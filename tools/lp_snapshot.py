@@ -33,7 +33,7 @@ How it works
   ``initialize_database``) + ``migrate_database`` (never from a
   checked-in ``.sqlite``), optionally edited by a named JSON patch that
   appends an override alternative and a new scenario.
-* ``flextool.engine.model.build_flextool`` is wrapped (in the
+* ``build_flextool`` in ``MODEL_MODULE`` is wrapped (in the
   worker process only; production code is untouched).  Right after each
   build returns -- before autoscale or any solver touches the Problem --
   the Problem is written with ``Problem.write_mps(emit_names=True)``.
@@ -84,8 +84,13 @@ TESTS_DIR = REPO / "tests"
 ENGINE_DIR = REPO / "flextool" / "engine"
 CANONICAL_PREFIX = "flextool/schemas/canonical_databases/"
 
+# Module whose ``build_flextool`` attribute the worker wraps.  Every
+# production caller must look it up there at call time (late
+# ``from <MODEL_MODULE> import build_flextool``), so the patch is seen.
+MODEL_MODULE = "flextool.engine.model"
+
 # Files whose ``add_cstr`` calls define the constraint-family universe
-# checked by ``coverage``.
+# checked by ``coverage``: POSIX paths relative to ENGINE_DIR.
 COVERAGE_SOURCES = (
     "model.py", "_reserve.py", "_group_slack.py", "_cumulative_invest.py",
     "_delay.py", "_commodity_ladder.py", "_dc_power_flow.py",
@@ -779,7 +784,8 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path) -> int:
 
     from db_utils import json_to_db  # tests/db_utils.py
 
-    import flextool.engine.model as model_mod
+    import importlib
+
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
     from flextool.update_flextool.initialize_database import (
@@ -789,6 +795,7 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest: list[dict] = []
     used: dict[str, int] = {}
+    model_mod = importlib.import_module(MODEL_MODULE)
     original = model_mod.build_flextool
 
     def capturing_build_flextool(m, d, *args, **kwargs):
@@ -1178,6 +1185,7 @@ _ADD_CSTR_LITERAL = re.compile(r"add_cstr\(\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']
 
 # Names passed to ``add_cstr`` through a variable or an f-string, resolved
 # by reading the call sites (source file -> names).
+# Keyed like COVERAGE_SOURCES (path relative to ENGINE_DIR).
 DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
     "model.py": (
         # _eq_invest_period_caps / _eq_invest_total_caps loop tables
@@ -1266,6 +1274,11 @@ UNREACHABLE: dict[str, str] = {
 
 def constraint_universe() -> dict[str, str]:
     """family name -> source file, for every add_cstr in COVERAGE_SOURCES."""
+    unknown = set(DYNAMIC_CSTR_NAMES) - set(COVERAGE_SOURCES)
+    if unknown:
+        raise ValueError(
+            f"DYNAMIC_CSTR_NAMES keys not in COVERAGE_SOURCES: {sorted(unknown)}"
+        )
     out: dict[str, str] = {}
     for fname in COVERAGE_SOURCES:
         text = (ENGINE_DIR / fname).read_text()

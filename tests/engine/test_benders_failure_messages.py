@@ -13,11 +13,11 @@ import ast
 import re
 from pathlib import Path
 
+from flextool.engine import _benders
 from flextool.engine._benders import _benders_failure_message
 
-_BENDERS_SRC = Path(__file__).resolve().parents[2] / (
-    "flextool/engine/_benders.py"
-)
+# Located through the module so the test follows the file if it moves.
+_BENDERS_SRC = Path(_benders.__file__)
 
 # Model-instance vocabulary that must not appear in a user-facing diagnostic.
 # The H2_trade model labels connections "trade"/"pipeline"/"line" and groups of

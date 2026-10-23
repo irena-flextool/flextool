@@ -15,9 +15,12 @@ empty) on-disk artefact instead.  See:
 * ``specs/architecture_provider_and_future_duckdb.md`` — the
   "CSV dump is a snapshot, not a re-creation" principle.
 
-This test scans ``flextool/engine/*.py`` and fails if a new
-cascade module introduces any of the three rule violations below
-without an explicit exemption.
+This test scans every ``*.py`` under ``flextool/engine/`` recursively
+(except the package root ``__init__.py`` and the ``autoscale/``
+subpackage) and fails if a new cascade module introduces any of the
+three rule violations below without an explicit exemption.  Allowlists
+and violation reports key files by their POSIX path relative to
+``flextool/engine/`` (e.g. ``_dump_csvs.py`` or ``output/_dump_csvs.py``).
 
 Rule 1 — No disk CSV reads in cascade code
 ==========================================
@@ -78,10 +81,29 @@ import pytest
 
 CASCADE_ROOT = Path(__file__).resolve().parents[2] / "flextool" / "engine"
 
+# Subfolders of CASCADE_ROOT that are not cascade code.  ``autoscale/``
+# is the LP-scaling layer (no Provider access).
+EXCLUDED_SUBDIRS: frozenset[str] = frozenset({"autoscale"})
+
+# Relative paths of files skipped outright: the package root
+# ``__init__.py`` only re-exports the public API.
+EXCLUDED_FILES: frozenset[str] = frozenset({"__init__.py"})
+
+# The scan must never silently cover nothing (e.g. after files move
+# into subfolders and the walk stops finding them).
+MIN_SCANNED_FILES = 80
+
 
 # ---------------------------------------------------------------------------
 # Allowlists (with per-file justifications)
 # ---------------------------------------------------------------------------
+
+
+# Keys of every allowlist below are POSIX paths relative to CASCADE_ROOT.
+
+# The Provider implementation module — the only file allowed to hold
+# module-level frame globals (Rule 2b).
+PROVIDER_IMPL_FILE = "_flex_data_provider.py"
 
 
 # Files that ARE the Provider's own I/O / snapshot implementation.  The
@@ -165,9 +187,17 @@ class Violation:
 # ---------------------------------------------------------------------------
 
 
+def _rel(path: Path) -> str:
+    """POSIX path of *path* relative to CASCADE_ROOT (allowlist key)."""
+    return path.relative_to(CASCADE_ROOT).as_posix()
+
+
 def _iter_cascade_files():
-    for p in sorted(CASCADE_ROOT.glob("*.py")):
-        if p.name == "__init__.py":
+    for p in sorted(CASCADE_ROOT.rglob("*.py")):
+        rel = p.relative_to(CASCADE_ROOT)
+        if rel.parts[0] in EXCLUDED_SUBDIRS:
+            continue
+        if rel.as_posix() in EXCLUDED_FILES:
             continue
         yield p
 
@@ -221,7 +251,7 @@ def _function_uses_provider_open(func_node: ast.AST) -> bool:
 
 def _detect_rule1_violations(path: Path, tree: ast.AST) -> list[Violation]:
     out: list[Violation] = []
-    fname = path.name
+    fname = _rel(path)
     # Map each ast node to its enclosing function (None for module-level).
     parent_func: dict[int, ast.AST] = {}
 
@@ -329,7 +359,7 @@ def _detect_rule2_module_globals(tree: ast.AST, fname: str) -> list[Violation]:
     dicts.
     """
     out: list[Violation] = []
-    if fname == "_flex_data_provider.py":
+    if fname == PROVIDER_IMPL_FILE:
         return out
 
     def _annotation_mentions_dataframe(ann: ast.AST) -> bool:
@@ -384,7 +414,7 @@ def _detect_rule3_shim_definitions(
     docstring text.
     """
     out: list[Violation] = []
-    fname = path.name
+    fname = _rel(path)
     if fname in PROVIDER_IMPL_ALLOWLIST:
         return out
     lines = source.splitlines()
@@ -437,7 +467,7 @@ def test_no_disk_csv_reads_in_cascade() -> None:
     """Rule 1: no bare disk CSV reads in cascade modules."""
     violations: list[Violation] = []
     for path in _iter_cascade_files():
-        if path.name in RULE_1_ALLOWLIST:
+        if _rel(path) in RULE_1_ALLOWLIST:
             continue
         _, tree = _read_tree(path)
         violations.extend(_detect_rule1_violations(path, tree))
@@ -468,10 +498,10 @@ def test_no_photocopier_lru_cache() -> None:
     """Rule 2a: no @lru_cache / @cache wrapping provider.get callers."""
     violations: list[Violation] = []
     for path in _iter_cascade_files():
-        if path.name in PROVIDER_IMPL_ALLOWLIST:
+        if _rel(path) in PROVIDER_IMPL_ALLOWLIST:
             continue
         _, tree = _read_tree(path)
-        violations.extend(_detect_rule2_lru_cache(tree, path.name))
+        violations.extend(_detect_rule2_lru_cache(tree, _rel(path)))
     if violations:
         pytest.fail(
             "Photocopier pattern detected: @lru_cache / @cache wraps a "
@@ -490,10 +520,10 @@ def test_no_module_level_frame_globals() -> None:
     """
     violations: list[Violation] = []
     for path in _iter_cascade_files():
-        if path.name in PROVIDER_IMPL_ALLOWLIST:
+        if _rel(path) in PROVIDER_IMPL_ALLOWLIST:
             continue
         _, tree = _read_tree(path)
-        violations.extend(_detect_rule2_module_globals(tree, path.name))
+        violations.extend(_detect_rule2_module_globals(tree, _rel(path)))
     if violations:
         pytest.fail(
             "Photocopier pattern detected: module-level pl.DataFrame "
@@ -525,19 +555,38 @@ def test_provider_or_shims_have_justification() -> None:
         )
 
 
+def test_scan_covers_the_engine_package() -> None:
+    """Sanity: the recursive walk finds the cascade modules.
+
+    Guards against the scan silently covering nothing — every rule test
+    above passes vacuously on an empty file list.
+    """
+    scanned = list(_iter_cascade_files())
+    assert len(scanned) > MIN_SCANNED_FILES, (
+        f"only {len(scanned)} cascade files scanned under {CASCADE_ROOT} "
+        f"(floor {MIN_SCANNED_FILES}); _iter_cascade_files is broken or "
+        "the package moved."
+    )
+
+
 def test_allowlists_cover_only_existing_files() -> None:
     """Sanity: every allowlisted filename must exist on disk.
 
     Catches stale allowlist entries left behind after refactors.
     """
-    on_disk = {p.name for p in _iter_cascade_files()}
+    on_disk = {_rel(p) for p in _iter_cascade_files()}
     stale = [
-        name for name in (PROVIDER_IMPL_ALLOWLIST | RAW_INPUT_FALLBACK_ALLOWLIST)
+        name for name in (
+            [PROVIDER_IMPL_FILE]
+            + list(PROVIDER_IMPL_ALLOWLIST | RAW_INPUT_FALLBACK_ALLOWLIST)
+        )
         if name not in on_disk
     ]
     if stale:
         pytest.fail(
             "Stale allowlist entries (file no longer exists in "
-            f"flextool/engine/): {stale}.  Remove from "
-            "PROVIDER_IMPL_ALLOWLIST / RAW_INPUT_FALLBACK_ALLOWLIST."
+            f"flextool/engine/): {stale}.  Remove or update the "
+            "relative path in "
+            "PROVIDER_IMPL_FILE / PROVIDER_IMPL_ALLOWLIST / "
+            "RAW_INPUT_FALLBACK_ALLOWLIST."
         )

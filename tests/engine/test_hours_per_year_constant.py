@@ -23,6 +23,14 @@ import flextool.engine as ep
 from flextool.engine._constants import HOURS_PER_YEAR
 
 
+# Path (relative to the engine package) of the one module allowed to
+# hold the literal.
+_CONSTANTS_MODULE = "_constants.py"
+
+# The recursive scan must never silently cover nothing.
+_MIN_SCANNED_FILES = 80
+
+
 def test_hours_per_year_value() -> None:
     assert HOURS_PER_YEAR == 8760.0
 
@@ -35,9 +43,12 @@ def test_no_bare_year_constant_in_engine_code() -> None:
     """
     pkg_dir = pathlib.Path(ep.__file__).parent
     offenders: list[str] = []
+    scanned = 0
     for py in sorted(pkg_dir.rglob("*.py")):
-        if py.name == "_constants.py":
+        rel = py.relative_to(pkg_dir).as_posix()
+        if rel == _CONSTANTS_MODULE:
             continue
+        scanned += 1
         tree = ast.parse(py.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (
@@ -46,7 +57,14 @@ def test_no_bare_year_constant_in_engine_code() -> None:
                 and not isinstance(node.value, bool)
                 and float(node.value) == 8760.0
             ):
-                offenders.append(f"{py.name}:{node.lineno}")
+                offenders.append(f"{rel}:{node.lineno}")
+    assert scanned > _MIN_SCANNED_FILES, (
+        f"only {scanned} engine modules scanned under {pkg_dir}"
+    )
+    assert (pkg_dir / _CONSTANTS_MODULE).is_file(), (
+        f"{_CONSTANTS_MODULE} not found under {pkg_dir}; update "
+        "_CONSTANTS_MODULE after moving it"
+    )
     assert not offenders, (
         "bare 8760 literal(s) in engine code — route through "
         "flextool.engine._constants.HOURS_PER_YEAR: "
