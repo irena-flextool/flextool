@@ -437,8 +437,10 @@ Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [
 
 - `co2_method` - Choice of the CO2 method or a combination of methods: no_method, price, period, total, price_period, price_total, period_total, price_period_total.
 - `co2_price` [CUR/ton] CO2 price for a group of nodes. Constant or period. A period-indexed Map may cover *more* periods than the current solve realises — extra entries are silently ignored, so the same shared CO2-price dataset can drive solves with different period subsets. If the active solve activates `co2_price` topology (a priced commodity is wired up) but no `co2_price` or `co2_content` value is supplied for a needed period, the engine logs a warning and skips the CO2 cost term for that period rather than raising an error.
-- `co2_max_period` [tCO2] Annualized maximum limit for emitted CO2 in each period.
+- `co2_max_period` [tCO2/a] Annualized maximum limit for emitted CO2 in each period (tonnes per year of the period).
 - `co2_max_total` [tCO2] Maximum limit for emitted CO2 in the whole solve.
+
+The emissions that the CO2 price and the limits apply to are the fuel drawn from the group's nodes times the commodity's `co2_content`, including the extra fuel that `min_load_efficiency` units burn at part load.
 
 ### Stochastics
 

@@ -536,6 +536,18 @@ def _patch_co2_period_total(data: dict) -> dict:
                 ["group", "co2_limit", "co2_max_total", 2.0e7]])
 
 
+def _patch_co2_cap_minload(data: dict) -> dict:
+    """CO2 price, period cap and total cap on a min_load_efficiency unit
+    (linear online): the section fuel of the units online in
+    co2_price_eff, co2_max_period and co2_max_total."""
+    return _overlay(
+        data, name="co2_cap_minload",
+        base=["init", "west", "coal", "co2_limit", "coal_min_load"],
+        values=[["group", "co2_limit", "co2_method", "price_period_total"],
+                ["group", "co2_limit", "co2_price", 10.0],
+                ["group", "co2_limit", "co2_max_total", 2.5e6]])
+
+
 def _patch_negcap_indirect(data: dict) -> dict:
     """Negative-capacity unit made indirect (second output):
     maxOutputSum_negCap."""
@@ -634,6 +646,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "chp_misc": _patch_chp_misc,
     "profiles": _patch_profiles,
     "co2_period_total": _patch_co2_period_total,
+    "co2_cap_minload": _patch_co2_cap_minload,
     "negcap_indirect": _patch_negcap_indirect,
     "nested_fix_quantity": _patch_nested_fix_quantity,
     "nested_fix_usage": _patch_nested_fix_usage,
@@ -755,6 +768,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("chp_misc", _T),
     ("profiles", _T),
     ("co2_period_total", _T),
+    ("co2_cap_minload", _T),
     ("negcap_indirect", _T),
     ("nested_fix_quantity", _T),
     ("nested_fix_usage", _T),

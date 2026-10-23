@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **CO2 limits count the part-load fuel of min-load units.** The CO2
+  limits (`co2_max_period`, `co2_max_total`) now count the extra fuel that
+  `min_load_efficiency` units burn at part load, as the CO2 price and the
+  reported emissions already did. Before, the limits left that fuel out, so
+  the reported emissions of such units could exceed the limit. Models that
+  combine a CO2 limit with such units get a tighter limit and less output
+  from those units.
+
 - **Combined reserve methods keep all their requirements.** A reserve group
   with a combined `reserve_method` (`timeseries_and_dynamic`,
   `timeseries_and_large_failure`, `all`) lost its timeseries requirement

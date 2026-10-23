@@ -2070,6 +2070,26 @@ def _validate_min_input_shares(rows: pl.DataFrame) -> None:
                         + [f"{r['p']}: sum {r['s']}" for r in sums.iter_rows(named=True)]))
 
 
+def _eff_fuel_input(b: _Build, arcs: pl.DataFrame) -> list[tuple[str, Expr]]:
+    """Fuel input of processes with an efficiency on the arcs ``arcs`` (p, source, sink, ...).
+
+    ``[("eff", v_flow·unitsize·slope)]`` plus, for min_load_efficiency units, ``("section_lin" |
+    "section_int", v_online·section·unitsize)``, each restricted to ``arcs``; MWh/h per (arc, d, t), unweighted.
+    Shared by the commodity cost (commodity_cost_eff), the CO2 price (co2_price_eff) and both CO2 caps
+    (co2_max_period, co2_max_total), so their fuel measure cannot drift apart.
+    """
+    d = b.d
+    terms: list[tuple[str, Expr]] = [("eff", Where(b.v_flow * d.p_unitsize * d.p_slope, arcs))]
+    if b.has_minload_eff:
+        if b.has_online_lin:
+            terms.append(("section_lin", Where(Where(b.v_online_linear, d.process_min_load_eff)
+                                               * d.p_section * d.p_unitsize, arcs)))
+        if b.has_online_int:
+            terms.append(("section_int", Where(Where(b.v_online_integer, d.process_min_load_eff)
+                                               * d.p_section * d.p_unitsize, arcs)))
+    return terms
+
+
 def _eq_co2_max_period(b: _Build) -> None:
     """CO2 emission cap per period."""
     if not b.has_co2_cap:
@@ -2079,21 +2099,26 @@ def _eq_co2_max_period(b: _Build) -> None:
 
     # ─── EQ. ─── co2_max_period ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped, t} v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t]·co2_content[c]·w[d,t]
+    # Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped, t}
+    #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
+    #     · co2_content[c]·w[d,t]
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_noEff, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
     #   ≤ co2_max_period[g,d]
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
-    # Caps the annualised CO2 emissions of a group in each period (tonnes).  Emissions come from the
-    # flows out of the group's nodes that carry a CO2-emitting commodity c.  On eff processes the
-    # source-side flow is v_flow · slope; noEff processes take no slope (applying it would over-count them).
+    # Caps the annualised CO2 emissions of a group in each period (tonnes per year).  Emissions come from
+    # the fuel that processes draw from the group's nodes when it carries a CO2-emitting commodity c,
+    # measured as in co2_price_eff (_eff_fuel_input): on eff processes the output flow times slope plus,
+    # for min_load_efficiency units (linear and integer v_online), the section fuel of the units online.
+    # noEff processes take neither slope nor section (applying them would over-count).
     lhs: dict = {}
     if b.has_co2_cap_eff:
-        lhs["emissions_eff"] = Sum(
-            Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_capped)
-            * d.p_co2_content
-            * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
-            over=("p", "source", "sink", "c", "t"),
-        )
+        for key, term in _eff_fuel_input(b, d.flow_from_co2_capped):
+            lhs[f"emissions_{key}"] = Sum(
+                term
+                * d.p_co2_content
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
+                over=("p", "source", "sink", "c", "t"),
+            )
     if b.has_co2_cap_noEff:
         lhs["emissions_noEff"] = Sum(
             Where(v_flow * d.p_unitsize, d.flow_from_co2_capped_noEff)
@@ -2119,21 +2144,25 @@ def _eq_co2_max_total(b: _Build) -> None:
 
     # ─── EQ. ─── co2_max_total ───────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total, d,t} v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t]·co2_content[c]·w[d,t]
+    # Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total, d,t}
+    #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
+    #     · co2_content[c]·w[d,t]
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total_noEff, d,t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
     #   ≤ co2_max_total[g]
     #   ∀ g ∈ group_co2_max_total;   w = step_duration · timestep_weight / period_share
     # Caps the CO2 emissions of a group over the whole horizon (tonnes); the emission terms are those of
-    # co2_max_period, summed over the periods as well.  Each period contributes its annualised emissions,
-    # not weighted by the years it represents (see specs/github_issues.md, refactor bug 13).
+    # co2_max_period (section fuel included), summed over the periods as well.  Each period contributes its
+    # annualised emissions, not weighted by the years it represents (see specs/github_issues.md, refactor
+    # bug 13).
     lhs: dict = {}
     if b.has_co2_cap_total_eff:
-        lhs["emissions_eff"] = Sum(
-            Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_capped_total)
-            * d.p_co2_content
-            * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
-            over=("p", "source", "sink", "c", "d", "t"),
-        )
+        for key, term in _eff_fuel_input(b, d.flow_from_co2_capped_total):
+            lhs[f"emissions_{key}"] = Sum(
+                term
+                * d.p_co2_content
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
+                over=("p", "source", "sink", "c", "d", "t"),
+            )
     if b.has_co2_cap_total_noEff:
         lhs["emissions_noEff"] = Sum(
             Where(v_flow * d.p_unitsize, d.flow_from_co2_capped_total_noEff)
@@ -2597,8 +2626,6 @@ def _obj_commodity(b: _Build) -> Expr | None:
         return None
     d = b.d
     v_flow = b.v_flow
-    v_online_lin = b.v_online_linear
-    v_online_int = b.v_online_integer
     op_factor = b.op_factor
     # Commodities with a price ladder are priced by _commodity_ladder, not by the single commodity price.
     ladder_c = (d.commodity_with_ladder["c"]
@@ -2623,22 +2650,7 @@ def _obj_commodity(b: _Build) -> Expr | None:
     # output flow times slope, plus the section input per online unit (min_load_efficiency units only,
     # linear and integer online alike).  Price in currency/MWh.
     if _has_rows(buy_eff):
-        terms.append(Sum(
-            Where(v_flow * d.p_unitsize * d.p_slope, buy_eff)
-            * d.p_commodity_price * op_factor))
-        if b.has_minload_eff:
-            if b.has_online_lin:
-                terms.append(Sum(
-                    Where(Where(v_online_lin, d.process_min_load_eff)
-                          * d.p_section * d.p_unitsize,
-                          buy_eff)
-                    * d.p_commodity_price * op_factor))
-            if b.has_online_int:
-                terms.append(Sum(
-                    Where(Where(v_online_int, d.process_min_load_eff)
-                          * d.p_section * d.p_unitsize,
-                          buy_eff)
-                    * d.p_commodity_price * op_factor))
+        terms += [Sum(term * d.p_commodity_price * op_factor) for _key, term in _eff_fuel_input(b, buy_eff)]
 
     # ─── OBJ. ─── commodity_cost_noEff ───────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -2666,11 +2678,6 @@ def _obj_co2_price(b: _Build) -> Expr | None:
     if not b.has_co2_price:
         return None
     d = b.d
-    v_flow = b.v_flow
-    v_online_lin = b.v_online_linear
-    v_online_int = b.v_online_integer
-    op_factor = b.op_factor
-    terms: list = []
 
     # ─── OBJ. ─── co2_price_eff ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -2681,23 +2688,8 @@ def _obj_co2_price(b: _Build) -> Expr | None:
     # node of a CO2-priced group g; content in t/MWh, price in currency/t.  The section term exists
     # for min_load_efficiency units only.  Flows into priced nodes earn no removal credit (see
     # specs/github_issues.md, refactor bug 19).
-    terms.append(Sum(
-        Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_priced)
-        * d.p_co2_content * d.p_co2_price * op_factor))
-    if b.has_minload_eff:
-        if b.has_online_lin:
-            terms.append(Sum(
-                Where(Where(v_online_lin, d.process_min_load_eff)
-                      * d.p_section * d.p_unitsize,
-                      d.flow_from_co2_priced)
-                * d.p_co2_content * d.p_co2_price * op_factor))
-        if b.has_online_int:
-            terms.append(Sum(
-                Where(Where(v_online_int, d.process_min_load_eff)
-                      * d.p_section * d.p_unitsize,
-                      d.flow_from_co2_priced)
-                * d.p_co2_content * d.p_co2_price * op_factor))
-    return _sum_terms(terms)
+    return _sum_terms([Sum(term * d.p_co2_content * d.p_co2_price * b.op_factor)
+                       for _key, term in _eff_fuel_input(b, d.flow_from_co2_priced)])
 
 
 def _obj_co2_price_noEff(b: _Build) -> Expr | None:
