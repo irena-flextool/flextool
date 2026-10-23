@@ -36,7 +36,7 @@ __all__ = [
 # the cascade run.
 
 _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
-    # _emit_leaf_sets — 27 thin writers
+    # _leaf_sets — 27 thin writers
     "period_group.csv",
     "period_node.csv",
     "period_commodity.csv",
@@ -62,7 +62,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "timeline.csv",
     "commodity__tier_ann.csv",
     "solve_period.csv",
-    # _emit_mid_sets — thin writers.
+    # _mid_sets — thin writers.
     #
     # Phase 4 audit (2026-05-21) corrected the spelling of seven
     # entries below to match the actual emit keys produced by the
@@ -93,12 +93,12 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "g_divest_total.csv",
     "g_invest_cumulative.csv",
     "ci_ladder_cumulative.csv",
-    # _emit_calc_params — thin writers
+    # _calc_params — thin writers
     "process_VRE.csv",
     "process_online_linear.csv",
     "process_online_integer.csv",
     "process__method_indirect.csv",
-    # _emit_arc_unions — thin writers + Phase E-b lifted streamed writers
+    # _arc_unions — thin writers + Phase E-b lifted streamed writers
     "node__TimeParam_in_use.csv",
     "process_source_delayed.csv",
     "process_source_undelayed.csv",
@@ -139,7 +139,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "nodeGroupDispatch__group_aggregate_Connection.csv",
     "nodeGroupDispatch__group_aggregate_Unit_to_group.csv",
     "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
-    # _emit_chain_params — Phase E-b lifted streamed writers
+    # _chain_params — Phase E-b lifted streamed writers
     "p_entity_pre_existing.csv",
     # — 2-CSV existing chain (count/integer_count/later_solves emits
     #   pruned — dead)
@@ -148,7 +148,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # — 2-CSV capacity max chain (max_capacity/invest_cumulative_max pruned — dead)
     "p_entity_max_units.csv",
     "p_entity_dispatch_capacity_max.csv",
-    # _emit_co2_accumulators — Phase E-b lifted.  ``co2_cum_realized_tonnes.csv``
+    # _co2_accumulators — Phase E-b lifted.  ``co2_cum_realized_tonnes.csv``
     # used to live here as a guaranteed empty-seed contract; Phase 1b of
     # specs/provider_consolidation.md retired the empty seed.  The
     # post-solve accumulator computed by
@@ -156,12 +156,12 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # handoff/Provider plumbing when it fires, but single-solve
     # scenarios never run that path — so the basename is conditional,
     # not part of the expected_basenames contract.
-    # _emit_pdt_params — Phase E-b lifted streamed writers
+    # _pdt_params — Phase E-b lifted streamed writers
     "pdtProcess.csv",
     "pdtNode.csv",
     "pdtProcess_source.csv",
     "pdtProcess_sink.csv",
-    # _emit_period_params — Phase E-b lifted streamed writers
+    # _period_params — Phase E-b lifted streamed writers
     "pdtNodeInflow.csv",
     "pdtProfile.csv",
     "pdtProcess_section.csv",
@@ -182,7 +182,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "ed_divest_min_period.csv",
     "ed_cumulative_max_capacity.csv",
     "ed_cumulative_min_capacity.csv",
-    # _emit_calc_params — Phase E-b lifted streamed writers
+    # _calc_params — Phase E-b lifted streamed writers
     # — process_arc_method_joins (10 CSVs, methodgated arc joins)
     "process_sink_toProcess.csv",
     "process_process_toSource.csv",
@@ -197,13 +197,13 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # — process_profile_method_joins (2 CSVs)
     "process__profileProcess__toSink__profile__profile_method.csv",
     "process__source__toProfileProcess__profile__profile_method.csv",
-    # _emit_dispatchers — Phase E-b lifted entity_period_calc_params
+    # _dispatchers — Phase E-b lifted entity_period_calc_params
     "pdProcess.csv",
     "pdNode.csv",
     "edEntity_lifetime.csv",
     "ed_fixed_cost.csv",
     "p_entity_unitsize.csv",
-    # _emit_dispatchers — Phase E-b lifted process_arc_unions monolith
+    # _dispatchers — Phase E-b lifted process_arc_unions monolith
     "process_source_sink_eff.csv",
     "process_source_sink_noEff.csv",
     "process_online.csv",
@@ -211,14 +211,14 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_source_sink.csv",
     "process_source_sink_alwaysProcess.csv",
     "process__source__sink__profile__profile_method_direct.csv",
-    # _emit_entity_annual — Phase E-b lifted (6-CSV monolith)
+    # _entity_annual — Phase E-b lifted (6-CSV monolith)
     "ed_entity_annual.csv",
     "ed_entity_annual_discounted.csv",
     "ed_entity_annual_divest.csv",
     "ed_entity_annual_divest_discounted.csv",
     "ed_lifetime_fixed_cost.csv",
     "ed_lifetime_fixed_cost_divest.csv",
-    # _emit_inflow_scaling — only the 6 CONSUMED outputs are emitted; the 9
+    # _inflow_scaling — only the 6 CONSUMED outputs are emitted; the 9
     # internal middle parameters (orig_flow_sum, period_share_of_annual_flow,
     # new_peak_sign, old_peak_max, old_peak_min, old_peak_sign,
     # new_peak_divided_by_old_peak, new_peak_inflow_sum, new_old_multiplier)
@@ -229,14 +229,14 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "period_flow_proportional_multiplier.csv",
     "new_old_slope.csv",
     "new_old_section.csv",
-    # _emit_lp_scaling — only the 3 CONSUMED outputs are emitted; the 6
+    # _lp_scaling — only the 3 CONSUMED outputs are emitted; the 6
     # stage-to-stage middle-products (_node_cap_unitsize_sum, _node_cap_raw,
     # _node_cap_pow10, inv_node_cap, _group_cap_raw, _group_cap_pow10) have
     # no functional reader and are no longer written.
     "node_capacity_for_scaling.csv",
     "group_capacity_for_scaling.csv",
     "inv_group_cap.csv",
-    # _emit_solve_writers — Phase E-b7 (34 small per-solve CSVs)
+    # _solve_writers — Phase E-b7 (34 small per-solve CSVs)
     "steps_in_timeline.csv",
     "steps_in_use.csv",
     "steps_complete_solve.csv",
@@ -294,7 +294,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "rp_block_last.csv",
     "rp_block_start_last.csv",
     "timestep_weight.csv",
-    # _emit_period_calc — Phase E-b8 (12 + 2 CSVs)
+    # _period_calc — Phase E-b8 (12 + 2 CSVs)
     "p_inflation_factor_operations_yearly.csv",
     "complete_period_share_of_year_calc.csv",
     "p_timeline_duration_in_years.csv",
@@ -308,7 +308,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "f_d_k.csv",
     "pd_branch_weight.csv",
     "pdt_branch_weight.csv",
-    # _emit_per_solve — Phase E-b8 (30 + 19 + 1 CSVs)
+    # _per_solve — Phase E-b8 (30 + 19 + 1 CSVs)
     "branch_set.csv",
     "year_set.csv",
     "period_from_period_time_set.csv",
@@ -357,7 +357,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "gd_invest_period.csv",
     "gd_divest_period.csv",
     "ed_invest_forbidden_no_investment.csv",
-    # _emit_reserve — Phase E-b8 (1 + 2 + 4 CSVs)
+    # _reserve_sets — Phase E-b8 (1 + 2 + 4 CSVs)
     "pdtReserve_upDown_group.csv",
     "process_reserve_upDown_node_active.csv",
     "prundt.csv",

@@ -11,7 +11,7 @@ Two preprocessing families called per-solve (not per-write-input):
   ed_invest / ed_divest / edd_history family + the gd_* group
   projections + the no-investment-lifetime gate.
 
-Style mirrors :mod:`._emit_leaf_sets` / :mod:`._emit_mid_sets`:
+Style mirrors :mod:`._leaf_sets` / :mod:`._mid_sets`:
 eager polars CSV reads, expression chains, ``unique(maintain_order=True)``
 for legacy-bit-identical row order, missing files treated as empty
 frames.
@@ -46,7 +46,7 @@ _DIVEST_PERIOD_METHODS: frozenset[str] = frozenset((
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O helpers — same conventions as _emit_leaf_sets / _emit_mid_sets.
+# CSV I/O helpers — same conventions as _leaf_sets / _mid_sets.
 # ---------------------------------------------------------------------------
 
 
@@ -197,7 +197,7 @@ def emit_per_solve_sets(
     # rp_weights.csv, but emit_per_solve_sets runs BEFORE emit_rp_data in
     # the cascade — the Provider doesn't yet hold ``rp_weights`` at this
     # point, so the derivation always wrote empty frames.  Both sets are
-    # now emitted by ``_emit_solve_writers._compute_rp_frames`` (which
+    # now emitted by ``_solve_writers._compute_rp_frames`` (which
     # owns the rp_weights data) so they land populated for the RP path
     # and empty under ``emit_empty_rp_data`` for the non-RP path.
 

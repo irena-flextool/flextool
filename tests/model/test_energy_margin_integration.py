@@ -1,7 +1,7 @@
 """End-to-end gating test for the ``energy_margin`` demand-margin feature.
 
-The feature (``flextool/engine/_emit_energy_margin.py``, wired into
-``_emit_solve_time.run`` right after ``emit_pdtNodeInflow``) multiplies a
+The feature (``flextool/engine/preprocess/emit/_energy_margin.py``, wired into
+``_solve_time.run`` right after ``emit_pdtNodeInflow``) multiplies a
 node's ``pdtNodeInflow`` by its ``energy_margin_multiplier`` factor, but ONLY:
 
 * in the solve that carries investment periods

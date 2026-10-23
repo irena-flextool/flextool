@@ -1,6 +1,6 @@
 """Node inflow scaling params — per-solve emitters.
 
-Called per-solve from ``_emit_solve_time.run`` (batch 17).
+Called per-solve from ``_solve_time.run`` (batch 17).
 
 Output CSVs (6 emitted — the 6 with a downstream consumer):
 
@@ -61,7 +61,7 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
-from flextool.engine._vectorize import _render_value_column
+from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
 _logger = logging.getLogger(__name__)
 

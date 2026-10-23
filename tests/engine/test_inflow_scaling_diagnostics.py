@@ -23,7 +23,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._emit_inflow_scaling import (
+from flextool.engine.preprocess.emit._inflow_scaling import (
     _compute_inflow_scaling_diagnostics,
     emit_node_inflow_scaling_params,
 )
@@ -168,7 +168,7 @@ def test_warning_logged_at_warning_level(caplog):
 
     with caplog.at_level(
         logging.WARNING,
-        logger="flextool.engine._emit_inflow_scaling",
+        logger="flextool.engine.preprocess.emit._inflow_scaling",
     ):
         emit_node_inflow_scaling_params(INP, SDD, provider=provider)
 
@@ -192,7 +192,7 @@ def test_no_warning_on_uniform_input_via_emitter(caplog):
     provider = _base_provider(timestep_weight=None)
     with caplog.at_level(
         logging.WARNING,
-        logger="flextool.engine._emit_inflow_scaling",
+        logger="flextool.engine.preprocess.emit._inflow_scaling",
     ):
         emit_node_inflow_scaling_params(INP, SDD, provider=provider)
     msgs = [r.getMessage() for r in caplog.records

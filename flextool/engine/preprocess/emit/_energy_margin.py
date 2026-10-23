@@ -1,6 +1,6 @@
 """energy_margin_multiplier — invest-only, negative-inflow demand margin emitter.
 
-Runs per-solve from ``_emit_solve_time.run`` immediately AFTER
+Runs per-solve from ``_solve_time.run`` immediately AFTER
 ``emit_pdtNodeInflow`` (batch 54) and BEFORE the positive/negative inflow
 split (batch 58), so that split inherits the margin.
 
@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from flextool.engine._emit_inflow_scaling import (
+from flextool.engine.preprocess.emit._inflow_scaling import (
     _read_keyed_float,
     _read_pairs,
 )
@@ -52,7 +52,7 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
-from flextool.engine._vectorize import _render_value_column
+from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
 
 def emit_energy_margin_inflow(

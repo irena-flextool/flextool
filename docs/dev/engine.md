@@ -266,8 +266,8 @@ The on-disk `rp_weights` carrier is authored as a flat triple
 shape and the flattened list-of-Maps shape Spine produces depending on
 import path. Both decode to the same nested
 `{base: {rep: weight}}` dict that
-`_emit_solve_writers.derive_rp_weights` converts into the per-solve
-`rp_weights.csv` frame and that `_emit_solve_writers` derives the
+`_solve_writers.derive_rp_weights` converts into the per-solve
+`rp_weights.csv` frame and that `_solve_writers` derives the
 `rp_base_chain`, `rp_base_first`, `rp_base_last`, and `rp_base__rep`
 companion sets from. See architecture.md
 [Feature flags in `build_flextool`](architecture.md#feature-flags-in-build_flextool)
@@ -305,12 +305,12 @@ Representative entries:
 | `_npv.py` | Annualized investment / divestment carriers feeding the objective. |
 | `_profiles.py` | `p_profile_value` and the `p_process_existing_count` factor used by profile-bound constraints. |
 | `_walks.py` | Backward / forward step lookups (`dtttdt`, `dtttdt_forward_only`, the block-interior variant). |
-| `_emit_arc_unions.py` | Arc set algebra: `flow_to_n`, `flow_from_n`, the commodity-flow joins, the reverse-arc additions for connections. |
-| `_emit_calc_params.py` | The `pdtX` / `pdX` per-step parameter cascade. |
-| `_emit_co2_accumulators.py` | Cumulative-CO2 ladder feeding the CO2-cap constraint. |
-| `_emit_pdt_params.py` | The full `pdt_*` family (online indices, varCost frames, …). |
-| `_emit_period_calc.py` | `p_period_share`, `complete_period_share_of_year`, `p_timeline_duration_in_years`. |
-| `_emit_reserve.py` | Reserve-up / reserve-down set machinery for `_reserve.py`. |
+| `_arc_unions.py` | Arc set algebra: `flow_to_n`, `flow_from_n`, the commodity-flow joins, the reverse-arc additions for connections. |
+| `_calc_params.py` | The `pdtX` / `pdX` per-step parameter cascade. |
+| `_co2_accumulators.py` | Cumulative-CO2 ladder feeding the CO2-cap constraint. |
+| `_pdt_params.py` | The full `pdt_*` family (online indices, varCost frames, …). |
+| `_period_calc.py` | `p_period_share`, `complete_period_share_of_year`, `p_timeline_duration_in_years`. |
+| `_reserve_sets.py` | Reserve-up / reserve-down set machinery for `_reserve.py`. |
 | `_provider_io.py` | The single Provider-funnel (`_emit`, `_provider_key`, `_provider_open`) every emitter routes through. |
 | `_vectorize.py` | Shared per-roll vectorize helpers: the entity × dt and entity × period grids (carrying `__eo` / `__to` / `__po` order keys), the dict→lookup lift, the stochastic / parent-period fold, and the `repr()`-based value rendering. |
 
@@ -339,7 +339,7 @@ picks the first non-null candidate across the cascade branches in
 priority order, and `collect_value_frame` collects the graph to a
 single Float64 value column, sorts by the order keys, and renders each
 value to a string. `derive_pdtProcess_vectorized` in
-`_emit_pdt_params.py` is a representative example, and `emit_pdtProcess`
+`_pdt_params.py` is a representative example, and `emit_pdtProcess`
 simply publishes its output to the Provider.
 
 Two rules keep the rendered output exact:
@@ -384,10 +384,10 @@ for the handoff-key family.
 
 Emitters have dependencies — `_existing` reads
 `realized_invest` from prior solves' handoffs and `pd_invest_set`
-from `_emit_period_params`; `_npv` reads
+from `_period_params`; `_npv` reads
 `ed_lifetime_fixed_cost` which depends on `p_entity_all_existing`;
 `_block`'s overlap sets feed the arc-side block aggregation
-in `_emit_arc_unions`.
+in `_arc_unions`.
 
 The runner does not compute the order. It is encoded in the call
 order of `_apply_db_overrides` (in `flex_data.py`) and the legacy

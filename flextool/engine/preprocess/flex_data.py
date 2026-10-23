@@ -260,8 +260,8 @@ def _read_capacity(path: Path,
     # ``p_entity_all_existing`` is the cumulative existing capacity per
     # period (reflecting lifetime, carried over across periods within a
     # solve), which is what the .mod's ``p_entity_dispatch_capacity_max``
-    # formula uses.  ``_emit_chain_params.emit_p_entity_existing_chain``
-    # (called per-iter by ``_emit_solve_time.run`` batch 59,
+    # formula uses.  ``_chain_params.emit_p_entity_existing_chain``
+    # (called per-iter by ``_solve_time.run`` batch 59,
     # unconditionally) populates ``solve_data/p_entity_all_existing`` in
     # the Provider, so the cascade always has this key available.
     df = _provider_read(
@@ -320,7 +320,7 @@ def _read_p_flow_max(
              .select("p", "source", "sink", "d", "t", "value"))
     # ``p_flow_max.csv`` is emitted with ``value`` as ``repr(float)`` — a
     # Utf8 column — so heterogeneous CSV leaves round-trip byte-identically
-    # (see :func:`flextool.engine._emit_arc_unions.derive_p_flow_max`,
+    # (see :func:`flextool.engine.preprocess.emit._arc_unions.derive_p_flow_max`,
     # whose ``_rows_to_frame`` types every column ``pl.Utf8``).  This frame is
     # the authoritative seed for ``p_flow_upper`` in the native cascade.  Cast
     # ``value`` back to Float64 here: ``p_flow_upper`` feeds numeric
@@ -371,7 +371,7 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
     # (including ``value``) as ``Utf8`` — values round-trip through
     # ``repr(v)`` so heterogeneous param leaf types (int methods + float
     # data) survive byte-identically (see
-    # :func:`flextool.engine._emit_pdt_params.derive_pdtProcess`).
+    # :func:`flextool.engine.preprocess.emit._pdt_params.derive_pdtProcess`).
     # When a numeric param (e.g. ``availability``) is sliced out for use
     # as a polars-numeric Param ``value`` column, the Utf8 must be cast
     # back to ``Float64`` at the producer — otherwise downstream
@@ -792,7 +792,7 @@ class FlexData:
     p_storage_state_reference_value: Param | None = None     # (n, d, t)
     # ─── Storage end-state binding (use_reference_price) ─────────────────
     # B1a — per-(node, period) reference price emitted by
-    # ``_emit_arc_unions.emit_p_storage_state_reference_price`` into
+    # ``_arc_unions.emit_p_storage_state_reference_price`` into
     # ``solve_data/p_storage_state_reference_price.csv``.  Consumed by
     # the use_reference_price objective term (B1b) for nodes whose
     # ``storage_solve_horizon_method=use_reference_price``.  Loaded but
@@ -1638,7 +1638,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     noEff (p, source, sink, c, g) frames) but the gate set comes from
     ``solve_data/group_co2_max_total.csv`` (groups whose ``group__co2_method``
     is ``total`` / ``price_total`` / ``period_total`` — already projected
-    by :func:`_emit_leaf_sets.write_co2_method_sets`).  The cap value
+    by :func:`_leaf_sets.write_co2_method_sets`).  The cap value
     is read from the canonical ``solve_data/pdGroup.csv`` slice
     (``param == 'co2_max_total'``); flextool preprocessing broadcasts the
     Spine scalar across periods, so we collapse to one row per group by
@@ -2917,7 +2917,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
 
     # B1a — load ``p_storage_state_reference_price`` (n, d) from the canonical
     # ``solve_data/p_storage_state_reference_price.csv`` emitted by
-    # ``_emit_arc_unions.emit_p_storage_state_reference_price``.  Schema is
+    # ``_arc_unions.emit_p_storage_state_reference_price``.  Schema is
     # ``(node, period, value)``; per-(node, period) parameter consumed by
     # B1b's ``use_reference_price`` objective term.  Field is loaded but
     # unused at this commit; B1b adds the consumer.
@@ -2965,9 +2965,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # Eight per-solve frames driving the .mod's intra-period state-change
     # branch for ``nodeState_rp`` plus the three ``rp_inter_period_*``
     # constraints (.mod:2197-2200, .mod:2965-2997).  Emitted by
-    # ``_emit_leaf_sets.emit_node_state_subsets`` (nodeState_rp),
-    # ``_emit_per_solve`` (rp_base_period_set), and
-    # ``_emit_solve_writers._compute_rp_frames`` (chain / first / last /
+    # ``_leaf_sets.emit_node_state_subsets`` (nodeState_rp),
+    # ``_per_solve`` (rp_base_period_set), and
+    # ``_solve_writers._compute_rp_frames`` (chain / first / last /
     # block_first / block_start_last / weights).  Loaded here; model.py
     # wiring lands in Phase 5+.
     from flextool.engine.preprocess import _provider_keys as _K_rp
@@ -2993,7 +2993,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         )
         if df_rpbps.height > 0:
             # Emitter writes a single column ``period`` (see
-            # ``_emit_per_solve`` line ~169 via ``_emit_singles``).
+            # ``_per_solve`` line ~169 via ``_emit_singles``).
             col = "period" if "period" in df_rpbps.columns else df_rpbps.columns[0]
             rp_base_period_set = (df_rpbps
                                   .rename({col: "b"})
@@ -4768,7 +4768,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         #
         # Stochastic / output_horizon: prefer ``dt_realize_dispatch_set.csv``
         # when present.  That's the canonical "rows to emit" set built by
-        # ``_emit_per_solve.write_period_set_csvs`` — it includes all
+        # ``_per_solve.write_period_set_csvs`` — it includes all
         # forecast-branch (period, step) pairs for stochastic scenarios
         # (where ``realized_dispatch.csv`` is anchor-only by design).  For
         # non-stochastic / non-output_horizon solves it collapses to the
@@ -6599,7 +6599,7 @@ def build_handoff_from_solution(
 
     # ---- cumulative_co2: per-(group, period) running total ----
     # Gap F final close-out — native compute via
-    # ``_emit_co2_accumulators.compute_co2_rolling_accumulator`` when
+    # ``_co2_accumulators.compute_co2_rolling_accumulator`` when
     # ``flex_data`` + ``sol`` are available (cascade path).  Falls back to
     # the disk read for legacy / test callers that only pass ``sol``.
     cumulative_co2_df = None
@@ -6607,7 +6607,7 @@ def build_handoff_from_solution(
         cumulative_co2_df = prior_handoff.cumulative_co2
     used_native_co2 = False
     if flex_data is not None and sol is not None:
-        from flextool.engine._emit_co2_accumulators import (
+        from flextool.engine.preprocess.emit._co2_accumulators import (
             compute_co2_rolling_accumulator,
         )
         prior_df = (prior_handoff.cumulative_co2

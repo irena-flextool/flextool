@@ -1,4 +1,4 @@
-"""Unit tests for ``flextool.engine._blocks`` (Agent 1.1).
+"""Unit tests for ``flextool.engine.preprocess.emit._blocks`` (Agent 1.1).
 
 The module's public surface: ``derive_blocks``, ``derive_overlap_set``,
 ``validate_group_membership``, ``emit_block_data`` and the end-to-end
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine._blocks import (
+from flextool.engine.preprocess.emit._blocks import (
     BlockAssignments,
     BlockBoundaries,
     BlockPredecessors,

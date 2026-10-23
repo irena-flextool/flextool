@@ -367,7 +367,7 @@ def test_rp_weight_sum_uses_actual_nonuniform_weights(tmp_path):
         if ts in tc.rp_weights:
             import polars as pl
 
-            from flextool.engine._emit_solve_writers import (
+            from flextool.engine.preprocess.emit._solve_writers import (
                 _compute_rp_frames,
             )
             tl = tc.timesets__timeline[ts]

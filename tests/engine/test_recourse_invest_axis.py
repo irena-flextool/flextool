@@ -15,7 +15,7 @@ from flextool.engine.preprocess.params._derived import (
     _build_recourse_anchor_pairs,
     _expand_invest_branch_periods,
 )
-from flextool.engine._emit_solve_writers import (
+from flextool.engine.preprocess.emit._solve_writers import (
     emit_stochastic_invest_method,
 )
 

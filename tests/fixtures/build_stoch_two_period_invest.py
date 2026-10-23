@@ -12,7 +12,7 @@ NODE enters the stochastic group, so the node-side NA net-charge pinning
 × ``groupStochastic``) never fires and the LP stays separable per leaf
 (hand-calc-able).  A node-authored branch-keyed ``inflow`` would NOT work
 without the node in the group — the stochastic inflow fold-in
-(``_emit_period_params``) gates on ``group__node`` × include_stochastics —
+(``_period_params``) gates on ``group__node`` × include_stochastics —
 which is why the demand variation is supply-side here:
 
   * node ``elec`` — balance, high penalty (VOLL), DETERMINISTIC demand

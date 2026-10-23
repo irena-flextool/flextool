@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import polars as pl
 
-from flextool.engine._emit_energy_margin import emit_energy_margin_inflow
+from flextool.engine.preprocess.emit._energy_margin import emit_energy_margin_inflow
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 INPUT_DIR = Path("input")

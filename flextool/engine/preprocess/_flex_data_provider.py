@@ -283,7 +283,7 @@ class FlexDataProvider:
 
         *handler_id* is a stable identifier — typically the fully-
         qualified function name (e.g.
-        ``"flextool.engine._emit_arc_unions.write_process_arc_unions"``).
+        ``"flextool.engine.preprocess.emit._arc_unions.write_process_arc_unions"``).
         *reads* is the list of (suffix-stripped) frame names the handler
         consumes via ``get``/``has``.  *groups* is the item-group tokens
         at which the handler fires; ``None`` means "fires once at the

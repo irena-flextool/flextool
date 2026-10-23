@@ -23,7 +23,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine._emit_period_params import (
+from flextool.engine.preprocess.emit._period_params import (
     derive_pdtGroup,
     derive_pdtGroup_vectorized,
 )

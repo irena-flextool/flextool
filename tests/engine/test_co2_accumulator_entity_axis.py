@@ -23,7 +23,7 @@ import polars as pl
 import pytest
 from polar_high import Param
 
-from flextool.engine._emit_co2_accumulators import (
+from flextool.engine.preprocess.emit._co2_accumulators import (
     compute_co2_rolling_accumulator,
 )
 

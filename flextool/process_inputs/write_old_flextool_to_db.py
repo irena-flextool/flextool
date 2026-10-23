@@ -337,7 +337,7 @@ def _write_commodities(
 
         # Create fuel market node. It is a commodity source, so node_type
         # MUST be set to "commodity" — an unset node_type defaults to
-        # "balance" in the engine (_emit_mid_sets.py "default 'balance'"),
+        # "balance" in the engine (_mid_sets.py "default 'balance'"),
         # which would give the market no supply and starve the fuel.
         market_name = _fuel_market_name(fuel.name)
         _add_entity(db, "node", market_name, alt_name, counters,

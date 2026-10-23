@@ -215,7 +215,7 @@ _PARAMETER_SPECS: list[dict] = [
         # here (``_rows_to_frame`` truncates the flattened map row to this
         # 2-col header, dropping the time axis and value).  Map-shaped
         # adders ingest through the ``pd_``/``pdt_`` specs below; the
-        # emitter (_emit_energy_margin_adder) reads all three files and
+        # emitter (_energy_margin_adder) reads all three files and
         # broadcasts each authored shape over the invest (d, t) grid via
         # _param_shapes' promote_param_to_dt.  A node has a scalar OR a
         # map adder, never both.

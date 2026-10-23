@@ -36,7 +36,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine._emit_inflow_scaling import (
+from flextool.engine.preprocess.emit._inflow_scaling import (
     _compute_inflow_scaling_frames,
     _compute_inflow_scaling_frames_vectorized,
 )

@@ -28,7 +28,7 @@ test injects non-unit weights and asserts:
    ``pdt_branch_weight_lf``), which divides each branch's input weight
    by the sum across siblings sharing the same first-step; the
    per-(d, t) value is emitted to ``solve_data/pdt_branch_weight.csv``
-   by ``_emit_period_calc.emit_branch_weights``.
+   by ``_period_calc.emit_branch_weights``.
 
 2. **Objective-sensitivity (liveness).**  Two solves whose branch
    weights are a pure REDISTRIBUTION with the sum preserved

@@ -172,7 +172,7 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
     flowGroup indicators sum nothing and emit all-zero rows in production.
 
     Also backfills the 12 ``nodeGroupDispatch__*`` arc-union MultiIndex
-    sets emitted by ``flextool/engine/_emit_arc_unions.py``.
+    sets emitted by ``flextool/engine/preprocess/emit/_arc_unions.py``.
     Without these, ``calc_group_flows`` finds zero rows for the unit /
     connection aggregator joins, and ``out_group.nodeGroup_flows`` emits
     only the slack/inflow/loss column families — group_flows__dt loses
@@ -183,7 +183,7 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
     ``FlexDataProvider`` keyed under ``"input/<basename>"`` /
     ``"solve_data/<basename>"`` — the writer→emitter refactor no longer
     flushes these to disk on the default cascade path, so there is no
-    on-disk fallback (matching the B6 ``_emit_arc_unions`` precedent).
+    on-disk fallback (matching the B6 ``_arc_unions`` precedent).
 
     ``provider`` contract (STRICT): on an in-memory output path a
     Provider MUST exist.  This function is only reached on the in-memory

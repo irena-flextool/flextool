@@ -30,7 +30,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine._emit_period_params import (
+from flextool.engine.preprocess.emit._period_params import (
     derive_pdtNodeInflow,
     derive_pdtNodeInflow_vectorized,
 )
@@ -107,7 +107,7 @@ def _assert_parity(df_legacy: pl.DataFrame, df_vec: pl.DataFrame,
 
 def _pbt_inflow_from_provider(p) -> dict:
     """Rebuild the ``pbt_node_inflow`` dict (verbatim legacy reader)."""
-    from flextool.engine._emit_period_params import _cell_str
+    from flextool.engine.preprocess.emit._period_params import _cell_str
 
     out: dict = {}
     df = p.get("input/pbt_node_inflow")
@@ -128,7 +128,7 @@ def _pbt_inflow_from_provider(p) -> dict:
 
 def _inflow_method_pairs_from_provider(p) -> frozenset:
     """Rebuild the ``node__inflow_method`` pair set (verbatim legacy)."""
-    from flextool.engine._emit_period_params import _cell_str
+    from flextool.engine.preprocess.emit._period_params import _cell_str
 
     out: set = set()
     df = p.get("solve_data/node__inflow_method")

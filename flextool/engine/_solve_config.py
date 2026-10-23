@@ -535,7 +535,7 @@ class SolveConfig:
         # The per-solve dict is hard-wired to {} so every solve
         # emits p_use_row_scaling=0 (the
         # ``use_row_scaling.get(solve, "no")`` default branch in
-        # _emit_solve_writers.derive_p_use_row_scaling), preserving
+        # _solve_writers.derive_p_use_row_scaling), preserving
         # the Mode A pre-scaling behaviour for the row-scaling
         # capacity-proxy emitter.  The autoscaler's Layer 2 + Layer
         # 3 (driven by --scaling) are unaffected.

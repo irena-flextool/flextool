@@ -152,8 +152,8 @@ class SolveContext:
     )
 
     # ── Path B Cat B (WriterSnapshot top-7) extensions ──────────────────
-    # Per-solve preprocessing artefacts written by ``_emit_solve_writers``
-    # / ``_emit_period_calc`` and consumed by the cascade (audit
+    # Per-solve preprocessing artefacts written by ``_solve_writers``
+    # / ``_period_calc`` and consumed by the cascade (audit
     # `specs/in_cascade_csv_audit.md` §Category B).  Lazy-loaded on first
     # attribute access — same pattern as ``period_in_use`` /
     # ``period_branch`` above.  Schemas mirror the renamed canonical form

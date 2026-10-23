@@ -1,7 +1,7 @@
 """BlockLayout — multi-resolution timestep grouping (Δ.2).
 
 Native ``engine`` port of
-``flextool/engine/_blocks.py`` (1368 LOC).  Produces, in one
+``flextool/engine/preprocess/emit/_blocks.py`` (1368 LOC).  Produces, in one
 pass, every per-solve block-related frame consumed downstream:
 
 * ``entity_block``         — ``(entity, block)``
@@ -38,7 +38,7 @@ Key decisions:
   raise ``FlexToolConfigError`` / ``NotImplementedError`` (matching
   the reference).
 
-Reference: ``flextool/engine/_blocks.py`` (read-only).
+Reference: ``flextool/engine/preprocess/emit/_blocks.py`` (read-only).
 """
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ DEFAULT_BLOCK = "default"
 
 
 # Eight per-solve block CSV stems written by
-# ``flextool.engine._blocks.write_block_data`` and consumed by
+# ``flextool.engine.preprocess.emit._blocks.write_block_data`` and consumed by
 # :meth:`BlockLayout.load_from_solve_data`.  Defined as a module
 # constant so the off-cascade workdir bridge can seed only these files
 # into the ephemeral Provider (without picking up unrelated workdir

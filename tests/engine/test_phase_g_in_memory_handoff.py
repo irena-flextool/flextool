@@ -136,7 +136,7 @@ def test_phase_g_per_iter_reads_drop(
         except Exception:  # noqa: BLE001
             name = str(filepath_or_buffer)
         # Only count reads originating from the process_outputs/* code
-        # path (the Phase G scope).  Other callers (e.g. _emit_chain_params)
+        # path (the Phase G scope).  Other callers (e.g. _chain_params)
         # are out of scope here.
         frame = sys._getframe(1)
         depth = 0

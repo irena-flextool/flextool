@@ -148,9 +148,9 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "files at solve-context build time (pre-Provider)."
     ),
     # Note: `_pdt_lookup.py` and the writer-port modules
-    # (`_emit_arc_unions.py`, `_emit_chain_params.py`,
-    # `_emit_dispatchers.py`, `_emit_pdt_params.py`,
-    # `_emit_period_params.py`, `_emit_solve_writers.py`) previously
+    # (`_arc_unions.py`, `_chain_params.py`,
+    # `_dispatchers.py`, `_pdt_params.py`,
+    # `_period_params.py`, `_solve_writers.py`) previously
     # appeared here because the Rule 1 AST detector couldn't distinguish
     # `csv.reader(fh)` on a `_provider_open()` in-memory buffer from
     # `csv.reader(open(path))` on disk.  The detector now whitelists

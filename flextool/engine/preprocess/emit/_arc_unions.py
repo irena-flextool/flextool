@@ -34,10 +34,10 @@ Each ``write_*`` is a thin wrapper around a ``derive_*`` (or, where the
 legacy emits multiple CSVs from one shared computation, around a small
 ``_compute_*`` helper).  The ``derive_*`` returns a fresh
 ``pl.DataFrame`` in the same in-memory contract as
-:mod:`._emit_leaf_sets` / :mod:`._emit_mid_sets` /
-:mod:`._emit_calc_params`.
+:mod:`._leaf_sets` / :mod:`._mid_sets` /
+:mod:`._calc_params`.
 
-Style mirrors :mod:`._emit_calc_params` — eager polars reads of tiny
+Style mirrors :mod:`._calc_params` — eager polars reads of tiny
 CSVs with positional column renames, expression chains where natural,
 small python loops where the iteration order is precision-load-bearing
 (matches the legacy ``dict.fromkeys`` ordered-dedup pattern).
@@ -48,7 +48,7 @@ Precision-parity pattern
 ``write_pProcess_source_sink`` writes a value column.  Legacy formats
 it via ``f"{repr(v)}"`` with ``v`` already a python float — we mirror
 exactly by pre-stringifying with ``repr(float(v))``.  See
-:mod:`._emit_calc_params` module docstring for the precision-parity
+:mod:`._calc_params` module docstring for the precision-parity
 rationale (round-trip-exactness of ``repr(float)`` and divergence
 from polars' default float formatting).
 """
@@ -60,7 +60,7 @@ import polars as pl
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O — same conventions as the sibling _emit_*.py modules.
+# CSV I/O — same conventions as the sibling emit/_*.py modules.
 # ---------------------------------------------------------------------------
 
 # Provider-aware open helper — re-exported from the shared module.

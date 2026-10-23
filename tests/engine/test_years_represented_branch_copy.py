@@ -14,7 +14,7 @@ for the substring bug.
 """
 from __future__ import annotations
 
-from flextool.engine._emit_solve_writers import (
+from flextool.engine.preprocess.emit._solve_writers import (
     derive_period_years,
     derive_years_represented,
 )

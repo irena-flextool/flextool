@@ -84,9 +84,9 @@ SOLVE_DATA_STOCHASTIC_INVEST_METHOD = "solve_data/stochastic_invest_method"
 
 
 # ---------------------------------------------------------------------------
-# RP-blended-weights keys — populated by ``_emit_solve_writers._compute_rp_frames``
-# (the six derived sets/params) plus the node-state RP subset (``_emit_leaf_sets``)
-# and the per-solve base-period set (``_emit_per_solve``).  Consumed by the
+# RP-blended-weights keys — populated by ``_solve_writers._compute_rp_frames``
+# (the six derived sets/params) plus the node-state RP subset (``_leaf_sets``)
+# and the per-solve base-period set (``_per_solve``).  Consumed by the
 # storage-binding-method machinery once the model-side wiring lands.
 # ---------------------------------------------------------------------------
 

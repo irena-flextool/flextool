@@ -40,13 +40,11 @@ from collections import defaultdict
 # remaining writers.
 # ---------------------------------------------------------------------------
 
-from flextool.engine._blocks import emit_block_data_for_solve
+from flextool.engine.preprocess.emit._blocks import emit_block_data_for_solve
 # Step 2.5 — legacy preprocessing package deleted (item 15).  The per-
 # solve orchestrator now lives natively at
-# :mod:`flextool.engine._emit_solve_time`.
-from flextool.engine import (
-    _emit_solve_time as preprocessing_solve_time,
-)
+# :mod:`flextool.engine.preprocess.emit._solve_time`.
+from flextool.engine.preprocess.emit import _solve_time as preprocessing_solve_time
 from flextool.engine._solve_state import (
     FlexToolConfigError,
     FlexToolSolveError,
@@ -54,7 +52,7 @@ from flextool.engine._solve_state import (
 # Step 2.5 — solve_writers calls now resolve to the native polars
 # implementations.  The legacy disk-writing module remains in the tree
 # but is no longer called from the cascade.
-from flextool.engine import _emit_solve_writers as solve_writers
+from flextool.engine.preprocess.emit import _solve_writers as solve_writers
 from flextool.engine.preprocess import _provider_keys
 from flextool.engine.preprocess import _provider_translators
 
@@ -506,7 +504,7 @@ def native_run_model(state, solver) -> int:
     # the parent's ALREADY-materialized realized-branch rows: the
     # ``(p, p) in period__branch_lists[parent]`` predicate selects the
     # realized self-rows (the SAME predicate ``derive_solve_branch_weight``
-    # uses at ``_emit_solve_writers.py``) and excludes synthetic forecast
+    # uses at ``_solve_writers.py``) and excludes synthetic forecast
     # rows (``<p>_high`` ...).  A MULTI-period realized window carries one
     # realized-branch row per realized period (the continuation loop in
     # ``_stochastic.py`` appends ``(period, realized_branch)`` for each), so
@@ -765,7 +763,7 @@ def native_run_model(state, solver) -> int:
 
         # S1-g-3 — expose the per-sub-solve Provider to writer entry
         # points BEFORE preprocessing runs, so native writers threaded
-        # with ``provider=`` (via :func:`_emit_solve_time.run`) can
+        # with ``provider=`` (via :func:`_solve_time.run`) can
         # fetch it from ``state.current_provider``.  Writers not yet
         # threaded still resolve their reads via the Provider-as-seed
         # bridge installed above; Step 2 deletes both paths.
@@ -1070,7 +1068,7 @@ def native_run_model(state, solver) -> int:
         # in-memory carrier fallback that wrote to the now-dead
         # ``solve_data/fix_storage_*`` Provider keys have been deleted;
         # all downstream consumers (flex_data.py, _derived.py,
-        # _emit_arc_unions.py, _emit_per_solve.py) consult ``handoff/*``.
+        # _arc_unions.py, _per_solve.py) consult ``handoff/*``.
 
         solve_writers.emit_solve_status(
             first_of_nested_level, last_of_nested_level,
@@ -1409,7 +1407,7 @@ def native_run_model(state, solver) -> int:
         )
         if _mem_cp is not None:
             _mem_cp("prep_solve_time_dispatcher_done",
-                    "prep: _emit_solve_time.run (per-solve sets + params dispatcher) done")
+                    "prep: _solve_time.run (per-solve sets + params dispatcher) done")
         # Step 1-f — Provider stash on state.  Read by
         # ``_PolarHighCascadeSolver.run`` to thread through into
         # ``load_flextool`` / ``write_outputs_for_solve`` /

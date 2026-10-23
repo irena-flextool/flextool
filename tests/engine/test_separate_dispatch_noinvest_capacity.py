@@ -9,7 +9,7 @@ EMPTY ``realized_existing`` carrier, so the sibling used to resolve its
 capacity to ZERO → ``p_process_existing_count = 0`` → the unit could not
 dispatch → all demand went unserved (VOLL) / a commitment pin was infeasible.
 
-The fix (``_emit_chain_params._compute_p_entity_existing_chain``): a
+The fix (``_chain_params._compute_p_entity_existing_chain``): a
 continuation/dispatch solve that carries NO ``realized_existing`` row for an
 entity falls back to that entity's DB ``pre_existing`` capacity — the handoff
 ADDS committed invest on top of existing, it never ZEROES the operational

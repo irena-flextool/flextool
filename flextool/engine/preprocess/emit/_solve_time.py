@@ -1,7 +1,7 @@
 """Native per-solve preprocessing orchestrator.
 
 Every sub-emitter is a native polars implementation in
-``flextool.engine._emit_*``.  The cascade threads the
+``flextool.engine.preprocess.emit``.  The cascade threads the
 per-sub-solve Provider into every emit_* call directly.
 
 Ordering
@@ -60,20 +60,18 @@ def run(
     _ck("START")
 
     # Native emit modules.
-    from flextool.engine import (
-        _emit_arc_unions as _arc,
-        _emit_calc_params as _calc,
-        _emit_dispatchers as _disp,
-        _emit_entity_annual as _entity_annual,
-        _emit_inflow_scaling as _inflow_scaling,
-        _emit_leaf_sets as _leaf,
-        _emit_lp_scaling as _lp_scaling,
-        _emit_mid_sets as _mid,
-        _emit_per_solve as _per_solve,
-        _emit_period_calc as _period_calc,
-        _emit_period_params as _period,
-        _emit_reserve as _reserve,
-    )
+    from flextool.engine.preprocess.emit import _arc_unions as _arc
+    from flextool.engine.preprocess.emit import _calc_params as _calc
+    from flextool.engine.preprocess.emit import _dispatchers as _disp
+    from flextool.engine.preprocess.emit import _entity_annual
+    from flextool.engine.preprocess.emit import _inflow_scaling
+    from flextool.engine.preprocess.emit import _leaf_sets as _leaf
+    from flextool.engine.preprocess.emit import _lp_scaling
+    from flextool.engine.preprocess.emit import _mid_sets as _mid
+    from flextool.engine.preprocess.emit import _per_solve
+    from flextool.engine.preprocess.emit import _period_calc
+    from flextool.engine.preprocess.emit import _period_params as _period
+    from flextool.engine.preprocess.emit import _reserve_sets as _reserve
 
     # ── Refresh write_input-scope outputs (idempotent, no-DB) ─────────
     # The mod's ``if p_model['solveFirst']`` printf blocks may have
@@ -194,7 +192,7 @@ def run(
     _arc.emit_node_time_param_in_use(input_dir, solve_data_dir, provider=provider)
     _ck("node_time_param_in_use")
     # ── L2 batch 26: p_entity_pre_existing ────────────────────────────
-    from flextool.engine import _emit_chain_params as _chain
+    from flextool.engine.preprocess.emit import _chain_params as _chain
     _chain.emit_p_entity_pre_existing(input_dir, solve_data_dir, provider=provider)
     _ck("p_entity_pre_existing")
     # ── L3 batch 27: ed_invest_forbidden_no_investment ────────────────
@@ -223,7 +221,7 @@ def run(
     _arc.emit_peedt(solve_data_dir, provider=provider)
     _ck("peedt")
     # ── L0 batches 42 / 43 ────────────────────────────────────────────
-    from flextool.engine import _emit_pdt_params as _pdt
+    from flextool.engine.preprocess.emit import _pdt_params as _pdt
     _pdt.emit_pdtProcess(input_dir, solve_data_dir, provider=provider)
     _ck("pdtProcess")
     _reserve.emit_pdtReserve_upDown_group(input_dir, solve_data_dir, provider=provider)
@@ -270,7 +268,7 @@ def run(
     # in the invest solve; runs BEFORE the positive/negative split (batch
     # 58) so that split inherits the margin.  Early-returns (byte-identical
     # to today) for dispatch solves or when no node sets a manual margin.
-    from flextool.engine import _emit_energy_margin as _energy_margin
+    from flextool.engine.preprocess.emit import _energy_margin
     _energy_margin.emit_energy_margin_inflow(
         state, solve_name, input_dir, solve_data_dir, provider=provider,
     )
@@ -281,9 +279,7 @@ def run(
     # negative demand rows on zero-inflow slack nodes (value = -adder at each
     # invest (d, t)).  Early-returns (byte-identical) for dispatch solves or
     # when no node uses the ``inflow_adder`` method with a non-zero adder.
-    from flextool.engine import (
-        _emit_energy_margin_adder as _energy_margin_adder,
-    )
+    from flextool.engine.preprocess.emit import _energy_margin_adder
     _energy_margin_adder.emit_energy_margin_adder(
         state, solve_name, input_dir, solve_data_dir, provider=provider,
     )

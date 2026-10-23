@@ -210,13 +210,11 @@ def run(
         # Step 3 — write_input-time native preprocessing emitters.
         # Each emit_* threads the Provider directly so frames flow into
         # memory rather than disk.
-        from flextool.engine import (
-            _emit_leaf_sets as _leaf,
-            _emit_mid_sets as _mid,
-            _emit_calc_params as _calc,
-            _emit_arc_unions as _arc,
-            _emit_dispatchers as _disp,
-        )
+        from flextool.engine.preprocess.emit import _leaf_sets as _leaf
+        from flextool.engine.preprocess.emit import _mid_sets as _mid
+        from flextool.engine.preprocess.emit import _calc_params as _calc
+        from flextool.engine.preprocess.emit import _arc_unions as _arc
+        from flextool.engine.preprocess.emit import _dispatchers as _disp
         input_dir = wf / "input"
         solve_data_dir = wf / "solve_data"
         os.makedirs(solve_data_dir, exist_ok=True)

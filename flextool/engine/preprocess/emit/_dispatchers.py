@@ -513,7 +513,7 @@ def emit_process_arc_unions(input_dir: Path, solve_data_dir: Path,
 def _entity_period_inputs(input_dir: Path, solve_data_dir: Path,
                             *, provider: "object | None" = None) -> dict:
     """Shared input bundle for the 5 entity-period computes."""
-    from flextool.engine._pdt_lookup import PdLookup
+    from flextool.engine.preprocess.emit._pdt_lookup import PdLookup
 
     pp = PdLookup(
         pd_csv=input_dir / "pd_process.csv",

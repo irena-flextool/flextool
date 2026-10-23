@@ -17,8 +17,8 @@ Outputs (all written under ``solve_data/``):
 
 Method-enum constants mirror flextool/flextool_base.dat:184 and
 :211-212.  ``PdLookup`` is the native 4-branch resolver from
-:mod:`._pdt_lookup` (same machinery used by ``_emit_dispatchers`` and
-``_emit_period_params``).
+:mod:`._pdt_lookup` (same machinery used by ``_dispatchers`` and
+``_period_params``).
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._pdt_lookup import PdLookup
+from flextool.engine.preprocess.emit._pdt_lookup import PdLookup
 from flextool.engine.preprocess._provider_io import _emit
 
 
@@ -43,7 +43,7 @@ _DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O helpers — same conventions as ``_emit_per_solve``.
+# CSV I/O helpers — same conventions as ``_per_solve``.
 # ---------------------------------------------------------------------------
 
 

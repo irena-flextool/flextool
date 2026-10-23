@@ -50,8 +50,8 @@ from flextool.engine.preprocess._provider_io import _emit
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O helpers — same conventions as ``_emit_per_solve`` /
-# ``_emit_lp_scaling``.
+# CSV I/O helpers — same conventions as ``_per_solve`` /
+# ``_lp_scaling``.
 # ---------------------------------------------------------------------------
 
 

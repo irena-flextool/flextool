@@ -1,6 +1,6 @@
 """energy_margin_adder — invest-only, additive negative-inflow demand margin.
 
-Runs per-solve from ``_emit_solve_time.run`` immediately AFTER the
+Runs per-solve from ``_solve_time.run`` immediately AFTER the
 multiplier (``emit_energy_margin_inflow``, batch 54) and BEFORE the
 positive/negative inflow split (batch 58), so that split inherits the
 added demand.  Ordering is multiply-then-add.
@@ -18,7 +18,7 @@ The subtraction above is the ONLY correct direction.
 
 What it does vs. the multiplier
 -------------------------------
-The multiplier (``_emit_energy_margin.py``) SCALES a node's existing
+The multiplier (``_energy_margin.py``) SCALES a node's existing
 NEGATIVE inflow rows — a no-op on a node with zero native inflow.  The
 adder targets exactly those zero-inflow slack nodes: it must CREATE
 negative demand rows for a node that has NO ``pdtNodeInflow`` row at all
@@ -80,7 +80,7 @@ The core ``nodeBalance_eq`` reads ``p_inflow`` DIRECTLY from
 ``pdtNodeInflow.csv`` (``model.py`` ~L1640), so the added demand IS
 served for every node type, including one set ``inflow_method="no_inflow"``.
 BUT the ``p_positive_inflow`` / ``p_negative_inflow`` split
-(``_emit_period_params._derive_positive_negative_inflow``) forces
+(``_period_params._derive_positive_negative_inflow``) forces
 ``no_inflow`` nodes to ``0.0`` — and those two frames feed the group
 energy-slack / capacity-margin / reserve auxiliary constraints
 (``_group_slack.py``).  So an adder on a node that is BOTH explicitly
@@ -97,7 +97,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine._emit_inflow_scaling import (
+from flextool.engine.preprocess.emit._inflow_scaling import (
     _read_pairs,
 )
 from flextool.engine.preprocess._provider_io import (
@@ -105,7 +105,7 @@ from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
 from flextool.engine._param_shapes import promote_param_to_dt
-from flextool.engine._vectorize import _render_value_column
+from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
 # The pdtNodeInflow frame is all-Utf8: node, period, time, value.
 _PDT_COLS = ("node", "period", "time", "value")

@@ -2,7 +2,7 @@
 
 Each family reads a small handful of ``input/*.csv`` (and,
 occasionally, a leaf-level ``solve_data/*.csv`` written earlier by
-:mod:`._emit_leaf_sets`) and emits one or more ``solve_data/`` CSVs.
+:mod:`._leaf_sets`) and emits one or more ``solve_data/`` CSVs.
 
 Families:
 
@@ -20,7 +20,7 @@ fresh ``pl.DataFrame`` (the in-memory contract); ``write_*`` wrappers
 materialise the frame to the legacy ``solve_data/*.csv`` path so
 downstream consumers continue to read identical bytes.
 
-Style mirrors :mod:`._emit_leaf_sets`: eager polars reads of tiny
+Style mirrors :mod:`._leaf_sets`: eager polars reads of tiny
 CSVs, expression chains, ``unique(maintain_order=True)`` for ordered
 dedup.  Constants mirror the legacy module's literals one-for-one.
 """
@@ -35,7 +35,7 @@ from flextool.engine.preprocess._provider_io import _emit
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O — same conventions as _emit_leaf_sets:
+# CSV I/O — same conventions as _leaf_sets:
 #   * eager read, missing file → empty frame with requested schema
 #   * positional column rename (handle legacy headers that differ in label)
 #   * empty frame still writes header line

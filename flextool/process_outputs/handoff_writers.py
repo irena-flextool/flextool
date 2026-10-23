@@ -113,7 +113,7 @@ def _load_pre_existing(
 
     Provider-first: the canonical in-memory frame at
     ``solve_data/p_entity_pre_existing`` (populated by
-    ``_emit_chain_params.emit_p_entity_pre_existing``) is tall —
+    ``_chain_params.emit_p_entity_pre_existing``) is tall —
     ``(entity, period, value)`` — and is what every consumer should
     use on the in-memory cascade.
 

@@ -38,7 +38,7 @@ Value-column semantics: the legacy emitters wrote ``f"...,{repr(v)}\\n"``
 which preserves the Python-type-as-emitted distinction
 between ``0`` (int) and ``0.0`` (float).  We mirror that by building
 ``value`` as a ``Utf8`` column with ``repr(v)`` applied per-row (the
-same pattern :mod:`._emit_chain_params` uses for its
+same pattern :mod:`._chain_params` uses for its
 ``_ed_value_frame`` helper).
 """
 from __future__ import annotations
@@ -51,14 +51,14 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
-from flextool.engine._pdt_lookup import (
+from flextool.engine.preprocess.emit._pdt_lookup import (
     NODE_PARAM_DEF1,
     PROCESS_PARAM_DEF1,
     PdtLookup,
     PdtLookupPerSide,
     read_class_defaults,
 )
-from flextool.engine._vectorize import (
+from flextool.engine.preprocess.emit._vectorize import (
     build_entity_dt_grid,
     build_fold_frame,
     coalesce_value,

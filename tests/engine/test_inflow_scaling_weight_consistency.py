@@ -22,7 +22,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._emit_inflow_scaling import (
+from flextool.engine.preprocess.emit._inflow_scaling import (
     _compute_inflow_scaling_frames,
 )
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider

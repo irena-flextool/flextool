@@ -1,8 +1,8 @@
 """End-to-end gating test for the ADDITIVE ``energy_margin_adder`` feature.
 
 Sibling to ``test_energy_margin_integration.py`` (the multiplier).  The
-adder (``flextool/engine/_emit_energy_margin_adder.py``, wired into
-``_emit_solve_time.run`` right AFTER the multiplier) applies, ONLY in the
+adder (``flextool/engine/preprocess/emit/_energy_margin_adder.py``, wired into
+``_solve_time.run`` right AFTER the multiplier) applies, ONLY in the
 solve that carries investment periods and ONLY to nodes whose
 ``energy_margin_method == 'inflow_adder'``:
 

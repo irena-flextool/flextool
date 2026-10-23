@@ -13,7 +13,7 @@ Post-Step-2.5 these helpers consume the canonical
 ``solve_data/*.csv`` frames exclusively through the
 :class:`FlexDataProvider`.  The disk-fallback arms that previously
 re-read ``<workdir>/solve_data/<name>.csv`` from disk are gone — the
-writer cascade (``_emit_per_solve.write_invest_csvs`` and friends)
+writer cascade (``_per_solve.write_invest_csvs`` and friends)
 seeds every required key in the Provider before this loader runs.
 
 When the active solve **is** in Spine, the override chain

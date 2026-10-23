@@ -1542,7 +1542,7 @@ def _write_scale_csv(
     base solve.
     """
     try:
-        from flextool.engine._emit_solve_writers import (
+        from flextool.engine.preprocess.emit._solve_writers import (
             derive_scale_the_objective,
         )
         sd = Path(solve_data_dir)

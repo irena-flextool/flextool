@@ -41,7 +41,7 @@ by the LAST (dispatch) sub-solve and so do NOT reflect the invest grid:
   t)`` weights the engine builds, NOT a step-count shortcut —
   :func:`flextool.engine.preprocess.params._derived.p_timestep_weight_from_source`
   for the default / ``timeset_weights`` regimes, and
-  :func:`flextool.engine._emit_solve_writers._compute_rp_frames` for
+  :func:`flextool.engine.preprocess.emit._solve_writers._compute_rp_frames` for
   ``representative_period_weights`` (RP).
 
 Why the ACTUAL weight, not the step count ``n_d``
@@ -66,7 +66,7 @@ import polars as pl
 from flextool.engine.preprocess.params._derived import (
     p_timestep_weight_from_source,
 )
-from flextool.engine._emit_solve_writers import _compute_rp_frames
+from flextool.engine.preprocess.emit._solve_writers import _compute_rp_frames
 from flextool.engine.preprocess.params._per_solve_sets import derive_per_solve_aggregates
 from flextool.engine._solve_config import SolveConfig
 from flextool.engine._spinedb_reader import SpineDbReader
@@ -135,7 +135,7 @@ def _rp_weight_sum_by_period(
 ) -> dict[str, float]:
     """Actual ``Σ_t timestep_weight`` per period for one RP *timeset*.
 
-    Reuses the engine writer :func:`._emit_solve_writers._compute_rp_frames`
+    Reuses the engine writer :func:`._solve_writers._compute_rp_frames`
     — the single source of truth that folds
     ``representative_period_weights`` into ``timestep_weight.csv`` — so the
     weights match those the annualiser applies to ``node_slack_up_d_e``
@@ -496,7 +496,7 @@ def _rp_fold_edges_and_tw(
     representative cell ``(period, rep_time)`` that shares its within-block
     offset ``h``, weighted by the hull weight ``rp_weights[base][rep]``.
     ``tw_rep`` comes straight from the engine writer's ``timestep_weight.csv``
-    (:func:`._emit_solve_writers._compute_rp_frames`) so the sizer divides by
+    (:func:`._solve_writers._compute_rp_frames`) so the sizer divides by
     exactly the weight the annualiser multiplies back.
 
     Two representative-period regimes are handled:

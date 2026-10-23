@@ -28,7 +28,7 @@ Strategy
    reflects the inflated values, NOT the natural handoff values.
 
 The assertion target — ``p_entity_previously_invested_capacity`` — is
-the CSV emitted by ``_emit_chain_params.emit_p_entity_existing_chain``
+the CSV emitted by ``_chain_params.emit_p_entity_existing_chain``
 after reading the handoff via ``read_handoff_frame``.  This proves the
 full Phase 5a + 5b chain: external dict → ``translate_overrides_to_provider``
 → ``override/realized_invest`` Provider key → ``read_handoff_frame``
@@ -185,7 +185,7 @@ def test_external_override_shadows_handoff_realized_invest(
 
     # ── Assertion 3: override propagated to solve 2's preprocessing ────
     # ``p_entity_previously_invested_capacity`` is emitted by
-    # ``_emit_chain_params.emit_p_entity_existing_chain``, which reads
+    # ``_chain_params.emit_p_entity_existing_chain``, which reads
     # ``realized_invest`` via ``read_handoff_frame`` — i.e. the Phase 5a
     # override-aware lookup.  Inflating the override by OVERRIDE_SCALE
     # should produce a proportionally inflated capacity row for the
@@ -201,7 +201,7 @@ def test_external_override_shadows_handoff_realized_invest(
             f"p_entity_previously_invested_capacity by ×{OVERRIDE_SCALE}; "
             f"baseline={baseline_v}, expected_override={expected}, "
             f"observed_override={override_v}.  Either the override did "
-            f"not reach _emit_chain_params._load_realized_from_handoff "
+            f"not reach _chain_params._load_realized_from_handoff "
             f"(Phase 5a/5b plumbing gap) or the scale was lost in "
             f"transit."
         )

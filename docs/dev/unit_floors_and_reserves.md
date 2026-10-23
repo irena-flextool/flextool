@@ -57,7 +57,7 @@ finite. Rows with a zero multiplier are dropped (no coefficient).
 
 Activation (unchanged, .mod parity): a reserve's relationships are active
 only if some group of the same (reserve, up/down) authors a non-zero
-`reservation` (`prundt_from_source`, `_emit_reserve`). A dynamic / n-1-only
+`reservation` (`prundt_from_source`, `_reserve_sets`). A dynamic / n-1-only
 reserve without any `reservation` is therefore inactive.
 
 ## Follow-ups (not implemented)
@@ -92,7 +92,7 @@ reserve without any `reservation` is therefore inactive.
    added, drop the filters and the warning.
 6. Dynamic and n-1 reserves activate only if some group of the same
    (reserve, up/down) has a non-zero `reservation` (`prundt_from_source`,
-   `_emit_reserve`; see "Activation" above). A dynamic / n-1-only reserve
+   `_reserve_sets`; see "Activation" above). A dynamic / n-1-only reserve
    is silently inactive — e.g. `network_coal_wind_reserve_n_1` does not
    test any n-1 requirement. Activation should follow the group's
    `reserve_method` (dynamic: any `increase_reserve_ratio`; n-1: any

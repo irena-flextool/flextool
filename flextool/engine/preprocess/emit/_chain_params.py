@@ -57,7 +57,7 @@ def _ed_value_frame(
     byte-parity on either path — see commit notes for the symptom.
     Storing ``value`` as Utf8 preserves the bit-exact precision parity the
     legacy CSV writers achieved through ``repr`` (see
-    :mod:`._emit_arc_unions` docstring).
+    :mod:`._arc_unions` docstring).
     """
     return pl.DataFrame(
         {

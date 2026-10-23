@@ -323,7 +323,7 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # ─── unit / connection: efficiency-curve (period, time) Params ────────
     # ``efficiency``, ``efficiency_at_min_load`` and ``min_load`` are all
     # members of ``_PROCESS_TIME_PARAM``
-    # (_emit_arc_unions.py:146-149 — flextool_base.dat:153), so each admits
+    # (_arc_unions.py:146-149 — flextool_base.dat:153), so each admits
     # the full (period, time) shape family exactly like ``availability``.
     # Consumed by :func:`._derived.p_slope_from_source` /
     # :func:`._derived.p_section_from_source` via

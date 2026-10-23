@@ -29,7 +29,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._emit_period_params import (
+from flextool.engine.preprocess.emit._period_params import (
     derive_pdtProfile,
     derive_pdtProfile_vectorized,
 )
@@ -106,7 +106,7 @@ def _assert_parity(df_legacy: pl.DataFrame, df_vec: pl.DataFrame,
 
 def _pbt_profile_from_provider(p) -> dict:
     """Rebuild the ``pbt_profile`` dict (verbatim legacy reader logic)."""
-    from flextool.engine._emit_period_params import _cell_str
+    from flextool.engine.preprocess.emit._period_params import _cell_str
 
     out: dict = {}
     df = p.get("input/pbt_profile")
@@ -127,7 +127,7 @@ def _pbt_profile_from_provider(p) -> dict:
 
 def _fold_index_from_provider(p, stem: str, key_col: int) -> dict:
     """Rebuild a ``_read_pairs_to_dict`` index (verbatim legacy logic)."""
-    from flextool.engine._emit_period_params import _cell_str
+    from flextool.engine.preprocess.emit._period_params import _cell_str
 
     out: dict = {}
     df = p.get(f"solve_data/{stem}")

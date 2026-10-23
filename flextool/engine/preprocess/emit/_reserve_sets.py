@@ -1,6 +1,6 @@
 """Reserve calculated params — per-solve emitters.
 
-Fired per-solve from ``_emit_solve_time.run`` at batches 43, 44 and 49.
+Fired per-solve from ``_solve_time.run`` at batches 43, 44 and 49.
 
 Three public entry points:
 
@@ -81,7 +81,7 @@ def _to_utf8_frame(
 
 
 # ---------------------------------------------------------------------------
-# Native-frame readers — same shape as _emit_inflow_scaling / _pdt_lookup
+# Native-frame readers — same shape as _inflow_scaling / _pdt_lookup
 # helpers.  The legacy emitter wrote plain text with ``repr(v)``; these
 # read the in-memory polars frame directly via
 # ``provider.get(_provider_key(path))`` instead of round-tripping through

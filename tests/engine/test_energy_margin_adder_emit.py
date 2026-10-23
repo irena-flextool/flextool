@@ -24,7 +24,7 @@ from types import SimpleNamespace
 
 import polars as pl
 
-from flextool.engine._emit_energy_margin_adder import (
+from flextool.engine.preprocess.emit._energy_margin_adder import (
     emit_energy_margin_adder,
 )
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider

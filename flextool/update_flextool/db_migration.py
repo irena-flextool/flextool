@@ -1465,7 +1465,7 @@ def migrate_database(
                 # Drop ``model.output_node_balance_t``.  Dead toggle:
                 # nothing in ``engine`` reads its row from the
                 # ``optional_outputs.csv`` set, and the ``enable_set``
-                # check in :mod:`flextool.engine._emit_per_solve`
+                # check in :mod:`flextool.engine.preprocess.emit._per_solve`
                 # only looks for ``output_horizon``.  Schema row, the
                 # SET_LIKE_NAMES bookkeeping entry, the autoscale
                 # quantity-type table row and the export_settings.yaml
@@ -1511,7 +1511,7 @@ def migrate_database(
                 # other six.  After this commit the
                 # ``optional_outputs.csv`` cl_pars emitter holds only
                 # ``output_horizon`` — the one flag actually consumed
-                # by ``_emit_per_solve``.
+                # by ``_per_solve``.
                 _migrate_v56_remove_output_connection_flow_separate(db)
                 # Batch C.1 — first commit of the solver-knob
                 # consolidation.  Retype ``solve.solver_arguments`` from
@@ -1674,7 +1674,7 @@ def migrate_database(
                 # ``no_method`` list_value, and sets the
                 # parameter_definition default to ``"none"``.  Engine
                 # semantics are unchanged: every consumer in
-                # :mod:`flextool.engine._emit_co2_accumulators`
+                # :mod:`flextool.engine.preprocess.emit._co2_accumulators`
                 # filters by exact-match on the active method names
                 # (``total`` / ``price_total`` / ``period_total`` /
                 # ``price_period_total``); ``no_method`` and ``none``
@@ -5576,7 +5576,7 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
     * ``model.inflation_offset_investment`` — current default ``1.0``,
       patched to ``0.0`` to match the engine fallback in
       :func:`flextool.engine.preprocess.params._npv._inflation_scalars`
-      (line 355) and the symmetric fallback in ``_emit_period_calc.py``
+      (line 355) and the symmetric fallback in ``_period_calc.py``
       (line 295).
 
     * ``commodity.unitsize`` — current default ``1.0``, patched to
@@ -5593,7 +5593,7 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
     * ``reserve__upDown__connection__node.large_failure_ratio`` and
       ``reserve__upDown__unit__node.large_failure_ratio`` — currently
       carry an empty-string default (``""``).  The N-1 reserve consumer
-      in :func:`flextool.engine._emit_reserve._compute_reserve_filters`
+      in :func:`flextool.engine.preprocess.emit._reserve_sets._compute_reserve_filters`
       gates each ``(p, r, ud, n)`` on
       ``p_prn.get((..., "large_failure_ratio"), 0.0) > 0`` — any
       non-zero enables the constraint, so the contract is "absent /
@@ -6023,7 +6023,7 @@ def _migrate_v56_remove_output_node_balance_t(db) -> None:
     Dead toggle: no module in :mod:`flextool.engine` reads the
     ``optional_outputs.csv`` row for this flag and no per-flag branch
     exists in the per-solve emitter
-    (:mod:`flextool.engine._emit_per_solve`).  Only
+    (:mod:`flextool.engine.preprocess.emit._per_solve`).  Only
     ``output_horizon`` is checked from the ``enable_optional_outputs``
     set.  The remaining cl_pars entry in
     :mod:`flextool.input_derivation._specs` (the ``optional_outputs.csv``
@@ -6048,7 +6048,7 @@ def _migrate_v56_remove_output_ramp_envelope(db) -> None:
     :mod:`flextool.input_derivation._specs`, but nothing on the engine
     side reads its row from the resulting ``enable_optional_outputs``
     set — only ``output_horizon`` is checked in
-    :mod:`flextool.engine._emit_per_solve`.  Any value users set
+    :mod:`flextool.engine.preprocess.emit._per_solve`.  Any value users set
     has been silently dropped.
 
     This helper removes the schema row; sibling edits in the same
@@ -7298,7 +7298,7 @@ def _migrate_v56_rename_co2_methods_no_method_to_none(db) -> None:
        off-name.
 
     Engine consumer behaviour is unchanged: the only filter site is
-    :func:`flextool.engine._emit_co2_accumulators._emitting_groups`,
+    :func:`flextool.engine.preprocess.emit._co2_accumulators._emitting_groups`,
     which keeps groups whose method is in
     ``{"total", "price_total", "period_total", "price_period_total"}``;
     ``no_method`` and ``none`` both fall through identically.

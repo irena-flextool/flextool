@@ -1002,8 +1002,8 @@ def p_timestep_weight_from_source(
     Map, RP scenarios) in flextool.
 
     Algorithm (mirrors
-    :func:`._emit_solve_writers.emit_timeset_cost_weight` for the non-RP
-    path and :func:`._emit_solve_writers.emit_rp_data` for the RP path):
+    :func:`._solve_writers.emit_timeset_cost_weight` for the non-RP
+    path and :func:`._solve_writers.emit_rp_data` for the RP path):
 
     Non-RP path (``timeset_weights`` set on a timeset):
       1. For each ``(period, timeset)`` pair from
@@ -1022,7 +1022,7 @@ def p_timestep_weight_from_source(
     RP path (``representative_period_weights`` set):
       Representative-period weights are folded into
       ``solve_data/timestep_weight.csv`` by the writer
-      (:func:`._emit_solve_writers._compute_rp_frames`,
+      (:func:`._solve_writers._compute_rp_frames`,
       ``w_r[rep]=Σ_base·n_rp/n_base``) and loaded into
       ``flex_data.p_timestep_weight`` by the CSV loader
       (``flex_data.py`` ``_load_time``).  When the ACTIVE solve's
@@ -1077,7 +1077,7 @@ def p_timestep_weight_from_source(
         # No flat ``timeset_weights`` — but this may be an RP solve.
         # ``representative_period_weights`` are folded into
         # ``solve_data/timestep_weight.csv`` by the writer
-        # (``_emit_solve_writers._compute_rp_frames``) and already loaded
+        # (``_solve_writers._compute_rp_frames``) and already loaded
         # into ``flex_data.p_timestep_weight`` by the CSV loader.  If the
         # ACTIVE solve's ``period_timeset`` references a timeset carrying
         # RP weights, return None so the guarded call site preserves that

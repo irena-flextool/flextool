@@ -609,7 +609,7 @@ def dt_non_anticipativity_lf(workdir: Path | None,
 
     Slice G (F1) — the operational non-anticipativity set is now the
     single source of truth materialised by
-    ``_emit_per_solve.emit_per_solve_sets`` as
+    ``_per_solve.emit_per_solve_sets`` as
     ``solve_data/dt_non_anticipativity_set.csv``, driven by the resolved
     ``non_anticipativity_periods`` window:
 
@@ -1243,7 +1243,7 @@ def _read_invest_tie_periods(
     for a non-empty window).
 
     The per-solve CSV materialised by
-    ``_emit_per_solve.emit_per_solve_sets`` is authoritative and requires
+    ``_per_solve.emit_per_solve_sets`` is authoritative and requires
     a ``provider``.  The ``ctx`` argument is accepted for signature parity
     with sibling readers but is deliberately NOT a source for this window:
     ``SolveConfig.non_anticipativity_invest_periods`` is a
@@ -1423,7 +1423,7 @@ def _p_years_d_rows(workdir: Path | None,
     """``{period: cumulative year}`` from ``solve_data/p_years_d.csv``
     (fallback ``period_with_history.csv``, ``param`` column) — the
     canonical emitted CSVs that carry the fan-member byte-copies
-    (``_emit_solve_writers.py`` years-represented / period-years
+    (``_solve_writers.py`` years-represented / period-years
     copy loops)."""
     df = _read_solve_data_csv(workdir, provider, "p_years_d.csv")
     val_col = None

@@ -37,7 +37,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._emit_period_params import (
+from flextool.engine.preprocess.emit._period_params import (
     _derive_pssdt_varCost_filters,
     _derive_pssdt_varCost_filters_vectorized,
     _derive_varCost_pair,

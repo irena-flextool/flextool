@@ -27,7 +27,7 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
-from flextool.engine._vectorize import (
+from flextool.engine.preprocess.emit._vectorize import (
     build_entity_dt_grid,
     build_entity_period_grid,
     build_fold_frame,
@@ -58,7 +58,7 @@ def _utf8_frame(columns: dict[str, list[str]]) -> pl.DataFrame:
     All columns (including ``value``) are stored as ``Utf8`` so the
     legacy ``f"...,{repr(v)}\\n"`` byte-emission round-trips identically
     through ``pl.DataFrame.write_csv``.  See
-    :mod:`._emit_chain_params._ed_value_frame` for the rationale on
+    :mod:`._chain_params._ed_value_frame` for the rationale on
     using ``repr(v)`` directly rather than coercing to ``float`` first.
     """
     schema = {name: pl.Utf8 for name in columns}
@@ -2356,7 +2356,7 @@ _ED_PERIOD_PARAM_SPECS: tuple[tuple[str, str, str], ...] = (
 
 def _ed_period_inputs(input_dir: Path, solve_data_dir: Path,
                       *, provider: "object | None" = None):
-    from flextool.engine._pdt_lookup import PdLookup
+    from flextool.engine.preprocess.emit._pdt_lookup import PdLookup
     pp = PdLookup(
         pd_csv=input_dir / "pd_process.csv",
         p_csv=input_dir / "p_process.csv",

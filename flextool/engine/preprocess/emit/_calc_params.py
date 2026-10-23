@@ -15,7 +15,7 @@ Each ``derive_*`` returns a fresh ``pl.DataFrame`` (in-memory
 contract); ``write_*`` wrappers materialise the frame to the
 ``solve_data/*.csv`` path.
 
-Style mirrors :mod:`._emit_leaf_sets` / :mod:`._emit_mid_sets`:
+Style mirrors :mod:`._leaf_sets` / :mod:`._mid_sets`:
 eager polars reads of tiny CSVs, expression chains,
 ``unique(maintain_order=True)`` for ordered dedup.
 

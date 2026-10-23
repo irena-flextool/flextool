@@ -1,6 +1,6 @@
 """LP row-scaling capacity proxies — per-solve emitters.
 
-Called per-solve from ``_emit_solve_time.run`` via
+Called per-solve from ``_solve_time.run`` via
 :func:`emit_lp_scaling_params`.
 
 The 9 CSVs compute a power-of-10 capacity proxy per (node, period) and
@@ -19,11 +19,11 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine.preprocess._provider_io import _emit
-from flextool.engine._vectorize import _render_value_column
+from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O helpers — same conventions as ``_emit_per_solve``.
+# CSV I/O helpers — same conventions as ``_per_solve``.
 # ---------------------------------------------------------------------------
 
 

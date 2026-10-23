@@ -245,7 +245,7 @@ def _resolve_inv_scale_the_objective(
     Phase G — when ``scale_the_objective`` is supplied directly (cascade-
     threaded), use it and skip the disk read entirely.  Otherwise reads
     ``<work_folder>/solve_data/scale_the_objective.csv`` (Agent 12;
-    emitted by :func:`flextool.engine._emit_solve_writers.write_scale_the_objective`).
+    emitted by :func:`flextool.engine.preprocess.emit._solve_writers.write_scale_the_objective`).
     Falls back to ``1 / 1e-6`` when the file is missing / empty /
     unreadable — mirrors the ``default 1e-6`` clause on
     ``param scale_the_objective`` in ``flextool.mod``.
@@ -646,7 +646,7 @@ def _output_horizon_enabled(
     """True when ``model.output_horizon`` is enabled for this solve.
 
     Reads ``solve_data/enable_optional_outputs.csv`` (the same flag set
-    ``_emit_per_solve`` consults to source horizon vs realized rows).
+    ``_per_solve`` consults to source horizon vs realized rows).
     Provider-first, disk fallback; missing → False.
     """
     if work_folder is None:
@@ -677,7 +677,7 @@ def _load_dispatch_or_invest_periods(
     """Return the horizon-expanded ``d_realize_dispatch_or_invest`` period
     list (Slice D §11.2).
 
-    Under ``output_horizon`` this set (emitted by ``_emit_per_solve``)
+    Under ``output_horizon`` this set (emitted by ``_per_solve``)
     unions the branch (non-realized) dispatch periods with the realized
     invest periods, so it carries the branch-suffixed period tokens the
     in-memory ``realized_dispatch`` shortcut omits.  Provider-first, disk

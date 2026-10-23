@@ -37,7 +37,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._emit_lp_scaling import (
+from flextool.engine.preprocess.emit._lp_scaling import (
     _compute_lp_scaling_frames,
     _compute_lp_scaling_frames_vectorized,
 )
