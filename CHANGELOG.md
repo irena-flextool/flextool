@@ -1,3 +1,12 @@
+## Unreleased
+
+- **Internal:** the engine package is renamed `flextool.engine_polars` →
+  `flextool.engine` and split into subpackages (`input`, `preprocess`,
+  `model`, `solve`, `output`, `autoscale`); `flextool/engine/README.md`
+  describes the layout. `flextool.engine_polars` stays as an alias for the
+  public API. The model build (`model/core.py`, formerly `model.py`) is
+  restructured for readability; the LP it builds is unchanged.
+
 ## Release 4.1.1 (21.10.2026) — scale_to_annual_flow over the whole timeline, multi-output indirect-unit capacity, node__dt balance under coarsening
 
 No schema change (stays v76); no migration needed.

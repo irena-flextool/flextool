@@ -6,7 +6,7 @@ data from an external tool — another optimisation model, a market
 simulator, a Python data step — into a FlexTool cascade *between*
 sub-solves of the same run.
 
-[rc]: ../../flextool/engine/solve/_orchestration.py
+[rc]: https://github.com/irena-flextool/flextool/blob/main/flextool/engine/solve/_orchestration.py
 
 ## Purpose
 
@@ -62,7 +62,7 @@ Full source: `flextool/engine/solve/_orchestration.py` (entry point),
 Only the 11 keys below are overridable. Supplying any other key raises
 `ValueError` in `translate_overrides_to_provider`. The constants live
 in `flextool.engine.preprocess._provider_keys`; import as
-`from flextool.engine import _provider_keys as K`.
+`from flextool.engine.preprocess import _provider_keys as K`.
 
 | Key constant | What it overrides | Required columns |
 |---|---|---|
@@ -171,7 +171,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine import run_chain_from_db
-from flextool.engine import _provider_keys as K
+from flextool.engine.preprocess import _provider_keys as K
 
 
 WATCH_DIR = Path("overrides_in")
@@ -271,11 +271,12 @@ itself, not this hook.
 
 ## See also
 
-- [`tests/engine/test_override_provider.py`](../../tests/engine/test_override_provider.py) —
+- [`tests/engine/test_override_provider.py`](https://github.com/irena-flextool/flextool/blob/main/tests/engine/test_override_provider.py) —
   end-to-end test of the override path plus the audit-dump variant.
   Useful as a reference for additional patterns (capturing a real
   handoff frame, scaling it, asserting the propagated effect).
-- [`specs/architecture_provider_and_future_duckdb.md`](../../specs/architecture_provider_and_future_duckdb.md)
+- `specs/architecture_provider_and_future_duckdb.md` (internal design notes,
+  not in the public repository)
   (sections on Phases 5 and 6) — design rationale for the
   `override/*` namespace, the override-aware `read_handoff_frame`
   lookup, and the audit-dump format.

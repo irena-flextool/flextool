@@ -19,7 +19,7 @@ three independent flavours, all implemented natively in
   overlapping windows (rolling) or into an outer long-horizon solve
   whose decisions feed an inner short-horizon solve (nested). The user
   configuration is in `solve.solve_mode` / `solve.contains_solves`; the
-  engine wiring is in `_recursive_solve.py` + `_solve_handoff.py`.
+  engine wiring is in `solve/_recursive_solve.py` + `solve/_handoff.py`.
 
 Spatial and flex-temporal are LP-level decompositions (one solve, many
 sub-problems). Rolling / nested is a *meta*-level decomposition (one
@@ -304,7 +304,7 @@ the LP's constraints.
 
 This is structurally different from the Benders path: there is one
 LP, one HiGHS run, no outer loop. The decomposition lives in the LP
-*structure* (which `(entity, block)` rows the `_emit_*` modules produce).
+*structure* (which `(entity, block)` rows the `preprocess/emit/` modules produce).
 
 ### 3.2 Schema surface
 
@@ -356,12 +356,12 @@ flowchart LR
     B --> G[block_step_duration]
     B --> H[block_step_previous]
     E & F & G & H --> I[BlockBundle]
-    I --> J[block-aware _emit_*.py]
+    I --> J[block-aware preprocess/emit/]
 ```
 
 `BlockBundle` (in `_block.py`) wraps the `BlockLayout` with
 cached lazy-frame join helpers (`block_compat_frame`,
-`process_side_block_lf`, …) that the `_emit_*` modules use to filter and
+`process_side_block_lf`, …) that the `preprocess/emit/` modules use to filter and
 re-project their rows.
 
 ### 3.4 Overlap-set aggregation
@@ -390,7 +390,7 @@ Two structural assumptions:
 
 ### 3.5 Block-aware emitters
 
-The `_emit_*.py` modules in `engine` (formerly `_writer_*.py`,
+The modules in `engine/preprocess/emit/` (formerly `_writer_*.py`,
 renamed in the writer→emitter Phases 1–5; see
 [engine.md § Emitters](engine.md#emitters-formerly-writer-ports))
 are block-aware. The major touch points:
@@ -410,7 +410,7 @@ are block-aware. The major touch points:
 ### 3.6 Output expansion
 
 Coarse-block decision variables are expanded back onto the fine
-timeline before the `_emit_*` modules write results, using the same
+timeline before the `preprocess/emit/` modules write results, using the same
 `overlap_set` (read in reverse). Per-fraction attribution stays
 consistent across the solve / write boundary; downstream tooling sees
 the same fine-grained output regardless of which entities ran on
@@ -462,7 +462,7 @@ Engine wiring:
   ``solve_roll_0, solve_roll_1, …`` with per-roll active-time and
   realized-time lists.
 - Per-roll storage carry-over rides
-  `SolveHandoff.roll_end_state` (`_solve_handoff.py`).
+  `SolveHandoff.roll_end_state` (`solve/_handoff.py`).
 - The cascade reuses the same LP shell via `polar_high.WarmProblem`
   when consecutive rolls' `FlexData` fingerprints match; otherwise
   cold-rebuild. See
@@ -546,7 +546,7 @@ features. Quick map (full text in
 
 | Combination | Supported | Notes |
 |---|---|---|
-| Benders + flex-temporal | Yes | Each region's `build_flextool` runs through the block-aware `_emit_*` modules unchanged. |
+| Benders + flex-temporal | Yes | Each region's `build_flextool` runs through the block-aware `preprocess/emit/` modules unchanged. |
 | Benders + rolling | No | One Benders solve is the unit of work for the outer rolling loop. Not currently wired; would require per-roll cut warm-start. The TIER-1 invest→dispatch handoff threads a Benders *invest* solve into a downstream *rolling dispatch* solve, which is the supported pattern. |
 | Benders + nested | Partial | The outer (parent) solve can be Benders, but the parent's handoff to children propagates only the invest→dispatch capacity, not per-region operational state. Treat as untested beyond the invest→dispatch chain. |
 | Flex-temporal + rolling | Yes | The rolling jump is on the fine timeline; coarse blocks honour the jump boundary inside each window. |

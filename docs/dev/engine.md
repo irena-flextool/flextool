@@ -8,9 +8,10 @@ top of the upstream `polar_high` eDSL, and hands the HiGHS-via-`highspy`
 solution off to either the next solve in a cascade or to
 `process_outputs`.
 
-This page is the developer-side deep dive — the file map and feature
-table are on [architecture.md](architecture.md); here we walk the
-pipeline in the order a bug or extension actually traverses it.
+This page is the developer-side deep dive — the folder map is in
+`flextool/engine/README.md` and the feature table on
+[architecture.md](architecture.md); here we walk the pipeline in the
+order a bug or extension actually traverses it.
 
 !!! note "Two repositories"
     `polar_high` is the standalone LP eDSL — sets, parameters,
@@ -28,7 +29,7 @@ flowchart TD
   src["Spine input DB<br/>(or CsvSource / InMemoryReader)"] --> reader
   reader["SpineDbReader<br/>InMemoryReader"] --> overlay
   overlay["_apply_db_overrides<br/>(direct + derived ports)"] --> emit
-  emit["_emit_*.py + _derived_*.py<br/>(~150 sets &amp; params, Provider-first)"] --> provider["FlexDataProvider<br/>(in-memory transport)"]
+  emit["preprocess/emit/ + preprocess/params/<br/>(~150 sets &amp; params, Provider-first)"] --> provider["FlexDataProvider<br/>(in-memory transport)"]
   provider --> flex["FlexData<br/>(polars frames + Params)"]
   flex --> build["build_flextool(m, d)<br/>feature-gated LP build"]
   build --> prob["polar_high.Problem<br/>(or WarmProblem)"]
@@ -277,7 +278,7 @@ for the entry in the gating table.
 
 About 150 sets and calculated parameters that used to be `param := ...`
 declarations in the retired `flextool.mod` are now produced in Python
-by the `_emit_*.py` and `_derived_*.py` modules. They all share a
+by the modules in `preprocess/emit/` and `preprocess/params/`. They all share a
 common shape:
 
 - Input: a `FlexData` populated with the prior phases' fields, plus a
@@ -288,10 +289,10 @@ common shape:
 - Purity: every helper either fully populates its target keys or
   leaves them absent — no half-populated state.
 
-The split between `_derived_*` and `_emit_*` is historical, not
-semantic. The `_emit_*` family ported the modules that wrote
-`solve_data/*.csv` in the legacy preprocessing; the `_derived_*`
-family ported the modules that produced computed parameters
+The split between `preprocess/params/` and `preprocess/emit/` is
+historical, not semantic. `emit/` holds the ports of the modules that
+wrote `solve_data/*.csv` in the legacy preprocessing; `params/` holds
+the ports of the modules that produced computed parameters
 in-process. Both are now just Python functions writing into the
 Provider.
 
@@ -357,8 +358,8 @@ Two rules keep the rendered output exact:
 
 ### Writer → emitter rename (Phases 1–5)
 
-Every module that used to be `flextool/engine/_writer_*.py`
-is now `_emit_*.py`. The accompanying function-level rename moved
+Every module that used to be `_writer_*.py` became `_emit_*.py`
+(now in `preprocess/emit/`). The accompanying function-level rename moved
 `write_X(workdir, ...)` to `emit_X(provider, ...)` — emitters publish
 to `FlexDataProvider` first, and any CSV mirror is a side-effect of
 `csv_dump=True` rather than the canonical path. The retired surfaces
@@ -409,7 +410,7 @@ Three key families:
 | Prefix | Purpose |
 |---|---|
 | `INPUT_*` | Backend-derived rows the cascade re-reads each iteration (CSV-shaped, populated from the input DB). |
-| `SOLVE_DATA_*` | Per-solve sets and parameters that the derivation layer produces (the bulk of the `_emit_*` output). |
+| `SOLVE_DATA_*` | Per-solve sets and parameters that the derivation layer produces (the bulk of the `preprocess/emit/` output). |
 | `HANDOFF_*` / `OVERRIDE_*` | Cross-solve handoff carriers and their override siblings; see below. |
 
 ### Override translator
@@ -566,7 +567,7 @@ user-facing story and the parameters that gate this path.
 When a solve is part of a cascade (rolling-window, nested, or stochastic
 sub-solves), each completed solve produces a `SolveHandoff` that seeds
 the next solve's preprocessing. The dataclass is in
-`_solve_handoff.py`; its eleven optional carriers are all
+`solve/_handoff.py`; its eleven optional carriers are all
 `pl.DataFrame | None`:
 
 | Field | Shape | Meaning |
@@ -842,7 +843,7 @@ small. Repeating the table from
 | `load_flextool(source, ...)` | CSV-shaped loader. Source may be a `Path`, a `str`, or a `CsvSource`. Accepts an optional `InputSource` override for migrated parameters. In the live cascade it is driven by `_drive_cascade` against a pre-built workdir whose Provider serves every read in-memory. |
 | `build_flextool(m, d, *, include_existing_fixed_cost=False, scale_the_objective=1.0)` | The model build. `m` is a fresh `Problem` / `WarmProblem`; `d` is the populated `FlexData`. Returns `None`; mutates `m` in place. |
 | `run_chain(steps, ...)` | Thin compat shim around `run_chain_from_db`. Kept for callers that still hand-construct `ChainStep` lists. |
-| `run_chain_from_db(db_url, work_folder, ...)` | The canonical multi-solve driver. Walks the solve list, calls `_drive_cascade` per solve, threads `SolveHandoff` between iterations. |
+| `run_chain_from_db(input_db_url, scenario_name, work_folder, ...)` | The canonical multi-solve driver. Fills the Provider and the `RunnerState` from the DB, then calls `run_orchestration`, which walks the sub-solves and threads `SolveHandoff` between them. |
 | `run_orchestration(state, work_folder, ...)` | One layer below `run_chain_from_db`. Takes a pre-built `RunnerState` (with `SolveConfig` and `TimelineConfig` already resolved) and drives the cascade. The intended entry point from the GUI / Spine Toolbox layer. |
 | `SolveHandoff` | The carrier dataclass. Optional fields covering invest / divest / fix-storage / cumulative ladders / roll-end state (incl. the upward variant). `is_empty()` returns True when nothing fired. Populated by `build_handoff_from_solution` (in `flex_data.py`); the older disk-read `capture_post_solve` constructor was retired when the cascade fell through to Provider/CSV reads in all production paths. |
 | `OrchestrationStep` | Per-solve result. Carries `solve_name`, `solution`, `handoff`, `warm_used`. |
@@ -855,8 +856,8 @@ small. Repeating the table from
 | You want to… | Start at | Then read |
 |---|---|---|
 | Add a constraint that uses only existing parameters | `model/core.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1) and list it in the `model/core.py` module docstring. |
-| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model/core.py`. Register it in autoscale `PARAMETER_TYPES` (CLAUDE.md invariant #1). |
-| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_emit_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `flex_data.py`. |
+| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct.py` (trivial DB read) or a new module in `preprocess/params/` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model/core.py`. Register it in autoscale `PARAMETER_TYPES` (CLAUDE.md invariant #1). |
+| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new module in `preprocess/emit/` otherwise | Wire the new function into `_apply_db_overrides` in `flex_data.py`. |
 | Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1), add them to the `model/core.py` module docstring, and check the LP with `tools/lp_snapshot.py`. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. Cross-link: [scaling.md](scaling.md). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. Cross-link: [slack_convention.md](slack_convention.md). |

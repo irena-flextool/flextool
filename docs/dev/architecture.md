@@ -96,9 +96,9 @@ flextool/                          The installed Python package
 ├── input_derivation/              Per-solve preprocessing computations
 │                                    (the live successor to the retired
 │                                    flextoolrunner/preprocessing).
-├── engine/                 Optimization engine + cascade coordinator:
-│                                    FlexData, FlexDataProvider, derived
-│                                    parameter / set emitters (_emit_*.py),
+├── engine/                        Optimization engine + cascade coordinator:
+│                                    FlexData, FlexDataProvider, parameter
+│                                    cascade + per-solve emitters,
 │                                    build_flextool, run_orchestration /
 │                                    run_chain_from_db, SolveHandoff,
 │                                    auto-scaling.
@@ -236,13 +236,13 @@ Exported from `flextool.engine` (`__init__.py`):
 | Symbol | Purpose |
 |---|---|
 | `FlexData` | Input dataclass — polars frames + `polar_high.Param`s. Sets unprefixed, parameters `p_*`. Full inventory in `_param_shapes.py`. |
-| `FlexDataProvider` | In-memory transport surface. Keys are declared in `_provider_keys.py` (no `.csv` suffix). All cross-phase data moves through it. |
+| `FlexDataProvider` | In-memory transport surface (`preprocess/_flex_data_provider.py`; not re-exported). Keys are declared in `_provider_keys.py` (no `.csv` suffix). All cross-phase data moves through it. |
 | `load_flextool(source)` | Build `FlexData` from a workdir (CSV layout) or from a Provider-backed source. |
 | `build_flextool(m, d, ...)` | Feature-conditional LP/MIP construction on a `Problem` / `WarmProblem`. |
-| `run_chain(...)` / `run_chain_from_db(...)` | Run a sequence of `ChainStep`s, threading `SolveHandoff` between them. |
+| `run_chain_from_db(...)` / `run_chain(...)` | Run a DB scenario end to end, threading `SolveHandoff` between sub-solves (`run_chain` is an older wrapper returning `ChainStep`s). |
 | `run_orchestration(state, work_folder, ...)` | Native cascade coordinator: reads `RunnerState`, drives the rolling / nested / stochastic cascade, returns one `OrchestrationStep` per solve. |
 | `SolveHandoff` | Cross-solve carrier (invest / divest / storage / roll-state / CO2 ladder / commodity ladder / cumulative sim-hours / history sets). |
-| `SpineDbReader` / `InMemoryReader` / `CsvSource` / `FlexInputSource` | Input adapters — production Spine DB, in-memory test fixture, or workdir CSVs. |
+| `SpineDbReader` / `InMemoryReader` / `CsvSource` / `FlexInputSource` / `InputSource` | Input adapters — production Spine DB, in-memory test fixture, or workdir CSVs. |
 
 #### Solve modes
 
@@ -251,7 +251,7 @@ Same `build_flextool` body, three wrappers from `polar_high`:
 - **Monolithic** — `polar_high.Problem`. One LP per call.
 - **Warm-start cascade** — `polar_high.WarmProblem`. Rebuilds the LP shell
   once, then mutates marked Params (`_apply_warm_updates` in
-  `_solve_handoff.py`) between rolls. The optimisation room for the future
+  `solve/_warm.py`) between rolls. The optimisation room for the future
   rolling-overlap work (only update changing coefficients) lives here.
 - **Benders (regional)** — `engine.solve._benders.solve_benders` driven by
   the orchestrator. Slices `FlexData` by region via `_region_filter`, then
@@ -345,48 +345,30 @@ The Provider is the contract. Disk-side CSV mirrors in `solve_data/<solve>/`
 exist only when `csv_dump=True` (a debug toggle) and are not load-bearing
 for any downstream phase.
 
-#### File map (most important)
+#### Package map
+
+`flextool/engine/README.md` is the entry point: public API, the pipeline
+step by step, and one line per folder. In short:
 
 ```
-__init__.py                       Public re-exports (table above)
-model/core.py                          build_flextool — LP build (table of
-                                  contents) + core equation families
-_online.py, _reserve.py, ...      LP feature modules (map: model/core.py docstring)
-_common.py                  Helpers shared by the LP modules
-flex_data.py                      FlexData dataclass + loader entry point
-chain.py                          run_chain + ChainStep dataclass
-_orchestration.py                 run_orchestration / run_chain_from_db,
-                                  native cascade
-_solve_state.py                   RunnerState, PathConfig, SolveConfig,
-                                  TimelineConfig dataclasses
-_solve_handoff.py                 SolveHandoff carrier + capture wiring
-_benders.py                       solve_benders + Coupling / BendersResult
-                                  (master + multi-cut loop)
-_region_filter.py                 region slicing + half-flow injection
-_warm.py                          WarmProblem update routine
-_provider_keys.py                 Canonical key names for FlexDataProvider
-_flex_data_provider.py            In-memory transport surface
-_param_shapes.py                  Canonical shape per FlexData field
-_spinedb_reader.py                Spine DB → FlexData
-_inmemory_reader.py               In-memory test-fixture loader
-_input_source.py                  FlexInputSource / CsvSource / InputSource
-_db_loader.py                     FlexToolRunner: DB-side state loader
-_db_reader.py                     Spine DB read helpers
-_recursive_solve.py               Rolling / nested solve tree builder
-_stochastic.py                    Stochastic branch handler
-_timeline.py                      Timeline / timeset construction
-_block_layout.py / _blocks.py     Multi-resolution period-block layout
-_solver_base.py                   Solver invocation surface
-autoscale/                        Auto-scaling pipeline + YAML audit report
-_derived_*.py                     Calculated-parameter helpers (NPV, branch,
-                                  walks, profile, block, ...)
-_emit_*.py                        Set/parameter emitters (period_params,
-                                  arc_unions, calc_params, co2_accumulators,
-                                  pdt_params, reserve, leaf_sets, mid_sets,
-                                  inflow_scaling, lp_scaling, ...)
-_native_run_model.py              Per-solve run helper (cascade-internal)
-_output_writer.py                 Solution → output_parquet bridge
+__init__.py           Public API (table above)
+input/                Database and in-memory readers, SolveConfig, timeline,
+                      RunnerState, parameter shapes (_param_shapes.py), constants
+preprocess/           FlexData + load_flextool (flex_data.py), FlexDataProvider
+                      and its keys, input writer, per-solve context
+preprocess/params/    Parameter cascade: direct, projected, derived (NPV,
+                      walks, profiles, blocks, branches, existing capacity)
+preprocess/emit/      Per-solve sets and parameters written into the Provider
+model/                The LP: core.py (build_flextool, table of contents +
+                      core equations) and one module per optional feature
+solve/                Orchestration (_orchestration.py), sub-solve expansion,
+                      solver dispatch, warm start, Benders, SolveHandoff
+output/               Solution → output parquet bundle; CSV dumps
+autoscale/            Auto-scaling pipeline + YAML audit report
 ```
+
+Imports point down the pipeline (solve → model → preprocess → input); the
+README lists the known exceptions.
 
 #### Parameter shapes & `(d,t)` broadcasting
 
@@ -839,7 +821,7 @@ an un-absorbable commitment, resolved by allowing slack.
 used to be `SolveHandoff` fields too, populated only by the now-removed
 `capture_post_solve()` disk-read constructor. They were retired when the
 cascade fell through to Provider/CSV reads in all production paths; see
-the docstring of `_solve_handoff.py` for the history.
+the docstring of `solve/_handoff.py` for the history.
 
 ## Solution extraction
 

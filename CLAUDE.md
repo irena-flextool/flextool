@@ -5,6 +5,7 @@ the authoritative sources before non-trivial work:
 
 - **`docs/dev/architecture.md`** — system structure, every subsystem, and
   the invariants below (in full, with the *why*).
+- **`flextool/engine/README.md`** — engine structure: pipeline, folders.
 - **`CONTRIBUTING.md`** — dev setup, running tests, changing the data
   structure / schema, migrations, and the PR checklist.
 
@@ -53,8 +54,8 @@ the authoritative sources before non-trivial work:
    `NaN`. Lift cascade lookups from the de-duplicated dict
    (`lift_dict_to_lookup`), never raw CSV — duplicate keys explode the
    join. Preserve domain/period order (don't `.unique()` the source
-   lists) and the `__eo` / `__to` sort keys. Every heavy `_emit_*`
-   derive is gated by a `test_vectorize_<family>_parity.py` (Tier A
+   lists) and the `__eo` / `__to` sort keys. Every heavy
+   `preprocess/emit/` derive is gated by a `test_vectorize_<family>_parity.py` (Tier A
    `.equals` / Tier B `rtol≈1e-12`).
    → docs/dev/engine.md "Vectorized per-roll emit".
 
