@@ -134,14 +134,17 @@ def _u8(lf: "pl.LazyFrame", keys) -> "pl.LazyFrame":
     return lf.with_columns([pl.col(k).cast(pl.Utf8) for k in keys])
 
 
-def _flow_requirement_bound(d, ratio_set, ratio_param, rug_sel, side: str) -> "pl.LazyFrame | None":
+def _flow_requirement_bound(d, ratio_set, ratio_param, rug_sel, side: str, *,
+                            per_process_max: bool = False) -> "pl.LazyFrame | None":
     """Largest value of one flow-driven reserve requirement, per ``(r, ud, g, d, t)`` (Utf8 keys).
 
     The requirement Σ v_flow · unitsize · ratio over the arcs whose ``side`` (``"sink"`` or ``"source"``)
     is a node n of group g with ``(p, r, ud, n)`` in ``ratio_set``, with v_flow replaced by its
     structural upper bound p_flow_upper (existing + the most the process can invest by that period, per
     unitsize; max_flow_for_unconstrained_variables for unlimited invest and conversion_flow_coeff = 0
-    arcs).  None when there is nothing to sum.
+    arcs).  With ``per_process_max`` the bound is summed over each process's own arcs and the result is
+    the max over processes (the n-1 requirement: one row per failing process); otherwise the sum over
+    all arcs (the dynamic requirement).  None when there is nothing to sum.
     """
     if (ratio_set is None or ratio_set.height == 0 or ratio_param is None
             or rug_sel is None or rug_sel.height == 0):
@@ -166,12 +169,14 @@ def _flow_requirement_bound(d, ratio_set, ratio_param, rug_sel, side: str) -> "p
     upper = promote_param_to_dt(fu, d.dt)
     upper = _u8(upper.select("p", "source", "sink", "d", "t", "value"), ["p", "source", "sink", "d", "t"])
     us_lf = _u8(us.frame.lazy().select("p", "value"), ["p"]).rename({"value": "__us"})
-    return (sel.join(arcs, on=["p", "n"], how="inner")
-            .join(upper, on=["p", "source", "sink"], how="inner")
-            .join(us_lf, on="p", how="inner")
-            .with_columns((pl.col("value") * pl.col("__us") * pl.col("__ratio")).abs().alias("value"))
-            .group_by("r", "ud", "g", "d", "t")
-            .agg(pl.col("value").sum()))
+    bound = (sel.join(arcs, on=["p", "n"], how="inner")
+             .join(upper, on=["p", "source", "sink"], how="inner")
+             .join(us_lf, on="p", how="inner")
+             .with_columns((pl.col("value") * pl.col("__us") * pl.col("__ratio")).abs().alias("value")))
+    if per_process_max:
+        return (bound.group_by("r", "ud", "g", "p", "d", "t").agg(pl.col("value").sum())
+                .group_by("r", "ud", "g", "d", "t").agg(pl.col("value").max()))
+    return bound.group_by("r", "ud", "g", "d", "t").agg(pl.col("value").sum())
 
 
 def reserve_shortfall_scale(d) -> "Param | None":
@@ -185,9 +190,9 @@ def reserve_shortfall_scale(d) -> "Param | None":
     * reservation wherever it is authored (a timeseries-only model has scale = reservation);
     * dynamic groups: Σ over the flows that drive the requirement of
       p_flow_upper · unitsize · increase_reserve_ratio;
-    * n-1 groups: Σ over the large-failure flows of p_flow_upper · unitsize · large_failure_ratio — the
-      same sum over failing processes as the n-1 requirement (it must become a max if the requirement is
-      ever made per failing process);
+    * n-1 groups: the max over failing processes of Σ over that process's large-failure flows of
+      p_flow_upper · unitsize · large_failure_ratio — the largest single n-1 row (one row per failing
+      process);
     * a group combining methods sums the applicable components.
 
     Returns the reservation Param itself when no dynamic / n-1 group exists; None when there is nothing
@@ -213,7 +218,7 @@ def reserve_shortfall_scale(d) -> "Param | None":
     if method_n1 is not None and method_n1.height > 0:
         for ud, side in (("up", "sink"), ("down", "source")):
             n1_rug = method_n1.filter(pl.col("ud").cast(pl.Utf8) == ud).select("r", "ud", "g").unique()
-            part = _flow_requirement_bound(d, lfr_set, lfr_val, n1_rug, side)
+            part = _flow_requirement_bound(d, lfr_set, lfr_val, n1_rug, side, per_process_max=True)
             if part is not None:
                 parts.append(part)
     if not parts:
@@ -305,17 +310,19 @@ def add_variables(b: "_Build") -> None:
 # Constraints
 
 
-def _flow_node_view(v_flow: Var, side: str) -> Var:
+def _flow_node_view(v_flow: Var, side: str, extra: "dict[str, str] | None" = None) -> Var:
     """``v_flow`` with its ``side`` axis (``"source"`` or ``"sink"``) relabelled to the node axis ``n``.
 
     The dynamic and n-1 requirements sum v_flow over the flows whose ``side`` node is the reserve node n.
     Relabelling ties that axis to n (and to the ratio Param's n), so the enclosing Sum collapses it;
-    a separately renamed join column would leave ``source`` / ``sink`` open.  The view keeps the LP
-    columns and the name ``v_flow`` (autoscale keys on it).
+    a separately renamed join column would leave ``source`` / ``sink`` open.  ``extra`` relabels further
+    axes (the n-1 rows: ``{"p": "p_fail"}``).  The view keeps the LP columns and the name ``v_flow``
+    (autoscale keys on it).
     """
+    mapping = {side: "n", **(extra or {})}
     return Var(name=v_flow.name,
-               dims=tuple("n" if c == side else c for c in v_flow.dims),
-               frame=v_flow.frame.pipe(rename_to_axis, {side: "n"}))
+               dims=tuple(mapping.get(c, c) for c in v_flow.dims),
+               frame=v_flow.frame.pipe(rename_to_axis, mapping))
 
 
 def add_constraints(b: "_Build") -> None:
@@ -409,50 +416,67 @@ def add_constraints(b: "_Build") -> None:
 
     # ─── EQ. ─── reserveBalance_up_n_1_eq / reserveBalance_down_n_1_eq ───────
     # ─────────────────────────────────────────────────────────────────────────
-    # up:   reserve_sum[r,ud,g,d,t] + vq_term[r,ud,g,d,t]
-    #         ≥ Σ_{(p,s,n) ∈ process_source_sink, (p,r,ud,n) ∈ lfr_g} v_flow[p,s,n,d,t] · unitsize[p] · ratio[p,r,ud,n]
-    # down: reserve_sum[r,ud,g,d,t] + vq_term[r,ud,g,d,t]
-    #         ≥ Σ_{(p,n,k) ∈ process_source_sink, (p,r,ud,n) ∈ lfr_g} v_flow[p,n,k,d,t] · unitsize[p] · ratio[p,r,ud,n]
-    #   ∀ (r,ud,g) ∈ reserve_upDown_group_method_n_1 with ud = up / down, (d,t) ∈ dt
-    #   lfr_g = process_reserve_upDown_node_large_failure_ratio with n ∈ group g
-    #   ratio = large_failure_ratio
-    # Reserve covers the loss of large processes: upward reserve the loss of
-    # their output into n, downward reserve the loss of their consumption
-    # from n.  One row per (r,ud,g,d,t): the requirement is the sum over all
-    # large-failure processes, not a row per failing process.  RHS 0 when no
-    # flow drives it.
+    # Σ_{(p,n) : (p,r,ud,n) ∈ pruna_g, p ≠ f} v_reserve[p,r,ud,n,d,t] · unitsize[p] · reliability[p,r,ud,n]
+    #   + vq_term[r,ud,g,d,t]
+    #   ≥ up:   Σ_{(f,s,n) ∈ process_source_sink, (f,r,ud,n) ∈ lfr_g} v_flow[f,s,n,d,t] · unitsize[f] · ratio[f,r,ud,n]
+    #     down: Σ_{(f,n,k) ∈ process_source_sink, (f,r,ud,n) ∈ lfr_g} v_flow[f,n,k,d,t] · unitsize[f] · ratio[f,r,ud,n]
+    #   ∀ (r,ud,g,f) ∈ fail_g, (d,t) ∈ dt
+    #   pruna_g = the providers of the reserve_sum above, per group
+    #   lfr_g   = process_reserve_upDown_node_large_failure_ratio with n ∈ group g,
+    #             (r,ud,g) ∈ reserve_upDown_group_method_n_1 with ud = up / down
+    #   fail_g  = (r,ud,g,f): f in lfr_g with a flow into (up) / out of (down) a node of g
+    #   ratio   = large_failure_ratio;   f is the row dim p_fail
+    # Reserve covers the loss of each large process f separately (the largest
+    # failure binds): upward reserve the loss of its output into the group,
+    # downward reserve the loss of its consumption from the group.  The
+    # failing process's own reserve does not count.  All rows of a group
+    # share vq_term, so the priced shortfall is the largest deficit.  Flows
+    # count at unitsize, without the efficiency slope.  No row for a group
+    # without a failing process.  Nonzeros grow with failing processes ×
+    # providers per group.
     method_n1 = d.reserve_upDown_group_method_n_1
-    if method_n1 is not None and method_n1.height > 0:
-        lfr_set = getattr(d, "process_reserve_upDown_node_large_failure_ratio", None)
-        lfr_param = getattr(d, "p_process_reserve_upDown_node_large_failure_ratio_value", None)
+    lfr_set = getattr(d, "process_reserve_upDown_node_large_failure_ratio", None)
+    lfr_param = getattr(d, "p_process_reserve_upDown_node_large_failure_ratio_value", None)
+    if (method_n1 is not None and method_n1.height > 0 and v_flow is not None
+            and lfr_set is not None and lfr_set.height > 0 and lfr_param is not None
+            and d.process_source_sink is not None):
+        # The failing process f is the dim p_fail: unitsize and ratio re-keyed on it.
+        us_fail = Param(("p_fail",), p_unitsize.frame.pipe(rename_to_axis, {"p": "p_fail"}))
+        ratio_fail = Param(("p_fail", "r", "ud", "n"), lfr_param.frame.pipe(rename_to_axis, {"p": "p_fail"}))
         for ud_filter, name, side, other in (("up", "reserveBalance_up_n_1_eq", "sink", "source"),
                                              ("down", "reserveBalance_down_n_1_eq", "source", "sink")):
             n1_rug = method_n1.filter(pl.col("ud") == ud_filter).select("r", "ud", "g").unique()
             if n1_rug.height == 0:
                 continue
-            rhs_terms: dict = {}
-            if (v_flow is not None and lfr_set is not None and lfr_set.height > 0
-                    and lfr_param is not None and d.process_source_sink is not None):
-                lfr_g = (lfr_set.join(gn, on="n", how="inner")
-                         .join(n1_rug, on=["r", "ud", "g"], how="inner")
-                         .select("p", "r", "ud", "n", "g"))
-                if lfr_g.height > 0:
-                    # n is the sink of the failing flow (up) or its source (down).
-                    pss_idx = (d.process_source_sink.pipe(rename_to_axis, {side: "n"})
-                               .select("p", *(("source", "n") if side == "sink" else ("n", "sink"))))
-                    rhs_terms["n_1_failure"] = Sum(
-                        Where(_flow_node_view(v_flow, side) * p_unitsize * lfr_param,
-                              pss_idx.join(lfr_g, on=["p", "n"], how="inner")),
-                        over=("p", other, "n"))
-            if not rhs_terms:
-                rhs_terms = {"zero": 0.0}
+            lfr_g = (lfr_set.join(gn, on="n", how="inner")
+                     .join(n1_rug, on=["r", "ud", "g"], how="inner")
+                     .select("p", "r", "ud", "n", "g"))
+            if lfr_g.height == 0:
+                continue
+            # n is the sink of the failing flow (up) or its source (down).
+            pss_idx = (d.process_source_sink.pipe(rename_to_axis, {side: "n"})
+                       .select("p", *(("source", "n") if side == "sink" else ("n", "sink"))))
+            fail_arcs = pss_idx.join(lfr_g, on=["p", "n"], how="inner").pipe(rename_to_axis, {"p": "p_fail"})
+            if fail_arcs.height == 0:
+                continue
+            fail_g = (fail_arcs.select("r", "ud", "g", "p_fail")
+                      .unique(maintain_order=True)
+                      .sort("r", "ud", "g", "p_fail"))
+            failure = Sum(Where(_flow_node_view(v_flow, side, {"p": "p_fail"}) * us_fail * ratio_fail, fail_arcs),
+                          over=(other, "n"))
             lhs_terms = {}
             if lhs_vq is not None:
                 lhs_terms["vq_term"] = Where(lhs_vq, n1_rug)
-            if lhs_reserve_core is not None:
-                lhs_terms["reserve_sum"] = Where(lhs_reserve_core, n1_rug)
-            m.add_cstr(name, over=n1_rug.join(d.dt, how="cross"), sense=">=",
-                       lhs_terms=lhs_terms, rhs_terms=rhs_terms)
+            if d.p_process_reserve_upDown_node_reliability is not None:
+                # Providers other than the failing process (p and p_fail compared on their labels).
+                pruna_fail = (pruna_g.join(fail_g, on=["r", "ud", "g"], how="inner")
+                              .filter(pl.col("p").cast(pl.Utf8) != pl.col("p_fail").cast(pl.Utf8)))
+                if pruna_fail.height > 0:
+                    lhs_terms["reserve_sum"] = Sum(
+                        Where(v_reserve * p_unitsize * d.p_process_reserve_upDown_node_reliability, pruna_fail),
+                        over=("p", "n"))
+            m.add_cstr(name, over=fail_g.join(d.dt, how="cross"), sense=">=",
+                       lhs_terms=lhs_terms, rhs_terms={"n_1_failure": failure})
 
     # ─── EQ. ─── reserve_process_upward / reserve_process_downward ───────────
     # ─────────────────────────────────────────────────────────────────────────

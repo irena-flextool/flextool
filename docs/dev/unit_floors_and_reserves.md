@@ -66,9 +66,10 @@ objective penalty and in `process_outputs` (`calc_slacks`):
   dynamic / n-1 group exists (byte-identical LP);
 * dynamic: `Σ p_flow_upper·unitsize·increase_reserve_ratio` over the flows
   of the dynamic RHS (sink and source side);
-* n-1: `Σ p_flow_upper·unitsize·large_failure_ratio` over the failing flows —
-  a SUM over failing processes because the V1 n-1 RHS sums them (the .mod
-  has one row per failing process; switch to a max if that is ported);
+* n-1: `max_f Σ p_flow_upper·unitsize·large_failure_ratio`, the sum over
+  the failing flows of one process f, maximised over the failing processes
+  (`_flow_requirement_bound(per_process_max=True)`): the largest single
+  n-1 row;
 * authored `reservation` is added for any group; methods add up.
 
 `p_flow_upper` is the structural bound (existing + max invest by that
@@ -80,6 +81,19 @@ Activation (unchanged, .mod parity): a reserve's relationships are active
 only if some group of the same (reserve, up/down) authors a non-zero
 `reservation` (`prundt_from_source`, `_reserve_sets`). A dynamic / n-1-only
 reserve without any `reservation` is therefore inactive.
+
+## n-1 rows
+
+`reserveBalance_{up,down}_n_1_eq[r, ud, g, p_fail, d, t]`: one row per
+failing process `p_fail` (a process with `large_failure_ratio` at a node of
+g and a flow into, for up, or out of, for down, that node). LHS: the reserve
+of every provider of g except `p_fail` (× unitsize × reliability) plus the
+group's shared `vq_reserve · scale`; RHS: `p_fail`'s failing flows ×
+unitsize × ratio. The shared slack prices the largest deficit once (.mod
+parity). Rows grow with failing processes, nonzeros with failing processes
+× providers per group (each row repeats the other providers); an
+exact-equivalent aggregate form (a total-reserve variable per
+`(r, ud, g, d, t)`) is the remedy if a large model shows the growth.
 
 ## Follow-ups (not implemented)
 
@@ -114,10 +128,6 @@ reserve without any `reservation` is therefore inactive.
    test any n-1 requirement. Activation should follow the group's
    `reserve_method` (dynamic: any `increase_reserve_ratio`; n-1: any
    `large_failure_ratio`), not the presence of a timeseries reservation.
-6. The n-1 requirement is one `reserveBalance` row per (r, ud, g, d, t)
-   whose RHS sums `large_failure_ratio × flow` over ALL large-failure
-   processes of the group; the .mod had one constraint per failing process
-   (the largest single failure sets the requirement). The sum over-procures
-   reserve whenever two or more processes can fail. When split per failing
-   process, the n-1 component of `reserve_shortfall_scale` must become the
-   max over the failing processes instead of the sum.
+   Open owner question: the reservation filter was introduced deliberately
+   ("reserve provision is active only when there is demand for the
+   reserve").

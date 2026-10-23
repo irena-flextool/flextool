@@ -5,8 +5,9 @@ the objective penalty and in the output reconstruction alike:
 * timeseries groups: ``reservation`` (unchanged);
 * dynamic groups: Σ ``p_flow_upper · unitsize · increase_reserve_ratio``
   over the flows that drive the requirement;
-* n-1 groups: Σ ``p_flow_upper · unitsize · large_failure_ratio`` over the
-  failing flows (the same sum the V1 n-1 RHS uses).
+* n-1 groups: the max over failing processes of Σ ``p_flow_upper ·
+  unitsize · large_failure_ratio`` over that process's failing flows (one
+  n-1 row per failing process, see ``test_reserve_n_1_per_failure.py``).
 
 Before, the multiplier was the group's ``reservation``.  A reserve's
 relationships are active once ANY group of the same (reserve, up/down)
@@ -84,10 +85,12 @@ def _n1(tpf, alt: str, penalty: float):
 def test_n_1_shortfall_covers_requirement_and_is_penalised(
         tmp_path_factory) -> None:
     """n-1 group without its own reservation: scale = 500 MW · 0.1 = 50 MW
-    (it was 0: a hard requirement), the shortfall covers whatever coal's
-    own 5 MW cannot, and it is priced — doubling the penalty raises the
-    objective while the shortfall stays.  (The penalties are low enough
-    that the LP does not curb coal output to avoid the requirement.)"""
+    (it was 0: a hard requirement).  Coal is the only failing process and
+    its own reserve does not cover its own failure, and wind has max_share
+    0, so the shortfall covers the whole requirement; it is priced —
+    doubling the penalty raises the objective while the shortfall stays.
+    (The penalties are low enough that the LP does not curb coal output to
+    avoid the requirement.)"""
     s1 = _n1(tmp_path_factory, "rs_n1_a", 100.0)
     s2 = _n1(tmp_path_factory, "rs_n1_b", 200.0)
     sc = _scale(s1).filter((pl.col("r") == "n_1")
@@ -95,9 +98,8 @@ def test_n_1_shortfall_covers_requirement_and_is_penalised(
     assert sc["value"].to_list() == pytest.approx([50.0] * sc.height)
     assert sc.height == s1.flex_data.dt.height
     requirement = 0.1 * flow(s1, PLANT, COAL, "west")
-    provided = reserve(s1, PLANT, "n_1", "west")
     short = _vq(s1, "n_1", "electricity") * 50.0
-    assert ((provided + short - requirement) >= -1e-6).all()
+    assert ((short - requirement) >= -1e-6).all()
     assert short.max() > 10.0
     assert (_vq(s1, "n_1", "electricity") <= 1.0 + 1e-9).all()
     assert _vq(s2, "n_1", "electricity").to_list() == pytest.approx(

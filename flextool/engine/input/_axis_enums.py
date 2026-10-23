@@ -76,6 +76,9 @@ _AXIS_SYNONYMS: dict[str, str] = {
     # for the process role).  Each is a single-axis token.
     "unit": "p",
     "connection": "p",
+    # Model-internal: the failing process of an n-1 reserve row
+    # (model/_reserve.py reserveBalance_{up,down}_n_1_eq).
+    "p_fail": "p",
     "node_1": "n",
     "node_2": "n",
     # Mixed-vocab columns (per axis contract).  source/sink columns

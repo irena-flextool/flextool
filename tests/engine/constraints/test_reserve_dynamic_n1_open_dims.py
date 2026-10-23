@@ -91,14 +91,20 @@ def test_reserve_dynamic_solves(toy_group_reserve):
 
 def _add_large_failure_ratio(d, ud: str):
     """Turn the timeseries reserve into an *n-1* reserve; ``ud`` picks the
-    up (sink-side) or down (source-side) failure branch."""
+    up (sink-side) or down (source-side) failure branch.  For ``down`` the
+    failing flow is ``u``'s consumption from ``FUEL_n``, so ``FUEL_n`` joins
+    group ``g`` and carries the ratio."""
+    n_fail = "n1" if ud == "up" else "FUEL_n"
     lfr_set = pl.DataFrame(
-        {"p": ["u"], "r": ["r1"], "ud": [ud], "n": ["n1"]})
+        {"p": ["u"], "r": ["r1"], "ud": [ud], "n": [n_fail]})
     lfr_param = Param(("p", "r", "ud", "n"),
-        pl.DataFrame({"p": ["u"], "r": ["r1"], "ud": [ud], "n": ["n1"],
+        pl.DataFrame({"p": ["u"], "r": ["r1"], "ud": [ud], "n": [n_fail],
                       "value": [0.1]}))
+    group_node = (d.group_node if ud == "up" else
+                  pl.concat([d.group_node, pl.DataFrame({"g": ["g"], "n": ["FUEL_n"]})]))
     return dataclasses.replace(
         d,
+        group_node=group_node,
         reserve_upDown_group=pl.DataFrame(
             {"r": ["r1"], "ud": [ud], "g": ["g"]}),
         reserve_upDown_group_method_timeseries=pl.DataFrame(
@@ -132,5 +138,17 @@ def test_reserve_n_1_canonicalises(toy_group_reserve, ud, name):
     d = _add_large_failure_ratio(toy_group_reserve, ud)
     pb = Problem()
     build_flextool(pb, d)
-    pb.canonicalise()
+    m = pb.canonicalise()
     assert name in set(pb.cstr_names())
+
+    # One row per failing process (p_fail = u) and step, with the failing
+    # flow's coefficient -(unitsize · ratio) = -(100 · 0.1) = -10 and no
+    # reserve of u itself (the failing process cannot cover its own loss).
+    rows = _row_terms(m, name)
+    assert sorted(rows) == [f"{name}[r1,{ud},g,u,d1,t01]", f"{name}[r1,{ud},g,u,d1,t02]"]
+    for rname, terms in rows.items():
+        flow_terms = {c: v for c, v in terms.items() if c.startswith("v_flow[")}
+        assert len(flow_terms) == 1, f"{rname}: {flow_terms}"
+        (coeff,) = flow_terms.values()
+        assert coeff == pytest.approx(-10.0, rel=1e-9), f"{rname}: {coeff}"
+        assert not [c for c in terms if c.startswith("v_reserve[")], rname

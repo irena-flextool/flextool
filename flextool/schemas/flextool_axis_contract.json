@@ -24,8 +24,8 @@
       "source_type": "entity_class_union",
       "source": ["unit", "connection"],
       "filter": "scenario_filter",
-      "column_synonyms": ["process"],
-      "note": "FlexTool convention: 'process' = unit ∪ connection. Cascade column synonym: 'process'."
+      "column_synonyms": ["process", "p_fail"],
+      "note": "FlexTool convention: 'process' = unit ∪ connection. Cascade column synonym: 'process'. 'p_fail' is model-internal: the failing process of an n-1 reserve row (model/_reserve.py)."
     },
     {
       "name": "c",

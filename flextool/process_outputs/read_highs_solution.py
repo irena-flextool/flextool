@@ -2073,10 +2073,11 @@ def write_v_dual_reserve_balance(
 
     # reserveBalance_timeseries_eq indices: r, ud, g, d, t (5).  The
     # method is implicit in the constraint name prefix — there is no
-    # ``r_m`` column inside the brackets.  Sibling constraints
-    # ``reserveBalance_dynamic_eq`` / ``reserveBalance_*_n_1_eq`` carry
-    # the same (r, ud, g, d, t) axes; the ``max() over methods`` combine
-    # documented above is a future extension.
+    # ``r_m`` column inside the brackets.  The sibling constraint
+    # ``reserveBalance_dynamic_eq`` carries the same (r, ud, g, d, t) axes;
+    # ``reserveBalance_*_n_1_eq`` carry (r, ud, g, p_fail, d, t), one row per
+    # failing process, so the ``max() over methods`` combine documented above
+    # (a future extension) must also take the max over p_fail.
     df = extract_variable(
         h, "reserveBalance_timeseries_eq",
         ("reserve", "updown", "node_group"),

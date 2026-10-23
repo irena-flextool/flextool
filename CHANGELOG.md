@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **N-1 reserve requirement per failing unit or connection.** A
+  `large_failure` reserve requirement now has one constraint per failing
+  unit or connection, so the largest single failure sets the requirement,
+  and the failing unit's own reserve no longer counts towards covering its
+  own failure. Before, the failures of all large-failure units in the group
+  were added up into one requirement (too much reserve when two or more can
+  fail), and a single failing unit could cover its own loss (too little).
+  The largest possible reserve shortfall of such a group is now the largest
+  single failure instead of the sum. Models with n-1 reserves will get
+  different reserve procurement and costs.
+
 - **Upward reserve of a unit with online variables comes out of its online
   capacity.** A unit with a `startup_method` (`linear` or `binary`) can hold
   upward reserve only from the units it has online: its output plus the
