@@ -32,6 +32,11 @@ import polars as pl
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.preprocess._provider_io import _emit
+from flextool.engine.preprocess._reserve_methods import (
+    RESERVE_DYNAMIC_METHODS,
+    RESERVE_N_1_METHODS,
+    RESERVE_TIMESERIES_METHODS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -189,18 +194,6 @@ def emit_process_delayed__duration(input_dir: Path, solve_data_dir: Path,
 # (legacy: preprocessing/reserve_method_partitions.py)
 # ===========================================================================
 
-_RESERVE_TIMESERIES_METHODS: frozenset[str] = frozenset((
-    "timeseries_only", "timeseries_and_dynamic",
-    "timeseries_and_large_failure", "all",
-))
-_RESERVE_DYNAMIC_METHODS: frozenset[str] = frozenset((
-    "dynamic_only", "timeseries_and_dynamic",
-    "dynamic_and_large_failure", "all",
-))
-_RESERVE_N_1_METHODS: frozenset[str] = frozenset((
-    "large_failure_only", "timeseries_and_large_failure",
-    "dynamic_and_large_failure", "all",
-))
 
 _RESERVE_QUAD_COLS = ["reserve", "upDown", "group", "method"]
 
@@ -224,9 +217,9 @@ def emit_reserve_partitions(input_dir: Path, solve_data_dir: Path,
     """Emit ``reserve_partitions`` to the Provider."""
     del solve_data_dir
     for fname, allowed in (
-        ("reserve__upDown__group__method_timeseries.csv", _RESERVE_TIMESERIES_METHODS),
-        ("reserve__upDown__group__method_dynamic.csv",    _RESERVE_DYNAMIC_METHODS),
-        ("reserve__upDown__group__method_n_1.csv",        _RESERVE_N_1_METHODS),
+        ("reserve__upDown__group__method_timeseries.csv", RESERVE_TIMESERIES_METHODS),
+        ("reserve__upDown__group__method_dynamic.csv",    RESERVE_DYNAMIC_METHODS),
+        ("reserve__upDown__group__method_n_1.csv",        RESERVE_N_1_METHODS),
     ):
         _emit(provider, f"solve_data/{fname}",
               derive_reserve_method_partition(input_dir, allowed,

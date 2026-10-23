@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **Combined reserve methods keep all their requirements.** A reserve group
+  with a combined `reserve_method` (`timeseries_and_dynamic`,
+  `timeseries_and_large_failure`, `all`) lost its timeseries requirement
+  when another group in the model used `timeseries_only`. Every group now
+  gets the requirements its method names.
+
 - **N-1 reserve requirement per failing unit or connection.** A
   `large_failure` reserve requirement now has one constraint per failing
   unit or connection, so the largest single failure sets the requirement,

@@ -55,6 +55,7 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
+from flextool.engine.preprocess._reserve_methods import RESERVE_METHODS_BY_PARTITION
 
 
 def _to_e(expr: pl.Expr) -> pl.Expr:
@@ -1403,27 +1404,21 @@ def reserve_upDown_group(source: "InputSource") -> pl.DataFrame:
               .collect())
 
 
-_RESERVE_METHOD_TO_FIELD = {
-    "timeseries": "timeseries_only",
-    "dynamic": "dynamic",
-    "n_1": "large_failure",
-}
-
-
 def reserve_upDown_group_method(source: "InputSource", method: str) -> pl.DataFrame:
-    """Filter ``reserve__upDown__group`` by ``reserve_method`` value.
+    """``reserve__upDown__group`` rows whose ``reserve_method`` belongs to partition ``method``.
 
-    ``method`` is the polar_high partition name (``timeseries`` / ``dynamic``
-    / ``n_1``); the underlying Spine value is mapped via
-    ``_RESERVE_METHOD_TO_FIELD``.
+    ``method`` is the partition name (``timeseries`` / ``dynamic`` / ``n_1``); a group belongs to every
+    partition its method names (``RESERVE_METHODS_BY_PARTITION``: ``timeseries_and_dynamic`` is in
+    timeseries and dynamic, ``all`` in all three, ``no_reserve`` in none).  The ``method`` column keeps
+    the authored value, as the solve_data CSV partition does.
     """
-    spine_method = _RESERVE_METHOD_TO_FIELD.get(method, method)
+    allowed = RESERVE_METHODS_BY_PARTITION[method]
     df = _try_param(source, "reserve__upDown__group", "reserve_method")
     if df is None:
         return _empty({"r": pl.Utf8, "ud": pl.Utf8, "g": pl.Utf8,
                        "method": pl.Utf8})
     return (df.lazy()
-              .filter(pl.col("value") == spine_method)
+              .filter(pl.col("value").is_in(sorted(allowed)))
               .pipe(rename_to_axis, {"reserve": "r", "upDown": "ud", "group": "g",
                         "value": "method"})
               .select("r", "ud", "g", "method")
