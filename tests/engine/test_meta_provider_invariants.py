@@ -121,7 +121,7 @@ PROVIDER_IMPL_ALLOWLIST: dict[str, str] = {
         "used exclusively by test_writer_port_phase1.  In-cascade the "
         "Provider always carries the frame."
     ),
-    "_dump_csvs.py": (
+    "output/_dump_csvs.py": (
         "Snapshot-writer subsystem (--csv-dump). "
         "pl.read_csv here serves the merge-write path that preserves "
         "existing on-disk slices when dumping new rows; this is a "

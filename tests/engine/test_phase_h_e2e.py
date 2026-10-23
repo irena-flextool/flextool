@@ -82,7 +82,7 @@ import polars as pl
 import pytest
 
 from flextool.engine import run_chain_from_db
-from flextool.engine._parquet_bundle import (
+from flextool.engine.output._parquet_bundle import (
     REGISTRY,
     write_manifest,
 )

@@ -17,7 +17,7 @@ import pytest
 
 from polar_high import Param
 from flextool.engine import load_flextool
-from flextool.engine._dump_csvs import DIRECT_WRITES
+from flextool.engine.output._dump_csvs import DIRECT_WRITES
 
 
 DATA = Path(__file__).resolve().parent / "data"

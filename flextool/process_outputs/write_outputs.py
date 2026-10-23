@@ -1277,7 +1277,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
     # (legitimately absent) raw shard.
     if not read_parquet_dir:
         try:
-            from flextool.engine._parquet_bundle import write_manifest
+            from flextool.engine.output._parquet_bundle import write_manifest
             raw_dir = raw_output_dir or 'output_raw'
             bundle_root = os.path.dirname(raw_dir) or '.'
             write_manifest(bundle_root)

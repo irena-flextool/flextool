@@ -14,7 +14,7 @@ functions that push every derived frame into the caller-supplied
 Provider directly — no monkey-patching, no disk I/O on this path.
 Downstream readers
 (:func:`flextool.engine.input.load_flextool`,
-:func:`flextool.engine._output_writer.write_outputs_for_solve`,
+:func:`flextool.engine.output._writer.write_outputs_for_solve`,
 the per-solve preprocessing dispatched by
 :func:`flextool.engine._native_run_model.native_run_model`)
 resolve every input through the Provider.

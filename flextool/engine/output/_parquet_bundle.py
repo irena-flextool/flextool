@@ -435,7 +435,7 @@ def write_parquet(spec_key: str, frame, work_folder: Path | str) -> Path:
     if spec_key not in REGISTRY:
         raise KeyError(
             f"write_parquet: unknown spec key {spec_key!r}; add an entry "
-            f"to REGISTRY in flextool/engine/_parquet_bundle.py.",
+            f"to REGISTRY in flextool/engine/output/_parquet_bundle.py.",
         )
     spec = REGISTRY[spec_key]
     if "*" in spec.filename:

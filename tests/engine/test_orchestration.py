@@ -156,7 +156,7 @@ def test_build_handoff_from_solution_covers_eight_carriers(scenario_workdir)-> N
 
     Δ.1 — the ninth carrier (``periods_already_emitted``) was retired
     from :class:`SolveHandoff` and now lives on
-    :class:`flextool.engine._output_writer.OutputWriterState`
+    :class:`flextool.engine.output._writer.OutputWriterState`
     (writer-side state, not a true solver handoff).  See
     ``test_output_writer.test_output_writer_state_periods_already_emitted``
     for the new home's coverage.

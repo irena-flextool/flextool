@@ -1,6 +1,6 @@
 """Tests for the Δ.1 output writer adapter.
 
-The adapter (``flextool/engine/_output_writer.py``) takes a
+The adapter (``flextool/engine/output/_writer.py``) takes a
 :class:`polar_high.Solution` from a polars-build LP solve and feeds
 it into flextool's existing ``process_outputs`` writers.  Coverage:
 
@@ -21,7 +21,7 @@ import polars as pl
 import pytest
 
 from flextool.engine import run_chain_from_db
-from flextool.engine._output_writer import (
+from flextool.engine.output._writer import (
     OutputWriterState,
     write_outputs_for_solve,
 )
@@ -157,7 +157,7 @@ def test_output_writer_state_periods_already_emitted_accumulates(tmp_path, scena
                 f"period_capacity.csv has wrong shape: {df.columns}"
             )
             # ``OutputWriterState`` mirrors whatever the file says.
-            from flextool.engine._output_writer import OutputWriterState
+            from flextool.engine.output._writer import OutputWriterState
             ws = OutputWriterState()
             ws.periods_already_emitted.update(
                 str(p) for p in df["period"].to_list()
@@ -236,7 +236,7 @@ def test_restore_space_mangled_names_repairs_highs_after_write(tmp_path) -> None
     import numpy as np
     from polar_high.engine import Solution
 
-    from flextool.engine._output_writer import (
+    from flextool.engine.output._writer import (
         _restore_space_mangled_names,
     )
 
@@ -281,7 +281,7 @@ def test_restore_space_mangled_names_noop_on_shim() -> None:
     import numpy as np
     from polar_high.engine import Solution
 
-    from flextool.engine._output_writer import (
+    from flextool.engine.output._writer import (
         _restore_space_mangled_names,
     )
     from flextool.engine._subprocess_solve import _SolHighsShim

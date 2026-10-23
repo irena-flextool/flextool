@@ -1036,7 +1036,7 @@ class FlexData:
         the round-trip regression test).
         """
         # Local import — avoids a circular import at module-load.
-        from flextool.engine._dump_csvs import dump_csvs as _impl
+        from flextool.engine.output._dump_csvs import dump_csvs as _impl
         return _impl(self, workdir, copy_meta_from=copy_meta_from,
                      include_heavy=include_heavy)
 

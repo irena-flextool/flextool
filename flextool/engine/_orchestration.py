@@ -2102,7 +2102,7 @@ def _drive_cascade(
     )
     from flextool.engine.model import build_flextool
     from flextool.engine._solver_dispatch import apply_data_solver_options
-    from flextool.engine._output_writer import (
+    from flextool.engine.output._writer import (
         OutputWriterState,
         write_outputs_for_solve,
     )

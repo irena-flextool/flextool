@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     import highspy
     from flextool.engine._solve_handoff import SolveHandoff
     from flextool.engine.input import FlexData
-    from flextool.engine._output_writer import OutputWriterState
+    from flextool.engine.output._writer import OutputWriterState
 
 _logger = logging.getLogger(__name__)
 

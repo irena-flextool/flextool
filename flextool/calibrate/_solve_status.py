@@ -114,7 +114,7 @@ def _registry_filename(key: str) -> str:
     single-source registry of every processed output table name (the same
     keys ``write_outputs`` uses when it writes ``<key>.parquet``).  We use
     this rather than
-    :data:`flextool.engine._parquet_bundle.REGISTRY`, whose
+    :data:`flextool.engine.output._parquet_bundle.REGISTRY`, whose
     processed-output coverage is documented as REPRESENTATIVE / incomplete
     by design (``cost_node_discounted_d_ec`` is absent there).  A key not in
     the registry raises loudly here instead of silently looking for a file

@@ -2,7 +2,7 @@
 
 Asserts:
 
-* ``flextool.engine._parquet_bundle.write_manifest`` is callable
+* ``flextool.engine.output._parquet_bundle.write_manifest`` is callable
   on a populated bundle root and produces ``manifest.json`` with the
   documented schema.
 * Every entry's ``key`` matches a REGISTRY entry.
@@ -32,7 +32,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine._parquet_bundle import (
+from flextool.engine.output._parquet_bundle import (
     REGISTRY,
     ParquetSpec,
     write_manifest,
