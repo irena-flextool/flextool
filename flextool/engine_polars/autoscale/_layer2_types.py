@@ -285,7 +285,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
 
     # Slice D per-path total caps (design §7.2/§14) — one cap row per
     # (entity, scenario-leaf).  Emitted by
-    # ``_emit_entity_total_cap`` (model.py) when >1 scenario leaf exists
+    # ``_eq_invest_total_caps`` (model.py) when >1 scenario leaf exists
     # (recourse); the leaf-suffixed sums replace the cross-scenario
     # ``over=("d",)`` total.  Registered EXACTLY (``_path`` is not a
     # known ``lookup_cstr`` suffix, so a missing row silently reverts to
@@ -443,7 +443,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # floor) per unit / per arc; unit-count flow units
     "minFlow_reserve": CstrFamily(QuantityType.DIMENSIONLESS),
     "minFlow_reserve_arc": CstrFamily(QuantityType.DIMENSIONLESS),
-    # model.py _add_min_input_share: homogeneous input-mixing row
+    # model.py _eq_min_input_share: homogeneous input-mixing row
     # (input_share_min) in unit-count flow units
     "minInputShare": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine_polars/model.py:3814 (minimum_uptime_<sfx>)

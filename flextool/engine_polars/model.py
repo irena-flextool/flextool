@@ -263,8 +263,11 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _online.add_constraints,         # incl. online_fix_eq
         _unit_floors.add_constraints,
         _eq_ramp,
-        _eq_invest_bounds,
+        _eq_invest_max_units,
+        _eq_invest_period_caps,
+        _eq_invest_total_caps,
         _eq_conversion,
+        _eq_min_input_share,
         _eq_co2_max_period,
         _eq_co2_max_total,
         _eq_user_constraints,
@@ -1597,133 +1600,132 @@ def _eq_max_output_sum(b: _Build) -> None:
 
 
 def _eq_ramp(b: _Build) -> None:
-    """Ramp limits."""
+    """Ramp limits of process flows."""
+    if not b.has_ramp:
+        return
     m, d = b.m, b.d
     v_flow = b.v_flow
-    v_startup_lin = b.v_startup_linear
-    v_shutdown_lin = b.v_shutdown_linear
-    v_startup_int = b.v_startup_integer
-    v_shutdown_int = b.v_shutdown_integer
-    invest_in_dispatch = b.invest_in_dispatch_p
-    divest_in_dispatch = b.divest_in_dispatch_p
-    # ─── Ramp limits ──────────────────────────────────────────────────────
-    if b.has_ramp:
-        v_flow_prev = Lag(v_flow, d.dtttdt, "t", "t_previous")
-        # 4 constraint families:
-        #   sink_up:    step_dur*(v_flow_now - v_flow_prev) <=
-        #               + ramp_speed_up_sink * 60 * step_dur * existing_count
-        #               + (v_startup if online)
-        #   sink_down:  step_dur*(v_flow_now - v_flow_prev) >=
-        #               - ramp_speed_down_sink * 60 * step_dur * existing_count
-        #               - (v_shutdown if online)
-        #   source_up:   same with source-side ramp_speed
-        #   source_down: same with source-side ramp_speed (and ramp_speed_down read from p_process_sink in the .mod — quirk that we follow as p_ramp_speed_down_sink)
-        # Note: v_flow is in unitsize-units; divide both sides by unitsize
-        # gives the form above (existing_count = existing/unitsize).
-        for side, dir_, idx_set, ramp_param in [
-            ("sink",   "up",   d.process_source_sink_ramp_limit_sink_up,
-             d.p_ramp_speed_up_sink),
-            ("sink",   "down", d.process_source_sink_ramp_limit_sink_down,
-             d.p_ramp_speed_down_sink),
-            ("source", "up",   d.process_source_sink_ramp_limit_source_up,
-             d.p_ramp_speed_up_source),
-            ("source", "down", d.process_source_sink_ramp_limit_source_down,
-             # the .mod's source-down constraint uses
-             # p_process_sink[p, source, ramp_speed_down] (a quirk).
-             # In our test data p_ramp_speed_down_source is the right
-             # source-side param; defer to it.
-             d.p_ramp_speed_down_source),
-        ]:
-            if idx_set is None or idx_set.height == 0:
-                continue
-            if ramp_param is None:
-                continue
-            # conversion_flow_coeff = 0 edges are outside every ramp limit.
-            idx_set = _drop_uncapped(d, idx_set)
-            if idx_set.height == 0:
-                continue
-            sense = "<=" if dir_ == "up" else ">="
-            sign  = 1.0  if dir_ == "up" else -1.0  # flips the RHS sign for "down"
-            over_idx = idx_set.join(d.dt, how="cross")
-            # LHS: step_dur * (v_flow_now - v_flow_prev) (Where filters
-            # to idx_set tuples).  Both v_flow and v_flow_prev are
-            # already over (p, source, sink, d, t).
-            flow_diff = (Where(v_flow, idx_set) - Where(v_flow_prev, idx_set)) \
-                         * d.p_step_duration
-            # RHS: ±ramp_speed · 60 · step_dur · coef
-            #        · (existing_count + Σv_invest − Σv_divest)
-            # (.mod ramp_*_constraint): the side's capacity factor and the
-            # invested / divested units scale the ramp limit exactly as
-            # they scale the arc's capacity — output capacity_max_coeff on
-            # the sink side, input_share_max on the source side, and for an
-            # indirect unit's input arc its input limit per unit of capacity
-            # (``p_indirect_input_cap`` = input_share_max × full-load input),
-            # so the ramp speed is per unit of that arc's maximum flow.
-            rate = ramp_param * 60.0 * d.p_step_duration
-            if side == "sink":
-                if d.p_process_sink_max_capacity_coef is not None:
-                    rate = rate * _coef_factor(
-                        idx_set, d.p_process_sink_max_capacity_coef,
-                        ["p", "sink"])
-            else:
-                src_factor = _source_ramp_factor(d, idx_set)
-                if src_factor is not None:
-                    rate = rate * src_factor
-            rhs_param = (rate * d.p_process_existing_count) * sign
-            rhs_terms: dict = {"limit": rhs_param}
-            if b.has_invest_p:
-                rhs_terms["invest"] = (invest_in_dispatch * rate) * sign
-            if b.has_divest_p:
-                rhs_terms["divest"] = (divest_in_dispatch * rate) * (-sign)
-            # UC startup/shutdown tightening
-            if dir_ == "up":
-                if b.has_online_lin:
-                    rhs_terms["startup_lin"] = Where(v_startup_lin, idx_set)
-                if b.has_online_int:
-                    rhs_terms["startup_int"] = Where(v_startup_int, idx_set)
-            else:
-                if b.has_online_lin:
-                    rhs_terms["shutdown_lin"] = -Where(v_shutdown_lin, idx_set)
-                if b.has_online_int:
-                    rhs_terms["shutdown_int"] = -Where(v_shutdown_int, idx_set)
-            m.add_cstr(
-                f"ramp_{side}_{dir_}_constraint",
-                over      = over_idx,
-                sense     = sense,
-                lhs_terms = {"flow_diff": flow_diff},
-                rhs_terms = rhs_terms,
-            )
+    v_flow_prev = Lag(v_flow, d.dtttdt, "t", "t_previous")
+
+    # ─── EQ. ─── ramp_{sink,source}_{up,down}_constraint ─────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # step_duration[d,t] · (v_flow[p,s,k,d,t] − v_flow[p,s,k,d,t_prev])
+    #   ≤ +R · (existing_count[p,d] + Σ_{d′} v_invest_p[p,d′] − Σ_{d′} v_divest_p[p,d′]) + v_startup[p,d,t]   (up)
+    #   ≥ −R · (existing_count[p,d] + Σ_{d′} v_invest_p[p,d′] − Σ_{d′} v_divest_p[p,d′]) − v_shutdown[p,d,t]  (down)
+    #   R = ramp_speed_{dir}_{side}[p,s,k] · 60 · step_duration[d,t] · c[p,s,k,d,t]
+    #   ∀ (p,s,k) ∈ process_source_sink_ramp_limit_{side}_{dir}, (d,t) ∈ dt;   t_prev from dtttdt
+    # Limits the change of a flow between steps by its ramp speed (share of capacity per minute).
+    # c scales the limit as the arc's capacity is scaled: capacity_max_coeff[p,k] on the sink side; on the
+    # source side input_share_max[p,s], or on an indirect unit's input arc its input limit per unit of
+    # capacity (p_indirect_input_cap = input_share_max · full-load input).  v_flow is in units of unitsize,
+    # so existing_count = existing / unitsize.  v_startup / v_shutdown are the linear and integer UC
+    # variables where the process has them.  Arcs with conversion_flow_coeff = 0 get no row.
+    for side, dir_, idx_set, ramp_speed in (
+        ("sink",   "up",   d.process_source_sink_ramp_limit_sink_up,     d.p_ramp_speed_up_sink),
+        ("sink",   "down", d.process_source_sink_ramp_limit_sink_down,   d.p_ramp_speed_down_sink),
+        ("source", "up",   d.process_source_sink_ramp_limit_source_up,   d.p_ramp_speed_up_source),
+        ("source", "down", d.process_source_sink_ramp_limit_source_down, d.p_ramp_speed_down_source),
+    ):
+        if not _has_rows(idx_set) or ramp_speed is None:
+            continue
+        idx_set = _drop_uncapped(d, idx_set)
+        if idx_set.height == 0:
+            continue
+        sign = 1.0 if dir_ == "up" else -1.0
+        flow_diff = (Where(v_flow, idx_set) - Where(v_flow_prev, idx_set)) * d.p_step_duration
+        rate = ramp_speed * 60.0 * d.p_step_duration
+        if side == "sink":
+            if d.p_process_sink_max_capacity_coef is not None:
+                rate = rate * _coef_factor(idx_set, d.p_process_sink_max_capacity_coef, ["p", "sink"])
+        else:
+            src_factor = _source_ramp_factor(d, idx_set)
+            if src_factor is not None:
+                rate = rate * src_factor
+        rhs: dict = {"limit": (rate * d.p_process_existing_count) * sign}
+        if b.has_invest_p:
+            rhs["invest"] = (b.invest_in_dispatch_p * rate) * sign
+        if b.has_divest_p:
+            rhs["divest"] = (b.divest_in_dispatch_p * rate) * (-sign)
+        if dir_ == "up":
+            if b.has_online_lin:
+                rhs["startup_lin"] = Where(b.v_startup_linear, idx_set)
+            if b.has_online_int:
+                rhs["startup_int"] = Where(b.v_startup_integer, idx_set)
+        else:
+            if b.has_online_lin:
+                rhs["shutdown_lin"] = -Where(b.v_shutdown_linear, idx_set)
+            if b.has_online_int:
+                rhs["shutdown_int"] = -Where(b.v_shutdown_integer, idx_set)
+        m.add_cstr(
+            f"ramp_{side}_{dir_}_constraint",
+            over      = idx_set.join(d.dt, how="cross"),
+            sense     = "<=" if dir_ == "up" else ">=",
+            lhs_terms = {"flow_diff": flow_diff},
+            rhs_terms = rhs,
+        )
 
 
-def _eq_invest_bounds(b: _Build) -> None:
-    """Investment and divestment limits."""
+def _source_ramp_factor(d, idx_set: "pl.DataFrame") -> "Param | None":
+    """Source-side ramp capacity factor c over ``idx_set × dt``.
+
+    Indirect-unit input arcs (rows of ``p_indirect_input_cap``) take that input limit per unit of
+    capacity; every other arc takes ``input_share_max`` keyed ``(p, source)`` (default 1).  ``None``
+    when neither applies (factor 1 everywhere, the RHS is left unmultiplied).
+    """
+    keys = ["p", "source", "sink"]
+    share = getattr(d, "p_process_source_input_share_max", None)
+    in_cap = getattr(d, "p_indirect_input_cap", None)
+    cap_rows = None
+    if in_cap is not None and in_cap.frame.height > 0:
+        cap_rows = (_utf8_keys(in_cap.frame.lazy(), keys)
+                    .join(_utf8_keys(idx_set.lazy(), keys).select([f"_{k}" for k in keys]),
+                          on=[f"_{k}" for k in keys], how="semi")
+                    .select([f"_{k}" for k in keys] + ["d", "t", pl.col("value").alias("__cap")])
+                    .collect())
+        if cap_rows.height == 0:
+            cap_rows = None
+    if cap_rows is None:
+        if share is None:
+            return None
+        return _coef_factor(idx_set, share, ["p", "source"])
+    base = _utf8_keys(idx_set.select(keys).unique().join(d.dt.select("d", "t"), how="cross").lazy(), keys)
+    if share is not None:
+        base = base.join(share.frame.lazy()
+                         .select(pl.col("p").cast(pl.Utf8).alias("_p"),
+                                 pl.col("source").cast(pl.Utf8).alias("_source"),
+                                 pl.col("value").alias("__share")),
+                         on=["_p", "_source"], how="left")
+    else:
+        base = base.with_columns(pl.lit(None, dtype=pl.Float64).alias("__share"))
+    frame = (base
+             .join(cap_rows.lazy(), on=[f"_{k}" for k in keys] + ["d", "t"], how="left")
+             .select(*keys, "d", "t", value=pl.coalesce(pl.col("__cap"), pl.col("__share"), pl.lit(1.0)))
+             .collect())
+    return Param(("p", "source", "sink", "d", "t"), frame)
+
+
+def _eq_invest_max_units(b: _Build) -> None:
+    """Units invested or divested per period."""
+    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n):
+        return
     m, d = b.m, b.d
-    v_invest_p = b.v_invest_p
-    v_divest_p = b.v_divest_p
-    v_invest_n = b.v_invest_n
-    v_divest_n = b.v_divest_n
-    # ─── Invest / divest variable bounds + maxFlow tightening ──────────
+
+    # ─── EQ. ─── max{Invest,Divest}_var_bound[_n] ────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_invest_p[p,d] ≤ max_units[p,d]   ∀ (p,d) ∈ pd_invest_set     (maxInvest_var_bound)
+    # v_divest_p[p,d] ≤ max_units[p,d]   ∀ (p,d) ∈ pd_divest_set     (maxDivest_var_bound)
+    # v_invest_n[n,d] ≤ max_units[n,d]   ∀ (n,d) ∈ nd_invest_set     (maxInvest_var_bound_n)
+    # v_divest_n[n,d] ≤ max_units[n,d]   ∀ (n,d) ∈ nd_divest_set     (maxDivest_var_bound_n)
+    # Caps the units invested or divested in one period (max_units = p_entity_max_units).
+    # Emitted as rows, not as variable bounds.
     if b.has_invest_p or b.has_divest_p:
-        # p-side max_units (rename "e" → "p" to align with process vars).
-        # Phase 4.8g: the ContextVar is reset by the time ``build_flextool``
-        # runs, so ``rename_to_axis`` cannot re-cast the renamed column to
-        # the p-axis Enum.  Use a semi-join against ``process_source_sink``
-        # (already p-Enum) up-cast to the e-axis vocab of the source frame
-        # so the cross-Enum filter composes natively.
-        _maxu = d.p_entity_max_units.frame
-        _e_dt = _maxu.schema["e"]
-        _p_in_e = (d.process_source_sink
-                     .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
-                     .unique())
-        max_units_p = Param(("p", "d"),
-            _maxu.join(_p_in_e, on="e", how="semi")
-                  .pipe(rename_to_axis, {"e": "p"}))
+        max_units_p = Param(("p", "d"), _entity_rows(d.p_entity_max_units.frame, "e", d.process_source_sink, "p"))
     if b.has_invest_p:
         m.add_cstr(
             "maxInvest_var_bound",
             over      = d.pd_invest_set,
             sense     = "<=",
-            lhs_terms = {"invest":    v_invest_p},
+            lhs_terms = {"invest":    b.v_invest_p},
             rhs_terms = {"max_units": max_units_p},
         )
     if b.has_divest_p:
@@ -1731,27 +1733,17 @@ def _eq_invest_bounds(b: _Build) -> None:
             "maxDivest_var_bound",
             over      = d.pd_divest_set,
             sense     = "<=",
-            lhs_terms = {"divest":    v_divest_p},
+            lhs_terms = {"divest":    b.v_divest_p},
             rhs_terms = {"max_units": max_units_p},
         )
     if b.has_invest_n or b.has_divest_n:
-        # Phase 4.8g: same cross-Enum pattern as the ``max_units_p`` site
-        # above — semi-join against ``nodeState['n']`` up-cast to the
-        # e-axis vocab carried by ``p_entity_max_units``.
-        _maxu_n = d.p_entity_max_units.frame
-        _e_dt_n = _maxu_n.schema["e"]
-        _n_in_e = (d.nodeState
-                     .select(pl.col("n").cast(_e_dt_n, strict=False).alias("e"))
-                     .unique())
-        max_units_n = Param(("n", "d"),
-            _maxu_n.join(_n_in_e, on="e", how="semi")
-                    .pipe(rename_to_axis, {"e": "n"}))
+        max_units_n = Param(("n", "d"), _entity_rows(d.p_entity_max_units.frame, "e", d.nodeState, "n"))
     if b.has_invest_n:
         m.add_cstr(
             "maxInvest_var_bound_n",
             over      = d.nd_invest_set,
             sense     = "<=",
-            lhs_terms = {"invest":    v_invest_n},
+            lhs_terms = {"invest":    b.v_invest_n},
             rhs_terms = {"max_units": max_units_n},
         )
     if b.has_divest_n:
@@ -1759,335 +1751,265 @@ def _eq_invest_bounds(b: _Build) -> None:
             "maxDivest_var_bound_n",
             over      = d.nd_divest_set,
             sense     = "<=",
-            lhs_terms = {"divest":    v_divest_n},
+            lhs_terms = {"divest":    b.v_divest_n},
             rhs_terms = {"max_units": max_units_n},
         )
-    # Per-period invest/divest cap (.mod's maxInvest_entity_period /
-    # maxDivest_entity_period).  Only applies on (e, d) ∈ ed_invest_period
-    # — that's the entities/periods flagged with a per-period limit (e.g.
-    # invest_method = "invest_period_total").  Entities with invest_method
-    # = "invest_total" or "invest_no_limit" don't appear in this set.
-    #
-    # The mathematical relation is
-    #     v_invest[e, d] * unitsize  ≤  ed_invest_max_period[e, d]
-    # and we emit it in that natural form: the LP coefficient on
-    # v_invest is ``unitsize`` (carried on the LHS) and the RHS is the
-    # raw cap in MW (``ed_invest_max_period`` is already raw MW).  This
-    # mirrors every other invest constraint (the per-entity total /
-    # cumulative / group families all use coef=unitsize, RHS-in-MW), so
-    # the extracted row dual is in obj/MW — consistent across families.
-    # (Numerical conditioning that the old pre-divided coef=1 form bought
-    # is now handled by autoscale Layer 2, so no special-casing here.)
-    if b.has_invest_p and d.ed_invest_period_set is not None and d.ed_invest_period_set.height > 0:
-        ed_p_period = d.ed_invest_period_set.pipe(rename_to_axis, {"e": "p"}).join(
-            d.pd_invest_set, on=["p", "d"], how="inner")
-        if ed_p_period.height > 0 and d.ed_invest_max_period is not None:
-            cap_p = Param(("p", "d"),
-                d.ed_invest_max_period.frame.pipe(rename_to_axis, {"e": "p"})
-                .select("p", "d", "value"))
-            m.add_cstr(
-                "maxInvest_entity_period_p",
-                over      = ed_p_period,
-                sense     = "<=",
-                lhs_terms = {"invest": v_invest_p * d.p_unitsize},
-                rhs_terms = {"cap":    cap_p},
-            )
-    if b.has_invest_n and d.ed_invest_period_set is not None and d.ed_invest_period_set.height > 0:
-        ed_n_period = d.ed_invest_period_set.pipe(rename_to_axis, {"e": "n"}).join(
-            d.nd_invest_set, on=["n", "d"], how="inner")
-        if ed_n_period.height > 0 and d.ed_invest_max_period is not None:
-            cap_n = Param(("n", "d"),
-                d.ed_invest_max_period.frame.pipe(rename_to_axis, {"e": "n"})
-                .select("n", "d", "value"))
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            m.add_cstr(
-                "maxInvest_entity_period_n",
-                over      = ed_n_period,
-                sense     = "<=",
-                lhs_terms = {"invest": v_invest_n * us_n},
-                rhs_terms = {"cap":    cap_n},
-            )
-    # Divest period caps: same coef=unitsize / raw-MW-RHS form as invest
-    # above (dual in obj/MW, matching the total/cumulative/group families).
-    if b.has_divest_p and d.ed_divest_period_set is not None and d.ed_divest_period_set.height > 0:
-        ed_p_dperiod = d.ed_divest_period_set.pipe(rename_to_axis, {"e": "p"}).join(
-            d.pd_divest_set, on=["p", "d"], how="inner")
-        if ed_p_dperiod.height > 0 and d.ed_divest_max_period is not None:
-            cap_dp = Param(("p", "d"),
-                d.ed_divest_max_period.frame.pipe(rename_to_axis, {"e": "p"})
-                .select("p", "d", "value"))
-            m.add_cstr(
-                "maxDivest_entity_period_p",
-                over      = ed_p_dperiod,
-                sense     = "<=",
-                lhs_terms = {"divest": v_divest_p * d.p_unitsize},
-                rhs_terms = {"cap":    cap_dp},
-            )
-    if b.has_divest_n and d.ed_divest_period_set is not None and d.ed_divest_period_set.height > 0:
-        ed_n_dperiod = d.ed_divest_period_set.pipe(rename_to_axis, {"e": "n"}).join(
-            d.nd_divest_set, on=["n", "d"], how="inner")
-        if ed_n_dperiod.height > 0 and d.ed_divest_max_period is not None:
-            cap_dn = Param(("n", "d"),
-                d.ed_divest_max_period.frame.pipe(rename_to_axis, {"e": "n"})
-                .select("n", "d", "value"))
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            m.add_cstr(
-                "maxDivest_entity_period_n",
-                over      = ed_n_dperiod,
-                sense     = "<=",
-                lhs_terms = {"divest": v_divest_n * us_n},
-                rhs_terms = {"cap":    cap_dn},
-            )
-    # Per-entity totals: Σ_d v_invest[e, d] * unitsize ≤ e_invest_max_total[e]
-    # (and divest analogue).  When running a non-first sub-solve of a
-    # multi-solve chain, ``p_entity_previously_invested_capacity[e, d]``
-    # / ``p_entity_invested[e]`` / ``p_entity_divested[e]`` carry the
-    # cumulative realized invest/divest from prior solves and must be
-    # added to the LHS — see flextool.mod:3597-3623.  polar_high emits one
-    # row per entity (collapsed over d) so we use the max prior-capacity
-    # per entity, which equals the tightest .mod row (the last d) for
-    # the typical non-decreasing schedule.
-    def _e_max_prior_cap() -> dict[str, float]:
-        if d.p_entity_previously_invested_capacity is None:
-            return {}
-        return dict(
-            d.p_entity_previously_invested_capacity.frame
-              .group_by("e").agg(pl.col("value").max())
-              .rows()
+
+
+def _eq_invest_period_caps(b: _Build) -> None:
+    """Capacity invested or divested per period, for entities with a per-period limit."""
+    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n):
+        return
+    m, d = b.m, b.d
+
+    # ─── EQ. ─── max{Invest,Divest}_entity_period_{p,n} ──────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_invest_p[p,d] · unitsize[p]        ≤ invest_max_period[p,d]   ∀ (p,d) ∈ ed_invest_period_set ∩ pd_invest_set
+    # v_invest_n[n,d] · state_unitsize[n]  ≤ invest_max_period[n,d]   ∀ (n,d) ∈ ed_invest_period_set ∩ nd_invest_set
+    # v_divest_p[p,d] · unitsize[p]        ≤ divest_max_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ pd_divest_set
+    # v_divest_n[n,d] · state_unitsize[n]  ≤ divest_max_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ nd_divest_set
+    # Caps the capacity built or retired in one period for entities with a per-period limit
+    # (e.g. invest_method = invest_period_total).  The cap is raw capacity with unitsize on the LHS, as in
+    # the other invest caps, so the row dual is in objective units per unit of capacity.
+    for name, active, period_set, var_set, cap, var, axis, kind in (
+        ("maxInvest_entity_period_p", b.has_invest_p, d.ed_invest_period_set, d.pd_invest_set,
+         d.ed_invest_max_period, b.v_invest_p, "p", "invest"),
+        ("maxInvest_entity_period_n", b.has_invest_n, d.ed_invest_period_set, d.nd_invest_set,
+         d.ed_invest_max_period, b.v_invest_n, "n", "invest"),
+        ("maxDivest_entity_period_p", b.has_divest_p, d.ed_divest_period_set, d.pd_divest_set,
+         d.ed_divest_max_period, b.v_divest_p, "p", "divest"),
+        ("maxDivest_entity_period_n", b.has_divest_n, d.ed_divest_period_set, d.nd_divest_set,
+         d.ed_divest_max_period, b.v_divest_n, "n", "divest"),
+    ):
+        if not active or not _has_rows(period_set):
+            continue
+        over = period_set.pipe(rename_to_axis, {"e": axis}).join(var_set, on=[axis, "d"], how="inner")
+        if over.height == 0 or cap is None:
+            continue
+        cap_param = Param((axis, "d"), cap.frame.pipe(rename_to_axis, {"e": axis}).select(axis, "d", "value"))
+        unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
+        m.add_cstr(
+            name,
+            over      = over,
+            sense     = "<=",
+            lhs_terms = {kind:  var * unitsize},
+            rhs_terms = {"cap": cap_param},
         )
-    def _e_prior_invested() -> dict[str, float]:
-        if d.p_entity_invested is None:
-            return {}
-        return dict(d.p_entity_invested.frame.rows())
-    def _e_prior_divested() -> dict[str, float]:
-        # The .mod gates p_entity_divested behind ``not p_model['solveFirst']``
-        # — ignore the file on the first sub-solve of a chain (or for a
-        # single-solve scenario).  ``p_nested_solve_first`` is tri-state:
-        # None → no p_nested_model.csv (single-solve, treated as solveFirst);
-        # True → solveFirst=1 (skip); False → solveFirst=0 (use the prior).
-        if d.p_entity_divested is None:
-            return {}
-        if getattr(d, "p_nested_solve_first", None) is not False:
-            return {}
-        return dict(d.p_entity_divested.frame.rows())
 
-    def _adjust_cap_frame(cap_frame: pl.DataFrame, key_col: str,
-                           subtract: dict[str, float]) -> pl.DataFrame:
-        """Return cap_frame with `value` -= subtract[key], clipped at 0."""
-        if not subtract:
+
+def _eq_invest_total_caps(b: _Build) -> None:
+    """Capacity invested or divested over the horizon, for entities with a total limit."""
+    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n):
+        return
+    m, d = b.m, b.d
+    d_leaf = getattr(d, "d_leaf", None)
+
+    # Capacity realized by earlier solves of a solve chain, per entity.  Invest: the largest previously
+    # invested capacity over the periods.  Divest: p_entity_divested, except on the first solve of a chain
+    # (p_nested_solve_first is None for a single solve, True on the first solve, False after it).
+    prior_invest: dict[str, float] = {}
+    if d.p_entity_previously_invested_capacity is not None:
+        prior_invest = dict(d.p_entity_previously_invested_capacity.frame
+                            .group_by("e").agg(pl.col("value").max())
+                            .rows())
+    prior_divest: dict[str, float] = {}
+    if d.p_entity_divested is not None and getattr(d, "p_nested_solve_first", None) is False:
+        prior_divest = dict(d.p_entity_divested.frame.rows())
+
+    def _minus_prior(cap_frame: pl.DataFrame, key_col: str, prior: dict[str, float]) -> pl.DataFrame:
+        """``cap_frame`` with ``value -= prior[key]``, clipped at 0."""
+        if not prior:
             return cap_frame
-        adj = cap_frame.with_columns(
-            value=(pl.col("value")
-                   - pl.col(key_col).map_elements(lambda k: subtract.get(k, 0.0),
-                                                    return_dtype=pl.Float64))
-        ).with_columns(value=pl.when(pl.col("value") < 0).then(0.0)
-                                .otherwise(pl.col("value")))
-        return adj
+        return (cap_frame
+                .with_columns(value=pl.col("value") - pl.col(key_col).map_elements(
+                    lambda k: prior.get(k, 0.0), return_dtype=pl.Float64))
+                .with_columns(value=pl.when(pl.col("value") < 0).then(0.0).otherwise(pl.col("value"))))
 
-    max_prior_cap = _e_max_prior_cap()
-    # Not read below: p_entity_invested is not applied to the totals.
-    prior_invested = _e_prior_invested()  # noqa: F841
-    prior_divested = _e_prior_divested()
-
-    if (b.has_invest_p and d.e_invest_total is not None
-            and d.e_invest_total.height > 0
-            and d.e_invest_max_total is not None):
-        # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); up-cast p→e.
-        _e_dt = d.e_invest_total.schema["e"]
-        _p_in_e = (d.process_source_sink
-                     .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
-                     .unique())
-        e_inv_p = (d.e_invest_total
-                     .join(_p_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "p"}))
-        if e_inv_p.height > 0:
-            cap_frame = _adjust_cap_frame(
-                d.e_invest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
-                "p", max_prior_cap)
-            e_inv_max_p = Param(("p",), cap_frame)
-            _emit_entity_total_cap(
-                m,
-                legacy_name = "maxInvest_entity_total",
-                path_name   = "maxInvest_entity_total_path",
-                over_e      = e_inv_p,
-                var         = v_invest_p,
-                unitsize    = d.p_unitsize,
-                cap_param   = e_inv_max_p,
-                d_leaf      = getattr(d, "d_leaf", None),
-                lhs_label   = "invest_total",
-            )
-    if (b.has_divest_p and d.e_divest_total is not None
-            and d.e_divest_total.height > 0
-            and d.e_divest_max_total is not None):
-        # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); up-cast p→e.
-        _e_dt = d.e_divest_total.schema["e"]
-        _p_in_e = (d.process_source_sink
-                     .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
-                     .unique())
-        e_div_p = (d.e_divest_total
-                     .join(_p_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "p"}))
-        if e_div_p.height > 0:
-            cap_frame = _adjust_cap_frame(
-                d.e_divest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
-                "p", prior_divested)
-            e_div_max_p = Param(("p",), cap_frame)
-            _emit_entity_total_cap(
-                m,
-                legacy_name = "maxDivest_entity_total",
-                path_name   = "maxDivest_entity_total_path",
-                over_e      = e_div_p,
-                var         = v_divest_p,
-                unitsize    = d.p_unitsize,
-                cap_param   = e_div_max_p,
-                d_leaf      = getattr(d, "d_leaf", None),
-                lhs_label   = "divest_total",
-            )
-    # Node analogues for per-entity totals.
-    if (b.has_invest_n and d.e_invest_total is not None
-            and d.e_invest_total.height > 0
-            and d.e_invest_max_total is not None):
-        # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); up-cast n→e.
-        _e_dt = d.e_invest_total.schema["e"]
-        _n_in_e = (d.nodeState
-                     .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
-                     .unique())
-        e_inv_n = (d.e_invest_total
-                     .join(_n_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "n"}))
-        if e_inv_n.height > 0:
-            cap_frame = _adjust_cap_frame(
-                d.e_invest_max_total.frame.pipe(rename_to_axis, {"e": "n"}),
-                "n", max_prior_cap)
-            e_inv_max_n = Param(("n",), cap_frame)
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            _emit_entity_total_cap(
-                m,
-                legacy_name = "maxInvest_entity_total_n",
-                path_name   = "maxInvest_entity_total_path_n",
-                over_e      = e_inv_n,
-                var         = v_invest_n,
-                unitsize    = us_n,
-                cap_param   = e_inv_max_n,
-                d_leaf      = getattr(d, "d_leaf", None),
-                lhs_label   = "invest_total",
-            )
-    if (b.has_divest_n and d.e_divest_total is not None
-            and d.e_divest_total.height > 0
-            and d.e_divest_max_total is not None):
-        # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); up-cast n→e.
-        _e_dt = d.e_divest_total.schema["e"]
-        _n_in_e = (d.nodeState
-                     .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
-                     .unique())
-        e_div_n = (d.e_divest_total
-                     .join(_n_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "n"}))
-        if e_div_n.height > 0:
-            cap_frame = _adjust_cap_frame(
-                d.e_divest_max_total.frame.pipe(rename_to_axis, {"e": "n"}),
-                "n", prior_divested)
-            e_div_max_n = Param(("n",), cap_frame)
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            _emit_entity_total_cap(
-                m,
-                legacy_name = "maxDivest_entity_total_n",
-                path_name   = "maxDivest_entity_total_path_n",
-                over_e      = e_div_n,
-                var         = v_divest_n,
-                unitsize    = us_n,
-                cap_param   = e_div_max_n,
-                d_leaf      = getattr(d, "d_leaf", None),
-                lhs_label   = "divest_total",
-            )
+    # ─── EQ. ─── max{Invest,Divest}_entity_total[_path][_n] ──────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_d v_invest_p[p,d] · unitsize[p]  ≤  max(0, invest_max_total[p] − prior_invest[p])   ∀ p ∈ e_invest_total
+    # Σ_d v_divest_p[p,d] · unitsize[p]  ≤  max(0, divest_max_total[p] − prior_divest[p])   ∀ p ∈ e_divest_total
+    #   _n: the node analogues with v_invest_n / v_divest_n and state_unitsize[n]
+    #   _path: one row per (entity, leaf), Σ_d over the periods of the leaf
+    # Caps the capacity built or retired over the horizon.  With one scenario leaf (deterministic) the row
+    # is the plain total; with several (recourse) it becomes the _path row, the per-entity cap applying to
+    # each scenario path.  prior_invest[e] = max_d p_entity_previously_invested_capacity[e,d] (one row per
+    # entity, so the tightest per-period cap of a non-decreasing schedule).  p_entity_invested is not
+    # subtracted (see specs/github_issues.md, refactor bug 2).
+    for active, total_set, max_total, members, axis, var, legacy_name, path_name, label, prior in (
+        (b.has_invest_p, d.e_invest_total, d.e_invest_max_total, d.process_source_sink, "p", b.v_invest_p,
+         "maxInvest_entity_total", "maxInvest_entity_total_path", "invest_total", prior_invest),
+        (b.has_divest_p, d.e_divest_total, d.e_divest_max_total, d.process_source_sink, "p", b.v_divest_p,
+         "maxDivest_entity_total", "maxDivest_entity_total_path", "divest_total", prior_divest),
+        (b.has_invest_n, d.e_invest_total, d.e_invest_max_total, d.nodeState, "n", b.v_invest_n,
+         "maxInvest_entity_total_n", "maxInvest_entity_total_path_n", "invest_total", prior_invest),
+        (b.has_divest_n, d.e_divest_total, d.e_divest_max_total, d.nodeState, "n", b.v_divest_n,
+         "maxDivest_entity_total_n", "maxDivest_entity_total_path_n", "divest_total", prior_divest),
+    ):
+        if not active or not _has_rows(total_set) or max_total is None:
+            continue
+        over_e = _entity_rows(total_set, "e", members, axis)
+        if over_e.height == 0:
+            continue
+        cap = Param((axis,), _minus_prior(max_total.frame.pipe(rename_to_axis, {"e": axis}), axis, prior))
+        unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
+        # (d, leaf) pairs of the scenario tree, restricted to the periods var exists in.
+        leaf_periods = None
+        if d_leaf is not None and getattr(d_leaf, "height", 0) > 0:
+            d_dtype = var.frame.schema["d"]
+            leaf_periods = (d_leaf if d_leaf.schema["d"] == d_dtype
+                            else d_leaf.with_columns(pl.col("d").cast(d_dtype, strict=False)))
+            leaf_periods = leaf_periods.join(var.frame.select("d").unique(), on="d", how="semi")
+        if leaf_periods is None or leaf_periods.height == 0 or leaf_periods["leaf"].n_unique() <= 1:
+            name, over, mask = legacy_name, over_e, over_e
+        else:
+            name = path_name
+            mask = over_e.join(leaf_periods, how="cross")
+            over = over_e.join(leaf_periods.select("leaf").unique().sort("leaf"), how="cross")
+        m.add_cstr(
+            name,
+            over      = over,
+            sense     = "<=",
+            lhs_terms = {label: Sum(Where(var * unitsize, mask), over=("d",))},
+            rhs_terms = {"cap": cap},
+        )
 
 
 def _eq_conversion(b: _Build) -> None:
-    """Conversion of indirect (multi-flow) units and minimum input shares."""
+    """Conversion of indirect (multi-flow) units."""
+    if not b.has_indirect:
+        return
     m, d = b.m, b.d
     v_flow = b.v_flow
-    v_online_lin = b.v_online_linear
-    v_online_int = b.v_online_integer
-    process_indirect_dt = b.process_indirect_dt
-    # ─── conversion_indirect (CHP / multi-flow) ───────────────────────────
-    if b.has_indirect:
-        # Per flextool.mod:2557-2580, the conversion equation reads:
-        #   Σ_source (v_flow[p, source, p] · unitsize · source_flow_coef[p, source])
-        #     = Σ_sink (v_flow[p, p, sink] · unitsize · sink_flow_coef[p, sink])
-        #         · slope[p, d, t]
-        # Most fixtures have all flow_coefs = 1 (the implicit default) so
-        # ``p_process_*_flow_coef`` is None and the Sum collapses to the
-        # pre-flow-coef form.  When non-default, the Param multiplier
-        # routes per-arc weights into the equation — this is what the
-        # ``coal_chp_extraction`` scenario uses to express the iso-fuel
-        # tradeoff between heat and electricity (sink coefs 0.2 vs 2.0).
-        # Per flextool.mod:2343, the source-side input term also splits
-        # into an *undelayed* part (current-time) and a *delayed* part
-        # (time-shifted via dtt__delay_duration, weighted by
-        # p_process_delay_weight).  Anti-join out the delayed processes
-        # from the existing Sum, then add the delayed contribution from
-        # _delay.delayed_input_expr.  The delayed term multiplies each
-        # input by its source-side conversion_flow_coeff, like the
-        # undelayed term (flextool.mod conversion_indirect).
-        in_flows_undelayed = d.process_input_flows
-        if (getattr(d, "process_delayed", None) is not None
-                and d.process_delayed.height > 0):
-            in_flows_undelayed = in_flows_undelayed.join(
-                d.process_delayed, on="p", how="anti")
 
-        input_expr = v_flow * d.p_unitsize
-        if d.p_process_source_conversion_flow_coeff is not None:
-            input_expr = input_expr * d.p_process_source_conversion_flow_coeff
-        output_expr = v_flow * d.p_unitsize * d.p_slope
-        if d.p_process_sink_conversion_flow_coeff is not None:
-            output_expr = output_expr * d.p_process_sink_conversion_flow_coeff
+    # ─── EQ. ─── conversion_indirect ─────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{s ∈ in(p)} v_flow[p,s,p,d,t] · unitsize[p] · conv_in[p,s]
+    #   + Σ_s Σ_{(t_s,t,δ) ∈ delay} v_flow[p,s,p,d,t_s] · unitsize[p] · delay_weight[p,δ] · conv_in[p,s]
+    #   = Σ_{k ∈ out(p)} v_flow[p,p,k,d,t] · unitsize[p] · slope[p,d,t] · conv_out[p,k]
+    #     + v_online[p,d,t] · section[p,d,t] · unitsize[p]
+    #   ∀ (p,d,t) ∈ process_indirect_dt
+    # Energy balance of an indirect (multi-flow) unit: weighted input equals weighted output times the slope.
+    # conv_in / conv_out = source / sink conversion_flow_coeff (default 1); unequal sink coefficients express
+    # e.g. the heat/electricity trade-off of an extraction CHP.  The first input sum covers undelayed units;
+    # delayed units take their inputs at the earlier source-side steps t_s (dtt__delay_duration,
+    # _delay.delayed_input_expr), t being the sink-side time.
+    # Section term (indirect min_load_efficiency units, linear and integer v_online): the input of an
+    # indirect unit is its own v_flow, so this is the only place the section fuel enters; node balance,
+    # commodity cost, CO2 and the reported inputs all read that v_flow.  It carries no conversion_flow_coeff;
+    # for a delayed unit it sits on the output side at time t.  Rows without a v_online column lack the term.
+    in_flows_undelayed = d.process_input_flows
+    if _has_rows(getattr(d, "process_delayed", None)):
+        in_flows_undelayed = in_flows_undelayed.join(d.process_delayed, on="p", how="anti")
+    input_expr = v_flow * d.p_unitsize
+    if d.p_process_source_conversion_flow_coeff is not None:
+        input_expr = input_expr * d.p_process_source_conversion_flow_coeff
+    output_expr = v_flow * d.p_unitsize * d.p_slope
+    if d.p_process_sink_conversion_flow_coeff is not None:
+        output_expr = output_expr * d.p_process_sink_conversion_flow_coeff
 
-        lhs_terms = {
-            "input": Sum(Where(input_expr, in_flows_undelayed),
-                          over=("source","sink")),
-        }
-        delayed_term = _delay.delayed_input_expr(d, v_flow)
-        if delayed_term is not None:
-            lhs_terms["input_delayed"] = delayed_term
+    lhs: dict = {"input": Sum(Where(input_expr, in_flows_undelayed), over=("source", "sink"))}
+    delayed_term = _delay.delayed_input_expr(d, v_flow)
+    if delayed_term is not None:
+        lhs["input_delayed"] = delayed_term
+    rhs: dict = {"output": Sum(Where(output_expr, d.process_output_flows), over=("source", "sink"))}
+    if b.has_minload_eff and d.p_section is not None:
+        ind_mle = d.process_min_load_eff.join(d.process_indirect.select("p").unique(), on="p", how="semi")
+        if ind_mle.height > 0:
+            if b.has_online_lin:
+                rhs["section_lin"] = Where(b.v_online_linear, ind_mle) * d.p_section * d.p_unitsize
+            if b.has_online_int:
+                rhs["section_int"] = Where(b.v_online_integer, ind_mle) * d.p_section * d.p_unitsize
+    m.add_cstr(
+        "conversion_indirect",
+        over      = b.process_indirect_dt,
+        sense     = "==",
+        lhs_terms = lhs,
+        rhs_terms = rhs,
+    )
 
-        rhs_terms = {"output": Sum(Where(output_expr,
-                                         d.process_output_flows),
-                                   over=("source","sink"))}
-        # min_load_efficiency section term (flextool.mod:2582):
-        #   + (v_online_linear + v_online_integer)[p,d,t]
-        #     · pdtProcess_section[p,d,t] · unitsize[p]
-        # for indirect min_load_efficiency units.  The input of an indirect
-        # unit is its own v_flow (noEff), so this is the ONLY place the
-        # section fuel enters: nodeBalance, commodity cost, CO2 and the
-        # reported input flows all read that v_flow.  The section is not
-        # multiplied by any conversion_flow_coeff (as in the .mod).  For a
-        # delayed unit it sits on the output side, at the sink-side time t
-        # with v_online[t]; the delayed inputs supply it through
-        # ``input_delayed``.  (p,d,t) rows without v_online lack the term.
-        if b.has_minload_eff and d.p_section is not None:
-            ind_mle = d.process_min_load_eff.join(
-                d.process_indirect.select("p").unique(), on="p", how="semi")
-            if ind_mle.height > 0:
-                if b.has_online_lin:
-                    rhs_terms["section_lin"] = (
-                        Where(v_online_lin, ind_mle)
-                        * d.p_section * d.p_unitsize)
-                if b.has_online_int:
-                    rhs_terms["section_int"] = (
-                        Where(v_online_int, ind_mle)
-                        * d.p_section * d.p_unitsize)
 
-        m.add_cstr(
-            "conversion_indirect",
-            over      = process_indirect_dt,
-            sense     = "==",
-            lhs_terms = lhs_terms,
-            rhs_terms = rhs_terms,
-        )
+def _eq_min_input_share(b: _Build) -> None:
+    """Minimum share of each input in the input of an indirect unit."""
+    if not b.has_indirect:
+        return
+    m, d = b.m, b.d
+    share = getattr(d, "p_process_source_input_share_min", None)
+    pif = getattr(d, "process_input_flows", None)
+    pss = getattr(d, "process_source_sink", None)
+    if share is None or share.frame.height == 0 or not _has_rows(pif) or not _has_rows(pss):
+        return
 
-        # minInputShare — unit__inputNode.input_share_min (mixing minimum
-        # on the unit's current input; see :func:`_add_min_input_share`).
-        _add_min_input_share(m, d, v_flow)
+    # ─── EQ. ─── minInputShare ───────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # conv[p,s] · v_flow[p,s,p,d,t]  ≥  share_min[p,s] · Σ_{s′ ∈ in(p)} conv[p,s′] · v_flow[p,s′,p,d,t]
+    #   ∀ (p,s) with share_min[p,s] > 0, p ∈ process_indirect with ≥ 2 inputs, (p,d,t) ∈ process_indirect_dt
+    # While the unit runs, input s supplies at least the share input_share_min of its current input energy
+    # (conv = source conversion_flow_coeff, default 1).  The row is homogeneous: with no input it reads
+    # 0 ≥ 0, so it needs no online variable.  unitsize cancels (v_flow is per unitsize on every input of p).
+    keys = ["p", "source", "sink"]
+    # Input arcs with a v_flow column of indirect units with at least two inputs.
+    in_arcs = (_utf8_keys(pif.lazy().select(keys), keys)
+               .join(_utf8_keys(d.process_indirect.lazy().select("p"), ["p"]).select("_p").unique(),
+                     on="_p", how="semi")
+               .join(_utf8_keys(pss.lazy().select(keys), keys).select("_p", "_source", "_sink"),
+                     on=["_p", "_source", "_sink"], how="semi"))
+    n_in = in_arcs.group_by("_p").agg(pl.len().alias("__n"))
+    in_arcs = in_arcs.join(n_in.filter(pl.col("__n") >= 2).select("_p"), on="_p", how="semi")
+    share_lf = (share.frame.lazy()
+                .with_columns(pl.col("p").cast(pl.Utf8).alias("_p"),
+                              pl.col("source").cast(pl.Utf8).alias("_source"))
+                .select("_p", "_source", pl.col("value").cast(pl.Float64)))
+    rows = (in_arcs.join(share_lf, on=["_p", "_source"], how="inner")
+            .filter(pl.col("value") > 0.0)
+            .select(*keys, "value").collect())
+    if rows.height == 0:
+        return
+    _validate_min_input_shares(rows)
+    arcs_all = (in_arcs.join(_utf8_keys(rows.select("p").unique().lazy(), ["p"]).select("_p"),
+                             on="_p", how="semi")
+                .select(keys).collect())
+    conv = getattr(d, "p_process_source_conversion_flow_coeff", None)
+    v_flow = b.v_flow
+    expr = v_flow
+    if conv is not None:
+        conv_c = _coef_factor(arcs_all, conv, ["p", "source"])
+        neg = conv_c.frame.filter(pl.col("value") < 0.0)
+        if neg.height > 0:
+            raise FlexToolConfigError(
+                "input_share_min is not defined for a unit with a negative input conversion_flow_coeff: "
+                + ", ".join(f"{r['p']}<-{r['source']}" for r in neg.iter_rows(named=True)))
+        expr = v_flow * conv_c
+    over = rows.select(keys).join(d.dt, how="cross")
+    pidt = getattr(d, "process_indirect_dt", None)
+    if _has_rows(pidt):
+        over = over.join(pidt.select("p", "d", "t"), on=["p", "d", "t"], how="semi")
+    if over.height == 0:
+        return
+    share_p = Param(("p", "source"), rows.select("p", "source", "value"))
+    m.add_cstr(
+        "minInputShare",
+        over      = over,
+        sense     = ">=",
+        lhs_terms = {"own":   Where(expr, rows.select(keys))},
+        rhs_terms = {"total": Sum(Where(expr, arcs_all), over=("source",)) * share_p},
+    )
+
+
+def _validate_min_input_shares(rows: pl.DataFrame) -> None:
+    """Raise unless every ``input_share_min`` lies in [0, 1] and they sum to at most 1 per unit.
+
+    The input data is validated once per scenario
+    (``input_derivation._validators.validate_unit_input_shares``); this guards hand-built data.
+    """
+    bad = rows.filter(pl.col("value") > 1.0)
+    sums = (rows.group_by("p").agg(pl.col("value").sum().alias("s"))
+            .filter(pl.col("s") > 1.0 + 1e-9))
+    if bad.height > 0 or sums.height > 0:
+        raise FlexToolConfigError(
+            "input_share_min must lie in [0, 1] and sum to at most 1 per unit; offending: "
+            + ", ".join([f"{r['p']}<-{r['source']}: {r['value']}" for r in bad.iter_rows(named=True)]
+                        + [f"{r['p']}: sum {r['s']}" for r in sums.iter_rows(named=True)]))
 
 
 def _eq_co2_max_period(b: _Build) -> None:
@@ -3567,60 +3489,6 @@ def _eq_non_anticipativity_invest(b: _Build) -> None:
 # Helpers
 
 
-def _emit_entity_total_cap(
-    m, *, legacy_name: str, path_name: str, over_e: pl.DataFrame,
-    var, unitsize, cap_param, d_leaf, lhs_label: str,
-) -> None:
-    """Per-path entity total cap (design §7.2 (G)).
-
-    Sums ``var * unitsize`` over the invest axis's periods against a
-    per-entity total cap.  With a single scenario leaf — deterministic
-    or flag-off, where ``d_leaf`` degenerates to one ``"__anchor"``
-    leaf — this emits the legacy ``over=("d",)`` total under the legacy
-    NAME, byte-identical to the pre-recourse constraint.  With more than
-    one leaf (recourse), it emits ``path_name`` indexed by
-    ``(entity, leaf)`` with the inner ``d``-sum masked to each leaf's
-    own periods; the per-entity ``cap_param`` broadcasts across leaves
-    (one cap per scenario path — no cross-scenario double-count).
-
-    ``leaf`` is a plain ``Utf8`` index column carried through the
-    ``Where`` mask exactly as ``g`` is in the group-total builders;
-    ``Sum(over=("d",))`` leaves ``(entity, leaf)`` matching ``over_e ×
-    leaves``.
-    """
-    dl = None
-    if d_leaf is not None and getattr(d_leaf, "height", 0) > 0:
-        inv_periods = var.frame.select("d").unique()
-        _d_dt = var.frame.schema["d"]
-        dlx = d_leaf
-        if dlx.schema["d"] != _d_dt:
-            dlx = dlx.with_columns(pl.col("d").cast(_d_dt, strict=False))
-        dl = dlx.join(inv_periods, on="d", how="semi")
-    n_leaves = (dl["leaf"].n_unique()
-                if dl is not None and dl.height > 0 else 1)
-    if n_leaves <= 1:
-        m.add_cstr(
-            legacy_name,
-            over      = over_e,
-            sense     = "<=",
-            lhs_terms = {lhs_label: Sum(Where(var * unitsize, over_e),
-                                        over=("d",))},
-            rhs_terms = {"cap": cap_param},
-        )
-        return
-    mask = over_e.join(dl, how="cross")
-    over_path = over_e.join(dl.select("leaf").unique().sort("leaf"),
-                            how="cross")
-    m.add_cstr(
-        path_name,
-        over      = over_path,
-        sense     = "<=",
-        lhs_terms = {lhs_label: Sum(Where(var * unitsize, mask),
-                                    over=("d",))},
-        rhs_terms = {"cap": cap_param},
-    )
-
-
 def _add_non_anticipativity_constraints(
     m, d, db_pairs: pl.DataFrame, *,
     v_state, v_online_integer, v_online_linear, v_reserve,
@@ -4381,143 +4249,6 @@ def _invest_capacity_multiplier(pss_dt: "pl.DataFrame | None",
              .select(*keys, "value")
              .collect())
     return Param(tuple(keys), frame)
-
-
-def _add_min_input_share(m, d, v_flow) -> None:
-    """``minInputShare`` — ``unit__inputNode.input_share_min``.
-
-    While the unit is running, input ``s`` supplies at least
-    ``input_share_min_s`` of the unit's CURRENT input energy (flow ×
-    ``conversion_flow_coeff``)::
-
-        conv_s · v_flow[p, s, p]  ≥  share_s · Σ_{s'} conv_{s'} · v_flow[p, s', p]
-
-    per ``(p, s, p, d, t)`` for indirect units with ≥ 2 inputs of
-    ``conversion_flow_coeff ≠ 0`` and ``share_s > 0``.  The row is
-    homogeneous: with no input (the unit is not running) it reads
-    ``0 ≥ 0``, so it needs no online variable and holds for units without
-    one.  ``v_flow`` is per unitsize on every input of ``p``, so the
-    unitsize cancels.  The ranges are checked once per scenario by
-    ``input_derivation._validators.validate_unit_input_shares``; the
-    guard below keeps hand-built FlexData honest.
-    """
-    share = getattr(d, "p_process_source_input_share_min", None)
-    pif = getattr(d, "process_input_flows", None)
-    indirect = getattr(d, "process_indirect", None)
-    pss = getattr(d, "process_source_sink", None)
-    if (share is None or share.frame.height == 0 or pif is None
-            or pif.height == 0 or indirect is None or indirect.height == 0
-            or pss is None or pss.height == 0):
-        return
-    keys = ["p", "source", "sink"]
-    in_arcs = (_utf8_keys(pif.lazy().select(keys), keys)
-               .join(_utf8_keys(indirect.lazy().select("p"), ["p"])
-                     .select("_p").unique(), on="_p", how="semi")
-               .join(_utf8_keys(pss.lazy().select(keys), keys)
-                     .select("_p", "_source", "_sink"),
-                     on=["_p", "_source", "_sink"], how="semi"))
-    n_in = in_arcs.group_by("_p").agg(pl.len().alias("__n"))
-    in_arcs = (in_arcs.join(n_in.filter(pl.col("__n") >= 2).select("_p"),
-                            on="_p", how="semi"))
-    share_lf = (share.frame.lazy()
-                .with_columns(pl.col("p").cast(pl.Utf8).alias("_p"),
-                              pl.col("source").cast(pl.Utf8).alias("_source"))
-                .select("_p", "_source", pl.col("value").cast(pl.Float64)))
-    rows = (in_arcs.join(share_lf, on=["_p", "_source"], how="inner")
-            .filter(pl.col("value") > 0.0)
-            .select(*keys, "value").collect())
-    if rows.height == 0:
-        return
-    bad = rows.filter(pl.col("value") > 1.0)
-    sums = (rows.group_by("p").agg(pl.col("value").sum().alias("s"))
-            .filter(pl.col("s") > 1.0 + 1e-9))
-    if bad.height > 0 or sums.height > 0:
-        raise FlexToolConfigError(
-            "input_share_min must lie in [0, 1] and sum to at most 1 per "
-            "unit; offending: "
-            + ", ".join([f"{r['p']}<-{r['source']}: {r['value']}"
-                         for r in bad.iter_rows(named=True)]
-                        + [f"{r['p']}: sum {r['s']}"
-                           for r in sums.iter_rows(named=True)]))
-    procs = rows.select("p").unique()
-    arcs_all = (in_arcs.join(_utf8_keys(procs.lazy(), ["p"]).select("_p"),
-                             on="_p", how="semi")
-                .select(keys).collect())
-    conv = getattr(d, "p_process_source_conversion_flow_coeff", None)
-    expr = v_flow
-    if conv is not None:
-        conv_c = _coef_factor(arcs_all, conv, ["p", "source"])
-        neg = conv_c.frame.filter(pl.col("value") < 0.0)
-        if neg.height > 0:
-            raise FlexToolConfigError(
-                "input_share_min is not defined for a unit with a negative "
-                "input conversion_flow_coeff: "
-                + ", ".join(f"{r['p']}<-{r['source']}"
-                            for r in neg.iter_rows(named=True)))
-        expr = v_flow * conv_c
-    over = (rows.select(keys)
-            .join(d.dt, how="cross"))
-    pidt = getattr(d, "process_indirect_dt", None)
-    if pidt is not None and pidt.height > 0:
-        over = over.join(pidt.select("p", "d", "t"), on=["p", "d", "t"],
-                         how="semi")
-    if over.height == 0:
-        return
-    share_p = Param(("p", "source"), rows.select("p", "source", "value"))
-    m.add_cstr("minInputShare", over=over, sense=">=",
-               lhs_terms={"own": Where(expr, rows.select(keys))},
-               rhs_terms={"total": Sum(Where(expr, arcs_all),
-                                       over=("source",)) * share_p})
-
-
-def _source_ramp_factor(d, idx_set: "pl.DataFrame") -> "Param | None":
-    """Source-side ramp capacity factor over ``idx_set × dt``.
-
-    Indirect-unit input arcs (rows of ``p_indirect_input_cap``) take that
-    per-unit-of-capacity input limit (``input_share_max`` × full-load
-    input flow); every other arc takes ``input_share_max`` keyed
-    ``(p, source)`` (default 1).  ``None`` when neither applies (factor 1
-    everywhere — the ramp RHS is left byte-identical).
-    """
-    keys = ["p", "source", "sink"]
-    share = getattr(d, "p_process_source_input_share_max", None)
-    in_cap = getattr(d, "p_indirect_input_cap", None)
-    cap_rows = None
-    if in_cap is not None and in_cap.frame.height > 0:
-        cap_rows = (_utf8_keys(in_cap.frame.lazy(), keys)
-                    .join(_utf8_keys(idx_set.lazy(), keys)
-                          .select([f"_{k}" for k in keys]),
-                          on=[f"_{k}" for k in keys], how="semi")
-                    .select([f"_{k}" for k in keys] + ["d", "t",
-                            pl.col("value").alias("__cap")])
-                    .collect())
-        if cap_rows.height == 0:
-            cap_rows = None
-    if cap_rows is None:
-        if share is None:
-            return None
-        return _coef_factor(idx_set, share, ["p", "source"])
-    base = _utf8_keys(idx_set.select(keys).unique().join(d.dt.select("d", "t"),
-                                                         how="cross").lazy(),
-                      keys)
-    if share is not None:
-        base = (base
-                .join(share.frame.lazy()
-                      .select(pl.col("p").cast(pl.Utf8).alias("_p"),
-                              pl.col("source").cast(pl.Utf8).alias("_source"),
-                              pl.col("value").alias("__share")),
-                      on=["_p", "_source"], how="left"))
-    else:
-        base = base.with_columns(pl.lit(None, dtype=pl.Float64)
-                                 .alias("__share"))
-    frame = (base
-             .join(cap_rows.lazy(), on=[f"_{k}" for k in keys] + ["d", "t"],
-                   how="left")
-             .select(*keys, "d", "t",
-                     value=pl.coalesce(pl.col("__cap"),
-                                       pl.col("__share"), pl.lit(1.0)))
-             .collect())
-    return Param(("p", "source", "sink", "d", "t"), frame)
 
 
 def _add_profile_cstr(m, d, v_flow, name: str, idx: "pl.DataFrame",

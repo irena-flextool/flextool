@@ -1180,7 +1180,9 @@ _ADD_CSTR_LITERAL = re.compile(r"add_cstr\(\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']
 # by reading the call sites (source file -> names).
 DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
     "model.py": (
-        # _emit_entity_total_cap(legacy_name=..., path_name=...)
+        # _eq_invest_period_caps / _eq_invest_total_caps loop tables
+        "maxInvest_entity_period_p", "maxInvest_entity_period_n",
+        "maxDivest_entity_period_p", "maxDivest_entity_period_n",
         "maxInvest_entity_total", "maxInvest_entity_total_path",
         "maxDivest_entity_total", "maxDivest_entity_total_path",
         "maxInvest_entity_total_n", "maxInvest_entity_total_path_n",
