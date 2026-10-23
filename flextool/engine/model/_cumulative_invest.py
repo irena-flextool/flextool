@@ -177,7 +177,7 @@ def _eq_fix_no_investment(b: _Build) -> None:
     # v_invest_n[n,d] = 0   ∀ (n,d) ∈ ed_invest_forbidden_no_investment ∩ nd_invest_set
     # Pins investment to zero where the entity's invest method forbids it.
     # Never emits rows: ed_invest_set (the v_invest_* domain) already excludes the forbidden cells, so the
-    # row domain is empty (specs/github_issues.md, refactor bug 7).
+    # row domain is empty.
     for name, var, axis in (("fix_v_invest_no_investment_eq_p", b.v_invest_p, "p"),
                             ("fix_v_invest_no_investment_eq_n", b.v_invest_n, "n")):
         if var is None:
@@ -245,7 +245,7 @@ def _eq_min_invest_total(b: _Build) -> None:
     # In every period, the capacity invested in the periods still alive then is at least the minimum.
     # Capacity invested by earlier solves of a chain is not counted.  When the process side has
     # min-total entities but none of them has an edd_invest_set row, the node side is skipped as well
-    # (specs/github_issues.md, refactor bug 28).
+    # (known limitation).
     for name, var, axis in (("minInvest_entity_total_p", b.v_invest_p, "p"),
                             ("minInvest_entity_total_n", b.v_invest_n, "n")):
         unitsize = _unitsize(d, axis)
@@ -315,8 +315,8 @@ def _eq_cumulative_capacity(b: _Build) -> None:
     #   _n: the node analogue with v_invest_n / v_divest_n and state_unitsize[n]
     # Keeps the capacity of an entity in a period (existing + invested and still alive − divested)
     # within its cumulative limits, MW (MWh for storage nodes).  Existing capacity is a constant on the
-    # right-hand side.  The divest term is the divestment of period d only, present where v_divest exists
-    # (specs/github_issues.md, refactor bug 29).
+    # right-hand side.  The divest term is the divestment of period d only, present where v_divest exists;
+    # divestments of earlier periods are not subtracted (known limitation).
     for name, sense, cap, var, divest, axis in (
         ("maxCumulative_capacity_p", "<=", d.ed_cumulative_max_capacity, b.v_invest_p, b.v_divest_p, "p"),
         ("maxCumulative_capacity_n", "<=", d.ed_cumulative_max_capacity, b.v_invest_n, b.v_divest_n, "n"),
@@ -363,7 +363,7 @@ def _eq_group_entity_period(b: _Build) -> None:
     #   _n: the node analogues with v_invest_n / v_divest_n and state_unitsize[n]
     # Bounds the capacity a group of entities builds or retires in one period, MW (MWh for storage
     # nodes); processes and storage nodes of a group get separate rows.  Group retire_{max,min}_period is
-    # not a schema parameter (specs/github_issues.md, refactor bug 5).
+    # not a schema parameter, so the divest rows are reachable only with off-schema data.
     for kind, sense, gd_idx, cap, sides in (
         ("invest", "<=", d.gd_invest_period, d.p_group_invest_max_period,
          (("maxInvestGroup_entity_period_p", b.v_invest_p, "p"),
@@ -466,7 +466,7 @@ def _eq_group_divest_total(b: _Build) -> None:
     # separate rows.  With one scenario leaf (deterministic) the max row is the plain total; with
     # several (recourse) it becomes the _path row, so the cap applies to each scenario path instead of
     # adding up divestments of alternative branches.  Group retire_{max,min}_total is not a schema
-    # parameter (specs/github_issues.md, refactor bug 5).
+    # parameter, so these rows are reachable only with off-schema data.
     for name, path_name, sense, cap, var, axis in (
         ("maxDivestGroup_entity_total_p", "maxDivestGroup_entity_total_path_p", "<=",
          d.p_group_retire_max_total, b.v_divest_p, "p"),
@@ -527,7 +527,7 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
     # Keeps the capacity of a group in a period (existing + invested and still alive) within its
     # cumulative limits; processes and storage nodes share one row.  Divestments and capacity invested by
     # earlier solves of a chain are not counted.  Missing from the autoscale registry and reachable only
-    # with off-schema group parameters (specs/github_issues.md, refactor bugs 4 and 5).
+    # with off-schema group parameters.
     for name, sense, cap in (("maxInvestGroup_entity_cumulative", "<=", d.p_group_invest_max_cumulative),
                              ("minInvestGroup_entity_cumulative", ">=", d.p_group_invest_min_cumulative)):
         if cap is None:
@@ -579,7 +579,7 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
     # Limits the energy flowing into a flow group over the solve to an average power times the hours of
     # the solve.  The steps are weighted by step_duration only (no rp or years-represented weights);
     # eff source flows carry the slope but no conversion_flow_coeff, and the min-load section input is
-    # not counted (specs/github_issues.md, refactor bug 30).
+    # not counted (known limitation).
     for name, sense, cap in (("maxCumulative_flow_solve", "<=", d.p_group_max_cumulative_flow),
                              ("minCumulative_flow_solve", ">=", d.p_group_min_cumulative_flow)):
         if cap is None or cap.frame.height == 0:

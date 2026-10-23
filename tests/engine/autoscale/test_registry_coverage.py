@@ -250,7 +250,7 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "reserveBalance_up_n_1_eq", "reserveBalance_down_n_1_eq",
     # _cumulative_invest.py — every family passes its names from a loop
     # table.  {max,min}InvestGroup_entity_cumulative is left out: it has no
-    # registry entry yet (specs/github_issues.md, refactor bug 4).
+    # registry entry yet (reachable only with off-schema group parameters).
     "minInvest_entity_period_p", "minInvest_entity_period_n",
     "minDivest_entity_period_p", "minDivest_entity_period_n",
     "minInvest_entity_total_p", "minInvest_entity_total_n",

@@ -6,8 +6,10 @@
   model-wide `CO2` output. Before, each period counted as one year, so with
   multi-year periods the limit was `years_represented` times too loose.
   Models that use a `co2_method` with `total` and `years_represented`
-  above 1 get a tighter limit. In rolling or multi-solve chains each solve
-  still gets the full limit.
+  above 1 get a tighter limit. In a chain of solves each solve still gets
+  the full limit over only its own periods, and in a rolling solve each roll
+  compares only its own window's emissions with the full limit, so there the
+  limit binds much more loosely than intended.
 
 - **Years represented in rolling solves and stochastic branches.** The
   outputs that scale annual values by `years_represented` (the model-wide

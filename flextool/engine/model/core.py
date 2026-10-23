@@ -1910,7 +1910,7 @@ def _eq_invest_total_caps(b: _Build) -> None:
     # is the plain total; with several (recourse) it becomes the _path row, the per-entity cap applying to
     # each scenario path.  prior_invest[e] = max_d p_entity_previously_invested_capacity[e,d] (one row per
     # entity, so the tightest per-period cap of a non-decreasing schedule).  p_entity_invested is not
-    # subtracted (see specs/github_issues.md, refactor bug 2).
+    # subtracted (known limitation).
     for active, total_set, max_total, members, axis, var, legacy_name, path_name, label, prior in (
         (b.has_invest_p, d.e_invest_total, d.e_invest_max_total, d.process_source_sink, "p", b.v_invest_p,
          "maxInvest_entity_total", "maxInvest_entity_total_path", "invest_total", prior_invest),
@@ -2171,8 +2171,8 @@ def _eq_co2_max_total(b: _Build) -> None:
     # Caps the CO2 emissions of a group over the horizon the solve represents (tonnes): each period's
     # annualised emissions (as in co2_max_period, section fuel included) times the years the period
     # represents, summed over the periods — the measure of the model CO2 output.  years_represented is not
-    # discounted.  Rolling and chained solves get the full cap in every roll/solve (see
-    # specs/github_issues.md, refactor bug 38).
+    # discounted.  Each solve of a chain and each roll of a rolling solve gets the full cap for only its
+    # own periods / window, so there the cap binds more loosely than intended (known limitation).
     lhs: dict = {}
     if b.has_co2_cap_total_eff:
         for key, term in _eff_fuel_input(b, d.flow_from_co2_capped_total):
@@ -2466,7 +2466,7 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     #   = state_start[n] · existing[n,d] / state_unitsize[n]
     #   ∀ n ∈ bind_within_solve ∩ storage_fix_start, (n,d,t) ∈ nodeState_last_dt, d ∈ first period
     # The first step of a bind_within_solve node wraps to the last one, so the start state is pinned at
-    # the last step (of the first period, see specs/github_issues.md, refactor bug 15) to the share
+    # the last step of the first period (known limitation: not the last step of the horizon) to the share
     # state_start of the built storage capacity (state units).  First solve of a chain only.
     lhs: dict = {"state": b.v_state}
     invested, divested = _node_in_service(b, d.nodeState, "_cyclic", coef=d.p_state_start)
@@ -2507,8 +2507,8 @@ def _eq_storage_reference_value(b: _Build) -> None:
     # v_state[n,d,t] = reference_value[n,d,t] · existing[n,d] / state_unitsize[n]
     #   ∀ n ∈ storage_use_reference_value, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last
     # Pins the state at the end of the solve horizon to the reference share of the existing storage
-    # capacity (state units).  Invested and divested capacity is not included (see specs/github_issues.md,
-    # refactor bug 14).  Nodes with a competing end condition are not in storage_use_reference_value.
+    # capacity (state units).  Invested and divested capacity is not included (known limitation).  Nodes
+    # with a competing end condition are not in storage_use_reference_value.
     target = (promote_param_to_dt(d.p_storage_state_reference_value, d.dt)
               .rename({"value": "rv"})
               .join(d.p_state_existing_capacity.frame.lazy().rename({"value": "exist"}),
@@ -2631,7 +2631,7 @@ def _obj_balance_slack(b: _Build) -> Expr:
     #   ncs = node_capacity_for_scaling, factor 1 when the parameter is absent;   currency
     # Prices the energy a node balance cannot supply (up) or absorb (down); penalty in currency/MWh.
     # The slacks enter the balance without ncs, so with node_capacity_for_scaling ≠ 1 the effective
-    # penalty per MWh is penalty · ncs (see specs/github_issues.md, refactor bug 18).
+    # penalty per MWh is penalty · ncs (unreachable today; known inconsistency).
     if d.p_node_capacity_for_scaling is not None:
         return (Sum(vq_up   * d.p_penalty_up
                     * d.p_node_capacity_for_scaling * op_factor)
@@ -2707,8 +2707,8 @@ def _obj_co2_price(b: _Build) -> Expr | None:
     #     · co2_content[c] · co2_price[g,d,t] · w_op[d,t]
     # Cost of the CO2 emitted when processes with an efficiency draw a CO2-bearing commodity c from a
     # node of a CO2-priced group g; content in t/MWh, price in currency/t.  The section term exists
-    # for min_load_efficiency units only.  Flows into priced nodes earn no removal credit (see
-    # specs/github_issues.md, refactor bug 19).
+    # for min_load_efficiency units only.  Flows into priced nodes earn no removal credit (known
+    # limitation).
     return _sum_terms([Sum(term * d.p_co2_content * d.p_co2_price * b.op_factor)
                        for _key, term in _eff_fuel_input(b, d.flow_from_co2_priced)])
 

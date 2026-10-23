@@ -488,7 +488,10 @@ period cap of p2035 (1.2e6 t/a) binds.  The companion change to
   `costs_discounted.csv`): coal_plant output falls (t0001 62.49 → 30.30 MW;
   `process__d_co2` coal_plant p2035 24 193 → 11 730 t/a), wind investment in
   p2035 rises 323.94 → 353.49 MW, battery storage investment and CHP output
-  rise, the heat slack penalty falls.
+  rise, the heat slack penalty falls. `connection__dt.csv`: only the
+  `battery_inverter` column moves, p2035 t0001–t0004 (−142.31 / −158.19 /
+  +158.19 / +158.19 → −166.64 / −149.91 / +166.64 / +166.64 MW), the larger
+  p2035 battery cycling more; the transfer connections are unchanged.
 - `test_a_lot_but_not_multi_year` (single period p2020, 3e6 t/a cap does not
   bind) and the other CO2 / min-load goldens (`coal_co2_limit`,
   `coal_co2_price`, `multi_year_one_solve_co2_limit`,
