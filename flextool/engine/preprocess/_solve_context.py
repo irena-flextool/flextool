@@ -394,8 +394,8 @@ class SolveContext:
         canonical column names.  Empty when the file is missing.
 
         Path B / audit §Category B: cascade helpers that previously
-        re-read the CSV (``_derived_params.py:5421, 7974``;
-        ``_derived_branch.py:285``) should prefer this typed accessor.
+        re-read the CSV (``_derived.py:5421, 7974``;
+        ``_branch.py:285``) should prefer this typed accessor.
         """
         if not self._steps_in_use_loaded:
             self._steps_in_use = _load_steps_in_use(
@@ -413,7 +413,7 @@ class SolveContext:
         is present.
 
         Path B / audit §Category B: cascade helpers that previously
-        re-read the CSV (``_derived_params.py:7990``) should prefer this
+        re-read the CSV (``_derived.py:7990``) should prefer this
         typed accessor.
         """
         if not self._period_share_loaded:
@@ -430,7 +430,7 @@ class SolveContext:
         file is missing.
 
         Path B / audit §Category B: cascade helpers that previously
-        re-read the CSV (``_derived_params.py:4940``) should prefer this
+        re-read the CSV (``_derived.py:4940``) should prefer this
         typed accessor.
         """
         if not self._p_entity_all_existing_loaded:
@@ -448,7 +448,7 @@ class SolveContext:
         when the file is missing.
 
         Path B / audit §Category B: cascade helpers that previously
-        re-read the CSV (``_derived_params.py:7623``) should prefer
+        re-read the CSV (``_derived.py:7623``) should prefer
         this typed accessor.
         """
         if not self._solve_branch_weight_loaded:
@@ -572,7 +572,7 @@ def _maybe_read(path: Path,
 
 def _read_active_solve(workdir: Path,
                         *, provider: "object | None" = None) -> str | None:
-    """Mirror of ``_derived_params._read_active_solve``.
+    """Mirror of ``_derived._read_active_solve``.
 
     Provider-first read; falls back to disk when the Provider is absent
     or doesn't carry the frame.
@@ -828,7 +828,7 @@ def _load_period_share(solve_data_dir: Path,
 
     Audit §Category B (WriterSnapshot top-7): the cascade currently
     falls through both names at its read sites (e.g.
-    ``_derived_params.py:7984-7988``).  Centralising the fallback here
+    ``_derived.py:7984-7988``).  Centralising the fallback here
     gives every consumer the same semantics.
     """
     empty = pl.DataFrame(schema={"d": pl.Utf8, "value": pl.Float64})

@@ -781,7 +781,7 @@ def _lineage_inputs(
 
     * ``pb_rows`` — ``period__branch`` (anchor d, member b) pairs in
       CSV row order (period order).  Guarded-ctx acquisition per the
-      ``dtttdt_from_source`` precedent (``_derived_params.py:
+      ``dtttdt_from_source`` precedent (``_derived.py:
       6578-6605``): ``ctx.period_branch`` is trusted only when BOTH
       columns are null-free — the ``d_anchor`` axis vocabulary is
       empty by contract, so under enum activation the ctx frame's
@@ -872,7 +872,7 @@ def _classify_lineage(
       ``d != b``).
 
     Failure semantics (design §3.1.1, mirroring ``dtttdt_from_source``
-    ``_derived_params.py:6634-6650``): a synthetic ``period_in_use``
+    ``_derived.py:6634-6650``): a synthetic ``period_in_use``
     member without a ``period__branch`` fan row, with an anchor that
     has no in-use self-row, or without an SBTB time-branch entry means
     the per-solve artefacts are inconsistent — RAISE instead of
@@ -1736,7 +1736,7 @@ def apply_branch_cluster(
         workdir, source, active_solve, ctx=ctx, provider=provider)
 
     # 3-4. Branch-weight Params (lazy ports of the previous eager
-    # helpers in ``_derived_params.py``).
+    # helpers in ``_derived.py``).
     _new_pd_bw = pd_branch_weight_param(
         workdir, source, active_solve, ctx=ctx, provider=provider)
     if _new_pd_bw is not None or getattr(flex_data, "pd_branch_weight", None) is None:

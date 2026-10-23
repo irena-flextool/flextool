@@ -144,7 +144,7 @@ def emit_per_solve_sets(
     window for this solve (see
     ``SolveConfig.non_anticipativity_periods_to_tristate``).  It drives
     the ``dt_non_anticipativity_set.csv`` content — the single source of
-    truth read back by ``_derived_branch.dt_non_anticipativity_lf``:
+    truth read back by ``_branch.dt_non_anticipativity_lf``:
 
     * ``None`` (unset)      -> legacy ``realized_dispatch u fix_storage``
       union, byte-identical to prior behaviour;
@@ -159,7 +159,7 @@ def emit_per_solve_sets(
     ``periods_to_tuples`` — unset == [] == no tie).  When non-empty it
     materialises ``pd_non_anticipativity_invest_periods.csv`` (a
     one-column period list), read back by
-    ``_derived_branch.pd_non_anticipativity_lf`` to populate the invest
+    ``_branch.pd_non_anticipativity_lf`` to populate the invest
     tie-set.  When unset/empty NO file is emitted, so the frame builder's
     reader returns ``None`` -> the legacy branch_start path -> a provably
     empty frame -> zero constraints -> byte-identical to prior behaviour

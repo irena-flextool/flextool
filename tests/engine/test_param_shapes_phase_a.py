@@ -89,7 +89,7 @@ def test_new_shape_members_exist() -> None:
 def test_existing_shape_members_preserved() -> None:
     """Pre-existing :class:`Shape` members are NOT renamed/deleted.
 
-    ``_direct_params.py`` and three test files transitively depend on
+    ``_direct.py`` and three test files transitively depend on
     these names — Phase A must keep them intact (structural choice (a)
     in the task brief).
     """

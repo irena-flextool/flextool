@@ -1,6 +1,6 @@
 """Slice H — construction lead time: commissioning-year helper (solver-free).
 
-Drives :func:`._derived_existing.commissioning_year_lf` directly against a
+Drives :func:`._existing.commissioning_year_lf` directly against a
 hand-built stub source on the design §2.3 uneven calendar (seams
 ``S = {0, 5, 8, 20}``), pinning ``c = snap(yr(o) + L, method)`` for every
 method (§7d) and the two-level default (§7e).
@@ -15,7 +15,7 @@ import math
 import polars as pl
 import pytest
 
-from flextool.engine._derived_existing import commissioning_year_lf
+from flextool.engine.preprocess.params._existing import commissioning_year_lf
 
 # §2.3 calendar: p1 [0,5), p2 [5,8), p3 [8,20), p4 [20, tail).
 PERIODS = ["p1", "p2", "p3", "p4"]

@@ -9,8 +9,8 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-import flextool.engine._derived_params as dp
-from flextool.engine._derived_params import (
+import flextool.engine.preprocess.params._derived as dp
+from flextool.engine.preprocess.params._derived import (
     _anchor_expand_explicit,
     _build_recourse_anchor_pairs,
     _expand_invest_branch_periods,

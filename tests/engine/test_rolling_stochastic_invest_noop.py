@@ -11,7 +11,7 @@ Investment in FlexTool is period-granular: ``v_invest`` is indexed ``(p, d)``
 / ``(n, d)`` with no timestep axis.  A ``rolling_window`` solve expands into
 synthetic per-roll sub-solves named ``<base>_roll_<N>`` whose roll starts
 advance PAST the beginning of each period.  ``_resolve_synthetic_solve``
-(``flextool/engine/_derived_params.py``) reads a ``roll_N`` token as an
+(``flextool/engine/preprocess/params/_derived.py``) reads a ``roll_N`` token as an
 invest-period anchor, so ``apply_synthetic_invest_sets`` leaves every
 invest-set ``None`` — no ``v_invest`` is created and the authored investment
 intent is silently dropped.

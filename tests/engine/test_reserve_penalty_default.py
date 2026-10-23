@@ -72,7 +72,7 @@ def test_unauthored_penalty_defaults_to_5000(tmp_path_factory) -> None:
     """No authored ``penalty_reserve``: the group gets 5000 in the loaded
     Param and in the objective — the same optimum as authoring 5000, and
     dearer than a zero penalty (before, the two coincided: no term)."""
-    from flextool.engine._direct_params import PENALTY_RESERVE_DEFAULT
+    from flextool.engine.preprocess.params._direct import PENALTY_RESERVE_DEFAULT
 
     assert PENALTY_RESERVE_DEFAULT == 5000.0
     unauth = _solve(tmp_path_factory, "rpd_none", None)

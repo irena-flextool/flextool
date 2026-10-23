@@ -1289,7 +1289,7 @@ def derive_p_flow_max(
     src_conv = _pair_floats("p_process_source_conversion_flow_coeff.csv")
     sink_conv = _pair_floats("p_process_sink_conversion_flow_coeff.csv")
 
-    # Delayed processes (mirror of ``_derived_params._delay_fuel_factor_lf``):
+    # Delayed processes (mirror of ``_derived._delay_fuel_factor_lf``):
     # a weighted delay lets one input step feed up to 1/max(weight) of the
     # steady-state fuel; a single-duration delay has weight 1.
     delay_max_w: dict[str, float] = {}
@@ -1353,7 +1353,7 @@ def derive_p_flow_max(
             dcm_v = dcm.get((p, d), 0.0)
             if p in has_indirect and (p, src) in process_source:
                 # Input-arc limit (mirror of
-                # ``_derived_params._indirect_input_cap_lf``):
+                # ``_derived._indirect_input_cap_lf``):
                 # input_share_max × (slope·W + section) × delay_factor
                 # / src_div, times the capacity count.
                 fuel = slope.get((p, d, t), 0.0) * fuel_width.get(p, 0.0)

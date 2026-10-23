@@ -24,7 +24,7 @@ test injects non-unit weights and asserts:
    (input 2/3/4) renormalise among themselves to 2⁄9 / 3⁄9 / 4⁄9.
    The normalisation is done by
    ``apply_derived_g`` →
-   ``_derived_branch.apply_branch_cluster`` (``pd_branch_weight_lf`` /
+   ``_branch.apply_branch_cluster`` (``pd_branch_weight_lf`` /
    ``pdt_branch_weight_lf``), which divides each branch's input weight
    by the sum across siblings sharing the same first-step; the
    per-(d, t) value is emitted to ``solve_data/pdt_branch_weight.csv``

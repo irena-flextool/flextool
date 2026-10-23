@@ -2,7 +2,7 @@
 
 Lazy-polars port of flextool's existing-capacity cascade and the
 invest/divest set family.  Replaces the eager-Python helpers spread
-across :mod:`._derived_params` (``p_entity_all_existing_from_source``,
+across :mod:`._derived` (``p_entity_all_existing_from_source``,
 ``ed_invest_set_from_source`` / ``ed_divest_set_from_source``,
 ``edd_invest_lookback_set_from_source``,
 ``p_entity_max_units_from_source``, etc.) and the workdir-CSV reads
@@ -54,8 +54,8 @@ Cluster B fields (per
 * ``p_entity_max_units`` — per-(e, d) max unit count via the
   unitsize cascade × the max_capacity branch fork.
 
-The shared :func:`._derived_walks.period_walk_iterator` lifted out of
-Cluster A's ``_derived_npv`` is consumed throughout for the lifetime-
+The shared :func:`._walks.period_walk_iterator` lifted out of
+Cluster A's ``_npv`` is consumed throughout for the lifetime-
 window walks.
 
 All helpers are lazy until the public ``apply_existing_chain`` boundary
@@ -75,7 +75,7 @@ from flextool.engine._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine._derived_walks import period_walk_iterator, WindowMethod
+from flextool.engine.preprocess.params._walks import period_walk_iterator, WindowMethod
 
 
 # Substrate handle for the cascade-wide axis enum vocabulary.
@@ -135,7 +135,7 @@ _LIFETIME_UNBOUNDED_METHODS: frozenset[str] = frozenset((
 def _entity_class_lf(source: "InputSource") -> pl.LazyFrame:
     """Lazy ``[e, ec]``: every (entity, entity_class) pairing.
 
-    Mirror of :func:`._derived_npv._entity_class_lf` (kept local to
+    Mirror of :func:`._npv._entity_class_lf` (kept local to
     avoid cross-module coupling).
     """
     parts: list[pl.LazyFrame] = []
@@ -169,7 +169,7 @@ def _entity_method_lf(source: "InputSource",
     """Lazy ``[e, method]`` from ``unit/node/connection.<param>``.
 
     ``parameter_name`` ∈ {``invest_method``, ``lifetime_method``}.
-    Mirror of :func:`._derived_npv._entity_method_lf`.
+    Mirror of :func:`._npv._entity_method_lf`.
     """
     parts: list[pl.LazyFrame] = []
     for ec in ("unit", "node", "connection"):
@@ -199,7 +199,7 @@ def _lifetime_method_with_default_lf(
 
     Entities without an explicit ``lifetime_method`` row get
     ``reinvest_automatic``.  Mirror of
-    :func:`._derived_npv._lifetime_method_with_default_lf`.
+    :func:`._npv._lifetime_method_with_default_lf`.
     """
     explicit = _entity_method_lf(source, "lifetime_method")
     explicit_entities = explicit.select("e").unique()
@@ -214,7 +214,7 @@ def _per_entity_param_lf(source: "InputSource",
                             ) -> pl.LazyFrame:
     """Lazy ``[e, d, value, is_scalar]``.
 
-    Mirror of :func:`._derived_npv._per_entity_param_lf`.
+    Mirror of :func:`._npv._per_entity_param_lf`.
 
     Period-dim detection: a per-period parameter exposes exactly one
     index column alongside ``name`` / ``value``.  The canonical name is
@@ -243,7 +243,7 @@ def _per_entity_param_lf(source: "InputSource",
         period_col = "period" if "period" in extra else (extra[0] if extra else None)
         if period_col is not None:
             # Per-ROW scalar detection — see the matching helper in
-            # ``_derived_npv._per_entity_param_lf`` for the full rationale.
+            # ``_npv._per_entity_param_lf`` for the full rationale.
             # A constant ``existing`` (etc.) stored in an entity class
             # that ALSO carries period-Map values for sibling entities
             # surfaces with a NULL index (``x = null``).  That row must
@@ -278,7 +278,7 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
                               ) -> pl.LazyFrame:
     """Resolve ``pdX[e, param, d]`` cascade in lazy form.
 
-    Mirror of :func:`._derived_npv._resolve_per_period_lf`.
+    Mirror of :func:`._npv._resolve_per_period_lf`.
     """
     # Align ``per_param``'s ``e`` / ``d`` dtypes to ``ed_lf``'s before
     # joining — ``per_param`` was built from a String-typed CSV read
@@ -381,8 +381,8 @@ def commissioning_year_lf(source: "InputSource",
     the resulting frame is empty.
 
     **[F2] Seam-calendar identity under recourse.**  The seam years are
-    read from :func:`._derived_params._p_years_d_lf` through the *identical*
-    provider/workdir resolution :func:`._derived_walks.period_walk_iterator`
+    read from :func:`._derived._p_years_d_lf` through the *identical*
+    provider/workdir resolution :func:`._walks.period_walk_iterator`
     uses (the Slice-D fallback block), so that under recourse a branch order
     period's ``yr(o)`` lands on the same calendar the walk compares
     ``yr_dall`` against.  Reproduced verbatim below.
@@ -390,10 +390,10 @@ def commissioning_year_lf(source: "InputSource",
     if not period_in_use:
         return None
     # [F2] Mirror period_walk_iterator's provider/workdir fallback block
-    # (_derived_walks.py:269-276) VERBATIM so this helper's _p_years_d_lf
+    # (_walks.py:269-276) VERBATIM so this helper's _p_years_d_lf
     # call hits the identical calendar as the walk's yr_dall.
     if provider is None:
-        from flextool.engine._derived_params import (
+        from flextool.engine.preprocess.params._derived import (
             _recourse_walk_provider,
             _recourse_walk_workdir,
         )
@@ -410,7 +410,7 @@ def commissioning_year_lf(source: "InputSource",
     # resolving ``p_years_d.csv`` from the wrong solve → no in-use seam).
     _lag_cfg = _construction_lag_configured(source)
 
-    from flextool.engine._derived_params import _p_years_d_lf
+    from flextool.engine.preprocess.params._derived import _p_years_d_lf
     pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         if _lag_cfg:
@@ -681,7 +681,7 @@ def edd_history_choice_lf(source: "InputSource",
         keep iff pdy[d] >= pdy[d_h] AND pdy[d] < pdy[d_h] + life[e, d_h]
 
     ``lineage`` / ``commission_lf`` — see
-    :func:`._derived_walks.period_walk_iterator`.
+    :func:`._walks.period_walk_iterator`.
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
@@ -706,7 +706,7 @@ def edd_history_automatic_lf(source: "InputSource",
         keep iff pdy[d] >= pdy[d_h]
 
     ``lineage`` / ``commission_lf`` — see
-    :func:`._derived_walks.period_walk_iterator`.
+    :func:`._walks.period_walk_iterator`.
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
@@ -729,7 +729,7 @@ def edd_history_no_investment_lf(source: "InputSource",
     ``edd_history_choice`` but for the ``no_investment`` cohort.
 
     ``lineage`` / ``commission_lf`` — see
-    :func:`._derived_walks.period_walk_iterator`.
+    :func:`._walks.period_walk_iterator`.
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
@@ -752,7 +752,7 @@ def _edd_history_lf_for(source: "InputSource",
     lifetime_method cohort.
 
     ``lineage`` / ``commission_lf`` — see
-    :func:`._derived_walks.period_walk_iterator`.  ``commission_lf`` shifts
+    :func:`._walks.period_walk_iterator`.  ``commission_lf`` shifts
     this cohort's availability window to the commissioning year (Slice H).
     """
     if not period_with_history or not period_in_use:
@@ -816,7 +816,7 @@ def edd_history_lf(source: "InputSource",
     :func:`edd_history_no_investment_lf`).
 
     ``lineage`` / ``commission_lf`` — see
-    :func:`._derived_walks.period_walk_iterator`.
+    :func:`._walks.period_walk_iterator`.
     """
     if not period_with_history or not period_in_use:
         return pl.LazyFrame(schema={
@@ -1004,7 +1004,7 @@ def edd_invest_set_lf(source: "InputSource",
     to those whose ``d_history`` (renamed ``d_invest``) is also a
     valid invest decision in the current solve.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
     """
     edd = edd_history_lf(source, active_solve,
@@ -1039,11 +1039,11 @@ def edd_invest_lookback_set_lf(source: "InputSource",
     user-constraint expressions (mod L2885-2898).
 
     Δ.7 consolidation: the eager
-    :func:`._derived_params.edd_invest_lookback_set_from_source`
-    pre-dates the shared :func:`._derived_walks.period_walk_iterator`;
+    :func:`._derived.edd_invest_lookback_set_from_source`
+    pre-dates the shared :func:`._walks.period_walk_iterator`;
     Δ.7 wraps the shared walker with the
-    :data:`._derived_walks.WindowMethod.STRICT_LOOKBACK_BOUNDED` /
-    :data:`._derived_walks.WindowMethod.STRICT_LOOKBACK_UNBOUNDED`
+    :data:`._walks.WindowMethod.STRICT_LOOKBACK_BOUNDED` /
+    :data:`._walks.WindowMethod.STRICT_LOOKBACK_UNBOUNDED`
     modes for bounded / unbounded entity cohorts respectively, then
     unions the results.
 
@@ -1051,7 +1051,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
     Python ``for r in out.iter_rows`` lifetime gate is replaced with
     a fully lazy join + filter on the shared walker.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_in_use:
@@ -1464,11 +1464,11 @@ def _lifetime_expired_pairs_lf(source: "InputSource",
         life_sum(e) = Σ_{d_first ∈ period_first}
                           (pdy[d_first] + lifetime[e, d_first])
 
-    Mirror of :func:`._derived_params._lifetime_expired_pairs` in lazy form.
-    Uses :func:`._derived_params._read_period_first` /
-    :func:`._derived_params._p_years_d_lf` for the workdir-aware reads.
+    Mirror of :func:`._derived._lifetime_expired_pairs` in lazy form.
+    Uses :func:`._derived._read_period_first` /
+    :func:`._derived._p_years_d_lf` for the workdir-aware reads.
     """
-    from flextool.engine._derived_params import _read_period_first, _p_years_d_lf
+    from flextool.engine.preprocess.params._derived import _read_period_first, _p_years_d_lf
     period_first = _read_period_first(source, active_solve, None)
     if not period_first:
         return pl.LazyFrame(schema={
@@ -1563,7 +1563,7 @@ def apply_existing_chain(flex_data: object,
 
     * ``p_entity_all_existing`` — chained existing capacity (replacing
       the workdir CSV read of ``solve_data/p_entity_all_existing.csv``
-      and the cascade in :func:`._derived_params.p_entity_all_existing_from_source`).
+      and the cascade in :func:`._derived.p_entity_all_existing_from_source`).
 
     Order:
       1. Resolve the per-solve scope (active_solve, periods, etc.).
@@ -1582,7 +1582,7 @@ def apply_existing_chain(flex_data: object,
     sweep validates.  When parity drifts, the test surfaces the
     fixture and the diff frame.
     """
-    from flextool.engine._derived_params import (
+    from flextool.engine.preprocess.params._derived import (
         _read_active_solve, _period_in_use_set,
         _read_period_with_history,
     )

@@ -11,7 +11,7 @@ with helpers for scalar Direct Params previously read by
 
 ``p_min_load`` (``unit.min_load``) was formerly a Δ.4 scalar Direct Param
 here, but is now produced as a shape-correct (p, d, t) Param by
-``_derived_params.apply_derived_b`` so a period/time Map isn't summed in the
+``_derived.apply_derived_b`` so a period/time Map isn't summed in the
 minFlow_minload constraint (see ``specs/fix_map_reading.md`` §5).  Its
 coverage moved to ``test_min_load_pdt.py`` and the derived-producer unit test
 below.
@@ -40,7 +40,7 @@ from flextool.engine import (
     SpineDbReader,
     load_flextool,
 )
-from flextool.engine import _direct_params as dp
+from flextool.engine.preprocess.params import _direct as dp
 from polar_high import Param
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ def test_p_min_load_pdt_inmemory_explicit_scalar():
     A scalar min_load broadcasts to the full (d, t) grid — byte-identical
     floor to the old (p,) broadcast.  See ``specs/fix_map_reading.md`` §5.
     """
-    from flextool.engine import _derived_params as drv
+    from flextool.engine.preprocess.params import _derived as drv
 
     dt = pl.DataFrame({
         "d": ["2025", "2025", "2030", "2030"],

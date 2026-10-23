@@ -11,7 +11,7 @@ The Δ.3 schematic offered two options for the partition family:
 across model.py / _group_slack.py / _cumulative_invest.py /
 _region_filter.py / chain.py / _dump_csvs.py — option (b) would
 cascade widely.  The canonical frame is :func:`process_source_sink_canonical`
-in ``_projection_params.py``; this test asserts the invariants:
+in ``_projection.py``; this test asserts the invariants:
 
   * ``method ∈ {'eff', 'noEff'}`` for every row.
   * The canonical frame's ``(p, source, sink)`` rows equal the union
@@ -27,7 +27,7 @@ import polars as pl
 import pytest
 
 from flextool.engine import SpineDbReader
-from flextool.engine._projection_params import (
+from flextool.engine.preprocess.params._projection import (
     process_source_sink_canonical,
     process_source_sink_collapsed,
     process_source_sink_eff,

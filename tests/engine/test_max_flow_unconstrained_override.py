@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine import _derived_params as dp
+from flextool.engine.preprocess.params import _derived as dp
 from flextool.engine._spinedb_reader import SpineDbReader
 
 FLEXTOOL_ROOT = Path(__file__).resolve().parents[2]

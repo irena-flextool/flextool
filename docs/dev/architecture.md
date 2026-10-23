@@ -416,8 +416,8 @@ loudly via `_UnrecognisedIndex`. Document such internal axes in
 ##### Silent-default `"x"` index — readers outside the resolver
 
 Not every DB read goes through `resolve_param_shape`. The **per-entity
-cascades** in `_derived_params.py` / `_derived_existing.py` /
-`_derived_npv.py` read raw entity params (`source.parameter(...)`) and
+cascades** in `_derived.py` / `_existing.py` /
+`_npv.py` read raw entity params (`source.parameter(...)`) and
 must detect the period axis themselves. The failure mode is identical to
 the resolver's: Spine names a Map's index column with the author's
 `index_name`, whose spinedb_api *default is the literal string `"x"`*
@@ -453,7 +453,7 @@ turning `existing_count = existing/unitsize` into a spurious fraction
   hardened); `_ed_explicit_period_param`, `_per_solve_sets`; `profile`
   in real solves (reads the engine-written canonical `pt_profile.csv` /
   `pbt_profile`, not the raw Map).
-- *Residual, latent* — the `_derived_profile.py` **raw-Spine fallback**
+- *Residual, latent* — the `_profiles.py` **raw-Spine fallback**
   readers (`_profile_time_lf` matches only `t`/`i`/`time`;
   `_profile_period_time_lf` / `_profile_period_only_lf` gate on literal
   `"period"`). An `"x"`-indexed profile Map read via these returns empty

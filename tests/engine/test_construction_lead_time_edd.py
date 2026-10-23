@@ -19,7 +19,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine._derived_existing import (
+from flextool.engine.preprocess.params._existing import (
     assert_no_forced_out_of_horizon_commission,
     commissioning_year_lf,
     edd_invest_set_lf,

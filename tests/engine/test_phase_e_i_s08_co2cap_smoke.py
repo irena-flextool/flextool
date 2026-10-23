@@ -11,7 +11,7 @@ Root cause: ``group.co2_max_period`` in the Rivendell DB is authored as
 a 1d Map whose ``index_name`` is the spinedb_api silent default
 (``"x"``), not an explicit ``"period"``.  The Δ.17c shape resolver
 collapsed silent-default labels to ``None`` and returned ``None`` from
-:func:`flextool.engine._direct_params.p_co2_max_period_from_source`
+:func:`flextool.engine.preprocess.params._direct.p_co2_max_period_from_source`
 — even though the per-parameter allow-list
 (``{SCALAR, MAP_PERIOD}``) admits only one shape at depth 1, so the
 authoring intent was unambiguous.

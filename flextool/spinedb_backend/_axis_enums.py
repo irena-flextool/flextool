@@ -765,7 +765,7 @@ def build_axis_enums(
             else:
                 vocab = []
             # Branch axis: the cascade column ``b`` (renamed from
-            # ``branch`` in _derived_branch.py:150) carries the
+            # ``branch`` in _branch.py:150) carries the
             # ``"{period}_{branch}"`` sibling-period tokens emitted by
             # _stochastic.py:492 (``solve_branch = period + "_" + branch``)
             # plus the base period token itself.  These flow through

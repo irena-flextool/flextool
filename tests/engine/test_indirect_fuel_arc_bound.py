@@ -245,7 +245,7 @@ def test_delay_fuel_factor() -> None:
     """``delay_factor = 1 / max(weight)``: a 0.25/0.75 split lets one input
     step carry 1/0.75 of the steady-state fuel; a scalar delay (single
     duration, weight 1) leaves the bound unchanged."""
-    from flextool.engine._derived_params import _delay_fuel_factor_lf
+    from flextool.engine.preprocess.params._derived import _delay_fuel_factor_lf
 
     weighted = _StubSource(pl.DataFrame({
         "name": ["u_split", "u_split"],

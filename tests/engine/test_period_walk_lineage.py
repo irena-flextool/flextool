@@ -30,16 +30,16 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine import _derived_npv as npv
-from flextool.engine._derived_branch import (
+from flextool.engine.preprocess.params import _npv as npv
+from flextool.engine.preprocess.params._branch import (
     check_recourse_npv_preconditions,
 )
-from flextool.engine._derived_existing import (
+from flextool.engine.preprocess.params._existing import (
     edd_history_lf,
     edd_invest_lookback_set_lf,
     edd_invest_set_lf,
 )
-from flextool.engine._derived_params import (
+from flextool.engine.preprocess.params._derived import (
     _p_years_d_lf,
     _period_in_use_set,
     _periodAll_from_source,
@@ -47,7 +47,7 @@ from flextool.engine._derived_params import (
     _read_period_with_history,
     edd_divest_active_from_source,
 )
-from flextool.engine._derived_walks import (
+from flextool.engine.preprocess.params._walks import (
     WindowMethod,
     period_walk_iterator,
 )

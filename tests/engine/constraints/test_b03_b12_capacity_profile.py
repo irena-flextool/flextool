@@ -493,7 +493,7 @@ def test_p_arc_max_cap_coef_producer_selection():
     """
     import polars as _pl
 
-    from flextool.engine._derived_params import (
+    from flextool.engine.preprocess.params._derived import (
         p_arc_max_cap_coef_from_source,
     )
 

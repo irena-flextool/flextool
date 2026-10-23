@@ -16,7 +16,7 @@ so downstream consumers see the same file layout.
 Style: read tiny CSVs eagerly with polars, project with native polars
 expressions, deduplicate via ``.unique(maintain_order=True)``.  No
 abstraction beyond a per-family ``write_all`` orchestrator.  Match
-:mod:`._derived_existing` / :mod:`._projection_params` style.
+:mod:`._existing` / :mod:`._projection` style.
 """
 from __future__ import annotations
 

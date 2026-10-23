@@ -51,7 +51,7 @@ _AXIS_SYNONYMS: dict[str, str] = {
     "d_previous": "d",
     "d_upper": "d",
     "d_back": "d",
-    # ``anchor`` is the cascade column name used in _derived_params.py
+    # ``anchor`` is the cascade column name used in _derived.py
     # during the period__branch overlay (period→anchor rename).  The
     # values are period labels, so the column belongs to the ``d`` axis.
     "anchor": "d",
@@ -96,7 +96,7 @@ _AXIS_SYNONYMS: dict[str, str] = {
     # (process-side block column in BlockBundle, renamed from "block")
     # while ``b_first`` / ``b_next`` are TIMESTEP-AXIS short forms
     # (cardinal timestep labels in coarse-block successor frames, NOT
-    # block names — see _derived_block.py period_block_succ where bsd
+    # block names — see _block.py period_block_succ where bsd
     # "step" column is renamed to "b_first" / "b_next" via successor
     # walk).  Don't conflate them.
     # ----------------------------------------------------------------

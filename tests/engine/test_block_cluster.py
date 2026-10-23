@@ -1,7 +1,7 @@
 """Δ.9 — Cluster E (block-layout consumers) parity tests.
 
 Per-fixture parity check: lazy port in
-:mod:`flextool.engine._derived_block` vs. flextool's canonical
+:mod:`flextool.engine.preprocess.params._block` vs. flextool's canonical
 preprocessed CSVs in ``solve_data/``.
 
 The CSVs are the parity oracle — any divergence between the lazy port
@@ -36,11 +36,11 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine._block_layout import (
+from flextool.engine.preprocess.params._block_layout import (
     DEFAULT_BLOCK,
     BlockLayout,
 )
-from flextool.engine._derived_block import (
+from flextool.engine.preprocess.params._block import (
     arc_block_dt,
     dtttdt_block_interior_lf,
     flow_from_n_block_filtered,

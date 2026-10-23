@@ -68,7 +68,7 @@ from flextool.engine._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine._block_layout import (
+from flextool.engine.preprocess.params._block_layout import (
     DEFAULT_BLOCK,
     BlockLayout,
 )
@@ -629,7 +629,7 @@ def period_block_multi_resolution_lf(
     to the timeset-based default branch).
 
     Mirror of ``flex_data.py:1985-2126`` and the multi-resolution path of
-    ``period_block_family_from_source`` in ``_derived_params.py``.
+    ``period_block_family_from_source`` in ``_derived.py``.
     """
     if bundle is None or not bundle.is_multi_block():
         return None
@@ -662,7 +662,7 @@ def period_block_multi_resolution_lf(
     #
     # WARNING — legacy mirror, NOT on any live path (this function is
     # exported in ``__all__`` but has no caller; the live producer is
-    # ``_derived_params.period_block_family_from_source``).  The live
+    # ``_derived.period_block_family_from_source``).  The live
     # producer segments the cyclic loop PER representative period so a
     # coarse node cannot chain storage across months-apart representative
     # days (the coarse-storage relaxation bug).  This mirror still closes

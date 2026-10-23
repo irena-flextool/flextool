@@ -140,7 +140,7 @@ class SolveHandoff:
     # step)``, long enough (trimmed to the authored max min-up/down
     # duration per period) to cover the next roll's early-step lookback.
     # The next roll rebuilds ``uptime_carry`` / ``downtime_carry`` from it
-    # (``_derived_params.online_mintime_carry_from_source``) and injects
+    # (``_derived.online_mintime_carry_from_source``) and injects
     # them on the ``minimum_uptime`` RHS / ``minimum_downtime`` LHS so an
     # obligation opened in roll N constrains roll N+1's early steps.
     # PERIOD-AWARE: carried only within the same period (period-cyclic

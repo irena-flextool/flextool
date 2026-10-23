@@ -109,7 +109,7 @@ def test_synthetic_solve_derives_inflow_signed_split(_synthetic_step_flex_data):
     """Fix A: the three signed-split fields are populated on a synthetic
     sub-solve, and match the canonical ``apply_derived_c`` helpers.
     """
-    from flextool.engine import _derived_params as drv
+    from flextool.engine.preprocess.params import _derived as drv
 
     name, fd = _synthetic_step_flex_data
 

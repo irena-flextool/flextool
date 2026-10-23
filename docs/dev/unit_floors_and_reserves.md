@@ -82,9 +82,9 @@ reserve without any `reservation` is therefore inactive.
    `process_source_sink_eff` to `_noEff` (efficiency losses dropped) and
    turned a `regular` connection one-way. Now every reader of `delay`
    reads `unit.delay` only (`input_derivation/_specs.py` delay tables,
-   `input_derivation/_process_method.py`, `_derived_params`
+   `input_derivation/_process_method.py`, `_derived`
    `_classify_process_method` / `_delay_distributions_from_source`,
-   `_projection_params.process_delayed`), so a connection is modelled as
+   `_projection.process_delayed`), so a connection is modelled as
    if no delay were set, and `_validators.validate_connection_delay` warns
    once per connection with a non-zero delay
    (`tests/engine/test_connection_delay_ignored.py`). Applying a

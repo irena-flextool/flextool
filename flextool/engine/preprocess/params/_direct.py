@@ -519,7 +519,7 @@ def p_state_start_from_source(source: "InputSource") -> Param | None:
 
 # §5.2.7 — process scalars sliced from p_process.csv
 # NOTE: ``unit.min_load`` is NOT a direct (p,) scalar.  It is produced as a
-# shape-correct (p, d, t) Param by ``_derived_params.apply_derived_b`` (via
+# shape-correct (p, d, t) Param by ``_derived.apply_derived_b`` (via
 # ``p_min_load_pdt_from_source``) so a period/time Map keeps its per-(d, t)
 # semantics instead of being summed in the minFlow_minload constraint.
 # See ``specs/fix_map_reading.md`` §5.
@@ -1963,7 +1963,7 @@ def apply_direct_params_a(source: "InputSource",
 
     # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
     # ``p_min_load`` is produced authoritatively as a shape-correct
-    # (p, d, t) Param by ``_derived_params.apply_derived_b`` (via
+    # (p, d, t) Param by ``_derived.apply_derived_b`` (via
     # ``p_min_load_pdt_from_source``), so a period/time Map isn't summed in
     # the minFlow_minload constraint.  The synthetic / rolling sub-solve
     # early-return in ``flex_data.py`` re-wires it (passes 3-10 are skipped
@@ -2203,7 +2203,7 @@ def apply_direct_params_b(source: "InputSource",
 
     # ``process_delayed__duration`` is produced together with the delay
     # weights and ``dtt__delay_duration`` by
-    # ``_derived_params.apply_delay_params`` (same td labels).
+    # ``_derived.apply_delay_params`` (same td labels).
 
     # ─── Δ.4b — additional Map(period→time) on object classes ───────────
     # Δ.12c-fix gap #1: helpers broadcast non-Map shapes via period_filter.

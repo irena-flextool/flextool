@@ -26,7 +26,7 @@ Output CSVs:
 
 Reuse note (Phase 2 sub-dispatch 3 brief):
 
-``flextool.engine._per_solve_sets.PerSolveAggregates`` already
+``flextool.engine.preprocess.params._per_solve_sets.PerSolveAggregates`` already
 derives ``complete_period_share_of_year`` natively from
 :class:`InputSource` (cluster-D / NPV path) — but that helper is
 upstream-bound: it works on solve-config objects rather than the
@@ -475,11 +475,11 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
     # it carries no probability mass → weight 0, excluded from every forecast
     # denominator.  A lone pre-reveal / deterministic trunk is NOT phantom and
     # keeps 1.0.  Kept in lock-step with
-    # ``_derived_branch.pdt_branch_weight_lf`` (the authoritative LP weight) via
-    # the shared :func:`_derived_branch.phantom_periods` helper, so this emitted
+    # ``_branch.pdt_branch_weight_lf`` (the authoritative LP weight) via
+    # the shared :func:`_branch.phantom_periods` helper, so this emitted
     # CSV stays byte-parity with the LP Param.  Now applied to the pd (invest)
     # loop too (= W7), not just pdt.
-    from flextool.engine._derived_branch import phantom_periods
+    from flextool.engine.preprocess.params._branch import phantom_periods
     phantom = phantom_periods(pb_set)
 
     pd_rows: list[tuple[str, float]] = []

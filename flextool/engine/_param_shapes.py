@@ -165,7 +165,7 @@ class Shape(Enum):
       depth-3 variant of ``commodity.price_ladder_annual``.
 
     The Phase A choice was (a) — extend this enum in-place — because the
-    existing ``Shape`` use sites (3 test files + ``_direct_params.py``
+    existing ``Shape`` use sites (3 test files + ``_direct.py``
     imports only the resolver / broadcasters, not the enum members
     directly) confine the blast radius to this module.  A natural
     follow-up (option b in the Phase A design doc) is to make ``Shape``
@@ -325,9 +325,9 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # members of ``_PROCESS_TIME_PARAM``
     # (_emit_arc_unions.py:146-149 — flextool_base.dat:153), so each admits
     # the full (period, time) shape family exactly like ``availability``.
-    # Consumed by :func:`._derived_params.p_slope_from_source` /
-    # :func:`._derived_params.p_section_from_source` via
-    # :func:`._derived_params._eff_param_to_pdt`.  ``efficiency`` is
+    # Consumed by :func:`._derived.p_slope_from_source` /
+    # :func:`._derived.p_section_from_source` via
+    # :func:`._derived._eff_param_to_pdt`.  ``efficiency`` is
     # authored on both unit and connection; ``efficiency_at_min_load`` /
     # ``min_load`` only feed the unit ``min_load_efficiency`` linearisation.
     ("unit", "efficiency"): {
@@ -350,7 +350,7 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     },
     # ─── Tier-3 silent-default migration ─────────────────────────────────
     # Map(period → time) variable-cost / reservation parameters previously
-    # routed through inline helpers in ``_direct_params.py`` that gated on
+    # routed through inline helpers in ``_direct.py`` that gated on
     # ``{"period", "t"}.issubset(cols)`` — silently dropping silent-default
     # Maps whose ``index_name`` carried spinedb_api's ``"x" / "" / None``
     # instead of the canonical ``"period" / "t"``.  Routing through

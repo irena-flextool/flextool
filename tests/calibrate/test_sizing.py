@@ -341,7 +341,7 @@ def test_rp_weight_sum_uses_actual_nonuniform_weights(tmp_path):
         _rp_weight_sum_by_period,
         _weight_sum_by_period,
     )
-    from flextool.engine._per_solve_sets import (
+    from flextool.engine.preprocess.params._per_solve_sets import (
         derive_per_solve_aggregates,
     )
     from flextool.engine._solve_config import SolveConfig

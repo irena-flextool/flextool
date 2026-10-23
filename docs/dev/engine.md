@@ -253,7 +253,7 @@ and `bind_forward_only_blended_weights` — are projected from the user-side
 `storage_binding_method` value list by
 `storage_bind_within_solve_blended_weights` /
 `storage_bind_within_period_blended_weights` /
-`storage_bind_forward_only_blended_weights` in `_projection_params.py`,
+`storage_bind_forward_only_blended_weights` in `_projection.py`,
 which populate the corresponding `FlexData` fields. `nodeState_rp` is
 the union (the inter-period constraints all share it); the cyclic
 constraint further filters back to the within-solve / within-period
@@ -299,12 +299,12 @@ Representative entries:
 
 | Module | Produces |
 |---|---|
-| `_derived_block.py` | `BlockLayout` fan-out — per-entity blocks, overlap sets, block step durations. |
-| `_derived_branch.py` | `period_branch`, `pdt_branch_weight`, `pd_branch_weight` — stochastic branch weighting. |
-| `_derived_existing.py` | `p_entity_all_existing`, `p_entity_previously_invested_capacity` — cross-solve existing-capacity composition. |
-| `_derived_npv.py` | Annualized investment / divestment carriers feeding the objective. |
-| `_derived_profile.py` | `p_profile_value` and the `p_process_existing_count` factor used by profile-bound constraints. |
-| `_derived_walks.py` | Backward / forward step lookups (`dtttdt`, `dtttdt_forward_only`, the block-interior variant). |
+| `_block.py` | `BlockLayout` fan-out — per-entity blocks, overlap sets, block step durations. |
+| `_branch.py` | `period_branch`, `pdt_branch_weight`, `pd_branch_weight` — stochastic branch weighting. |
+| `_existing.py` | `p_entity_all_existing`, `p_entity_previously_invested_capacity` — cross-solve existing-capacity composition. |
+| `_npv.py` | Annualized investment / divestment carriers feeding the objective. |
+| `_profiles.py` | `p_profile_value` and the `p_process_existing_count` factor used by profile-bound constraints. |
+| `_walks.py` | Backward / forward step lookups (`dtttdt`, `dtttdt_forward_only`, the block-interior variant). |
 | `_emit_arc_unions.py` | Arc set algebra: `flow_to_n`, `flow_from_n`, the commodity-flow joins, the reverse-arc additions for connections. |
 | `_emit_calc_params.py` | The `pdtX` / `pdX` per-step parameter cascade. |
 | `_emit_co2_accumulators.py` | Cumulative-CO2 ladder feeding the CO2-cap constraint. |
@@ -382,11 +382,11 @@ for the handoff-key family.
 
 ### Topological ordering
 
-Emitters have dependencies — `_derived_existing` reads
+Emitters have dependencies — `_existing` reads
 `realized_invest` from prior solves' handoffs and `pd_invest_set`
-from `_emit_period_params`; `_derived_npv` reads
+from `_emit_period_params`; `_npv` reads
 `ed_lifetime_fixed_cost` which depends on `p_entity_all_existing`;
-`_derived_block`'s overlap sets feed the arc-side block aggregation
+`_block`'s overlap sets feed the arc-side block aggregation
 in `_emit_arc_unions`.
 
 The runner does not compute the order. It is encoded in the call
@@ -689,7 +689,7 @@ against `flex_data.dt` before the pivot. Empty Params take the same
 empty-frame fallback as before.
 
 The same shape-tolerance idea shows up in the loader-side
-`_node_unitsize_lf` helper (`_derived_params.py`): a node parameter
+`_node_unitsize_lf` helper (`_derived.py`): a node parameter
 authored as a Spine `Map` carries the Map's `index_name` on the data
 column, which Spine defaults to `x` rather than `period`. The helper
 treats any non-`(name, value)` column as the period axis and
@@ -729,7 +729,7 @@ timeline that HiGHS sees through `polar_high`.
 
 ## Flex-temporal decomposition
 
-`_block_layout.py` and `_derived_block.py` carry the multi-resolution
+`_block_layout.py` and `_block.py` carry the multi-resolution
 period-block layout that lets one solve run hourly power dispatch
 alongside daily hydrogen dispatch in the same LP. The public surface
 is `BlockLayout` — a dataclass produced once per solve, carrying:
@@ -855,7 +855,7 @@ small. Repeating the table from
 | You want to… | Start at | Then read |
 |---|---|---|
 | Add a constraint that uses only existing parameters | `model.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1) and list it in the `model.py` module docstring. |
-| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct_params.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model.py`. Register it in autoscale `PARAMETER_TYPES` (CLAUDE.md invariant #1). |
+| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model.py`. Register it in autoscale `PARAMETER_TYPES` (CLAUDE.md invariant #1). |
 | Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_emit_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `flex_data.py`. |
 | Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1), add them to the `model.py` module docstring, and check the LP with `tools/lp_snapshot.py`. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. Cross-link: [scaling.md](scaling.md). |
@@ -872,7 +872,7 @@ file:
 
 - **Lazy at the rim, eager at the boundary.** Internal frames are
   `pl.LazyFrame`; helpers `.collect()` once at the function boundary.
-  This is the pattern documented at the top of `_derived_params.py`
+  This is the pattern documented at the top of `_derived.py`
   and `_per_solve_sets.py`.
 - **None-skip is canonical.** A field at `None` means "feature not
   active" and is the recommended way to opt out. Empty frames mean

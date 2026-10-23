@@ -28,8 +28,8 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine import _derived_existing as de
-from flextool.engine import _derived_npv as dn
+from flextool.engine.preprocess.params import _existing as de
+from flextool.engine.preprocess.params import _npv as dn
 
 
 def _mixed_existing_source():

@@ -25,7 +25,7 @@ Fixture
 DB-direct ``p_inflation_op_full_cascade_from_source`` both see the
 same rate-0.02 source.  Built by ``tests/_gen_inflation_check.py``.
 
-Cascade algorithm (per ``flextool/engine/_derived_npv.py``):
+Cascade algorithm (per ``flextool/engine/preprocess/params/_npv.py``):
 
 For each (period d, year y in ``solve.years_represented``):
 
@@ -40,7 +40,7 @@ For the operations cascade ``offset = inflation_offset_operations``
 The fixture's offsets are at their defaults.
 
 Lifetime cascade for ``ed_entity_annual_discounted`` (per
-``flextool/_derived_params.py:5848-5885``):
+``flextool/_derived.py:5848-5885``):
 
   - annuity = invest_cost × 1000 × r / (1 - (1/(1+r))^lifetime)
   - For ``reinvest_automatic`` (default lifetime_method):
@@ -125,7 +125,7 @@ def _inv_factor(d: str) -> float:
 def _annuity(invest_cost_eur_per_kw: float,
               discount_rate: float,
               lifetime_years: float) -> float:
-    """Annuity formula per ``flextool/_derived_params.py:5487-5498``::
+    """Annuity formula per ``flextool/_derived.py:5487-5498``::
 
         ann = invest_cost × 1000 × r / (1 - (1/(1+r))^n)
 

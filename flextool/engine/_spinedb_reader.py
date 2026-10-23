@@ -1243,7 +1243,7 @@ class SpineDbReader:
                 # and the outer is silently overwritten (deepest-wins
                 # in _emit_leaf).  That loses the anchor → window
                 # mapping the synthetic per-sub-solve cascade needs
-                # (see ``_derived_params._solve_periods``).  Append a
+                # (see ``_derived._solve_periods``).  Append a
                 # depth suffix to keep both levels addressable.
                 if name in cols:
                     name = f"{name}_{depth + 1}"

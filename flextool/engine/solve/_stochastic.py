@@ -799,7 +799,7 @@ class StochasticSolver:
                 # blanket binding would also point the POST-reveal weight-0
                 # phantom self-row at d_ref, making it join the recourse
                 # lineage chain and trip the leaf-weight-constancy
-                # precondition (_derived_branch.py).  The lineage precondition
+                # precondition (_branch.py).  The lineage precondition
                 # already excludes pre-reveal anchors, so the pre-reveal trunk
                 # is safe.  A pre-reveal period has no suffixed copy of its
                 # own, so this is the only owner it can get.

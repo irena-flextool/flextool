@@ -26,7 +26,7 @@ def test_lineage_filter_error_is_valueerror():
 
 
 def test_assert_lineage_castable_raises_lineage_filter_error():
-    from flextool.engine._derived_walks import _assert_lineage_castable
+    from flextool.engine.preprocess.params._walks import _assert_lineage_castable
 
     enum_d = pl.Enum(["p2035", "p2040"])
     lineage = pl.DataFrame({
@@ -39,7 +39,7 @@ def test_assert_lineage_castable_raises_lineage_filter_error():
 
 def test_assert_recourse_preconditions_raises_lineage_filter_error(
         monkeypatch):
-    from flextool.engine import _derived_branch
+    from flextool.engine.preprocess.params import _branch as _derived_branch
 
     monkeypatch.setattr(
         _derived_branch, "check_recourse_npv_preconditions",

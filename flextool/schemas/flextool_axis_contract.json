@@ -34,7 +34,7 @@
       "source": "commodity",
       "filter": "scenario_filter",
       "column_synonyms": ["commodity"],
-      "note": "Commodity entities. WARNING: the cascade letter 'c' is overloaded — _direct_params._node_constraint_coef and _process_constraint_coef rename constraint→c (see review_notes.c_collision). Phase 1 build_axis_enums must decide whether to (a) rename the constraint column to 'cn' in those helpers or (b) split into two enums under different column names. The contract here documents the commodity vocabulary; the constraint axis is registered separately below."
+      "note": "Commodity entities. WARNING: the cascade letter 'c' is overloaded — _direct._node_constraint_coef and _process_constraint_coef rename constraint→c (see review_notes.c_collision). Phase 1 build_axis_enums must decide whether to (a) rename the constraint column to 'cn' in those helpers or (b) split into two enums under different column names. The contract here documents the commodity vocabulary; the constraint axis is registered separately below."
     },
     {
       "name": "g",
@@ -63,7 +63,7 @@
       },
       "filter": "∩ realized_periods of the active model instance",
       "column_synonyms": ["period", "d_invest", "d_divest", "d_previous", "d_upper", "d_back"],
-      "note": "FlexTool 'period' axis. Sources: keys of solve.years_represented (Map), values of solve.realized_periods (Array), keys of solve.invest_periods (Map), keys of solve.realized_invest_periods (Map). NOT 'timeline' — the earlier audit reported source=timeline but the cascade renames period→d at every reader (e.g. _derived_block.py:169/180, _derived_branch.py:150, _invest_seeds.py:80/107). The 'period' is a logical year/horizon label, distinct from the timeline (timestep grid)."
+      "note": "FlexTool 'period' axis. Sources: keys of solve.years_represented (Map), values of solve.realized_periods (Array), keys of solve.invest_periods (Map), keys of solve.realized_invest_periods (Map). NOT 'timeline' — the earlier audit reported source=timeline but the cascade renames period→d at every reader (e.g. _block.py:169/180, _branch.py:150, _invest_seeds.py:80/107). The 'period' is a logical year/horizon label, distinct from the timeline (timestep grid)."
     },
     {
       "name": "e",
@@ -90,7 +90,7 @@
         "t_upper", "t_back", "t_source", "t_sink",
         "b_first", "b_next"
       ],
-      "note": "Vocabulary = keys of timeline.timestep_duration map. Per-timeline; union across active timelines if multiple are active in the model instance. 'b_first' and 'b_next' are confusingly named — they are cardinal timestep synonyms (the FIRST timestep of a coarse block) NOT 'block' axis values; see _derived_block.py:601-625."
+      "note": "Vocabulary = keys of timeline.timestep_duration map. Per-timeline; union across active timelines if multiple are active in the model instance. 'b_first' and 'b_next' are confusingly named — they are cardinal timestep synonyms (the FIRST timestep of a coarse block) NOT 'block' axis values; see _block.py:601-625."
     },
     {
       "name": "i",
@@ -114,7 +114,7 @@
       },
       "filter": "gated by solve.include_stochastics",
       "column_synonyms": ["b"],
-      "note": "Stochastic branch labels. The cascade column is 'b' (renamed from 'branch' in _derived_branch.py:150). WARNING: 'b' is overloaded — _derived_block.py / _block_layout.py also use 'b' for the BLOCK axis (see 'block' axis below). The two never appear in the same frame, but Phase 1 must decide on a disambiguation (e.g. rename block→bk in block helpers, or rename branch→br). See review_notes.b_collision. Empty enum is valid (deterministic runs)."
+      "note": "Stochastic branch labels. The cascade column is 'b' (renamed from 'branch' in _branch.py:150). WARNING: 'b' is overloaded — _block.py / _block_layout.py also use 'b' for the BLOCK axis (see 'block' axis below). The two never appear in the same frame, but Phase 1 must decide on a disambiguation (e.g. rename block→bk in block helpers, or rename branch→br). See review_notes.b_collision. Empty enum is valid (deterministic runs)."
     },
     {
       "name": "block",
@@ -129,7 +129,7 @@
       "filter": "active blocks for the solve (includes synthetic DEFAULT_BLOCK)",
       "column_synonyms": ["bk"],
       "tokens_default_extension": ["default"],
-      "note": "Block names are derived in _block_layout.py from 'group' entities that carry a new_stepduration parameter, plus a synthetic DEFAULT_BLOCK fallback. Vocabulary = group names participating as resolution blocks ∪ {DEFAULT_BLOCK}. Phase 1 resolved the b_collision review note by renaming the cascade column from 'b' to 'bk' in _derived_block.py / _block_layout.py / flex_data.py block-aware filters. The companion 'b_f' (block-fine) column also carries block vocabulary but is a distinct column name and does not collide."
+      "note": "Block names are derived in _block_layout.py from 'group' entities that carry a new_stepduration parameter, plus a synthetic DEFAULT_BLOCK fallback. Vocabulary = group names participating as resolution blocks ∪ {DEFAULT_BLOCK}. Phase 1 resolved the b_collision review note by renaming the cascade column from 'b' to 'bk' in _block.py / _block_layout.py / flex_data.py block-aware filters. The companion 'b_f' (block-fine) column also carries block vocabulary but is a distinct column name and does not collide."
     },
     {
       "name": "r",
@@ -155,7 +155,7 @@
       "source": "constraint",
       "filter": "scenario_filter",
       "column_synonyms": ["cn"],
-      "note": "User-defined constraints. Phase 1 resolved the c-collision review note by renaming the constraint column from 'c' to 'cn' across _direct_params, _projection_params, flex_data.py (_load_user_constraints), _derived_params (p_flow_constraint_coef_from_source) and model.py. The constraint axis now lives under the 'cn' column name and never collides with the commodity 'c' column."
+      "note": "User-defined constraints. Phase 1 resolved the c-collision review note by renaming the constraint column from 'c' to 'cn' across _direct, _projection, flex_data.py (_load_user_constraints), _derived (p_flow_constraint_coef_from_source) and model.py. The constraint axis now lives under the 'cn' column name and never collides with the commodity 'c' column."
     },
     {
       "name": "d_anchor",
@@ -175,7 +175,7 @@
       "source": null,
       "tokens": ["source", "sink"],
       "filter": null,
-      "note": "Fixed pair. Substrate token introduced in cascade helpers (e.g. _derived_params.py and _writer_leaf_sets) when pivoting node/process membership by side."
+      "note": "Fixed pair. Substrate token introduced in cascade helpers (e.g. _derived.py and _writer_leaf_sets) when pivoting node/process membership by side."
     },
     {
       "name": "klass",
@@ -184,7 +184,7 @@
       "source": null,
       "tokens": ["unit", "connection"],
       "filter": null,
-      "note": "Fixed pair, mirrors the two entity classes that compose 'process'. Introduced in _derived_params.py efficiency-method derivation when tagging rows by their underlying process class."
+      "note": "Fixed pair, mirrors the two entity classes that compose 'process'. Introduced in _derived.py efficiency-method derivation when tagging rows by their underlying process class."
     }
   ],
   "synthetic_token_allowlist": [
@@ -197,7 +197,7 @@
     {
       "axis": "block",
       "tokens": ["default"],
-      "introduced_by": "flextool/engine/_block_layout.py DEFAULT_BLOCK",
+      "introduced_by": "flextool/engine/preprocess/params/_block_layout.py DEFAULT_BLOCK",
       "note": "Synthetic fallback block name assigned to nodes/processes that lack an explicit resolution group."
     }
   ],
@@ -224,10 +224,10 @@
   "_review_notes": [
     {
       "id": "c_collision",
-      "summary": "The cascade letter 'c' is used both for commodity (the commodity entity-class axis) and for constraint (in _direct_params._node_constraint_coef / _process_constraint_coef where the 'constraint' column is renamed to 'c').",
+      "summary": "The cascade letter 'c' is used both for commodity (the commodity entity-class axis) and for constraint (in _direct._node_constraint_coef / _process_constraint_coef where the 'constraint' column is renamed to 'c').",
       "code_sites": [
-        "flextool/engine/_direct_params.py:285",
-        "flextool/engine/_direct_params.py:306",
+        "flextool/engine/preprocess/params/_direct.py:285",
+        "flextool/engine/preprocess/params/_direct.py:306",
         "flextool/engine/preprocess/flex_data.py:1547",
         "flextool/engine/preprocess/flex_data.py:1564"
       ],
@@ -237,15 +237,15 @@
         "(c) Promote 'cn' as the canonical constraint column and update the rename helpers."
       ],
       "recommendation_for_phase_1": "Pick option (a). The two helpers are the only sites; renaming there keeps build_axis_enums simple (one enum per column name).",
-      "resolution": "Phase 1 landed option (a): the constraint column is now 'cn' across the cascade (_direct_params, _projection_params.cdt_filter, flex_data.py:_load_user_constraints, _derived_params.p_flow_constraint_coef_from_source, model.py user-constraint emission). The constraint axis 'column_synonyms' field reflects the new name."
+      "resolution": "Phase 1 landed option (a): the constraint column is now 'cn' across the cascade (_direct, _projection.cdt_filter, flex_data.py:_load_user_constraints, _derived.p_flow_constraint_coef_from_source, model.py user-constraint emission). The constraint axis 'column_synonyms' field reflects the new name."
     },
     {
       "id": "b_collision",
-      "summary": "The cascade letter 'b' is used both for stochastic branch (in _derived_branch.py) and for block (in _derived_block.py / _block_layout.py). Both are derived axes with distinct vocabularies. No frame holds both at once, but Phase 1 must disambiguate to keep one enum-per-column-name in build_axis_enums.",
+      "summary": "The cascade letter 'b' is used both for stochastic branch (in _branch.py) and for block (in _block.py / _block_layout.py). Both are derived axes with distinct vocabularies. No frame holds both at once, but Phase 1 must disambiguate to keep one enum-per-column-name in build_axis_enums.",
       "code_sites": [
-        "flextool/engine/_derived_branch.py:138, 150, 155, 177, 182, 191, 201",
-        "flextool/engine/_derived_block.py:140, 165, 176",
-        "flextool/engine/_block_layout.py:1435"
+        "flextool/engine/preprocess/params/_branch.py:138, 150, 155, 177, 182, 191, 201",
+        "flextool/engine/preprocess/params/_block.py:140, 165, 176",
+        "flextool/engine/preprocess/params/_block_layout.py:1435"
       ],
       "options": [
         "(a) Rename block→'bk' and keep branch→'b'.",
@@ -253,7 +253,7 @@
         "(c) Schema-aware cast helper that picks the right enum based on the surrounding columns ((d, b, w) → branch, (n, b) → block)."
       ],
       "recommendation_for_phase_1": "Pick option (a) (rename block→'bk'). branch is far more pervasive in stochastic-aware code; block is contained to ~4 modules and easier to rename.",
-      "resolution": "Phase 1 landed option (a). The block-axis column is now 'bk' in BlockBundle properties (entity_block_lf, block_period_time_first_lf, block_period_time_last_lf), in block_compat() and in the block-aware flow_to_n / flow_from_n filters in flex_data.py and _derived_block.py. The branch column remains 'b'."
+      "resolution": "Phase 1 landed option (a). The block-axis column is now 'bk' in BlockBundle properties (entity_block_lf, block_period_time_first_lf, block_period_time_last_lf), in block_compat() and in the block-aware flow_to_n / flow_from_n filters in flex_data.py and _block.py. The branch column remains 'b'."
     },
     {
       "id": "i_axis_depth",
@@ -272,9 +272,9 @@
       "id": "d_axis_source",
       "summary": "The original audit reported axis 'd' source=timeline. Verification in the cascade (renames 'period'→'d' at many sites; no timeline-name lookup) shows 'd' is the PERIOD axis, not timeline. Sourced from solve.years_represented keys, solve.realized_periods array, solve.invest_periods keys, solve.realized_invest_periods keys.",
       "code_sites": [
-        "flextool/engine/_derived_block.py:169",
-        "flextool/engine/_derived_block.py:180",
-        "flextool/engine/_derived_branch.py:150",
+        "flextool/engine/preprocess/params/_block.py:169",
+        "flextool/engine/preprocess/params/_block.py:180",
+        "flextool/engine/preprocess/params/_branch.py:150",
         "flextool/engine/preprocess/_invest_seeds.py:80",
         "flextool/engine/preprocess/_invest_seeds.py:107"
       ],

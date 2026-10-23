@@ -359,7 +359,7 @@ flowchart LR
     I --> J[block-aware _emit_*.py]
 ```
 
-`BlockBundle` (in `_derived_block.py`) wraps the `BlockLayout` with
+`BlockBundle` (in `_block.py`) wraps the `BlockLayout` with
 cached lazy-frame join helpers (`block_compat_frame`,
 `process_side_block_lf`, …) that the `_emit_*` modules use to filter and
 re-project their rows.
@@ -375,7 +375,7 @@ variables onto coarse-block constraints (and vice versa).
 Concretely, when a coarse-block (e.g. daily hydrogen) node balance
 joins an hourly arc, the hourly `v_flow` rows are aggregated to the
 daily key via `arc_sink_block_dt` / `arc_source_block_dt`
-(`_derived_block.py`), weighted by `block_step_duration`. The other
+(`_block.py`), weighted by `block_step_duration`. The other
 direction — a fine-block constraint reading a coarse-block variable —
 projects the coarse value onto each fine step at fraction 1
 (piecewise-constant).

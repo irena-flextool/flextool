@@ -47,7 +47,7 @@ import polars as pl
 import pytest
 
 from flextool.engine import InMemoryReader, SpineDbReader, load_flextool
-from flextool.engine import _direct_params as dp
+from flextool.engine.preprocess.params import _direct as dp
 from polar_high import Param
 
 
@@ -437,8 +437,8 @@ def test_load_flextool_with_db_reader_solves_correctly(scenario_workdir):
 # a "None-default" policy: spinedb_schema.json carries
 # ``default_value = None`` for every such row, and consumers fall back
 # to the engine's hard-coded substitute at read time (see
-# ``_scalar_default`` in _derived_params.py and the min_load comment in
-# _projection_params.py:1101).  Regression here would mean a vendored
+# ``_scalar_default`` in _derived.py and the min_load comment in
+# _projection.py:1101).  Regression here would mean a vendored
 # JSON drifted *to* a non-None default — silently bypassing the
 # engine-side fallback and breaking the contract that the schema only
 # declares user-overridable defaults.

@@ -67,12 +67,12 @@ def _reset_global_axis_enums():
 def _reset_recourse_walk_scope():
     """Reset the recourse walker process-globals before/after each test.
 
-    :func:`._derived_params._enter_recourse_anchor_scope` arms three
+    :func:`._derived._enter_recourse_anchor_scope` arms three
     module-globals for the active solve — the recourse anchor-pairs holder
     and the boundary-scoped walker Provider + workdir (Slice D α-1).  A real
     recourse solve leaves them ARMED when it finishes; in production the next
     solve's cascade clears them (``flex_data._apply_db_overrides`` calls
-    :func:`._derived_params._reset_recourse_scope` first — the F1 guarantee).
+    :func:`._derived._reset_recourse_scope` first — the F1 guarantee).
 
     A solver-free unit test that calls ``period_walk_iterator`` /
     ``commissioning_year_lf`` directly never runs that cascade, so without
@@ -84,7 +84,7 @@ def _reset_recourse_walk_scope():
     to give every test the same clean slate the F1 cascade guarantees a real
     solve.
     """
-    from flextool.engine import _derived_params as _drv
+    from flextool.engine.preprocess.params import _derived as _drv
     _drv._reset_recourse_scope()
     yield
     _drv._reset_recourse_scope()

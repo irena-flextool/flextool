@@ -212,7 +212,7 @@ class _StubSource:
     ({"a": 3.0, "b": 1.0}, {"a": 0.2, "b": 0.3}, 3.0 * 0.2 + 1.0 * 0.3),
 ])
 def test_fuel_width_greedy(conv, capcoef, expected) -> None:
-    from flextool.engine._derived_params import _indirect_fuel_width_lf
+    from flextool.engine.preprocess.params._derived import _indirect_fuel_width_lf
 
     got = dict(_indirect_fuel_width_lf(_StubSource(conv, capcoef))
                .with_columns(pl.col("p").cast(pl.Utf8)).collect()

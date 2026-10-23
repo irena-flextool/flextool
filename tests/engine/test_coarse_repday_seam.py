@@ -24,7 +24,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine._derived_params import (
+from flextool.engine.preprocess.params._derived import (
     _fine_rank_map,
     _guard_coarse_blocks_within_repday,
     _repday_segment_map,

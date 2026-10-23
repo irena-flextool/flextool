@@ -19,7 +19,7 @@ The authoritative caller is :func:`derive_per_solve_aggregates`
 which returns a typed :class:`PerSolveAggregates` dataclass.  A
 downstream consumer benefits:
 
-* :mod:`flextool.engine._derived_params` —
+* :mod:`flextool.engine.preprocess.params._derived` —
   ``_dt_period_active_steps_from_workdir`` can fall through to native
   derivation when the workdir CSVs are absent.
 

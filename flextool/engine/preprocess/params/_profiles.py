@@ -48,7 +48,7 @@ Architectural notes
 -------------------
 
 * **Drop the ``_check_canonical_keys`` predicate.**  The Δ.6 close
-  stanza identified ``_derived_params.py:p_profile_value_from_source``
+  stanza identified ``_derived.py:p_profile_value_from_source``
   as guarding against non-canonical Map keys (``x``/``i`` from
   zero-``index_name`` Spine values) by returning ``None`` and falling
   back to the CSV path.  Cluster C drops the predicate: the stochastic
@@ -835,7 +835,7 @@ def p_profile_value_from_source_v2(source: "InputSource",
                                           provider: "object | None" = None,
                                           ) -> Param | None:
     """Δ.7 lazy port replacement for
-    ``_derived_params.p_profile_value_from_source``.
+    ``_derived.p_profile_value_from_source``.
 
     Returns ``Param(("f", "d", "t"), frame)`` or ``None`` when the
     cascade produces no rows (no profiles in the source, or all

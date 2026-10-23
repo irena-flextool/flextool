@@ -4,7 +4,7 @@ constraint support across every authored shape.
 Background (the bug this pins):
 
 The instant-flow obligation's constraint *support* used to be built by a
-separate raw-source projection (``_projection_params.gdt_*InstantFlow``)
+separate raw-source projection (``_projection.gdt_*InstantFlow``)
 that detected the index axis by column name:
 
 * ``if "period" in df.columns`` — silently returned an EMPTY support for
@@ -162,7 +162,7 @@ def _period_filter() -> pl.DataFrame:
 
 
 def _resolve_and_support(stub) -> pl.DataFrame:
-    import flextool.engine._direct_params as dp
+    import flextool.engine.preprocess.params._direct as dp
     pf = _period_filter()
     cap = dp.pdt_min_instant_flow_from_source(stub, period_filter=pf)
     assert cap is not None, (
@@ -298,7 +298,7 @@ class _MixedShapeFlowGroupStub:
 def _mixed_min_instant_flow_param():
     """Resolve the mixed-authoring ``pdt_min_instant_flow`` cap over a
     2-period × 2-timestep grid and return (Param, dt_grid)."""
-    import flextool.engine._direct_params as dp
+    import flextool.engine.preprocess.params._direct as dp
     pf = _period_filter()
     stub = _MixedShapeFlowGroupStub(
         period_maps={

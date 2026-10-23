@@ -286,7 +286,7 @@ def test_nodeBalancePeriod_excludes_nodeState_nodes():
 # SINK side (``flow_to_n`` into N) + inflow only, so they never exercise
 # the ``source_eff`` / ``source_noEff`` terms of ``nodeBalancePeriod_eq``.
 # That gap let a real bug ship: the cascade producer
-# (``_derived_params.apply_derived_b``) seeded ``flow_from_nodeBalance_eff``
+# (``_derived.apply_derived_b``) seeded ``flow_from_nodeBalance_eff``
 # from ``nodeBalance`` ALONE, dropping every ``balance_within_period`` node,
 # so a period node that is the SOURCE on an arc (e.g. Rivendell GAS → gas
 # plant) had NO source term in its period row → the constraint was VACUOUS

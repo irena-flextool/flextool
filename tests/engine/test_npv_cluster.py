@@ -1,9 +1,9 @@
 """Δ.5 — Cluster A (annual integration / NPV) parity tests.
 
 Per-fixture parity check that the new lazy-polars NPV helpers in
-``flextool.engine._derived_npv`` produce frame-equal output
+``flextool.engine.preprocess.params._npv`` produce frame-equal output
 (modulo column ordering) vs the eager ``ed_entity_annual_family_from_source``
-helper in ``flextool.engine._derived_params`` — which itself is
+helper in ``flextool.engine.preprocess.params._derived`` — which itself is
 parity-clean against flextool's CSV-side reference output (gated by
 ``test_db_direct_inflation_2pct``).
 
@@ -34,8 +34,8 @@ from flextool.engine import (
     SpineDbReader,
     load_flextool,
 )
-from flextool.engine import _derived_npv as npv
-from flextool.engine._derived_params import (
+from flextool.engine.preprocess.params import _npv as npv
+from flextool.engine.preprocess.params._derived import (
     _read_active_solve,
     _solve_periods,
     _period_in_use_set,

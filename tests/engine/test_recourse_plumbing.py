@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from flextool.engine._derived_params import (
+from flextool.engine.preprocess.params._derived import (
     _has_branch_invest_axis,
     _recourse_invest_active,
 )

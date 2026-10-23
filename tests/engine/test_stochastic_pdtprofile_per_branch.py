@@ -21,7 +21,7 @@ every branch's wind cap was identical.
 polar_high's posture
 ----------------
 polar_high reads ``solve_data/pdtProfile.csv`` directly via its CSV path
-(stochastic 3d_map detection in ``_derived_params.py:p_profile_value``
+(stochastic 3d_map detection in ``_derived.py:p_profile_value``
 explicitly defers to CSV when the source returns generic ``x`` / ``i``
 keys — see progress.md §3.6.1).  So polar_high is immune to the bug at the
 helper level — but inherits a buggy ``pdtProfile.csv`` if a fixture

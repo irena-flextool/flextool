@@ -49,7 +49,7 @@ Architecture invariants (per the Δ.10 hand-off):
 
 The cluster F existing helpers (``p_slope``, ``p_section``,
 ``p_flow_upper_existing``, ``p_state_upper``, ``p_process_existing_count``)
-remain in :mod:`._derived_params`; this module hosts only the new Δ.10
+remain in :mod:`._derived`; this module hosts only the new Δ.10
 helpers — verification of the existing helpers is a code-review pass,
 not a re-port.
 """
@@ -69,7 +69,7 @@ from flextool.engine._axis_enums import (
     rename_to_axis,
 )
 
-from flextool.engine._derived_params import (
+from flextool.engine.preprocess.params._derived import (
     UNITSIZE_DEFAULT,
     _entity_unitsize_lf,
     _node_unitsize_lf,
@@ -156,7 +156,7 @@ def p_unitsize_from_source(source: "InputSource",
                   OR existing       (if explicitly set non-zero)
                   OR 1000.0
 
-    Already lazified in :func:`._derived_params._entity_unitsize_lf`
+    Already lazified in :func:`._derived._entity_unitsize_lf`
     (cluster B/C primitive); we project the cascade onto the processes in
     *pss*.  Returns ``None`` only when *pss* is empty — for a non-empty
     *pss* the result is COMPLETE (every process covered, uncovered ones
@@ -192,7 +192,7 @@ def p_state_unitsize_from_source(source: "InputSource",
 
         state_us_long = unitsize_long.filter(n ∈ nodeState["n"])
 
-    Uses the canonical :func:`._derived_params._node_unitsize_lf`
+    Uses the canonical :func:`._derived._node_unitsize_lf`
     cascade.  Returns ``None`` only when *nodeState_df* is empty — for a
     non-empty *nodeState_df* the result is COMPLETE (every node covered,
     uncovered ones defaulted to :data:`UNITSIZE_DEFAULT`), because the

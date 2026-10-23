@@ -278,7 +278,7 @@ Regenerated all 5 CSVs (`costs__dt.csv`, `costs_discounted.csv`,
 `node_state__dt.csv`, `unit__outputNode__dt.csv`, `unit_capacity__d.csv`)
 for all 3 nested scenarios after these engine + post-process fixes:
 
-1. `flextool/engine_polars/_derived_profile.py` — `_profile_time_lf` now
+1. `flextool/engine_polars/_profiles.py` — `_profile_time_lf` now
    reads per-solve `solve_data/pt_profile.csv` (averaged values) when a
    workdir is available, falling back to the spine source only if the
    CSV is missing. Previously read raw hourly profile and inner-joined
@@ -288,7 +288,7 @@ for all 3 nested scenarios after these engine + post-process fixes:
    (0.38 vs 0.54875 for t0001 in 24h-sampled invest_24h), driving wind
    capacity to 814 MW vs 288.83 MW.
 
-2. `flextool/engine_polars/_derived_params.py` — `_dt_period_active_steps`
+2. `flextool/engine_polars/_derived.py` — `_dt_period_active_steps`
    now prefers `_dt_period_active_steps_from_workdir` (reads
    `steps_in_use.csv`) over the spine source path. The spine source
    expands timesets against the raw hourly timeline duration, ignoring

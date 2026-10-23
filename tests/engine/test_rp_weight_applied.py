@@ -13,7 +13,7 @@ differing ONLY in their RP weight values (see
 * ``lh2_three_region_rp_invest_uniform``— 0.5/0.5, 0.5/0.5 (w≡1)
 
 These pin the RP-weight engine fix
-(``_derived_params.p_timestep_weight_from_source`` returns ``None`` on the
+(``_derived.p_timestep_weight_from_source`` returns ``None`` on the
 RP-only branch so the folded ``solve_data/timestep_weight.csv`` value
 survives the guarded call site at ``apply_derived_a``):
 

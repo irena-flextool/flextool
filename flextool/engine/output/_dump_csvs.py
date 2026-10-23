@@ -550,7 +550,7 @@ _PDT_NODE_SLICES = {
 _PDT_PROCESS_SLICES = {
     "availability": "p_process_availability",
     # ``p_min_load`` is a shape-correct (p, d, t) Param (produced by
-    # ``_derived_params.apply_derived_b``), so it dumps to the period+time
+    # ``_derived.apply_derived_b``), so it dumps to the period+time
     # keyed ``pdtProcess.csv`` — not the scalar ``p_process.csv`` — mirroring
     # ``availability``.  See ``specs/fix_map_reading.md`` §5.
     "min_load": "p_min_load",

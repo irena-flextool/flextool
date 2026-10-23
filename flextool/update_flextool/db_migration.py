@@ -5575,13 +5575,13 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
 
     * ``model.inflation_offset_investment`` — current default ``1.0``,
       patched to ``0.0`` to match the engine fallback in
-      :func:`flextool.engine._derived_npv._inflation_scalars`
+      :func:`flextool.engine.preprocess.params._npv._inflation_scalars`
       (line 355) and the symmetric fallback in ``_emit_period_calc.py``
       (line 295).
 
     * ``commodity.unitsize`` — current default ``1.0``, patched to
       ``None``.  The engine reads via
-      :func:`flextool.engine._direct_params.p_commodity_unitsize_from_source`
+      :func:`flextool.engine.preprocess.params._direct.p_commodity_unitsize_from_source`
       (``_entity_scalar_explicit``) so the schema default is dropped;
       the price-ladder consumer in
       :func:`flextool.engine._commodity_ladder._commodity_unitsize_param`
@@ -5603,7 +5603,7 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
       same two classes already carry ``null, null``.
 
     * ``reserve__upDown__group.penalty_reserve`` — currently ``5000.0``.
-      :func:`flextool.engine._direct_params.p_reserve_upDown_group_penalty_reserve_from_source`
+      :func:`flextool.engine.preprocess.params._direct.p_reserve_upDown_group_penalty_reserve_from_source`
       reads via ``parameter_explicit`` and drops the broadcast default
       on the floor (the function's own docstring claims "None default
       — explicit rows only").  Soft-reserve violations enter the
@@ -5614,12 +5614,12 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
 
     * ``reserve__upDown__connection__node.max_share`` — currently
       ``0.0``.  The consumer
-      :func:`flextool.engine._direct_params._process_reserve_node_param`
+      :func:`flextool.engine.preprocess.params._direct._process_reserve_node_param`
       also uses ``parameter_explicit``; the sister row on
       ``reserve__upDown__unit__node`` already has ``null, null``.
 
     * ``node.storage_state_start`` — currently ``0.0``.
-      :func:`flextool.engine._direct_params.p_state_start_from_source`
+      :func:`flextool.engine.preprocess.params._direct.p_state_start_from_source`
       reads explicit rows only; the docstring already claims
       "Default ``None`` (schema).".  If the schema default were
       actually honoured every storage node would be force-pinned to

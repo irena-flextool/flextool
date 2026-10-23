@@ -1254,7 +1254,7 @@ def read_parameters(
     # ─── Per-(solve, period) scalar params ──────────────────────────────────
     # years_from_start_d / years_represented_d — Series.  FlexData
     # carries ``p_years_represented_d`` (Param, (d,) → R width sum;
-    # populated by ``_derived_params.apply_derived_a`` from
+    # populated by ``_derived.apply_derived_a`` from
     # ``solve.years_represented``).  ``years_from_start_d`` is still
     # defaulted to 0.0 (used only for divest carry-forward; the active
     # divest cascade uses ``edd_divest_active`` directly).

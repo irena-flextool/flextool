@@ -2,7 +2,7 @@
 ``specs/step05_continuation_fanout_design.md`` §5.5).
 
 ``make_step_jump`` (``_timeline.py``) and ``dtttdt_from_source``
-(``_derived_params.py``) must share the same cross-period wrap
+(``_derived.py``) must share the same cross-period wrap
 semantics.  Byte-parity for pre-existing shapes is enforced with
 hard-coded literals CAPTURED FROM PRE-CHANGE HEAD (main 643a8fb8):
 the deterministic 2-period and single-period stochastic rows below are
@@ -19,7 +19,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine._derived_params import dtttdt_from_source
+from flextool.engine.preprocess.params._derived import dtttdt_from_source
 from flextool.engine._solve_state import ActiveTimeEntry
 from flextool.engine._timeline import make_step_jump
 

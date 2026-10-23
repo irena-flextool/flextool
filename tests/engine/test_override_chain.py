@@ -98,7 +98,7 @@ def test_p_timestep_weight_non_trivial_on_base_weighted(
     Without the Γ.8.E wire-up the helper returns the trivial 1.0
     default and the LP reproduces only by coincidence.
     """
-    from flextool.engine._derived_params import (
+    from flextool.engine.preprocess.params._derived import (
         p_timestep_weight_from_source,
     )
     work = scenario_workdir("base_weighted")
@@ -122,7 +122,7 @@ def test_p_inflation_op_uses_years_represented(scenario_workdir) -> None:
     key the DB parameter on the parent solve name; the helper must
     fall back via stripping ``_roll_<N>``.
     """
-    from flextool.engine._derived_params import (
+    from flextool.engine.preprocess.params._derived import (
         p_inflation_op_from_source,
     )
     work = scenario_workdir("fullYear_roll")

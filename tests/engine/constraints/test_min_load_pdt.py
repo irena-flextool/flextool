@@ -2,14 +2,14 @@
 
 Background (``specs/fix_map_reading.md`` §5): ``p_min_load`` used to be a
 ``(p,)`` Direct Param whose scalar helper
-(``_direct_params._entity_scalar_explicit``) did ``.select(dim, "value")`` and
+(``_direct._entity_scalar_explicit``) did ``.select(dim, "value")`` and
 **dropped the Map index column**.  A period Map ``{p1: 0.4, p2: 0.3}`` then
 unrolled to two ``(unit, value)`` rows for the same unit, and polar_high
 **summed** the duplicate ``(p)`` keys in the ``minFlow_minload`` constraint
 (``model.py``) — producing a floor of 0.7 in *every* period.
 
 The fix routes ``p_min_load`` through the efficiency shape resolver
-(``_derived_params.p_min_load_pdt_from_source`` → ``_eff_param_to_pdt``) so it
+(``_derived.p_min_load_pdt_from_source`` → ``_eff_param_to_pdt``) so it
 becomes a shape-correct ``(p, d, t)`` Param, exactly like ``p_slope`` /
 ``p_section`` already are.
 
@@ -31,7 +31,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine import build_flextool, InMemoryReader
-from flextool.engine import _derived_params as drv
+from flextool.engine.preprocess.params import _derived as drv
 from flextool.engine.preprocess.flex_data import FlexData
 
 from .conftest import solver_options

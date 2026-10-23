@@ -3130,7 +3130,7 @@ def _max_flow_rhs(d, inv_procs: "pl.DataFrame | None" = None,
                 "indirect-unit input arcs: "
                 f"{sorted(map(str, inputs.get_column('p').unique().to_list()))}."
                 " It is produced with p_flow_upper by the input cascade "
-                "(_derived_params.p_indirect_input_cap_from_source / "
+                "(_derived.p_indirect_input_cap_from_source / "
                 "wire_arc_capacity_params).")
         in_lf = _with_existing(_utf8_keys(
             inputs.join(d.dt, how="cross").lazy(), keys))

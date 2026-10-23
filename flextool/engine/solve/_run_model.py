@@ -499,7 +499,7 @@ def native_run_model(state, solver) -> int:
     # deterministic and drops ``stochastic_branches``, so the stochastic
     # pass above leaves its ``solve_branch__time_branch_lists`` EMPTY.  The
     # per-solve folds that collapse a stochastic 3d_map
-    # ``(branch, time_start, time) -> (d, t)`` — ``_derived_profile``'s
+    # ``(branch, time_start, time) -> (d, t)`` — ``_profiles``'s
     # ``_profile_stochastic_lf`` and ``_pdt_lookup.PdtLookup.get`` — then
     # find no branch rows, drop the 3d_map, and the zero-fallback fills 0
     # (wind -> 0 -> garbage).  Re-populate the sibling's branch rows from
@@ -1069,7 +1069,7 @@ def native_run_model(state, solver) -> int:
         # (Phase 4.1e).  The legacy shutil.copy archive path and the
         # in-memory carrier fallback that wrote to the now-dead
         # ``solve_data/fix_storage_*`` Provider keys have been deleted;
-        # all downstream consumers (flex_data.py, _derived_params.py,
+        # all downstream consumers (flex_data.py, _derived.py,
         # _emit_arc_unions.py, _emit_per_solve.py) consult ``handoff/*``.
 
         solve_writers.emit_solve_status(

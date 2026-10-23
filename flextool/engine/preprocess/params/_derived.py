@@ -77,7 +77,7 @@ def _load_block_layout_with_seed(workdir, provider):
        ``workdir/solve_data`` internally.
     3. Neither available → ``None``.
     """
-    from flextool.engine._block_layout import BlockLayout
+    from flextool.engine.preprocess.params._block_layout import BlockLayout
     if provider is None and workdir is None:
         return None
     from pathlib import Path
@@ -332,7 +332,7 @@ def _anchor_expand_explicit(explicit_lf: pl.LazyFrame) -> pl.LazyFrame:
     each token is in-vocab), and every inherited branch (``br``) token is
     covered by the 4.0.4 vocabulary splice; a nulled token therefore
     signals a wiring bug and is hard-raised (mirroring
-    :func:`._derived_branch.d_leaf_lf`) rather than silently dropped.
+    :func:`._branch.d_leaf_lf`) rather than silently dropped.
     """
     pairs = _RECOURSE_ANCHOR_PAIRS
     if pairs is None or pairs.height == 0:
@@ -399,7 +399,7 @@ _enums: "dict | None" = None
 # 1000.0 fallback lives only in flextool's preprocessing
 # (``entity_period_calc_params.py``).  Defined here so the cascade tails
 # (:func:`_entity_unitsize_lf` / :func:`_node_unitsize_lf`) and the
-# structural-completeness projection (``_derived_arithmetic._unitsize_complete``)
+# structural-completeness projection (``_arithmetic._unitsize_complete``)
 # share ONE source of truth and cannot drift.
 UNITSIZE_DEFAULT = 1000.0
 
@@ -414,7 +414,7 @@ _ENTITY_UNITSIZE_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary(
 _NODE_UNITSIZE_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 if TYPE_CHECKING:
-    from flextool.engine._block_layout import BlockLayout
+    from flextool.engine.preprocess.params._block_layout import BlockLayout
     from flextool.engine._input_source import InputSource
     from flextool.engine.preprocess._solve_context import SolveContext
 
@@ -427,7 +427,7 @@ if TYPE_CHECKING:
 def _try_param(source: "InputSource", entity_class: str,
                 parameter_name: str) -> pl.DataFrame | None:
     """Return ``source.parameter(...)`` or ``None`` if class unknown /
-    parameter unknown / empty.  Mirrors ``_projection_params._try_param``.
+    parameter unknown / empty.  Mirrors ``_projection._try_param``.
     """
     try:
         df = source.parameter(entity_class, parameter_name)
@@ -1171,7 +1171,7 @@ def pd_branch_weight_from_source(
     .mod's ``param pd_branch_weight`` default).
 
     For stochastic fixtures it is SUPERSEDED downstream: ``apply_derived_g``
-    calls ``_derived_branch.apply_branch_cluster``, whose
+    calls ``_branch.apply_branch_cluster``, whose
     ``pd_branch_weight_lf`` reads ``solve_branch_weight`` /
     ``period__branch`` and writes the real sibling-normalised weights
     (each branch's input weight divided by the sum across siblings that
@@ -1203,7 +1203,7 @@ def pdt_branch_weight_from_source(
     baseline; it is the final value only for deterministic / non-stochastic
     fixtures.  For stochastic fixtures it is SUPERSEDED by the real
     sibling-normalised weights computed in ``apply_derived_g``
-    (``_derived_branch.apply_branch_cluster`` → ``pdt_branch_weight_lf``).
+    (``_branch.apply_branch_cluster`` → ``pdt_branch_weight_lf``).
     """
     if dt is None:
         return None
@@ -1517,7 +1517,7 @@ def p_profile_value_from_source(
         # Stochastic 3d_map (named branch column) — deferred.
         return None
     # Δ.7: dropped the ``_check_canonical_keys`` predicate (per the
-    # Δ.6 close-stanza TODO #5).  The Δ.7 ``_derived_profile`` module
+    # Δ.6 close-stanza TODO #5).  The Δ.7 ``_profiles`` module
     # owns the canonical cascade; this legacy helper is preserved as a
     # ``parameter()``-only fast path that handles the deterministic
     # period/t/scalar cases via column-name detection (still useful as
@@ -1748,13 +1748,13 @@ def apply_derived_a(
         flex_data.p_process_existing_count = ec
 
     # 8. p_profile_value (Δ.7 cluster C — profile cascade) ------------
-    # Δ.7 lifts the helper into ``_derived_profile.apply_profile_cascade``
+    # Δ.7 lifts the helper into ``_profiles.apply_profile_cascade``
     # — the new module ports flextool's full 5-branch cascade lazily and
     # drops the Δ.5/Δ.6 canonical-keys gate.  We delegate here so the
     # apply_derived_a entry stays the single integration point.
     # Δ.12b: defensive try/except removed — apply_profile_cascade is
     # parity-bound (cluster C tests gate it).
-    from flextool.engine._derived_profile import apply_profile_cascade
+    from flextool.engine.preprocess.params._profiles import apply_profile_cascade
     apply_profile_cascade(flex_data, source, workdir, provider=provider)
 
     # 9. p_penalty_up / p_penalty_down (Δ.10 cluster F) ----------------
@@ -1763,7 +1763,7 @@ def apply_derived_a(
     # (the slice from ``pdtNode.csv``).
     # Δ.12b: unconditional — penalty helpers always produce a Param
     # when nodeBalance is non-empty (sentinel default applied inside).
-    from flextool.engine._derived_arithmetic import (
+    from flextool.engine.preprocess.params._arithmetic import (
         p_penalty_up_from_source,
         p_penalty_down_from_source,
     )
@@ -2933,7 +2933,7 @@ def p_min_load_pdt_from_source(source: "InputSource",
     the same path the efficiency-curve ``p_slope`` / ``p_section`` already use)
     so a period / time / period-time ``Map`` keeps its per-(d, t) semantics.
 
-    This replaces the old ``(p,)`` direct param (``_direct_params``
+    This replaces the old ``(p,)`` direct param (``_direct``
     ``p_min_load_from_source`` → ``_entity_scalar_explicit``) whose
     ``.select(dim, "value")`` dropped the Map index column: a Map min_load
     then yielded one ``(unit, value)`` row per key, and polar_high **summed**
@@ -3048,7 +3048,7 @@ def apply_derived_b(
     # Δ.12b: bundle load failure is non-fatal (workdir without block
     # CSVs => no block filtering).  Helper exceptions propagate.
     if pss_frame is not None and pss_frame.height > 0:
-        from flextool.engine._derived_block import (
+        from flextool.engine.preprocess.params._block import (
             flow_to_n_block_filtered,
             flow_from_n_block_filtered,
             flow_from_nodeBalance_seed,
@@ -3176,7 +3176,7 @@ def apply_derived_b(
     # ``unitsize_long.filter(p ∈ pss["p"].unique())``.
     # Δ.12b: unconditional when pss is non-empty.
     if pss_frame is not None and pss_frame.height > 0:
-        from flextool.engine._derived_arithmetic import p_unitsize_from_source
+        from flextool.engine.preprocess.params._arithmetic import p_unitsize_from_source
         flex_data.p_unitsize = p_unitsize_from_source(source, pss_frame)
 
     # ─── §F.1b p_all_entity_unitsize  (scaling family — all entities) ────
@@ -3215,7 +3215,7 @@ def apply_derived_b(
     # (p, sink) when any non-default, non-zero coef remains.
     # Δ.12b: helper exceptions propagate; the anti-join inner gate
     # (only when zero-rows exist) is preserved as a structural filter.
-    from flextool.engine._derived_arithmetic import (
+    from flextool.engine.preprocess.params._arithmetic import (
         p_process_source_conversion_flow_coeff_from_source,
         p_process_sink_conversion_flow_coeff_from_source,
     )
@@ -4106,13 +4106,13 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
                                              no_investment) }
 
     Δ.7 consolidation: delegates to the lazy port
-    :func:`._derived_existing.edd_invest_lookback_set_lf` which
-    consumes :func:`._derived_walks.period_walk_iterator` with the
+    :func:`._existing.edd_invest_lookback_set_lf` which
+    consumes :func:`._walks.period_walk_iterator` with the
     new ``STRICT_LOOKBACK_*`` modes.  The previous eager
     ``for r in out.iter_rows`` lifetime gate is replaced with a fully
     lazy join + filter on the shared walker.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
     """
     if ed_invest is None or ed_invest.height == 0:
@@ -4136,7 +4136,7 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
             "d": schema_dtype(_enums, "d"),
         })
     # Δ.7 — delegate to the lazy port consuming the shared walker.
-    from flextool.engine._derived_existing import edd_invest_lookback_set_lf
+    from flextool.engine.preprocess.params._existing import edd_invest_lookback_set_lf
     ed_invest_lf = ed_invest.lazy().select("e", "d")
     return edd_invest_lookback_set_lf(
         source, active_solve, ed_invest_lf, periods, workdir,
@@ -4157,7 +4157,7 @@ def edd_divest_active_from_source(source: "InputSource",
 
     ``lineage`` — the one non-walker cross-period pair-former
     (Slice B design §7.0, inventory #18): when not ``None``, the
-    shared :func:`._derived_walks._apply_lineage_filter` is applied to
+    shared :func:`._walks._apply_lineage_filter` is applied to
     the ``(d_divest, d)`` pairs with ``anchor_col="d_divest"``,
     ``dall_col="d"``, under the same Slice A semi-join contract.  The
     ``period_in_use`` list the filter tests membership against is the
@@ -4196,7 +4196,7 @@ def edd_divest_active_from_source(source: "InputSource",
                .join(yr_d, on="d", how="inner")
                .filter(pl.col("yr_divest") <= pl.col("yr")))
     if lineage is not None:
-        from flextool.engine._derived_walks import (
+        from flextool.engine.preprocess.params._walks import (
             _apply_lineage_filter,
             _assert_lineage_castable,
         )
@@ -5110,7 +5110,7 @@ def p_flow_upper_from_source(source: "InputSource",
     Used in the indirect-method branch.
 
     ``p_unitsize`` — per-(p,) unitsize cascade from
-    :func:`_derived_arithmetic.p_unitsize_from_source`.  Caller may
+    :func:`_arithmetic.p_unitsize_from_source`.  Caller may
     also pass the per-entity cascade keyed on ``(e,)``; we accept either
     column name.
 
@@ -5895,7 +5895,7 @@ def p_node_capacity_for_scaling_from_source(source: "InputSource",
     # carry ``vq_state_up/down``), so union the period nodes in before the
     # cross-join.  Dtype-safe; when the period set is empty the union
     # collapses to exactly ``nb`` → byte-identical legacy behavior.
-    from flextool.engine._projection_params import (
+    from flextool.engine.preprocess.params._projection import (
         nodeBalance as _nodeBalance_proj,
         nodeBalancePeriod as _nodeBalancePeriod_proj,
     )
@@ -6062,7 +6062,7 @@ def _build_commission_lf(source: "InputSource",
     """
     if not period_in_use:
         return None
-    from flextool.engine._derived_existing import (
+    from flextool.engine.preprocess.params._existing import (
         _construction_lag_configured as _lag_configured,
         commissioning_year_lf as _commissioning_year_lf,
     )
@@ -6125,7 +6125,7 @@ def apply_derived_c(
     # try/except blocks (§6) so a LineageFilterError is loud, not swallowed.
     # ``None`` flag-off → edd builders keep today's unfiltered behaviour.
     if _RECOURSE_ANCHOR_PAIRS is not None:
-        from flextool.engine._derived_branch import (
+        from flextool.engine.preprocess.params._branch import (
             assert_recourse_npv_preconditions as _assert_recourse,
             dd_same_scenario_df as _dd_same_scenario_df,
         )
@@ -6238,7 +6238,7 @@ def apply_derived_c(
     # contributes nothing, fall back to the seed-loaded ed_*_set on
     # flex_data).  The partition helpers are pure projections; they're
     # cheap so re-running on every invocation is fine.
-    from flextool.engine._derived_existing import (
+    from flextool.engine.preprocess.params._existing import (
         pd_invest_set_lf as _pd_invest_lf,
         nd_invest_set_lf as _nd_invest_lf,
         pd_divest_set_lf as _pd_divest_lf,
@@ -6329,7 +6329,7 @@ def apply_derived_c(
                                              ctx=ctx, provider=provider)
     commission_lf = None
     if ed_inv_used is not None and ed_inv_used.height > 0 and _c_period_in_use:
-        from flextool.engine._derived_existing import (
+        from flextool.engine.preprocess.params._existing import (
             assert_no_forced_out_of_horizon_commission as _assert_no_forced_ooh,
         )
         # [MINOR-3] Failures on a lag-configured model surface as a
@@ -6356,7 +6356,7 @@ def apply_derived_c(
     # with ed_invest_set on (e, d_history).  Mirror of
     # ``invest_divest_sets.py:267-270``.
     if ed_inv_used is not None and ed_inv_used.height > 0:
-        from flextool.engine._derived_existing import (
+        from flextool.engine.preprocess.params._existing import (
             edd_invest_set_lf as _edd_invest_lf,
         )
         period_in_use = _c_period_in_use
@@ -6518,7 +6518,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
               .join(axis_lazyframe({"d": piu}), how="cross")
               .with_columns(value=pl.lit(0.0)))
     # Read explicit existing rows.  Period-dim detection mirrors
-    # ``_derived_existing._per_entity_param_lf``: the period column may
+    # ``_existing._per_entity_param_lf``: the period column may
     # be named ``period`` (canonical) or carry a user-renamed
     # ``Map.index_name`` (e.g. ``x``).  Treat any extra non-name/value
     # column as the period dim.
@@ -7939,7 +7939,7 @@ def period_block_family_from_source(source: "InputSource",
                             # ``"bk" → "block"``).  Using ``"b"`` here
                             # would cast block tokens to the BRANCH enum
                             # and null every row out.  Parallel pattern:
-                            # _derived_block.py:696-705.
+                            # _block.py:696-705.
                             ov = ov.pipe(rename_to_axis, {
                                 "period": "d",
                                 "block_coarse": "bk",
@@ -8809,7 +8809,7 @@ def apply_derived_e(
     ``nodeState_last_dt`` + ``flow_from_nodeBalance_*`` block filter on
     the source-driven path.
     """
-    from flextool.engine._derived_block import (
+    from flextool.engine.preprocess.params._block import (
         load_block_bundle,
         nodeState_last_dt_lf,
         flow_from_nodeBalance_block_filtered,
@@ -8955,7 +8955,7 @@ def apply_derived_e(
             source, pse, nodeState_df)
         # §F.2 p_state_unitsize (Δ.10 cluster F) — per-node unitsize
         # restricted to nodeState.
-        from flextool.engine._derived_arithmetic import p_state_unitsize_from_source
+        from flextool.engine.preprocess.params._arithmetic import p_state_unitsize_from_source
         flex_data.p_state_unitsize = p_state_unitsize_from_source(
             source, nodeState_df)
 
@@ -8971,7 +8971,7 @@ def apply_derived_e(
     # ``flex_data.p_roll_continue_state`` / ``p_fix_storage_quantity``
     # at load time.  Re-reading the same CSV here duplicates the IO and
     # the polars allocation.  Audit `specs/in_cascade_csv_audit.md`
-    # §Category A entries `_derived_params.py:6562` and `:6582`.
+    # §Category A entries `_derived.py:6562` and `:6582`.
     # Prefer the already-populated FlexData fields when available; fall
     # back to the workdir reader for legacy/test callers that bypass
     # ``_load_storage`` or when the seed produced None (e.g. CSV absent
@@ -10029,7 +10029,7 @@ def apply_derived_f(
       1. Cluster A (Δ.5): ``p_inflation_op``, ``p_ed_fixed_cost``,
          ``ed_entity_annual_discounted``, ``ed_entity_annual_divest_discounted``,
          ``ed_lifetime_fixed_cost``, ``ed_lifetime_fixed_cost_divest``
-         — delegated to :func:`._derived_npv.apply_npv`, the lazy-polars
+         — delegated to :func:`._npv.apply_npv`, the lazy-polars
          port.  Replaces the eager ``ed_entity_annual_family_from_source``
          and ``p_inflation_op_full_cascade_from_source`` paths.
       2. ``p_entity_previously_invested_capacity`` / ``p_entity_invested``
@@ -10039,7 +10039,7 @@ def apply_derived_f(
     Δ.4 deleted the deprecated wrapper alias; Δ.5 ports the lifetime
     cascade family to lazy polars.
     """
-    from flextool.engine import _derived_npv
+    from flextool.engine.preprocess.params import _npv as _derived_npv
 
     # 1. Cluster A (lazy NPV / inflation / fixed cost cascade).
     _derived_npv.apply_npv(flex_data, source, workdir, provider=provider)
@@ -10712,13 +10712,13 @@ def pd_branch_weight_full_from_source(
     """Per-period branch weight — full multi-branch cascade.
 
     Δ.8 consolidation: delegates to the lazy port
-    :func:`._derived_branch.pd_branch_weight_param`.  Behaviour
+    :func:`._branch.pd_branch_weight_param`.  Behaviour
     preserved: defaults to 1.0 when no ``period__branch`` rows exist
     (deterministic fixtures), normalises across siblings otherwise.
 
-    See :mod:`._derived_branch` for the algorithm reference.
+    See :mod:`._branch` for the algorithm reference.
     """
-    from flextool.engine._derived_branch import pd_branch_weight_param
+    from flextool.engine.preprocess.params._branch import pd_branch_weight_param
     out = pd_branch_weight_param(workdir, source, active_solve)
     if out is not None:
         return out
@@ -10748,13 +10748,13 @@ def pdt_branch_weight_full_from_source(
     """Per-(d, t) branch weight — full multi-branch cascade.
 
     Δ.8 consolidation: delegates to the lazy port
-    :func:`._derived_branch.pdt_branch_weight_param`.  Behaviour
+    :func:`._branch.pdt_branch_weight_param`.  Behaviour
     preserved: dense over ``dt`` (every (d, t) gets a value;
     denominator-zero rows fall through to 1.0).
 
-    See :mod:`._derived_branch` for the algorithm reference.
+    See :mod:`._branch` for the algorithm reference.
     """
-    from flextool.engine._derived_branch import pdt_branch_weight_param
+    from flextool.engine.preprocess.params._branch import pdt_branch_weight_param
     return pdt_branch_weight_param(workdir, source, active_solve, dt)
 
 
@@ -10772,7 +10772,7 @@ def apply_synthetic_invest_sets(flex_data: object,
     The synthetic-aware :func:`_solve_periods` returns the right period
     list for the anchor (Map-shaped ``invest_periods`` filtered to the
     synthetic anchor); the eager helpers in this module and the lazy
-    partition helpers in :mod:`._derived_existing` are pure derivations
+    partition helpers in :mod:`._existing` are pure derivations
     on top of that period list so they work as-is.  Fields populated
     (mirrors the seed names in ``_invest_seeds.py``):
 
@@ -10821,7 +10821,7 @@ def apply_synthetic_invest_sets(flex_data: object,
 
     # pd/nd_invest_set, pd/nd_divest_set partitions — pure entity-class
     # projections, no solve dependency beyond the input ed_*_set frame.
-    from flextool.engine._derived_existing import (
+    from flextool.engine.preprocess.params._existing import (
         pd_invest_set_lf as _pd_invest_lf,
         nd_invest_set_lf as _nd_invest_lf,
         pd_divest_set_lf as _pd_divest_lf,
@@ -10866,7 +10866,7 @@ def apply_synthetic_invest_sets(flex_data: object,
         # next_seam order with +inf commissioning must be caught here too
         # (this path may run without apply_derived_c preceding).
         if commission_lf is not None:
-            from flextool.engine._derived_existing import (
+            from flextool.engine.preprocess.params._existing import (
                 assert_no_forced_out_of_horizon_commission as _assert_no_forced_ooh,
             )
             _assert_no_forced_ooh(source, commission_lf)
@@ -10874,7 +10874,7 @@ def apply_synthetic_invest_sets(flex_data: object,
         # Build on-demand from the provider (branch-cluster runs later); the
         # anchor-pairs holder armed at the top of this fn is the conjunct.
         if _RECOURSE_ANCHOR_PAIRS is not None:
-            from flextool.engine._derived_branch import (
+            from flextool.engine.preprocess.params._branch import (
                 assert_recourse_npv_preconditions as _assert_recourse,
                 dd_same_scenario_df as _dd_same_scenario_df,
             )
@@ -10961,7 +10961,7 @@ def apply_derived_g(
 
     # ─── §3.18 cluster D — multi-branch normalisation + non-anticipativity ──
     # Δ.8 consolidation: delegate the full cluster D port to
-    # ``_derived_branch.apply_branch_cluster``.  The helper covers
+    # ``_branch.apply_branch_cluster``.  The helper covers
     # ``pd_branch_weight``, ``pdt_branch_weight``, and (already
     # CSV-loaded by ``flex_data.py``) ``period_branch_full``,
     # ``period_in_use_set``, ``dt_non_anticipativity`` — the latter
@@ -10970,7 +10970,7 @@ def apply_derived_g(
     # never touches ``invest_periods`` / ``v_invest``.
     # Δ.12b: defensive try/except removed; apply_branch_cluster is
     # parity-bound (cluster D tests gate it).
-    from flextool.engine._derived_branch import apply_branch_cluster
+    from flextool.engine.preprocess.params._branch import apply_branch_cluster
     apply_branch_cluster(flex_data, source, workdir, active_solve,
                           ctx=ctx, provider=provider)
 

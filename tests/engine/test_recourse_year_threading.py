@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from flextool.engine._derived_params import (
+from flextool.engine.preprocess.params._derived import (
     _p_years_d_lf,
     _years_for_period_from_source,
 )
@@ -77,7 +77,7 @@ def test_years_for_period_provider_without_csv_falls_through():
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     prov = FlexDataProvider()
     p = "solve_data/p_years_represented.csv"
-    from flextool.engine._derived_params import (
+    from flextool.engine.preprocess.params._derived import (
         _provider_has_key as _hk,
     )
     from pathlib import Path

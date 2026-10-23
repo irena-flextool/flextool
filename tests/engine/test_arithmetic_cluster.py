@@ -1,8 +1,8 @@
 """Δ.10 — Cluster F (scalar arithmetic) parity tests.
 
 Per-fixture parity sweep + targeted tests for the cluster F helpers in
-:mod:`flextool.engine._derived_arithmetic` and the existing
-cluster F helpers in :mod:`flextool.engine._derived_params`
+:mod:`flextool.engine.preprocess.params._arithmetic` and the existing
+cluster F helpers in :mod:`flextool.engine.preprocess.params._derived`
 (``p_slope``, ``p_section``, ``p_flow_upper_existing``, ``p_state_upper``,
 ``p_process_existing_count``).
 
@@ -40,7 +40,7 @@ from flextool.engine import (
     SpineDbReader,
     load_flextool,
 )
-from flextool.engine import _derived_arithmetic as ar
+from flextool.engine.preprocess.params import _arithmetic as ar
 
 
 HERE = Path(__file__).resolve().parent

@@ -36,10 +36,10 @@ by the LAST (dispatch) sub-solve and so do NOT reflect the invest grid:
 
 * the invest ``(d, t)`` grid and per-period
   ``complete_period_share_of_year`` come from
-  :func:`flextool.engine._per_solve_sets.derive_per_solve_aggregates`;
+  :func:`flextool.engine.preprocess.params._per_solve_sets.derive_per_solve_aggregates`;
 * ``Σ_t timestep_weight(d, t)`` per period comes from the ACTUAL per-``(d,
   t)`` weights the engine builds, NOT a step-count shortcut —
-  :func:`flextool.engine._derived_params.p_timestep_weight_from_source`
+  :func:`flextool.engine.preprocess.params._derived.p_timestep_weight_from_source`
   for the default / ``timeset_weights`` regimes, and
   :func:`flextool.engine._emit_solve_writers._compute_rp_frames` for
   ``representative_period_weights`` (RP).
@@ -63,11 +63,11 @@ from collections import defaultdict
 
 import polars as pl
 
-from flextool.engine._derived_params import (
+from flextool.engine.preprocess.params._derived import (
     p_timestep_weight_from_source,
 )
 from flextool.engine._emit_solve_writers import _compute_rp_frames
-from flextool.engine._per_solve_sets import derive_per_solve_aggregates
+from flextool.engine.preprocess.params._per_solve_sets import derive_per_solve_aggregates
 from flextool.engine._solve_config import SolveConfig
 from flextool.engine._spinedb_reader import SpineDbReader
 from flextool.engine._timeline import TimelineConfig
@@ -174,7 +174,7 @@ def _weight_sum_by_period(
     Uses the ACTUAL engine-built weights for every regime:
 
     * **default / ``timeset_weights``** — the native
-      :func:`._derived_params.p_timestep_weight_from_source` (returns dense
+      :func:`._derived.p_timestep_weight_from_source` (returns dense
       1.0 or the normalised ``timeset_weights``), summed per period;
     * **``representative_period_weights`` (RP)** — that helper returns
       ``None`` (RP weights live in the CSV the writer folds), so each active

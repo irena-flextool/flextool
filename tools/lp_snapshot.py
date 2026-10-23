@@ -1265,7 +1265,7 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
 # reports them separately and does not count them as gaps.
 UNREACHABLE: dict[str, str] = {
     name: ("ed_invest_set (the v_invest_* domain) already anti-joins "
-           "ed_invest_forbidden_no_investment (_derived_params."
+           "ed_invest_forbidden_no_investment (_derived."
            "ed_invest_set_from_source), so the row domain "
            "forbidden ∩ v_invest is always empty")
     for name in ("fix_v_invest_no_investment_eq_p",

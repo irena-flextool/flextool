@@ -250,10 +250,10 @@ def reserve_penalty(d) -> "Param | None":
     """``penalty_reserve`` dense over ``reserve_upDown_group``.
 
     Every ``(r, ud, g)`` gets a penalty: the authored ``p_reserve_upDown_group_penalty_reserve`` where
-    present, else :data:`~flextool.engine._direct_params.PENALTY_RESERVE_DEFAULT` — a group with a
+    present, else :data:`~flextool.engine.preprocess.params._direct.PENALTY_RESERVE_DEFAULT` — a group with a
     requirement but no authored penalty must not get a free shortfall.  None only when the feature is off.
     """
-    from flextool.engine._direct_params import PENALTY_RESERVE_DEFAULT
+    from flextool.engine.preprocess.params._direct import PENALTY_RESERVE_DEFAULT
 
     rug = getattr(d, "reserve_upDown_group", None)
     if rug is None or rug.height == 0:

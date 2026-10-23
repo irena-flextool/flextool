@@ -2,7 +2,7 @@
 
 Lazy-polars port of flextool's NPV / lifetime-fixed-cost / inflation
 cascade.  Replaces the eager-Python implementation that previously lived
-in :mod:`._derived_params` (``ed_entity_annual_family_from_source`` plus
+in :mod:`._derived` (``ed_entity_annual_family_from_source`` plus
 its supporting ``_per_method_annuity`` / ``_resolve_pdX`` helpers).
 
 The cluster covers six FlexData fields:
@@ -68,13 +68,13 @@ flextool source; deviations are documented inline.
 Cross-references
 ----------------
 
-* :mod:`._derived_params._inflation_yearly_from_source` — the yearly
+* :mod:`._derived._inflation_yearly_from_source` — the yearly
   inflation cascade computation used to be eager-Python; we keep that
   helper's algorithm but expose a lazy-frame variant
   (:func:`_inflation_factors_lf`) for use here.
-* :func:`._derived_params._p_years_d_lf` — already lazy; reused as-is.
-* :func:`._derived_params._period_in_use_set` and
-  :func:`._derived_params._solve_periods` — list builders used to
+* :func:`._derived._p_years_d_lf` — already lazy; reused as-is.
+* :func:`._derived._period_in_use_set` and
+  :func:`._derived._solve_periods` — list builders used to
   bound the period domain.
 """
 from __future__ import annotations
@@ -115,7 +115,7 @@ _DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
 _LIFETIME_METHOD_DEFAULT = "reinvest_automatic"
 
 # Inflation defaults — mirrors period_calculated_params.py:221-227 and
-# _solve_inflation_inputs in _derived_params.py.
+# _solve_inflation_inputs in _derived.py.
 _INFL_RATE_DEFAULT = 0.0
 _INFL_OFFSET_INV_DEFAULT = 0.0
 _INFL_OFFSET_OPS_DEFAULT = 0.5
@@ -174,7 +174,7 @@ def _per_entity_param_lf(source: "InputSource",
                             ) -> pl.LazyFrame:
     """Lazy ``(e, d, value)`` frame from ``unit/node/connection.<param>``.
 
-    Mirrors :func:`._derived_params._resolve_pdX` semantics in lazy form:
+    Mirrors :func:`._derived._resolve_pdX` semantics in lazy form:
 
     * Per-period (Map) rows produce ``(e, d, value)`` rows directly.
     * Scalar rows produce ``(e, value)`` rows with ``d`` null;
@@ -193,7 +193,7 @@ def _per_entity_param_lf(source: "InputSource",
             continue
         cols = df.columns
         # Period-dim detection — see the matching helper in
-        # ``_derived_existing._per_entity_param_lf``.  When the source
+        # ``_existing._per_entity_param_lf``.  When the source
         # exposes the period axis under a user-renamed ``Map.index_name``
         # (e.g. ``x``), checking only ``"period" in cols`` misses it and
         # the scalar-broadcast branch explodes per-period rows through
@@ -241,7 +241,7 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
                               ) -> pl.LazyFrame:
     """Resolve ``pdX[e, param, d]`` cascade in lazy form.
 
-    Order (mirrors :func:`._derived_params._resolve_pdX`):
+    Order (mirrors :func:`._derived._resolve_pdX`):
       1. Explicit ``(e, d)`` row → take that ``value``.
       2. Else scalar ``(e, ·)`` row → broadcast across ``ed_lf``.
       3. Else → ``fill``.
@@ -249,7 +249,7 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
     Returns ``ed_lf`` with an extra ``value`` column (Float64).
     ``ed_lf`` must carry columns ``[e, d, ...]``.
     """
-    from flextool.engine._derived_params import _anchor_expand_explicit
+    from flextool.engine.preprocess.params._derived import _anchor_expand_explicit
     explicit = _anchor_expand_explicit(
         per_param
           .filter(~pl.col("is_scalar"))
@@ -331,7 +331,7 @@ def _solve_inflation_scalars(source: "InputSource"
     flextool's CSV-side defaults when the Spine reader returned
     only-default rows.
 
-    Mirrors :func:`._derived_params._solve_inflation_inputs` semantics.
+    Mirrors :func:`._derived._solve_inflation_inputs` semantics.
     """
     def _explicit_max(par: str, default: float) -> float:
         try:
@@ -375,14 +375,14 @@ def _years_for_period_lf(source: "InputSource",
                               ) -> pl.LazyFrame:
     """Build the per-(d, year_label, width) frame from
     ``solve.years_represented`` mirroring
-    :func:`._derived_params._years_for_period_from_source` in lazy form.
+    :func:`._derived._years_for_period_from_source` in lazy form.
 
     Returns columns ``[d, y, width]`` where ``y`` is a string label.
     Empty if no rows.  ``provider`` (Slice D α-1) revives the canonical
     ``p_years_represented.csv`` arm carrying fan-member year rows.
     """
     # Materialise scalars eagerly — they're solve-level, tiny.
-    from flextool.engine._derived_params import _years_for_period_from_source
+    from flextool.engine.preprocess.params._derived import _years_for_period_from_source
     yfp = _years_for_period_from_source(
         source, active_solve, period_universe, provider=provider)
     rows: list[tuple[str, str, float]] = []
@@ -537,21 +537,21 @@ def period_walk_iterator(
         factor_side: str,
         lineage: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
-    """Δ.5-era public alias delegating to :mod:`._derived_walks`.
+    """Δ.5-era public alias delegating to :mod:`._walks`.
 
-    Δ.6 lifted the canonical implementation into ``_derived_walks`` so
+    Δ.6 lifted the canonical implementation into ``_walks`` so
     Cluster B's invest-history walk could re-use it.  This wrapper
     preserves the boolean ``bounded`` signature for the existing NPV
     callers while internally dispatching the new
-    :class:`._derived_walks.WindowMethod` enum.
+    :class:`._walks.WindowMethod` enum.
 
-    See :func:`._derived_walks.period_walk_iterator` for the canonical
+    See :func:`._walks.period_walk_iterator` for the canonical
     semantics.  ``bounded`` and ``lineage`` are orthogonal — the bool
     selects the window predicate, ``lineage`` restricts the
     ``(d, d_all)`` pair domain (Slice B; always ``None`` until the
     recourse flag lands, Slice C/D); the keyword is forwarded verbatim.
     """
-    from flextool.engine._derived_walks import (
+    from flextool.engine.preprocess.params._walks import (
         period_walk_iterator as _walk,
         WindowMethod,
     )
@@ -574,7 +574,7 @@ def _ed_lifetime_lf(source: "InputSource",
                        ) -> pl.LazyFrame:
     """Lazy ``(e, d, life)`` mirroring ``edEntity_lifetime`` semantics.
 
-    Mirrors :func:`._derived_params._ed_lifetime_mapping`: for each
+    Mirrors :func:`._derived._ed_lifetime_mapping`: for each
     (e, d) ∈ entities × periods, emit ``unit/node/connection.lifetime``
     cascaded via ``_resolve_pdX``.  Non-process / non-node entities
     get 0 (mirrors flextool's class-gated branch).
@@ -720,7 +720,7 @@ def npv_invest_discounted_lf(
     multiple methods; each contributes a separate sum.  See
     ``entity_annual_calc_params.py:222-251``.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
 
     Returns lazy ``[e, d, value]``.
@@ -823,7 +823,7 @@ def npv_divest_discounted_lf(
     and the gate is restricted to e ∈ node ∪ process (mirrors
     L266-285 — no fallback for unclassified entities).
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
 
     Returns lazy ``[e, d, value]``.
@@ -920,7 +920,7 @@ def lifetime_fixed_cost_invest_lf(
     ops_factor (not inv_factor) and edEntity_lifetime as the bound.
     See L292-321.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_with_history:
@@ -1010,7 +1010,7 @@ def lifetime_fixed_cost_divest_lf(
     where ``life`` is raw lifetime and ``inv_factor`` (NOT ops_factor)
     is used — mod L1651 asymmetry.  See L325-348.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_invest:
@@ -1078,7 +1078,7 @@ def p_inflation_op_from_source(source: "InputSource",
     """Public entry: ``p_inflation_op[d]`` over ``period_in_use``.
 
     Lazy port of
-    :func:`._derived_params.p_inflation_op_full_cascade_from_source`.
+    :func:`._derived.p_inflation_op_full_cascade_from_source`.
     Replaces the workdir read of ``solve_data/p_inflation_factor_operations_yearly.csv``
     when wired through :func:`apply_npv`.
     """
@@ -1146,7 +1146,7 @@ def ed_entity_annual_discounted_from_source(
     for the lazy result to match the seed on fixtures where every
     (e, d) value is zero (e.g. ``work_wind_battery_invest``).
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_invest:
@@ -1177,7 +1177,7 @@ def ed_entity_annual_divest_discounted_from_source(
     Unfiltered ``entityDivest × period_invest`` — see the rationale on
     :func:`ed_entity_annual_discounted_from_source`.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_invest:
@@ -1208,7 +1208,7 @@ def ed_lifetime_fixed_cost_from_source(
     Unfiltered ``entity × period_with_history`` — see the rationale on
     :func:`ed_entity_annual_discounted_from_source`.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_with_history:
@@ -1239,7 +1239,7 @@ def ed_lifetime_fixed_cost_divest_from_source(
     Unfiltered ``entityDivest × period_invest`` — see the rationale on
     :func:`ed_entity_annual_discounted_from_source`.
 
-    ``lineage`` — see :func:`._derived_walks.period_walk_iterator`;
+    ``lineage`` — see :func:`._walks.period_walk_iterator`;
     always ``None`` until the recourse flag lands (Slice C/D).
     """
     if not period_invest:
@@ -1283,7 +1283,7 @@ def apply_npv(flex_data: object,
     (no_invest short-circuit, no period_with_history, etc.) — that
     ``None`` is the explicit "field stays default" signal.
     """
-    from flextool.engine._derived_params import (
+    from flextool.engine.preprocess.params._derived import (
         _read_active_solve, _solve_periods, _period_in_use_set,
         _periodAll_from_source, _read_period_with_history,
         _expand_invest_branch_periods, _enter_recourse_anchor_scope,
@@ -1301,7 +1301,7 @@ def apply_npv(flex_data: object,
     # AFTER apply_npv.  Precondition check hoisted above the NPV builder
     # calls (§6).  ``None`` flag-off → walks unfiltered → byte-parity.
     if _recourse_branch_axis_present():
-        from flextool.engine._derived_branch import (
+        from flextool.engine.preprocess.params._branch import (
             assert_recourse_npv_preconditions,
             dd_same_scenario_annuity_df,
         )
@@ -1335,7 +1335,7 @@ def apply_npv(flex_data: object,
         source, period_with_history)
 
     # 3-6. NPV / lifetime cascade family.  Mirrors the "no_invest"
-    # short-circuit in :mod:`._derived_params.ed_entity_annual_family_from_source`
+    # short-circuit in :mod:`._derived.ed_entity_annual_family_from_source`
     # and :func:`flextool.engine.preprocess.flex_data._load_invest`: when
     # neither ed_invest nor ed_divest carries any row, the cluster
     # outputs are all None (the LP has no v_invest / v_divest

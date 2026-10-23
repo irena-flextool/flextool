@@ -33,7 +33,7 @@ from flextool.engine.preprocess._provider_io import (
 )
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_translators import read_handoff_frame
-from flextool.engine._derived_params import (
+from flextool.engine.preprocess.params._derived import (
     INVEST_METHODS_INVEST_NO_LIMIT,
 )
 

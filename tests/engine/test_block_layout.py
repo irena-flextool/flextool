@@ -1,4 +1,4 @@
-"""Regression tests for ``flextool.engine._block_layout``.
+"""Regression tests for ``flextool.engine.preprocess.params._block_layout``.
 
 These tests pin the behaviour of ``BlockLayout`` against fixture
 CSV data under ``tests/engine/data/work_*``: column shapes,
@@ -39,7 +39,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine._block_layout import (
+from flextool.engine.preprocess.params._block_layout import (
     DEFAULT_BLOCK,
     BlockLayout,
 )
@@ -382,7 +382,7 @@ def test_frame_columns_match_canonical_csv_headers(scenario_workdir) -> None:
 
 def test_validate_group_membership_rejects_dual_resolution_membership() -> None:
     """Validation must raise on an entity in two resolution-groups."""
-    from flextool.engine._block_layout import (
+    from flextool.engine.preprocess.params._block_layout import (
         validate_group_membership,
     )
     from flextool.engine._solve_state import FlexToolConfigError
@@ -399,7 +399,7 @@ def test_validate_group_membership_rejects_dual_resolution_membership() -> None:
 
 def test_validate_group_membership_rejects_reserve_in_resolution_group() -> None:
     """V1 rule: reserve participants must NOT sit in a resolution-group."""
-    from flextool.engine._block_layout import (
+    from flextool.engine.preprocess.params._block_layout import (
         validate_group_membership,
     )
     from flextool.engine._solve_state import FlexToolConfigError
@@ -419,7 +419,7 @@ def test_validate_group_membership_rejects_reserve_in_resolution_group() -> None
 def test_aligned_subsets_only_raises_on_non_aligned() -> None:
     """The reference's aligned-subsets assumption raises on non-aligned
     fine→coarse aggregation; our port preserves that behaviour."""
-    from flextool.engine._block_layout import _aggregate_timeline
+    from flextool.engine.preprocess.params._block_layout import _aggregate_timeline
 
     # 3h coarse against 2h fine rows — not aligned.
     rows = [("t1", 2.0), ("t2", 2.0), ("t3", 2.0)]

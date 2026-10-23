@@ -1,7 +1,7 @@
 """Δ.7 — Cluster C (profile cascade) parity tests.
 
 Per-fixture parity check: lazy port in
-:mod:`flextool.engine._derived_profile` vs. the canonical
+:mod:`flextool.engine.preprocess.params._profiles` vs. the canonical
 preprocessed CSV in ``solve_data/pdtProfile.csv`` produced by
 flextool's :func:`flextoolrunner.preprocessing.entity_period_calc_params.write_pdtProfile`.
 
@@ -36,7 +36,7 @@ import pytest
 
 from flextool.engine import SpineDbReader
 from flextool.engine._inmemory_reader import InMemoryReader
-from flextool.engine._derived_profile import (
+from flextool.engine.preprocess.params._profiles import (
     p_profile_value_lf,
     p_profile_value_from_source_v2,
     _classify_profile_rows,

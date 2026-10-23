@@ -148,7 +148,7 @@ def test_scalar_relationship_unit_outputNode(period_filter) -> None:
     migration the resolver lands on ``Shape.SCALAR`` and returns a
     ``Param(("p", "sink"))``.
     """
-    import flextool.engine._direct_params as dp
+    import flextool.engine.preprocess.params._direct as dp
     stub = _ScalarRelationshipStub(
         entity_class="unit__outputNode",
         parameter_name="other_operational_cost",
@@ -175,7 +175,7 @@ def test_scalar_relationship_reserve_upDown_group(period_filter) -> None:
     ``filter_zero=False`` is preserved (the helper accepts non-zero
     scalars uniformly via the resolver path).
     """
-    import flextool.engine._direct_params as dp
+    import flextool.engine.preprocess.params._direct as dp
     stub = _ScalarRelationshipStub(
         entity_class="reserve__upDown__group",
         parameter_name="reservation",
@@ -282,7 +282,7 @@ def test_p_pdt_varCost_source_silent_default(period_filter) -> None:
     """``unit__inputNode.other_operational_cost`` silent-default Map →
     Param ``(p, source, d, t)``, period→value AND time→value preserved.
     """
-    import flextool.engine._direct_params as dp
+    import flextool.engine.preprocess.params._direct as dp
     pt_values = _pt_values()
     stub = _SilentDefaultMapPeriodTimeStub(
         entity_class="unit__inputNode",
@@ -316,7 +316,7 @@ def test_p_pdt_varCost_sink_silent_default(period_filter) -> None:
     """``unit__outputNode.other_operational_cost`` silent-default Map →
     Param ``(p, sink, d, t)``.
     """
-    import flextool.engine._direct_params as dp
+    import flextool.engine.preprocess.params._direct as dp
     pt_values = _pt_values()
     stub = _SilentDefaultMapPeriodTimeStub(
         entity_class="unit__outputNode",
@@ -400,7 +400,7 @@ def test_p_pdt_varCost_process_multi_class_concat(period_filter) -> None:
     ``p_pdt_varCost_source_from_source`` /
     ``p_pdt_varCost_sink_from_source`` helpers.
     """
-    import flextool.engine._direct_params as dp
+    import flextool.engine.preprocess.params._direct as dp
     unit_pt = {("p2024", "t00001"): 1.0, ("p2025", "t00002"): 2.0}
     conn_pt = {("p2024", "t00002"): 3.0, ("p2030", "t00003"): 4.0}
     stub = _MultiClassStubSource(
@@ -434,7 +434,7 @@ def test_pdtReserve_reservation_silent_default(period_filter) -> None:
     """``reserve__upDown__group.reservation`` silent-default Map →
     Param ``(r, ud, g, d, t)``; no dups; values preserved.
     """
-    import flextool.engine._direct_params as dp
+    import flextool.engine.preprocess.params._direct as dp
     pt_values = _pt_values()
     stub = _SilentDefaultMapPeriodTimeStub(
         entity_class="reserve__upDown__group",
@@ -466,7 +466,7 @@ def test_pdtReserve_reservation_zero_not_filtered(period_filter) -> None:
     zero rows carry meaning (legacy CSV path emitted zero rows).  Pin
     that semantic with an authored 0.0 row.
     """
-    import flextool.engine._direct_params as dp
+    import flextool.engine.preprocess.params._direct as dp
     pt_values = {
         ("p2024", "t00001"): 0.0,   # explicit zero — MUST survive
         ("p2025", "t00002"): 1.5,
@@ -558,7 +558,7 @@ class _EntityExistingStub:
 
 
 def _unitsize_map(stub) -> dict[str, float]:
-    from flextool.engine._derived_params import _entity_unitsize_lf
+    from flextool.engine.preprocess.params._derived import _entity_unitsize_lf
     us = _entity_unitsize_lf(stub).collect()
     return {
         e: v for e, v in zip(
@@ -572,7 +572,7 @@ def test_entity_unitsize_retiring_silent_default_map_uses_nameplate_max():
     """A retiring unit whose silent-default (``"x"``-indexed) ``existing``
     Map decays to 0 must take its per-period MAX (nameplate), NOT the
     last period's 0 → NOT the 1000 fallback."""
-    from flextool.engine._derived_params import UNITSIZE_DEFAULT
+    from flextool.engine.preprocess.params._derived import UNITSIZE_DEFAULT
 
     stub = _EntityExistingStub({
         # Retires: nameplate 220 early, 0 from p2027 onward (last = 0).
@@ -602,7 +602,7 @@ def test_entity_unitsize_scalar_existing_preserved():
 def test_entity_unitsize_no_existing_falls_back_to_default():
     """A unit with NO ``existing`` and NO ``virtual_unitsize`` keeps the
     canonical 1000 fallback (guards against the fix over-reaching)."""
-    from flextool.engine._derived_params import UNITSIZE_DEFAULT
+    from flextool.engine.preprocess.params._derived import UNITSIZE_DEFAULT
 
     stub = _EntityExistingStub({"bare_unit": []})
     got = _unitsize_map(stub)

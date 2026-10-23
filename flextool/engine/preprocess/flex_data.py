@@ -43,7 +43,7 @@ from flextool.engine._axis_enums import (  # substrate retained for Path B — s
     lit_axis,
     set_global_axis_enums,
 )
-from flextool.engine._block_layout import BlockLayout
+from flextool.engine.preprocess.params._block_layout import BlockLayout
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine._input_source import read_csv_fallback
 
@@ -1278,7 +1278,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         pss_source_canonical = _read_canonical_set(sd / "process_source.csv", "source")
         pss_sink_canonical   = _read_canonical_set(sd / "process_sink.csv",   "sink")
     else:
-        from flextool.engine._projection_params import process_source_sink_canonical, _try_entities
+        from flextool.engine.preprocess.params._projection import process_source_sink_canonical, _try_entities
         canonical = process_source_sink_canonical(source)
         if canonical.height == 0:
             return empty_return
@@ -1333,7 +1333,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     # preserved instead of silently nulled.  Downstream eb_local.n is
     # also up-cast to ``e`` below so the join composes natively in
     # Enum.  Mirrors the source-driven cascade pattern in
-    # ``_derived_block.flow_to_n_block_filtered`` /
+    # ``_block.flow_to_n_block_filtered`` /
     # ``filter_flow_n_by_block``.
     _enums = get_global_axis_enums()
     flow_to_n   = pss.with_columns(
@@ -1957,7 +1957,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
 
     Δ.19 — when ``db_reader`` is supplied AND the active solve is a
     recognised synthetic ``<base>_<anchor>`` (see
-    :func:`_derived_params._resolve_synthetic_solve`), the 8 invest-set
+    :func:`_derived._resolve_synthetic_solve`), the 8 invest-set
     seed reads (``ed_invest``, ``ed_divest``, ``ed_invest_forbidden``,
     ``pd_invest``, ``pd_divest``, ``nd_invest``, ``nd_divest``,
     ``edd_invest``) are skipped — :func:`apply_synthetic_invest_sets`
@@ -1990,7 +1990,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         try:
             scc = sd / "solve_current.csv"
             if _provider_has(provider, "solve_data/solve_current", scc):
-                from flextool.engine._derived_params import (_read_active_solve,
+                from flextool.engine.preprocess.params._derived import (_read_active_solve,
                                                 _resolve_synthetic_solve,
                                                 _solve_in_spine)
                 # workdir = sd.parent (sd is solve_data/)
@@ -2019,7 +2019,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         # from Spine directly (``solve.invest_periods`` for ``<base>``
         # at the anchor key is empty → no invest activity).  No disk
         # reads needed for the gate.
-        from flextool.engine._derived_params import _solve_periods as _sp
+        from flextool.engine.preprocess.params._derived import _solve_periods as _sp
         invest_periods = _sp(db_reader, active_solve, "invest_periods")
         if not invest_periods:
             return blank
@@ -2044,7 +2044,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
 
         # Δ.18 — CSV-fallback seeds for pd/nd_invest_set, pd/nd_divest_set,
         # edd_invest_set.  The override chain (``apply_derived_c`` via the
-        # lazy LFs in ``_derived_existing.py``) overlays these when active.
+        # lazy LFs in ``_existing.py``) overlays these when active.
         # For synthetic per-sub-solve fixtures the snapshot CSV is the only
         # source.
         pd_inv = _seed_set(sd, "pd_invest", "p", provider=provider)
@@ -2349,7 +2349,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     p_odt = p_odt.select("p", "period", "t").pipe(rename_to_axis, {"period": "d"})
 
     # Δ.12-drop: ``p_min_load`` produced authoritatively as a shape-correct
-    # (p, d, t) Param by ``_derived_params.apply_derived_b`` (via
+    # (p, d, t) Param by ``_derived.apply_derived_b`` (via
     # ``p_min_load_pdt_from_source``); the synthetic / no-workdir early-returns
     # in ``_apply_db_overrides`` re-wire it.  CSV seed dropped.  See
     # ``specs/fix_map_reading.md`` §5.
@@ -2366,7 +2366,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     p_startup_cost = None
     pdt_online_lin = pdt_online_int = None
     if source is not None:
-        from flextool.engine._direct_params import p_startup_cost_from_source
+        from flextool.engine.preprocess.params._direct import p_startup_cost_from_source
         sc_param = p_startup_cost_from_source(source, period_filter=dt)
         if sc_param is not None and sc_param.frame.height > 0:
             sc_frame = sc_param.frame.filter(pl.col("value") != 0)
@@ -2475,7 +2475,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     # agnostic; ``None`` when no process authors min-up/down.
     online_min_time = None
     if source is not None:
-        from flextool.engine import _derived_params as _drv_mt
+        from flextool.engine.preprocess.params import _derived as _drv_mt
         _mt: dict[str, float] = {}
         for _pn in ("min_uptime", "min_downtime"):
             for _p, _v in _drv_mt._process_min_time(source, _pn):
@@ -2689,7 +2689,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # TODO(Δ.18+): no canonical helper yet for ``nodeState_first_dt`` —
     # the override-chain produces ``period_branch`` / ``dtt_timeline_matching``
     # but not the simple per-(n, d) first timestep.  ``_read_period_first``
-    # in ``_derived_params`` reads similar data but is workdir-only and
+    # in ``_derived`` reads similar data but is workdir-only and
     # used by the existing-chain helper.
     fpos_path = sd / "period_first_of_solve.csv"
     fp_path = sd / "period_first.csv"
@@ -4571,7 +4571,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         # ─── Per-arc-side daily-block aggregation index ──────────────────────
         # Δ.17b Gap A: produced by ``apply_derived_e`` (which calls
-        # ``arc_block_dt_from_source``) — see ``_derived_params.py:6049+``.
+        # ``arc_block_dt_from_source``) — see ``_derived.py:6049+``.
         # The local seed had been redundant since Γ.3.E but remained the
         # sole producer because of a typo (``getattr(flex_data, "pss", ...)``
         # — actual attribute is ``process_source_sink``).  Δ.17b fixed the
@@ -4823,8 +4823,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # We deliberately DEFER the FlexData → Enum sweep until AFTER
         # ``_apply_db_overrides`` (the derived-cascade).  The cascade
         # builds many scratch frames with hard-coded ``pl.Utf8`` dim
-        # column schemas in ``_derived_params.py`` /
-        # ``_derived_block.py`` / etc., and joining Enum-cast FlexData
+        # column schemas in ``_derived.py`` /
+        # ``_block.py`` / etc., and joining Enum-cast FlexData
         # fields against String-dtype scratch frames raises
         # ``SchemaError``.  Casting after the cascade keeps the entire
         # CSV-read + cascade pipeline in String land and converts to
@@ -4863,11 +4863,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
             # set exists.  No-op on the non-synthetic path (the passes already
             # set them), so it is parity-clean — not a guard that masks a
             # divergence by silently dropping the term.
-            from flextool.engine._derived_arithmetic import (
+            from flextool.engine.preprocess.params._arithmetic import (
                 p_state_unitsize_from_source,
                 p_unitsize_from_source,
             )
-            from flextool.engine._derived_params import (
+            from flextool.engine.preprocess.params._derived import (
                 p_flow_constraint_coef_from_source,
             )
             _pss_inv = getattr(flex_data, "process_source_sink", None)
@@ -4905,7 +4905,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             # ``p_entity_all_existing`` reflects the in-memory handoff
             # carriers (rather than the workdir's pre-handoff CSV value).
             if db_reader is not None and workdir_for_db is not None:
-                from flextool.engine import _derived_existing as _ex
+                from flextool.engine.preprocess.params import _existing as _ex
                 _ex.apply_existing_chain(flex_data, db_reader, workdir_for_db,
                                               handoff=handoff, ctx=ctx,
                                               provider=provider)
@@ -4984,9 +4984,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     helpers that don't yet consume it fall through to their pre-Δ.12a
     direct-CSV path with no behavioural change.
     """
-    from flextool.engine import _direct_params as _dp
-    from flextool.engine import _projection_params as _pp
-    from flextool.engine import _derived_params as _drv
+    from flextool.engine.preprocess.params import _direct as _dp
+    from flextool.engine.preprocess.params import _projection as _pp
+    from flextool.engine.preprocess.params import _derived as _drv
 
     # F1 — defensive per-solve reset of the recourse process-globals BEFORE
     # any cascade pass runs, so no producer can inherit a stale anchor-pairs
@@ -5022,7 +5022,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # Pass 1b runs after ``apply_derived_a`` populates ``flex_data.dt``
     # so scalar / 1d_map[period] / 1d_map[time] values authored on the
     # source can broadcast across the active solve's (d, t) axis.  See
-    # ``_direct_params.apply_direct_params_a/b`` docstrings for the
+    # ``_direct.apply_direct_params_a/b`` docstrings for the
     # full Δ.28 rationale.
     _loadflex_prof("apply_db_overrides:pass_direct_params_a")
     _timed("1a direct_params_a", _dp.apply_direct_params_a, db_reader, flex_data)
@@ -5071,8 +5071,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # Δ.19 — for the synthetic ``<base>_<anchor>`` shape we additionally
     # produce the 8 invest-set frames from ``<base>``'s Spine entries
     # filtered to the anchor's period subset (see
-    # :func:`_derived_params._resolve_synthetic_solve` and
-    # :func:`_derived_params.apply_synthetic_invest_sets`).  This cuts the
+    # :func:`_derived._resolve_synthetic_solve` and
+    # :func:`_derived.apply_synthetic_invest_sets`).  This cuts the
     # 8 invest-set disk reads in ``_invest_seeds.py``.  The cost cascade
     # (``apply_derived_f`` NPV / fixed-cost) and per-period caps remain
     # on the CSV-seed path because those bake in multi-year discounting
@@ -5126,7 +5126,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # silently dropped because both gate on ``p_section is not None``.
         # ``p_section_from_source`` is solve-agnostic (no ``active_solve``
         # filter), so calling it here mirrors ``apply_derived_c`` exactly
-        # (``_derived_params`` §3.8.1 wiring).  See
+        # (``_derived`` §3.8.1 wiring).  See
         # ``specs/model_bugs.md::SECTION-1``.
         def _wire_section_for_synthetic_solve():
             dt = getattr(flex_data, "dt", None)
@@ -5187,7 +5187,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
 
         # INFLOW-1 — synthetic solves skip ``apply_derived_c``; re-wire the
         # inflow signed-split so the non_sync / capacity_margin demand budget
-        # isn't silently lost.  ``apply_derived_c`` (``_derived_params`` §3.12)
+        # isn't silently lost.  ``apply_derived_c`` (``_derived`` §3.12)
         # builds ``p_positive_inflow`` / ``p_negative_inflow`` /
         # ``pdtNodeInflow_per_step`` from the in-memory ``flex_data.p_inflow``
         # (and ``flex_data.p_step_duration``), both of which are already loaded
@@ -5235,7 +5235,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # rolling-stochastic solve WITH investment or benders those now
         # activate (parity with the single-solve path), not yet fixture-covered.
         def _wire_non_anticipativity_for_synthetic_solve():
-            from flextool.engine._derived_branch import (
+            from flextool.engine.preprocess.params._branch import (
                 dt_non_anticipativity_df,
                 period_branch_full_df,
             )
@@ -5255,7 +5255,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
 
         # MINTIME-1 — same class of gap as RESERVE-1 / SECTION-1 /
         # MINLOAD-1 / INFLOW-1.  The synthetic-solve early-return skips
-        # passes 3-10, so ``apply_derived_c``'s (``_derived_params`` §3.8)
+        # passes 3-10, so ``apply_derived_c``'s (``_derived`` §3.8)
         # min_uptime / min_downtime lookback producers never run on a
         # rolling sub-solve — ``uptime_lookback`` / ``pdt_uptime_set`` (and
         # the downtime twins) are the SOLE inputs to ``model.py``'s
@@ -5345,7 +5345,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # forced the call site to depend on a pre-seeded CSV value for those
     # carriers.  Now that ``apply_derived_f`` is the authoritative producer
     # of the carriers, the seed in ``_load_invest`` becomes redundant.
-    from flextool.engine import _derived_existing as _ex
+    from flextool.engine.preprocess.params import _existing as _ex
     _loadflex_prof("apply_db_overrides:pass_existing_chain")
     _timed("10 existing_chain", _ex.apply_existing_chain, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
 

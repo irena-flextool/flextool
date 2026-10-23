@@ -14,7 +14,7 @@ session-scoped ``test_db_url`` fixture — never a checked-in ``.sqlite``.
 """
 from __future__ import annotations
 
-from flextool.engine._projection_params import groupCapacityMargin
+from flextool.engine.preprocess.params._projection import groupCapacityMargin
 from flextool.engine._spinedb_reader import SpineDbReader
 
 

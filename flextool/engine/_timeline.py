@@ -31,7 +31,7 @@ Architecture notes
   ``storage_state_reference_value`` row in any of those files bypasses
   aggregation entirely.
 
-* ``_derived_params.py::dt_and_step_duration_from_source`` is a
+* ``_derived.py::dt_and_step_duration_from_source`` is a
   polars-lazy alternative that consumes the per-(entity_class,
   parameter_name) ``InputSource`` Protocol; this module uses
   ``params_to_dict`` directly.  The two paths produce identical

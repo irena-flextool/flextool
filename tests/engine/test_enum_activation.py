@@ -16,8 +16,8 @@ After Phase 4.4 the activation substrate is in place:
 
 The cascade-wide ``set_global_axis_enums`` flip is INTENTIONALLY left
 disabled (see ``flex_data.py`` BLOCKER comment near the call site).  The
-remaining cross-axis alias surface in ``_derived_params.py`` /
-``_projection_params.py`` / ``model.py`` requires a systematic audit
+remaining cross-axis alias surface in ``_derived.py`` /
+``_projection.py`` / ``model.py`` requires a systematic audit
 that exceeds the scope of one dispatch.  This test verifies the
 substrate is wired so the follow-up dispatch can flip the global on
 without touching the surrounding plumbing.

@@ -21,12 +21,12 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine._derived_existing import (
+from flextool.engine.preprocess.params._existing import (
     _construction_lag_configured,
     edd_invest_set_lf,
 )
-from flextool.engine._derived_params import _build_commission_lf
-from flextool.engine._derived_walks import (
+from flextool.engine.preprocess.params._derived import _build_commission_lf
+from flextool.engine.preprocess.params._walks import (
     WindowMethod,
     period_walk_iterator,
 )
@@ -123,7 +123,7 @@ def test_guard_raises_through_real_builder(monkeypatch) -> None:
         raise CommissioningLagError(
             "commission_lf join produced no surviving lag rows")
     monkeypatch.setattr(
-        "flextool.engine._derived_existing.period_walk_iterator",
+        "flextool.engine.preprocess.params._existing.period_walk_iterator",
         _raise_lag)
     with pytest.raises(CommissioningLagError, match="no surviving lag rows"):
         edd_invest_set_lf(
@@ -193,7 +193,7 @@ def test_build_commission_lf_surfaces_helper_error_when_lag_configured(
     """A helper bug on a genuinely lag-configured model (L>0) surfaces as a
     CommissioningLagError instead of silently solving the unlagged model."""
     monkeypatch.setattr(
-        "flextool.engine._derived_existing.commissioning_year_lf",
+        "flextool.engine.preprocess.params._existing.commissioning_year_lf",
         _raise_runtime)
     with pytest.raises(CommissioningLagError, match="MINOR-3"):
         _build_commission_lf(
@@ -205,7 +205,7 @@ def test_build_commission_lf_swallows_helper_error_when_no_lag(
     """No lead configured -> the helper would legitimately return None, so a
     failure is swallowed to None (byte-parity for existing models)."""
     monkeypatch.setattr(
-        "flextool.engine._derived_existing.commissioning_year_lf",
+        "flextool.engine.preprocess.params._existing.commissioning_year_lf",
         _raise_runtime)
     assert _build_commission_lf(
         _source(), "s", _ed_lf("nuke"), PERIODS, None) is None
@@ -218,7 +218,7 @@ def test_build_commission_lf_propagates_commissioning_lag_error(
     def _boom(*_a, **_k):
         raise CommissioningLagError("desync from helper")
     monkeypatch.setattr(
-        "flextool.engine._derived_existing.commissioning_year_lf",
+        "flextool.engine.preprocess.params._existing.commissioning_year_lf",
         _boom)
     with pytest.raises(CommissioningLagError, match="desync from helper"):
         _build_commission_lf(

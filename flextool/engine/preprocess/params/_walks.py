@@ -6,7 +6,7 @@ Cluster B (existing chain & invest sets; Δ.6) of the derived-helper
 port.
 
 The Δ.5 close stanza in ``progress.md`` flagged that the
-``period_walk_iterator`` helper in ``_derived_npv.py`` was a candidate
+``period_walk_iterator`` helper in ``_npv.py`` was a candidate
 for extraction so Cluster B can re-use it without circular import.
 This file is the realised refactor.
 
@@ -112,7 +112,7 @@ def _assert_lineage_castable(lineage: pl.DataFrame,
     DELETE a pair that IS in the lineage frame — exactly the
     silent-lineage failure class the recourse program keeps
     eliminating.  Mirrors the Slice A ``_finalize_lineage_frame``
-    live-assert idiom (``_derived_branch.py``).
+    live-assert idiom (``_branch.py``).
 
     Empirical polars 1.40.1 behavior this guard exists for (Slice B
     design W5(c)): a NON-STRICT cast between two different Enum
@@ -206,7 +206,7 @@ def period_walk_iterator(
     source
         ``InputSource`` for the cluster's data (used to read
         ``p_years_d`` / yearly inflation factors via lazy helpers
-        in ``_derived_npv``).
+        in ``_npv``).
     active_solve
         Active solve name for ``p_years_d`` resolution.
     ed_lf
@@ -255,7 +255,7 @@ def period_walk_iterator(
     commission_lf
         Optional ``[e, d, yr_c]`` commissioning-year frame (Slice H
         construction lead time — see
-        :func:`._derived_existing.commissioning_year_lf`).  When provided,
+        :func:`._existing.commissioning_year_lf`).  When provided,
         the availability filters compare ``yr_dall`` against
         ``yr_avail = coalesce(yr_c, yr_d)`` instead of ``yr_d`` (both the
         lower bound and the lifetime-expiry upper bound
@@ -280,7 +280,7 @@ def period_walk_iterator(
     # ``provider``/``workdir`` through every NPV/edd walker caller.
     # Off-flag both are ``None`` → arms dead → byte-parity.
     if provider is None:
-        from flextool.engine._derived_params import (
+        from flextool.engine.preprocess.params._derived import (
             _recourse_walk_provider,
             _recourse_walk_workdir,
         )
@@ -296,7 +296,7 @@ def period_walk_iterator(
         return ed_lf.select("e", "d").with_columns(
             factor=pl.lit(0.0, dtype=pl.Float64))
     # Lazy import to avoid circular dependency at module-load time.
-    from flextool.engine._derived_params import _p_years_d_lf
+    from flextool.engine.preprocess.params._derived import _p_years_d_lf
     # Slice D α-1 (§5.1): under recourse the caller forwards ``provider`` so
     # the canonical ``p_years_d.csv`` arm — which byte-copies fan-member year
     # rows — goes live, giving branch periods their anchor's year-from-start
@@ -457,7 +457,7 @@ def period_walk_iterator(
                   .unique())
 
     # Inflation factor sum.
-    from flextool.engine._derived_npv import _inflation_factors_lf
+    from flextool.engine.preprocess.params._npv import _inflation_factors_lf
     factors_lf = _inflation_factors_lf(
         source, active_solve, period_universe, provider=provider)
     if factor_side == "inv":

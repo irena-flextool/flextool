@@ -211,7 +211,7 @@ def _stub_a20_passes(monkeypatch, calls: list, *,
     no-op recorder that appends its label to ``calls``.
 
     Patches against the source modules — ``_apply_db_overrides`` does
-    ``from flextool.engine import _direct_params as _dp`` etc.
+    ``from flextool.engine import _direct as _dp`` etc.
     inside the function body, so patching the module attributes is
     sufficient (no per-callsite indirection to chase).
 
@@ -223,12 +223,10 @@ def _stub_a20_passes(monkeypatch, calls: list, *,
     preserves their "write solve_current.csv to set the active solve"
     idiom without needing to construct a real FlexDataProvider.
     """
-    from flextool.engine import (
-        _direct_params as _dp,
-        _projection_params as _pp,
-        _derived_params as _drv,
-        _derived_existing as _ex,
-    )
+    from flextool.engine.preprocess.params import _direct as _dp
+    from flextool.engine.preprocess.params import _projection as _pp
+    from flextool.engine.preprocess.params import _derived as _drv
+    from flextool.engine.preprocess.params import _existing as _ex
     def _record(label):
         return lambda *a, **kw: calls.append(label)
 

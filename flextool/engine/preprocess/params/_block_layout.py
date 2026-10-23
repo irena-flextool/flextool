@@ -569,7 +569,7 @@ class BlockLayout:
 
         """
         # ── 1. Resolve the active solve name ───────────────────────────
-        from flextool.engine._projection_params import (
+        from flextool.engine.preprocess.params._projection import (
             _try_entities,
             _try_param,
         )

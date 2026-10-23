@@ -283,7 +283,7 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
     # The synthesized dual is naturally in CUR/MW (units & connections) and
     # CUR/MWh (storage nodes): the LP capacity is in MW(h) and the objective
     # coefficient was lifted ×1000 from the per-kW input invest_cost
-    # (_derived_npv.py annuity).  Divide by 1000 so the REPORTED marginal
+    # (_npv.py annuity).  Divide by 1000 so the REPORTED marginal
     # matches the input convention the user types — CUR/kW (units &
     # connections) and CUR/kWh (storage nodes).  Single choke point: every
     # regime flows through `combined`, and the node-vs-process split happens

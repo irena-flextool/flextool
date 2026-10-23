@@ -760,7 +760,7 @@ def read_sets(
     # node__storage_binding_method — (node, method).
     #
     # Walk every storage_bind_* projection exposed by FlexData.  The four
-    # frames below mirror the entries in ``_projection_params.py:1858-1861``
+    # frames below mirror the entries in ``_projection.py:1858-1861``
     # and the FlexData declarations in ``flex_data.py:579-582``.  Pre-fix this
     # block walked only ``storage_bind_within_solve`` and
     # ``storage_bind_forward_only`` (audit §5.2), which silently dropped the

@@ -10,7 +10,7 @@ Before the fix, :meth:`SpineDbReader._unroll_rows` kept the whole-null
 value as a value-less *scalar* row, so :meth:`parameter` returned a
 ``[name, value]`` frame with no index column.  The downstream shape
 resolver
-(:func:`flextool.engine._direct_params._resolve_constraint_index_col`)
+(:func:`flextool.engine.preprocess.params._direct._resolve_constraint_index_col`)
 then raised ``Unrecognised Map index column(s) []`` — the misleading
 "malformed Map" error in the bug report.
 
@@ -40,7 +40,7 @@ import pytest
 
 from tests.db_utils import json_to_db
 
-from flextool.engine import _direct_params as dp
+from flextool.engine.preprocess.params import _direct as dp
 from flextool.engine._spinedb_reader import SpineDbReader
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "null_override_clears_map.json"

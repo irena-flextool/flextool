@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from flextool.engine._spinedb_reader import SpineDbReader
-from flextool.engine import _direct_params as dp
+from flextool.engine.preprocess.params import _direct as dp
 from polar_high import Param
 
 TEST_DIR = Path(__file__).resolve().parents[2]

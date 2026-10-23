@@ -7,7 +7,7 @@ A DIRECT (``constant_efficiency``) unit with a real input node and an
 output-node ``fixed`` profile (the Koeberg class) builds its real flow
 arc as ``v_flow[unit, input_node, output_node]``.  But the per-roll
 *projection* producer
-:func:`flextool.engine._projection_params._profile_method_arc`
+:func:`flextool.engine.preprocess.params._projection._profile_method_arc`
 hard-coded ``source = unit`` on its output-side branch, so the
 ``process_profile_fixed`` ``(p, source, sink, f)`` tuple came out as
 ``(unit, unit, output_node, f)``.  ``_eq_profiles`` then filters

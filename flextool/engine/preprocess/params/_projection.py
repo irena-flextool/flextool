@@ -224,7 +224,7 @@ def process_source_sink(source: "InputSource") -> pl.DataFrame:
 #   * Connections: always ``(c, node_1, node_2)`` (already 1-arc form).
 #
 # Internal method comes from the classifier (input_writer.METHODS_MAPPING).
-# We reuse the classifier from ``_derived_params.py``.
+# We reuse the classifier from ``_derived.py``.
 
 
 _METHOD_2WAY_NVAR_LOCAL = frozenset(("method_2way_nvar_off",))
@@ -308,7 +308,7 @@ def process_source_sink_canonical(source: "InputSource",
     del pss  # legacy parameter
 
     # Late import to avoid a circular reference.
-    from flextool.engine._derived_params import _classify_process_method
+    from flextool.engine.preprocess.params._derived import _classify_process_method
     classified = _classify_process_method(source)
 
     # Connections are always noEff and 1-arc.
@@ -725,7 +725,7 @@ def process_source_sink_2way_1var(source: "InputSource") -> pl.DataFrame:
     Schema: ``[p, source, sink]`` in the canonical forward orientation
     (matching ``process_source_sink``).
     """
-    from flextool.engine._derived_params import _classify_process_method
+    from flextool.engine.preprocess.params._derived import _classify_process_method
 
     classified = _classify_process_method(source)
     if classified is None or classified.height == 0:
