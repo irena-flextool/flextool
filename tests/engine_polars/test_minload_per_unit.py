@@ -147,7 +147,7 @@ def test_sinkless_indirect_unit_without_output_is_internal_error() -> None:
     """A sink-less indirect online min-load unit cannot reach the floor
     emitter today (``_max_flow_rhs`` raises first); should that change it
     must not silently lose its floor."""
-    from flextool.engine_polars.model import _assert_minload_units_have_outputs
+    from flextool.engine_polars._unit_floors import _assert_minload_units_have_outputs
 
     d = types.SimpleNamespace(
         process_indirect=pl.DataFrame({"p": ["mix"]}),

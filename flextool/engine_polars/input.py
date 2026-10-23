@@ -673,7 +673,7 @@ class FlexData:
     # window in the next handoff.  ``uptime_carry`` / ``downtime_carry`` are
     # the per-``(p, d, t)`` carried obligations built from the window at the
     # continuation roll (period-aware) and injected on the ``minimum_uptime``
-    # RHS / ``minimum_downtime`` LHS by ``_add_online_block``.  All ``None``
+    # RHS / ``minimum_downtime`` LHS by ``_online.add_constraints``.  All ``None``
     # on the first roll / non-rolling / no-min-up-down solves (→ the online
     # block takes its byte-identical baseline path).
     online_startup_history: pl.DataFrame | None = None       # (p, d, t, startup, shutdown, duration)

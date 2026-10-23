@@ -117,17 +117,17 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ``p_unitsize`` (or ``v_unitsize`` from process_existing_count)
     # turns the row into POWER as needed.  Integer variants are
     # mathematically the same column type.
-    # flextool/engine_polars/model.py:511
+    # flextool/engine_polars/_online.py add_variables
     "v_online_linear": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine_polars/model.py:512
+    # flextool/engine_polars/_online.py add_variables
     "v_startup_linear": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine_polars/model.py:513
+    # flextool/engine_polars/_online.py add_variables
     "v_shutdown_linear": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine_polars/model.py:518
+    # flextool/engine_polars/_online.py add_variables
     "v_online_integer": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine_polars/model.py:520
+    # flextool/engine_polars/_online.py add_variables
     "v_startup_integer": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine_polars/model.py:521
+    # flextool/engine_polars/_online.py add_variables
     "v_shutdown_integer": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
 
     # ── Investment / divestment counts.  DIMENSIONLESS column whose
@@ -414,32 +414,32 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
 
     # ── Unit-commitment (online / startup / shutdown / minimum times).
     # All DIMENSIONLESS — they bound counts.
-    # flextool/engine_polars/model.py:3732 (maxOnline_<sfx>)
+    # flextool/engine_polars/_online.py (maxOnline_<sfx>)
     "maxOnline": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:3735 (maxStartup_<sfx>)
+    # flextool/engine_polars/_online.py (maxStartup_<sfx>)
     "maxStartup": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:3738 (maxShutdown_<sfx>)
+    # flextool/engine_polars/_online.py (maxShutdown_<sfx>)
     "maxShutdown": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:3744 (online__startup_<sfx>)
+    # flextool/engine_polars/_online.py (online__startup_<sfx>)
     "online__startup": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:3748 (online__shutdown_<sfx>)
+    # flextool/engine_polars/_online.py (online__shutdown_<sfx>)
     "online__shutdown": CstrFamily(QuantityType.DIMENSIONLESS),
     # OC1 #1 sub-slice (b) — separate_dispatch sibling v_online PIN
-    # (model.py online_fix_eq_<linear|integer>; the resolver strips the UC
+    # (_online.py online_fix_eq_<linear|integer>; the resolver strips the UC
     # suffix to this base).  Pins the dimensionless unit-count v_online to
     # the parent's committed schedule.
     "online_fix_eq": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:3770 (maxFlow_online_<sfx>)
+    # flextool/engine_polars/_online.py (maxFlow_online_<sfx>)
     "maxFlow_online": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py _add_online_block
+    # flextool/engine_polars/_online.py
     # (maxOutputSum_online_<sfx>)
     "maxOutputSum_online": CstrFamily(QuantityType.DIMENSIONLESS),
-    # model.py _add_unit_floors (minFlow_minload_<sfx>: per-unit floor)
+    # _unit_floors.py (minFlow_minload_<sfx>: per-unit floor)
     "minFlow_minload": CstrFamily(QuantityType.DIMENSIONLESS),
-    # model.py _add_unit_floors (minFlow_output_floor_<sfx>: per-output
+    # _unit_floors.py (minFlow_output_floor_<sfx>: per-output
     # floor of a multi-output unit; unit-count flow units)
     "minFlow_output_floor": CstrFamily(QuantityType.DIMENSIONLESS),
-    # model.py _add_unit_floors: downward-reserve headroom rows (zero
+    # _unit_floors.py: downward-reserve headroom rows (zero
     # floor) per unit / per arc; unit-count flow units
     "minFlow_reserve": CstrFamily(QuantityType.DIMENSIONLESS),
     "minFlow_reserve_arc": CstrFamily(QuantityType.DIMENSIONLESS),

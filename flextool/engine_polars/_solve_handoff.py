@@ -128,7 +128,7 @@ class SolveHandoff:
     # Producer: prior roll's v_online_{linear,integer} at its last
     # realized (d, t).
     # Consumer: next roll's ``p_roll_continue_online`` overlay (applied at
-    # the continuation roll's first step by ``_add_online_block``).
+    # the continuation roll's first step by ``_online.add_constraints``).
     # Schema: ``[process, value]``.  No file equivalent (in-memory only).
     roll_end_online: pl.DataFrame | None = None
 

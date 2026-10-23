@@ -62,7 +62,7 @@ from ._axis_enums import cast_dim
 
 
 if TYPE_CHECKING:
-    from polar_high.engine import Var
+    from .model import _Build
 
 
 # ---------------------------------------------------------------------------
@@ -254,8 +254,8 @@ def dc_arcs_frame(d) -> "pl.DataFrame | None":
     return dc_arcs if dc_arcs.height > 0 else None
 
 
-def add_variables(m, d, *, v_flow_back=None) -> "dict[str, Var]":
-    """Declare ``v_angle[n, d, t]`` and stash the DC arc frame.
+def add_variables(b: _Build) -> None:
+    """Declare ``v_angle[n, d, t]`` and stash the DC arc frame in ``b.dc_pf_vars``.
 
     ``v_angle`` is indexed by (n, d, t) where n ∈ ``node_dc_power_flow``.
     Bounds are set to the loose ±π for non-reference nodes; reference-angle
@@ -266,21 +266,23 @@ def add_variables(m, d, *, v_flow_back=None) -> "dict[str, Var]":
     longer created here — ``model.py`` declares it ONCE over the union of
     all ``method_2way_1var_off`` arcs (DC + non-DC) so the single-signed
     flow ``v_flow ∈ [-cap, +cap]`` can run sink→source on any such arc.
-    The shared Var is passed in via *v_flow_back* and stashed in the
-    returned dict so :func:`add_constraints` can splice it into
+    The shared Var is read from ``b.v_flow_back`` and stashed in
+    ``b.dc_pf_vars`` so :func:`add_constraints` can splice it into
     ``dc_flow_eq`` as ``v_flow - v_flow_back``.  The nodeBalance injection
     and the capacity cap (``maxFlow_back``) for the back auxiliary are
     likewise owned by ``model.py`` over the full set.
     """
+    m, d = b.m, b.d
+    v_flow_back = b.v_flow_back
     if not has_feature(d):
-        return {}
+        return
     if d.dt is None or d.dt.height == 0:
-        return {}
+        return
 
     # v_angle's index is the cross of node_dc_power_flow × dt.
     angle_idx = d.node_dc_power_flow.join(d.dt, how="cross").select("n", "d", "t")
     if angle_idx.height == 0:
-        return {}
+        return
 
     v_angle = m.add_var(
         "v_angle", ("n", "d", "t"), angle_idx,
@@ -295,27 +297,24 @@ def add_variables(m, d, *, v_flow_back=None) -> "dict[str, Var]":
         if v_flow_back is not None:
             out["v_flow_back"] = v_flow_back
 
-    return out
+    b.dc_pf_vars = out
 
 
-def add_constraints(m, d, vars: dict, *,
-                    v_flow=None, p_unitsize=None,
-                    p_flow_upper_existing=None) -> None:
+def add_constraints(b: _Build) -> None:
     """Emit the dc_flow_eq + reference-angle pin.
 
-    ``v_flow``: the model's ``v_flow[p, source, sink, d, t]`` Var.  Required
-    when ``connection_dc_power_flow`` is non-empty — without flow the
-    angle-only LP would be vacuous.
-
-    ``p_unitsize``: the ``p_entity_unitsize`` Param indexed by (p,).
-    Required for the same reason.
-
-    ``p_flow_upper_existing``: accepted for backward-compatibility but no
-    longer consumed here — the back-flow capacity cap is emitted by
-    ``model.py`` as ``maxFlow_back`` over the full ``method_2way_1var_off``
-    arc set (a superset of the DC arcs), so capping again here would be
-    redundant.
+    Reads ``b.dc_pf_vars`` (from :func:`add_variables`), the model's
+    ``v_flow[p, source, sink, d, t]`` and ``d.p_unitsize``.  The back-flow
+    capacity cap is not here: ``model.py`` emits it as ``maxFlow_back`` over
+    the full ``method_2way_1var_off`` arc set (a superset of the DC arcs).
     """
+    if not (b.has_proc and b.dc_pf_vars):
+        return
+    d = b.d
+    m = b.m
+    vars = b.dc_pf_vars
+    v_flow = b.v_flow
+    p_unitsize = d.p_unitsize
     if not has_feature(d):
         return
     v_angle = vars.get("v_angle")

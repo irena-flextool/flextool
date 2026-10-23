@@ -207,7 +207,7 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     # ramp — model.py:2328  f"ramp_{side}_{dir_}_constraint"
     "ramp_sink_up_constraint", "ramp_sink_down_constraint",
     "ramp_source_up_constraint", "ramp_source_down_constraint",
-    # unit commitment — model.py:3909+  f"...{sfx}", sfx ∈ {_linear,_integer}
+    # unit commitment — _online.py / _unit_floors.py  f"...{sfx}", sfx ∈ {_linear,_integer}
     "maxOnline_linear", "maxOnline_integer",
     "maxStartup_linear", "maxStartup_integer",
     "maxShutdown_linear", "maxShutdown_integer",
@@ -219,7 +219,7 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "minFlow_output_floor_linear", "minFlow_output_floor_integer",
     "minimum_uptime_linear", "minimum_uptime_integer",
     "minimum_downtime_linear", "minimum_downtime_integer",
-    # OC1 #1 sub-slice (b) separate_dispatch sibling v_online pin — model.py
+    # OC1 #1 sub-slice (b) separate_dispatch sibling v_online pin — _online.py
     # ``online_fix_eq_{linear,integer}`` (resolver strips the UC suffix to
     # the registered ``online_fix_eq`` base).
     "online_fix_eq_linear", "online_fix_eq_integer",

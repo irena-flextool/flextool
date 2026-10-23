@@ -89,6 +89,7 @@ CANONICAL_PREFIX = "flextool/schemas/canonical_databases/"
 COVERAGE_SOURCES = (
     "model.py", "_reserve.py", "_group_slack.py", "_cumulative_invest.py",
     "_delay.py", "_commodity_ladder.py", "_dc_power_flow.py",
+    "_online.py", "_unit_floors.py",
 )
 
 
@@ -1187,8 +1188,6 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
         # _add_non_anticipativity_invest_constraints._tie(name, ...)
         "non_anticipativity_invest_p", "non_anticipativity_invest_n",
         "non_anticipativity_divest_p", "non_anticipativity_divest_n",
-        # f"online_fix_eq_{_sfx}"
-        "online_fix_eq_linear", "online_fix_eq_integer",
         # f"ramp_{side}_{dir_}_constraint"
         "ramp_sink_up_constraint", "ramp_sink_down_constraint",
         "ramp_source_up_constraint", "ramp_source_down_constraint",
@@ -1201,13 +1200,21 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
         # _add_profile_cstr(..., name, ...)
         "profile_flow_upper_limit", "profile_flow_lower_limit",
         "profile_flow_fixed",
-        # _add_online_block / _add_unit_floors: f"...{sfx}", sfx=_{kind}
+    ),
+    "_online.py": (
+        # f"...{sfx}", sfx=_{kind}
         *(f"{base}_{kind}"
           for base in ("maxOnline", "maxStartup", "maxShutdown",
                        "online__startup", "online__shutdown",
                        "maxFlow_online", "maxOutputSum_online",
                        "minimum_uptime", "minimum_downtime",
-                       "minFlow_minload", "minFlow_output_floor")
+                       "online_fix_eq")
+          for kind in ("linear", "integer")),
+    ),
+    "_unit_floors.py": (
+        # f"...{sfx}", sfx=_{kind}
+        *(f"{base}_{kind}"
+          for base in ("minFlow_minload", "minFlow_output_floor")
           for kind in ("linear", "integer")),
     ),
     "_reserve.py": (
