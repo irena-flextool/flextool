@@ -60,7 +60,7 @@ from flextool.lean_parquet import write_lean_parquet
 if TYPE_CHECKING:
     from polar_high import Solution
 
-    from flextool.engine.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
 _logger = logging.getLogger(__name__)
 

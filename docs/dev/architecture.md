@@ -330,7 +330,7 @@ the peak-memory and wall-time of the build.
 #### Cross-solve state (Provider keys + `SolveHandoff`)
 
 Inside the cascade everything moves through `FlexDataProvider`. The
-relevant key families are declared in `engine/_provider_keys.py`:
+relevant key families are declared in `engine/preprocess/_provider_keys.py`:
 
 - `HANDOFF_*` — quantities the just-solved problem produces for the next
   iteration (`fix_storage_quantity/price/usage`, `roll_end_state`,
@@ -353,7 +353,7 @@ model.py                          build_flextool — LP build (table of
                                   contents) + core equation families
 _online.py, _reserve.py, ...      LP feature modules (map: model.py docstring)
 _model_common.py                  Helpers shared by the LP modules
-input.py                          FlexData dataclass + loader entry point
+flex_data.py                      FlexData dataclass + loader entry point
 chain.py                          run_chain + ChainStep dataclass
 _orchestration.py                 run_orchestration / run_chain_from_db,
                                   native cascade

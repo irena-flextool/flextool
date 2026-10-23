@@ -14,7 +14,7 @@ import polars as pl
 import pytest
 
 from flextool.engine import _group_slack, _reserve, _commodity_ladder
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine._input_source import seed_provider_from_dir
 
 

@@ -27,7 +27,7 @@ from flextool.engine._derived_branch import (
     dd_same_scenario_df,
     pd_non_anticipativity_df,
 )
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +345,7 @@ def test_t8_metadata_exclusion(tmp_path):
 def _minimal_flex_data():
     from polar_high import Param
 
-    from flextool.engine.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
     dt = pl.DataFrame({"d": ["p2035"], "t": ["t0001"]})
     val = dt.with_columns(value=pl.lit(1.0))
@@ -371,7 +371,7 @@ def test_t9_region_filter_pass_through(tmp_path):
     field sweep filters only frames carrying n/p/e/cn/g columns, and
     the lineage frames carry only d/d_other/b."""
     from flextool.engine.solve._region_filter import _drop_master_rows
-    from flextool.engine.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
     dd, pd_na = _build(tmp_path, pb=PB_41, piu=PIU_41, sbtb=SBTB_41)
     rd = _minimal_flex_data()
@@ -478,7 +478,7 @@ def test_t12_stoch_dump_reload_roundtrip(stoch_data, stoch_wf, tmp_path):
     Path note (design §5 implementation note): a CSV-only reload
     (dumped dir carries no Spine DB) skips the ENTIRE derived cascade
     (``_apply_db_overrides`` gates on ``db_reader is not None``,
-    ``input.py:4679``), so every cascade-produced field — the lineage
+    ``flex_data.py:4679``), so every cascade-produced field — the lineage
     frames, like their cousins ``period_branch_full`` /
     ``dt_non_anticipativity`` — is None after ``load_flextool`` of a
     dumped tree.  The F2 substance ("the rebuild inputs all survive a

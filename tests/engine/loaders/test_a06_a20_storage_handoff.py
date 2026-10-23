@@ -1,7 +1,7 @@
 """Surface A.6 (storage / reservoir / state loader) and A.20
 (handoff / warm-start / rolling-horizon coupling) loader tests.
 
-A.6 tests call ``flextool.engine.input._load_storage`` directly
+A.6 tests call ``flextool.engine.preprocess.flex_data._load_storage`` directly
 with hand-built minimal frames — the helper is pure (just CSV reads
 plus algebra over its inputs) so isolating it avoids needing a full
 workdir orchestration just to flip a single binding-method row.
@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 import polars as pl
 
-from flextool.engine.input import _load_storage, _apply_db_overrides
+from flextool.engine.preprocess.flex_data import _load_storage, _apply_db_overrides
 
 
 # --- A.6 helpers ----------------------------------------------------

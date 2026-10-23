@@ -6,7 +6,7 @@ maps when a solve gets duplicated for rolling/per-sub-solve modes.
 polar_high doesn't reproduce ``SolveConfig`` (chain.py manages
 sub-solves directly via FlexData snapshots); the port instead
 covers the closest analogue polar_high ships: the
-``solve_mode.csv`` parser in :func:`flextool.input._load_solver_options`.
+``solve_mode.csv`` parser in :func:`flextool.engine.preprocess.flex_data._load_solver_options`.
 
 That parser is the parsing-and-application layer flextool's
 test framing alludes to ("solve_mode.csv parsing & application"):
@@ -44,7 +44,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine.input import _load_solver_options
+from flextool.engine.preprocess.flex_data import _load_solver_options
 
 
 def _write_solve_mode(p: Path, rows: list[tuple[str, str, str | int | float]]) -> None:
@@ -135,7 +135,7 @@ class TestSolveModeParsing:
 
     def test_bool_coercion_handles_aliases(self, tmp_path: Path) -> None:
         """bool coercion accepts true/yes/on/1 (and false/no/off/0)
-        synonyms (input.py:2617-2621)."""
+        synonyms (flex_data.py:2617-2621)."""
         for raw, expected in [("true", True), ("yes", True), ("on", True),
                               ("1", True), ("false", False), ("off", False),
                               ("no", False), ("0", False)]:
@@ -153,7 +153,7 @@ class TestSolveModeParsing:
     def test_malformed_value_does_not_crash(self, tmp_path: Path) -> None:
         """Malformed numeric values are silently dropped — let the HiGHS
         defaults stand rather than crashing the whole loader on one bad
-        cell (input.py:2670-2672)."""
+        cell (flex_data.py:2670-2672)."""
         sd = tmp_path / "solve_data"
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
             ("highs_time_limit", "S", "not_a_float"),
@@ -174,7 +174,7 @@ class TestSolveModeParsing:
         """Header-only solve_mode.csv ⇒ None.
 
         The loader explicitly rejects empty / malformed files so that
-        downstream HiGHS runs with default options (input.py:2632-2633).
+        downstream HiGHS runs with default options (flex_data.py:2632-2633).
         """
         sd = tmp_path / "solve_data"
         sd.mkdir()
@@ -187,7 +187,7 @@ class TestSolveModeParsing:
 
     def test_solve_data_fallback(self, tmp_path: Path) -> None:
         """Some fixtures drop ``solve_mode.csv`` under ``solve_data/``
-        instead of ``input/`` — the loader must fall back (input.py:2628)."""
+        instead of ``input/`` — the loader must fall back (flex_data.py:2628)."""
         sd = tmp_path / "solve_data"
         sd.mkdir()
         # No input/solve_mode.csv; only solve_data/solve_mode.csv.
@@ -237,7 +237,7 @@ class TestSolveModeApplication:
 
     def test_missing_solve_current_picks_any_row(self, tmp_path: Path) -> None:
         """No ``solve_current.csv`` ⇒ single-solve fixture; the parser
-        takes whatever rows are there (input.py:2640-2652)."""
+        takes whatever rows are there (flex_data.py:2640-2652)."""
         sd = tmp_path / "solve_data"
         sd.mkdir()
         _write_solve_mode(tmp_path / "input" / "solve_mode.csv", [
@@ -249,7 +249,7 @@ class TestSolveModeApplication:
 
     def test_solve_not_in_csv_falls_back(self, tmp_path: Path) -> None:
         """solve_current names a solve absent from solve_mode.csv — the
-        parser falls back to the full table (input.py:2649-2650).
+        parser falls back to the full table (flex_data.py:2649-2650).
         Behaviorally equivalent to "single-solve mode, take whatever
         rows exist" so the loader doesn't wedge on a typo."""
         sd = tmp_path / "solve_data"

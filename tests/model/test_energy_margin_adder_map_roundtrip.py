@@ -48,7 +48,7 @@ from db_utils import json_to_db  # noqa: E402
 from flextool.engine._emit_energy_margin_adder import (  # noqa: E402
     emit_energy_margin_adder,
 )
-from flextool.engine._flex_data_provider import (  # noqa: E402
+from flextool.engine.preprocess._flex_data_provider import (  # noqa: E402
     FlexDataProvider,
 )
 from flextool.spinedb_backend import SpineDBBackend  # noqa: E402

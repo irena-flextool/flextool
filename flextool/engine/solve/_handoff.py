@@ -2,7 +2,7 @@
 
 Home of the canonical :class:`SolveHandoff` dataclass — the typed
 record of "what one solve produced that the next solve(s) consume".
-Built post-solve by :func:`flextool.engine.input.build_handoff_from_solution`
+Built post-solve by :func:`flextool.engine.preprocess.flex_data.build_handoff_from_solution`
 directly from the polar_high ``Solution`` object; consumed by the next
 sub-solve via the orchestrator's iteration-start translator
 (:func:`_provider_translators.translate_handoff_to_provider`) which

@@ -258,10 +258,10 @@ def test_recourse_handoff_drops_non_realized(_resolved, recourse_wf, caplog):
     import logging
 
     data, sol = _resolved
-    from flextool.engine.input import build_handoff_from_solution
+    from flextool.engine.preprocess.flex_data import build_handoff_from_solution
 
     with caplog.at_level(logging.DEBUG,
-                         logger="flextool.engine.input"):
+                         logger="flextool.engine.preprocess.flex_data"):
         handoff = build_handoff_from_solution(
             sol, recourse_wf, SOLVE, flex_data=data)
     assert handoff is not None

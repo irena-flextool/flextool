@@ -76,7 +76,7 @@ def _provider_from_workdir(workdir: Path):
     Dual-registers each frame under ``"<parent>/<stem>"`` AND the bare
     ``"<stem>"`` key (design §6 / S6 — glob, do not under-register).
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
     for parent in ("input", "solve_data"):
@@ -271,7 +271,7 @@ def test_lp_scaling_synthetic_node_chain(tmp_path):
     * node with usz==0 + fallback MISSING → 1.0 branch of R;
     * arc-less node → unitsize "0.0" (float, not int-0).
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
 
@@ -344,7 +344,7 @@ def test_lp_scaling_synthetic_scaling_inactive(tmp_path):
     inv_node_cap collapse to 1.0 regardless of the pow10 value (the
     scaling_active Python branch).  The same provider as a control where
     scaling IS active proves the gate distinguishes the two."""
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     def build(active: bool):
         provider = FlexDataProvider()
@@ -411,7 +411,7 @@ def test_lp_scaling_synthetic_group_chain(tmp_path):
     * a member node ABSENT from the node list → ncfs default 1.0 in the GR
       sum (the ``.get((n, d), 1.0)`` branch).
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     def build(active: bool):
         provider = FlexDataProvider()
@@ -519,7 +519,7 @@ def test_lp_scaling_synthetic_half_decade_probe(tmp_path):
     """
     import math
 
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     half = math.sqrt(10.0)  # 10^0.5 ≈ 3.1623 — the decade boundary.
     # Node raw just BELOW the boundary → pow10 should be 1.0 (10^0); just

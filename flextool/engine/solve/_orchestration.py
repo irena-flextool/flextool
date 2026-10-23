@@ -60,7 +60,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from flextool.engine.solve._acceptance import classify_acceptance
 from flextool.engine.solve._handoff import SolveHandoff
-from flextool.engine._stochastic_detect import (
+from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
 )
 from flextool.engine._solve_state import (
@@ -754,7 +754,7 @@ if TYPE_CHECKING:
     import polars as pl
     from polar_high import Problem, Solution
 
-    from flextool.engine.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
 
 # ---------------------------------------------------------------------------
@@ -1195,7 +1195,7 @@ class _NoopMemoryRecorder:
 
 # Module-level recorder reference.  ``run_orchestration`` constructs the
 # per-run recorder and publishes it here so deeper-stack modules (e.g.
-# :mod:`flextool.engine.input`'s ``_apply_db_overrides``) can
+# :mod:`flextool.engine.preprocess.flex_data`'s ``_apply_db_overrides``) can
 # emit phase progress in the unified ``[mem]`` format without each
 # carrying a recorder kwarg.  Reset to ``None`` when the run completes
 # so a subsequent run starts clean.
@@ -2096,7 +2096,7 @@ def _drive_cascade(
     from flextool.engine.solve._run_model import native_run_model
 
     from polar_high import NamedBasis, Problem, WarmProblem
-    from flextool.engine.input import (
+    from flextool.engine.preprocess.flex_data import (
         build_handoff_from_solution,
         load_flextool,
     )
@@ -2573,7 +2573,7 @@ def _drive_cascade(
             # ``v_divest_n`` to long-form (entity, d, value) frames whose
             # columns match ``polar_high.Solution.value(name)`` exactly;
             # it is ``{}`` when the model has no investment.
-            from flextool.engine.input import (
+            from flextool.engine.preprocess.flex_data import (
                 build_handoff_from_solution,
             )
 
@@ -4389,7 +4389,7 @@ def run_chain_from_db(
 
     Combines:
 
-    1. :func:`flextool.engine._native_input_writer.write_workdir_inputs`
+    1. :func:`flextool.engine.preprocess._input_writer.write_workdir_inputs`
        populates the cascade-input Provider with every derived frame
        from the Spine DB (pure in-memory; no workdir CSVs are
        written).
@@ -4526,7 +4526,7 @@ def run_chain_from_db(
     # in-memory: ``write_workdir_inputs`` runs the input_derivation
     # pipeline whose emitters populate the Provider directly, so no
     # CSVs hit disk.
-    from flextool.engine._native_input_writer import (
+    from flextool.engine.preprocess._input_writer import (
         write_workdir_inputs,
     )
 
@@ -4545,7 +4545,7 @@ def run_chain_from_db(
         )
     else:
         _memrec = _MemoryRecorder(csv_path=None, enabled=False)
-    # Publish so deeper modules (input.py's _apply_db_overrides) emit
+    # Publish so deeper modules (flex_data.py's _apply_db_overrides) emit
     # in the unified [mem] format.
     set_phase_recorder(_memrec)
     _memrec.checkpoint("cascade_start", logger,
@@ -4557,7 +4557,7 @@ def run_chain_from_db(
     # so the per-sub-solve hook in
     # :mod:`flextool.engine.solve._run_model` picks it up at
     # provider seed time.
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     cascade_input_provider = FlexDataProvider()
 
     write_workdir_inputs(

@@ -1,7 +1,7 @@
 """flextool integration with the polar_high LP eDSL.
 
 This subpackage is **flextool-specific** — it knows the on-disk layout
-of flextool's ``input/`` + ``solve_data/`` CSVs (``input.py``) and the
+of flextool's ``input/`` + ``solve_data/`` CSVs (``flex_data.py``) and the
 shape of flextool's optimization model (``model.py``). The
 ``polar_high`` package itself knows nothing of flextool.
 """
@@ -84,7 +84,7 @@ _install_polar_high_determinism()
 # `from polar_high import …`) and rely on Problem.add_var / add_cstr
 # already being wrapped at first call. Reordering would break the
 # determinism guarantee documented above.
-from flextool.engine.input import (  # noqa: E402  # see determinism note above
+from flextool.engine.preprocess.flex_data import (  # noqa: E402  # see determinism note above
     FlexData, load_flextool,
 )
 from flextool.engine.model import build_flextool  # noqa: E402  # see determinism note above

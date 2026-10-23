@@ -129,7 +129,7 @@ def _fix_usage_overlay(toy_storage_2t, *, cap: float):
     p_state_start = Param(("n", "d"),
         pl.DataFrame({"n": ["s"], "d": ["d1"], "value": [0.5]}))
     # dtttdt_forward_only = dtttdt with the first (d, t) per solve
-    # dropped (input.py:2493-2496).  For 2 timesteps in one period,
+    # dropped (flex_data.py:2493-2496).  For 2 timesteps in one period,
     # drop t01: keep only (d1, t02, ...).
     dtttdt_fo = (toy_storage_2t.dtttdt
                  .sort("d", "t").slice(1))
@@ -252,7 +252,7 @@ def test_storage_handoff_wiring_sc_c_fix_usage_binding(toy_storage_2t):
 def test_fix_usage_producer_applies_slope(toy_storage_2t, tmp_path):
     """Producer test: with p_slope=0.9 on the discharge process, the
     produced p_fix_storage_usage must include the slope multiplier per
-    the eff-partition branch added at input.py:5706-5837.
+    the eff-partition branch added at flex_data.py:5706-5837.
 
     Hand-calc:
       LP solves with discharge_t02 = 2 MWh (demand-driven).
@@ -265,7 +265,7 @@ def test_fix_usage_producer_applies_slope(toy_storage_2t, tmp_path):
     so this test fails on the legacy simplified formula and passes on
     the new full formula.  Test exists to guard against regression.
     """
-    from flextool.engine.input import build_handoff_from_solution
+    from flextool.engine.preprocess.flex_data import build_handoff_from_solution
 
     # Build the LP with non-unit slope on discharge_p.
     data = _fix_usage_overlay(toy_storage_2t, cap=10.0)  # generous cap, non-binding

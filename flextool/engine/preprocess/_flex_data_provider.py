@@ -13,7 +13,7 @@ Name conventions
   (``"solve_data/p_flow_max"``, ``"input/timeline"``, ``"derived/..."``,
   ``"handoff/..."``) and consumers query the same form — typically via
   the typed constants in ``_provider_keys.py`` (``K.SOLVE_DATA_...``)
-  or via ``_emit_provider_io._provider_key(path)``.
+  or via ``_provider_io._provider_key(path)``.
 * The same basename can appear under multiple parents (the canonical
   example is ``timeline.csv`` which exists in both ``input/`` and
   ``solve_data/``); each is stored under its qualified key and looked
@@ -39,7 +39,7 @@ Source tagging
 ``source`` string that is retained alongside the frame and surfaced by
 :meth:`FlexDataProvider.get_source`.  The natural cascade leaves
 ``source`` unset; external-override writes (see
-:func:`flextool.engine._provider_translators.translate_overrides_to_provider`)
+:func:`flextool.engine.preprocess._provider_translators.translate_overrides_to_provider`)
 tag their entries with ``"external_override"`` so downstream audit
 tooling can distinguish overridden keys from naturally-produced ones.
 Eviction by :meth:`release_unused` drops the source entry alongside the
@@ -229,7 +229,7 @@ class FlexDataProvider:
         bare↔qualified fallback was dropped in Phase 4.2-2 — callers
         must pass the canonical parent-qualified key (typically a
         ``K.*`` constant from ``_provider_keys.py`` or the result of
-        ``_emit_provider_io._provider_key(path)``).
+        ``_provider_io._provider_key(path)``).
         """
         key = _strip_csv(name)
         if key in self._evicted:

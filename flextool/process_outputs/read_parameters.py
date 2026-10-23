@@ -40,7 +40,7 @@ from flextool.process_outputs._inmemory_helpers import (
 if TYPE_CHECKING:
     from polar_high import Solution
 
-    from flextool.engine.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
 
 # ---------------------------------------------------------------------------

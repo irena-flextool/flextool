@@ -50,7 +50,7 @@ def _provider_from_workdir(workdir: Path):
     ``"<stem>"`` key so both ``_provider_key``-qualified lookups and any
     bare lookup resolve (design §6 / S6 — glob, do not under-register).
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
     for parent in ("input", "solve_data"):
@@ -231,7 +231,7 @@ def test_vectorized_pdtNode_synthetic_fold_and_cascade(tmp_path):
     oracle; ``derive_pdtNode_vectorized`` must be byte-identical (Tier A;
     these are small integer-valued sums, no ULP drift).
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
 

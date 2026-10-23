@@ -26,7 +26,7 @@ import pytest
 
 from flextool.engine._solve_config import SolveConfig
 from flextool.engine._solve_state import FlexToolConfigError
-from flextool.engine._stochastic_detect import (
+from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic,
     synthetic_branch_tokens,
 )
@@ -233,7 +233,7 @@ REALIZE_CSV = "solve_data/realized_invest_periods_of_current_solve.csv"
 def _solved(scenario_workdir):
     from polar_high import Problem
     from flextool.engine import build_flextool, load_flextool
-    from flextool.engine.input import build_handoff_from_solution
+    from flextool.engine.preprocess.flex_data import build_handoff_from_solution
 
     work = scenario_workdir(SCENARIO)
     data = load_flextool(work)

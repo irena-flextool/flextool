@@ -5,7 +5,7 @@ Every ``emit_*`` function pushes its frame into a
 :class:`FlexDataProvider` via ``_emit(provider, key, df)`` which —
 since Phase 0a of ``specs/provider_consolidation.md`` —
 single-registers under the parent-qualified key only (see
-:mod:`flextool.engine._emit_provider_io`).  Consumer queries
+:mod:`flextool.engine.preprocess._provider_io`).  Consumer queries
 against the bare basename are resolved by the Provider's
 bidirectional lookup (see :meth:`FlexDataProvider.get`).  Disk
 emission happens only via

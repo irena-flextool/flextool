@@ -58,7 +58,7 @@ Side-paths off this trunk:
 
 ## FlexData — the central data carrier
 
-`FlexData` (in `input.py`) is a `@dataclass` of roughly 220 fields. Five
+`FlexData` (in `flex_data.py`) is a `@dataclass` of roughly 220 fields. Five
 fields are positional and always present (the time / weighting / node
 floor); every other field defaults to `None` and is filled in only when
 the scenario exercises the corresponding feature.
@@ -311,7 +311,7 @@ Representative entries:
 | `_emit_pdt_params.py` | The full `pdt_*` family (online indices, varCost frames, …). |
 | `_emit_period_calc.py` | `p_period_share`, `complete_period_share_of_year`, `p_timeline_duration_in_years`. |
 | `_emit_reserve.py` | Reserve-up / reserve-down set machinery for `_reserve.py`. |
-| `_emit_provider_io.py` | The single Provider-funnel (`_emit`, `_provider_key`, `_provider_open`) every emitter routes through. |
+| `_provider_io.py` | The single Provider-funnel (`_emit`, `_provider_key`, `_provider_open`) every emitter routes through. |
 | `_vectorize.py` | Shared per-roll vectorize helpers: the entity × dt and entity × period grids (carrying `__eo` / `__to` / `__po` order keys), the dict→lookup lift, the stochastic / parent-period fold, and the `repr()`-based value rendering. |
 
 ### Vectorized per-roll emit
@@ -390,13 +390,13 @@ from `_emit_period_params`; `_derived_npv` reads
 in `_emit_arc_unions`.
 
 The runner does not compute the order. It is encoded in the call
-order of `_apply_db_overrides` (in `input.py`) and the legacy
+order of `_apply_db_overrides` (in `flex_data.py`) and the legacy
 load sequence in `load_flextool`. Adding a new derived field
 typically means appending one call to the right phase.
 
 ## FlexDataProvider and override translator
 
-`FlexDataProvider` (`flextool/engine/_flex_data_provider.py`)
+`FlexDataProvider` (`flextool/engine/preprocess/_flex_data_provider.py`)
 is the in-memory dict-of-frames that every cascade module reads from
 and writes to. Keys are declared in `_provider_keys.py`; the
 convention is `<parent>/<basename>` (e.g. `solve_data/foo`,
@@ -584,7 +584,7 @@ the next solve's preprocessing. The dataclass is in
 | `cum_sim_hours` | `[period, value]` | Running simulated-hour total per period. |
 
 `build_handoff_from_solution(sol, work_folder, solve_name, ...)` in
-`input.py` populates one `SolveHandoff` from the just-completed
+`flex_data.py` populates one `SolveHandoff` from the just-completed
 solve's `polar_high` Solution plus the per-solve metadata in
 `solve_data/`. The cascade transports the carriers through the
 Provider's `HANDOFF_*` keys (see
@@ -593,7 +593,7 @@ the `solve_data/<solve>/*.csv` mirrors only exist under
 `csv_dump=True` and are not load-bearing for any downstream phase.
 
 The handoff flows back into the next solve through the override
-translator + `_apply_db_overrides` chain in `input.py`, which reads
+translator + `_apply_db_overrides` chain in `flex_data.py`, which reads
 the `HANDOFF_*` Provider keys and translates each carrier into the
 next `FlexData`'s `p_entity_*` parameters and the corresponding
 `n_*` / `ndt_*` / `p_*` sets (`p_fix_storage_quantity`,
@@ -635,7 +635,7 @@ on the child solve:
   parent's allowance, indexed over the n_fix_storage_usage subset of
   nodes.
 
-`build_handoff_from_solution` (in `input.py`, formerly
+`build_handoff_from_solution` (in `flex_data.py`, formerly
 `build_handoff_from_flexpy`) is the producer side: it extracts the
 three metrics from the just-completed solution and packs them into the
 `SolveHandoff` carrier. Each metric is sourced independently —
@@ -662,7 +662,7 @@ realised state.
 the explicit carrier for that path. The producer at
 `build_handoff_from_solution` copies the same end-of-horizon `v_state`
 into both `roll_end_state` and `upward_roll_end_state` for every
-solve; the consumer in `input.py` reads
+solve; the consumer in `flex_data.py` reads
 `HANDOFF_UPWARD_ROLL_END_STATE` first and falls back to
 `HANDOFF_ROLL_END_STATE` when the upward key is empty. The carrier is
 always-on for any storage→dispatch nesting; no opt-in flag. See
@@ -844,7 +844,7 @@ small. Repeating the table from
 | `run_chain(steps, ...)` | Thin compat shim around `run_chain_from_db`. Kept for callers that still hand-construct `ChainStep` lists. |
 | `run_chain_from_db(db_url, work_folder, ...)` | The canonical multi-solve driver. Walks the solve list, calls `_drive_cascade` per solve, threads `SolveHandoff` between iterations. |
 | `run_orchestration(state, work_folder, ...)` | One layer below `run_chain_from_db`. Takes a pre-built `RunnerState` (with `SolveConfig` and `TimelineConfig` already resolved) and drives the cascade. The intended entry point from the GUI / Spine Toolbox layer. |
-| `SolveHandoff` | The carrier dataclass. Optional fields covering invest / divest / fix-storage / cumulative ladders / roll-end state (incl. the upward variant). `is_empty()` returns True when nothing fired. Populated by `build_handoff_from_solution` (in `input.py`); the older disk-read `capture_post_solve` constructor was retired when the cascade fell through to Provider/CSV reads in all production paths. |
+| `SolveHandoff` | The carrier dataclass. Optional fields covering invest / divest / fix-storage / cumulative ladders / roll-end state (incl. the upward variant). `is_empty()` returns True when nothing fired. Populated by `build_handoff_from_solution` (in `flex_data.py`); the older disk-read `capture_post_solve` constructor was retired when the cascade fell through to Provider/CSV reads in all production paths. |
 | `OrchestrationStep` | Per-solve result. Carries `solve_name`, `solution`, `handoff`, `warm_used`. |
 | `ChainStep` | Per-sub-solve result of the compat shim. Same shape as `OrchestrationStep`. |
 | `FlexInputSource` / `CsvSource` | The CSV-shaped source protocol family. |
@@ -856,12 +856,12 @@ small. Repeating the table from
 |---|---|---|
 | Add a constraint that uses only existing parameters | `model.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1) and list it in the `model.py` module docstring. |
 | Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct_params.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model.py`. Register it in autoscale `PARAMETER_TYPES` (CLAUDE.md invariant #1). |
-| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_emit_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `input.py`. |
+| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_emit_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `flex_data.py`. |
 | Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1), add them to the `model.py` module docstring, and check the LP with `tools/lp_snapshot.py`. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. Cross-link: [scaling.md](scaling.md). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. Cross-link: [slack_convention.md](slack_convention.md). |
 | Add a new decomposition mode | `_benders.py` (+ `_region_filter.py`) for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
-| Trace a wrong-period bug in rolling horizon | `_apply_db_overrides` in `input.py` | The handoff translation site. Cross-check against the `SolveHandoff` fields populated by `capture_post_solve`. |
+| Trace a wrong-period bug in rolling horizon | `_apply_db_overrides` in `flex_data.py` | The handoff translation site. Cross-check against the `SolveHandoff` fields populated by `capture_post_solve`. |
 | Trace a warm-LP divergence | `_warm._STRUCTURAL_FIELDS`, `_warm._WARM_PARAMS` | A divergence usually means a structural field changed (add it to `_STRUCTURAL_FIELDS`) or a Param outside the warm set was mutated (add it to `_WARM_PARAMS` and write the `_apply_warm_updates` clause). |
 | Add a new variable / dual to the parquet output | `flextool/process_outputs/read_highs_solution.VARIABLE_SPECS` | Append one `VariableSpec`. No engine-side change required. |
 
@@ -885,7 +885,7 @@ file:
   `tests/engine/test_meta_provider_invariants.py` forbids
   disk reads from any cascade module.
 - **One funnel per source.** All Provider reads inside emitter
-  modules go through `_emit_provider_io._provider_open` /
+  modules go through `_provider_io._provider_open` /
   `_provider_key`. All Spine DB reads go through
   `SpineDbReader.parameter()`. Adding a new reader site is a smell;
   route through the existing funnel.

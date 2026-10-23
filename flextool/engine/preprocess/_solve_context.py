@@ -7,7 +7,7 @@ This module hosts :class:`SolveContext`, the typed dataclass the
 It wraps the per-solve preprocessing artefacts that today live as CSVs
 under ``workdir/solve_data/`` and exposes them as in-memory polars
 frames so the override helpers (``apply_derived_a..g``) and the
-``_load_*`` family in :mod:`flextool.engine.input` no longer have
+``_load_*`` family in :mod:`flextool.engine.preprocess.flex_data` no longer have
 to re-read the same files dozens of times per solve.
 
 :class:`SolveContext` reads the ``solve_data/*.csv`` files written by
@@ -536,7 +536,7 @@ def _provider_fetch_or_raise(
     provider: "object", path: Path, consumer: str,
 ) -> pl.DataFrame:
     """Fetch *path*'s carrier from *provider* strictly; raise on miss."""
-    from flextool.engine._emit_provider_io import _provider_key
+    from flextool.engine.preprocess._provider_io import _provider_key
     key = _provider_key(path)
     if provider.has(key):
         df = provider.get(key)
@@ -577,7 +577,7 @@ def _read_active_solve(workdir: Path,
     Provider-first read; falls back to disk when the Provider is absent
     or doesn't carry the frame.
     """
-    from flextool.engine._emit_provider_io import _provider_key
+    from flextool.engine.preprocess._provider_io import _provider_key
     p = workdir / "solve_data" / "solve_current.csv"
     if provider is not None and provider.has(_provider_key(p)):
         df = provider.get(_provider_key(p))
@@ -599,12 +599,12 @@ def _read_active_solve(workdir: Path,
 
 def _read_solve_first(work_folder: Path,
                        *, provider: "object | None" = None) -> bool:
-    """Mirror of ``input._read_solve_first``.
+    """Mirror of ``flex_data._read_solve_first``.
 
     Reads ``modelParam == 'solveFirst'`` from ``p_model.csv``.  Resolves
     in order: ``solve_data/p_model.csv`` → ``input/p_model.csv`` → True.
     """
-    from flextool.engine._emit_provider_io import _provider_key
+    from flextool.engine.preprocess._provider_io import _provider_key
 
     def _cell_str(value: "object | None") -> str:
         return "" if value is None else str(value)
@@ -631,7 +631,7 @@ def _read_solve_first(work_folder: Path,
 def _read_period_set(path: Path,
                       *, provider: "object | None" = None) -> set[str]:
     """Read a single-column period CSV (header row, then one period per row)."""
-    from flextool.engine._emit_provider_io import _provider_key
+    from flextool.engine.preprocess._provider_io import _provider_key
 
     def _cell_str(value: "object | None") -> str:
         return "" if value is None else str(value)
@@ -654,7 +654,7 @@ def _read_period_set(path: Path,
 def _read_realized_dispatch_periods(path: Path,
                                      *, provider: "object | None" = None) -> set[str]:
     """Read distinct periods from ``realized_dispatch.csv``."""
-    from flextool.engine._emit_provider_io import _provider_key
+    from flextool.engine.preprocess._provider_io import _provider_key
 
     def _cell_str(value: "object | None") -> str:
         return "" if value is None else str(value)
@@ -840,7 +840,7 @@ def _load_period_share(solve_data_dir: Path,
         # Provider-strict: at least one of the canonical variants must
         # carry the frame.  We probe ``_calc`` first (the producer's
         # default), then the legacy non-``_calc`` name as a fallback.
-        from flextool.engine._emit_provider_io import _provider_key
+        from flextool.engine.preprocess._provider_io import _provider_key
         for path in cand_paths:
             key = _provider_key(path)
             if provider.has(key):

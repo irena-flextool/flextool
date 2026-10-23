@@ -18,7 +18,7 @@ import os
 import polars as pl
 import pytest
 
-from flextool.engine._flex_data_provider import (
+from flextool.engine.preprocess._flex_data_provider import (
     EvictedFrameError,
     FlexDataProvider,
 )

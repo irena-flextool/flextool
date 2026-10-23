@@ -48,7 +48,7 @@ def _provider_from_workdir(workdir: Path):
     ``"<stem>"`` key so both ``_provider_key``-qualified lookups and any
     bare lookup resolve.
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
     for parent in ("input", "solve_data"):
@@ -192,7 +192,7 @@ def test_vectorized_pdtProcess_side_exercises_pbt_fold(side_col, tmp_path):
     loop) is the oracle; ``_derive_pdtProcess_side_vectorized`` must be
     byte-identical.
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
     put = _put_factory(provider)

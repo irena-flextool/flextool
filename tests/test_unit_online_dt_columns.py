@@ -31,7 +31,7 @@ post-processing column-select crashed.
 
 Fix (commit ``91edd891``): when a UC process has no ``process_block``
 row, fall back to the per-step timeline (``steps_in_use.csv``), matching
-``_native_input_writer``'s documented intent that empty entity_block /
+``_input_writer``'s documented intent that empty entity_block /
 process_block stubs "fall through to identity (every entity mapped to
 'default')".  See ``# BUG p_online_dt_empty_no_blocks`` in
 ``specs/model_bugs.md``.
@@ -68,7 +68,7 @@ if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
 from flextool.engine import run_chain_from_db  # noqa: E402
-from flextool.engine._flex_data_provider import FlexDataProvider  # noqa: E402
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402
 
 

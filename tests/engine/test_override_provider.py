@@ -54,7 +54,7 @@ import polars as pl
 import pytest
 
 from flextool.engine import run_chain_from_db
-from flextool.engine import _provider_keys as K
+from flextool.engine.preprocess import _provider_keys as K
 
 pytestmark = pytest.mark.solver
 

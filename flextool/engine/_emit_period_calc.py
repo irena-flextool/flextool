@@ -46,7 +46,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine._constants import HOURS_PER_YEAR
-from flextool.engine._emit_provider_io import _emit
+from flextool.engine.preprocess._provider_io import _emit
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ def _read_csv(path: Path, columns: list[str],
     misses the key.  Step 2.5 Phase C dropped the disk-fallback arm —
     cascade modules read the Provider only.
     """
-    from flextool.engine._emit_provider_io import (
+    from flextool.engine.preprocess._provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )
@@ -384,8 +384,8 @@ def emit_period_calculated_params(
     # legacy ``solve_data/ladder_cum_sim_hours`` CSV fallback was dropped
     # in 4.2-1g — the translator pipeline always populates the handoff
     # key now, so the fallback was dead in production.
-    from flextool.engine import _provider_keys as K
-    from flextool.engine._provider_translators import read_handoff_frame
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
     p_ladder_cum: dict[str, float] = {}
     handoff_df = read_handoff_frame(provider, K.HANDOFF_CUM_SIM_HOURS)
     if handoff_df is not None and "p_ladder_cum_sim_hours" in handoff_df.columns:

@@ -8,8 +8,8 @@ contains an end-to-end integration test asserting that those
 writers' output matches flextool's phase-3 reference, byte-for-byte
 after row-sort + 6-decimal rounding.
 
-The polar_high analogue lives in :func:`flextool.input.build_handoff_from_solution`
-+ :func:`flextool.input.apply_handoff` — the in-memory equivalents
+The polar_high analogue lives in :func:`flextool.engine.preprocess.flex_data.build_handoff_from_solution`
++ :func:`flextool.engine.preprocess.flex_data.apply_handoff` — the in-memory equivalents
 of those CSV writers.  Parity is asserted indirectly by
 ``test_flex_chain_apply_handoff.py`` (objective-level parity end-
 to-end).  This test goes one layer deeper: it walks the chain via

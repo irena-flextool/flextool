@@ -84,7 +84,7 @@ def _provider_from_workdir(workdir: Path):
     Dual-registers each frame under ``"<parent>/<stem>"`` AND the bare
     ``"<stem>"`` key (design §6 / S6 — glob, do not under-register).
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
     for parent in ("input", "solve_data"):
@@ -314,7 +314,7 @@ def _synthetic_provider():
     * ``origN`` — use_original (no scaling stage), present only in
       ptNode_inflow / fallback.
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
 
@@ -518,7 +518,7 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
     synthetic fixture: cpsoy==0 (stage-5 numerator survives with 0), a
     tdy_sum==0 drop (stage 6), and the S5 empty-complete-timeline int-0
     cell (orig_flow_sum must emit ``"0"`` not ``"0.0"``)."""
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     # --- cpsoy==0 + tdy_sum==0 (period with no timeline) ---------------
     provider = FlexDataProvider()

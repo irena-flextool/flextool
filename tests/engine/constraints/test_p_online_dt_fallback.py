@@ -4,7 +4,7 @@
 Bug: ``_emit_per_solve.write_per_solve_sets`` derived ``p_online_dt``
 strictly from ``process_block ⋈ block_step_duration``.  When the input
 data did not emit a ``process_block`` row for a UC process (true of the
-single-solve ``_native_input_writer`` path, which ships a header-only
+single-solve ``_input_writer`` path, which ships a header-only
 ``process_block.csv``), ``p_online_dt`` collapsed to zero rows and the
 entire UC machinery — ``v_online_linear``, ``v_startup_linear``,
 ``minimum_uptime``, ``maxOnline_linear``, etc. — built over an empty
@@ -15,7 +15,7 @@ Fix: when a process in ``process_online`` has no ``process_block`` row,
 fall back to the per-step timeline (``steps_in_use``).  This mirrors
 the .mod's pre-v51 behaviour where UC processes without an explicit
 block defaulted to the full (d, t) grid, and matches
-``_native_input_writer``'s documented intent that empty stubs "fall
+``_input_writer``'s documented intent that empty stubs "fall
 through to identity (every entity mapped to 'default')".
 
 This regression test asserts the fallback fires: for the

@@ -57,7 +57,7 @@ import polars as pl
 
 from polar_high import Param, Problem
 from flextool.engine import build_flextool
-from flextool.engine.input import FlexData
+from flextool.engine.preprocess.flex_data import FlexData
 
 UNITSIZE = 1000.0
 # Var-unit capacity on v_state_inter.  Physical cap = STATE_CAP * UNITSIZE

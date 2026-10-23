@@ -45,7 +45,7 @@ def _provider_from_workdir(workdir: Path):
     ``"<stem>"`` key so both ``_provider_key``-qualified lookups and any
     bare lookup resolve (design §6 / S6 — glob, do not under-register).
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
     for parent in ("input", "solve_data"):
@@ -275,7 +275,7 @@ def test_vectorized_pdtNodeInflow_synthetic_branches(tmp_path):
     ``derive_pdtNodeInflow_vectorized`` must match (Tier A expected —
     small integer-valued sums; Tier B acceptable on genuine ULP drift).
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
 

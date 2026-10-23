@@ -9,7 +9,7 @@ grid).  They share the same shape: pull a scalar / per-entity value
 out of Spine, broadcast over a structural set, optionally apply the
 unitsize cascade.
 
-Δ.10 lifts six helpers off ``input.py``'s CSV preprocessing:
+Δ.10 lifts six helpers off ``flex_data.py``'s CSV preprocessing:
 
 * :func:`p_unitsize_from_source`            — ``(p,)`` per-process
   unitsize; cascade ``virtual_unitsize OR existing OR 1000`` filtered
@@ -145,7 +145,7 @@ def p_unitsize_from_source(source: "InputSource",
     """``p_unitsize[p]`` — per-process unitsize cascade restricted to
     processes appearing in *pss*.
 
-    Mirrors ``flextool/engine/input.py:800-825``::
+    Mirrors ``flextool/engine/preprocess/flex_data.py:800-825``::
 
         unitsize_long = _read_unitsize(p_entity_unitsize.csv)
         unitsize_p = unitsize_long.filter(p ∈ pss["p"].unique())
@@ -188,7 +188,7 @@ def p_state_unitsize_from_source(source: "InputSource",
     """``p_state_unitsize[n]`` — per-node unitsize restricted to nodes
     in *nodeState_df*.
 
-    Mirrors ``input.py:1780-1789``::
+    Mirrors ``flex_data.py:1780-1789``::
 
         state_us_long = unitsize_long.filter(n ∈ nodeState["n"])
 
@@ -316,7 +316,7 @@ def p_penalty_down_from_source(source: "InputSource",
 # p_process_sink_conversion_flow_coeff
 # ---------------------------------------------------------------------------
 #
-# Mirrors input.py:950-1002.  The CSV path reads
+# Mirrors flex_data.py:950-1002.  The CSV path reads
 # p_process_source_conversion_flow_coeff.csv /
 # p_process_sink_conversion_flow_coeff.csv (always emitted by flextool's
 # input writer for indirect units), then:
@@ -406,7 +406,7 @@ def p_process_source_conversion_flow_coeff_from_source(
     """``p_process_source_conversion_flow_coeff`` for indirect units.
 
     Returns ``(zero_pairs, coef_param)`` mirroring
-    ``input.py:_load_indirect``'s contract (lines 950-978).  The
+    ``flex_data.py:_load_indirect``'s contract (lines 950-978).  The
     caller anti-joins ``zero_pairs`` from its inputs set and assigns
     ``coef_param`` to ``flex_data.p_process_source_conversion_flow_coeff``.
 

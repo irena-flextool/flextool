@@ -50,7 +50,7 @@ def test_scenario_workdir_smoke_base(scenario_workdir):
 
 
 def test_scenario_workdir_loads_with_load_flextool(scenario_workdir):
-    from flextool.engine.input import load_flextool
+    from flextool.engine.preprocess.flex_data import load_flextool
 
     work = scenario_workdir("base")
     data = load_flextool(work)

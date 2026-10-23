@@ -16,7 +16,7 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Var
 
 from flextool.engine._axis_enums import rename_to_axis, schema_dtype
-from flextool.engine._emit_provider_io import _provider_key
+from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine._model_common import _entity_rows, _has_rows, _var_view
 from flextool.engine._param_shapes import promote_param_to_dt
 

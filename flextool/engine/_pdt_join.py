@@ -5,7 +5,7 @@ RP-blended-weights ``nodeState_rp_dt`` / ``nodeState_rp_block_first_dt``
 helpers added by Phase 4 of the RP-blended-weights restoration).
 
 Pre-E.3, :class:`FlexData` carried these as eager DataFrames built
-up-front in :mod:`flextool.engine.input`.  On y2050-scale
+up-front in :mod:`flextool.engine.preprocess.flex_data`.  On y2050-scale
 fixtures the largest of them — ``pss_dt`` = ``process_source_sink × dt``
 — is ~1.75 GB and lives for the whole LP build alongside ``v_flow.frame``
 (which already carries the same ``(p, source, sink, d, t)`` key set after
@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 if TYPE_CHECKING:  # pragma: no cover
-    from flextool.engine.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
 
 __all__ = (
@@ -106,7 +106,7 @@ def compute_nodeState_first_dt(flex_data: "FlexData") -> pl.DataFrame | None:
     ``state_start`` / ``roll_continue`` boundary constraints.
 
     Mirrors the pre-E.3 eager build in
-    :func:`flextool.engine.input._load_storage` (which sometimes
+    :func:`flextool.engine.preprocess.flex_data._load_storage` (which sometimes
     sourced ``first_period`` from
     ``solve_data/period_first_of_solve.csv`` / ``period_first.csv``).
     Here we take the lexicographically smallest ``d`` in ``dt`` — the

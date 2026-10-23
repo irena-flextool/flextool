@@ -61,7 +61,7 @@ def _provider_from_workdir(workdir: Path):
     ``"<stem>"`` key so both ``_provider_key``-qualified lookups and any
     bare lookup resolve (design §6 / S6 — glob, do not under-register).
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
     for parent in ("input", "solve_data"):
@@ -214,7 +214,7 @@ def test_synthetic_varCost_pair(tmp_path):
     domain.  Oracle = legacy ``_derive_varCost_pair``; parity asserted on
     both basic and always (Tier A expected).
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
 
@@ -331,7 +331,7 @@ def test_synthetic_pssdt_varCost_filters(tmp_path):
 
     Oracle = legacy ``_derive_pssdt_varCost_filters``; Tier A ``.equals``.
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     provider = FlexDataProvider()
 

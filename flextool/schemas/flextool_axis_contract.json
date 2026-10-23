@@ -129,7 +129,7 @@
       "filter": "active blocks for the solve (includes synthetic DEFAULT_BLOCK)",
       "column_synonyms": ["bk"],
       "tokens_default_extension": ["default"],
-      "note": "Block names are derived in _block_layout.py from 'group' entities that carry a new_stepduration parameter, plus a synthetic DEFAULT_BLOCK fallback. Vocabulary = group names participating as resolution blocks ∪ {DEFAULT_BLOCK}. Phase 1 resolved the b_collision review note by renaming the cascade column from 'b' to 'bk' in _derived_block.py / _block_layout.py / input.py block-aware filters. The companion 'b_f' (block-fine) column also carries block vocabulary but is a distinct column name and does not collide."
+      "note": "Block names are derived in _block_layout.py from 'group' entities that carry a new_stepduration parameter, plus a synthetic DEFAULT_BLOCK fallback. Vocabulary = group names participating as resolution blocks ∪ {DEFAULT_BLOCK}. Phase 1 resolved the b_collision review note by renaming the cascade column from 'b' to 'bk' in _derived_block.py / _block_layout.py / flex_data.py block-aware filters. The companion 'b_f' (block-fine) column also carries block vocabulary but is a distinct column name and does not collide."
     },
     {
       "name": "r",
@@ -155,7 +155,7 @@
       "source": "constraint",
       "filter": "scenario_filter",
       "column_synonyms": ["cn"],
-      "note": "User-defined constraints. Phase 1 resolved the c-collision review note by renaming the constraint column from 'c' to 'cn' across _direct_params, _projection_params, input.py (_load_user_constraints), _derived_params (p_flow_constraint_coef_from_source) and model.py. The constraint axis now lives under the 'cn' column name and never collides with the commodity 'c' column."
+      "note": "User-defined constraints. Phase 1 resolved the c-collision review note by renaming the constraint column from 'c' to 'cn' across _direct_params, _projection_params, flex_data.py (_load_user_constraints), _derived_params (p_flow_constraint_coef_from_source) and model.py. The constraint axis now lives under the 'cn' column name and never collides with the commodity 'c' column."
     },
     {
       "name": "d_anchor",
@@ -228,8 +228,8 @@
       "code_sites": [
         "flextool/engine/_direct_params.py:285",
         "flextool/engine/_direct_params.py:306",
-        "flextool/engine/input.py:1547",
-        "flextool/engine/input.py:1564"
+        "flextool/engine/preprocess/flex_data.py:1547",
+        "flextool/engine/preprocess/flex_data.py:1564"
       ],
       "options": [
         "(a) Rename the constraint-axis column to 'cn' in those helpers (lowest-risk; localised).",
@@ -237,7 +237,7 @@
         "(c) Promote 'cn' as the canonical constraint column and update the rename helpers."
       ],
       "recommendation_for_phase_1": "Pick option (a). The two helpers are the only sites; renaming there keeps build_axis_enums simple (one enum per column name).",
-      "resolution": "Phase 1 landed option (a): the constraint column is now 'cn' across the cascade (_direct_params, _projection_params.cdt_filter, input.py:_load_user_constraints, _derived_params.p_flow_constraint_coef_from_source, model.py user-constraint emission). The constraint axis 'column_synonyms' field reflects the new name."
+      "resolution": "Phase 1 landed option (a): the constraint column is now 'cn' across the cascade (_direct_params, _projection_params.cdt_filter, flex_data.py:_load_user_constraints, _derived_params.p_flow_constraint_coef_from_source, model.py user-constraint emission). The constraint axis 'column_synonyms' field reflects the new name."
     },
     {
       "id": "b_collision",
@@ -253,7 +253,7 @@
         "(c) Schema-aware cast helper that picks the right enum based on the surrounding columns ((d, b, w) → branch, (n, b) → block)."
       ],
       "recommendation_for_phase_1": "Pick option (a) (rename block→'bk'). branch is far more pervasive in stochastic-aware code; block is contained to ~4 modules and easier to rename.",
-      "resolution": "Phase 1 landed option (a). The block-axis column is now 'bk' in BlockBundle properties (entity_block_lf, block_period_time_first_lf, block_period_time_last_lf), in block_compat() and in the block-aware flow_to_n / flow_from_n filters in input.py and _derived_block.py. The branch column remains 'b'."
+      "resolution": "Phase 1 landed option (a). The block-axis column is now 'bk' in BlockBundle properties (entity_block_lf, block_period_time_first_lf, block_period_time_last_lf), in block_compat() and in the block-aware flow_to_n / flow_from_n filters in flex_data.py and _derived_block.py. The branch column remains 'b'."
     },
     {
       "id": "i_axis_depth",
@@ -275,8 +275,8 @@
         "flextool/engine/_derived_block.py:169",
         "flextool/engine/_derived_block.py:180",
         "flextool/engine/_derived_branch.py:150",
-        "flextool/engine/_invest_seeds.py:80",
-        "flextool/engine/_invest_seeds.py:107"
+        "flextool/engine/preprocess/_invest_seeds.py:80",
+        "flextool/engine/preprocess/_invest_seeds.py:107"
       ],
       "resolution": "Updated axis row in this contract: source_type=parameter_keys with the four solve parameters listed."
     },

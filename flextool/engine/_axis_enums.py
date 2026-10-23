@@ -31,8 +31,8 @@ import polars as pl
 
 if TYPE_CHECKING:
     # Avoid a circular import at module-load time — FlexData lives in
-    # ``input.py`` which itself transitively imports this module.
-    from flextool.engine.input import FlexData
+    # ``flex_data.py`` which itself transitively imports this module.
+    from flextool.engine.preprocess.flex_data import FlexData
 
 
 # ---------------------------------------------------------------------------

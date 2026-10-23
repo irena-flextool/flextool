@@ -76,8 +76,8 @@ from typing import TYPE_CHECKING, Iterable
 import polars as pl
 
 from flextool.engine._solve_state import FlexToolConfigError
-from flextool.engine._emit_provider_io import _emit
-from flextool.engine.input import _provider_open
+from flextool.engine.preprocess._provider_io import _emit
+from flextool.engine.preprocess.flex_data import _provider_open
 
 
 # ---------------------------------------------------------------------------

@@ -48,8 +48,8 @@ from typing import Any
 
 import polars as pl
 
-from flextool.engine import _provider_keys as K
-from flextool.engine._emit_provider_io import _emit
+from flextool.engine.preprocess import _provider_keys as K
+from flextool.engine.preprocess._provider_io import _emit
 
 
 def _emit_path(provider, path: "Path | str", df: pl.DataFrame) -> None:
@@ -1156,7 +1156,7 @@ def _compute_rp_frames(
 
 # Map from the basename keys produced by :func:`_compute_rp_frames`
 # to the canonical Provider keys (no ``.csv`` suffix, per the Phase 3b
-# convention in :mod:`flextool.engine._provider_keys`).  Used by
+# convention in :mod:`flextool.engine.preprocess._provider_keys`).  Used by
 # both :func:`emit_rp_data` and :func:`emit_empty_rp_data` so the six
 # restored RP basenames + the two pre-existing ones land under the
 # named ``K.SOLVE_DATA_*`` constants.

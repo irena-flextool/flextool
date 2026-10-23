@@ -47,7 +47,7 @@ import pytest
 
 from polar_high import Problem
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine.input import build_handoff_from_solution
+from flextool.engine.preprocess.flex_data import build_handoff_from_solution
 
 pytestmark = pytest.mark.solver
 

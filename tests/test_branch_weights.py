@@ -40,7 +40,7 @@ import pytest
 from flextool.engine._emit_period_calc import (
     emit_branch_weights,
 )
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 
 # ---------------------------------------------------------------------------

@@ -33,7 +33,7 @@ def _seeded_provider(workdir):
     the real run/reload paths ``load_flextool`` seeds the Provider the
     same way before the reader runs.
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from flextool.engine._input_source import seed_provider_from_dir
 
     prov = FlexDataProvider()
@@ -82,7 +82,7 @@ def test_recourse_active_workdir_none_false():
 
 
 def test_emit_read_roundtrip_provider(tmp_path):
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     prov = FlexDataProvider()
     emit_stochastic_invest_method(

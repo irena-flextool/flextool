@@ -1,5 +1,5 @@
 """Diagnostic for the chain-cumulative carriers populated by
-:func:`flextool.input.build_handoff_from_solution` through ``run_chain``.
+:func:`flextool.engine.preprocess.flex_data.build_handoff_from_solution` through ``run_chain``.
 
 Exercises the chain-cumulative carrier SHAPE — state passed solve-to-
 solve — on the carriers the 4-solve invest+lifetime-renew fixture

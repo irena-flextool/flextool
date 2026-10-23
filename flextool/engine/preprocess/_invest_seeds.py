@@ -32,7 +32,7 @@ from flextool.engine._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine._emit_provider_io import _provider_key
+from flextool.engine.preprocess._provider_io import _provider_key
 
 
 # Substrate handle for the cascade-wide axis enum vocabulary.

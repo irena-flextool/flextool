@@ -47,7 +47,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine.input import FlexData
+from flextool.engine.preprocess.flex_data import FlexData
 from flextool.engine._axis_enums import (
     cast_dim,
     get_global_axis_enums,
@@ -152,7 +152,7 @@ def load_decomposition_method(
         path = Path(work_dir) / "input" / "p_group_decomposition.csv"
         if not path.exists():
             return {}
-        from flextool.engine._flex_data_provider import (
+        from flextool.engine.preprocess._flex_data_provider import (
             FlexDataProvider,
         )
         from flextool.engine._input_source import (

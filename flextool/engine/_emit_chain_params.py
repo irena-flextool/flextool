@@ -27,12 +27,12 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine._emit_provider_io import (
+from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
-from flextool.engine import _provider_keys as K
-from flextool.engine._provider_translators import read_handoff_frame
+from flextool.engine.preprocess import _provider_keys as K
+from flextool.engine.preprocess._provider_translators import read_handoff_frame
 from flextool.engine._derived_params import (
     INVEST_METHODS_INVEST_NO_LIMIT,
 )

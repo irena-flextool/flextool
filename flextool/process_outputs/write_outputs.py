@@ -142,7 +142,7 @@ def _provider_lookup_df(provider, parent: str, stem: str):
 
     Provider key convention matches the emit_* writers' ``_emit(...)``
     callsites — ``"<parent>/<basename-without-csv>"`` (see
-    :mod:`flextool.engine._emit_provider_io`).  The cascade keeps
+    :mod:`flextool.engine.preprocess._provider_io`).  The cascade keeps
     these frames in memory only (no on-disk fallback), so a ``None``
     *provider* yields ``None`` for every key.
     """
@@ -808,7 +808,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             solve parquet aggregation, and pandas joins/muls would
             mismatch.  Single-solve scenarios can ignore.
         flex_data_provider: optional per-sub-solve
-            :class:`flextool.engine._flex_data_provider.FlexDataProvider`
+            :class:`flextool.engine.preprocess._flex_data_provider.FlexDataProvider`
             from the orchestration step (typically ``last_step.flex_data_provider``).
             Used by :func:`_backfill_group_indicator_sets` to read the
             ``input/nodeGroup*`` + ``solve_data/nodeGroupDispatch__*``

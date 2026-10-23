@@ -25,8 +25,8 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine import _provider_keys as K
-from flextool.engine._emit_provider_io import _emit
+from flextool.engine.preprocess import _provider_keys as K
+from flextool.engine.preprocess._provider_io import _emit
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ def _read_csv(path: Path, columns: list[str],
     """Provider-only — returns an empty all-Utf8 frame on Provider miss.
     Step 2.5 Phase C dropped the disk-fallback arm.
     """
-    from flextool.engine._emit_provider_io import (
+    from flextool.engine.preprocess._provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )
@@ -514,7 +514,7 @@ def emit_per_solve_sets(
     # ``node`` column is consumed; the translator seeds these keys at
     # iteration start, replacing the legacy ``solve_data/fix_storage_*``
     # Provider read path ahead of the wide-field deletion in 4.1k.
-    from flextool.engine._provider_translators import read_handoff_frame
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
     for handoff_key, dst in (
         (K.HANDOFF_FIX_STORAGE_QUANTITY, "n_fix_storage_quantity_set.csv"),
         (K.HANDOFF_FIX_STORAGE_PRICE,    "n_fix_storage_price_set.csv"),

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flextool.engine._emit_provider_io import _provider_key
+from flextool.engine.preprocess._provider_io import _provider_key
 
 
 # ---------------------------------------------------------------------------

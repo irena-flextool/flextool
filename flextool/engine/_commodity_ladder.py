@@ -167,8 +167,8 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *, provider=None) -> dict
 
     # Tier MWh bought by the earlier solves of a chain, from the solve handoff; None on the first solve
     # (counted as 0).
-    from flextool.engine import _provider_keys as K
-    from flextool.engine._provider_translators import read_handoff_frame
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
     p_realized = None
     rel = read_handoff_frame(provider, K.HANDOFF_CUMULATIVE_COMMODITY)
     if rel is not None and rel.height > 0:

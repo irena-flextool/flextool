@@ -83,7 +83,7 @@ class ChainStep:
         The HiGHS solution for this sub-solve.
     handoff : flextool.SolveHandoff
         The handoff carriers derived from the polar_high solution
-        (see :func:`flextool.input.build_handoff_from_solution`).
+        (see :func:`flextool.engine.preprocess.flex_data.build_handoff_from_solution`).
     warm_used : bool
         True if this sub-solve was solved by warm-updating the prior
         sub-solve's :class:`WarmProblem` instance; False if it was a

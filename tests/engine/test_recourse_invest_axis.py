@@ -31,13 +31,13 @@ def _reset_anchor_scope():
 
 
 def _emit(prov, key, cols, rows):
-    from flextool.engine._emit_provider_io import _emit as _e
+    from flextool.engine.preprocess._provider_io import _emit as _e
     _e(prov, key, pl.DataFrame({c: [r[i] for r in rows]
                                 for i, c in enumerate(cols)}))
 
 
 def _provider(tmp_path, *, flag: str, pb, piu):
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     prov = FlexDataProvider()
     emit_stochastic_invest_method(
         flag, str(tmp_path / "solve_data/stochastic_invest_method.csv"),

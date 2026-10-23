@@ -41,12 +41,12 @@ Design decisions:
   ``block_compat`` carries only ``(default, default)``.
 * **Closes the Δ.3 `flow_to_n` / `flow_from_n` gap.** The block-aware
   filter previously lived only in the CSV path
-  (``input.py::_load_process_topology``); the helper here mirrors it
+  (``flex_data.py::_load_process_topology``); the helper here mirrors it
   on the source-driven path so multi-block fixtures' `db_direct_parity`
   test stops being a known gap.
 
-Reference: ``flextool/engine/input.py::_load_process_topology``
-(lines 703-783) and ``input.py::_load_storage`` (lines 1647-1699,
+Reference: ``flextool/engine/preprocess/flex_data.py::_load_process_topology``
+(lines 703-783) and ``flex_data.py::_load_storage`` (lines 1647-1699,
 2233-2253).
 """
 from __future__ import annotations
@@ -303,7 +303,7 @@ def filter_flow_n_by_block(
 ) -> pl.DataFrame:
     """Apply block-compatibility filter to ``flow_to_n`` / ``flow_from_n``.
 
-    Mirror of ``input.py::_load_process_topology`` lines 728-782.  An
+    Mirror of ``flex_data.py::_load_process_topology`` lines 728-782.  An
     arc ``(p, source, sink)`` contributes to node ``n``'s nodeBalance
     iff ``(b_n, b_f)`` exists in :py:attr:`BlockBundle.block_compat_frame`,
     where:
@@ -463,7 +463,7 @@ def flow_from_nodeBalance_block_filtered(
 ) -> pl.DataFrame | None:
     """Apply the block-compatibility filter to source-side nodeBalance arcs.
 
-    Mirror of ``input.py::_load_storage`` lines 1664-1699.  The
+    Mirror of ``flex_data.py::_load_storage`` lines 1664-1699.  The
     ``flow_from_nodeBalance_eff`` / ``flow_from_nodeBalance_noEff``
     frames carry ``(p, source, sink, n=source)``; the filter drops arcs
     whose source-block doesn't overlap the destination node's block.
@@ -492,7 +492,7 @@ def flow_from_nodeBalance_seed(
     ``flow_from_nodeBalance_noEff``.
 
     Mirror of the inline derivation in
-    ``input.py::_load_storage`` lines 1658-1705 (the slow path's
+    ``flex_data.py::_load_storage`` lines 1658-1705 (the slow path's
     storage loader).  Per the dispatch:
 
     ::
@@ -628,7 +628,7 @@ def period_block_multi_resolution_lf(
     ``None`` when the synthesis branch doesn't fire (caller falls back
     to the timeset-based default branch).
 
-    Mirror of ``input.py:1985-2126`` and the multi-resolution path of
+    Mirror of ``flex_data.py:1985-2126`` and the multi-resolution path of
     ``period_block_family_from_source`` in ``_derived_params.py``.
     """
     if bundle is None or not bundle.is_multi_block():
@@ -860,7 +860,7 @@ def nodeState_last_dt_lf(
 
     Last-fine-step-of-last-block per node.  Built from
     ``block_period_time_last`` × ``entity_block`` × ``nodeState``.
-    Mirror of ``input.py:2233-2253``.
+    Mirror of ``flex_data.py:2233-2253``.
     """
     empty = pl.LazyFrame(schema={
         "n": schema_dtype(_enums, "n"),
@@ -899,7 +899,7 @@ def dtttdt_block_interior_lf(
 ) -> pl.LazyFrame:
     """Interior-of-block dtttdt rows.
 
-    Two paths matching ``input.py``'s branching:
+    Two paths matching ``flex_data.py``'s branching:
 
     1. **Default** (timeset-block decomposition): keep dtttdt rows where
        ``t_previous_within_timeset == t_previous`` (jump=1 interior).

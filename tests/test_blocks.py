@@ -27,7 +27,7 @@ from flextool.engine._blocks import (
     emit_block_data,
     validate_group_membership,
 )
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine._solve_state import FlexToolConfigError
 
 

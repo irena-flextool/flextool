@@ -8,7 +8,7 @@ Why this module exists
 ----------------------
 
 Phase 0a of ``specs/provider_consolidation.md`` retired the dual-key
-registration in :func:`_emit_provider_io._emit`.  Every frame lives
+registration in :func:`_provider_io._emit`.  Every frame lives
 under exactly one Provider key — the parent-qualified form.  Stringly-
 typed lookups (``provider.get("solve_data/active_timelines")``) are
 typo-prone: a rename in one site without the other becomes a silent

@@ -123,7 +123,7 @@ def _frames_equal(a: pl.DataFrame, b: pl.DataFrame, *,
 def _csv_path_flow_to_n(workdir_path: Path) -> pl.DataFrame:
     """Compute ``flow_to_n`` via the canonical CSV path's algorithm.
 
-    Mirrors ``input.py::_load_process_topology`` lines 728-769 exactly.
+    Mirrors ``flex_data.py::_load_process_topology`` lines 728-769 exactly.
     Used as the parity oracle for the cluster E port.
     """
     sd = workdir_path / "solve_data"
@@ -208,7 +208,7 @@ def _csv_nodeStateBlock(sd: Path) -> pl.DataFrame:
 @pytest.mark.parametrize("work", PARITY_CASES, ids=PARITY_CASES)
 def test_flow_to_n_block_filter_parity(work: str, scenario_workdir) -> None:
     """``flow_to_n_block_filtered`` matches the CSV path's filter
-    output (mirror of ``input.py::_load_process_topology`` lines
+    output (mirror of ``flex_data.py::_load_process_topology`` lines
     728-769).  Closes the Δ.3 deferred-port gap."""
     workdir_path = _resolve_work(work, scenario_workdir)
     sd = workdir_path / "solve_data"
@@ -258,7 +258,7 @@ def test_nodeStateBlock_synthesis_parity(work: str, scenario_workdir) -> None:
 
     The CSV oracle ``solve_data/nodeStateBlock.csv`` only carries the
     EXPLICIT branch; the multi-resolution synthesis is layered onto it
-    in ``input.py::_load_storage`` lines 2010-2146 by computing
+    in ``flex_data.py::_load_storage`` lines 2010-2146 by computing
     ``entity_block ∩ coarse_blocks ∩ nodeBalance``.  This test mirrors
     the union.
     """
@@ -330,7 +330,7 @@ def test_nodeState_last_dt_parity(work: str, scenario_workdir) -> None:
     if bptl_f.height == 0 or eb_f.height == 0:
         return
 
-    # Reference: build the same way ``input.py:2233-2253`` does.
+    # Reference: build the same way ``flex_data.py:2233-2253`` does.
     bptl = bptl_f.rename({"block": "bk", "period": "d", "step": "t"})
     eb = eb_f.rename({"entity": "n", "block": "bk"})
     expected = (nodeState.select("n")

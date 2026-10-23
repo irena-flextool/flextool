@@ -4,7 +4,7 @@
 On a rolling / synthetic sub-solve the online min_uptime / min_downtime
 lookback (``uptime_lookback`` / ``pdt_uptime_set`` and the downtime twins)
 was **never built** — the synthetic-solve early-return in
-``input._apply_db_overrides`` skips ``apply_derived_c`` (§3.8), the sole
+``flex_data._apply_db_overrides`` skips ``apply_derived_c`` (§3.8), the sole
 producer of those frames, and returned without re-wiring them (unlike the
 documented RESERVE-1 / SECTION-1 / MINLOAD-1 / INFLOW-1 / NA-1 gaps).  With
 the frames ``None`` the ``minimum_uptime`` / ``minimum_downtime`` constraints

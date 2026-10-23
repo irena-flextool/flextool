@@ -116,10 +116,10 @@ from flextool.engine.autoscale import (
 from flextool.engine.solve._region_filter import HalfFlow, RegionSplit
 from flextool.engine._solve_state import FlexToolConfigError
 from flextool.engine.solve._solver_dispatch import apply_data_solver_options
-from flextool.engine._stochastic_detect import (
+from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
 )
-from flextool.engine.input import FlexData
+from flextool.engine.preprocess.flex_data import FlexData
 
 _logger = logging.getLogger(__name__)
 

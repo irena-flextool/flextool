@@ -2,7 +2,7 @@
 
 The :mod:`input_derivation` tier sits between
 :mod:`flextool.spinedb_backend` (raw EAV → polars materialisation) and
-the in-cascade :class:`flextool.engine._flex_data_provider.FlexDataProvider`
+the in-cascade :class:`flextool.engine.preprocess._flex_data_provider.FlexDataProvider`
 that the rest of the engine consumes.
 
 Architecture
@@ -44,7 +44,7 @@ import spinedb_api as api
 from spinedb_api import DatabaseMapping
 
 if TYPE_CHECKING:
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 
 __all__ = ["run"]
@@ -53,7 +53,7 @@ __all__ = ["run"]
 def _provider_key(filename: str) -> str:
     """Canonical Provider key for ``input/<stem>.csv`` style paths.
 
-    Matches the convention in :mod:`flextool.engine._emit_provider_io`:
+    Matches the convention in :mod:`flextool.engine.preprocess._provider_io`:
     ``"<parent_dir_name>/<stem>"``.
     """
     p = Path(filename)

@@ -31,7 +31,7 @@ import logging
 import polars as pl
 import pytest
 
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.solve._run_model import (
     _downgrade_rp_methods_for_non_rp_solve,
 )

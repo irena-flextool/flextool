@@ -29,8 +29,8 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine import _emit_mid_sets as _mid
-from flextool.engine._flex_data_provider import FlexDataProvider
-from flextool.engine.input import _load_handoff_aux_pair
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess.flex_data import _load_handoff_aux_pair
 
 
 def _seed_provider() -> FlexDataProvider:

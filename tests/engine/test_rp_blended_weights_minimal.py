@@ -47,7 +47,7 @@ import polars as pl
 
 from polar_high import Param, Problem
 from flextool.engine import build_flextool
-from flextool.engine.input import FlexData
+from flextool.engine.preprocess.flex_data import FlexData
 
 
 def _build_toy_rp_2base_1rep() -> FlexData:

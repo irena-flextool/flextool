@@ -1,14 +1,14 @@
 """Surface A.8 (variable / fixed operating-cost loader) and A.9 (CO2 cap
 loader) tests.
 
-A.8 covers ``flextool.engine.input._load_varcost`` — the helper
+A.8 covers ``flextool.engine.preprocess.flex_data._load_varcost`` — the helper
 that reads up to four ``pssdt_varCost_*.csv`` set files plus three
 wide ``pdt*`` Param files and returns the eight-key dict consumed by
 the cost-emit pass.  Each helper returns ``None`` independently per
 field so a single source-only / sink-only / process-only fixture
 suffices to verify the disjoint-routing contract.
 
-A.9 covers ``flextool.engine.input._load_co2_cap`` — the loader
+A.9 covers ``flextool.engine.preprocess.flex_data._load_co2_cap`` — the loader
 behind the per-period CO2-cap constraint family.  Tests focus on the
 short-circuit gates (no-pss, missing CSV, empty CSV, no priced-node
 intersection) that decide whether the constraint family fires at all;
@@ -25,7 +25,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine.input import _load_varcost, _load_co2_cap
+from flextool.engine.preprocess.flex_data import _load_varcost, _load_co2_cap
 
 
 # --- helpers --------------------------------------------------------

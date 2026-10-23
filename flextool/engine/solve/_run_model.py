@@ -55,10 +55,10 @@ from flextool.engine._solve_state import (
 # implementations.  The legacy disk-writing module remains in the tree
 # but is no longer called from the cascade.
 from flextool.engine import _emit_solve_writers as solve_writers
-from flextool.engine import _provider_keys
-from flextool.engine import _provider_translators
+from flextool.engine.preprocess import _provider_keys
+from flextool.engine.preprocess import _provider_translators
 
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.solve._realized_overlap import (
     effective_realized_invest_periods,
     find_realized_invest_overlaps,
@@ -1069,7 +1069,7 @@ def native_run_model(state, solver) -> int:
         # (Phase 4.1e).  The legacy shutil.copy archive path and the
         # in-memory carrier fallback that wrote to the now-dead
         # ``solve_data/fix_storage_*`` Provider keys have been deleted;
-        # all downstream consumers (input.py, _derived_params.py,
+        # all downstream consumers (flex_data.py, _derived_params.py,
         # _emit_arc_unions.py, _emit_per_solve.py) consult ``handoff/*``.
 
         solve_writers.emit_solve_status(

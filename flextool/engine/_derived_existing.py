@@ -87,7 +87,7 @@ _enums: "dict | None" = None
 
 if TYPE_CHECKING:
     from flextool.engine._input_source import InputSource
-    from flextool.engine._solve_context import SolveContext
+    from flextool.engine.preprocess._solve_context import SolveContext
 
 
 # -- Method-enum constants (mirror flextool/flextool_base.dat:211-212) -------
@@ -1586,8 +1586,8 @@ def apply_existing_chain(flex_data: object,
         _read_active_solve, _period_in_use_set,
         _read_period_with_history,
     )
-    from flextool.engine.input import _read_solve_first
-    from flextool.engine._emit_provider_io import _provider_key
+    from flextool.engine.preprocess.flex_data import _read_solve_first
+    from flextool.engine.preprocess._provider_io import _provider_key
     from polar_high import Param as _Param
 
     def _provider_get(p):

@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import polars as pl
 from polar_high import Param
-from flextool.engine.input import FlexData
+from flextool.engine.preprocess.flex_data import FlexData
 
 
 def data() -> FlexData:

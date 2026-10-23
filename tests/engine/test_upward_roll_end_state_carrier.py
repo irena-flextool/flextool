@@ -3,7 +3,7 @@
 The ``upward_roll_end_state`` field on ``SolveHandoff`` carries a
 nested dispatch sub-solve's realized end-of-horizon v_state UPWARD to
 its parent storage solve's next roll.  Producer copies roll_end_state
-into upward_roll_end_state; consumer at input.py:2810-2819 prefers
+into upward_roll_end_state; consumer at flex_data.py:2810-2819 prefers
 upward over the sequential-prior roll_end_state.
 
 Three unit tests:
@@ -29,8 +29,8 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine import _provider_keys as K
-from flextool.engine._provider_translators import (
+from flextool.engine.preprocess import _provider_keys as K
+from flextool.engine.preprocess._provider_translators import (
     read_handoff_frame,
     translate_handoff_to_provider,
 )
@@ -124,7 +124,7 @@ def test_upward_supersedes_roll_end_state_when_both_populated():
     consumers should prefer the upward value.
 
     This is verified by reading both keys and confirming the consumer
-    logic at ``input.py:2810-2819`` (df_upward → df_rcs fallback) picks
+    logic at ``flex_data.py:2810-2819`` (df_upward → df_rcs fallback) picks
     the upward one.  Tested at the read level here; the integration
     is exercised by any nested-fixture solve.
     """

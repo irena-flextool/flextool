@@ -35,7 +35,7 @@ from test_scenarios import (  # noqa: E402
 )
 
 from flextool.engine import run_chain_from_db  # noqa: E402
-from flextool.engine._flex_data_provider import FlexDataProvider  # noqa: E402
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402
 
 from tests.decomposition._helpers import (  # noqa: E402

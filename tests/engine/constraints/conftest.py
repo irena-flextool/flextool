@@ -38,7 +38,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine import build_flextool
-from flextool.engine.input import FlexData
+from flextool.engine.preprocess.flex_data import FlexData
 
 
 # ---------------------------------------------------------------------------

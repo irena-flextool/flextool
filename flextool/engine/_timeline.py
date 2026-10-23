@@ -60,14 +60,14 @@ from flextool.engine._solve_state import (
     ActiveTimeEntry,
     FlexToolConfigError,
 )
-from flextool.engine._emit_provider_io import (
+from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
 
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
 
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from flextool.engine._solve_config import SolveConfig
 
 

@@ -67,7 +67,7 @@ import polars as pl
 # Step 2.5 Phase B collapsed the local copy that carried a disk-fallback
 # arm; cascade code uses the Provider-only shim.
 
-from flextool.engine._emit_provider_io import (  # noqa: E402
+from flextool.engine.preprocess._provider_io import (  # noqa: E402
     _emit,
     _provider_key,
 )
@@ -93,7 +93,7 @@ def _read_csv(path: Path, columns: list[str],
     rename; returns an empty all-Utf8 frame when the Provider misses
     the key (matches legacy missing-CSV behaviour).
     """
-    from flextool.engine._emit_provider_io import (
+    from flextool.engine.preprocess._provider_io import (
         _provider_lookup_positional,
     )
     seeded = _provider_lookup_positional(
@@ -1399,8 +1399,8 @@ def derive_p_storage_state_reference_price(
     # replaces the legacy ``solve_data/fix_storage_price.csv`` Provider
     # read; the translator seeds the handoff key at iteration start
     # (parent's data shadowing sequential when nested).
-    from flextool.engine import _provider_keys as K
-    from flextool.engine._provider_translators import (
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import (
         read_handoff_frame,
     )
     fix_price: dict[tuple[str, str, str], float] = {}

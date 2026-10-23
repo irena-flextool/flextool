@@ -31,7 +31,7 @@ sliced rows back into a wide-by-param file (one row per (entity,
 param, …)).  Where flextool emits both an ``input/`` and a
 ``solve_data/`` copy of the same logical CSV, ``dump_csvs`` writes
 to ``solve_data/`` (the canonical post-preprocessing location) and
-also to ``input/`` when ``input.py`` reads from there for that field.
+also to ``input/`` when ``flex_data.py`` reads from there for that field.
 
 **Not in scope.**  Per-solve metadata (``solve_current.csv``,
 ``period_first_of_solve.csv``, ``solve_mode.csv``, etc.) — these are
@@ -56,7 +56,7 @@ from flextool.engine._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine._param_shapes import promote_param_to_dt
 
 if TYPE_CHECKING:
-    from flextool.engine.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
 
 # ---------------------------------------------------------------------------

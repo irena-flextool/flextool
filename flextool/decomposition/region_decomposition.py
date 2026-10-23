@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine._solve_state import FlexToolConfigError
 
 

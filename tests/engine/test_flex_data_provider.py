@@ -11,7 +11,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 
 # ---------------------------------------------------------------------------
@@ -241,8 +241,8 @@ def test_translate_overrides_to_provider_tags_each_entry_external_override():
     ``external_override`` source tag so the Phase 6b audit dump can
     discriminate overridden keys from natural-cascade writes.
     """
-    from flextool.engine import _provider_keys as K
-    from flextool.engine._provider_translators import (
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import (
         translate_overrides_to_provider,
     )
 

@@ -16,8 +16,8 @@ from flextool.engine._input_source import (
     _read_csv_file,
     seed_provider_from_dir,
 )
-from flextool.engine._flex_data_provider import FlexDataProvider
-from flextool.engine._solve_context import SolveContext
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._solve_context import SolveContext
 
 
 def _seed_workdir_provider(wd: Path) -> FlexDataProvider:

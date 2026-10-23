@@ -51,7 +51,7 @@ exercise the cascade THREE ways and inspect the on-disk bundle:
   documents this with a ``pytest.skip``.
 
 The multi-roll fixture under ``the in-memory cascade`` is currently
-broken (Phase H surfaced the regression: ``input.py::_load_process_topology``
+broken (Phase H surfaced the regression: ``flex_data.py::_load_process_topology``
 calls ``_read_p_flow_max``, ``_read_unitsize``, and ~30 other helpers
 that use ``if not path.exists(): return None`` — these are NOT
 seed-aware loaders, only the writer-side ``_emit_*`` modules were
@@ -170,7 +170,7 @@ _DOCUMENTED_OUT_OF_SCOPE_SOLVE_DATA: frozenset[str] = frozenset({
 })
 
 # ``input/`` is entirely out-of-scope for Phase E gating — the legacy
-# ``flextool.engine._native_input_writer.write_workdir_inputs``
+# ``flextool.engine.preprocess._input_writer.write_workdir_inputs``
 # keeps writing the 132-CSV input bundle via direct ``csv.writer``
 # calls (this replaces the Tier-4-retired
 # ``flextoolrunner.input_writer.write_input``).  Phase E-c
@@ -449,7 +449,7 @@ def test_csv_dump_mode_multi_roll_cascade(tmp_path: Path, scenario_workdir) -> N
     sub-solve are emitted, manifest writes.
 
     The csv-emission-disabled mode for multi-roll is currently
-    blocked by the loader-side ``input.py::_read_p_flow_max`` /
+    blocked by the loader-side ``flex_data.py::_read_p_flow_max`` /
     ``_read_unitsize`` family (not seed-aware).  Verifying the
     csv-dump-mode multi-roll path proves the cascade itself still
     works correctly; the in-memory seed extension to the loader-side

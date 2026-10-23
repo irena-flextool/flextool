@@ -18,7 +18,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._emit_provider_io import _emit
+from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine._vectorize import _render_value_column
 
 
@@ -30,7 +30,7 @@ from flextool.engine._vectorize import _render_value_column
 def _read_csv(path: Path, columns: list[str],
               *, provider: "object | None" = None) -> pl.DataFrame:
     """Provider-only — Step 2.5 Phase C dropped the disk-fallback arm."""
-    from flextool.engine._emit_provider_io import (
+    from flextool.engine.preprocess._provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )

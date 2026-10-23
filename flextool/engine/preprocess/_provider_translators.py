@@ -22,10 +22,10 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine import _provider_keys as K
+from flextool.engine.preprocess import _provider_keys as K
 
 if TYPE_CHECKING:
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from flextool.engine.solve._handoff import SolveHandoff
 
 
@@ -96,7 +96,7 @@ def translate_handoff_to_provider(
     other's keys.  ``None`` (default) writes every field (the full translate).
 
     The translated keys are listed in
-    ``flextool.engine._provider_keys`` under the ``HANDOFF_*``
+    ``flextool.engine.preprocess._provider_keys`` under the ``HANDOFF_*``
     constants.  See :data:`_HANDOFF_EMPTY_SCHEMAS` for column shapes.
     """
     field_to_key = (

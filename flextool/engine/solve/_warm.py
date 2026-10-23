@@ -23,7 +23,7 @@ import polars as pl
 from polar_high import Problem, WarmProblem
 
 if TYPE_CHECKING:
-    from flextool.engine.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
 
 __all__ = [

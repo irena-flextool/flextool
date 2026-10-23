@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from polar_high import Solution
 
     from flextool.engine.solve._handoff import SolveHandoff
-    from flextool.engine.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
 _logger = logging.getLogger(__name__)
 

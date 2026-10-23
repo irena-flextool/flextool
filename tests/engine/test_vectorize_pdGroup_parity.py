@@ -31,7 +31,7 @@ from flextool.engine._emit_period_params import (
     derive_pdGroup,
     derive_pdGroup_vectorized,
 )
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 
 def _provider_from_workdir(workdir: Path):

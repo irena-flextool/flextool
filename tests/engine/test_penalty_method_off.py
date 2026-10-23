@@ -23,7 +23,7 @@ import polars as pl
 from polar_high import Param, Problem
 
 from flextool.engine import build_flextool
-from flextool.engine.input import FlexData
+from flextool.engine.preprocess.flex_data import FlexData
 
 # Two timesteps in one period; unit step-duration / weights so the
 # objective is a clean penalty × demand × steps product.

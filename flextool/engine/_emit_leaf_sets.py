@@ -24,9 +24,9 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine import _provider_keys as K
+from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine._axis_enums import alias_to_axis
-from flextool.engine._emit_provider_io import _emit
+from flextool.engine.preprocess._provider_io import _emit
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ def _read_csv(path: Path, columns: list[str],
     upstream writer hasn't populated *path*'s key (legacy behaviour
     for a missing on-disk CSV).
     """
-    from flextool.engine._emit_provider_io import (
+    from flextool.engine.preprocess._provider_io import (
         _provider_key,
         _provider_lookup_positional,
     )

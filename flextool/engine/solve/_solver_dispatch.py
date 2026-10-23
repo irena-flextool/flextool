@@ -211,7 +211,7 @@ def apply_data_solver_options(problem: "Problem", data: Any) -> None:
     """Store the HiGHS options carried by the data on ``problem``.
 
     ``data.solver_options`` holds the HiGHS rows of ``solve_mode.csv`` for the
-    active solve (see ``input._load_solver_options``); ``None`` or empty keeps
+    active solve (see ``flex_data._load_solver_options``); ``None`` or empty keeps
     whatever ``problem`` already holds.  Called right after ``build_flextool``
     on every path that builds a Problem for solving.
     """
@@ -308,7 +308,7 @@ def run_one_solve(
     which spawns the solver's CLI binary against an MPS written by
     ``Problem.write_mps`` and reads the .sol back through a read-only
     ``highspy.Highs`` populated via ``setSolution``.  Downstream consumers
-    (``input.py``, ``_emit_co2_accumulators.py``,
+    (``flex_data.py``, ``_emit_co2_accumulators.py``,
     ``process_outputs/read_parameters.py``) see a uniform
     :class:`polar_high.Solution` shape regardless of which solver ran.
 

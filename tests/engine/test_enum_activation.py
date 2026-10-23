@@ -15,7 +15,7 @@ After Phase 4.4 the activation substrate is in place:
 * ``cast_frame_axes`` is synonym-aware.
 
 The cascade-wide ``set_global_axis_enums`` flip is INTENTIONALLY left
-disabled (see ``input.py`` BLOCKER comment near the call site).  The
+disabled (see ``flex_data.py`` BLOCKER comment near the call site).  The
 remaining cross-axis alias surface in ``_derived_params.py`` /
 ``_projection_params.py`` / ``model.py`` requires a systematic audit
 that exceeds the scope of one dispatch.  This test verifies the
@@ -32,7 +32,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine.input import load_flextool
+from flextool.engine.preprocess.flex_data import load_flextool
 
 
 def _all_dim_dtypes(flex_data) -> list[tuple[str, str, pl.DataType]]:

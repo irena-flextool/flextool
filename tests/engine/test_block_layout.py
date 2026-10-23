@@ -476,7 +476,7 @@ def test_load_from_solve_data_missing_directory_returns_empty() -> None:
 
 def test_load_from_solve_data_block_compat_lh2(scenario_workdir) -> None:
     """``block_compat`` returns the (bk, b_f) compatibility set used to
-    filter flow_to_n / flow_from_n in input.py.  The block-axis column
+    filter flow_to_n / flow_from_n in flex_data.py.  The block-axis column
     is ``bk`` (not ``b``) — see the b_collision contract review note.
     """
     workdir = scenario_workdir("lh2_three_region", db_fixture="lh2")

@@ -57,7 +57,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine._constants import HOURS_PER_YEAR
-from flextool.engine._emit_provider_io import (
+from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )

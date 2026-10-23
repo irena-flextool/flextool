@@ -27,7 +27,7 @@ from flextool.engine._emit_inflow_scaling import (
     _compute_inflow_scaling_diagnostics,
     emit_node_inflow_scaling_params,
 )
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 INP = Path("input")
 SDD = Path("solve_data")

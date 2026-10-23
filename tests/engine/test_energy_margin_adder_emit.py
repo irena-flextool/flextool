@@ -27,7 +27,7 @@ import polars as pl
 from flextool.engine._emit_energy_margin_adder import (
     emit_energy_margin_adder,
 )
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 INPUT_DIR = Path("input")
 SOLVE_DATA_DIR = Path("solve_data")

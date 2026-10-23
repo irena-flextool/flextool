@@ -20,8 +20,8 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine._flex_data_provider import FlexDataProvider
-from flextool.engine._solve_context import (
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._solve_context import (
     FlexDataError,
     SolveContext,
     _load_edd_history,

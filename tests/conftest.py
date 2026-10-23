@@ -860,7 +860,7 @@ def scenario_workdir(
                 f"Unknown db_fixture {db_fixture!r}; valid: "
                 f"{sorted(url_by_fixture)}"
             ) from None
-        # ``_find_scenario`` (input.py) auto-constructs a SpineDbReader
+        # ``_find_scenario`` (flex_data.py) auto-constructs a SpineDbReader
         # for ``load_flextool`` if and only if the workdir's basename
         # matches ``work_<scenario_name>`` EXACTLY (no numeric suffix)
         # and the workdir contains ``tests.sqlite``.  ``tmp_path_factory.
@@ -907,8 +907,8 @@ def scenario_workdir(
 def _reset_global_axis_enums() -> None:
     """Reset the cascade-wide axis_enums ContextVar before every test.
 
-    ``flextool.engine.input.load_flextool`` sets the global
-    ``axis_enums`` ContextVar on success (input.py finally block
+    ``flextool.engine.preprocess.flex_data.load_flextool`` sets the global
+    ``axis_enums`` ContextVar on success (flex_data.py finally block
     ~line 4216).  The ContextVar persists into the next test in the
     same pytest worker, pinning Enum dtypes that may differ from the
     next test's fixture vocabulary — surfacing as "enum on left does

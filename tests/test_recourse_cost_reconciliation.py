@@ -36,7 +36,7 @@ if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
 from flextool.engine import run_chain_from_db  # noqa: E402
-from flextool.engine._flex_data_provider import (  # noqa: E402
+from flextool.engine.preprocess._flex_data_provider import (  # noqa: E402
     FlexDataProvider,
 )
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402

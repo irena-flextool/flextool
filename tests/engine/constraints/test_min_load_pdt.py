@@ -32,7 +32,7 @@ import pytest
 from polar_high import Param, Problem
 from flextool.engine import build_flextool, InMemoryReader
 from flextool.engine import _derived_params as drv
-from flextool.engine.input import FlexData
+from flextool.engine.preprocess.flex_data import FlexData
 
 from .conftest import solver_options
 

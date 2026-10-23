@@ -44,7 +44,7 @@ from flextool.engine._axis_enums import (  # substrate retained for Path B — s
     set_global_axis_enums,
 )
 from flextool.engine._block_layout import BlockLayout
-from flextool.engine._emit_provider_io import _provider_key
+from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine._input_source import read_csv_fallback
 
 
@@ -134,7 +134,7 @@ def _provider_read(provider: "object | None", name: str,
     the residual disk-read goes through
     :func:`flextool.engine._input_source.read_csv_fallback` so
     Rule 1 of ``tests/engine/test_meta_provider_invariants.py``
-    can confirm input.py never calls ``_read_csv_file`` /
+    can confirm flex_data.py never calls ``_read_csv_file`` /
     ``pl.read_csv`` directly.
     """
     if provider is not None and provider.has(name):
@@ -379,7 +379,7 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
     # p_process_availability`` in ``model._max_flow_rhs``) raise
     # ``InvalidOperationError: arithmetic on string and numeric``.
     # ``strict=False`` mirrors the casts in ``_read_long`` / pdtNode
-    # path (input.py:958) — non-parseable values become null and the
+    # path (flex_data.py:958) — non-parseable values become null and the
     # downstream consumer's ``fill_null(0.0)`` handles them.
     if "value" in out.columns and out.schema["value"] == pl.Utf8:
         out = out.with_columns(
@@ -2005,8 +2005,8 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
 
     # Workdir-CSV seeds for the invest/divest cascade live in
     # ``_invest_seeds.py`` — keeps the synthetic-solve fallback I/O off
-    # ``input.py`` so the override chain stays the dominant data path.
-    from flextool.engine._invest_seeds import (
+    # ``flex_data.py`` so the override chain stays the dominant data path.
+    from flextool.engine.preprocess._invest_seeds import (
         read_invest_set as _seed_invest_set,
         read_forbidden_no_investment as _seed_forbidden_ni,
         read_set_seed as _seed_set,
@@ -2123,7 +2123,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     # ``ed_divest_period_set_from_source`` when active_solve is in
     # Spine; the workdir-CSV seeds below cover the synthetic per-sub-
     # solve case.
-    from flextool.engine._invest_seeds import read_period_set as _seed_period_set
+    from flextool.engine.preprocess._invest_seeds import read_period_set as _seed_period_set
 
     # Multi-solve handoff state.  These files are written between
     # sub-solves; the .mod uses them as constants on the
@@ -2408,8 +2408,8 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     # ``None`` every roll, so the storage gate's ``not is_solve_first``
     # clause is inert there and carry-presence is the operative signal (it
     # is exactly co-extensive with "continuation roll" — empty on roll 1).
-    from flextool.engine import _provider_keys as K
-    from flextool.engine._provider_translators import read_handoff_frame
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
     p_roll_continue_online = None
     df_rco = read_handoff_frame(provider, K.HANDOFF_ROLL_END_ONLINE)
     if df_rco is not None and df_rco.height > 0:
@@ -2970,7 +2970,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # ``_emit_solve_writers._compute_rp_frames`` (chain / first / last /
     # block_first / block_start_last / weights).  Loaded here; model.py
     # wiring lands in Phase 5+.
-    from flextool.engine import _provider_keys as _K_rp
+    from flextool.engine.preprocess import _provider_keys as _K_rp
     nodeState_rp = None
     nsrp_path = sd / "nodeState_rp.csv"
     if _provider_has(provider, _K_rp.SOLVE_DATA_NODE_STATE_RP, nsrp_path):
@@ -3182,8 +3182,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # Per user direction: always-on for any storage→dispatch nesting;
     # parent's next-roll initial state comes from the dispatch's
     # realized state, not the parent's own previous prediction.
-    from flextool.engine import _provider_keys as K
-    from flextool.engine._provider_translators import read_handoff_frame
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
     p_roll_continue_state = None
     df_rcs = read_handoff_frame(provider, K.HANDOFF_ROLL_END_STATE)
     df_upward = read_handoff_frame(provider, K.HANDOFF_UPWARD_ROLL_END_STATE)
@@ -3206,8 +3206,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # populates the key from ``SolveHandoff.fix_storage_quantity`` at
     # iteration start; the legacy ``solve_data/fix_storage_quantity``
     # read path is gone.
-    from flextool.engine import _provider_keys as K
-    from flextool.engine._provider_translators import read_handoff_frame
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
     p_fix_storage_quantity = None
     df_fsq = read_handoff_frame(provider, K.HANDOFF_FIX_STORAGE_QUANTITY)
     if df_fsq is not None and df_fsq.height > 0:
@@ -4156,7 +4156,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
     :class:`SpineDbReader`) overrides the chosen first-wave Direct
     Params with frames built directly from the DB.  Every other
     ``FlexData`` field is still loaded via the CSV path; the full
-    sweep into ``input.py`` happens in Γ.2/Γ.3.
+    sweep into ``flex_data.py`` happens in Γ.2/Γ.3.
 
     Γ.8.F Step 3 — when ``source`` is a workdir-shaped path (Path / str)
     AND ``db_reader`` is not supplied, ``load_flextool`` auto-constructs
@@ -4228,7 +4228,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # (``input_derivation.run`` → ``load_flextool``) always pass an
     # explicit Provider, so this branch is a no-op there.
     if provider is None:
-        from flextool.engine._flex_data_provider import (
+        from flextool.engine.preprocess._flex_data_provider import (
             FlexDataProvider,
         )
         from flextool.engine._input_source import (
@@ -4242,7 +4242,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
     from flextool.engine.solve._orchestration import get_phase_recorder
     _entry_rec = get_phase_recorder()
-    _entry_logger = logging.getLogger("flextool.engine.input")
+    _entry_logger = logging.getLogger("flextool.engine.preprocess.flex_data")
     if _entry_rec is not None:
         _entry_rec.checkpoint(
             "load_flextool_provider_seeded",
@@ -4268,7 +4268,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         except Exception:  # pragma: no cover — defensive
             ctx_workdir = None
     if ctx_workdir is not None:
-        from flextool.engine._solve_context import SolveContext
+        from flextool.engine.preprocess._solve_context import SolveContext
         try:
             ctx = SolveContext.from_workdir(ctx_workdir, provider=provider)
         except Exception:  # pragma: no cover — defensive
@@ -4997,7 +4997,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
 
     from flextool.engine.solve._orchestration import get_phase_recorder
     _rec = get_phase_recorder()
-    _logger = logging.getLogger("flextool.engine.input")
+    _logger = logging.getLogger("flextool.engine.preprocess.flex_data")
 
     def _timed(label, fn, *args, **kwargs):
         t0 = time.perf_counter()
@@ -5969,7 +5969,7 @@ def build_handoff_from_solution(
     from flextool.engine.solve._handoff import SolveHandoff
     # Slice C Guard 3 — local imports keep this helper's import surface narrow.
     from flextool.engine._solve_state import FlexToolConfigError
-    from flextool.engine._stochastic_detect import (
+    from flextool.engine.preprocess._stochastic_detect import (
         synthetic_branch_tokens,
     )
 
@@ -6032,7 +6032,7 @@ def build_handoff_from_solution(
         _dropped = {k: v for k, v in invest_by_ed.items()
                     if k[1] in _synth_handoff}
         if _dropped:
-            logging.getLogger("flextool.engine.input").debug(
+            logging.getLogger("flextool.engine.preprocess.flex_data").debug(
                 "recourse handoff: dropping %d non-realized invest rows, "
                 "total capacity %.6g (periods %s)",
                 len(_dropped), sum(_dropped.values()),
@@ -6250,7 +6250,7 @@ def build_handoff_from_solution(
     # (period, step) v_state per nodeState node.  The carrier exists as
     # a distinct SolveHandoff field so the parent storage's consumer
     # can prefer it explicitly over the sequential-prior fallback (see
-    # input.py:2810-2819).  In the current sequential-prior orchestration,
+    # flex_data.py:2810-2819).  In the current sequential-prior orchestration,
     # the last completed solve before the parent's next roll IS the
     # child dispatch sub-solve, so sequential prior already fans the
     # dispatch's roll_end_state into the parent's provider key — but
@@ -7273,7 +7273,7 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
             .with_columns(value=pl.col("value").cast(pl.Float64, strict=False))
             .select("n", "value"))
         # The loader does NOT filter zero rows for this carrier (see
-        # input.py:1996-1999) — it keeps them.  Match that behaviour.
+        # flex_data.py:1996-1999) — it keeps them.  Match that behaviour.
         overrides["p_roll_continue_state"] = (
             Param(("n",), df) if df.height > 0 else None)
 

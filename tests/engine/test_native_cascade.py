@@ -51,7 +51,7 @@ import pytest
 
 from polar_high import Problem
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine.input import _cascade_gate
+from flextool.engine.preprocess.flex_data import _cascade_gate
 
 
 pytestmark = pytest.mark.solver

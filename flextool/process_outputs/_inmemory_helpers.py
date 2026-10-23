@@ -34,7 +34,7 @@ import polars as pl
 # Legacy pandas output namespace spells them out so plot / write_outputs
 # / out_*.py modules read them as ``period`` / ``time`` / ``node`` /
 # ``process`` etc.  Keep this map in sync with the per-field comments in
-# :class:`flextool.engine.input.FlexData`.
+# :class:`flextool.engine.preprocess.flex_data.FlexData`.
 DIM_NAMES: dict[str, str] = {
     "n": "node",
     "p": "process",
@@ -244,7 +244,7 @@ def with_solve_column(frame_pl: "pl.DataFrame", solve_name: str) -> "pl.DataFram
     """Return ``frame_pl`` with a leading ``solve`` column = ``solve_name``.
 
     FlexData fields drop the ``solve`` column at load time (see
-    ``input.py:_read_long`` family).  The legacy pandas namespace
+    ``flex_data.py:_read_long`` family).  The legacy pandas namespace
     keeps it as the leftmost index level.  Inject it back in so the
     pivoted DataFrame's row MultiIndex starts with ``solve``.
     """

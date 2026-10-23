@@ -1,14 +1,14 @@
 """Surface A.10 (user-defined flow / investment constraint loader) and
 A.13 (stochastic-branching loader) tests.
 
-A.10 covers ``flextool.engine.input._load_user_constraints`` —
+A.10 covers ``flextool.engine.preprocess.flex_data._load_user_constraints`` —
 the helper that turns ``constraint__sense.csv`` +
 ``p_process_node_constraint_flow_coeff.csv`` into the (cdt_eq,
 cdt_le, cdt_ge) constraint-axis triple plus the ``flow_cstr_idx``
 index frame.  Tests pin the blank-shortcut gates, the dt-cardinality
 cross join and the source/sink dedup that drives ``flow_cstr_idx``.
 
-A.13 covers ``flextool.engine.input._load_stochastics`` — the
+A.13 covers ``flextool.engine.preprocess.flex_data._load_stochastics`` — the
 helper that reads four solve_data CSVs (pdt/pd branch weights,
 non-anticipativity timesteps, ``period_in_use_set``) plus the
 ``groupIncludeStochastics`` input.  Tests pin the null-fill / empty-
@@ -24,7 +24,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine.input import _load_user_constraints, _load_stochastics
+from flextool.engine.preprocess.flex_data import _load_user_constraints, _load_stochastics
 
 
 # --- helpers --------------------------------------------------------
@@ -135,13 +135,13 @@ def test_flow_cstr_idx_via_provider_utf8_coef_column(tmp_path: Path):
     ``_rows_to_frame`` output of :class:`SpineDBBackend`).  The loader
     must cast ``coef`` to Float64 before ``group_by(...).agg(coef.sum())``
     or polars raises ``InvalidOperationError: 'sum' operation not supported
-    for dtype 'str'`` (input.py:1574).
+    for dtype 'str'`` (flex_data.py:1574).
 
     Reproduces the cascade-path schema by seeding a ``FlexDataProvider``
     directly — disk CSV via ``read_csv_fallback`` parses ``"2.0"`` as
     Float64 and masks the bug.
     """
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     inp, _ = _make_dirs(tmp_path)
     dt = pl.DataFrame({"d": ["d1"], "t": ["t1"]})

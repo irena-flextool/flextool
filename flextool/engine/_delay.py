@@ -17,7 +17,7 @@ from polar_high.engine import Expr, Var
 
 from flextool.engine._axis_enums import cast_dim
 from flextool.engine._derived_params import process_delayed__duration_from_weight
-from flextool.engine._emit_provider_io import _provider_key
+from flextool.engine.preprocess._provider_io import _provider_key
 
 
 def _provider_get(provider, path: Path) -> pl.DataFrame | None:

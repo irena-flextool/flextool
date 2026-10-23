@@ -174,7 +174,7 @@ def test_build_handoff_from_solution_covers_eight_carriers(scenario_workdir)-> N
         pytest.skip("work_multi_year_one_solve_co2_limit not present")
 
     from polar_high import Problem
-    from flextool.engine.input import (
+    from flextool.engine.preprocess.flex_data import (
         build_handoff_from_solution,
         load_flextool,
     )

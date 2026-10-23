@@ -53,7 +53,7 @@ handoff translators and before preprocessing. Returning `{}` (or
 
 Full source: `flextool/engine/solve/_orchestration.py` (entry point),
 `flextool/engine/solve/_run_model.py` (invocation site),
-`flextool/engine/_provider_translators.py`
+`flextool/engine/preprocess/_provider_translators.py`
 (`translate_overrides_to_provider`, `read_handoff_frame`,
 `dump_provider_sources`).
 
@@ -61,7 +61,7 @@ Full source: `flextool/engine/solve/_orchestration.py` (entry point),
 
 Only the 11 keys below are overridable. Supplying any other key raises
 `ValueError` in `translate_overrides_to_provider`. The constants live
-in `flextool.engine._provider_keys`; import as
+in `flextool.engine.preprocess._provider_keys`; import as
 `from flextool.engine import _provider_keys as K`.
 
 | Key constant | What it overrides | Required columns |

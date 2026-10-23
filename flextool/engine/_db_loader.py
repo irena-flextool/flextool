@@ -131,12 +131,12 @@ class FlexToolRunner:
         Used by the regional-decomposition wrapper and a handful of
         debug callers that want a freshly-staged ``input/`` directory.
         When *provider* is None an ephemeral
-        :class:`flextool.engine._flex_data_provider.FlexDataProvider`
+        :class:`flextool.engine.preprocess._flex_data_provider.FlexDataProvider`
         is constructed; the cascade itself constructs its own Provider in
         ``_drive_cascade``.
         """
         if provider is None:
-            from flextool.engine._flex_data_provider import FlexDataProvider
+            from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
             provider = FlexDataProvider()
         _input_derivation_run(
             input_db_url,

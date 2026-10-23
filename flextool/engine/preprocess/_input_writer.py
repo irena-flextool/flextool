@@ -13,7 +13,7 @@ The :mod:`flextool.input_derivation` pipeline dispatches ``emit_*``
 functions that push every derived frame into the caller-supplied
 Provider directly — no monkey-patching, no disk I/O on this path.
 Downstream readers
-(:func:`flextool.engine.input.load_flextool`,
+(:func:`flextool.engine.preprocess.flex_data.load_flextool`,
 :func:`flextool.engine.output._writer.write_outputs_for_solve`,
 the per-solve preprocessing dispatched by
 :func:`flextool.engine.solve._run_model.native_run_model`)
@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 
 __all__ = ["write_workdir_inputs"]
@@ -72,7 +72,7 @@ def write_workdir_inputs(
         :mod:`flextool.input_derivation` pipeline ``put``'s its
         materialised frames here; downstream cascade readers resolve
         them via
-        :meth:`flextool.engine._flex_data_provider.FlexDataProvider.get`.
+        :meth:`flextool.engine.preprocess._flex_data_provider.FlexDataProvider.get`.
     logger : logging.Logger, optional
         Logger to use during emission.  ``None`` builds a default
         named logger.

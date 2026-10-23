@@ -19,12 +19,12 @@ from flextool.engine._derived_params import (
 
 
 def _emit(prov, key, df):
-    from flextool.engine._emit_provider_io import _emit as _e
+    from flextool.engine.preprocess._provider_io import _emit as _e
     _e(prov, key, df)
 
 
 def _provider():
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     return FlexDataProvider()
 
 
@@ -74,7 +74,7 @@ def test_years_for_period_provider_without_csv_falls_through():
     # provider present but no p_years_represented.csv key → canonical arm
     # skipped.  (The source-path fallback is covered by the flag-off golden
     # spot-suites, which pass a real InputSource.)
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     prov = FlexDataProvider()
     p = "solve_data/p_years_represented.csv"
     from flextool.engine._derived_params import (

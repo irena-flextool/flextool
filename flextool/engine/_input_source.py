@@ -23,7 +23,7 @@ DB-direct abstraction used by the live cascade
 
 CSV-shaped source notes:
 
-Today's downstream consumer (:func:`flextool.input.load_flextool`) reads
+Today's downstream consumer (:func:`flextool.engine.preprocess.flex_data.load_flextool`) reads
 CSVs via ``polars.read_csv`` directly off the directory tree, so the
 Protocol exposes both:
 
@@ -88,11 +88,11 @@ def _read_csv_file(path: "Path | str") -> pl.DataFrame:
 def read_csv_fallback(path: "Path | str") -> pl.DataFrame:
     """Off-cascade disk read of a single CSV.
 
-    Reserved for callers in :pyfile:`flextool/engine/input.py`
+    Reserved for callers in :pyfile:`flextool/engine/preprocess/flex_data.py`
     that still serve workdir-only loader-unit tests.  Cascade code MUST
     go through :class:`FlexDataProvider`; this is the single sanctioned
     entry point for the residual disk-fallback path so the Rule 1
-    invariant scan can confirm input.py never calls ``_read_csv_file``
+    invariant scan can confirm flex_data.py never calls ``_read_csv_file``
     or ``pl.read_csv`` directly.
     """
     return _read_csv_file(path)

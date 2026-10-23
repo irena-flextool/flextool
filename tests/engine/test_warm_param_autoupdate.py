@@ -269,7 +269,7 @@ def test_param_cells_size_bound_on_real_fixture(scenario_workdir) -> None:
     set on a feature-heavy fixture stays under a generous size budget.
     Acts as an early-warning for accidentally tracking a Param family
     that explodes the per-cell map."""
-    from flextool.engine.input import load_flextool
+    from flextool.engine.preprocess.flex_data import load_flextool
     from flextool.engine.model import build_flextool
     from flextool.engine.solve.chain import _MUTABLE_PARAMS
 

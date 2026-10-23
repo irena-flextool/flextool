@@ -17,9 +17,9 @@ plugin is the boundary).  Helpers that compose multiple
 before a single ``.collect()`` at the end.  Single-call helpers stay
 eager (no compositional benefit from going lazy).
 
-The full sweep into ``input.py`` is Γ.2/Γ.3; Γ.1 wires only the chosen
+The full sweep into ``flex_data.py`` is Γ.2/Γ.3; Γ.1 wires only the chosen
 representative subset.  Each helper is here so a future helper-by-
-helper migration replaces the corresponding CSV branch in ``input.py``
+helper migration replaces the corresponding CSV branch in ``flex_data.py``
 with a one-line call to the function below.
 """
 from __future__ import annotations
@@ -434,7 +434,7 @@ def _e_total_param(source: "InputSource", parameter_name: str,
     ``unit/node/connection`` carries an explicit row.
 
     When ``filter_zero=True``, rows with ``value == 0`` are dropped
-    (mirrors ``input.py::_read_e_param`` for ``invest_min_total`` /
+    (mirrors ``flex_data.py::_read_e_param`` for ``invest_min_total`` /
     ``retire_min_total`` which use a different reader that filters
     zeros).  Returns ``None`` when no rows survive (or
     ``entityInvest`` is empty).
@@ -468,7 +468,7 @@ def _e_total_param(source: "InputSource", parameter_name: str,
 # Δ.4 — second-wave Direct Param helpers.
 #
 # Each helper below covers a single FlexData field whose CSV-loader path
-# in ``input.py`` is a one-CSV ``rename + select`` of an entity scalar /
+# in ``flex_data.py`` is a one-CSV ``rename + select`` of an entity scalar /
 # Map / 1d_map parameter.  Helpers return ``Param | None`` (None when
 # the DB-side has no explicit row, matching the CSV path's "absent →
 # None" contract).  The CSV-side behaviour preserved verbatim — the
@@ -503,7 +503,7 @@ def p_state_self_discharge_from_source(source: "InputSource") -> Param | None:
     """``node.self_discharge_loss`` → ``Param(("n",), [n, value])``.
 
     Default 0.0 (schema).  CSV path
-    (``input.py::_load_storage::_node_param``) returns the explicit
+    (``flex_data.py::_load_storage::_node_param``) returns the explicit
     rows only.  We mirror by reading via ``parameter_explicit``.
     """
     return _entity_scalar_explicit(source, "node", "self_discharge_loss", "n")
@@ -1945,12 +1945,12 @@ def apply_direct_params_a(source: "InputSource",
     # Max variants: keyed on entityInvest (resp. entityDivest), one row
     # per entity with value defaulting to 0 — mirrors
     # ``entity_total_caps.py:_compute_entity_total`` and
-    # ``input.py::_e_total_param``.
+    # ``flex_data.py::_e_total_param``.
     flex_data.e_invest_max_total = _e_total_param(
         source, "invest_max_total", kind="invest")
     flex_data.e_divest_max_total = _e_total_param(
         source, "retire_max_total", kind="divest")
-    # Min variants: CSV path filters out zero rows (input.py::_read_e_param)
+    # Min variants: CSV path filters out zero rows (flex_data.py::_read_e_param)
     # — None when no entity has an explicit non-zero min cap.
     flex_data.e_invest_min_total = _e_total_param(
         source, "invest_min_total", kind="invest", filter_zero=True)
@@ -1966,7 +1966,7 @@ def apply_direct_params_a(source: "InputSource",
     # (p, d, t) Param by ``_derived_params.apply_derived_b`` (via
     # ``p_min_load_pdt_from_source``), so a period/time Map isn't summed in
     # the minFlow_minload constraint.  The synthetic / rolling sub-solve
-    # early-return in ``input.py`` re-wires it (passes 3-10 are skipped
+    # early-return in ``flex_data.py`` re-wires it (passes 3-10 are skipped
     # there).  See ``specs/fix_map_reading.md`` §5.  NB: ``p_min_load`` is a
     # per-unit floor — the ``minFlow_minload`` constraint (``model.py``) sums
     # flow over all of a unit's outputs — and the (p, d, t) shape lets that
@@ -2237,7 +2237,7 @@ def apply_direct_params(source: "InputSource",
     """Apply the full Direct Param wave in two phases.
 
     Δ.28 — kept as a single back-compat entry point.  The dispatcher in
-    :func:`flextool.engine.input._apply_db_overrides` does NOT
+    :func:`flextool.engine.preprocess.flex_data._apply_db_overrides` does NOT
     call this function any more; it calls
     :func:`apply_direct_params_a` / :func:`apply_direct_params_b`
     around :func:`apply_derived_a` so the dt-dependent broadcasts in

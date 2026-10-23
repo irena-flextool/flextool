@@ -2,7 +2,7 @@
 
 Δ.4 extends ``apply_direct_params`` (formerly ``first_wave_overrides``)
 with helpers for scalar Direct Params previously read by
-``input.py``'s CSV loaders only:
+``flex_data.py``'s CSV loaders only:
 
 * ``p_state_self_discharge`` — ``node.self_discharge_loss``
 * ``p_state_start`` — ``node.storage_state_start``

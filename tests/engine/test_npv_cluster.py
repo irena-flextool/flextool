@@ -42,7 +42,7 @@ from flextool.engine._derived_params import (
     _periodAll_from_source,
     _read_period_with_history,
 )
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine._input_source import seed_provider_from_dir
 
 

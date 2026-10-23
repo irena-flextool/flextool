@@ -51,8 +51,8 @@ import polars as pl
 from polar_high import Param, Problem
 
 from flextool.engine import build_flextool, run_chain_from_db
-from flextool.engine._flex_data_provider import FlexDataProvider
-from flextool.engine.input import FlexData
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess.flex_data import FlexData
 from flextool.process_outputs.write_outputs import write_outputs
 
 

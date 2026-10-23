@@ -180,7 +180,7 @@ class RunnerState:
     # invokes this callable at iteration start (after the sequential
     # + parent handoff translators) and fans the returned dict into
     # the ``override/*`` Provider namespace via
-    # :func:`flextool.engine._provider_translators.translate_overrides_to_provider`.
+    # :func:`flextool.engine.preprocess._provider_translators.translate_overrides_to_provider`.
     # The callable is owned by external code wrapping the runner
     # (e.g. file-watch, ZeroMQ bridge); ``None`` means no overrides.
     override_provider: Callable[[], "dict[str, pl.DataFrame]"] | None = None

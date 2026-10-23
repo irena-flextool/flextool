@@ -244,7 +244,7 @@ def test_backfill_group_indicator_sets_requires_provider(tmp_path) -> None:
     """
     from types import SimpleNamespace
 
-    from flextool.engine._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from flextool.process_outputs.write_outputs import (
         _backfill_group_indicator_sets,
     )

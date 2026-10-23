@@ -1292,7 +1292,7 @@ class BlockLayout:
             # strict — no bare ``pl.read_csv`` / ``_read_csv_file`` in
             # this module.
             from pathlib import Path as _Path
-            from flextool.engine._flex_data_provider import (
+            from flextool.engine.preprocess._flex_data_provider import (
                 FlexDataProvider,
             )
             from flextool.engine._input_source import (
@@ -1451,7 +1451,7 @@ class BlockLayout:
         threshold``.
 
         Mirrors the ``coarse_blocks`` selection in
-        ``input.py``'s nodeStateBlock synthesis (lines 2013-2040).
+        ``flex_data.py``'s nodeStateBlock synthesis (lines 2013-2040).
         """
         if self.block_step_duration_frame.height == 0:
             return []

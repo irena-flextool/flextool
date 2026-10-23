@@ -18,7 +18,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine._emit_mid_sets import derive_node_penalty_method
-from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 INPUT_DIR = Path("input")
 NODE_KEY = "input/node"

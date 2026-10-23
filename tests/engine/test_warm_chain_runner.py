@@ -192,7 +192,7 @@ def test_warm_native_reuses_warmproblem_on_identical_data(
         _apply_warm_updates,
         _fingerprint,
     )
-    from flextool.engine.input import load_flextool
+    from flextool.engine.preprocess.flex_data import load_flextool
 
     work = scenario_workdir("test_a_lot")
 

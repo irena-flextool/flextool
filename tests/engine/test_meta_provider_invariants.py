@@ -103,19 +103,19 @@ MIN_SCANNED_FILES = 80
 
 # The Provider implementation module — the only file allowed to hold
 # module-level frame globals (Rule 2b).
-PROVIDER_IMPL_FILE = "_flex_data_provider.py"
+PROVIDER_IMPL_FILE = "preprocess/_flex_data_provider.py"
 
 
 # Files that ARE the Provider's own I/O / snapshot implementation.  The
 # rules don't apply here by construction.
 PROVIDER_IMPL_ALLOWLIST: dict[str, str] = {
-    "_flex_data_provider.py": (
+    "preprocess/_flex_data_provider.py": (
         "Provider implementation: defines snapshot/dump I/O."
     ),
     "_input_source.py": (
         "Defines _read_csv_file itself — the canonical residual reader."
     ),
-    "_emit_provider_io.py": (
+    "preprocess/_provider_io.py": (
         "Off-cascade writer-port test-harness shim "
         "(documented at module top): Provider-first with disk fallback "
         "used exclusively by test_writer_port_phase1.  In-cascade the "
@@ -143,7 +143,7 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "boundary (post-Step-2 the Provider is threaded through, "
         "but the handoff retains a single disk read for back-compat)."
     ),
-    "_solve_context.py": (
+    "preprocess/_solve_context.py": (
         "Reads workdir solve_data/p_model.csv and similar context "
         "files at solve-context build time (pre-Provider)."
     ),

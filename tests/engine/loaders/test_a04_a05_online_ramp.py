@@ -162,7 +162,7 @@ def test_pdt_online_zero_startup_cost_excluded(online_workdir):
     as ``None``.  Called directly because the CSV path skips the
     source helper entirely (``source=None``).
     """
-    from flextool.engine.input import _load_online
+    from flextool.engine.preprocess.flex_data import _load_online
 
     inp = online_workdir / "input"
     sd = online_workdir / "solve_data"
