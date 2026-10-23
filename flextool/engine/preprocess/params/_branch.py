@@ -681,6 +681,90 @@ def period_branch_full_lf(workdir: Path | None,
 
 
 # ---------------------------------------------------------------------------
+# Branch periods inherit the period-keyed values of their anchor period
+# ---------------------------------------------------------------------------
+
+
+def branch_anchor_pairs(provider: "object | None",
+                        periods: "pl.Series | list[str] | None" = None,
+                        ) -> pl.DataFrame | None:
+    """``(anchor, br)`` pairs of the stochastic branch periods, Utf8; None when there are none.
+
+    Read from ``solve_data/period__branch`` (columns ``period`` = anchor, ``branch``).  Self rows
+    (trunks, deterministic periods) are dropped.  ``periods`` keeps only the branch periods in that
+    set (e.g. the periods the consumer has rows for), so realized-designated and zero-weight
+    branch periods without active time can be filtered out.  A branch period with more than one
+    anchor raises ``ValueError``: one anchor value per branch period is what inheritance needs.
+    """
+    pb = _provider_get(provider, Path("solve_data") / "period__branch.csv")
+    if pb is None or pb.height == 0:
+        return None
+    pairs = (pb.select(pl.col(pb.columns[0]).cast(pl.Utf8).alias("anchor"),
+                       pl.col(pb.columns[1]).cast(pl.Utf8).alias("br"))
+               .filter(pl.col("anchor") != pl.col("br")))
+    if periods is not None:
+        keep = pl.Series("br", list(periods), dtype=pl.Utf8)
+        pairs = pairs.filter(pl.col("br").is_in(keep.implode()))
+    pairs = pairs.unique().sort("br", "anchor")
+    if pairs.height == 0:
+        return None
+    multi = (pairs.group_by("br").agg(pl.col("anchor").n_unique().alias("n"))
+                  .filter(pl.col("n") > 1).sort("br"))
+    if multi.height > 0:
+        raise ValueError(
+            f"branch_anchor_pairs: branch period(s) {multi['br'].to_list()} have more than one "
+            "anchor period in period__branch; a branch period inherits the values of exactly one "
+            "anchor.")
+    return pairs
+
+
+def inherit_anchor_period(frame: pl.DataFrame, pairs: pl.DataFrame | None, *,
+                          group_keys: "tuple[str, ...] | list[str]",
+                          period_col: str = "d") -> pl.DataFrame:
+    """``frame`` plus, for every branch period of ``pairs``, the rows of its anchor period.
+
+    ``frame`` has a period column ``period_col`` and any other columns (keys and values).
+    ``pairs`` holds ``(anchor, br)`` as from :func:`branch_anchor_pairs`.  For each
+    ``group_keys`` value, a branch period that already has rows of its own keeps them and gets
+    none of the anchor's ("branch-native rows win per ``group_keys`` + period"): an authored
+    value set for a period (e.g. a whole tier curve keyed by tier) is never mixed with the
+    anchor's.  The rule is the one ``PdLookup`` (own row, else anchor), ``derive_years_represented``
+    and ``_anchor_expand_explicit`` use; because of it, applying the helper twice, or after an
+    upstream expansion to branch periods, adds nothing.
+
+    Authored rows come first, inherited rows follow in ``(anchor rows, br)`` order.  The period
+    column is joined as Utf8 and cast back to its input dtype strictly (a null from the cast is a
+    wiring bug and raises).  None / empty ``pairs`` returns ``frame`` unchanged.
+    """
+    if pairs is None or pairs.height == 0 or frame.height == 0:
+        return frame
+    group_keys = list(group_keys)
+    cols = frame.columns
+    d_dtype = frame.schema[period_col]
+    base = frame.with_columns(pl.col(period_col).cast(pl.Utf8))
+    inherited = (base.join(pairs.select("anchor", "br"), left_on=period_col, right_on="anchor",
+                           how="inner", maintain_order="left_right")
+                     .drop(period_col)
+                     .rename({"br": period_col})
+                     .join(base.select([*group_keys, period_col]).unique(),
+                           on=[*group_keys, period_col], how="anti", maintain_order="left")
+                     .select(cols))
+    if inherited.height == 0:
+        return frame
+    out = pl.concat([base, inherited], how="vertical")
+    if d_dtype != pl.Utf8:
+        casted = out.with_columns(pl.col(period_col).cast(d_dtype, strict=False))
+        if casted[period_col].null_count() > out[period_col].null_count():
+            bad = sorted(set(out.filter(casted[period_col].is_null()
+                                        & out[period_col].is_not_null())[period_col].to_list()))
+            raise ValueError(
+                f"inherit_anchor_period: casting period token(s) {bad} back to {d_dtype} gave "
+                "nulls (the token is missing from the period vocabulary).")
+        out = casted
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Public Param helpers (collect-at-boundary)
 # ---------------------------------------------------------------------------
 

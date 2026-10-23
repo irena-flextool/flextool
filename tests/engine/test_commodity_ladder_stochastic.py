@@ -1,14 +1,19 @@
-"""Commodity price ladders in stochastic solves (#32).
+"""Commodity price ladders in stochastic solves (#32, #41).
 
 #32: a ladder purchase is an operating cost, so in a stochastic solve it carries the probability of its
 period's branch (``pdt_branch_weight``, the weight in ``op_factor``), like every other operating cost.
 Before the fix every branch counted in full.
 
+#41: the forecast branch periods of a stochastic solve (``period1_upper``, …) are minted per solve, so no
+ladder row can be authored for them.  They use the annual ladder of their anchor period (price and tier
+quantity together); before the fix purchases in the branches had no price and no tier limit.
+
 Vehicle: ``2_day_stochastic_dispatch`` of ``tests/fixtures/stochastics.json`` (one real period
 ``period1`` = the weight-0 phantom trunk, four forecast branch periods), coal moved to a ladder.  A
 ladder whose cheap tier is the flat price (16) and unlimited must cost exactly what the flat price
-costs.  Databases are built from the JSON fixture (never a checked-in ``.sqlite``); the stochastic
-branch weights are rewritten in the ``stochastic_branches`` map for the skewed cases.
+costs.  The rolling smoke test uses ``1_week_rolling_wind``.  Databases are built from the JSON
+fixture (never a checked-in ``.sqlite``); the stochastic branch weights are rewritten in the
+``stochastic_branches`` map for the skewed cases.
 """
 from __future__ import annotations
 
@@ -20,7 +25,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from tests.engine._unit_db import b64, build, make_db, run, utf8
+from tests.engine._unit_db import b64, build, cstr_over, make_db, run, utf8
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STOCHASTICS_JSON = REPO_ROOT / "tests" / "fixtures" / "stochastics.json"
@@ -123,12 +128,30 @@ def flat(tmp_path_factory):
     return {name: _steps(tmp_path_factory, f"c5_flat_{name}", [], weights=w) for name, w in WEIGHTS.items()}
 
 
+@pytest.fixture(scope="module")
+def binding_q(flat):
+    """A tier-1 quantity that binds: half of the largest branch coal purchase (coal runs in one branch only)."""
+    step = _last(flat["uniform"])
+    flows = utf8(step.solution.value("v_flow")).filter(
+        (pl.col("p") == "coal_plant") & (pl.col("source") == "coal_market"))
+    fd = step.flex_data
+    w = utf8(fd.p_step_duration.frame).join(utf8(fd.p_timestep_weight.frame), on=["d", "t"], suffix="_w")
+    size = float(utf8(fd.p_unitsize.frame).filter(pl.col("p") == "coal_plant")["value"][0])
+    slope = utf8(fd.p_slope.frame).filter(pl.col("p") == "coal_plant").select("d", "t", slope="value")
+    mwh = (flows.join(w, on=["d", "t"]).join(slope, on=["d", "t"])
+           .group_by("d").agg((pl.col("value") * size * pl.col("slope") * pl.col("value_right")
+                               * pl.col("value_w")).sum().alias("mwh")))
+    branch_mwh = mwh.filter(pl.col("d").is_in(list(BRANCH_PERIODS)))["mwh"]
+    assert branch_mwh.len() == len(BRANCH_PERIODS) and branch_mwh.max() > 0
+    return 0.5 * float(branch_mwh.max())
+
+
 # ---------------------------------------------------------------------------
-# #32: a ladder at the flat price costs the flat price
+# #32 (+ #41 for the 2d form): a ladder at the flat price costs the flat price
 
 
 @pytest.mark.parametrize("weights", list(WEIGHTS))
-@pytest.mark.parametrize("form", ["3d_all"])
+@pytest.mark.parametrize("form", ["3d_all", "2d"])
 def test_ladder_at_flat_price_equals_flat_price_cost(tmp_path_factory, flat, form, weights) -> None:
     steps = _steps(tmp_path_factory, f"c5_flat_ladder_{form}_{weights}",
                    _annual(form, _tiers(FLAT_PRICE, math.inf)), weights=WEIGHTS[weights])
@@ -160,7 +183,106 @@ def test_ladder_objective_coefficient_carries_branch_weight(tmp_path_factory) ->
 
 
 # ---------------------------------------------------------------------------
+# #41: branch periods inherit the anchor period's annual ladder
+
+
+def test_branch_periods_inherit_annual_ladder_price(tmp_path_factory, flat) -> None:
+    steps = _steps(tmp_path_factory, "c5_trunk_price", _annual("3d_trunk", _tiers(FLAT_PRICE, math.inf)))
+    assert _obj(steps) == pytest.approx(_obj(flat["uniform"]), rel=1e-9)
+
+
+@pytest.fixture(scope="module")
+def cap_reference(tmp_path_factory, binding_q):
+    """The binding-cap ladder keyed by every period name (the authored-everywhere reference)."""
+    return {name: _steps(tmp_path_factory, f"c5_cap_all_{name}", _annual("3d_all", _tiers(10.0, binding_q)),
+                         weights=w)
+            for name, w in WEIGHTS.items()}
+
+
+@pytest.mark.parametrize("weights", list(WEIGHTS))
+@pytest.mark.parametrize("form", ["3d_trunk", "2d"])
+def test_branch_periods_inherit_annual_tier_cap(tmp_path_factory, binding_q, cap_reference, form,
+                                                weights) -> None:
+    steps = _steps(tmp_path_factory, f"c5_cap_{form}_{weights}", _annual(form, _tiers(10.0, binding_q)),
+                   weights=WEIGHTS[weights])
+    ref = cap_reference[weights]
+    assert _obj(steps) == pytest.approx(_obj(ref), rel=1e-9)
+    for s in (steps, ref):
+        step = _last(s)
+        rows = cstr_over(build(step.flex_data), "ladder_tier_cap_annual_roll")
+        assert rows is not None
+        assert set(rows.filter(pl.col("i") == "1")["d"]) == set(ALL_PERIODS)
+        tier1 = _v_trade(step).filter((pl.col("i") == "1") & pl.col("d").is_in(list(BRANCH_PERIODS)))
+        assert (tier1["value"] - binding_q).abs().min() <= 1e-7 * binding_q, "the tier-1 cap does not bind"
+
+
+# ---------------------------------------------------------------------------
+# Rolling: per-roll branch read and weights, warm-start cascade with the ladder Params
+
+
+def test_rolling_ladder_at_flat_price_equals_flat_price_cost(tmp_path_factory) -> None:
+    ladder = _steps(tmp_path_factory, "c5_roll_ladder", _annual("2d", _tiers(FLAT_PRICE, math.inf)),
+                    chain=CHAIN_ROLL)
+    flat_roll = _steps(tmp_path_factory, "c5_roll_flat", [], chain=CHAIN_ROLL)
+    assert len(ladder) == len(flat_roll) > 1
+    assert sum(s.solution.obj for s in ladder.values()) == pytest.approx(
+        sum(s.solution.obj for s in flat_roll.values()), rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
 # Unit tests of the helpers
+
+
+def _pairs(rows) -> pl.DataFrame:
+    return pl.DataFrame(rows, schema={"anchor": pl.Utf8, "br": pl.Utf8}, orient="row")
+
+
+def test_inherit_anchor_period_helper() -> None:
+    from flextool.engine.preprocess.params._branch import inherit_anchor_period
+
+    frame = pl.DataFrame({"c": ["coal", "coal", "gas", "coal"], "i": ["1", "2", "1", "1"],
+                          "d": ["p1", "p1", "p1", "p1_hi"], "price": [1.0, 2.0, 3.0, 9.0]})
+    pairs = _pairs([("p1", "p1_hi"), ("p1", "p1_lo")])
+    out = inherit_anchor_period(frame, pairs, group_keys=("c",))
+    got = {(r["c"], r["i"], r["d"]): r["price"] for r in out.iter_rows(named=True)}
+    assert got == {
+        ("coal", "1", "p1"): 1.0, ("coal", "2", "p1"): 2.0, ("gas", "1", "p1"): 3.0,
+        # p1_hi has its own coal curve: kept whole, no anchor tier 2 mixed in; gas is still inherited.
+        ("coal", "1", "p1_hi"): 9.0, ("gas", "1", "p1_hi"): 3.0,
+        ("coal", "1", "p1_lo"): 1.0, ("coal", "2", "p1_lo"): 2.0, ("gas", "1", "p1_lo"): 3.0,
+    }
+    assert out.height == len(got)
+    assert out.head(frame.height).equals(frame), "authored rows come first, unchanged"
+    # Idempotent: a second pass adds nothing.
+    assert inherit_anchor_period(out, pairs, group_keys=("c",)).equals(out)
+    # No pairs: unchanged.
+    assert inherit_anchor_period(frame, None, group_keys=("c",)) is frame
+    assert inherit_anchor_period(frame, _pairs([]), group_keys=("c",)) is frame
+    # A non-Utf8 period column keeps its dtype.
+    enum = pl.Enum(["p1", "p1_hi", "p1_lo"])
+    out_enum = inherit_anchor_period(frame.with_columns(pl.col("d").cast(enum)), pairs, group_keys=("c",))
+    assert out_enum.schema["d"] == enum and out_enum.height == len(got)
+
+
+def test_branch_anchor_pairs_helper() -> None:
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess.params._branch import branch_anchor_pairs
+
+    def provider(rows):
+        prov = FlexDataProvider()
+        prov.put("solve_data/period__branch",
+                 pl.DataFrame(rows, schema={"period": pl.Utf8, "branch": pl.Utf8}, orient="row"))
+        return prov
+
+    pb = [("p1", "p1"), ("p1", "p1_hi"), ("p1", "p1_lo"), ("p1", "p1_rlz"), ("p2", "p2")]
+    pairs = branch_anchor_pairs(provider(pb), ["p1", "p1_hi", "p1_lo", "p2"])
+    # Self rows dropped; a branch period outside the period set (realized / zero weight) gives no pair.
+    assert pairs.rows() == [("p1", "p1_hi"), ("p1", "p1_lo")]
+    assert branch_anchor_pairs(provider(pb)).rows() == [("p1", "p1_hi"), ("p1", "p1_lo"), ("p1", "p1_rlz")]
+    assert branch_anchor_pairs(provider([("p1", "p1"), ("p2", "p2")])) is None
+    assert branch_anchor_pairs(None) is None
+    with pytest.raises(ValueError, match=r"more than one anchor"):
+        branch_anchor_pairs(provider(pb + [("p2", "p1_hi")]))
 
 
 def test_branch_weight_per_period() -> None:

@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **Forecast branches use their period's annual commodity ladder.** In a
+  stochastic solve, the forecast branches of a period now use that period's
+  `price_ladder_annual` prices and tier quantities. Before, purchases in the
+  branches had no price and no tier limit, so a ladder commodity was free
+  and unlimited in every branch. A branch period gets each tier curve whole
+  from its period.
+
 - **Commodity price ladders in stochastic solves are weighted by branch
   probability.** The purchase cost of a `price_ladder_annual` or
   `price_ladder_cumulative` commodity is now weighted by the probability of

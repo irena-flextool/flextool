@@ -4944,6 +4944,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
                                               handoff=handoff, ctx=ctx,
                                               provider=provider)
 
+        # Annual commodity ladder: the forecast branch periods of a stochastic solve get their anchor
+        # period's tier curve.  Runs after every producer of the ladder Params (load_data and the
+        # direct-parameter pass).
+        _commodity_ladder.inherit_branch_periods(flex_data, provider)
+
         # Phase 4.6 — end-of-load FlexData → Enum sweep.  With the global
         # flipped on above, the cascade emits Enum-typed dim columns
         # throughout, but ad-hoc CSV-fallback paths inside the cascade

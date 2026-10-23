@@ -3,7 +3,8 @@
 For commodities with price_method price_ladder_annual / price_ladder_cumulative, the purchase at each node
 and period is split into tiers (v_trade).  A balance row ties the tiers to the commodity flow, cap rows
 limit each tier per period (annual) or over the horizon (cumulative), and the objective prices each tier,
-weighted by the branch weight of the period in stochastic solves.  The single commodity price term in
+weighted by the branch weight of the period in stochastic solves.  The forecast branch periods of a
+stochastic solve use the annual ladder of their anchor period.  The single commodity price term in
 model/core.py skips these commodities.  Earlier solves of a chain enter
 through f_d_k (share of the period simulated so far) and the tier MWh they already bought.
 """
@@ -18,6 +19,7 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Expr
 
 from flextool.engine.model._common import _has_rows
+from flextool.engine.preprocess.params._branch import branch_anchor_pairs, inherit_anchor_period
 
 if TYPE_CHECKING:
     from flextool.engine.model.core import _Build
@@ -75,6 +77,8 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *, provider=None) -> dict
 
     Every value is None when no commodity has a ladder.  Frames are read through ``provider``; ``inp_dir``
     / ``sd_dir`` are accepted for the loaders' uniform call.  Tier labels ``i`` are Utf8 everywhere.
+    The forecast branch periods of a stochastic solve get their annual ladder later, in
+    inherit_branch_periods (called by load_flextool once every producer of the ladder Params has run).
     p_commodity_unitsize is filled by the direct-parameter pass (default 1.0, _commodity_unitsize_param).
     """
     blank = dict(
@@ -200,6 +204,37 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *, provider=None) -> dict
     )
 
 
+def inherit_branch_periods(flex_data, provider) -> None:
+    """Give the forecast branch periods of a stochastic solve their anchor period's annual ladder.
+
+    Branch periods (period1_upper, …) are minted per solve, so no ladder row can be authored for them;
+    they are the anchor period's possible futures, so the anchor's tier curve applies.  Price and quantity
+    are inherited together, per commodity: a branch period that has a curve of its own for a commodity
+    keeps it whole (inherit_anchor_period, group key c).  Only branch periods with ladder rows
+    (cnd_ladder) are filled.  The cumulative ladder is keyed (c, i) and already holds in every period.
+    Runs on the final p_ladder_ann_price / p_ladder_ann_quantity: load_data and the direct-parameter pass
+    (_direct.apply_direct_params_b, which overwrites them for the period-indexed form) both produce them.
+    No-op outside stochastic solves (no non-self period__branch pair).
+    """
+    cnd = getattr(flex_data, "cnd_ladder", None)
+    price = getattr(flex_data, "p_ladder_ann_price", None)
+    quantity = getattr(flex_data, "p_ladder_ann_quantity", None)
+    if not _has_rows(cnd) or (price is None and quantity is None):
+        return
+    pairs = branch_anchor_pairs(provider, cnd["d"].cast(pl.Utf8).unique())
+    if pairs is None:
+        return
+    parts = [p.frame.select("c", "i", "d", "value").with_columns(field=pl.lit(name))
+             for name, p in (("price", price), ("quantity", quantity)) if p is not None]
+    both = inherit_anchor_period(pl.concat(parts, how="vertical"), pairs, group_keys=("c",))
+    if price is not None:
+        flex_data.p_ladder_ann_price = Param(
+            ("c", "i", "d"), both.filter(pl.col("field") == "price").select("c", "i", "d", "value"))
+    if quantity is not None:
+        flex_data.p_ladder_ann_quantity = Param(
+            ("c", "i", "d"), both.filter(pl.col("field") == "quantity").select("c", "i", "d", "value"))
+
+
 # ---------------------------------------------------------------------------
 # Variables
 
@@ -287,7 +322,8 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     #   ∀ (c,i,d) with (c,n,d,i) ∈ cndi_ladder_ann and quantity_ann[c,i,d] < 1e29
     # Caps what tier i supplies in period d.  f_d_k = share of the period simulated by the end of this
     # solve (factor 1 when absent); realized = tier MWh bought by earlier solves (0 when absent).
-    # Unlimited tiers (quantity ≥ 1e29) get no row.
+    # Unlimited tiers (quantity ≥ 1e29) get no row.  Branch periods of a stochastic solve use their
+    # anchor period's quantity (and price) unless they have their own (inherit_branch_periods).
     rhs: dict = {"cap": (d.p_ladder_ann_quantity * d.p_f_d_k if d.p_f_d_k is not None
                          else d.p_ladder_ann_quantity)}
     if d.p_ladder_cum_realized_mwh is not None:
