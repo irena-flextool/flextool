@@ -44,6 +44,11 @@ from flextool.engine.input._axis_enums import (  # substrate retained for Path B
     set_global_axis_enums,
 )
 from flextool.engine.preprocess.params._block_layout import BlockLayout
+from flextool.engine.preprocess.params._branch import (
+    activate_branch_anchor_pairs,
+    deactivate_branch_anchor_pairs,
+    solve_branch_anchor_pairs,
+)
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.input._input_source import read_csv_fallback
 
@@ -4430,7 +4435,15 @@ def load_flextool(source: "Path | str | FlexInputSource",
     if axis_enums is not None:
         set_global_axis_enums(axis_enums)
 
+    _branch_tok = None
     try:
+        # Stochastic branch periods inherit the period-keyed input values of their anchor period:
+        # arm the solve's (anchor, branch) pairs for the DB-direct readers before any of them runs
+        # (_load_online already reads startup_cost), reset in the finally below.  Only DB reads use
+        # them; CSV-only loads have no reader.
+        if db_reader is not None:
+            _branch_tok = activate_branch_anchor_pairs(solve_branch_anchor_pairs(provider))
+
         # Reuse the recorder bound at the function entry above so the
         # sub-checkpoints (axis_enums / SpineDbReader / load_flextool
         # start) share a single timeline.
@@ -4979,6 +4992,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
     finally:
         if ctx is not None:
             ctx.deactivate()
+        if _branch_tok is not None:
+            deactivate_branch_anchor_pairs(_branch_tok)
         # On the success path, leave the global ContextVar set to the
         # cascade's axis_enums — ``build_flextool`` runs AFTER
         # ``load_flextool`` returns and still needs the live vocabulary

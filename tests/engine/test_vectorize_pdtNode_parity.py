@@ -323,3 +323,68 @@ def test_vectorized_pdtNode_synthetic_fold_and_cascade(tmp_path):
     assert df_vec.equals(df_legacy), (
         f"synthetic pdtNode cascade: vectorized != legacy.\n"
         f"legacy:\n{df_legacy}\nvec:\n{df_vec}")
+
+
+def test_vectorized_pdtNode_branch_period_inherits_anchor_pd(tmp_path):
+    """A stochastic branch period without a ``pd`` row of its own takes its
+    anchor period's ``pd`` row (#55), in both twins; time-first still holds:
+
+    * ``city.penalty_up``: ``pd`` only for the anchor ``d1`` (8000) →
+      ``d1_b`` gets 8000, not the class default 5000 (non-vacuous).
+    * ``lake.storage``: ``pt`` 7.0 and anchor ``pd`` 5.0 → ``pt`` wins in
+      ``d1_b`` as in ``d1`` (time-first, the inherited ``pd`` is below it).
+    * ``lake.cost``: ``d1_b`` authors its own ``pd`` (2.0) → it wins.
+    """
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    put("input", "pbt_node", pl.DataFrame(schema={
+        "node": pl.Utf8, "param": pl.Utf8, "branch": pl.Utf8,
+        "time_start": pl.Utf8, "time": pl.Utf8, "value": pl.Float64}))
+    put("input", "pd_node", pl.DataFrame({
+        "node": ["city", "lake", "lake", "lake"],
+        "param": ["penalty_up", "storage", "cost", "cost"],
+        "period": ["d1", "d1", "d1", "d1_b"],
+        "value": [8000.0, 5.0, 9.0, 2.0],
+    }))
+    put("input", "pt_node", pl.DataFrame({
+        "node": ["lake"], "param": ["storage"], "time": ["t1"],
+        "value": [7.0]}))
+    put("input", "p_node", pl.DataFrame(schema={
+        "node": pl.Utf8, "param": pl.Utf8, "value": pl.Float64}))
+    put("input", "default_values", pl.DataFrame({
+        "class": ["node"], "parameter": ["penalty_up"], "value": [5000.0]}))
+    put("solve_data", "first_timesteps", pl.DataFrame({
+        "period": ["d1", "d1_b"], "time_start": ["s1", "s1"]}))
+    put("solve_data", "solve_branch__time_branch", pl.DataFrame({
+        "period": ["d1"], "branch": ["b1"]}))
+    put("solve_data", "period__branch", pl.DataFrame({
+        "period": ["d1", "d1"], "branch": ["d1", "d1_b"]}))
+    put("input", "group__node", pl.DataFrame(schema={
+        "group": pl.Utf8, "node": pl.Utf8}))
+    put("input", "groupIncludeStochastics", pl.DataFrame(schema={
+        "group": pl.Utf8}))
+    put("solve_data", "node__TimeParam_in_use", pl.DataFrame({
+        "node": ["city", "lake", "lake"],
+        "param": ["penalty_up", "storage", "cost"]}))
+    put("solve_data", "steps_in_use", pl.DataFrame({
+        "period": ["d1", "d1_b"], "time": ["t1", "t1"]}))
+
+    inp = tmp_path / "input"
+    sdd = tmp_path / "solve_data"
+    df_legacy = derive_pdtNode(inp, sdd, provider=provider)
+    df_vec = derive_pdtNode_vectorized(inp, sdd, provider=provider)
+
+    leg = {(r[0], r[1], r[2]): r[4] for r in df_legacy.iter_rows()}
+    assert leg[("city", "penalty_up", "d1_b")] == repr(8000.0), leg
+    assert leg[("lake", "storage", "d1")] == leg[("lake", "storage", "d1_b")] == repr(7.0), leg
+    assert leg[("lake", "cost", "d1")] == repr(9.0), leg
+    assert leg[("lake", "cost", "d1_b")] == repr(2.0), leg
+    assert df_vec.equals(df_legacy), (
+        f"branch-period pd: vectorized != legacy.\n"
+        f"legacy:\n{df_legacy}\nvec:\n{df_vec}")

@@ -1,5 +1,20 @@
 ## Unreleased
 
+- **Forecast branches use their period's per-period input values.** In a
+  stochastic solve, a value given as a map keyed by period (for example
+  `efficiency`, `startup_cost`, `min_load`, commodity `price`, `availability`,
+  `other_operational_cost`, `penalty_up` / `penalty_down`, profiles, CO2 price
+  and per-period limits such as `co2_max_period` or `capacity_margin`) now
+  also applies to the forecast branches of that period, the same way a single
+  value does. Before, the branches got the default instead (efficiency 1, no
+  startup or variable cost, free fuel, free slack), so a model with period
+  maps could report a far too low cost. A value authored for a branch period
+  itself still takes precedence.
+  With recourse investment (`stochastic_invest_method: recourse`), the
+  per-period investment limits of units, connections and nodes given as
+  period maps (e.g. `invest_max_period`) now also apply in the branch
+  periods, which are investment periods there.
+
 - **Rolling stochastic solves rebuild the LP when branch weights change.**
   When the forecast branch weights differ from one roll to the next and
   nothing else forces a rebuild, the next roll now gets its own weights in

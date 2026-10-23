@@ -419,3 +419,91 @@ def test_synthetic_pssdt_varCost_filters(tmp_path):
             f"synthetic:{name}: KEY-only filter parity failed\n"
             f"legacy=\n{lf}\nvec=\n{vf}")
     print("\n[varCost parity] synthetic filters: Tier A (all four non-empty)")
+
+
+# --- Part 4: stochastic branch period, chained from the per-side emit ------
+
+def test_synthetic_varCost_branch_period_inherits_anchor(tmp_path):
+    """``other_operational_cost`` keyed by the anchor period ``d1`` only must
+    reach its stochastic branch period ``d1_b`` through the per-side emit
+    (``pdtProcess_source`` / ``_sink``, #55) into the varCost pair and the
+    ``pssdt_varCost_eff_unit_*`` domains, identically in both twins.
+
+    The per-side frames are produced by the legacy per-side derive from an
+    anchor-only ``pd`` (no hand-written ``d1_b`` rows), then fed to the
+    varCost producers; before #55 the ``d1_b`` cells were 0 and the
+    branch-period domain rows were missing.
+    """
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess.emit._pdt_params import (
+        derive_pdtProcess_sink,
+        derive_pdtProcess_source,
+    )
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    occ = "other_operational_cost"
+    for side, node, value in (("source", "sA", 2.0), ("sink", "kA", 3.0)):
+        put("input", f"pbt_process_{side}", pl.DataFrame(schema={
+            "process": pl.Utf8, side: pl.Utf8, "param": pl.Utf8,
+            "branch": pl.Utf8, "time_start": pl.Utf8, "time": pl.Utf8,
+            "value": pl.Float64}))
+        put("input", f"pd_process_{side}", pl.DataFrame({
+            "process": ["u"], side: [node], "param": [occ], "period": ["d1"],
+            "value": [value]}))
+        put("input", f"pt_process_{side}", pl.DataFrame(schema={
+            "process": pl.Utf8, side: pl.Utf8, "param": pl.Utf8,
+            "time": pl.Utf8, "value": pl.Float64}))
+        put("input", f"p_process_{side}", pl.DataFrame(schema={
+            "process": pl.Utf8, side: pl.Utf8, "param": pl.Utf8,
+            "value": pl.Float64}))
+        put("solve_data", f"process_{side}_sourceSinkTimeParam_in_use",
+            pl.DataFrame({"process": ["u"], side: [node], "param": [occ]}))
+    put("solve_data", "first_timesteps", pl.DataFrame({
+        "period": ["d1", "d1_b"], "time_start": ["t1", "t1"]}))
+    put("solve_data", "solve_branch__time_branch", pl.DataFrame({
+        "period": ["d1"], "branch": ["b1"]}))
+    put("solve_data", "period__branch", pl.DataFrame({
+        "period": ["d1", "d1"], "branch": ["d1", "d1_b"]}))
+    put("input", "group__process", pl.DataFrame(schema={
+        "group": pl.Utf8, "process": pl.Utf8}))
+    put("input", "groupIncludeStochastics", pl.DataFrame(schema={
+        "group": pl.Utf8}))
+    put("solve_data", "steps_in_use", pl.DataFrame({
+        "period": ["d1", "d1_b"], "time": ["t1", "t1"]}))
+
+    inp = tmp_path / "input"
+    sdd = tmp_path / "solve_data"
+    put("solve_data", "pdtProcess_source", derive_pdtProcess_source(inp, sdd, provider=provider))
+    put("solve_data", "pdtProcess_sink", derive_pdtProcess_sink(inp, sdd, provider=provider))
+    put("solve_data", "pdtProcess", pl.DataFrame(schema={
+        "process": pl.Utf8, "param": pl.Utf8, "period": pl.Utf8,
+        "time": pl.Utf8, "value": pl.Utf8}))
+    arc = {"process": ["u"], "source": ["sA"], "sink": ["kA"]}
+    put("solve_data", "process_source_sink", pl.DataFrame(arc))
+    put("solve_data", "process_source_sink_alwaysProcess", pl.DataFrame(arc))
+    put("solve_data", "process_source_sink_noEff", pl.DataFrame(schema={
+        "process": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8}))
+    put("solve_data", "process_source_sink_eff", pl.DataFrame(arc))
+    put("input", "process__source", pl.DataFrame({"process": ["u"], "source": ["sA"]}))
+    put("input", "process__sink", pl.DataFrame({"process": ["u"], "sink": ["kA"]}))
+
+    leg_basic, leg_always = _derive_varCost_pair(inp, sdd, provider=provider)
+    vec_basic, vec_always = _derive_varCost_pair_vectorized(inp, sdd, provider=provider)
+    lb = {r[3]: r[5] for r in leg_basic.iter_rows()}
+    assert lb == {"d1": repr(5.0), "d1_b": repr(5.0)}, lb
+    assert _assert_parity(leg_basic, vec_basic, "branch:varCost.basic") == "A"
+    assert _assert_parity(leg_always, vec_always, "branch:varCost.always") == "A"
+
+    put("solve_data", "pdtProcess__source__sink__dt_varCost", leg_basic)
+    leg = _derive_pssdt_varCost_filters(inp, sdd, provider=provider)
+    vec = _derive_pssdt_varCost_filters_vectorized(inp, sdd, provider=provider)
+    _no_eff, eff_src, eff_snk, _eff_conn = leg
+    assert set(eff_src["period"].to_list()) == {"d1", "d1_b"}, eff_src
+    assert set(eff_snk["period"].to_list()) == {"d1", "d1_b"}, eff_snk
+    for name, lf, vf in zip(_FILTER_NAMES, leg, vec):
+        assert vf.equals(lf), f"branch:{name}: legacy=\n{lf}\nvec=\n{vf}"

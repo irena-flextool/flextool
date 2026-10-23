@@ -27,6 +27,7 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
+from flextool.engine.preprocess.emit._pdt_lookup import inherit_pd_branch_periods
 from flextool.engine.preprocess.emit._vectorize import (
     build_entity_dt_grid,
     build_entity_period_grid,
@@ -1201,6 +1202,17 @@ def _read_pd_2(path: Path,
     return out
 
 
+
+def _inherit_pd_2_branch_periods(pd_: dict, dt: "list[tuple[str, str]]", solve_data_dir: Path,
+                                 *, key_cols: "list[str]",
+                                 provider: "object | None") -> dict:
+    """``pd_`` (``(entity, param, period) -> value``) with each stochastic branch period of ``dt``
+    given its anchor period's entries (:func:`inherit_pd_branch_periods`).  Shared by the legacy
+    and vectorized ``pdtGroup`` / ``pdtCommodity`` derives so both read the same dict."""
+    pe_for_d = _read_pairs_to_dict(solve_data_dir / "period__branch.csv", key_col=1, provider=provider)
+    return inherit_pd_branch_periods(pd_, pe_for_d, key_cols=key_cols, period_pos=2,
+                                     periods=dict.fromkeys(d for d, _ in dt))
+
 def _read_branches_for_d(period_branch_csv: Path,
                          *, provider: "object | None" = None,
                          ) -> dict[str, list[str]]:
@@ -1433,13 +1445,16 @@ def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
     """Materialise the ``pdtGroup`` frame.
 
     Branches: ``pt_group[g, param, t]`` → ``pd_group[g, param, d]`` →
-    ``p_group[g, param]`` → 0.
+    ``p_group[g, param]`` → 0.  A stochastic branch period without a
+    ``pd_group`` row of its own uses its anchor period's.
     """
     pt_g = _read_pd_2(input_dir / "pt_group.csv", provider=provider)  # same (k1, k2, k3, v) shape
     pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
     p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
     groups = _read_singles(input_dir / "group.csv", provider=provider)
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    pd_g = _inherit_pd_2_branch_periods(pd_g, dt, solve_data_dir, key_cols=["group", "param", "period"],
+                                        provider=provider)
 
     g_col: list[str] = []
     p_col: list[str] = []
@@ -1493,6 +1508,8 @@ def derive_pdtGroup_vectorized(input_dir: Path, solve_data_dir: Path,
     p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
     groups = _read_singles(input_dir / "group.csv", provider=provider)
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    pd_g = _inherit_pd_2_branch_periods(pd_g, dt, solve_data_dir, key_cols=["group", "param", "period"],
+                                        provider=provider)
 
     key_cols = ["group", "param"]
     out_cols = [*key_cols, "period", "time"]
@@ -1547,12 +1564,16 @@ def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
 
     Domain: commodity × commodityTimeParam × dt.
     Branches: ``pt_commodity`` → ``pd_commodity`` → ``p_commodity`` → 0.
+    A stochastic branch period without a ``pd_commodity`` row of its own
+    uses its anchor period's.
     """
     pt = _read_pd_2(input_dir / "pt_commodity.csv", provider=provider)
     pd_ = _read_pd_2(input_dir / "pd_commodity.csv", provider=provider)
     p = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
     commodities = _read_singles(input_dir / "commodity.csv", provider=provider)
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    pd_ = _inherit_pd_2_branch_periods(pd_, dt, solve_data_dir,
+                                       key_cols=["commodity", "param", "period"], provider=provider)
 
     c_col: list[str] = []
     p_col: list[str] = []
@@ -1599,6 +1620,8 @@ def derive_pdtCommodity_vectorized(input_dir: Path, solve_data_dir: Path,
     p = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
     commodities = _read_singles(input_dir / "commodity.csv", provider=provider)
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    pd_ = _inherit_pd_2_branch_periods(pd_, dt, solve_data_dir,
+                                       key_cols=["commodity", "param", "period"], provider=provider)
 
     key_cols = ["commodity", "param"]
     out_cols = [*key_cols, "period", "time"]

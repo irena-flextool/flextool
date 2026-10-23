@@ -58,9 +58,20 @@ parameter_name) per ``apply_direct_params`` invocation — at most ~10
 calls per ``load_flextool``, all cached at the source-plugin level.
 The resolver itself does no per-row work; it only inspects the
 parameter's structural metadata.
+
+Stochastic branch periods
+-------------------------
+
+A branch period (``period1_upper``, ``p2035_high``, …) is minted per solve, so no input value is
+keyed by it.  Both broadcasters first copy the period-keyed rows of an anchor period to its branch
+periods (from ``period__branch``, restricted to the solve's in-use periods), unless the branch period
+authors a row of its own for that entity: a period map ``{anchor: v}`` then gives the branch periods
+the same rows as the scalar ``v``.  The step is active only inside ``load_flextool`` (which arms the
+pairs when it reads the DB); a direct call outside it returns the authored periods only.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -1396,6 +1407,27 @@ def _resolve_entity_dim_aliases(
     return (dict(entity_dim_aliases), target_keys)
 
 
+def _with_branch_periods(resolved: ResolvedShape) -> ResolvedShape:
+    """``resolved`` with its period-keyed rows copied to the stochastic branch periods of their period.
+
+    Runs on the raw source frame, before the null / zero filters, the period-filter join and the
+    axis cast, so "a branch period's own row wins" is judged on authored rows.  Scalar and time-only
+    shapes, and calls outside ``load_flextool`` (no active pairs), return ``resolved`` unchanged.
+    See :func:`flextool.engine.preprocess.params._branch.inherit_active_branch_periods`.
+    """
+    if resolved.period_index_column is None:
+        return resolved
+    # Function-local import: input -> preprocess, kept out of the module import order.
+    from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
+
+    frame = inherit_active_branch_periods(
+        resolved.frame, group_keys=resolved.entity_dim_columns,
+        period_col=resolved.period_index_column)
+    if frame is resolved.frame:
+        return resolved
+    return dataclasses.replace(resolved, frame=frame)
+
+
 def broadcast_to_period_time(
     resolved: "ResolvedShape | None",
     entity_dim_aliases: "str | dict[str, str]",
@@ -1444,6 +1476,9 @@ def broadcast_to_period_time(
     we return ``None`` (no Params produced for an empty solve), but no
     join is needed since SCALAR doesn't carry a d/t axis.
 
+    Period-keyed rows of an anchor period also apply to its stochastic
+    branch periods (module docstring, "Stochastic branch periods").
+
     *filter_zero* mirrors the CSV cascade's "drop rows where the
     explicit value is 0" semantic for fields like ``co2_price``
     (preprocessing emits zero-defaults but downstream gates filter
@@ -1456,6 +1491,7 @@ def broadcast_to_period_time(
     """
     if resolved is None or resolved.frame is None:
         return None
+    resolved = _with_branch_periods(resolved)
     df = resolved.frame
     if df.height == 0:
         return None
@@ -1684,11 +1720,15 @@ def broadcast_to_period(
     For ``SCALAR`` the filter is only consulted as the gating signal —
     no join is needed since a scalar doesn't carry a ``d`` axis.
 
+    Period-keyed rows of an anchor period also apply to its stochastic
+    branch periods (module docstring, "Stochastic branch periods").
+
     Other shapes raise :class:`FlexToolConfigError` (the resolver should
     have rejected them already; this is a defensive guard).
     """
     if resolved is None or resolved.frame is None:
         return None
+    resolved = _with_branch_periods(resolved)
     df = resolved.frame
     if df.height == 0:
         return None

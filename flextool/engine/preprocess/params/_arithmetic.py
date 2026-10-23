@@ -69,6 +69,7 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
 )
 
+from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
 from flextool.engine.preprocess.params._derived import (
     UNITSIZE_DEFAULT,
     _entity_unitsize_lf,
@@ -258,6 +259,10 @@ def _penalty_param_from_source(source: "InputSource",
     cols = df.columns
     period_col = next((c for c in ("period", "d", "x") if c in cols), None)
     time_col = next((c for c in ("t", "time", "step") if c in cols), None)
+    if period_col:
+        # Branch periods get their anchor period's rows.  This reader bypasses _param_shapes (axis by
+        # column name), so it applies the step itself; a silent "x" holding time labels matches no anchor.
+        df = inherit_active_branch_periods(df, group_keys=("name",), period_col=period_col)
     base = df.lazy().select(
         alias_to_axis("name", "n"),
         *([alias_to_axis(period_col, "d")] if period_col else []),

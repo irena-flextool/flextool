@@ -73,6 +73,7 @@ import polars as pl
 from polar_high import Param
 
 from flextool.engine.preprocess._provider_io import _provider_key
+from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
 from flextool.engine.input._axis_enums import (
     alias_to_axis,
     schema_dtype,
@@ -354,8 +355,10 @@ def _profile_period_time_lf(source: "InputSource",
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
+    # Branch periods get their anchor period's curve (this reader bypasses _param_shapes).
+    raw = inherit_active_branch_periods(raw.filter(pl.col("name").is_in(pt_profiles)),
+                                        group_keys=("name",), period_col="period")
     raw_lf = (raw.lazy()
-                  .filter(pl.col("name").is_in(pt_profiles))
                   .select(alias_to_axis("name", "f"),
                           alias_to_axis(pl.col("period").cast(pl.Utf8), "d"),
                           alias_to_axis(pl.col(t_col).cast(pl.Utf8), "t"),
@@ -396,8 +399,10 @@ def _profile_period_only_lf(source: "InputSource",
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
+    # Branch periods get their anchor period's value (this reader bypasses _param_shapes).
+    raw = inherit_active_branch_periods(raw.filter(pl.col("name").is_in(period_profiles)),
+                                        group_keys=("name",), period_col="period")
     raw_lf = (raw.lazy()
-                  .filter(pl.col("name").is_in(period_profiles))
                   .select(alias_to_axis("name", "f"),
                           alias_to_axis(pl.col("period").cast(pl.Utf8), "d"),
                           pl.col("value").cast(pl.Float64, strict=False)))

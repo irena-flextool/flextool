@@ -64,6 +64,7 @@ Workdir CSV reads (deferred to in-memory ``SolveContext`` per Δ.9+):
 """
 from __future__ import annotations
 
+import contextvars
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -74,6 +75,7 @@ from polar_high import Param
 from flextool.engine.input._axis_enums import (
     alias_to_axis,
     cast_dim,
+    get_global_axis_enums,
     rename_to_axis,
     schema_dtype,
 )
@@ -683,39 +685,63 @@ def period_branch_full_lf(workdir: Path | None,
 # ---------------------------------------------------------------------------
 # Branch periods inherit the period-keyed values of their anchor period
 # ---------------------------------------------------------------------------
+#
+#   value[k, br] = authored[k, br]            if k has an authored row in br
+#                = authored[k, anchor(br)]    otherwise, (anchor, br) ∈ period__branch, anchor ≠ br
+#
+# Branch periods (``period1_upper``, ``p2035_high``, …) are minted per solve, so no input value can be
+# keyed by them; they are possible futures of their anchor period, so the anchor's per-period value
+# applies.  A period map ``{anchor: v}`` therefore gives the anchor's branch periods the same rows as
+# the scalar ``v``.
+
+
+def _validated_pairs(pairs: "pl.DataFrame | None", caller: str) -> "pl.DataFrame | None":
+    """``(anchor, br)`` Utf8 pairs without self rows, unique and sorted; None when there are none.
+
+    Missing ``anchor`` / ``br`` columns, a null cell, or a branch period with more than one anchor
+    raise ``ValueError``: one anchor value per branch period is what inheritance needs.
+    """
+    if pairs is None or pairs.height == 0:
+        return None
+    missing = sorted({"anchor", "br"} - set(pairs.columns))
+    if missing:
+        raise ValueError(f"{caller}: pairs frame lacks column(s) {missing}; expected (anchor, br).")
+    out = pairs.select(pl.col("anchor").cast(pl.Utf8), pl.col("br").cast(pl.Utf8))
+    if out["anchor"].null_count() or out["br"].null_count():
+        raise ValueError(f"{caller}: pairs frame has null anchor or branch periods.")
+    out = out.filter(pl.col("anchor") != pl.col("br")).unique().sort("br", "anchor")
+    if out.height == 0:
+        return None
+    multi = (out.group_by("br").agg(pl.col("anchor").n_unique().alias("n"))
+                .filter(pl.col("n") > 1).sort("br"))
+    if multi.height > 0:
+        raise ValueError(
+            f"{caller}: branch period(s) {multi['br'].to_list()} have more than one anchor period in "
+            "period__branch; a branch period inherits the values of exactly one anchor.")
+    return out
 
 
 def branch_anchor_pairs(provider: "object | None",
-                        periods: "pl.Series | list[str] | None" = None,
+                        periods: "pl.Series | list[str] | None",
                         ) -> pl.DataFrame | None:
     """``(anchor, br)`` pairs of the stochastic branch periods, Utf8; None when there are none.
 
     Read from ``solve_data/period__branch`` (columns ``period`` = anchor, ``branch``).  Self rows
-    (trunks, deterministic periods) are dropped.  ``periods`` keeps only the branch periods in that
-    set (e.g. the periods the consumer has rows for), so realized-designated and zero-weight
-    branch periods without active time can be filtered out.  A branch period with more than one
-    anchor raises ``ValueError``: one anchor value per branch period is what inheritance needs.
+    (trunks, deterministic periods) are dropped.  ``periods`` is required: it keeps only the branch
+    periods in that set (the consumer's in-use periods), so realized-designated and zero-weight
+    branch periods without active time are filtered out.  Pass ``None`` explicitly only when the
+    caller restricts to its own period set downstream.  A branch period with more than one anchor
+    raises ``ValueError``.
     """
     pb = _provider_get(provider, Path("solve_data") / "period__branch.csv")
     if pb is None or pb.height == 0:
         return None
-    pairs = (pb.select(pl.col(pb.columns[0]).cast(pl.Utf8).alias("anchor"),
-                       pl.col(pb.columns[1]).cast(pl.Utf8).alias("br"))
-               .filter(pl.col("anchor") != pl.col("br")))
+    pairs = pb.select(pl.col(pb.columns[0]).cast(pl.Utf8).alias("anchor"),
+                      pl.col(pb.columns[1]).cast(pl.Utf8).alias("br"))
     if periods is not None:
         keep = pl.Series("br", list(periods), dtype=pl.Utf8)
         pairs = pairs.filter(pl.col("br").is_in(keep.implode()))
-    pairs = pairs.unique().sort("br", "anchor")
-    if pairs.height == 0:
-        return None
-    multi = (pairs.group_by("br").agg(pl.col("anchor").n_unique().alias("n"))
-                  .filter(pl.col("n") > 1).sort("br"))
-    if multi.height > 0:
-        raise ValueError(
-            f"branch_anchor_pairs: branch period(s) {multi['br'].to_list()} have more than one "
-            "anchor period in period__branch; a branch period inherits the values of exactly one "
-            "anchor.")
-    return pairs
+    return _validated_pairs(pairs, "branch_anchor_pairs")
 
 
 def inherit_anchor_period(frame: pl.DataFrame, pairs: pl.DataFrame | None, *,
@@ -724,30 +750,37 @@ def inherit_anchor_period(frame: pl.DataFrame, pairs: pl.DataFrame | None, *,
     """``frame`` plus, for every branch period of ``pairs``, the rows of its anchor period.
 
     ``frame`` has a period column ``period_col`` and any other columns (keys and values).
-    ``pairs`` holds ``(anchor, br)`` as from :func:`branch_anchor_pairs`.  For each
-    ``group_keys`` value, a branch period that already has rows of its own keeps them and gets
-    none of the anchor's ("branch-native rows win per ``group_keys`` + period"): an authored
-    value set for a period (e.g. a whole tier curve keyed by tier) is never mixed with the
-    anchor's.  The rule is the one ``PdLookup`` (own row, else anchor), ``derive_years_represented``
-    and ``_anchor_expand_explicit`` use; because of it, applying the helper twice, or after an
-    upstream expansion to branch periods, adds nothing.
+    ``pairs`` holds ``(anchor, br)``; it is validated here (columns, nulls, one anchor per branch
+    period; self rows dropped; Utf8 / Enum / Categorical all accepted).  For each ``group_keys``
+    value, a branch period that already has rows of its own keeps them and gets none of the
+    anchor's ("branch-native rows win per ``group_keys`` + period", null keys compared as equal):
+    an authored value set for a period (e.g. a whole tier curve keyed by tier, or a time curve) is
+    never mixed with the anchor's.  The rule is the one ``PdLookup`` (own row, else anchor),
+    ``derive_years_represented`` and ``_anchor_expand_explicit`` use; because of it, applying the
+    helper twice, or after an upstream expansion to branch periods, adds nothing.  Rows with a null
+    period are never joined to an anchor.
 
     Authored rows come first, inherited rows follow in ``(anchor rows, br)`` order.  The period
     column is joined as Utf8 and cast back to its input dtype strictly (a null from the cast is a
     wiring bug and raises).  None / empty ``pairs`` returns ``frame`` unchanged.
+
+    Eager by design: every caller passes a source frame or a de-duplicated lookup dict, before any
+    lazy broadcast or vectorized-emit join.  Do not add a collect on a lazy emit path to call it.
     """
-    if pairs is None or pairs.height == 0 or frame.height == 0:
+    pairs = _validated_pairs(pairs, "inherit_anchor_period")
+    if pairs is None or frame.height == 0:
         return frame
     group_keys = list(group_keys)
     cols = frame.columns
     d_dtype = frame.schema[period_col]
     base = frame.with_columns(pl.col(period_col).cast(pl.Utf8))
-    inherited = (base.join(pairs.select("anchor", "br"), left_on=period_col, right_on="anchor",
+    inherited = (base.join(pairs, left_on=period_col, right_on="anchor",
                            how="inner", maintain_order="left_right")
                      .drop(period_col)
                      .rename({"br": period_col})
                      .join(base.select([*group_keys, period_col]).unique(),
-                           on=[*group_keys, period_col], how="anti", maintain_order="left")
+                           on=[*group_keys, period_col], how="anti", nulls_equal=True,
+                           maintain_order="left")
                      .select(cols))
     if inherited.height == 0:
         return frame
@@ -762,6 +795,76 @@ def inherit_anchor_period(frame: pl.DataFrame, pairs: pl.DataFrame | None, *,
                 "nulls (the token is missing from the period vocabulary).")
         out = casted
     return out
+
+
+# The branch-anchor pairs of the load being built.  ``load_flextool`` activates them (from its own
+# provider) for the duration of the load when it reads parameters from the DB, and resets them in
+# its ``finally``; the DB-direct readers of period-keyed input apply them through
+# :func:`inherit_active_branch_periods`.  Outside a load nothing is active and the readers return
+# the authored periods only.  Mirrors ``_axis_enums.set_global_axis_enums``.
+_ACTIVE_BRANCH_ANCHOR_PAIRS: "contextvars.ContextVar[pl.DataFrame | None]" = contextvars.ContextVar(
+    "flextool_branch_anchor_pairs", default=None)
+
+
+def solve_branch_anchor_pairs(provider: "object | None") -> pl.DataFrame | None:
+    """The active solve's ``(anchor, br)`` pairs, restricted to its in-use periods; None when none.
+
+    ``period_in_use`` is the first column of ``solve_data/period_in_use_set`` (provider-only, the
+    form :func:`branch_anchor_pairs` uses); it excludes realized-designated and zero-weight branch
+    periods, which have no LP variables.  ``period__branch`` with non-self rows but no
+    ``period_in_use_set`` raises ``ValueError`` (a wiring bug: skipping would leave the branch
+    periods without their anchor's values).  With the axis enums active, a branch period outside
+    the live ``d`` vocabulary raises ``ValueError`` (it would otherwise become a null period and be
+    broadcast as a default over every period).
+    """
+    pb = _provider_get(provider, Path("solve_data") / "period__branch.csv")
+    if pb is None or pb.height == 0:
+        return None
+    if pb.filter(pl.col(pb.columns[0]).cast(pl.Utf8) != pl.col(pb.columns[1]).cast(pl.Utf8)).height == 0:
+        return None
+    piu = _provider_get(provider, Path("solve_data") / "period_in_use_set.csv")
+    if piu is None or piu.height == 0:
+        raise ValueError(
+            "solve_branch_anchor_pairs: period__branch has stochastic branch periods but "
+            "solve_data/period_in_use_set is missing or empty.")
+    pairs = branch_anchor_pairs(provider, piu[piu.columns[0]].cast(pl.Utf8).drop_nulls().to_list())
+    enums = get_global_axis_enums()
+    if pairs is not None and enums is not None and enums.get("d") is not None:
+        vocab = set(enums["d"].categories.to_list())
+        bad = sorted(set(pairs["br"].to_list()) - vocab)
+        if bad:
+            raise ValueError(
+                f"solve_branch_anchor_pairs: branch period(s) {bad} are not in the period (d) "
+                "vocabulary of the axis enums.")
+    return pairs
+
+
+def activate_branch_anchor_pairs(pairs: "pl.DataFrame | None") -> "contextvars.Token":
+    """Make ``pairs`` the active branch-anchor pairs; returns the token for the reset."""
+    return _ACTIVE_BRANCH_ANCHOR_PAIRS.set(_validated_pairs(pairs, "activate_branch_anchor_pairs"))
+
+
+def deactivate_branch_anchor_pairs(token: "contextvars.Token") -> None:
+    """Restore the active pairs to what they were before the matching activation."""
+    _ACTIVE_BRANCH_ANCHOR_PAIRS.reset(token)
+
+
+def active_branch_anchor_pairs() -> pl.DataFrame | None:
+    """The active branch-anchor pairs, or None outside a stochastic ``load_flextool``."""
+    return _ACTIVE_BRANCH_ANCHOR_PAIRS.get()
+
+
+def inherit_active_branch_periods(frame: pl.DataFrame, *,
+                                  group_keys: "tuple[str, ...] | list[str]",
+                                  period_col: str = "d") -> pl.DataFrame:
+    """:func:`inherit_anchor_period` with the active pairs; ``frame`` itself when none are active.
+
+    The one entry point for readers of period-keyed input during a load.
+    """
+    pairs = _ACTIVE_BRANCH_ANCHOR_PAIRS.get()
+    if pairs is None:
+        return frame
+    return inherit_anchor_period(frame, pairs, group_keys=group_keys, period_col=period_col)
 
 
 # ---------------------------------------------------------------------------

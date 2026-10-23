@@ -278,11 +278,12 @@ def test_branch_anchor_pairs_helper() -> None:
     pairs = branch_anchor_pairs(provider(pb), ["p1", "p1_hi", "p1_lo", "p2"])
     # Self rows dropped; a branch period outside the period set (realized / zero weight) gives no pair.
     assert pairs.rows() == [("p1", "p1_hi"), ("p1", "p1_lo")]
-    assert branch_anchor_pairs(provider(pb)).rows() == [("p1", "p1_hi"), ("p1", "p1_lo"), ("p1", "p1_rlz")]
-    assert branch_anchor_pairs(provider([("p1", "p1"), ("p2", "p2")])) is None
-    assert branch_anchor_pairs(None) is None
+    # periods=None (explicit): every branch period, the caller restricts downstream.
+    assert branch_anchor_pairs(provider(pb), None).rows() == [("p1", "p1_hi"), ("p1", "p1_lo"), ("p1", "p1_rlz")]
+    assert branch_anchor_pairs(provider([("p1", "p1"), ("p2", "p2")]), None) is None
+    assert branch_anchor_pairs(None, None) is None
     with pytest.raises(ValueError, match=r"more than one anchor"):
-        branch_anchor_pairs(provider(pb + [("p2", "p1_hi")]))
+        branch_anchor_pairs(provider(pb + [("p2", "p1_hi")]), None)
 
 
 def test_branch_weight_per_period() -> None:

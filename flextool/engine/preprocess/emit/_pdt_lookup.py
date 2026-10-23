@@ -32,6 +32,7 @@ Branching semantics:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterable
 
 from flextool.engine.preprocess._provider_io import _provider_key
 
@@ -277,6 +278,56 @@ def _read_singles(path: Path,
 
 
 # ---------------------------------------------------------------------------
+# Branch periods inherit the anchor period's ``pd`` rows.
+# ---------------------------------------------------------------------------
+
+def inherit_pd_branch_periods(pd: dict, pe_for_d: "dict[str, list[str]]", *,
+                              key_cols: "list[str]", period_pos: int,
+                              periods: "Iterable[str]") -> dict:
+    """``pd`` plus, for each branch period in ``periods``, its anchor period's entries.
+
+    A stochastic branch period is minted per solve, so no ``pd`` entry is keyed by it; it takes the
+    anchor's entry unless it has its own for that key (branch-native wins per key).  Pairs come from
+    ``pe_for_d`` (branch -> anchors, ``period__branch`` read with ``key_col=1``); self rows are
+    dropped and only anchors with at least one ``pd`` entry count, so a pair that is irrelevant to
+    this dict never reaches the one-anchor-per-branch check of
+    :func:`~flextool.engine.preprocess.params._branch.inherit_anchor_period` (which raises on a real
+    conflict).  ``key_cols`` names the key positions, ``period_pos`` the period's.
+
+    Returns ``pd`` itself when nothing is added (deterministic solves: every pair is a self row; no
+    polars frame is built then).  Otherwise a new dict: the authored entries first, the inherited
+    ones after.  Both the legacy loops and their vectorized twins read the result.
+    """
+    periods = set(periods)
+    candidates = sorted({(a, br) for br, anchors in pe_for_d.items() if br in periods
+                         for a in anchors if a != br})
+    if not candidates:
+        return pd
+    anchors = {a for a, _ in candidates}
+    anchors_with_rows = {k[period_pos] for k in pd if k[period_pos] in anchors}
+    candidates = [(a, br) for a, br in candidates if a in anchors_with_rows]
+    if not candidates:
+        return pd
+    import polars as pl
+
+    from flextool.engine.preprocess.params._branch import inherit_anchor_period
+
+    involved = anchors_with_rows | {br for _, br in candidates}
+    rows = [(*k, v) for k, v in pd.items() if k[period_pos] in involved]
+    frame = pl.DataFrame(rows, schema={**{c: pl.Utf8 for c in key_cols}, "value": pl.Float64},
+                         orient="row")
+    pairs = pl.DataFrame(candidates, schema={"anchor": pl.Utf8, "br": pl.Utf8}, orient="row")
+    group_keys = [c for i, c in enumerate(key_cols) if i != period_pos]
+    out = inherit_anchor_period(frame, pairs, group_keys=group_keys, period_col=key_cols[period_pos])
+    if out.height == frame.height:
+        return pd
+    merged = dict(pd)
+    for row in out.slice(frame.height).iter_rows():
+        merged[tuple(row[:-1])] = row[-1]
+    return merged
+
+
+# ---------------------------------------------------------------------------
 # Param-default enums (mirror flextool_base.dat — pinned here to avoid
 # importing the legacy preprocessing tree).
 # ---------------------------------------------------------------------------
@@ -359,7 +410,9 @@ class PdtLookup:
       2. parent-period-fold: for each pe with (pe, d) ∈ period__branch,
          sum pbt rows over ts ∈ first_timesteps[d], tb ∈ solve_branch[pe].
       3-4. pt or pd row (order toggled by ``time_first_priority``;
-         pdtNode prefers time, pdtProcess prefers period).
+         pdtNode prefers time, pdtProcess prefers period).  A stochastic
+         branch period without a pd row of its own uses its anchor
+         period's pd row (:func:`inherit_pd_branch_periods`).
       5. p scalar.
       6. ``param ∈ param_def1`` → 1.
       7. class-default (pdtNode only).
@@ -390,6 +443,8 @@ class PdtLookup:
         self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
+        self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d, key_cols=["e", "param", "d"],
+                                             period_pos=2, periods=list(self._ts_for_d))
         groups_stoch = frozenset(_read_singles(group_stochastic_csv, provider=provider))
         self._stoch_entity: set[str] = set()
         ge_df = provider.get(_provider_key(group_entity_csv))
@@ -472,7 +527,7 @@ class PdtLookupPerSide:
 
     Entity key is ``(process, side)``.  No def1 branch; otherwise same
     cascade as :class:`PdtLookup` minus the param_def1 / class-default
-    layers.
+    layers (branch periods inherit the anchor's pd rows the same way).
     """
 
     def __init__(
@@ -496,6 +551,9 @@ class PdtLookupPerSide:
         self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
+        self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d,
+                                             key_cols=["p", "side", "param", "d"], period_pos=3,
+                                             periods=list(self._ts_for_d))
         groups_stoch = frozenset(_read_singles(group_stochastic_csv, provider=provider))
         self._stoch_process: set[str] = set()
         gp_df = provider.get(_provider_key(group_process_csv))

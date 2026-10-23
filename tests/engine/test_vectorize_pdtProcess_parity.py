@@ -190,3 +190,80 @@ def test_vectorized_pdtProcess_exercises_pbt_fold(tmp_path):
         f"synthetic pbt fold: vectorized != legacy.\n"
         f"legacy:\n{df_legacy}\nvec:\n{df_vec}"
     )
+
+
+def _branch_provider(pd_rows: dict, p_rows: dict, pbt_rows: list):
+    """Synthetic stochastic provider: anchor ``d1`` with one branch period ``d1_b``
+    (``period__branch`` (d1, d1), (d1, d1_b)); ``d1`` has time branch ``b1``."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    put("input", "pbt_process", pl.DataFrame(pbt_rows, schema={
+        "process": pl.Utf8, "param": pl.Utf8, "branch": pl.Utf8,
+        "time_start": pl.Utf8, "time": pl.Utf8, "value": pl.Float64},
+        orient="row"))
+    put("input", "pd_process", pl.DataFrame(
+        [(*k, v) for k, v in pd_rows.items()], schema={
+            "process": pl.Utf8, "param": pl.Utf8, "period": pl.Utf8,
+            "value": pl.Float64}, orient="row"))
+    put("input", "pt_process", pl.DataFrame(schema={
+        "process": pl.Utf8, "param": pl.Utf8, "time": pl.Utf8,
+        "value": pl.Float64}))
+    put("input", "p_process", pl.DataFrame(
+        [(*k, v) for k, v in p_rows.items()], schema={
+            "process": pl.Utf8, "param": pl.Utf8, "value": pl.Float64},
+        orient="row"))
+    put("solve_data", "first_timesteps", pl.DataFrame({
+        "period": ["d1", "d1_b"], "time_start": ["s1", "s1"]}))
+    put("solve_data", "solve_branch__time_branch", pl.DataFrame({
+        "period": ["d1"], "branch": ["b1"]}))
+    put("solve_data", "period__branch", pl.DataFrame({
+        "period": ["d1", "d1"], "branch": ["d1", "d1_b"]}))
+    put("input", "group__process", pl.DataFrame(schema={
+        "group": pl.Utf8, "process": pl.Utf8}))
+    put("input", "groupIncludeStochastics", pl.DataFrame(schema={
+        "group": pl.Utf8}))
+    procs = sorted({k[0] for k in pd_rows} | {k[0] for k in p_rows}
+                   | {r[0] for r in pbt_rows})
+    put("solve_data", "process_TimeParam_in_use", pl.DataFrame({
+        "process": procs, "param": ["oc"] * len(procs)}))
+    put("solve_data", "steps_in_use", pl.DataFrame({
+        "period": ["d1", "d1_b"], "time": ["t1", "t1"]}))
+    return provider
+
+
+def test_vectorized_pdtProcess_branch_period_inherits_anchor_pd(tmp_path):
+    """A stochastic branch period without a ``pd`` row of its own takes its
+    anchor period's ``pd`` row (#55), in both twins, and the rest of the
+    cascade order holds:
+
+    * ``u``: ``pd`` only for the anchor ``d1`` → ``d1_b`` gets 3.0, not the
+      ``p`` scalar 1.0 it got before (non-vacuous).
+    * ``v``: ``d1_b`` authors its own ``pd`` row (9.0) → it wins.
+    * ``w``: anchor ``pd`` 5.0 plus a ``pbt`` parent-fold hit for ``d1_b``
+      (branch ``b1`` of the anchor) → the fold (7.0) still wins.
+    """
+    provider = _branch_provider(
+        pd_rows={("u", "oc", "d1"): 3.0, ("v", "oc", "d1"): 4.0,
+                 ("v", "oc", "d1_b"): 9.0, ("w", "oc", "d1"): 5.0},
+        p_rows={("u", "oc"): 1.0},
+        pbt_rows=[("w", "oc", "b1", "s1", "t1", 7.0)])
+    inp = tmp_path / "input"
+    sdd = tmp_path / "solve_data"
+    df_legacy = derive_pdtProcess(inp, sdd, provider=provider)
+    df_vec = derive_pdtProcess_vectorized(inp, sdd, provider=provider)
+
+    leg = {(r[0], r[2]): r[4] for r in df_legacy.iter_rows()}
+    assert leg[("u", "d1")] == leg[("u", "d1_b")] == repr(3.0), leg
+    assert leg[("u", "d1_b")] != repr(1.0), "branch period still on the p scalar"
+    assert leg[("v", "d1")] == repr(4.0), leg
+    assert leg[("v", "d1_b")] == repr(9.0), leg
+    assert leg[("w", "d1_b")] == repr(7.0), leg
+    assert df_vec.equals(df_legacy), (
+        f"branch-period pd: vectorized != legacy.\n"
+        f"legacy:\n{df_legacy}\nvec:\n{df_vec}")

@@ -272,3 +272,66 @@ def test_vectorized_pdtProcess_side_exercises_pbt_fold(side_col, tmp_path):
         f"synthetic pbt fold ({side_col}): vectorized != legacy.\n"
         f"legacy:\n{df_legacy}\nvec:\n{df_vec}"
     )
+
+
+@pytest.mark.parametrize("side_col", ["source", "sink"])
+def test_vectorized_pdtProcess_side_branch_period_inherits_anchor_pd(
+        side_col, tmp_path):
+    """PerSide (4-tuple ``pd`` key, period at position 3): a stochastic
+    branch period without a ``pd`` row of its own takes its anchor period's
+    (#55), in both twins.
+
+    * ``(u, nA)``: anchor ``pd`` 3.0, ``p`` scalar 1.0 → ``d1_b`` gets 3.0
+      and no longer the 1.0 it got before (non-vacuous).
+    * ``(u, nB)``: ``d1_b`` authors its own ``pd`` (9.0) → it wins; the
+      other side of the same process is unaffected by it.
+    * ``(w, nA)``: anchor ``pd`` 5.0 and a ``pbt`` parent-fold hit → the
+      fold (7.0) still wins.
+    """
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+    put = _put_factory(provider)
+    put("input", f"pbt_process_{side_col}", pl.DataFrame({
+        "process": ["w"], side_col: ["nA"], "param": ["oc"],
+        "branch": ["b1"], "time_start": ["s1"], "time": ["t1"],
+        "value": [7.0]}))
+    put("input", f"pd_process_{side_col}", pl.DataFrame({
+        "process": ["u", "u", "u", "w"], side_col: ["nA", "nB", "nB", "nA"],
+        "param": ["oc"] * 4, "period": ["d1", "d1", "d1_b", "d1"],
+        "value": [3.0, 4.0, 9.0, 5.0]}))
+    put("input", f"pt_process_{side_col}", pl.DataFrame(schema={
+        "process": pl.Utf8, side_col: pl.Utf8, "param": pl.Utf8,
+        "time": pl.Utf8, "value": pl.Float64}))
+    put("input", f"p_process_{side_col}", pl.DataFrame({
+        "process": ["u"], side_col: ["nA"], "param": ["oc"], "value": [1.0]}))
+    put("solve_data", "first_timesteps", pl.DataFrame({
+        "period": ["d1", "d1_b"], "time_start": ["s1", "s1"]}))
+    put("solve_data", "solve_branch__time_branch", pl.DataFrame({
+        "period": ["d1"], "branch": ["b1"]}))
+    put("solve_data", "period__branch", pl.DataFrame({
+        "period": ["d1", "d1"], "branch": ["d1", "d1_b"]}))
+    put("input", "group__process", pl.DataFrame(schema={
+        "group": pl.Utf8, "process": pl.Utf8}))
+    put("input", "groupIncludeStochastics", pl.DataFrame(schema={
+        "group": pl.Utf8}))
+    put("solve_data", f"process_{side_col}_sourceSinkTimeParam_in_use",
+        pl.DataFrame({"process": ["u", "u", "w"],
+                      side_col: ["nA", "nB", "nA"], "param": ["oc"] * 3}))
+    put("solve_data", "steps_in_use", pl.DataFrame({
+        "period": ["d1", "d1_b"], "time": ["t1", "t1"]}))
+
+    inp = tmp_path / "input"
+    sdd = tmp_path / "solve_data"
+    df_legacy = _legacy_side(inp, sdd, side_col=side_col, provider=provider)
+    df_vec = _vec_side(inp, sdd, side_col=side_col, provider=provider)
+
+    leg = {(r[0], r[1], r[3]): r[5] for r in df_legacy.iter_rows()}
+    assert leg[("u", "nA", "d1_b")] == leg[("u", "nA", "d1")] == repr(3.0), leg
+    assert leg[("u", "nA", "d1_b")] != repr(1.0), "branch period still on the p scalar"
+    assert leg[("u", "nB", "d1")] == repr(4.0), leg
+    assert leg[("u", "nB", "d1_b")] == repr(9.0), leg
+    assert leg[("w", "nA", "d1_b")] == repr(7.0), leg
+    assert df_vec.equals(df_legacy), (
+        f"{side_col}: branch-period pd: vectorized != legacy.\n"
+        f"legacy:\n{df_legacy}\nvec:\n{df_vec}")
