@@ -1,132 +1,32 @@
-"""Group-level slack constraints: ``capacity_margin``, ``inertia``, ``non_sync``.
+"""Group soft floors: capacity margin, inertia and the non-synchronous share limit.
 
-Each is a "soft floor" constraint: a sum over processes (or unit existence)
-must meet a per-group floor; a slack variable absorbs any shortfall and is
-priced at a high penalty in the objective.
-
-Module API
-----------
-
-``has_feature(d) -> bool``
-    True if any of the three group-slack features is active in this scenario.
-
-``load_data(inp, sd, dt, nb, pss_eff, pss_noEff, p_unitsize, **_) -> dict``
-    Read the solve_data / input CSVs the features need and return a dict
-    of new ``FlexData`` fields.  Fields that are unused in the current
-    scenario are returned as ``None`` (mirroring the rest of the loader's
-    convention so the merge agent can `**` -merge into the FlexData ctor).
-
-``add_constraints(m, d, vars) -> None``
-    Emit ``capacityMargin``, ``inertia_constraint`` and ``non_sync_constraint``
-    where their data is non-empty.  Declares its own slack variables
-    ``vq_capacity_margin``, ``vq_inertia``, ``vq_non_synchronous`` and
-    publishes them back into ``vars`` (key names match var names) so
-    ``add_objective_terms`` can consume them.
-
-``add_objective_terms(m, d, vars, op_factor) -> Expr | None``
-    Build the slack-penalty contribution of these three features.  Returns
-    ``None`` if the feature is not active (caller must guard).
-
-New FlexData fields (set by ``load_data``)
-------------------------------------------
-
-Sets
-~~~~
-
-* ``groupCapacityMargin``  — ``(g,)``  rows are groups whose
-  ``pdGroup_capacity_margin`` is non-empty.
-* ``groupInertia``         — ``(g,)``  rows are groups whose
-  ``pdGroup_inertia_limit``  is non-empty.
-* ``groupNonSync``         — ``(g,)``  rows are groups in
-  ``input/groupNonSync.csv`` (mirrors the .mod's hand-curated set).
-* ``group_node``           — ``(g, n)`` flextool's group__node (sd copy).
-* ``process_sink_inertia`` — ``(p, sink)`` rows for which
-  ``p_process_sink[p, sink, 'inertia_constant']`` exists.
-* ``process_source_inertia`` — ``(p, source)`` analogous.
-* ``process_sink_nonSync`` — ``(p, sink)`` flextool's process__sink_nonSync.
-* ``process_group_inside_nonSync`` — ``(p, g)`` set of process-inside-group
-  pairs that are excluded from non-sync flow accounting.
-
-Parameters
-~~~~~~~~~~
-
-* ``p_inv_group_cap``                     — ``(g, d)``  inverse of
-  group_capacity_for_scaling, used as a row-scaler in capacity_margin and
-  non_sync.  Equals ``1 / group_capacity_for_scaling`` per (g, d).
-* ``p_group_capacity_for_scaling``        — ``(g, d)``  the raw scaling
-  factor — used by the slack term in the objective for capacity_margin.
-* ``pdGroup_capacity_margin``             — ``(g, d)``  RHS of capacity
-  margin constraint.
-* ``pdGroup_penalty_capacity_margin``     — ``(g, d)``  unit penalty.
-* ``pdGroup_inertia_limit``               — ``(g, d)``  RHS of inertia.
-* ``pdGroup_penalty_inertia``             — ``(g, d)``  unit penalty.
-* ``pdGroup_non_synchronous_limit``       — ``(g, d)``  per-group share.
-* ``pdGroup_penalty_non_synchronous``     — ``(g, d)``  unit penalty.
-* ``p_process_sink_inertia_constant``     — ``(p, sink)``.
-* ``p_process_source_inertia_constant``   — ``(p, source)``.
-* ``p_positive_inflow``                   — ``(n, d, t)`` exogenous +
-  inflow part used by non_sync.  Note flextool also has a no-overlap
-  ``p_negative_inflow`` (consumed in the same constraint).
-* ``p_negative_inflow``                   — ``(n, d, t)``.
-* ``pdtNodeInflow_per_step``              — ``(n, d, t)`` =
-  ``pdtNodeInflow / p_step_duration``.  Used in capacity_margin RHS.
-
-Variables created in ``add_constraints``
-----------------------------------------
-
-* ``vq_capacity_margin[g, d]``          (period-only).
-* ``vq_inertia[g, d, t]``               .
-* ``vq_non_synchronous[g, d, t]``       .
-
-Required existing data fields (must be present before ``add_constraints``)
---------------------------------------------------------------------------
-
-* ``v_flow``              (in ``vars``).
-* ``v_online_lin`` / ``v_online_int``   (only if the model has UC; used by
-  inertia LHS for ``process_online`` processes and by non-sync's
-  min-load section term).
-* ``v_invest_p`` / ``v_divest_p``       (only if the scenario has invest;
-  used by capacity_margin LHS for available-capacity-with-invest).
-* ``p_unitsize``, ``p_slope``, ``p_section`` (already on ``d``).
-* ``p_step_duration``, ``p_timestep_weight``, ``p_inflation_op``,
-  ``p_period_share`` (already on ``d``).
-* ``p_process_existing_count``, ``edd_invest_set``, ``pd_divest_set``,
-  ``edd_divest_active`` (only when invest is active).
-* ``p_inflow``  -OR- direct ``pdtNodeInflow`` (used to derive
-  ``pdtNodeInflow_per_step``); we recompute from ``p_inflow *
-  p_step_duration`` if the canonical pdtNodeInflow.csv is unavailable.
-
-Hooks
------
-
-* In ``build_flextool``: invoke ``_group_slack.add_constraints(m, d, vars)``
-  AFTER existing constraint emission (storage, ramps, profiles), BEFORE
-  ``m.set_objective``.  Then ``obj = obj + _group_slack.add_objective_terms(m,
-  d, vars, op_factor) or 0``.
-* In ``load_flextool``: ``data = data._replace(**_group_slack.load_data(
-  inp, sd, dt, nb, pss_eff, pss_noEff, p_unitsize))`` before returning, or
-  set the fields directly as part of the ctor call.
-
-Sign conventions follow ``audit/constraints_audit.md`` and
-``audit/objective_audit.md`` term-by-term.
+Owns the variables vq_capacity_margin, vq_inertia and vq_non_synchronous, the rows capacityMargin,
+inertia_constraint and non_sync_constraint, and their penalties in the objective.  Each row asks a node
+group to meet a floor (available capacity, rotating inertia) or to stay under a ceiling (share of
+non-synchronous infeed); the slack variable absorbs the violation and is priced in the objective.
+Every slack is a fraction of the group's scaling quantity (group_capacity_for_scaling or the inertia
+limit), which keeps the rows well scaled.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
 import polars as pl
+from polar_high import Param, Sum, Where
+from polar_high.engine import Expr
 
-from polar_high import Sum, Where, Param
-from polar_high.engine import Var, Expr
-
-from ._emit_provider_io import _provider_key
 from ._axis_enums import align_join_dtypes
+from ._emit_provider_io import _provider_key
+from ._model_common import _has_rows, _var_view
+
+if TYPE_CHECKING:
+    from .model import _Build
 
 
-def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
-    """Provider-only fetch.  Returns ``None`` when the Provider is
-    missing or doesn't carry *path*'s canonical key.
-    """
+def _provider_get(provider, path: Path) -> pl.DataFrame | None:
+    """The provider's frame for ``path``, or None when the provider is missing or lacks it."""
     if provider is None:
         return None
     key = _provider_key(path)
@@ -136,8 +36,10 @@ def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
 
 
 # ---------------------------------------------------------------------------
-# Sentinel keys (must match the FlexData fields the merge agent will add).
+# Loader
 
+# Every FlexData field this module owns.  load_data returns all of them (None when not loaded here); the
+# Params among them are filled by the direct- and derived-parameter passes.
 _FIELDS: tuple[str, ...] = (
     "groupCapacityMargin", "groupInertia", "groupNonSync",
     "group_node",
@@ -154,47 +56,8 @@ _FIELDS: tuple[str, ...] = (
 )
 
 
-def _blank() -> dict:
-    """Return a dict-of-Nones for every field this module owns."""
-    return {f: None for f in _FIELDS}
-
-
-# ---------------------------------------------------------------------------
-# Public predicate
-
-def has_feature(d) -> bool:
-    """True if *any* of the three group-level slack features is active.
-
-    A feature is active when its corresponding group-set field has at
-    least one row.  ``getattr`` with a default of ``None`` keeps this
-    callable even if the merge agent is staged before the FlexData
-    extension lands."""
-    for f in ("groupCapacityMargin", "groupInertia", "groupNonSync"):
-        s = getattr(d, f, None)
-        if s is not None and s.height > 0:
-            return True
-    return False
-
-
-def _has_capacity_margin(d) -> bool:
-    s = getattr(d, "groupCapacityMargin", None)
-    return s is not None and s.height > 0
-
-
-def _has_inertia(d) -> bool:
-    s = getattr(d, "groupInertia", None)
-    return s is not None and s.height > 0
-
-
-def _has_non_sync(d) -> bool:
-    s = getattr(d, "groupNonSync", None)
-    return s is not None and s.height > 0
-
-
-# ---------------------------------------------------------------------------
-# Data loading helpers
-
 def _read_csv_or_none(p: Path, *, provider=None) -> pl.DataFrame | None:
+    """The provider's frame for ``p``; None when missing or empty."""
     df = _provider_get(provider, p)
     if df is None or df.height == 0:
         return None
@@ -202,59 +65,51 @@ def _read_csv_or_none(p: Path, *, provider=None) -> pl.DataFrame | None:
 
 
 def _slice_pdgroup(sd: Path, param: str, *, provider=None) -> pl.DataFrame | None:
-    """Slice ``solve_data/pdGroup.csv`` (canonical long format
-    ``group, param, period, value``) by literal ``param`` string —
-    same operation .mod does inline via ``pdGroup[g, '<param>', d]``.
+    """Rows of ``param`` in the long-format ``solve_data/pdGroup.csv`` (group, param, period, value).
 
-    Returns ``(g, d, value)`` or ``None`` if the Provider doesn't
-    carry the key / the slice is empty / the slice contains only zeros."""
-    p = sd / "pdGroup.csv"
-    df = _provider_get(provider, p)
+    Returns ``(g, d, value)`` without zero rows; None when the file is missing or nothing is left.
+    """
+    df = _provider_get(provider, sd / "pdGroup.csv")
     if df is None or df.height == 0:
         return None
     sliced = (df.filter(pl.col("param") == param)
-                .rename({"group": "g", "period": "d"})
-                .select("g", "d", "value")
-                .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
-    # Drop zero rows so the constraint set is naturally empty when the
-    # feature isn't exercised.
+              .rename({"group": "g", "period": "d"})
+              .select("g", "d", "value")
+              .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
+    # Zero rows dropped: a group whose value is 0 everywhere does not activate the feature.
     sliced = sliced.filter(pl.col("value") != 0.0)
     if sliced.height == 0:
         return None
     return sliced
 
 
-def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str,
-                             *, provider=None) -> pl.DataFrame | None:
-    """Some pdGroup_*.csv files are written by flextool preprocessing as
-    standalone wide-by-group files keyed on ``solve, period, <group1, …>``
-    (e.g. ``pdGroup_inertia_limit.csv``).  Read either format and return
-    a long ``(g, d, value)`` frame with zero rows dropped."""
-    p = sd / fname
-    df = _provider_get(provider, p)
+def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str, *, provider=None) -> pl.DataFrame | None:
+    """A standalone ``pdGroup_<param>.csv`` as long ``(g, d, value)`` without zero or null rows.
+
+    The file is either long (group, period, ``value_col`` or value) or wide by group (period, g1, g2, …);
+    a ``solve`` column is ignored.  None when the file is missing or nothing is left.
+    """
+    df = _provider_get(provider, sd / fname)
     if df is None or df.height == 0:
         return None
     if "solve" in df.columns:
         df = df.drop("solve")
     if {"period", value_col}.issubset(df.columns) and df.columns[0] == "group":
-        # long form with explicit value column name
         out = (df.rename({"group": "g", "period": "d", value_col: "value"})
-                 .select("g", "d", "value")
-                 .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
+               .select("g", "d", "value")
+               .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
     elif "period" in df.columns and "group" in df.columns and "value" in df.columns:
         out = (df.rename({"group": "g", "period": "d"})
-                 .select("g", "d", "value")
-                 .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
+               .select("g", "d", "value")
+               .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
     elif "period" in df.columns:
-        # wide-per-group: cols are (period, g1, g2, ...).
         val_cols = [c for c in df.columns if c != "period"]
         if not val_cols:
             return None
-        out = (df.unpivot(on=val_cols, index=["period"],
-                           variable_name="g", value_name="value")
-                 .rename({"period": "d"})
-                 .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                 .select("g", "d", "value"))
+        out = (df.unpivot(on=val_cols, index=["period"], variable_name="g", value_name="value")
+               .rename({"period": "d"})
+               .with_columns(pl.col("value").cast(pl.Float64, strict=False))
+               .select("g", "d", "value"))
     else:
         return None
     out = out.filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0))
@@ -263,16 +118,12 @@ def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str,
     return out
 
 
-def _read_inertia_constants(inp: Path, *,
-                              provider=None) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
-    """Parse ``p_process_sink.csv`` and ``p_process_source.csv`` for the
-    ``inertia_constant`` parameter.
+def _read_inertia_constants(inp: Path, *, provider=None) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
+    """``(sink_df, source_df)``: the non-zero ``inertia_constant`` rows of ``p_process_sink.csv`` /
+    ``p_process_source.csv`` as ``(p, sink|source, value)``, each None when absent.
 
-    Returns ``(sink_df, source_df)``, each ``(p, side, value)`` or None.
-
-    Both files are long-format with columns
-    ``[process, sink|source, sourceSinkParam, p_process_sink|source]``.
-    See ``_read_p_process_side`` in input.py for the canonical shape."""
+    Both files are long format: ``process, sink|source, sourceSinkParam, <value>``.
+    """
     def _read(path: Path, side: str) -> pl.DataFrame | None:
         df = _provider_get(provider, path)
         if df is None or df.height == 0:
@@ -281,18 +132,13 @@ def _read_inertia_constants(inp: Path, *,
             return None
         value_col = df.columns[-1]
         out = (df.filter(pl.col("sourceSinkParam") == "inertia_constant")
-                 .rename({"process": "p", value_col: "value"})
-                 .select("p", side, "value")
-                 .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                 .filter(pl.col("value") != 0.0))
+               .rename({"process": "p", value_col: "value"})
+               .select("p", side, "value")
+               .with_columns(pl.col("value").cast(pl.Float64, strict=False))
+               .filter(pl.col("value") != 0.0))
         return out if out.height > 0 else None
-    sink_df  = _read(inp / "p_process_sink.csv",   "sink")
-    src_df   = _read(inp / "p_process_source.csv", "source")
-    return sink_df, src_df
+    return _read(inp / "p_process_sink.csv", "sink"), _read(inp / "p_process_source.csv", "source")
 
-
-# ---------------------------------------------------------------------------
-# load_data
 
 def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
               nb: pl.DataFrame | None,
@@ -301,953 +147,538 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
               p_unitsize: Param | None,
               *, provider=None,
               **_unused) -> dict:
-    """Read group-level slack data from ``input/`` + ``solve_data/``.
+    """Group sets and scaling factors of the three features, as ``field_name -> DataFrame | Param | None``.
 
-    The merge agent calls this from ``load_flextool`` and merges the
-    result into the ``FlexData`` constructor.
-
-    All returned fields are independently optional.  Missing CSVs ⇒ None.
+    The caller merges the dict into FlexData.  Every field of ``_FIELDS`` is present; missing files give
+    None.  The group limits, penalties, inertia constants and signed inflows are filled by the direct- and
+    derived-parameter passes, not here.  ``inp`` / ``sd`` are the input and solve_data directories (files
+    are read through ``provider``); the other positional arguments are accepted for the loader's uniform
+    call and unused.
     """
-    out = _blank()
+    out = {f: None for f in _FIELDS}
 
-    # ── Group sets ────────────────────────────────────────────────────────
-    # The .mod derives groupCapacityMargin / groupInertia from non-empty rows
-    # in pdGroup_capacity_margin.csv / pdGroup_inertia_limit.csv (param-bearing
-    # rows of pdGroup.csv).  groupNonSync is hand-curated in
-    # input/groupNonSync.csv.
-    cap_pd = _slice_pdgroup_topfile(sd, "pdGroup_capacity_margin.csv",
-                                     "capacity_margin", provider=provider)
+    # Group sets: the groups with a non-zero capacity_margin / inertia_limit.  groupNonSync comes from
+    # input/groupNonSync.csv, else from the groups with a non_synchronous_limit.
+    cap_pd = _slice_pdgroup_topfile(sd, "pdGroup_capacity_margin.csv", "capacity_margin", provider=provider)
     if cap_pd is None:
         cap_pd = _slice_pdgroup(sd, "capacity_margin", provider=provider)
-    iner_pd = _slice_pdgroup_topfile(sd, "pdGroup_inertia_limit.csv",
-                                      "electricity",  # value col is group name
-                                      provider=provider)
+    iner_pd = _slice_pdgroup_topfile(sd, "pdGroup_inertia_limit.csv", "electricity", provider=provider)
     if iner_pd is None:
         iner_pd = _slice_pdgroup(sd, "inertia_limit", provider=provider)
-    nsync_pd = _slice_pdgroup(sd, "non_synchronous_limit",
-                                provider=provider)  # only via pdGroup.csv
-
-    # Set frames keyed by group name.  Δ.12-drop: the corresponding
-    # ``pdGroup_capacity_margin`` / ``pdGroup_inertia_limit`` /
-    # ``pdGroup_non_synchronous_limit`` Params are produced
-    # authoritatively by ``apply_direct_params`` (Δ.4b).
+    nsync_pd = _slice_pdgroup(sd, "non_synchronous_limit", provider=provider)
     if cap_pd is not None:
         out["groupCapacityMargin"] = cap_pd.select("g").unique()
     if iner_pd is not None:
         out["groupInertia"] = iner_pd.select("g").unique()
-
-    # groupNonSync: prefer the explicit input file (canonical), fallback to
-    # pd_group's non_synchronous_limit slice.
-    g_ns_path = inp / "groupNonSync.csv"
-    df = _provider_get(provider, g_ns_path)
+    df = _provider_get(provider, inp / "groupNonSync.csv")
     if df is not None and df.height > 0:
-        # Header column might be "groupNonSync" (legacy) or "group".
-        col = df.columns[0]
-        out["groupNonSync"] = (df.rename({col: "g"})
-                                 .select("g").unique())
+        col = df.columns[0]                 # "groupNonSync" or "group"
+        out["groupNonSync"] = df.rename({col: "g"}).select("g").unique()
     if out["groupNonSync"] is None and nsync_pd is not None:
         out["groupNonSync"] = nsync_pd.select("g").unique()
 
-    # Δ.12-drop: ``pdGroup_penalty_capacity_margin`` /
-    # ``pdGroup_penalty_inertia`` / ``pdGroup_penalty_non_synchronous``
-    # produced authoritatively by ``apply_direct_params`` (Δ.4b).  The
-    # legacy CSV reads of pdGroup_penalty_*.csv (and the pdGroup.csv
-    # ``penalty_*`` slice fallback) are dropped.
-
-    # ── group_node ────────────────────────────────────────────────────────
-    # Canonical preprocessing target: solve_data/group_node.csv.
-    # Fallback: input/group__node.csv (raw user input).
+    # group_node: solve_data/group_node.csv, else the raw input/group__node.csv; the first with rows wins.
     gn = None
     for path in (sd / "group_node.csv", inp / "group__node.csv"):
         df = _provider_get(provider, path)
         if df is None:
             continue
         if df.height > 0:
-            # both shapes are (group, node)
             gn = df.rename({"group": "g", "node": "n"}).select("g", "n").unique()
             break
     out["group_node"] = gn
 
-    # ── process_unit ──────────────────────────────────────────────────────
-    # The .mod's `process_unit` set narrows producer/consumer LHS terms in
-    # capacityMargin (and friends) to "unit"-typed processes — i.e. it
-    # excludes connection processes which would otherwise double-count
-    # transmission capacity.
-    # Canonical solve_data file has header `process_unit`; some legacy
-    # files use `process`.  Either works here.
-    pu_path = sd / "process_unit.csv"
-    df = _provider_get(provider, pu_path)
+    # process_unit: processes that are units.  The capacity margin counts units only, so connections do
+    # not count transmission capacity as group capacity.  Header "process_unit" or "process".
+    df = _provider_get(provider, sd / "process_unit.csv")
     if df is not None and df.height > 0:
         col = df.columns[0]
-        out["process_unit"] = (df.rename({col: "p"})
-                                 .select("p").unique())
+        out["process_unit"] = df.rename({col: "p"}).select("p").unique()
 
-    # ── group_capacity_for_scaling + inv_group_cap ───────────────────────
-    p_gcs = sd / "group_capacity_for_scaling.csv"
-    p_inv = sd / "inv_group_cap.csv"
-    df = _provider_get(provider, p_gcs)
+    # group_capacity_for_scaling and its inverse inv_group_cap, each derived from the other when only
+    # one file is present.
+    df = _provider_get(provider, sd / "group_capacity_for_scaling.csv")
     if df is not None and df.height > 0:
         df = (df.rename({"group": "g", "period": "d"})
-                .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                .select("g", "d", "value")
-                .filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0)))
+              .with_columns(pl.col("value").cast(pl.Float64, strict=False))
+              .select("g", "d", "value")
+              .filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0)))
         if df.height > 0:
             out["p_group_capacity_for_scaling"] = Param(("g", "d"), df)
-    df = _provider_get(provider, p_inv)
+    df = _provider_get(provider, sd / "inv_group_cap.csv")
     if df is not None and df.height > 0:
         df = (df.rename({"group": "g", "period": "d"})
-                .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                .select("g", "d", "value")
-                .filter(pl.col("value").is_not_null()))
+              .with_columns(pl.col("value").cast(pl.Float64, strict=False))
+              .select("g", "d", "value")
+              .filter(pl.col("value").is_not_null()))
         if df.height > 0:
             out["p_inv_group_cap"] = Param(("g", "d"), df)
-    # Derive inv_group_cap from group_capacity_for_scaling if missing.
-    if (out["p_inv_group_cap"] is None
-            and out["p_group_capacity_for_scaling"] is not None):
+    if out["p_inv_group_cap"] is None and out["p_group_capacity_for_scaling"] is not None:
         gcs = out["p_group_capacity_for_scaling"].frame
-        gcs_inv = (gcs.with_columns(value=1.0 / pl.col("value"))
-                      .select("g", "d", "value"))
-        out["p_inv_group_cap"] = Param(("g", "d"), gcs_inv)
-    # And vice versa (so each is non-None when the other is provided).
-    if (out["p_group_capacity_for_scaling"] is None
-            and out["p_inv_group_cap"] is not None):
+        out["p_inv_group_cap"] = Param(("g", "d"), gcs.with_columns(value=1.0 / pl.col("value"))
+                                       .select("g", "d", "value"))
+    if out["p_group_capacity_for_scaling"] is None and out["p_inv_group_cap"] is not None:
         ig = out["p_inv_group_cap"].frame
-        gcs = (ig.with_columns(value=1.0 / pl.col("value"))
-                 .select("g", "d", "value"))
-        out["p_group_capacity_for_scaling"] = Param(("g", "d"), gcs)
+        out["p_group_capacity_for_scaling"] = Param(("g", "d"), ig.with_columns(value=1.0 / pl.col("value"))
+                                                    .select("g", "d", "value"))
 
-    # ── inertia_constant index sets ─────────────────────────────
-    # Δ.12-drop: ``p_process_sink_inertia_constant`` /
-    # ``p_process_source_inertia_constant`` Params are produced
-    # authoritatively by ``apply_direct_params`` (Δ.4b).  The set frames
-    # ``process_sink_inertia`` / ``process_source_inertia`` are kept on
-    # the seed path for SIMPLE_PROJECTIONS' fall-through semantics.
+    # Arcs that carry an inertia constant (the constants themselves come from the direct-parameter pass).
     sink_df, src_df = _read_inertia_constants(inp, provider=provider)
     if sink_df is not None:
-        out["process_sink_inertia"]                 = sink_df.select("p", "sink").unique()
+        out["process_sink_inertia"] = sink_df.select("p", "sink").unique()
     if src_df is not None:
-        out["process_source_inertia"]               = src_df.select("p", "source").unique()
+        out["process_source_inertia"] = src_df.select("p", "source").unique()
 
-    # ── non-sync supporting sets ─────────────────────────────────────────
-    p_sink_ns = _read_csv_or_none(sd / "process__sink_nonSync.csv",
-                                     provider=provider)
+    # Non-synchronous infeed arcs, and the (process, group) pairs whose flows stay inside the group.
+    p_sink_ns = _read_csv_or_none(sd / "process__sink_nonSync.csv", provider=provider)
     if p_sink_ns is not None:
-        out["process_sink_nonSync"] = (p_sink_ns
-            .rename({"process": "p"})
-            .select("p", "sink").unique())
-    p_grp_inside = _read_csv_or_none(sd / "process__group_inside_group_nonSync.csv",
-                                       provider=provider)
+        out["process_sink_nonSync"] = p_sink_ns.rename({"process": "p"}).select("p", "sink").unique()
+    p_grp_inside = _read_csv_or_none(sd / "process__group_inside_group_nonSync.csv", provider=provider)
     if p_grp_inside is not None:
-        cols = p_grp_inside.columns
         rn = {}
-        if "process" in cols:
+        if "process" in p_grp_inside.columns:
             rn["process"] = "p"
-        if "group"   in cols:
-            rn["group"]   = "g"
-        out["process_group_inside_nonSync"] = (
-            p_grp_inside.rename(rn).select("p", "g").unique())
-
-    # Δ.12-drop: ``p_positive_inflow`` / ``p_negative_inflow`` /
-    # ``pdtNodeInflow_per_step`` produced authoritatively by
-    # ``apply_derived_c`` (helpers ``p_positive_inflow_from_inflow`` /
-    # ``p_negative_inflow_from_inflow`` /
-    # ``pdtNodeInflow_per_step_from_inflow``).  Seeds dropped.
+        if "group" in p_grp_inside.columns:
+            rn["group"] = "g"
+        out["process_group_inside_nonSync"] = p_grp_inside.rename(rn).select("p", "g").unique()
 
     return out
 
 
 # ---------------------------------------------------------------------------
-# Constraint emitters
-
-def add_constraints(m, d, vars: dict) -> None:
-    """Emit ``capacityMargin``, ``inertia_constraint``, ``non_sync_constraint``.
-
-    Each block is independently active depending on whether the
-    corresponding group set has any rows.  Constraints are no-op when
-    inactive, mirroring flextool.mod's data-driven shape.
-
-    ``vars`` is the dict of decision vars created earlier in
-    ``build_flextool``.  Slack variables created here are written back
-    into ``vars`` under their var names for the objective stage.
-    """
-    if _has_capacity_margin(d):
-        _add_capacity_margin(m, d, vars)
-    if _has_inertia(d):
-        _add_inertia(m, d, vars)
-    if _has_non_sync(d):
-        _add_non_sync(m, d, vars)
+# Feature flags (set on the build context by model._prepare)
 
 
-def _gd_index(d) -> pl.DataFrame:
-    """Return distinct (d,) periods present in dt (used as the period axis
-    for capacity_margin which is keyed on (g, d), not (g, d, t))."""
-    return d.dt.select("d").unique()
+def has_capacity_margin(d) -> bool:
+    """True when some group has a capacity margin and its limit and scaling are populated."""
+    return (_has_rows(getattr(d, "groupCapacityMargin", None))
+            and d.pdGroup_capacity_margin is not None and d.p_inv_group_cap is not None)
 
 
-# ── capacityMargin ───────────────────────────────────────────────────────
+def has_inertia(d) -> bool:
+    """True when some group has an inertia limit and the data to build its row is populated."""
+    return (_has_rows(getattr(d, "groupInertia", None))
+            and d.pdGroup_inertia_limit is not None and d.group_node is not None
+            and d.process_source_sink is not None and d.p_unitsize is not None)
 
-def _add_capacity_margin(m, d, vars: dict) -> None:
-    """capacityMargin (mod:4093-4154).
 
-    Indexed on ``g in groupCapacityMargin × (d, t) in dt`` where d is in
-    ``period_invest`` (we treat d ∈ dt as the operational set, matching
-    the existing pattern for other dispatch constraints).
+def has_non_sync(d) -> bool:
+    """True when some group has a non-synchronous limit and the data to build its row is populated."""
+    return (_has_rows(getattr(d, "groupNonSync", None))
+            and d.pdGroup_non_synchronous_limit is not None and d.group_node is not None
+            and d.process_source_sink is not None and d.p_unitsize is not None
+            and d.p_step_duration is not None and d.p_inv_group_cap is not None)
 
-    Sense: ``>=``.
 
-    LHS terms (each scaled by inv_group_cap[g, d]):
-      + profile-limited producing units: profile · capacity ·
-        (existing + invest − divest), p ∈ process_unit, sink ∈ group_node \\
-        nodeState, profile_method ∈ {upper_limit, fixed};
-      + capacity-limited producing units (same predicates without profile):
-        (existing + invest − divest);
-      − consuming units: v_flow * (slope * sink_coef/source_coef) for eff
-        + section term for min_load_efficiency online + v_flow for noEff;
-      + vq_capacity_margin[g, d] · group_capacity_for_scaling · inv_group_cap
-        = vq_capacity_margin[g, d]   (the slack scaling cancels).
+# ---------------------------------------------------------------------------
+# Variables
 
-    RHS terms (×inv_group_cap):
-      + Σ_{(g,n) in group_node, n ∉ nodeState} (− pdtNodeInflow / step_duration)
-      + pdGroup[g, 'capacity_margin', d]
 
-    Notes on simplifications vs the .mod
-      * We skip the consuming-units LHS and section-term refinements when
-        ``v_flow``, ``p_slope`` or ``p_section`` are not on ``d`` — the
-        engine only emits the term in the LP when its data is materialised.
-      * The ``inv_group_cap`` row-scaler is applied uniformly to every
-        term except the slack (where * group_cap_for_scaling cancels).
-    """
-    # required pieces
-    gcm  = d.groupCapacityMargin                      # (g,)
-    pgcm = d.pdGroup_capacity_margin                  # Param (g, d)
-    invc = d.p_inv_group_cap                          # Param (g, d)
-    if gcm is None or pgcm is None or invc is None:
+def add_variables(b: _Build) -> None:
+    """Declare the slack variables of the active group floors."""
+    if not (b.has_capacity_margin or b.has_inertia or b.has_non_sync):
         return
+    m, d = b.m, b.d
 
-    # Slack variable vq_capacity_margin[g, d] — exists once per (g, d) where
-    # the constraint is emitted.  Domain: groupCapacityMargin × period.
-    vq_dom = gcm.join(_gd_index(d), how="cross")
-    vq_cap = m.add_var("vq_capacity_margin", ("g", "d"), vq_dom, lower=0.0)
-    vars["vq_capacity_margin"] = vq_cap
+    # ─── VAR. ─── vq_capacity_margin ─────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # vq_capacity_margin[g,d] ≥ 0   ∀ g ∈ groupCapacityMargin, d ∈ periods of dt
+    # Capacity margin shortfall of group g in period d, as a fraction of
+    # group_capacity_for_scaling: MW = vq_capacity_margin · group_capacity_for_scaling[g,d].
+    if b.has_capacity_margin:
+        b.vq_capacity_margin = m.add_var("vq_capacity_margin", ("g", "d"),
+                                         d.groupCapacityMargin.join(d.dt.select("d").unique(), how="cross"),
+                                         lower=0.0)
 
-    # Constraint domain: groupCapacityMargin × dt.
-    over = gcm.join(d.dt, how="cross")
+    # ─── VAR. ─── vq_inertia ─────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # vq_inertia[g,d,t] ≥ 0   ∀ g ∈ groupInertia, (d,t) ∈ dt
+    # Inertia shortfall of group g, as a fraction of its inertia limit:
+    # MWs = vq_inertia · inertia_limit[g,d].
+    if b.has_inertia:
+        b.vq_inertia = m.add_var("vq_inertia", ("g", "d", "t"), d.groupInertia.join(d.dt, how="cross"), lower=0.0)
 
-    # Scale everything by inv_group_cap[g, d].
-    # The slack term's column-coefficient already multiplies by
-    # group_capacity_for_scaling (so * group_cap_for_scaling * inv_group_cap = 1).
-    lhs: dict = {}
+    # ─── VAR. ─── vq_non_synchronous ─────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # vq_non_synchronous[g,d,t] ≥ 0   ∀ g ∈ groupNonSync, (d,t) ∈ dt
+    # Non-synchronous infeed of group g above its allowed share, as a
+    # fraction of group_capacity_for_scaling: MW = vq_non_synchronous · group_capacity_for_scaling[g,d].
+    if b.has_non_sync:
+        b.vq_non_synchronous = m.add_var("vq_non_synchronous", ("g", "d", "t"),
+                                         d.groupNonSync.join(d.dt, how="cross"), lower=0.0)
 
-    # Slack — coef +1 (after the cancellation noted above).
-    lhs["slack"] = vq_cap
 
-    # Producing-unit available capacity: existing + Σ_d_inv v_invest − Σ_d_div v_divest.
-    # The .mod RHS in p_entity_all_existing already includes prior-solve
-    # invest carryover; the engine's preprocessing exposes existing/unitsize per
-    # (p, d) in p_process_existing_count, in *unit count* — so to get
-    # capacity we must multiply by p_entity_unitsize.
-    pss     = d.process_source_sink
-    pss_eff = d.process_source_sink_eff
-    pss_noEff = d.process_source_sink_noEff
-    proc_unit = getattr(d, "process_unit", None)   # mod's process_unit set
-    # group_node is required to know which (g, n) pairs are in scope; if
-    # absent we still emit the constraint with floor / inflow / slack so
-    # the slack is properly priced (no producer/consumer terms then).
-    gn_no_state = None
-    pss_to_grp = None
-    if d.group_node is not None:
-        # group_node restricted to (g, n) ∈ groupCapacityMargin × n.
-        gn = d.group_node.join(gcm, on="g", how="inner")  # (g, n)
-        # Producer predicate: sink in group_node and sink not in nodeState.
-        gn_no_state = gn
-        if d.nodeState is not None and d.nodeState.height > 0:
-            gn_no_state = gn.join(d.nodeState, on="n", how="anti")
-    if pss is not None and gn_no_state is not None:
-        # Restrict producer/consumer LHS to process_unit per the .mod
-        # (filters out connection processes which double-count transmission
-        # capacity).  If process_unit is missing, fall back to all of pss
-        # — no worse than the prior behaviour, but log via a soft fall-back.
-        pss_unit = pss
-        if proc_unit is not None and proc_unit.height > 0:
-            pss_unit = pss.join(proc_unit.select("p"), on="p", how="inner")
-        # Map sink → n for join.  ``sink`` carries the entity-union Enum
-        # (wider vocab including non-node entities); ``gn_no_state.n``
-        # carries the node-only Enum.  Renaming alone doesn't reconcile
-        # the dtypes; ``align_join_dtypes`` upcasts to the wider Enum so
-        # the join keys match.
-        pss_unit_n = pss_unit.rename({"sink": "n"})
-        pss_unit_n, gn_no_state_aligned = align_join_dtypes(
-            pss_unit_n, gn_no_state, ("n",))
-        pss_to_grp = (pss_unit_n
-                              .join(gn_no_state_aligned, on="n", how="inner")
-                              .rename({"n": "sink"}))   # (p, source, sink, g)
+# ---------------------------------------------------------------------------
+# Constraints
 
-    # Profile-limited subset (upper_limit or fixed):
-    # pss_to_grp ∩ (process_profile_upper ∪ process_profile_fixed)
-    has_profile = (
-        (d.process_profile_upper is not None and d.process_profile_upper.height > 0) or
-        (d.process_profile_fixed is not None and d.process_profile_fixed.height > 0))
-    profile_idx = None
-    if has_profile and pss_to_grp is not None:
-        parts = []
-        if d.process_profile_upper is not None and d.process_profile_upper.height > 0:
-            parts.append(d.process_profile_upper.select("p", "source", "sink", "f"))
-        if d.process_profile_fixed is not None and d.process_profile_fixed.height > 0:
-            parts.append(d.process_profile_fixed.select("p", "source", "sink", "f"))
-        profile_idx = pl.concat(parts, how="vertical").unique()
-        # Restrict to (p, source, sink) in pss_to_grp.
-        profile_idx = profile_idx.join(pss_to_grp,
-                                        on=["p", "source", "sink"], how="inner")
 
-    # Capacity-limited subset = pss_to_grp \ profile_idx (same (p, source, sink)).
-    capacity_idx = pss_to_grp
-    if pss_to_grp is not None and profile_idx is not None:
-        capacity_idx = pss_to_grp.join(
-            profile_idx.select("p", "source", "sink").unique(),
-            on=["p", "source", "sink"], how="anti")
+def add_constraints(b: _Build) -> None:
+    """capacityMargin, inertia_constraint and non_sync_constraint, each when its group set is active."""
+    _eq_capacity_margin(b)
+    _eq_inertia(b)
+    _eq_non_sync(b)
 
-    # ── Producer LHS: profile_limited (profile · capacity · inv_group_cap)
-    # We express "capacity" = existing_count[p, d] · unitsize[p]  +
-    # Σ_d_inv v_invest_p[d_inv] · unitsize − Σ_d_div v_divest_p[d_div] · unitsize.
-    # But our existing_count is already in unit count (=cap/unitsize),
-    # so existing_count · unitsize · profile is a constant Param contribution
-    # (RHS-side); the *variable* contributions are the invest / divest
-    # times unitsize times profile.
-    prof_val = d.p_profile_value                     # Param (f, d, t)
-    exist_cnt = d.p_process_existing_count           # Param (p, d)
-    p_us      = d.p_unitsize                         # Param (p,)
-    # Note: if there are no processes (slack-only fixture) we skip all
-    # producer/consumer blocks but still emit the constraint with
-    # floor + inflow + slack (the .mod's degenerate case).
-    has_process_data = (pss_to_grp is not None
-                        and exist_cnt is not None and p_us is not None)
 
-    # Constant (existing_count · unitsize · profile · inv_group_cap) is
-    # subtracted from the RHS so the LHS has only variable terms.
-    # We handle the profile & capacity legs separately, accumulate constants
-    # into a Param `const_subtract` and the per-(g, d, t) RHS.
+def _arcs_at_group(arcs: pl.DataFrame, side: str, group_nodes: pl.DataFrame) -> pl.DataFrame:
+    """``arcs`` (p, source, sink, …) whose ``side`` node is in ``group_nodes`` (g, n), with g added.
 
-    # Helper: invest tightening summed over d_invest, restricted to p in pset.
-    has_invest_p = (getattr(d, "pd_invest_set", None) is not None
-                    and d.pd_invest_set.height > 0)
-    has_divest_p = (getattr(d, "pd_divest_set", None) is not None
-                    and d.pd_divest_set.height > 0)
-    v_invest_p   = vars.get("v_invest_p")
-    v_divest_p   = vars.get("v_divest_p")
-    edd_inv_set  = getattr(d, "edd_invest_set", None)
-    edd_div_act  = getattr(d, "edd_divest_active", None)
+    ``side`` carries the entity-union Enum and ``n`` the node Enum; the join widens both to one dtype.
+    """
+    arcs_n, gn = align_join_dtypes(arcs.rename({side: "n"}), group_nodes, ("n",))
+    return arcs_n.join(gn, on="n", how="inner").rename({"n": side})
 
-    def _invest_sum(v_inv: Var, pset_pl: pl.DataFrame, edd: pl.DataFrame,
-                    rename_e: bool) -> Expr | None:
-        """Return Σ_{d_invest} v_invest_p[d_invest] over edd ∩ pset, with
-        d_invest contracted, leaving (p, d).  ``edd`` is keyed (e or p,
-        d_invest, d).  rename_e=True ⇒ "e"→"p"."""
-        if v_inv is None or edd is None or edd.height == 0:
-            return None
-        e = edd
-        if rename_e and "e" in e.columns:
-            e = e.rename({"e": "p"})
-        # ``edd``'s renamed-e column carries the entity-union Enum (wider
-        # than the ``p`` process Enum); reconcile dtypes before joining
-        # against ``pset_pl.p`` (process Enum).
-        pset_p = pset_pl.select("p").unique()
-        e, pset_p = align_join_dtypes(e, pset_p, ("p",))
-        e = e.join(pset_p, on="p", how="inner")
-        if e.height == 0:
-            return None
-        v_at = Var(name=v_inv.name + "__cap_margin_inv",
-                   dims=("p", "d_invest"),
-                   frame=v_inv.frame.rename({"d": "d_invest"}),
-                   lower=v_inv.lower, upper=v_inv.upper)
-        return Sum(Where(v_at, e), over=("d_invest",))
 
-    def _divest_sum(v_div: Var, pset_pl: pl.DataFrame, edd: pl.DataFrame) -> Expr | None:
-        if v_div is None or edd is None or edd.height == 0:
-            return None
-        pset_p = pset_pl.select("p").unique()
-        e, pset_p = align_join_dtypes(edd, pset_p, ("p",))
-        e = e.join(pset_p, on="p", how="inner")
-        if e.height == 0:
-            return None
-        v_at = Var(name=v_div.name + "__cap_margin_div",
-                   dims=("p", "d_divest"),
-                   frame=v_div.frame.rename({"d": "d_divest"}),
-                   lower=v_div.lower, upper=v_div.upper)
-        return Sum(Where(v_at, e), over=("d_divest",))
+def _invest_change(b: _Build, procs: pl.DataFrame, tag: str) -> tuple[Expr | None, Expr | None]:
+    """``(Σ_{d′} v_invest_p[p,d′], Σ_{d′} v_divest_p[p,d′])`` over (p,d′,d) ∈ edd_invest_set / edd_divest_active,
+    restricted to the processes in ``procs``; each None when absent.  Indexed (p, d)."""
+    d = b.d
+    procs_p = procs.select("p").unique()
+    invest = divest = None
+    edd_inv = getattr(d, "edd_invest_set", None)
+    if b.has_invest_p and b.v_invest_p is not None and _has_rows(edd_inv):
+        e = edd_inv.rename({"e": "p"}) if "e" in edd_inv.columns else edd_inv
+        e, pp = align_join_dtypes(e, procs_p, ("p",))
+        e = e.join(pp, on="p", how="inner")
+        if e.height > 0:
+            invest = Sum(Where(_var_view(b.v_invest_p, f"__{tag}_inv", {"d": "d_invest"}), e), over=("d_invest",))
+    edd_div = getattr(d, "edd_divest_active", None)
+    if b.has_divest_p and b.v_divest_p is not None and _has_rows(edd_div):
+        e, pp = align_join_dtypes(edd_div, procs_p, ("p",))
+        e = e.join(pp, on="p", how="inner")
+        if e.height > 0:
+            divest = Sum(Where(_var_view(b.v_divest_p, f"__{tag}_div", {"d": "d_divest"}), e), over=("d_divest",))
+    return invest, divest
 
-    # Constant existing-capacity contribution (subtracted from RHS).
-    # Term-by-term so we don't lose nullity: each Param multiplication
-    # is well-defined only if all factors are non-None.
-    const_terms_add: list = []   # things added on RHS (existing capacity contributions)
 
-    # — Profile-limited producers (LHS):
-    if has_process_data and profile_idx is not None and prof_val is not None:
-        # invest variables × profile × unitsize × inv_group_cap
-        if has_invest_p:
-            inv_sum = _invest_sum(v_invest_p, profile_idx, edd_inv_set, rename_e=True)
-            if inv_sum is not None:
-                # inv_sum is over (p, d).  Where on profile_idx adds
-                # (source, sink, f, g) so it can join the dt index.
-                term = (Where(inv_sum, profile_idx) * p_us * prof_val * invc)
-                lhs["prof_invest"] = Sum(term, over=("p", "source", "sink", "f"))
-        if has_divest_p:
-            div_sum = _divest_sum(v_divest_p, profile_idx, edd_div_act)
-            if div_sum is not None:
-                term = -(Where(div_sum, profile_idx) * p_us * prof_val * invc)
-                lhs["prof_divest"] = Sum(term, over=("p", "source", "sink", "f"))
-        # Constant: existing_count · unitsize · profile · inv_group_cap
-        # (= existing[p,d] · profile[f,d,t] · inv_group_cap[g,d]).
-        # This becomes an *additive* RHS contribution (we move it from LHS
-        # to RHS by sign flip).
-        const_terms_add.append(
-            ("prof_existing",
-             # existing in unit count, * unitsize * profile * inv_group_cap.
-             # Sum over (p, source, sink, f) leaves (g, d, t).
-             # The Param-only product is realised via Sum-of-1*Param: we use
-             # a dummy unit Var? No — instead, build a polars DF of the
-             # constant aggregate at constraint emission time, see below.
-             profile_idx, prof_val, exist_cnt, p_us, invc))
+def _eq_capacity_margin(b: _Build) -> None:
+    """capacityMargin: available unit capacity of a group covers its net demand plus the margin."""
+    if not b.has_capacity_margin:
+        return
+    m, d = b.m, b.d
+    gcm = d.groupCapacityMargin
+    invc = d.p_inv_group_cap
+    p_us = d.p_unitsize
+    exist_cnt = d.p_process_existing_count
+    prof_val = d.p_profile_value
 
-    # — Capacity-limited producers (LHS):  (no profile factor)
-    if has_process_data and capacity_idx is not None and capacity_idx.height > 0:
-        if has_invest_p:
-            inv_sum = _invest_sum(v_invest_p, capacity_idx, edd_inv_set, rename_e=True)
-            if inv_sum is not None:
-                term = Where(inv_sum, capacity_idx) * p_us * invc
-                lhs["cap_invest"] = Sum(term, over=("p", "source", "sink"))
-        if has_divest_p:
-            div_sum = _divest_sum(v_divest_p, capacity_idx, edd_div_act)
-            if div_sum is not None:
-                term = -(Where(div_sum, capacity_idx) * p_us * invc)
-                lhs["cap_divest"] = Sum(term, over=("p", "source", "sink"))
-        const_terms_add.append(
-            ("cap_existing",
-             capacity_idx, None, exist_cnt, p_us, invc))
-
-    # — Consuming units (LHS, negative): for each (p, source, sink) in pss
-    #   with source ∈ group_node, source ∉ nodeState, p ∈ process_unit.
-    # eff: − v_flow * unitsize * slope * sink_coef/source_coef * inv_group_cap.
-    # noEff: − v_flow * unitsize * inv_group_cap.
-    # min_load_efficiency online section term: − v_online * section * unitsize * inv_group_cap.
-    v_flow = vars.get("v_flow")
-    v_online_lin = vars.get("v_online_lin")
-    v_online_int = vars.get("v_online_int")
-    if has_process_data and v_flow is not None:
-        gn_src = gn_no_state
-        # process_unit filter on the consumer side, mirroring the .mod
-        # (the consumer LHS branch also has `p in process_unit`).
-        def _filter_unit(df: pl.DataFrame) -> pl.DataFrame:
-            if proc_unit is not None and proc_unit.height > 0:
-                return df.join(proc_unit.select("p"), on="p", how="inner")
-            return df
-        # eff consumers
-        if pss_eff is not None and pss_eff.height > 0:
-            # source carries the entity-union Enum; gn_src.n carries the
-            # node-only Enum.  align_join_dtypes upcasts to the wider Enum.
-            _eff_n = _filter_unit(pss_eff).rename({"source": "n"})
-            _eff_n, _gn_src_eff = align_join_dtypes(_eff_n, gn_src, ("n",))
-            consuming_eff = (_eff_n
-                              .join(_gn_src_eff, on="n", how="inner")
-                              .rename({"n": "source"}))   # (p,source,sink,g)
-            if consuming_eff.height > 0 and d.p_slope is not None:
-                term = -(Where(v_flow, consuming_eff) * p_us * d.p_slope * invc)
-                lhs["consume_eff"] = Sum(term, over=("p", "source", "sink"))
-                # min_load section term (only if process_min_load_eff has any
-                # of these processes).
-                if (d.process_min_load_eff is not None
-                        and d.process_min_load_eff.height > 0
-                        and d.p_section is not None):
-                    mle_in_eff = (consuming_eff.join(d.process_min_load_eff,
-                                                      on="p", how="inner"))
-                    if mle_in_eff.height > 0:
-                        if v_online_lin is not None:
-                            t_sec = -(Where(v_online_lin, mle_in_eff)
-                                       * d.p_section * p_us * invc)
-                            lhs["consume_section_lin"] = Sum(
-                                t_sec, over=("p", "source", "sink"))
-                        if v_online_int is not None:
-                            t_sec = -(Where(v_online_int, mle_in_eff)
-                                       * d.p_section * p_us * invc)
-                            lhs["consume_section_int"] = Sum(
-                                t_sec, over=("p", "source", "sink"))
-        # noEff consumers
-        if pss_noEff is not None and pss_noEff.height > 0:
-            _noeff_n = _filter_unit(pss_noEff).rename({"source": "n"})
-            _noeff_n, _gn_src_noeff = align_join_dtypes(_noeff_n, gn_src, ("n",))
-            consuming_noEff = (_noeff_n
-                                .join(_gn_src_noeff, on="n", how="inner")
-                                .rename({"n": "source"}))
-            if consuming_noEff.height > 0:
-                term = -(Where(v_flow, consuming_noEff) * p_us * invc)
-                lhs["consume_noEff"] = Sum(term, over=("p", "source", "sink"))
-
-    # ── RHS terms: existing-capacity LHS contributions (moved from LHS),
-    #   plus pdGroup_capacity_margin · inv_group_cap, plus
-    #   −Σ pdtNodeInflow/step_duration · inv_group_cap.
-
-    # Build the existing-capacity Param aggregates as polars frames so we
-    # can put them on the LHS as a Param (constant), but Param needs a
-    # ``value`` column.  Param goes on the RHS (or LHS) as scalars only;
-    # since we want to keep these on the LHS *side* of the inequality
-    # alongside the variable terms, we instead subtract them from the RHS.
-    # We build (g, d, t) → existing-capacity contribution.
-    # However: capacity-limited LHS does *not* depend on t.  We broadcast
-    # it onto (g, d, t) via a join with d.dt at the end.
+    # ─── EQ. ─── capacityMargin ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,k,f) ∈ prof(g)} (Σ_{d′} v_invest_p[p,d′] − Σ_{d′} v_divest_p[p,d′]) · unitsize[p] · profile[f,d,t]
+    #                                                                                         · icap[g,d]
+    #   + Σ_{(p,s,k) ∈ cap(g)} (Σ_{d′} v_invest_p[p,d′] − Σ_{d′} v_divest_p[p,d′]) · unitsize[p] · icap[g,d]
+    #   − Σ_{(p,s,k) ∈ use_eff(g)} v_flow[p,s,k,d,t] · unitsize[p] · slope[p,d,t] · icap[g,d]
+    #   − Σ_{(p,s,k) ∈ use_eff(g), p ∈ process_min_load_eff} v_online[p,d,t] · section[p] · unitsize[p] · icap[g,d]
+    #   − Σ_{(p,s,k) ∈ use_noEff(g)} v_flow[p,s,k,d,t] · unitsize[p] · icap[g,d]
+    #   + vq_capacity_margin[g,d]
+    #   ≥ capacity_margin[g,d] · icap[g,d] − Σ_{n ∈ N(g)} inflow_per_step[n,d,t] · icap[g,d]
+    #     − Σ_{prof(g)} existing_count[p,d] · unitsize[p] · profile[f,d,t] · icap[g,d]
+    #     − Σ_{cap(g)} existing_count[p,d] · unitsize[p] · icap[g,d]
+    #   ∀ g ∈ groupCapacityMargin, (d,t) ∈ dt
+    #   N(g) = nodes of g without a storage state;  icap = inv_group_cap = 1 / group_capacity_for_scaling
+    #   prof(g) = unit arcs into N(g) with an upper_limit or fixed profile f;  cap(g) = the other unit arcs into N(g)
+    #   use_*(g) = unit arcs out of N(g);  Σ_{d′} over edd_invest_set / edd_divest_active
+    # The capacity a group's units could deliver — existing plus invested
+    # minus divested, profile-limited where a profile caps the output — less
+    # what its units consume covers the group's net demand plus the margin;
+    # the shortfall is penalised.  Existing capacity is a constant and moves
+    # to the right-hand side.  Only units count (process_unit; all processes
+    # when the set is empty), so connections do not count as capacity.  The
+    # row is scaled by icap, which makes the slack a fraction of
+    # group_capacity_for_scaling.  Without group_node only the margin and the
+    # slack remain.
+    lhs: dict = {"slack": b.vq_capacity_margin}
     rhs: dict = {}
 
-    # Compute static existing-capacity contributions per (g, d) or (g, d, t):
-    # We'll merge into a single polars DataFrame and add as a Param on RHS
-    # with a sign flip (since these are LHS positive contributions):
-    #   LHS_existing = + cap_existing + prof_existing
-    #   constraint:   LHS_var + LHS_existing >= RHS_terms
-    #   ⇒  LHS_var  >=  RHS_terms − LHS_existing
-    # On the RHS we add (− LHS_existing).
-    existing_dt_frames: list[pl.DataFrame] = []   # (g, d, t, value)
-    for entry in const_terms_add:
-        kind = entry[0]
-        if kind == "prof_existing":
-            (_, idx, prof, exist, us, inv) = entry
-            # idx = (p, source, sink, f, g)
-            base = (idx.join(exist.frame.rename({"value": "exist"}),
-                              on="p", how="inner")
-                       .join(us.frame.rename({"value": "us"}),
-                              on="p", how="inner")
-                       .join(prof.frame.rename({"value": "prof"}),
-                              on=["f", "d"], how="inner")
-                       .join(inv.frame.rename({"value": "inv"}),
-                              on=["g", "d"], how="inner"))
-            # multiply
-            agg = (base.with_columns(value=pl.col("exist") * pl.col("us")
-                                            * pl.col("prof") * pl.col("inv"))
-                       .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
-                       .select("g", "d", "t", "value"))
-            existing_dt_frames.append(agg)
-        elif kind == "cap_existing":
-            (_, idx, _none, exist, us, inv) = entry
-            # idx = (p, source, sink, g) — no t dependence
-            base = (idx.join(exist.frame.rename({"value": "exist"}),
-                              on="p", how="inner")
-                       .join(us.frame.rename({"value": "us"}),
-                              on="p", how="inner")
-                       .join(inv.frame.rename({"value": "inv"}),
-                              on=["g", "d"], how="inner"))
-            agg_gd = (base.with_columns(value=pl.col("exist") * pl.col("us")
-                                              * pl.col("inv"))
-                          .group_by(["g", "d"]).agg(pl.col("value").sum()))
-            agg = agg_gd.join(d.dt, on="d", how="inner").select("g", "d", "t", "value")
-            existing_dt_frames.append(agg)
-    if existing_dt_frames:
-        ex = pl.concat(existing_dt_frames, how="vertical")
-        ex = ex.group_by(["g", "d", "t"]).agg(pl.col("value").sum())
-        # Negate so it goes to RHS.
-        ex = ex.with_columns(value=-pl.col("value"))
-        rhs["existing_neg"] = Param(("g", "d", "t"),
-                                     ex.select("g", "d", "t", "value"))
+    proc_unit = getattr(d, "process_unit", None)
+    gn_no_state = None
+    if d.group_node is not None:
+        gn_no_state = d.group_node.join(gcm, on="g", how="inner")
+        if d.nodeState is not None and d.nodeState.height > 0:
+            gn_no_state = gn_no_state.join(d.nodeState, on="n", how="anti")
 
-    # pdGroup[g, 'capacity_margin', d] · inv_group_cap.
-    rhs["floor"] = pgcm * invc
+    def _units(df: pl.DataFrame) -> pl.DataFrame:
+        if proc_unit is not None and proc_unit.height > 0:
+            return df.join(proc_unit.select("p"), on="p", how="inner")
+        return df
 
-    # − pdtNodeInflow / step_duration · inv_group_cap, summed over n in
-    # group_node : n ∉ nodeState.
+    # Unit arcs into the group (p, source, sink, g), split into profile-limited and capacity-limited.
+    pss_to_grp = None
+    if d.process_source_sink is not None and gn_no_state is not None:
+        pss_to_grp = _arcs_at_group(_units(d.process_source_sink), "sink", gn_no_state)
+    profile_idx = None
+    prof_sets = [s for s in (d.process_profile_upper, d.process_profile_fixed) if s is not None and s.height > 0]
+    if prof_sets and pss_to_grp is not None:
+        profile_idx = (pl.concat([s.select("p", "source", "sink", "f") for s in prof_sets], how="vertical").unique()
+                       .join(pss_to_grp, on=["p", "source", "sink"], how="inner"))
+    capacity_idx = pss_to_grp
+    if pss_to_grp is not None and profile_idx is not None:
+        capacity_idx = pss_to_grp.join(profile_idx.select("p", "source", "sink").unique(),
+                                       on=["p", "source", "sink"], how="anti")
+    has_process_data = pss_to_grp is not None and exist_cnt is not None and p_us is not None
+
+    existing_frames: list[pl.DataFrame] = []     # existing capacity · icap, (g, d, t, value)
+    if has_process_data and profile_idx is not None and prof_val is not None:
+        invest, divest = _invest_change(b, profile_idx, "cap_margin")
+        if invest is not None:
+            lhs["prof_invest"] = Sum(Where(invest, profile_idx) * p_us * prof_val * invc,
+                                     over=("p", "source", "sink", "f"))
+        if divest is not None:
+            lhs["prof_divest"] = Sum(-(Where(divest, profile_idx) * p_us * prof_val * invc),
+                                     over=("p", "source", "sink", "f"))
+        existing_frames.append(
+            profile_idx.join(exist_cnt.frame.rename({"value": "exist"}), on="p", how="inner")
+            .join(p_us.frame.rename({"value": "us"}), on="p", how="inner")
+            .join(prof_val.frame.rename({"value": "prof"}), on=["f", "d"], how="inner")
+            .join(invc.frame.rename({"value": "inv"}), on=["g", "d"], how="inner")
+            .with_columns(value=pl.col("exist") * pl.col("us") * pl.col("prof") * pl.col("inv"))
+            .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
+            .select("g", "d", "t", "value"))
+    if has_process_data and capacity_idx is not None and capacity_idx.height > 0:
+        invest, divest = _invest_change(b, capacity_idx, "cap_margin")
+        if invest is not None:
+            lhs["cap_invest"] = Sum(Where(invest, capacity_idx) * p_us * invc, over=("p", "source", "sink"))
+        if divest is not None:
+            lhs["cap_divest"] = Sum(-(Where(divest, capacity_idx) * p_us * invc), over=("p", "source", "sink"))
+        existing_frames.append(
+            capacity_idx.join(exist_cnt.frame.rename({"value": "exist"}), on="p", how="inner")
+            .join(p_us.frame.rename({"value": "us"}), on="p", how="inner")
+            .join(invc.frame.rename({"value": "inv"}), on=["g", "d"], how="inner")
+            .with_columns(value=pl.col("exist") * pl.col("us") * pl.col("inv"))
+            .group_by(["g", "d"]).agg(pl.col("value").sum())
+            .join(d.dt, on="d", how="inner").select("g", "d", "t", "value"))
+
+    # Consumption of the group's units.  The eff term counts input at the efficiency slope and needs
+    # p_slope; the min-load section input of online units is part of it.
+    if has_process_data and b.v_flow is not None:
+        pss_eff = d.process_source_sink_eff
+        if pss_eff is not None and pss_eff.height > 0:
+            use_eff = _arcs_at_group(_units(pss_eff), "source", gn_no_state)
+            if use_eff.height > 0 and d.p_slope is not None:
+                lhs["consume_eff"] = Sum(-(Where(b.v_flow, use_eff) * p_us * d.p_slope * invc),
+                                         over=("p", "source", "sink"))
+                if (d.process_min_load_eff is not None and d.process_min_load_eff.height > 0
+                        and d.p_section is not None):
+                    use_mle = use_eff.join(d.process_min_load_eff, on="p", how="inner")
+                    if use_mle.height > 0:
+                        if b.v_online_linear is not None:
+                            lhs["consume_section_lin"] = Sum(
+                                -(Where(b.v_online_linear, use_mle) * d.p_section * p_us * invc),
+                                over=("p", "source", "sink"))
+                        if b.v_online_integer is not None:
+                            lhs["consume_section_int"] = Sum(
+                                -(Where(b.v_online_integer, use_mle) * d.p_section * p_us * invc),
+                                over=("p", "source", "sink"))
+        pss_noEff = d.process_source_sink_noEff
+        if pss_noEff is not None and pss_noEff.height > 0:
+            use_noEff = _arcs_at_group(_units(pss_noEff), "source", gn_no_state)
+            if use_noEff.height > 0:
+                lhs["consume_noEff"] = Sum(-(Where(b.v_flow, use_noEff) * p_us * invc), over=("p", "source", "sink"))
+
+    if existing_frames:
+        ex = (pl.concat(existing_frames, how="vertical")
+              .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
+              .with_columns(value=-pl.col("value")))
+        rhs["existing_neg"] = Param(("g", "d", "t"), ex.select("g", "d", "t", "value"))
+    rhs["floor"] = d.pdGroup_capacity_margin * invc
     inflow_per = getattr(d, "pdtNodeInflow_per_step", None)
-    if (inflow_per is not None and gn_no_state is not None
-            and gn_no_state.height > 0):
-        # Param → polars by joining group_node and inv_group_cap.
-        flow_join = (gn_no_state.join(inflow_per.frame.rename({"value": "inflow"}),
-                                       on="n", how="inner")
-                                .join(invc.frame.rename({"value": "inv"}),
-                                       on=["g", "d"], how="inner"))
-        # − inflow * inv per (g, d, t), summed over n.
-        rhs_inflow = (flow_join.with_columns(value=-pl.col("inflow") * pl.col("inv"))
-                              .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
-                              .select("g", "d", "t", "value"))
+    if inflow_per is not None and gn_no_state is not None and gn_no_state.height > 0:
+        rhs_inflow = (gn_no_state.join(inflow_per.frame.rename({"value": "inflow"}), on="n", how="inner")
+                      .join(invc.frame.rename({"value": "inv"}), on=["g", "d"], how="inner")
+                      .with_columns(value=-pl.col("inflow") * pl.col("inv"))
+                      .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
+                      .select("g", "d", "t", "value"))
         if rhs_inflow.height > 0:
             rhs["inflow_neg"] = Param(("g", "d", "t"), rhs_inflow)
 
-    m.add_cstr(
-        "capacityMargin",
-        over      = over,
-        sense     = ">=",
-        lhs_terms = lhs,
-        rhs_terms = rhs,
-    )
+    m.add_cstr("capacityMargin", over=gcm.join(d.dt, how="cross"), sense=">=", lhs_terms=lhs, rhs_terms=rhs)
 
 
-# ── inertia_constraint ───────────────────────────────────────────────────
-
-def _add_inertia(m, d, vars: dict) -> None:
-    """inertia_constraint (mod:3943-3957).
-
-    Indexed on ``g in groupInertia × (d, t) in dt``.  Sense: ``>=``.
-
-    LHS:
-      + Σ_{(p, source, sink) : (p, source) in process_source_inertia,
-                               (g, source) in group_node}
-          · ((v_online if p in process_online) | v_flow else)
-          · inertia_constant[p, source]
-          · unitsize[p]
-      + same for sink-side
-      + vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d]
-
-    RHS: pdGroup[g, 'inertia_limit', d].
-    """
-    if d.groupInertia is None or d.pdGroup_inertia_limit is None:
+def _eq_inertia(b: _Build) -> None:
+    """inertia_constraint: rotating inertia of a group meets its inertia limit."""
+    if not b.has_inertia:
         return
-    if d.group_node is None:
-        return
+    m, d = b.m, b.d
     pss = d.process_source_sink
-    if pss is None:
-        return
-    p_us = d.p_unitsize
-    if p_us is None:
-        return
+    gn_in_gi = d.group_node.join(d.groupInertia, on="g", how="inner")
 
-    gi = d.groupInertia
-    gn_in_gi = d.group_node.join(gi, on="g", how="inner")    # (g, n)
-
-    # Slack variable.
-    vq_dom = gi.join(d.dt, how="cross")     # (g, d, t)
-    vq_in = m.add_var("vq_inertia", ("g", "d", "t"), vq_dom, lower=0.0)
-    vars["vq_inertia"] = vq_in
-
-    over = vq_dom
-
-    lhs: dict = {}
-    # Slack contribution: vq_inertia[g, d, t] * pdGroup[g, 'inertia_limit', d].
-    lhs["slack"] = vq_in * d.pdGroup_inertia_limit
-
-    v_flow = vars.get("v_flow")
-    v_online_lin = vars.get("v_online_lin")
-    v_online_int = vars.get("v_online_int")
-
-    # process_online set used to switch v_online vs v_flow.
-    proc_on = d.process_online
-    proc_on_lin = d.process_online_linear
-    proc_on_int = d.process_online_integer
-
-    def _inertia_side(side: str, side_idx: pl.DataFrame | None,
-                       const_param: Param | None) -> None:
-        """side ∈ {"source", "sink"}.
-
-        side_idx = (p, side) where inertia_constant exists.
-        const_param = Param(("p", side), value).
-        """
+    # ─── EQ. ─── inertia_constraint ──────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{side ∈ {source, sink}} Σ_{(p,s,k) ∈ arcs_side(g)} x[p,·,d,t] · inertia_constant[p,side] · unitsize[p]
+    #   + vq_inertia[g,d,t] · inertia_limit[g,d]
+    #   ≥ inertia_limit[g,d]
+    #   ∀ g ∈ groupInertia, (d,t) ∈ dt
+    #   arcs_side(g) = arcs whose side node is in g and that carry an inertia constant on that side
+    #   x = v_online[p,d,t] for p ∈ process_online (linear or integer), else v_flow[p,s,k,d,t]
+    # Synchronous machines connected to the group's nodes supply inertia (MWs)
+    # in proportion to the units online, or to their flow when they have no
+    # online variable; the shortfall is penalised.  The slack is a fraction of
+    # the limit.
+    lhs: dict = {"slack": b.vq_inertia * d.pdGroup_inertia_limit}
+    for side in ("source", "sink"):
+        side_idx = getattr(d, f"process_{side}_inertia", None)
+        const_param = getattr(d, f"p_process_{side}_inertia_constant", None)
         if side_idx is None or side_idx.height == 0 or const_param is None:
-            return
-        # process__source__sink restricted to the inertia-bearing side.
-        # Then filter by (g, side_value) ∈ group_node ∩ groupInertia.
-        # Bring g in via join on side_value=node.
-        pss_side = pss.join(side_idx, on=["p", side], how="inner")
-        # add g: rename side → n for the join.  ``pss``'s ``side`` column
-        # carries the entity-union Enum (process names + node names);
-        # ``gn_in_gi``'s ``n`` column carries the node-only Enum.  The
-        # raw rename collides those two vocabularies, so reconcile via
-        # ``align_join_dtypes`` (preserves the wider Enum when both are
-        # Enums, falls back to Utf8 otherwise — per the entity-union
-        # axis convention).
-        pss_side_renamed = pss_side.rename({side: "n"})
-        pss_side_renamed, gn_in_gi_aligned = align_join_dtypes(
-            pss_side_renamed, gn_in_gi, ("n",),
-        )
-        with_g = (pss_side_renamed
-                  .join(gn_in_gi_aligned, on="n", how="inner")
-                  .rename({"n": side}))   # (p, source, sink, g)
+            continue
+        with_g = _arcs_at_group(pss.join(side_idx, on=["p", side], how="inner"), side, gn_in_gi)
         if with_g.height == 0:
-            return
-        # Inertia-constant Param has dims (p, side). Multiply by unitsize.
-        # Then attach to v_online or v_flow per process.
-        coef_psd = const_param * p_us           # Param(p, side) -> (p, side)
-
-        # Online cases: (a) linear UC, (b) integer UC.
-        if proc_on_lin is not None and proc_on_lin.height > 0 and v_online_lin is not None:
-            with_g_on = with_g.join(proc_on_lin, on="p", how="inner")
-            if with_g_on.height > 0:
-                # v_online_lin's natural dims are (p, d, t); Where on with_g_on
-                # adds (source, sink, g).  Then * coef_psd (joined on (p, side)).
-                term = Where(v_online_lin, with_g_on) * coef_psd
-                lhs[f"online_lin_{side}"] = Sum(term, over=("p", "source", "sink"))
-        if proc_on_int is not None and proc_on_int.height > 0 and v_online_int is not None:
-            with_g_on = with_g.join(proc_on_int, on="p", how="inner")
-            if with_g_on.height > 0:
-                term = Where(v_online_int, with_g_on) * coef_psd
-                lhs[f"online_int_{side}"] = Sum(term, over=("p", "source", "sink"))
-        # Non-online case: v_flow.
-        if v_flow is not None:
+            continue
+        coef = const_param * d.p_unitsize
+        for online_set, v_online, key in ((d.process_online_linear, b.v_online_linear, f"online_lin_{side}"),
+                                          (d.process_online_integer, b.v_online_integer, f"online_int_{side}")):
+            if online_set is not None and online_set.height > 0 and v_online is not None:
+                with_g_on = with_g.join(online_set, on="p", how="inner")
+                if with_g_on.height > 0:
+                    lhs[key] = Sum(Where(v_online, with_g_on) * coef, over=("p", "source", "sink"))
+        if b.v_flow is not None:
             with_g_off = with_g
-            if proc_on is not None and proc_on.height > 0:
-                with_g_off = with_g.join(proc_on, on="p", how="anti")
+            if d.process_online is not None and d.process_online.height > 0:
+                with_g_off = with_g.join(d.process_online, on="p", how="anti")
             if with_g_off.height > 0:
-                term = Where(v_flow, with_g_off) * coef_psd
-                lhs[f"flow_{side}"] = Sum(term, over=("p", "source", "sink"))
+                lhs[f"flow_{side}"] = Sum(Where(b.v_flow, with_g_off) * coef, over=("p", "source", "sink"))
 
-    _inertia_side("source",
-                   getattr(d, "process_source_inertia", None),
-                   getattr(d, "p_process_source_inertia_constant", None))
-    _inertia_side("sink",
-                   getattr(d, "process_sink_inertia", None),
-                   getattr(d, "p_process_sink_inertia_constant", None))
-
-    rhs = {"floor": d.pdGroup_inertia_limit}
-
-    m.add_cstr(
-        "inertia_constraint",
-        over      = over,
-        sense     = ">=",
-        lhs_terms = lhs,
-        rhs_terms = rhs,
-    )
+    m.add_cstr("inertia_constraint", over=d.groupInertia.join(d.dt, how="cross"), sense=">=",
+               lhs_terms=lhs, rhs_terms={"floor": d.pdGroup_inertia_limit})
 
 
-# ── non_sync_constraint ───────────────────────────────────────────────────
-
-def _add_non_sync(m, d, vars: dict) -> None:
-    """non_sync_constraint (mod:4054-4091).
-
-    Indexed on ``g in groupNonSync × (d, t) in dt``.  Sense: ``<=``.
-
-    LHS (every term × inv_group_cap[g, d]):
-      + Σ_{(p,source,sink) : (g, sink) ∈ group_node ∧ (p, sink) ∈
-                              process__sink_nonSync ∧ (p, g) ∉
-                              process__group_inside_group_nonSync}
-          v_flow[p,source,sink,d,t] * unitsize * step_duration[d,t]
-      + Σ_{(g, n) ∈ group_node} p_positive_inflow[n, d, t]
-      − vq_non_synchronous[g, d, t] * step_duration[d, t]
-
-    RHS:
-      + Σ_outgoing-flow-from-group  × pdGroup[g, 'non_synchronous_limit'] × inv_group_cap.
-
-    Outgoing flow has three parts (mirroring the .mod):
-      noEff:   v_flow * unitsize * step_duration
-      eff:     v_flow * unitsize * slope * sink_coef/source_coef * step_duration
-      eff/min_load_eff section:  v_online * unitsize * step_duration * section
-      − exogenous outflow: − Σ_n p_negative_inflow.
-
-    NOTE: We omit the eff sink_coef/source_coef ratio (reflecting the
-    .mod's process_unit-only branch) because our existing constraints
-    already incorporate it via `p_slope` (slope encodes the ratio for
-    indirect/multi-flow).  The non_sync constraint in the .mod only
-    treats `process_unit`; for non-unit (connection) processes the ratio
-    is 1 by definition.
-    """
-    if d.groupNonSync is None or d.pdGroup_non_synchronous_limit is None:
+def _eq_non_sync(b: _Build) -> None:
+    """non_sync_constraint: non-synchronous infeed of a group stays under its share of the group's supply."""
+    if not b.has_non_sync:
         return
-    if d.group_node is None:
-        return
+    m, d = b.m, b.d
     pss = d.process_source_sink
-    if pss is None:
-        return
     p_us = d.p_unitsize
-    if p_us is None or d.p_step_duration is None:
-        return
+    invc = d.p_inv_group_cap
+    pgns = d.pdGroup_non_synchronous_limit
+    gn_in_gns = d.group_node.join(d.groupNonSync, on="g", how="inner")
+    proc_inside = d.process_group_inside_nonSync          # (p, g) | None
+    sink_ns = d.process_sink_nonSync                      # (p, sink) | None
 
-    gns      = d.groupNonSync
-    invc     = d.p_inv_group_cap
-    if invc is None:
-        return
-    gn_in_gns = d.group_node.join(gns, on="g", how="inner")     # (g, n)
-    proc_inside = d.process_group_inside_nonSync                # (p, g) | None
-    sink_ns     = d.process_sink_nonSync                        # (p, sink) | None
-
-    # Slack variable.
-    vq_dom = gns.join(d.dt, how="cross")
-    vq_ns  = m.add_var("vq_non_synchronous", ("g", "d", "t"), vq_dom, lower=0.0)
-    vars["vq_non_synchronous"] = vq_ns
-
-    over = vq_dom
-
-    # ── LHS ──────────────────────────────────────────────────────────────
-    lhs: dict = {}
-    v_flow = vars.get("v_flow")
-
-    # − vq_non_synchronous * step_duration  (via inv_group_cap-cancellation,
-    # this becomes − vq * step_duration).
-    lhs["slack_neg"] = -(vq_ns * d.p_step_duration)
-
-    # Incoming non-sync flows.
-    if (sink_ns is not None and sink_ns.height > 0 and v_flow is not None):
-        # (p, source, sink) in pss with (p, sink) ∈ process__sink_nonSync.
-        pss_in = pss.join(sink_ns, on=["p", "sink"], how="inner")
-        # (g, sink) in group_node ∩ groupNonSync (sink → n for the join).
-        pss_in_g = (pss_in.rename({"sink": "n"})
-                          .join(gn_in_gns, on="n", how="inner")
-                          .rename({"n": "sink"}))
-        # Drop (p, g) ∈ process__group_inside_group_nonSync.
-        if proc_inside is not None and proc_inside.height > 0:
-            pss_in_g = pss_in_g.join(proc_inside, on=["p", "g"], how="anti")
-        if pss_in_g.height > 0:
-            term = (Where(v_flow, pss_in_g) * p_us * d.p_step_duration * invc)
-            lhs["incoming_nonSync"] = Sum(term, over=("p", "source", "sink"))
-
-    # Exogenous positive inflow (assumed non-synchronous in the .mod).
-    p_pos = d.p_positive_inflow
-    if p_pos is not None and gn_in_gns.height > 0:
-        joined = (gn_in_gns.join(p_pos.frame.rename({"value": "v"}),
-                                  on="n", how="inner")
-                            .join(invc.frame.rename({"value": "iv"}),
-                                  on=["g", "d"], how="inner")
-                            .with_columns(value=pl.col("v") * pl.col("iv"))
-                            .group_by(["g", "d", "t"])
-                            .agg(pl.col("value").sum())
-                            .select("g", "d", "t", "value"))
-        if joined.height > 0:
-            lhs["exo_inflow"] = Param(("g", "d", "t"), joined)
-
-    # ── RHS ──────────────────────────────────────────────────────────────
-    pgns = d.pdGroup_non_synchronous_limit              # Param (g, d)
-    rhs: dict = {}
-
-    pss_eff   = d.process_source_sink_eff
-    pss_noEff = d.process_source_sink_noEff
-    p_slope   = d.p_slope
-
-    # Outgoing flow (source ∈ group_node) with the source-not-inside guard.
-    def _filter_out_inside(idx_g: pl.DataFrame) -> pl.DataFrame:
+    def _not_inside(idx_g: pl.DataFrame) -> pl.DataFrame:
         if proc_inside is None or proc_inside.height == 0:
             return idx_g
         return idx_g.join(proc_inside, on=["p", "g"], how="anti")
 
-    # Per‐tuple coef:  unitsize · step_duration · pdGroup_non_synchronous_limit · inv_group_cap.
-    # We keep these chained as Params and let the engine broadcast at term time.
+    # ─── EQ. ─── non_sync_constraint ─────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,k) ∈ in_ns(g)} v_flow[p,s,k,d,t] · unitsize[p] · Δt[d,t] · icap[g,d]
+    #   + Σ_{n ∈ N(g)} positive_inflow[n,d,t] · icap[g,d]
+    #   − vq_non_synchronous[g,d,t] · Δt[d,t]
+    #   ≤ ns_limit[g,d] · icap[g,d] · ( Σ_{(p,s,k) ∈ out_noEff(g)} v_flow[p,s,k,d,t] · unitsize[p] · Δt[d,t]
+    #                                 + Σ_{(p,s,k) ∈ out_eff(g)} v_flow[p,s,k,d,t] · slope[p,d,t] · unitsize[p]
+    #                                                            · Δt[d,t]
+    #                                 + Σ_{(p,s,k) ∈ out_eff(g), p ∈ process_min_load_eff}
+    #                                       v_online[p,d,t] · section[p] · unitsize[p] · Δt[d,t]
+    #                                 − Σ_{n ∈ N(g)} negative_inflow[n,d,t] )
+    #   ∀ g ∈ groupNonSync, (d,t) ∈ dt
+    #   N(g) = nodes of g;  icap = inv_group_cap;  ns_limit = non_synchronous_limit
+    #   in_ns(g) = arcs into N(g) with (p,k) ∈ process_sink_nonSync
+    #   out_*(g) = arcs out of N(g);  arcs of processes inside the group, (p,g) ∈ process_group_inside_nonSync,
+    #   are left out of in_ns and out_*
+    # Non-synchronous infeed (flagged arcs and positive exogenous inflow,
+    # which counts as non-synchronous) is at most ns_limit times the group's
+    # supply, measured as the energy drawn by the processes and the demand
+    # leaving its nodes; the excess is penalised.  The slack has no icap,
+    # which makes it a fraction of group_capacity_for_scaling.  slope already
+    # holds the sink/source coefficient ratio of multi-arc processes.
+    lhs: dict = {"slack_neg": -(b.vq_non_synchronous * d.p_step_duration)}
+    if sink_ns is not None and sink_ns.height > 0 and b.v_flow is not None:
+        pss_in_g = (pss.join(sink_ns, on=["p", "sink"], how="inner")
+                    .rename({"sink": "n"})
+                    .join(gn_in_gns, on="n", how="inner")
+                    .rename({"n": "sink"}))
+        pss_in_g = _not_inside(pss_in_g)
+        if pss_in_g.height > 0:
+            lhs["incoming_nonSync"] = Sum(Where(b.v_flow, pss_in_g) * p_us * d.p_step_duration * invc,
+                                          over=("p", "source", "sink"))
+    p_pos = d.p_positive_inflow
+    if p_pos is not None and gn_in_gns.height > 0:
+        exo_in = (gn_in_gns.join(p_pos.frame.rename({"value": "v"}), on="n", how="inner")
+                  .join(invc.frame.rename({"value": "iv"}), on=["g", "d"], how="inner")
+                  .with_columns(value=pl.col("v") * pl.col("iv"))
+                  .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
+                  .select("g", "d", "t", "value"))
+        if exo_in.height > 0:
+            lhs["exo_inflow"] = Param(("g", "d", "t"), exo_in)
+
+    rhs: dict = {}
     out_factor = p_us * d.p_step_duration * pgns * invc
-
-    if pss_noEff is not None and pss_noEff.height > 0 and v_flow is not None:
-        out_idx_noEff = (pss_noEff.rename({"source": "n"})
-                                  .join(gn_in_gns, on="n", how="inner")
-                                  .rename({"n": "source"}))
-        out_idx_noEff = _filter_out_inside(out_idx_noEff)
-        if out_idx_noEff.height > 0:
-            term = Where(v_flow, out_idx_noEff) * out_factor
-            rhs["out_noEff"] = Sum(term, over=("p", "source", "sink"))
-    if pss_eff is not None and pss_eff.height > 0 and v_flow is not None:
-        out_idx_eff = (pss_eff.rename({"source": "n"})
-                              .join(gn_in_gns, on="n", how="inner")
+    pss_noEff = d.process_source_sink_noEff
+    if pss_noEff is not None and pss_noEff.height > 0 and b.v_flow is not None:
+        out_noEff = _not_inside(pss_noEff.rename({"source": "n"}).join(gn_in_gns, on="n", how="inner")
+                                .rename({"n": "source"}))
+        if out_noEff.height > 0:
+            rhs["out_noEff"] = Sum(Where(b.v_flow, out_noEff) * out_factor, over=("p", "source", "sink"))
+    pss_eff = d.process_source_sink_eff
+    if pss_eff is not None and pss_eff.height > 0 and b.v_flow is not None:
+        out_eff = _not_inside(pss_eff.rename({"source": "n"}).join(gn_in_gns, on="n", how="inner")
                               .rename({"n": "source"}))
-        out_idx_eff = _filter_out_inside(out_idx_eff)
-        if out_idx_eff.height > 0:
-            if p_slope is not None:
-                term = Where(v_flow, out_idx_eff) * p_slope * out_factor
+        if out_eff.height > 0:
+            if d.p_slope is not None:
+                term = Where(b.v_flow, out_eff) * d.p_slope * out_factor
             else:
-                term = Where(v_flow, out_idx_eff) * out_factor
+                term = Where(b.v_flow, out_eff) * out_factor
             rhs["out_eff"] = Sum(term, over=("p", "source", "sink"))
-            # Section term for min_load_eff online.
-            if (d.process_min_load_eff is not None
-                    and d.process_min_load_eff.height > 0
+            if (d.process_min_load_eff is not None and d.process_min_load_eff.height > 0
                     and d.p_section is not None):
-                mle_idx = out_idx_eff.join(d.process_min_load_eff,
-                                            on="p", how="inner")
-                if mle_idx.height > 0:
-                    v_online_lin = vars.get("v_online_lin")
-                    v_online_int = vars.get("v_online_int")
-                    if v_online_lin is not None:
-                        t_sec = Where(v_online_lin, mle_idx) * d.p_section * out_factor
-                        rhs["out_section_lin"] = Sum(t_sec, over=("p", "source", "sink"))
-                    if v_online_int is not None:
-                        t_sec = Where(v_online_int, mle_idx) * d.p_section * out_factor
-                        rhs["out_section_int"] = Sum(t_sec, over=("p", "source", "sink"))
-
-    # Exogenous demand (-p_negative_inflow): pdGroup * inv_group_cap * Σ_n -p_neg.
+                out_mle = out_eff.join(d.process_min_load_eff, on="p", how="inner")
+                if out_mle.height > 0:
+                    if b.v_online_linear is not None:
+                        rhs["out_section_lin"] = Sum(Where(b.v_online_linear, out_mle) * d.p_section * out_factor,
+                                                     over=("p", "source", "sink"))
+                    if b.v_online_integer is not None:
+                        rhs["out_section_int"] = Sum(Where(b.v_online_integer, out_mle) * d.p_section * out_factor,
+                                                     over=("p", "source", "sink"))
     p_neg = d.p_negative_inflow
     if p_neg is not None and gn_in_gns.height > 0:
-        joined = (gn_in_gns.join(p_neg.frame.rename({"value": "v"}),
-                                  on="n", how="inner")
-                            .join(invc.frame.rename({"value": "iv"}),
-                                  on=["g", "d"], how="inner")
-                            .join(pgns.frame.rename({"value": "lim"}),
-                                  on=["g", "d"], how="inner")
-                            .with_columns(value=-pl.col("v") * pl.col("iv")
-                                                  * pl.col("lim"))
-                            .group_by(["g", "d", "t"])
-                            .agg(pl.col("value").sum())
-                            .select("g", "d", "t", "value"))
-        if joined.height > 0:
-            rhs["exo_demand"] = Param(("g", "d", "t"), joined)
+        exo_out = (gn_in_gns.join(p_neg.frame.rename({"value": "v"}), on="n", how="inner")
+                   .join(invc.frame.rename({"value": "iv"}), on=["g", "d"], how="inner")
+                   .join(pgns.frame.rename({"value": "lim"}), on=["g", "d"], how="inner")
+                   .with_columns(value=-pl.col("v") * pl.col("iv") * pl.col("lim"))
+                   .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
+                   .select("g", "d", "t", "value"))
+        if exo_out.height > 0:
+            rhs["exo_demand"] = Param(("g", "d", "t"), exo_out)
 
-    m.add_cstr(
-        "non_sync_constraint",
-        over      = over,
-        sense     = "<=",
-        lhs_terms = lhs,
-        rhs_terms = rhs,
-    )
+    m.add_cstr("non_sync_constraint", over=d.groupNonSync.join(d.dt, how="cross"), sense="<=",
+               lhs_terms=lhs, rhs_terms=rhs)
 
 
 # ---------------------------------------------------------------------------
-# Objective contribution
+# Objective
 
-def add_objective_terms(m, d, vars: dict, op_factor) -> "Expr | None":
-    """Build the slack-penalty contribution.  Returns ``None`` if no
-    feature is active (caller must guard with ``or 0``).
 
-    Terms (audit/objective_audit.md §9):
+def objective_terms(b: _Build) -> Expr | None:
+    """Penalties of the inertia, non-synchronous and capacity margin slacks."""
+    if not (b.has_capacity_margin or b.has_inertia or b.has_non_sync):
+        return None
+    d = b.d
 
-    9.1 Inertia slack:
-      + Σ_{g,d,t} pdt_branch_weight · vq_inertia · pdGroup_inertia_limit
-                  · pdGroup_penalty_inertia · step_duration · timestep_weight
-                  · inflation_op / period_share
-      The ``op_factor`` encodes ``step_duration · timestep_weight ·
-      inflation_op / period_share``; the model.py caller folds
-      ``pdt_branch_weight`` into ``op_factor`` when stochastics is active
-      (A6 close), so this term inherits the per-(d,t) probability
-      automatically.
-
-    9.2 Non-sync slack:
-      + Σ_{g,d,t} pdt_branch_weight · vq_non_synchronous · group_capacity_for_scaling
-                  · pdGroup_penalty_non_synchronous · step_duration · timestep_weight
-                  · inflation_op / period_share
-
-    9.3 Capacity-margin slack (period-only, NO step_duration / timestep_weight /
-    pdt_branch_weight):
-      + Σ_{g,d} vq_capacity_margin · group_capacity_for_scaling
-                · pdGroup_penalty_capacity_margin · 1000 · inflation_op
-      Asymmetry preserved per .mod — capacity_margin is a planning-level
-      slack and intentionally un-weighted by pdt_branch_weight.  See
-      audit/a6_stochastic_audit.md §5.
-
-      The ``× 1000`` converts ``penalty_capacity_margin`` from the
-      template unit ``CUR/kW`` to the objective unit ``CUR/MW``
-      (``vq_capacity_margin`` is in MW).  This matches the convention
-      established by
-      :mod:`flextool.process_outputs.calc_slacks` (commit 6a03dd90 —
-      "Cost aggregation semantic fixes").  BUG A4 fix.
-    """
+    # ─── OBJ. ─── inertia / non-synchronous / capacity margin slack ──────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # + Σ_{(g,d,t)} vq_inertia[g,d,t] · inertia_limit[g,d] · penalty_inertia[g,d] · w_op[d,t]
+    # + Σ_{(g,d,t)} vq_non_synchronous[g,d,t] · gcs[g,d] · penalty_non_synchronous[g,d] · w_op[d,t]
+    # + Σ_{(g,d)} vq_capacity_margin[g,d] · gcs[g,d] · penalty_capacity_margin[g,d] · inflation_op[d] · 1000
+    #   gcs = group_capacity_for_scaling;  w_op = b.op_factor
+    # Each slack is scaled back to physical units (MWs, MW) and priced per hour
+    # of operation.  The capacity margin is a planning quantity: it is priced
+    # once per period, without step weights or branch weights, and its penalty
+    # is authored in CUR/kW (× 1000 to CUR/MW).  The output layer
+    # (calc_slacks) reports the same costs.
     pieces: list[Expr] = []
-
-    if "vq_inertia" in vars and d.pdGroup_inertia_limit is not None \
-            and d.pdGroup_penalty_inertia is not None:
-        pieces.append(Sum(
-            vars["vq_inertia"]
-              * d.pdGroup_inertia_limit
-              * d.pdGroup_penalty_inertia
-              * op_factor))
-
-    if "vq_non_synchronous" in vars and d.p_group_capacity_for_scaling is not None \
-            and d.pdGroup_penalty_non_synchronous is not None:
-        pieces.append(Sum(
-            vars["vq_non_synchronous"]
-              * d.p_group_capacity_for_scaling
-              * d.pdGroup_penalty_non_synchronous
-              * op_factor))
-
-    if "vq_capacity_margin" in vars and d.p_group_capacity_for_scaling is not None \
-            and d.pdGroup_penalty_capacity_margin is not None \
-            and d.p_inflation_op is not None:
-        # Period-only term: no step_duration / timestep_weight / period_share.
-        # BUG A4 fix: include the × 1000 unit conversion (CUR/kW → CUR/MW)
-        # that matches ``calc_slacks.costPenalty_capacity_margin_d``'s
-        # ``.mul(1000.0)``.  Without it the LP objective under-counts the
-        # capacity-margin slack penalty by 1000× and
-        # ``test_solver_matches_python`` reports a 1.58 M-CUR delta on the
-        # ``capacity_margin`` scenario.
-        pieces.append(Sum(
-            vars["vq_capacity_margin"]
-              * d.p_group_capacity_for_scaling
-              * d.pdGroup_penalty_capacity_margin
-              * d.p_inflation_op
-              * 1000.0))
-
+    if (b.vq_inertia is not None and d.pdGroup_inertia_limit is not None
+            and d.pdGroup_penalty_inertia is not None):
+        pieces.append(Sum(b.vq_inertia * d.pdGroup_inertia_limit * d.pdGroup_penalty_inertia * b.op_factor))
+    if (b.vq_non_synchronous is not None and d.p_group_capacity_for_scaling is not None
+            and d.pdGroup_penalty_non_synchronous is not None):
+        pieces.append(Sum(b.vq_non_synchronous * d.p_group_capacity_for_scaling
+                          * d.pdGroup_penalty_non_synchronous * b.op_factor))
+    if (b.vq_capacity_margin is not None and d.p_group_capacity_for_scaling is not None
+            and d.pdGroup_penalty_capacity_margin is not None and d.p_inflation_op is not None):
+        pieces.append(Sum(b.vq_capacity_margin * d.p_group_capacity_for_scaling
+                          * d.pdGroup_penalty_capacity_margin * d.p_inflation_op * 1000.0))
     if not pieces:
         return None
-    out = pieces[0]
-    for p in pieces[1:]:
-        out = out + p
-    return out
+    total = pieces[0]
+    for piece in pieces[1:]:
+        total = total + piece
+    return total

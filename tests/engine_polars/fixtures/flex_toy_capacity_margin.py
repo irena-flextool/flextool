@@ -129,7 +129,7 @@ def expected_obj() -> float:
                 × penalty_cap (=1e6) × inflation_op (=1.0) × 1000
             = 9.0e10
     The × 1000 is the CUR/kW → CUR/MW unit conversion applied in
-    ``_group_slack.add_penalty_term`` (BUG A4 fix); mirrors
+    ``_group_slack.objective_terms`` (BUG A4 fix); mirrors
     ``flextool.process_outputs.calc_slacks.costPenalty_capacity_margin_d``
     ``.mul(1000.0)``.
 

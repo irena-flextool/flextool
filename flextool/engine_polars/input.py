@@ -5201,9 +5201,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # (each solve emits its own ``pdtNodeInflow.csv``).  All three helpers
         # are solve-agnostic (no ``active_solve`` filter) and the inputs match
         # ``apply_derived_c``'s exactly, so this is byte-identical to the
-        # non-synthetic path.  Without it ``_add_non_sync`` (RHS ``exo_demand``
+        # non-synthetic path.  Without it ``_group_slack._eq_non_sync`` (RHS ``exo_demand``
         # / LHS ``p_positive_inflow`` terms gate on these being non-None) and
-        # ``_add_cap_margin`` (``pdtNodeInflow_per_step``) silently drop the
+        # ``_eq_capacity_margin`` (``pdtNodeInflow_per_step``) silently drop the
         # demand budget — VRE pins to 0 and coal backfills.  See
         # ``specs/model_bugs.md::INFLOW-1``.
         def _wire_inflow_split_for_synthetic_solve():

@@ -19,7 +19,7 @@ Without Fix A (INFLOW-1) those three fields stay ``None`` on every
 synthetic sub-solve even though ``p_inflow`` itself is correctly loaded.
 The downstream consumers silently degrade:
 
-  * ``_add_non_sync`` gates its RHS exogenous-demand term (and its LHS
+  * ``_eq_non_sync`` gates its RHS exogenous-demand term (and its LHS
     positive-inflow term) on these being non-None — so the
     non_synchronous_limit constraint loses the whole demand budget,
     pinning VRE to 0 and letting synchronous (coal) generation backfill.
@@ -34,7 +34,7 @@ through the early-return branch) and asserts:
      re-running the exact ``apply_derived_c`` helpers on ``p_inflow``
      (proves the derivation matches the non-synthetic path), and
   3. with a non_synchronous_limit group wired onto a node that carries
-     negative inflow, ``_add_non_sync`` emits a ``non_sync_constraint``
+     negative inflow, ``_eq_non_sync`` emits a ``non_sync_constraint``
      whose exogenous-demand RHS is non-trivial — i.e. the budget that
      the bug silently dropped is restored.
 
@@ -159,7 +159,7 @@ def test_synthetic_solve_derives_inflow_signed_split(_synthetic_step_flex_data):
 
 
 def test_synthetic_solve_non_sync_budget_restored(_synthetic_step_flex_data):
-    """With the signed-split populated, ``_add_non_sync`` carries the
+    """With the signed-split populated, ``_eq_non_sync`` carries the
     exogenous-demand budget — the term the bug silently dropped.
 
     A non_synchronous_limit group is injected onto a node that has
@@ -170,6 +170,7 @@ def test_synthetic_solve_non_sync_budget_restored(_synthetic_step_flex_data):
     """
     from polar_high import Param, Problem
     from flextool.engine_polars import _group_slack as gs
+    from flextool.engine_polars.model import _Build
 
     name, fd = _synthetic_step_flex_data
 
@@ -201,15 +202,16 @@ def test_synthetic_solve_non_sync_budget_restored(_synthetic_step_flex_data):
     )
 
     pb = Problem()
-    cstr_vars: dict = {}
-    gs._add_non_sync(pb, fd, cstr_vars)
+    b = _Build(m=pb, d=fd, has_non_sync=gs.has_non_sync(fd))
+    gs.add_variables(b)
+    gs._eq_non_sync(b)
 
     assert "non_sync_constraint" in pb.cstr_names(), (
         f"{name}: non_sync_constraint was not emitted"
     )
     assert pb.cstr_row_count("non_sync_constraint") > 0
 
-    # The actual exo_demand RHS term _add_non_sync builds
+    # The actual exo_demand RHS term _eq_non_sync builds
     # (_group_slack.py): -p_negative_inflow * inv_group_cap *
     # non_synchronous_limit, summed over n in group_node.  With the fix it
     # is non-trivial; with the bug p_negative_inflow is None and the whole

@@ -157,11 +157,11 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     "v_trade": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="unitsize"),
 
     # ── Group-level slacks.  Direct physical units.
-    # flextool/engine_polars/_group_slack.py:522
+    # flextool/engine_polars/_group_slack.py add_variables
     "vq_capacity_margin": VarFamily(QuantityType.POWER),
-    # flextool/engine_polars/_group_slack.py:902
+    # flextool/engine_polars/_group_slack.py add_variables
     "vq_inertia": VarFamily(QuantityType.INERTIA),
-    # flextool/engine_polars/_group_slack.py:1045
+    # flextool/engine_polars/_group_slack.py add_variables
     "vq_non_synchronous": VarFamily(QuantityType.POWER),
 
     # ── DC power flow.
@@ -476,11 +476,11 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "reserve_storage_down_headroom": CstrFamily(QuantityType.ENERGY),
 
     # ── Group slack constraints.
-    # flextool/engine_polars/_group_slack.py:859
+    # flextool/engine_polars/_group_slack.py _eq_capacity_margin
     "capacityMargin": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/_group_slack.py:984
+    # flextool/engine_polars/_group_slack.py _eq_inertia
     "inertia_constraint": CstrFamily(QuantityType.INERTIA),
-    # flextool/engine_polars/_group_slack.py:1157
+    # flextool/engine_polars/_group_slack.py _eq_non_sync
     "non_sync_constraint": CstrFamily(QuantityType.POWER),
 
     # ── Commodity ladder.  ENERGY (MWh).

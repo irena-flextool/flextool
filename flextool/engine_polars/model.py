@@ -160,6 +160,9 @@ class _Build:
     has_divest_n: bool = False
     has_ladder: bool = False
     has_reserve: bool = False
+    has_capacity_margin: bool = False
+    has_inertia: bool = False
+    has_non_sync: bool = False
     is_solve_first: bool = True          # first solve of a chain, or a single solve
 
     # ── shared index sets ──
@@ -198,6 +201,9 @@ class _Build:
     v_flow_back: Var | None = None
     v_reserve: Var | None = None
     vq_reserve: Var | None = None
+    vq_capacity_margin: Var | None = None
+    vq_inertia: Var | None = None
+    vq_non_synchronous: Var | None = None
     dc_pf_vars: dict = field(default_factory=dict)
     ladder_vars: dict = field(default_factory=dict)
 
@@ -272,7 +278,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _obj_invest_divest,
         _obj_existing_fixed_cost,
         # ── feature modules: constraints + objective terms ──
-        _feature_group_slack,
+        _group_slack.add_constraints,
+        _group_slack.objective_terms,
         _reserve.add_constraints,
         _reserve.objective_terms,
         _feature_cumulative_invest,
@@ -345,6 +352,9 @@ def _prepare(b: _Build) -> None:
     b.has_divest_n = _has_rows(d.nd_divest_set)
     b.has_ladder = _commodity_ladder.has_feature(d)
     b.has_reserve = _has_rows(getattr(d, "reserve_upDown_group", None))
+    b.has_capacity_margin = _group_slack.has_capacity_margin(d)
+    b.has_inertia = _group_slack.has_inertia(d)
+    b.has_non_sync = _group_slack.has_non_sync(d)
     # p_nested_solve_first: None for a single solve, else True on the first
     # solve of a chain.
     b.is_solve_first = (d.p_nested_solve_first is None
@@ -595,6 +605,9 @@ def _declare_variables(b: _Build) -> None:
     # declared by their feature modules.
     _dc_power_flow.add_variables(b)
     b.ladder_vars = _commodity_ladder.add_variables(m, d) if b.has_ladder else {}
+
+    # Group soft-floor slacks (vq_capacity_margin, vq_inertia, vq_non_synchronous): declared by _group_slack.
+    _group_slack.add_variables(b)
 
 
 def _balance_slack_index(b: _Build) -> pl.DataFrame:
@@ -2906,43 +2919,6 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
 
 # ---------------------------------------------------------------------------
 # Feature modules
-
-
-def _feature_group_slack(b: _Build) -> Expr | None:
-    """Group slack constraints and penalties (_group_slack)."""
-    m, d = b.m, b.d
-    v_flow = b.v_flow
-    vq_up = b.vq_state_up
-    vq_down = b.vq_state_down
-    v_online_lin = b.v_online_linear
-    v_online_int = b.v_online_integer
-    v_invest_p = b.v_invest_p
-    v_divest_p = b.v_divest_p
-    v_invest_n = b.v_invest_n
-    v_divest_n = b.v_divest_n
-    op_factor = b.op_factor
-    # ─── Group-level slack (capacity_margin / inertia / non_sync) ────────
-    if _group_slack.has_feature(d):
-        vars_: dict = {}
-        if b.has_proc:
-            vars_["v_flow"]       = v_flow
-        if b.has_online_lin:
-            vars_["v_online_lin"] = v_online_lin
-        if b.has_online_int:
-            vars_["v_online_int"] = v_online_int
-        if b.has_invest_p:
-            vars_["v_invest_p"]   = v_invest_p
-        if b.has_divest_p:
-            vars_["v_divest_p"]   = v_divest_p
-        if b.has_invest_n:
-            vars_["v_invest_n"]   = v_invest_n
-        if b.has_divest_n:
-            vars_["v_divest_n"]   = v_divest_n
-        vars_["vq_state_up"]   = vq_up
-        vars_["vq_state_down"] = vq_down
-        _group_slack.add_constraints(m, d, vars_)
-        return _group_slack.add_objective_terms(m, d, vars_, op_factor)
-    return None
 
 
 def _feature_cumulative_invest(b: _Build) -> Expr | None:
