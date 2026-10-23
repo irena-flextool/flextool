@@ -284,7 +284,7 @@ def _invest_dual(
 ) -> VariableSpec:
     # ``derived_from`` is set for invest-cap families whose producer
     # splits the LHS into process-side (``..._p``) and node-side
-    # (``..._n``) constraints (model.py / _cumulative_invest.py).  The
+    # (``..._n``) constraints (model/core.py / _cumulative_invest.py).  The
     # bracketed entity columns of the two sides are disjoint (process
     # names vs. node names), so ``df.add(fill_value=0.0)`` cleanly
     # unions them into one wide frame at the output boundary.
@@ -423,7 +423,7 @@ VARIABLE_SPECS: list[VariableSpec] = [
     # -- Investment-floor (min-side) duals ----------------------------------
     # Mirror of the maxInvest families above, reading the row duals of the
     # ``>=`` lower-floor constraints emitted by ``_eq_min_*`` /
-    # ``_eq_group_*`` (flextool/engine/_cumulative_invest.py).
+    # ``_eq_group_*`` (flextool/engine/model/_cumulative_invest.py).
     # Purely additive (Increment 3): makes ``v_dual_min*`` available for the
     # later synthesis increment; nothing consumes these yet.  Same scale
     # sentinel + ``source="row_dual"`` as the max-side; absent families

@@ -1,6 +1,6 @@
 # Unit floors, input shares and reserve shortfall
 
-Engine notes for `_unit_floors.py`, `model.py::_eq_min_input_share` and
+Engine notes for `_unit_floors.py`, `model/core.py::_eq_min_input_share` and
 `_reserve.reserve_shortfall_scale`. User-facing semantics are in
 `docs/reference.md` (`min_load`, `capacity_min_coeff`, `input_share_min`,
 Reserves).

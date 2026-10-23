@@ -169,8 +169,8 @@ def test_synthetic_solve_non_sync_budget_restored(_synthetic_step_flex_data):
     ``_group_slack.py`` skips the exo_demand term entirely (budget lost).
     """
     from polar_high import Param, Problem
-    from flextool.engine import _group_slack as gs
-    from flextool.engine.model import _Build
+    from flextool.engine.model import _group_slack as gs
+    from flextool.engine.model.core import _Build
 
     name, fd = _synthetic_step_flex_data
 

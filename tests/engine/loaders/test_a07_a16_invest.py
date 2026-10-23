@@ -9,7 +9,7 @@ chain and the variable emitter.
 A.16 covers ``flextool.engine.preprocess.flex_data._load_cumulative_invest``
 (the cascade-of-15+ optional CSVs that drive cumulative-capacity and
 group-invest constraints) and a single direct call into
-``flextool.engine._cumulative_invest._eq_group_invest_cumulative``
+``flextool.engine.model._cumulative_invest._eq_group_invest_cumulative``
 to pin the all-three-required-or-no-emit guard.
 
 Both helper families are pure: they take ``Path`` arguments + a
@@ -29,7 +29,7 @@ from flextool.engine.preprocess.flex_data import (
     _load_invest,
     _load_cumulative_invest,
 )
-from flextool.engine._cumulative_invest import (
+from flextool.engine.model._cumulative_invest import (
     _eq_group_invest_cumulative,
     has_feature,
 )

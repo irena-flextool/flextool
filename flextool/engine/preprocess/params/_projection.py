@@ -719,7 +719,7 @@ def process_source_sink_2way_1var(source: "InputSource") -> pl.DataFrame:
     these arcs need a non-negative reverse auxiliary ``v_flow_back`` to
     carry sink→source flow.  This set is the union of DC-power-flow and
     non-DC ``method_2way_1var_off`` arcs (the classifier doesn't gate on
-    the DC feature); ``model.py`` declares the shared ``v_flow_back`` over
+    the DC feature); ``model/core.py`` declares the shared ``v_flow_back`` over
     it and ``_dc_power_flow`` consumes the same Var on the DC subset.
 
     Schema: ``[p, source, sink]`` in the canonical forward orientation

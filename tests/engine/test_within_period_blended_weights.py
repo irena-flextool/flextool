@@ -55,7 +55,7 @@ state-change is bounded by what inflow + slack can absorb.
 These three numbers are the load-bearing assertions below.  Any drift
 indicates a regression in the cyclic-closure topology or the per-
 period join semantics added in Phase E to
-``model.py``'s ``rp_inter_period_cyclic`` block.
+``model/core.py``'s ``rp_inter_period_cyclic`` block.
 
 If the orthogonal forward_only sanity check is interesting, see
 ``test_forward_only_blended_weights.py`` which exercises a closely
@@ -79,7 +79,7 @@ def _build_toy_rp_two_periods(*, method: str) -> FlexData:
     ``storage_bind_*_blended_weights`` partition gets the singleton
     node ``bat``; ``nodeState_rp`` is the union of all three blended-
     weights variants (Phase E extension) so the shared RP machinery in
-    ``model.py`` fires identically across the three variants.  Only
+    ``model/core.py`` fires identically across the three variants.  Only
     ``rp_inter_period_cyclic`` further filters back to the
     within_solve ∪ within_period subset and gates its (b_first, b_last)
     pairing on the optional ``d`` column carried on
@@ -296,7 +296,7 @@ def test_three_variants_distinguished_by_objective() -> None:
         f"each period closes its own cycle independently: "
         f"period y2025 must spill 2 (cost 2.0), period y2030 must "
         f"spill 1 (cost 1.0), total 3.0.  If obj == 1.0 the "
-        f"per-period (b_first, b_last) pairing in model.py's cyclic-"
+        f"per-period (b_first, b_last) pairing in model/core.py's cyclic-"
         f"emit block is collapsing to the within_solve cross-join "
         f"(Phase E rp_base_first/last d-column join bug); if obj == "
         f"0.0 the cyclic constraint is not firing at all for the "

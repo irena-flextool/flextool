@@ -178,7 +178,7 @@ def test_build_handoff_from_solution_covers_eight_carriers(scenario_workdir)-> N
         build_handoff_from_solution,
         load_flextool,
     )
-    from flextool.engine.model import build_flextool
+    from flextool.engine.model.core import build_flextool
 
     # Build a tempdir mirroring the layout used by run_chain so
     # build_handoff_from_solution can find the per-solve CSVs.

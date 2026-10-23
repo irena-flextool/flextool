@@ -36,7 +36,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine import build_flextool
-from flextool.engine._pdt_join import compute_pss_dt, compute_nodeBalance_dt
+from flextool.engine.model._pdt_join import compute_pss_dt, compute_nodeBalance_dt
 
 from .conftest import solver_options
 

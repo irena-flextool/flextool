@@ -13,7 +13,7 @@ old.
 
 A failure here narrows the bug to: the
 ``node_capacity_for_scaling[n,d]`` factor missing or mis-applied on
-the §1.1 / §1.2 slack obj terms in ``flextool/model.py``.
+the §1.1 / §1.2 slack obj terms in ``flextool/model/core.py``.
 """
 
 import pytest

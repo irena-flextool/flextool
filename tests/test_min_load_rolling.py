@@ -20,7 +20,7 @@ mirroring the existing RESERVE-1 patch.
 The ``MINLOAD_EFF`` check fires for *every* MLE unit on the synthetic
 path, so a successful optimal solve of a rolling MLE scenario is a
 sufficient correctness pin: it can only complete if ``p_section`` was
-populated AND the section energy-balance term (``model.py`` online
+populated AND the section energy-balance term (``model/core.py`` online
 cost / flow, gated on ``p_section is not None``) was built.  Pre-fix
 this test raises ``ValueError(... ['p_section'])``; post-fix it solves
 to optimality.

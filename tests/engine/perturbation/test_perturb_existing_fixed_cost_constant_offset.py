@@ -26,7 +26,7 @@ cost).  The expected obj delta is::
 Because the perturbed term is a constant in the LP, the optimal
 v_flow does not change → the rest of the obj is unchanged.
 
-Marked ``xfail`` until §8.1 is wired into ``flextool/model.py``.  When
+Marked ``xfail`` until §8.1 is wired into ``flextool/model/core.py``.  When
 wired, this test flips to PASS and is the canonical regression test
 for the term.
 """

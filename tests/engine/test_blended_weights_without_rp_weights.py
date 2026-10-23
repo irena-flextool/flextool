@@ -17,7 +17,7 @@ per-solve downgrade — the offending method is rewritten to its non-RP
 equivalent in the per-solve provider only, leaving the on-disk DB and
 upstream CSVs untouched.
 
-Note: Phase C also originally hosted a ``model.py`` not-yet-implemented
+Note: Phase C also originally hosted a ``model/core.py`` not-yet-implemented
 guard for the two RP variants whose constraint implementations were
 still pending.  Phase D landed ``bind_forward_only_blended_weights``
 and Phase E landed ``bind_within_period_blended_weights``; the guard's
@@ -261,7 +261,7 @@ def test_multi_solve_same_node_drives_both_paths(
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — Phase D + Phase E retired the model.py not-yet-implemented guard
+# Test 4 — Phase D + Phase E retired the model/core.py not-yet-implemented guard
 # for the two RP variants whose constraint implementations have now landed:
 #   * Phase D: bind_forward_only_blended_weights
 #   * Phase E: bind_within_period_blended_weights

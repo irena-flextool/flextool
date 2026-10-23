@@ -1,7 +1,7 @@
 """Shared post-process branch-probability weighting (option A).
 
 The LP objective weights every per-(d, t) operational and penalty cost
-term by ``pdt_branch_weight[d, t]`` (``flextool.engine.model`` folds
+term by ``pdt_branch_weight[d, t]`` (``flextool.engine.model.core`` folds
 it into ``op_factor`` / ``startup_factor``), so the LP objective is the
 probability-weighted expectation over the forecast fan.  The post-process
 cost reconstruction must apply the SAME per-(d, t) weight so that both the

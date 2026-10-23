@@ -20,7 +20,8 @@ import polars as pl
 
 from polar_high import Problem
 
-from flextool.engine import _delay, _dc_power_flow
+from flextool.engine.model import _delay
+from flextool.engine.model import _dc_power_flow
 
 
 # ====================================================================

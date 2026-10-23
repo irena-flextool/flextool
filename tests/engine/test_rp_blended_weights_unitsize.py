@@ -1,7 +1,7 @@
 """RP-blended-weights inter-period balance must be var-unit scaled.
 
 Regression guard for a mis-scaling in
-``model.py``'s ``rp_inter_period_balance`` / ``rp_inter_period_cyclic``
+``model/core.py``'s ``rp_inter_period_balance`` / ``rp_inter_period_cyclic``
 RHS: the seasonal-drift term ``(v_state_last - v_state_rp_start)`` was
 multiplied by ``p_state_unitsize`` even though the LHS
 ``v_state_inter`` delta — and both drift vars — are already in

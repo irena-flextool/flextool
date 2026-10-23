@@ -10,7 +10,7 @@ weighting math is supposed to do at the LP-objective level:
     total_cost = Σ_d (RP_cost_d × RP_weight_d).
 
 polar_high's RP machinery surfaces this through the ``op_factor`` term in
-``flextool/model.py`` (the .mod's ``Σ … · step_duration · rp_cost_weight
+``flextool/model/core.py`` (the .mod's ``Σ … · step_duration · rp_cost_weight
 · inflation_op / period_share``).  Inflation_op (set per period) acts
 as the period weight: scaling it by ``Y`` scales every operational
 **and** investment cost contribution by ``Y``, so the LP objective is

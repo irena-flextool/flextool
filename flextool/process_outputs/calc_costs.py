@@ -152,7 +152,7 @@ def compute_costs(par, s, v, r) -> None:
     # multiplying the annualized physical emissions by price, which would
     # drop the per-step rp weighting).
     # Option (A): weight the CO2 *cost* by pdt_branch_weight (the LP's CO2
-    # price term carries op_factor — model.py §4).  The physical CO2 tonnes
+    # price term carries op_factor — model/core.py §4).  The physical CO2 tonnes
     # (group_co2_d / process_emissions_co2_d above) stay UNWEIGHTED.
     r.group_cost_co2_dt = r.group_co2_dt.mul(par.group_co2_price).mul(par.timestep_weight, axis=0)
     r.group_cost_co2_dt = weight_dt_by_branch(r.group_cost_co2_dt, _pdt_bw)
@@ -218,7 +218,7 @@ def compute_costs(par, s, v, r) -> None:
         period_costs.index = cost.index
         r.cost_startup_dt[valid_processes] = cost.mul(period_costs).mul(par.timestep_weight, axis=0)
     # Option (A): weight the startup *cost* by pdt_branch_weight (the LP's
-    # startup_factor carries it — model.py §startup).  The physical start
+    # startup_factor carries it — model/core.py §startup).  The physical start
     # count (r.process_startup_dt above) stays UNWEIGHTED.
     r.cost_startup_dt = weight_dt_by_branch(r.cost_startup_dt, _pdt_bw)
 

@@ -70,7 +70,7 @@ def compute_slacks(par, s, v, r) -> None:
     r.costPenalty_node_state_upDown_dt = pd.concat([upward_node_penalty, downward_node_penalty], axis=1, keys=['up', 'down'], names=['upDown'])
     r.costPenalty_node_state_upDown_dt = r.costPenalty_node_state_upDown_dt.reorder_levels([1, 0], axis=1)
     # Option (A): weight the node-state slack *penalty* by pdt_branch_weight
-    # (the LP's vq_up/down term carries op_factor — model.py §obj).  The raw
+    # (the LP's vq_up/down term carries op_factor — model/core.py §obj).  The raw
     # physical slack (upward/downward_node_slack_dt above) stays UNWEIGHTED.
     r.costPenalty_node_state_upDown_dt = weight_dt_by_branch(r.costPenalty_node_state_upDown_dt, _pdt_bw)
     r.costPenalty_node_state_upDown_d = r.costPenalty_node_state_upDown_dt.groupby(level='period').sum()

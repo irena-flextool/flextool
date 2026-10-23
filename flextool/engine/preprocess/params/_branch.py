@@ -616,7 +616,7 @@ def dt_non_anticipativity_lf(workdir: Path | None,
     * unset window  -> the legacy ``realized_dispatch ∪ fix_storage``
       union (byte-identical to prior behaviour);
     * empty window  -> a header-only (present-but-empty) CSV -> the
-      model's ``if dtna.height == 0: return`` (``model.py``) skips ALL
+      model's ``if dtna.height == 0: return`` (``model/core.py``) skips ALL
       four families -> operations free from t0;
     * curated window -> those periods' timesteps ∩ ``steps_in_use``.
 
@@ -1166,7 +1166,7 @@ def d_leaf_lf(
     is well-defined and the per-leaf invest sums are disjoint.
 
     Consumed by the per-path total caps
-    (``maxInvest/maxDivest_entity_total_path`` — ``model.py`` — and the
+    (``maxInvest/maxDivest_entity_total_path`` — ``model/core.py`` — and the
     divest ``maxDivestGroup_entity_total_path`` — ``_cumulative_invest.py``):
     the leaf column joins into each cap row's key so a total cap applies
     once per scenario path, never cross-scenario double-counting.

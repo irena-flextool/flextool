@@ -54,7 +54,7 @@ def _solve(tpf, alt: str, penalty: float | None):
 
 
 def _penalty(step) -> float:
-    from flextool.engine._reserve import reserve_penalty
+    from flextool.engine.model._reserve import reserve_penalty
 
     pen = utf8(reserve_penalty(step.flex_data).frame).filter(
         (pl.col("r") == "rx") & (pl.col("ud") == "up")
@@ -101,7 +101,7 @@ def test_reserve_penalty_densifies_partial_param() -> None:
     """``reserve_penalty`` left-joins the authored Param onto
     ``reserve_upDown_group``: authored rows keep their value, the others
     get the default, and a missing Param means the default everywhere."""
-    from flextool.engine._reserve import reserve_penalty
+    from flextool.engine.model._reserve import reserve_penalty
 
     rug = pl.DataFrame({"r": ["a", "b"], "ud": ["up", "down"],
                         "g": ["g1", "g1"]})

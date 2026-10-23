@@ -149,7 +149,7 @@ def _build_dc_2bus(
         node_reference_angle=ref,
         p_connection_susceptance=p_susc,
         # The reverse-flow auxiliary ``v_flow_back`` is now declared by
-        # model.py over the union of method_2way_1var_off arcs (DC + non-DC),
+        # model/core.py over the union of method_2way_1var_off arcs (DC + non-DC),
         # driven by this set.  The DC arc is method_2way_1var_off, so it
         # must appear here for the shared Var (and the maxFlow_back cap) to
         # be emitted.
@@ -183,7 +183,7 @@ def test_b09_v_angle_bounds_and_back_flow_capacity():
     names = set(pb.cstr_names())
     assert "dc_flow_eq" in names
     assert "dc_reference_angle_eq" in names
-    # The back-flow capacity cap is now emitted by model.py as
+    # The back-flow capacity cap is now emitted by model/core.py as
     # ``maxFlow_back`` over the full method_2way_1var_off arc set (the
     # DC-only ``maxToSink_back`` was folded into it).
     assert "maxFlow_back" in names

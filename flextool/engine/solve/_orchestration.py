@@ -2100,7 +2100,7 @@ def _drive_cascade(
         build_handoff_from_solution,
         load_flextool,
     )
-    from flextool.engine.model import build_flextool
+    from flextool.engine.model.core import build_flextool
     from flextool.engine.solve._solver_dispatch import apply_data_solver_options
     from flextool.engine.output._writer import (
         OutputWriterState,

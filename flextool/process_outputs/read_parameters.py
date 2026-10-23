@@ -1098,7 +1098,7 @@ def read_parameters(
     # reserve_upDown_group_penalty — Series with MultiIndex (reserve,
     # upDown, node_group); the same dense penalty the LP objective uses
     # (authored penalty_reserve, else the default).
-    from flextool.engine._reserve import reserve_penalty
+    from flextool.engine.model._reserve import reserve_penalty
     reserve_pen = reserve_penalty(flex_data)
     if reserve_pen is not None and reserve_pen.frame.height > 0:
         p.reserve_upDown_group_penalty = series_with_multi_index(
@@ -1236,7 +1236,7 @@ def read_parameters(
     # LP uses in the reserve balances and the penalty (largest possible
     # requirement; the reservation for timeseries groups).  The reserve
     # shortfall in MW and its penalty cost are rebuilt with it.
-    from flextool.engine._reserve import reserve_shortfall_scale
+    from flextool.engine.model._reserve import reserve_shortfall_scale
     p.reserve_upDown_group_shortfall_scale = _pdtX_multi_col(
         reserve_shortfall_scale(flex_data), solve_name=solve_name,
         col_dims=("r", "ud", "g"),
@@ -1455,7 +1455,7 @@ def read_parameters(
         getattr(flex_data, "pd_branch_weight", None), solve_name=solve_name,
     )
     # Option (A): the per-(d, t) branch weight the LP objective folds into
-    # ``op_factor`` / ``startup_factor`` (model.py).  ``calc_slacks`` /
+    # ``op_factor`` / ``startup_factor`` (model/core.py).  ``calc_slacks`` /
     # ``calc_costs`` apply it to every per-(d, t) operational + penalty cost
     # term so ``costs__dt.csv`` and the ``Total cost (calculated)`` summary
     # equal the probability-weighted LP objective.  Absent (deterministic)

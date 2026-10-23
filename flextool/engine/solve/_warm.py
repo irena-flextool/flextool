@@ -736,7 +736,7 @@ def _apply_warm_updates(warm: WarmProblem,
                     # longer materialised on FlexData; build the cross-
                     # join on demand from the constituents so warm RHS
                     # alignment still works.
-                    from flextool.engine._pdt_join import (
+                    from flextool.engine.model._pdt_join import (
                         compute_pss_dt,
                         compute_nodeBalance_dt,
                         compute_nodeState_dt,
@@ -814,7 +814,7 @@ def _apply_warm_updates(warm: WarmProblem,
         # whose only effect is on a code path that the engine's
         # source-tracker walks (e.g. p_step_duration on dispatch
         # rolls).  But many "mutable" Params reach the LP through
-        # composite-anonymous-Param construction in flextool/model.py
+        # composite-anonymous-Param construction in flextool/model/core.py
         # (Sum-collapse: the new Param is built fresh without a
         # ``name=`` or ``_sources=`` link to the origin Param), and
         # for those the side-table is empty even though the LP DOES
@@ -867,10 +867,10 @@ def _build_warm_problem(
         by :func:`flextool.engine.scaling.recommended_highs_options`.
 
     Late-imports ``build_flextool`` to avoid a build-time cycle between
-    this module and ``model.py``.
+    this module and ``model/core.py``.
     """
     from flextool.engine.solve._solver_dispatch import apply_data_solver_options
-    from flextool.engine.model import build_flextool
+    from flextool.engine.model.core import build_flextool
 
     pb = Problem()
     build_flextool(pb, data, scale_the_objective=scale_the_objective)

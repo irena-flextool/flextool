@@ -2,7 +2,7 @@
 
 This subpackage is **flextool-specific** — it knows the on-disk layout
 of flextool's ``input/`` + ``solve_data/`` CSVs (``flex_data.py``) and the
-shape of flextool's optimization model (``model.py``). The
+shape of flextool's optimization model (``model/core.py``). The
 ``polar_high`` package itself knows nothing of flextool.
 """
 
@@ -87,7 +87,7 @@ _install_polar_high_determinism()
 from flextool.engine.preprocess.flex_data import (  # noqa: E402  # see determinism note above
     FlexData, load_flextool,
 )
-from flextool.engine.model import build_flextool  # noqa: E402  # see determinism note above
+from flextool.engine.model.core import build_flextool  # noqa: E402  # see determinism note above
 from flextool.engine.solve.chain import run_chain, ChainStep  # noqa: E402  # see determinism note above
 from flextool.engine.input._input_source import FlexInputSource, CsvSource, InputSource  # noqa: E402  # see determinism note above
 from flextool.engine.input._spinedb_reader import SpineDbReader  # noqa: E402  # see determinism note above

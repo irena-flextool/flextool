@@ -1131,7 +1131,7 @@ def resolve_param_shape(
     ``index_name`` so the DB stores the silent ``"x"`` label.  Without
     this probing the resolver returns ``None`` and ``p_co2_price`` is
     silently dropped while the feature gate (driven by topology, not
-    data) stays active — :func:`flextool.engine.model.build_flextool`
+    data) stays active — :func:`flextool.engine.model.core.build_flextool`
     then skips the CO2 cost term with a warning.
 
     Returns ``None`` only when the parameter has no explicit rows AND
@@ -1710,7 +1710,7 @@ def broadcast_to_period(
         # cross-joining with the active solve's period axis.  Mirrors
         # the legacy ``_entity_period_scalar`` semantic (one
         # (entity, d, value) row per active period) so eager consumers
-        # like :mod:`flextool.engine._cumulative_invest` (which
+        # like :mod:`flextool.engine.model._cumulative_invest` (which
         # does ``cap_param.frame.select("g", "d")``) keep working.
         #
         # Phase E.1's "scalar stays (entity,)" optimisation was designed
@@ -1779,7 +1779,7 @@ def promote_param_to_dt(
     t)``).  Polar_high algebra handles the broadcast lazily at
     constraint emission, but a small number of consumers in the cascade
     do eager ``.frame.join(..., on=["x", "d", "t"], how="left")`` style
-    densification (e.g. ``model.py`` flow_upper_rhs availability fold,
+    densification (e.g. ``model/core.py`` flow_upper_rhs availability fold,
     ``_region_filter.py`` half-flow injection).  Those consumers need a
     (entity, d, t)-shaped LazyFrame on the right-hand side; this helper
     gives it to them without forcing the source Param to materialise

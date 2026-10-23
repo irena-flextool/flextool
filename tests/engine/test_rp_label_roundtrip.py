@@ -3,7 +3,7 @@
 
 Root cause (fixed in ``_axis_enums._FLEXDATA_SWEEP_SKIP_COLUMNS``): the RP
 base-period / rep-start relations name their label columns ``"b"`` (base
-period start) and ``"r"`` (rep-block start) so ``model.py``'s inter-period
+period start) and ``"r"`` (rep-block start) so ``model/core.py``'s inter-period
 closure wiring can join on the ``.mod`` symbols — but those labels are
 TIMESTEP tokens (``t0001`` …), NOT branch / rep-axis tokens.  The
 end-of-load ``cast_flexdata_axes`` sweep resolves ``"b" → branch`` and

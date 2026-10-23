@@ -948,7 +948,7 @@ def _compute_rp_frames(
       ``rp_base_chain`` accumulates only WITHIN-period predecessor
       edges, and ``rp_base_first`` / ``rp_base_last`` carry one row per
       period plus a ``period`` column so the downstream cyclic-closure
-      constraint (``model.py``'s ``rp_inter_period_cyclic``) can pair
+      constraint (``model/core.py``'s ``rp_inter_period_cyclic``) can pair
       each period's first base against its OWN period's last base.
 
     ``per_period_inputs`` is required when ``variant == "within_period"``
@@ -1014,7 +1014,7 @@ def _compute_rp_frames(
         )
         # ``period`` column is the period that owns this chain edge /
         # endpoint; consumed by the FlexData loader and propagated as
-        # ``d`` so ``model.py``'s ``rp_inter_period_cyclic`` can pair
+        # ``d`` so ``model/core.py``'s ``rp_inter_period_cyclic`` can pair
         # endpoints per period.
         out["rp_base_chain.csv"] = _to_utf8_frame(
             ("base_start", "prev_base_start", "period"), wp_chain_rows,

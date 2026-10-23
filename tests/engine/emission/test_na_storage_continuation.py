@@ -24,7 +24,7 @@ targets are untouched.)
 
 Post-fix, ``period_branch_full`` gains the continuation pairs and
 ``period_in_use`` gains ``p2035_high`` / ``p2040_low`` / ``p2040_high``.  The
-raw ``db_pairs`` (``model.py`` NA dispatch: ``d != b``, ``b ∈
+raw ``db_pairs`` (``model/core.py`` NA dispatch: ``d != b``, ``b ∈
 period_in_use``) anchors every forecast to the trunk; the re-ground turns
 each anchor group into a FORECAST star keyed on the lexicographically
 smallest forecast (``p2035_high`` / ``p2040_high`` — ``high`` < ``low``),

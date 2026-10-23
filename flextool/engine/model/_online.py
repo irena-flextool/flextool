@@ -12,10 +12,10 @@ import polars as pl
 from polar_high import Lag, Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
-from flextool.engine._model_common import _availability_factor, _capped_arcs, _coef_factor, _entity_rows, _indirect_sum_arcs, _var_view
+from flextool.engine.model._common import _availability_factor, _capped_arcs, _coef_factor, _entity_rows, _indirect_sum_arcs, _var_view
 
 if TYPE_CHECKING:
-    from flextool.engine.model import _Build
+    from flextool.engine.model.core import _Build
 
 
 def add_variables(b: "_Build") -> None:

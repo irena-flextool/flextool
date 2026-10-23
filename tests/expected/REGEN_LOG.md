@@ -253,7 +253,7 @@ storage handoff path (commit forthcoming):
    docstring already documented the intended semantics; only the
    implementation diverged.
 
-2. `flextool/engine_polars/model.py:805-826` (roll_continue start binding) —
+2. `flextool/engine_polars/model/core.py:805-826` (roll_continue start binding) —
    gate widened from `storage_bind_forward_only` to all `nodeState` nodes,
    matching v3.32.0 .mod:2201. Previously the constraint was silently
    skipped for `bind_within_timeset` storages (e.g. battery in this

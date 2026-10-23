@@ -5584,7 +5584,7 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
       :func:`flextool.engine.preprocess.params._direct.p_commodity_unitsize_from_source`
       (``_entity_scalar_explicit``) so the schema default is dropped;
       the price-ladder consumer in
-      :func:`flextool.engine._commodity_ladder._commodity_unitsize_param`
+      :func:`flextool.engine.model._commodity_ladder._commodity_unitsize_param`
       substitutes ``1.0`` internally when the explicit Param is absent.
       The description is rewritten to name the gating feature
       (``commodity.price_method = price_ladder_*``) and explain the
@@ -5811,7 +5811,7 @@ def _migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff(db) -> None:
     role: it scales the conversion of input → output energy in the
     unit dispatch / node-balance / ``conversion_indirect`` equations
     (see flextool.mod:2557-2580 and the engine dispatch path
-    in ``model.py`` §F.4).
+    in ``model/core.py`` §F.4).
 
     Pure name change: every other column on the
     ``parameter_definition`` row (description, default value of 1.0,

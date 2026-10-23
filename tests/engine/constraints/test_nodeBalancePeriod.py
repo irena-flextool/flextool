@@ -290,7 +290,7 @@ def test_nodeBalancePeriod_excludes_nodeState_nodes():
 # from ``nodeBalance`` ALONE, dropping every ``balance_within_period`` node,
 # so a period node that is the SOURCE on an arc (e.g. Rivendell GAS → gas
 # plant) had NO source term in its period row → the constraint was VACUOUS
-# and the source drew for free.  The model.py assembly was correct; the
+# and the source drew for free.  The model/core.py assembly was correct; the
 # fixtures simply never reached it.
 #
 # This builder drains the period node ``G`` as a SOURCE: a conversion
@@ -499,7 +499,7 @@ def test_nodeBalancePeriod_source_term_binds_without_it_vacuous():
 def test_nodeBalancePeriod_source_term_slope_scaled():
     """The SOURCE term is slope-scaled (``v_flow · unitsize · slope``);
     the SINK term into B is not.  This pins the ``* d.p_slope`` factor that
-    the source-side branch of ``nodeBalancePeriod_eq`` applies (model.py
+    the source-side branch of ``nodeBalancePeriod_eq`` applies (model/core.py
     line ~881) — distinct from the sink-side ``flow_to_n`` term which omits
     it.
 

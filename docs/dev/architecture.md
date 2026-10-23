@@ -274,14 +274,14 @@ Same `build_flextool` body, three wrappers from `polar_high`:
 `objective_terms(b)` summed into the objective. Optional features with
 their own variables live in their own modules (`_online`, `_unit_floors`,
 `_reserve`, `_group_slack`, `_cumulative_invest`, `_commodity_ladder`,
-`_dc_power_flow`, `_delay`, `_non_anticipativity`). The `model.py` module
+`_dc_power_flow`, `_delay`, `_non_anticipativity`). The `model/core.py` module
 docstring maps every variable and equation family; details in
 [engine.md](engine.md#lp-build-modelpy-and-the-feature-modules).
 
 `_prepare` sets one `has_*` flag per feature on the `_Build` context from
 its switch field on `FlexData`; each family function returns early when
 its flag is off. Required-field lists are module-level tuples in
-`model.py`:
+`model/core.py`:
 
 | Flag | Switch field | Required tuple | Adds |
 |---|---|---|---|
@@ -349,10 +349,10 @@ for any downstream phase.
 
 ```
 __init__.py                       Public re-exports (table above)
-model.py                          build_flextool — LP build (table of
+model/core.py                          build_flextool — LP build (table of
                                   contents) + core equation families
-_online.py, _reserve.py, ...      LP feature modules (map: model.py docstring)
-_model_common.py                  Helpers shared by the LP modules
+_online.py, _reserve.py, ...      LP feature modules (map: model/core.py docstring)
+_common.py                  Helpers shared by the LP modules
 flex_data.py                      FlexData dataclass + loader entry point
 chain.py                          run_chain + ChainStep dataclass
 _orchestration.py                 run_orchestration / run_chain_from_db,

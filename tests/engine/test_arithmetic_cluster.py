@@ -493,7 +493,7 @@ def test_p_state_unitsize_inmemory_empty_nodestate_returns_none():
 def test_p_unitsize_inmemory_process_absent_from_cascade_defaults(caplog):
     """Regression — a process present in *pss* but absent from the
     entity-unitsize cascade (the structural set / entity-vocabulary
-    divergence that crashed ``model.py`` with ``Expr * NoneType``) must
+    divergence that crashed ``model/core.py`` with ``Expr * NoneType``) must
     NOT empty the projection.  It is covered by the canonical 1000.0
     default so ``p_unitsize`` is complete and never None for a non-empty
     pss, and a warning is emitted.
@@ -655,7 +655,7 @@ def test_p_process_source_conversion_flow_coeff_inmemory_zero_drop():
 
 def test_p_process_source_conversion_flow_coeff_inmemory_all_default_returns_none():
     """When every coefficient equals 1.0, the helper emits no Param —
-    model.py's gate falls through.
+    model/core.py's gate falls through.
     """
     src = InMemoryReader(
         entities={

@@ -623,7 +623,7 @@ def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False,
 # Per-field column protection for the end-of-load FlexData → Enum
 # sweep.  The representative-period base-period / rep-start relations
 # name their label columns ``"b"`` (base-period start) and ``"r"``
-# (rep-block start) so ``model.py``'s inter-period-closure wiring can
+# (rep-block start) so ``model/core.py``'s inter-period-closure wiring can
 # join on the ``.mod`` symbols — but those labels are TIMESTEP tokens
 # (``t0001`` …), NOT branch / rep-axis tokens.  The synonym table maps
 # ``"b" → branch`` and treats ``"r"`` as the (rep) axis, so a blind
@@ -634,7 +634,7 @@ def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False,
 # constraints (``rp_inter_period_cyclic`` / ``_balance``) are dropped
 # and the LP solves an under-constrained, too-cheap problem.  These
 # columns are left as the reader produced them (plain string labels);
-# ``model.py`` casts them explicitly against the correct timestep /
+# ``model/core.py`` casts them explicitly against the correct timestep /
 # base-period vocabulary at each use site (model._eq_rp_storage_chain).  Mirrors
 # how coarse-block frames dodge the identical ``b``/branch collision by
 # using ``"bk"`` for the block axis.

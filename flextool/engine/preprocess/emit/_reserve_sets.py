@@ -30,7 +30,7 @@ Output CSVs (7 total):
 Reuse note
 ----------
 
-``flextool.engine._reserve`` consumes these CSVs as RHS / domain
+``flextool.engine.model._reserve`` consumes these CSVs as RHS / domain
 inputs (``prundt`` for v_reserve, ``pdtReserve_upDown_group_reservation``
 for the balance constraint, etc.) but does not derive them — it is a
 constraint-builder that runs *after* preprocessing.  No code is shared

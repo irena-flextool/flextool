@@ -104,7 +104,7 @@ def _rename_invest_columns(sol: "Solution") -> None:
     ``v_divest[<entity>,<period>]`` family.  Since the entity sets for
     ``_p`` and ``_n`` are disjoint (one is process-only, the other
     node-only, by construction in
-    ``flextool/engine/model.py``), the union of the renamed
+    ``flextool/engine/model/core.py``), the union of the renamed
     columns is itself a well-formed ``v_invest`` family.
 
     ``passColName`` is invoked per column-id derived from the polars

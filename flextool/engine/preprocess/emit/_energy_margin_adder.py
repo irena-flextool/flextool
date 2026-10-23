@@ -77,7 +77,7 @@ node) keep their original ``value`` string verbatim.
 Known limitation — ``no_inflow`` nodes and group accounting
 -----------------------------------------------------------
 The core ``nodeBalance_eq`` reads ``p_inflow`` DIRECTLY from
-``pdtNodeInflow.csv`` (``model.py`` ~L1640), so the added demand IS
+``pdtNodeInflow.csv`` (``model/core.py`` ~L1640), so the added demand IS
 served for every node type, including one set ``inflow_method="no_inflow"``.
 BUT the ``p_positive_inflow`` / ``p_negative_inflow`` split
 (``_period_params._derive_positive_negative_inflow``) forces

@@ -206,7 +206,7 @@ def test_forward_only_matches_no_inter_period_reference() -> None:
     cyclic-closure constraint (which would force a 2.0 slack cost)
     must NOT have been emitted for the forward_only node.  This is
     the assertion gate for the Phase D bind_set_rp filter on
-    ``rp_inter_period_cyclic`` (model.py — the one constraint that
+    ``rp_inter_period_cyclic`` (model/core.py — the one constraint that
     intentionally stays scoped to ``storage_bind_within_solve_blended_weights``
     rather than the ``nodeState_rp`` union).
     """

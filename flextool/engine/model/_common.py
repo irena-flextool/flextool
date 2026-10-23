@@ -1,4 +1,4 @@
-"""Small helpers shared by ``model.py`` and the model feature modules.
+"""Small helpers shared by ``model/core.py`` and the model feature modules.
 
 Frame utilities (row checks, Utf8 join keys, renamed variable views), the
 arc classes of the capacity constraints, and the densified per-entity

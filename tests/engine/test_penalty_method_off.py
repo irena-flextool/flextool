@@ -62,7 +62,7 @@ def _build(nodes: list[str], off: list[str] | None) -> FlexData:
     )
     if off is not None:
         # ``off == []`` deliberately builds a height-0 frame so the empty-set
-        # guard in model.py (``penalty_off.height > 0``) is exercised.
+        # guard in model/core.py (``penalty_off.height > 0``) is exercised.
         kw["nodeBalance_penalty_off"] = pl.DataFrame(
             {"n": off}, schema={"n": pl.Utf8})
     return FlexData(**kw)

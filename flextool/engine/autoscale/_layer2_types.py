@@ -94,22 +94,22 @@ class CstrFamily:
 
 VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ── Process / connection flow (dispatched per timestep).
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "v_flow": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
 
     # ── Storage / nodeBalance slacks.  Carry ENERGY directly (no
     # unitsize multiplier on the column).
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "vq_state_up": VarFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "vq_state_down": VarFamily(QuantityType.ENERGY),
 
     # ── Storage state (per-step, per-block).  ENERGY column.
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "v_state": VarFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "v_state_inter": VarFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "v_state_rp_start": VarFamily(QuantityType.ENERGY),
 
     # ── Unit-commitment families.  Column counts a number of units
@@ -117,59 +117,59 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ``p_unitsize`` (or ``v_unitsize`` from process_existing_count)
     # turns the row into POWER as needed.  Integer variants are
     # mathematically the same column type.
-    # flextool/engine/_online.py add_variables
+    # flextool/engine/model/_online.py add_variables
     "v_online_linear": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/_online.py add_variables
+    # flextool/engine/model/_online.py add_variables
     "v_startup_linear": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/_online.py add_variables
+    # flextool/engine/model/_online.py add_variables
     "v_shutdown_linear": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/_online.py add_variables
+    # flextool/engine/model/_online.py add_variables
     "v_online_integer": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/_online.py add_variables
+    # flextool/engine/model/_online.py add_variables
     "v_startup_integer": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/_online.py add_variables
+    # flextool/engine/model/_online.py add_variables
     "v_shutdown_integer": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
 
     # ── Investment / divestment counts.  DIMENSIONLESS column whose
     # matrix coefficient ``p_unitsize`` (process / connection) or
     # ``p_state_unitsize`` (node) sets the row's effective POWER /
     # ENERGY type.
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "v_invest_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "v_divest_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "v_invest_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "v_divest_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
 
     # ── Reserve.  DIMENSIONLESS column; ``p_unitsize`` multiplier
     # carries the per-row POWER coefficient.
-    # flextool/engine/_reserve.py add_variables
+    # flextool/engine/model/_reserve.py add_variables
     "v_reserve": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/_reserve.py add_variables
+    # flextool/engine/model/_reserve.py add_variables
     "vq_reserve": VarFamily(QuantityType.POWER),
 
     # ── Commodity ladder.  v_trade is DIMENSIONLESS; row coef
     # ``unitsize`` turns it into ENERGY for the ladder caps and the
     # balance row.
-    # flextool/engine/_commodity_ladder.py add_variables
+    # flextool/engine/model/_commodity_ladder.py add_variables
     "v_trade": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="unitsize"),
 
     # ── Group-level slacks.  Direct physical units.
-    # flextool/engine/_group_slack.py add_variables
+    # flextool/engine/model/_group_slack.py add_variables
     "vq_capacity_margin": VarFamily(QuantityType.POWER),
-    # flextool/engine/_group_slack.py add_variables
+    # flextool/engine/model/_group_slack.py add_variables
     "vq_inertia": VarFamily(QuantityType.INERTIA),
-    # flextool/engine/_group_slack.py add_variables
+    # flextool/engine/model/_group_slack.py add_variables
     "vq_non_synchronous": VarFamily(QuantityType.POWER),
 
     # ── DC power flow.
     # ``v_angle`` (radians).  Dimensionless in our taxonomy.
-    # flextool/engine/_dc_power_flow.py add_variables
+    # flextool/engine/model/_dc_power_flow.py add_variables
     "v_angle": VarFamily(QuantityType.DIMENSIONLESS),
     # ``v_flow_back`` mirrors v_flow on the reverse direction.
-    # flextool/engine/model.py _declare_variables
+    # flextool/engine/model/core.py _declare_variables
     "v_flow_back": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
 
     # ── Benders (Option C) hand-built master families.  The hand master
@@ -208,84 +208,84 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
 
 CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Node balance (the central energy equation) — ENERGY.
-    # flextool/engine/model.py _eq_node_balance
+    # flextool/engine/model/core.py _eq_node_balance
     "nodeBalance_eq": CstrFamily(QuantityType.ENERGY),
     # Per-period energy balance for balance_within_period nodes — ENERGY.
-    # flextool/engine/model.py _eq_node_balance_period
+    # flextool/engine/model/core.py _eq_node_balance_period
     "nodeBalancePeriod_eq": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_block_coupling
+    # flextool/engine/model/core.py _eq_block_coupling
     "nodeBalanceBlock_eq": CstrFamily(QuantityType.ENERGY),
 
     # ── Storage state max / state ladder.  ENERGY.
-    # flextool/engine/model.py _eq_max_state
+    # flextool/engine/model/core.py _eq_max_state
     "maxState": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_rp_storage_chain
+    # flextool/engine/model/core.py _eq_rp_storage_chain
     "maxState_rp_start": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_block_coupling
+    # flextool/engine/model/core.py _eq_block_coupling
     "stateConstantWithinBlock_eq": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_rp_storage_chain
+    # flextool/engine/model/core.py _eq_rp_storage_chain
     "rp_inter_period_balance": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_rp_storage_chain
+    # flextool/engine/model/core.py _eq_rp_storage_chain
     "rp_inter_period_cyclic": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_rp_storage_chain
+    # flextool/engine/model/core.py _eq_rp_storage_chain
     "rp_inter_period_max_state": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_storage_start_binding
+    # flextool/engine/model/core.py _eq_storage_start_binding
     "storage_state_start_binding": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_storage_start_binding_cyclic
+    # flextool/engine/model/core.py _eq_storage_start_binding_cyclic
     "storage_state_start_binding_cyclic_period": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_storage_reference_value
+    # flextool/engine/model/core.py _eq_storage_reference_value
     "storage_state_solve_horizon_reference_value": CstrFamily(QuantityType.ENERGY),
 
     # ── Flow caps from process side.  DIMENSIONLESS (capacity coefficient).
     # The cap is a fraction × existing_count; the row's effective type
     # lives in the coefficient, not the RHS.
-    # flextool/engine/model.py _eq_max_flow
+    # flextool/engine/model/core.py _eq_max_flow
     "maxFlow": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/model.py _eq_max_flow
+    # flextool/engine/model/core.py _eq_max_flow
     "maxFlow_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
     # Reverse-flow capacity cap on v_flow_back for method_2way_1var_off
-    # arcs (DC + non-DC).  flextool/engine/model.py (maxFlow_back).
+    # arcs (DC + non-DC).  flextool/engine/model/core.py (maxFlow_back).
     "maxFlow_back": CstrFamily(QuantityType.DIMENSIONLESS),
     # Indirect-unit capacity on the SUM of output flows (+ its neg-cap
-    # ``≥`` twin).  flextool/engine/model.py (_eq_max_output_sum).
+    # ``≥`` twin).  flextool/engine/model/core.py (_eq_max_output_sum).
     "maxOutputSum": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxOutputSum_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
     # Legacy name for the DC-only back-flow cap; the cap is now emitted as
     # ``maxFlow_back`` over the full arc set.  Retained for back-compat.
     "maxToSink_back": CstrFamily(QuantityType.DIMENSIONLESS),
     # Ramp constraints, prefix-matched: ramp_<side>_<dir>_constraint.
-    # flextool/engine/model.py _eq_ramp
+    # flextool/engine/model/core.py _eq_ramp
     "ramp": CstrFamily(QuantityType.DIMENSIONLESS),
 
     # ── Investment caps — entity scope.
-    # flextool/engine/model.py _eq_invest_max_units
+    # flextool/engine/model/core.py _eq_invest_max_units
     "maxInvest_var_bound": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model.py _eq_invest_max_units
+    # flextool/engine/model/core.py _eq_invest_max_units
     "maxDivest_var_bound": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model.py _eq_invest_max_units
+    # flextool/engine/model/core.py _eq_invest_max_units
     "maxInvest_var_bound_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_invest_max_units
+    # flextool/engine/model/core.py _eq_invest_max_units
     "maxDivest_var_bound_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_invest_period_caps
+    # flextool/engine/model/core.py _eq_invest_period_caps
     "maxInvest_entity_period_p": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model.py _eq_invest_period_caps
+    # flextool/engine/model/core.py _eq_invest_period_caps
     "maxInvest_entity_period_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_invest_period_caps
+    # flextool/engine/model/core.py _eq_invest_period_caps
     "maxDivest_entity_period_p": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model.py _eq_invest_period_caps
+    # flextool/engine/model/core.py _eq_invest_period_caps
     "maxDivest_entity_period_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_invest_total_caps
+    # flextool/engine/model/core.py _eq_invest_total_caps
     "maxInvest_entity_total": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model.py _eq_invest_total_caps
+    # flextool/engine/model/core.py _eq_invest_total_caps
     "maxInvest_entity_total_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model.py _eq_invest_total_caps
+    # flextool/engine/model/core.py _eq_invest_total_caps
     "maxDivest_entity_total": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model.py _eq_invest_total_caps
+    # flextool/engine/model/core.py _eq_invest_total_caps
     "maxDivest_entity_total_n": CstrFamily(QuantityType.ENERGY),
 
     # Slice D per-path total caps (design §7.2/§14) — one cap row per
     # (entity, scenario-leaf).  Emitted by
-    # ``_eq_invest_total_caps`` (model.py) when >1 scenario leaf exists
+    # ``_eq_invest_total_caps`` (model/core.py) when >1 scenario leaf exists
     # (recourse); the leaf-suffixed sums replace the cross-scenario
     # ``over=("d",)`` total.  Registered EXACTLY (``_path`` is not a
     # known ``lookup_cstr`` suffix, so a missing row silently reverts to
@@ -381,7 +381,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
 
     # ── User-defined constraints: composite LHS, RHS in caller's
     # coordinates.  Layer 2 skips per-row scaling.
-    # flextool/engine/model.py _eq_user_constraints (process_constraint_equal / _less_than / _greater_than)
+    # flextool/engine/model/core.py _eq_user_constraints (process_constraint_equal / _less_than / _greater_than)
     "process_constraint_equal": CstrFamily(None),
     "process_constraint_less_than": CstrFamily(None),
     "process_constraint_greater_than": CstrFamily(None),
@@ -389,41 +389,41 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Node-balance fix (used by manual demand patching).  Zero RHS
     # in the most common case; treat as DIMENSIONLESS so the row
     # coefficient is the rescaled quantity.
-    # flextool/engine/model.py _eq_node_balance_fix_quantity
+    # flextool/engine/model/core.py _eq_node_balance_fix_quantity
     "node_balance_fix_quantity_eq_lower": CstrFamily(None),
-    # flextool/engine/model.py _eq_storage_usage_fix
+    # flextool/engine/model/core.py _eq_storage_usage_fix
     "node_storage_usage_fix_le": CstrFamily(None),
 
     # ── Conversion (efficiency-balanced flow row).
-    # flextool/engine/model.py _eq_conversion
+    # flextool/engine/model/core.py _eq_conversion
     "conversion_indirect": CstrFamily(QuantityType.ENERGY),
 
     # ── CO2 caps — EMISSION_MASS.
-    # flextool/engine/model.py _eq_co2_max_period
+    # flextool/engine/model/core.py _eq_co2_max_period
     "co2_max_period": CstrFamily(QuantityType.EMISSION_MASS),
-    # flextool/engine/model.py _eq_co2_max_total
+    # flextool/engine/model/core.py _eq_co2_max_total
     "co2_max_total": CstrFamily(QuantityType.EMISSION_MASS),
 
     # ── Unit-commitment (online / startup / shutdown / minimum times).
     # All DIMENSIONLESS — they bound counts.
-    # flextool/engine/_online.py (maxOnline_<sfx>)
+    # flextool/engine/model/_online.py (maxOnline_<sfx>)
     "maxOnline": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/_online.py (maxStartup_<sfx>)
+    # flextool/engine/model/_online.py (maxStartup_<sfx>)
     "maxStartup": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/_online.py (maxShutdown_<sfx>)
+    # flextool/engine/model/_online.py (maxShutdown_<sfx>)
     "maxShutdown": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/_online.py (online__startup_<sfx>)
+    # flextool/engine/model/_online.py (online__startup_<sfx>)
     "online__startup": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/_online.py (online__shutdown_<sfx>)
+    # flextool/engine/model/_online.py (online__shutdown_<sfx>)
     "online__shutdown": CstrFamily(QuantityType.DIMENSIONLESS),
     # OC1 #1 sub-slice (b) — separate_dispatch sibling v_online PIN
     # (_online.py online_fix_eq_<linear|integer>; the resolver strips the UC
     # suffix to this base).  Pins the dimensionless unit-count v_online to
     # the parent's committed schedule.
     "online_fix_eq": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/_online.py (maxFlow_online_<sfx>)
+    # flextool/engine/model/_online.py (maxFlow_online_<sfx>)
     "maxFlow_online": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/_online.py
+    # flextool/engine/model/_online.py
     # (maxOutputSum_online_<sfx>)
     "maxOutputSum_online": CstrFamily(QuantityType.DIMENSIONLESS),
     # _unit_floors.py (minFlow_minload_<sfx>: per-unit floor)
@@ -435,52 +435,52 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # floor) per unit / per arc; unit-count flow units
     "minFlow_reserve": CstrFamily(QuantityType.DIMENSIONLESS),
     "minFlow_reserve_arc": CstrFamily(QuantityType.DIMENSIONLESS),
-    # model.py _eq_min_input_share: homogeneous input-mixing row
+    # model/core.py _eq_min_input_share: homogeneous input-mixing row
     # (input_share_min) in unit-count flow units
     "minInputShare": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/_online.py add_constraints (minimum_uptime_<sfx>)
+    # flextool/engine/model/_online.py add_constraints (minimum_uptime_<sfx>)
     "minimum_uptime": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/_online.py add_constraints (minimum_downtime_<sfx>)
+    # flextool/engine/model/_online.py add_constraints (minimum_downtime_<sfx>)
     "minimum_downtime": CstrFamily(QuantityType.DIMENSIONLESS),
 
     # ── DC PF.
-    # flextool/engine/_dc_power_flow.py _eq_dc_flow — RHS=0, skip.
+    # flextool/engine/model/_dc_power_flow.py _eq_dc_flow — RHS=0, skip.
     "dc_flow_eq": CstrFamily(None),
-    # flextool/engine/_dc_power_flow.py _eq_reference_angle — fixed-zero angle
+    # flextool/engine/model/_dc_power_flow.py _eq_reference_angle — fixed-zero angle
     # at the reference node; RHS=0, skip per-row scaling.
     "dc_reference_angle_eq": CstrFamily(None),
 
     # ── Reserve.
-    # flextool/engine/_reserve.py add_constraints
+    # flextool/engine/model/_reserve.py add_constraints
     "reserveBalance_timeseries_eq": CstrFamily(QuantityType.POWER),
-    # flextool/engine/_reserve.py add_constraints
+    # flextool/engine/model/_reserve.py add_constraints
     "reserveBalance_dynamic_eq": CstrFamily(QuantityType.POWER),
-    # flextool/engine/_reserve.py add_constraints (reserveBalance_up_n_1_eq / _down_n_1_eq)
+    # flextool/engine/model/_reserve.py add_constraints (reserveBalance_up_n_1_eq / _down_n_1_eq)
     "reserveBalance_up_n_1_eq": CstrFamily(QuantityType.POWER),
     "reserveBalance_down_n_1_eq": CstrFamily(QuantityType.POWER),
-    # flextool/engine/_reserve.py add_constraints (reserve_process_upward / _downward)
+    # flextool/engine/model/_reserve.py add_constraints (reserve_process_upward / _downward)
     "reserve_process_upward": CstrFamily(QuantityType.POWER),
     "reserve_process_downward": CstrFamily(QuantityType.POWER),
     # Storage energy-adequacy coupling for reserve_duration (#322).  Both
     # framed in MWh: v_state·unitsize (± E) vs a stored-energy bound.
-    # flextool/engine/_reserve.py _add_storage_energy_constraints
+    # flextool/engine/model/_reserve.py _add_storage_energy_constraints
     "reserve_storage_up_floor": CstrFamily(QuantityType.ENERGY),
     "reserve_storage_down_headroom": CstrFamily(QuantityType.ENERGY),
 
     # ── Group slack constraints.
-    # flextool/engine/_group_slack.py _eq_capacity_margin
+    # flextool/engine/model/_group_slack.py _eq_capacity_margin
     "capacityMargin": CstrFamily(QuantityType.POWER),
-    # flextool/engine/_group_slack.py _eq_inertia
+    # flextool/engine/model/_group_slack.py _eq_inertia
     "inertia_constraint": CstrFamily(QuantityType.INERTIA),
-    # flextool/engine/_group_slack.py _eq_non_sync
+    # flextool/engine/model/_group_slack.py _eq_non_sync
     "non_sync_constraint": CstrFamily(QuantityType.POWER),
 
     # ── Commodity ladder.  ENERGY (MWh).
-    # flextool/engine/_commodity_ladder.py _eq_ladder_balance
+    # flextool/engine/model/_commodity_ladder.py _eq_ladder_balance
     "commodity_ladder_balance": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/_commodity_ladder.py _eq_tier_cap_annual
+    # flextool/engine/model/_commodity_ladder.py _eq_tier_cap_annual
     "ladder_tier_cap_annual_roll": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/_commodity_ladder.py _eq_tier_cap_cumulative
+    # flextool/engine/model/_commodity_ladder.py _eq_tier_cap_cumulative
     "ladder_tier_cap_cumulative_roll": CstrFamily(QuantityType.ENERGY),
 
     # ── Forbid-invest rows.  RHS = 0 by construction; skip per-row.
@@ -489,7 +489,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "fix_v_invest_no_investment_eq_n": CstrFamily(None),
 
     # ── Non-anticipativity (cross-branch equality).  RHS = 0; skip.
-    # flextool/engine/_non_anticipativity.py:add_dispatch_constraints
+    # flextool/engine/model/_non_anticipativity.py:add_dispatch_constraints
     "non_anticipativity_storage_use": CstrFamily(None),
     "non_anticipativity_storage_state_first": CstrFamily(None),
     "non_anticipativity_online_integer": CstrFamily(None),
@@ -498,7 +498,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
 
     # ── Investment non-anticipativity (cross-branch invest/divest
     # equality). RHS = 0; skip per-row.
-    # flextool/engine/_non_anticipativity.py:add_invest_constraints
+    # flextool/engine/model/_non_anticipativity.py:add_invest_constraints
     "non_anticipativity_invest_p": CstrFamily(None),
     "non_anticipativity_invest_n": CstrFamily(None),
     "non_anticipativity_divest_p": CstrFamily(None),

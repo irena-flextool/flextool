@@ -19,7 +19,7 @@ import polars as pl
 import pytest
 
 from flextool.engine import load_flextool
-from flextool.engine._pdt_join import compute_pss_dt
+from flextool.engine.model._pdt_join import compute_pss_dt
 from flextool.engine.solve._region_filter import (
     discover_regions,
     load_decomposition_method,

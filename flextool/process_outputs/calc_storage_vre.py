@@ -132,7 +132,7 @@ def compute_storage_and_vre(par, s, v, r) -> None:
     # absent from the frame.  A plain ``.mul`` aligns on the shared 'process'
     # level and drops those columns to NaN, silently zeroing VRE potential /
     # curtailment.  The engine applies availability=1.0 to every unauthored
-    # process (model.py: left-join + fill_null(1.0)); reproduce that here by
+    # process (model/core.py: left-join + fill_null(1.0)); reproduce that here by
     # densifying availability to 1.0 over the VRE process set before the mul.
     vre_procs = vre_processes_in_use.columns.get_level_values('process').unique()
     availability_dt = par.process_availability.reindex(columns=vre_procs).fillna(1.0)

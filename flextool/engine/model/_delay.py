@@ -1,7 +1,7 @@
 """Delayed processes: the input of a unit arrives at its conversion balance some steps later.
 
 Canonical use is a river chain, where water released upstream reaches the downstream plant after a known
-travel time.  For a delayed unit, conversion_indirect (model.py) takes the inputs out of its undelayed
+travel time.  For a delayed unit, conversion_indirect (model/core.py) takes the inputs out of its undelayed
 sum and adds the term of :func:`delayed_input_expr` instead: the source-side flows at earlier steps,
 weighted by the unit's delay profile.  The module declares no variables and emits no rows or objective
 terms of its own; it loads the delay tables and checks that they line up.

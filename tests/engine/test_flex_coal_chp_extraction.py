@@ -9,7 +9,7 @@ and electricity is encoded entirely through non-default values of
 
 The .mod's ``conversion_indirect`` (flextool.mod:2557-2580) multiplies
 each sink term by ``p_process_sink_conversion_flow_coeff[p, sink]``;
-the matching multiplier landed in ``flextool/model.py``'s
+the matching multiplier landed in ``flextool/model/core.py``'s
 ``conversion_indirect`` emission via the
 ``p_process_sink_conversion_flow_coeff`` Param plumbed through
 ``_load_indirect``.

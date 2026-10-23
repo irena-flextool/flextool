@@ -3,7 +3,7 @@
 Owns the rows that bound investment from below per entity (per period and over the horizon), bound the
 cumulative capacity (existing + invested − divested) of an entity, bound what a group of entities invests
 or divests (per period, over the horizon, cumulatively), and bound the flow into a flow group (over the
-solve, per period, per step).  The per-entity investment maxima are core rows in model.py.  The module
+solve, per period, per step).  The per-entity investment maxima are core rows in model/core.py.  The module
 declares no variables and adds no objective terms: it reads v_invest_*, v_divest_* and v_flow from the
 build context, and its rows are emitted only when some of its data is populated (has_feature).
 """
@@ -17,10 +17,10 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Expr, Var
 
 from flextool.engine.input._axis_enums import align_join_dtypes
-from flextool.engine._model_common import _has_rows, _var_view
+from flextool.engine.model._common import _has_rows, _var_view
 
 if TYPE_CHECKING:
-    from flextool.engine.model import _Build
+    from flextool.engine.model.core import _Build
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ def _eq_min_entity_period(b: _Build) -> None:
     # v_divest_p[p,d] · unitsize[p]        ≥ divest_min_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ pd_divest_set
     # v_divest_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ nd_divest_set
     # Forces a minimum capacity to be built or retired in a period; the floor twin of
-    # max{Invest,Divest}_entity_period in model.py.  Capacity in MW (MWh for storage nodes).
+    # max{Invest,Divest}_entity_period in model/core.py.  Capacity in MW (MWh for storage nodes).
     for name, period_set, cap, var, axis, kind in (
         ("minInvest_entity_period_p", d.ed_invest_period_set, d.ed_invest_min_period, b.v_invest_p, "p", "invest"),
         ("minInvest_entity_period_n", d.ed_invest_period_set, d.ed_invest_min_period, b.v_invest_n, "n", "invest"),

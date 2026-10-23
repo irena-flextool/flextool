@@ -17,11 +17,11 @@ from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine._model_common import _entity_rows, _has_rows, _var_view
+from flextool.engine.model._common import _entity_rows, _has_rows, _var_view
 from flextool.engine.input._param_shapes import promote_param_to_dt
 
 if TYPE_CHECKING:
-    from flextool.engine.model import _Build
+    from flextool.engine.model.core import _Build
 
 
 def _check(d, fields: tuple[str, ...]) -> None:

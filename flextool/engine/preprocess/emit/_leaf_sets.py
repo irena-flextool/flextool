@@ -363,7 +363,7 @@ def derive_node_state_subset(
     ``("bind_within_solve_blended_weights",
        "bind_forward_only_blended_weights")`` so the resulting set is
     the UNION of every node carrying either RP-flavoured method — the
-    SHARED RP machinery in ``model.py`` (``rp_inter_period_balance``,
+    SHARED RP machinery in ``model/core.py`` (``rp_inter_period_balance``,
     ``rp_inter_period_max_state``, ``maxState_rp_start``, and the
     intra-period state-change branches in ``nodeBalance_eq``) fires
     over this union; only ``rp_inter_period_cyclic`` further filters
@@ -516,14 +516,14 @@ def emit_node_state_subsets(solve_data_dir: Path,
     ``bind_within_solve_blended_weights`` (across-solve cyclic
     closure), ``bind_within_period_blended_weights`` (per-FlexTool-
     period cyclic closure), and ``bind_forward_only_blended_weights``
-    (no closure).  The shared RP machinery in ``model.py``
+    (no closure).  The shared RP machinery in ``model/core.py``
     (intra-period state-change branches in ``nodeBalance_eq``,
     ``rp_inter_period_balance``, ``rp_inter_period_max_state``,
     ``maxState_rp_start``) fires over this union; only the
     ``rp_inter_period_cyclic`` constraint further filters to the
     within_solve ∪ within_period subset, with per-period pairing on
     the optional ``d`` column carried on ``rp_base_first`` /
-    ``rp_base_last`` (see ``model.py``'s cyclic-emit block).
+    ``rp_base_last`` (see ``model/core.py``'s cyclic-emit block).
     """
     rp = derive_node_state_subset(
         solve_data_dir,

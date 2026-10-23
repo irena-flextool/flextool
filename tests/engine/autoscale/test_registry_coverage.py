@@ -223,7 +223,7 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     # ``online_fix_eq_{linear,integer}`` (resolver strips the UC suffix to
     # the registered ``online_fix_eq`` base).
     "online_fix_eq_linear", "online_fix_eq_integer",
-    # Slice D per-path total caps — model.py ``_eq_invest_total_caps``
+    # Slice D per-path total caps — model/core.py ``_eq_invest_total_caps``
     # and _cumulative_invest.py ``_eq_group_divest_total`` pass the
     # constraint name as a variable (legacy vs ``…_path``), so the
     # literal-grep test above cannot see them.  Pin both the legacy and
@@ -234,7 +234,7 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxDivest_entity_total_path", "maxDivest_entity_total_path_n",
     "maxDivestGroup_entity_total_path_p",
     "maxDivestGroup_entity_total_path_n",
-    # Per-period invest/divest caps — model.py ``_eq_invest_period_caps``
+    # Per-period invest/divest caps — model/core.py ``_eq_invest_period_caps``
     # passes the constraint name from a loop table.
     "maxInvest_entity_period_p", "maxInvest_entity_period_n",
     "maxDivest_entity_period_p", "maxDivest_entity_period_n",

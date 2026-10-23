@@ -20,7 +20,7 @@ import pytest
 from polar_high import Problem
 
 from flextool.engine import build_flextool, run_chain_from_db
-from flextool.engine._pdt_join import compute_pss_dt
+from flextool.engine.model._pdt_join import compute_pss_dt
 
 _TEST_DIR = Path(__file__).resolve().parents[2]
 if str(_TEST_DIR) not in sys.path:

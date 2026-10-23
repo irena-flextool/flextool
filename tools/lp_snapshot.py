@@ -54,7 +54,7 @@ How it works
 Known non-determinism (production, not the harness): the RHS of
 ``node_storage_usage_fix_le`` sums several coarse-window usages with a
 polars ``group_by().sum()`` whose input order follows an unordered
-``.unique()`` (model.py, storage usage fix block), so
+``.unique()`` (model/core.py, storage usage fix block), so
 ``nested_fix_usage/dispatch_fullYear_roll.mps`` can differ in the last
 bits between processes.  Byte compare flags it; canonical compare with
 ``--rtol 1e-12`` accepts it.
@@ -87,14 +87,16 @@ CANONICAL_PREFIX = "flextool/schemas/canonical_databases/"
 # Module whose ``build_flextool`` attribute the worker wraps.  Every
 # production caller must look it up there at call time (late
 # ``from <MODEL_MODULE> import build_flextool``), so the patch is seen.
-MODEL_MODULE = "flextool.engine.model"
+MODEL_MODULE = "flextool.engine.model.core"
 
 # Files whose ``add_cstr`` calls define the constraint-family universe
 # checked by ``coverage``: POSIX paths relative to ENGINE_DIR.
 COVERAGE_SOURCES = (
-    "model.py", "_reserve.py", "_group_slack.py", "_cumulative_invest.py",
-    "_delay.py", "_commodity_ladder.py", "_dc_power_flow.py",
-    "_online.py", "_unit_floors.py", "_non_anticipativity.py",
+    "model/core.py", "model/_reserve.py", "model/_group_slack.py",
+    "model/_cumulative_invest.py", "model/_delay.py",
+    "model/_commodity_ladder.py", "model/_dc_power_flow.py",
+    "model/_online.py", "model/_unit_floors.py",
+    "model/_non_anticipativity.py",
 )
 
 
@@ -1187,7 +1189,7 @@ _ADD_CSTR_LITERAL = re.compile(r"add_cstr\(\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']
 # by reading the call sites (source file -> names).
 # Keyed like COVERAGE_SOURCES (path relative to ENGINE_DIR).
 DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
-    "model.py": (
+    "model/core.py": (
         # _eq_invest_period_caps / _eq_invest_total_caps loop tables
         "maxInvest_entity_period_p", "maxInvest_entity_period_n",
         "maxDivest_entity_period_p", "maxDivest_entity_period_n",
@@ -1208,7 +1210,7 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
         "profile_flow_upper_limit", "profile_flow_lower_limit",
         "profile_flow_fixed",
     ),
-    "_online.py": (
+    "model/_online.py": (
         # f"...{sfx}", sfx=_{kind}
         *(f"{base}_{kind}"
           for base in ("maxOnline", "maxStartup", "maxShutdown",
@@ -1218,24 +1220,24 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
                        "online_fix_eq")
           for kind in ("linear", "integer")),
     ),
-    "_unit_floors.py": (
+    "model/_unit_floors.py": (
         # f"...{sfx}", sfx=_{kind}
         *(f"{base}_{kind}"
           for base in ("minFlow_minload", "minFlow_output_floor")
           for kind in ("linear", "integer")),
     ),
-    "_non_anticipativity.py": (
+    "model/_non_anticipativity.py": (
         # f"non_anticipativity_online_{kind}"
         "non_anticipativity_online_integer", "non_anticipativity_online_linear",
         # add_invest_constraints loop table
         "non_anticipativity_invest_p", "non_anticipativity_invest_n",
         "non_anticipativity_divest_p", "non_anticipativity_divest_n",
     ),
-    "_reserve.py": (
+    "model/_reserve.py": (
         "reserveBalance_up_n_1_eq", "reserveBalance_down_n_1_eq",
         "reserve_process_upward", "reserve_process_downward",
     ),
-    "_cumulative_invest.py": (
+    "model/_cumulative_invest.py": (
         # every family passes its names from a loop table
         "minInvest_entity_period_p", "minInvest_entity_period_n",
         "minDivest_entity_period_p", "minDivest_entity_period_n",

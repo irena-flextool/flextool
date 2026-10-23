@@ -19,10 +19,10 @@ from polar_high.engine import Expr
 
 from flextool.engine.input._axis_enums import align_join_dtypes
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine._model_common import _has_rows, _var_view
+from flextool.engine.model._common import _has_rows, _var_view
 
 if TYPE_CHECKING:
-    from flextool.engine.model import _Build
+    from flextool.engine.model.core import _Build
 
 
 def _provider_get(provider, path: Path) -> pl.DataFrame | None:

@@ -6,7 +6,7 @@ Background (``specs/fix_map_reading.md`` §5): ``p_min_load`` used to be a
 **dropped the Map index column**.  A period Map ``{p1: 0.4, p2: 0.3}`` then
 unrolled to two ``(unit, value)`` rows for the same unit, and polar_high
 **summed** the duplicate ``(p)`` keys in the ``minFlow_minload`` constraint
-(``model.py``) — producing a floor of 0.7 in *every* period.
+(``model/core.py``) — producing a floor of 0.7 in *every* period.
 
 The fix routes ``p_min_load`` through the efficiency shape resolver
 (``_derived.p_min_load_pdt_from_source`` → ``_eff_param_to_pdt``) so it

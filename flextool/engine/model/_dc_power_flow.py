@@ -3,7 +3,7 @@
 Owns the variable v_angle and the rows dc_reference_angle_eq and dc_flow_eq: the flow on each DC arc equals
 the connection's susceptance times the voltage-angle difference of its end nodes.  One node per connected
 component (node_reference_angle, chosen in input derivation) has its angle pinned to 0.  The reverse flow
-v_flow_back of the arcs, its capacity row and its node-balance terms belong to model.py, which shares them
+v_flow_back of the arcs, its capacity row and its node-balance terms belong to model/core.py, which shares them
 with the other method_2way_1var_off arcs; :func:`nodeBalance_back_flow_terms` builds those balance terms.
 """
 from __future__ import annotations
@@ -16,10 +16,10 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import cast_dim
-from flextool.engine._model_common import _has_rows
+from flextool.engine.model._common import _has_rows
 
 if TYPE_CHECKING:
-    from flextool.engine.model import _Build
+    from flextool.engine.model.core import _Build
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +138,7 @@ def dc_arcs_frame(d) -> pl.DataFrame | None:
 
     A DC arc is an arc of a connection_dc_power_flow connection whose both end nodes are in
     node_dc_power_flow, in one orientation (process_source_toSink_dc; process_source_sink, which has both
-    orientations, when that set is absent).  model.py adds these arcs to the v_flow_back arcs.
+    orientations, when that set is absent).  model/core.py adds these arcs to the v_flow_back arcs.
     """
     if (d.process_source_sink is None
             or d.connection_dc_power_flow is None
@@ -257,7 +257,7 @@ def _eq_dc_flow(b: _Build) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Node-balance terms of v_flow_back (used by model.py)
+# Node-balance terms of v_flow_back (used by model/core.py)
 
 
 def nodeBalance_back_flow_terms(arcs: pl.DataFrame | None, v_flow_back: Var | None, p_unitsize: Param,

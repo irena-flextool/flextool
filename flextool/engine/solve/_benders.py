@@ -150,7 +150,7 @@ def _silence_if_quiet(wp: WarmProblem) -> None:
 
 # The four investment/divestment decision variables assembled into a
 # whole-system handoff for the TIER-1 invest->dispatch chain.  Each is
-# declared in ``model.py`` over a 2-tuple of dims whose FIRST element is
+# declared in ``model/core.py`` over a 2-tuple of dims whose FIRST element is
 # the entity axis ("p" for process / connection vars, "n" for node vars)
 # and whose second is the period axis "d".  ``Var.dims`` is read at
 # runtime to recover the exact entity column name — we do not hard-code it.

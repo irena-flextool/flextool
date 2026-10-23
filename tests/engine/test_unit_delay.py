@@ -142,13 +142,13 @@ def _toy():
 
 
 def test_check_accepts_consistent_tables() -> None:
-    from flextool.engine import _delay
+    from flextool.engine.model import _delay
 
     _delay.check_delay_tables(_toy())
 
 
 def test_check_raises_without_durations() -> None:
-    from flextool.engine import _delay
+    from flextool.engine.model import _delay
 
     d = _toy()
     d.process_delayed__duration = None
@@ -160,7 +160,7 @@ def test_check_raises_without_durations() -> None:
 def test_check_raises_on_td_dtype_mismatch() -> None:
     """A text ``td`` against the Float64 shift table would silently empty
     the join (or crash on it): an error naming the tables."""
-    from flextool.engine import _delay
+    from flextool.engine.model import _delay
 
     d = _toy()
     d.process_delayed__duration = pl.DataFrame({"p": ["p_d"], "td": ["1.0"]})
@@ -169,7 +169,7 @@ def test_check_raises_on_td_dtype_mismatch() -> None:
 
 
 def test_check_raises_on_duration_without_shift_rows() -> None:
-    from flextool.engine import _delay
+    from flextool.engine.model import _delay
 
     d = _toy()
     d.process_delayed__duration = pl.DataFrame({"p": ["p_d"], "td": [2.0]})
@@ -181,7 +181,7 @@ def test_check_raises_on_duration_without_shift_rows() -> None:
 def test_check_raises_on_duration_without_weight() -> None:
     from polar_high import Param
 
-    from flextool.engine import _delay
+    from flextool.engine.model import _delay
 
     d = _toy()
     d.p_process_delay_weight = Param(("p", "td"), pl.DataFrame(

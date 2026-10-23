@@ -4,7 +4,7 @@ duration multiplier that links MW-scale flows to MWh in
 that silently drops ``p_step_duration`` from the storage / nodeBalance
 chain would leave the LP obj effectively unchanged when this Param
 is scaled.  See ``audit/objective_audit.md`` (universal numerator
-column) and the ``nodeBalance_eq`` block in ``flextool/model.py``
+column) and the ``nodeBalance_eq`` block in ``flextool/model/core.py``
 where every flow term is multiplied by ``p_step_duration`` (and the
 storage state-change term carries it implicitly via the duration of
 the flow on the source/sink side).

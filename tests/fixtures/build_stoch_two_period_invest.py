@@ -8,7 +8,7 @@ p2040 is a CONTINUATION period) with an INVEST entity.  Both branches are
 forecasts (``realized:no``); n_real = 0 — a genuine ``{high, low}`` fan.  The branch variation rides
 a UNIT profile through ``group__unit`` (the base fixture's mechanism) — no
 NODE enters the stochastic group, so the node-side NA net-charge pinning
-(``model.py`` ``non_anticipativity_storage_use``, gated on ``group_node``
+(``model/core.py`` ``non_anticipativity_storage_use``, gated on ``group_node``
 × ``groupStochastic``) never fires and the LP stays separable per leaf
 (hand-calc-able).  A node-authored branch-keyed ``inflow`` would NOT work
 without the node in the group — the stochastic inflow fold-in

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from flextool.engine._cumulative_invest import _instant_flow_support
+from flextool.engine.model._cumulative_invest import _instant_flow_support
 
 
 # ---------------------------------------------------------------------------

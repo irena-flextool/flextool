@@ -1968,7 +1968,7 @@ def apply_direct_params_a(source: "InputSource",
     # the minFlow_minload constraint.  The synthetic / rolling sub-solve
     # early-return in ``flex_data.py`` re-wires it (passes 3-10 are skipped
     # there).  See ``specs/fix_map_reading.md`` §5.  NB: ``p_min_load`` is a
-    # per-unit floor — the ``minFlow_minload`` constraint (``model.py``) sums
+    # per-unit floor — the ``minFlow_minload`` constraint (``model/core.py``) sums
     # flow over all of a unit's outputs — and the (p, d, t) shape lets that
     # per-unit floor vary over time; the two compose.
     # Per-output ``capacity_min_coeff`` — the optional per-output floor of

@@ -81,7 +81,7 @@ def workdir_with_co2_price(tmp_path_factory: pytest.TempPathFactory,
             f"workdir setup did not populate {steps_csv!s} — the cascade "
             "failed before snapshotting in-memory inputs (typically an "
             "orchestration/polar_high API drift).  This test exercises "
-            "the model.py CO2 gate; it can only run when the input-prep "
+            "the model/core.py CO2 gate; it can only run when the input-prep "
             "+ snapshot half of the cascade completes successfully."
         )
     return workdir
@@ -105,7 +105,7 @@ def test_missing_p_co2_price_warns_and_builds(
 
     pb = Problem()
     with caplog.at_level(logging.WARNING,
-                         logger="flextool.engine.model"):
+                         logger="flextool.engine.model.core"):
         # Pre-fix: this raised ValueError on the CO2_PRICE invariant.
         build_flextool(pb, data)
 
@@ -134,7 +134,7 @@ def test_missing_p_co2_content_warns_and_builds(
 
     pb = Problem()
     with caplog.at_level(logging.WARNING,
-                         logger="flextool.engine.model"):
+                         logger="flextool.engine.model.core"):
         build_flextool(pb, data)
 
     warnings = [r for r in caplog.records

@@ -97,7 +97,7 @@ def _unitsize_complete(keys_lf: "pl.LazyFrame",
     nodeState nodes the model creates variables for) that is missing from
     the cascade must therefore NOT be dropped — an incomplete projection
     silently drops constraint terms, and an *empty* one yields ``None``
-    and crashes the build at ``model.py`` with
+    and crashes the build at ``model/core.py`` with
     ``TypeError: ... 'Expr' and 'NoneType'``.
 
     We left-join the set against the cascade and coalesce any uncovered
@@ -328,7 +328,7 @@ def p_penalty_down_from_source(source: "InputSource",
 #      fill is structural: ``v_flow * Param`` would inner-join and drop
 #      rows otherwise.
 #   3. If every coef is 1.0 (the trivial CHP-base case), the Param is
-#      ``None`` — model.py's gate falls through to the no-coef path.
+#      ``None`` — model/core.py's gate falls through to the no-coef path.
 #
 # Spine source: ``unit__inputNode.conversion_flow_coeff`` /
 # ``unit__outputNode.conversion_flow_coeff``.  The default value on

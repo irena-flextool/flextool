@@ -155,7 +155,7 @@
       "source": "constraint",
       "filter": "scenario_filter",
       "column_synonyms": ["cn"],
-      "note": "User-defined constraints. Phase 1 resolved the c-collision review note by renaming the constraint column from 'c' to 'cn' across _direct, _projection, flex_data.py (_load_user_constraints), _derived (p_flow_constraint_coef_from_source) and model.py. The constraint axis now lives under the 'cn' column name and never collides with the commodity 'c' column."
+      "note": "User-defined constraints. Phase 1 resolved the c-collision review note by renaming the constraint column from 'c' to 'cn' across _direct, _projection, flex_data.py (_load_user_constraints), _derived (p_flow_constraint_coef_from_source) and model/core.py. The constraint axis now lives under the 'cn' column name and never collides with the commodity 'c' column."
     },
     {
       "name": "d_anchor",
@@ -237,7 +237,7 @@
         "(c) Promote 'cn' as the canonical constraint column and update the rename helpers."
       ],
       "recommendation_for_phase_1": "Pick option (a). The two helpers are the only sites; renaming there keeps build_axis_enums simple (one enum per column name).",
-      "resolution": "Phase 1 landed option (a): the constraint column is now 'cn' across the cascade (_direct, _projection.cdt_filter, flex_data.py:_load_user_constraints, _derived.p_flow_constraint_coef_from_source, model.py user-constraint emission). The constraint axis 'column_synonyms' field reflects the new name."
+      "resolution": "Phase 1 landed option (a): the constraint column is now 'cn' across the cascade (_direct, _projection.cdt_filter, flex_data.py:_load_user_constraints, _derived.p_flow_constraint_coef_from_source, model/core.py user-constraint emission). The constraint axis 'column_synonyms' field reflects the new name."
     },
     {
       "id": "b_collision",
@@ -259,7 +259,7 @@
       "id": "i_axis_depth",
       "summary": "The 'i' (tier_index) axis depth is discovered at runtime from commodity.price_ladder_* parameter maps. Vocabulary is integer strings '1'..'N' but N is not in the schema.",
       "code_sites": [
-        "flextool/engine/_commodity_ladder.py"
+        "flextool/engine/model/_commodity_ladder.py"
       ],
       "options": [
         "(a) Build the 'i' enum lazily at first use after backend ingest discovers N.",

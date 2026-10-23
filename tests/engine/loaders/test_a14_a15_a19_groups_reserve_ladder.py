@@ -13,7 +13,9 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine import _group_slack, _reserve, _commodity_ladder
+from flextool.engine.model import _group_slack
+from flextool.engine.model import _reserve
+from flextool.engine.model import _commodity_ladder
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.input._input_source import seed_provider_from_dir
 

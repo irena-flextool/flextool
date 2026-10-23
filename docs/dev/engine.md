@@ -113,7 +113,7 @@ This DB-driven validation matters because a 2D parameter authored as
 *names* in polars but the opposite axis semantics. Column-shape
 detection misses the difference; the per-level `index_name` doesn't.
 
-## LP build: `model.py` and the feature modules
+## LP build: `model/core.py` and the feature modules
 
 `build_flextool(m, d)` builds the LP into the `polar_high.Problem` `m`
 from the `FlexData` `d`. Its body is a table of contents: a list of
@@ -138,13 +138,13 @@ few shared expressions):
 
 Every family function starts with an early-return guard on its flag
 (`if not b.has_storage: return`), so a feature whose data is empty emits
-nothing. The `model.py` module docstring is the map: every variable with
+nothing. The `model/core.py` module docstring is the map: every variable with
 its dims and unit, and every equation family in emit order with the
 module it lives in. Each row, objective term and variable carries an
 `EQ.` / `OBJ.` / `VAR.` header with its formula, so
 `grep -rn "EQ. ─── maxFlow" flextool/engine` finds an equation.
 
-**What lives where.** `model.py` holds the core model that every run
+**What lives where.** `model/core.py` holds the core model that every run
 uses: node balance, storage state, flows and capacity, conversion,
 investment maxima, CO2 caps, user constraints, profiles and the core
 objective. An optional feature that brings its own variables or rows
@@ -156,7 +156,7 @@ non-synchronous share), `_cumulative_invest` (investment floors and
 group / cumulative / flow-group limits), `_commodity_ladder`,
 `_dc_power_flow`, `_delay` (delayed inputs, used by
 `conversion_indirect`) and `_non_anticipativity` (stochastic ties).
-Small helpers shared by these live in `_model_common`.
+Small helpers shared by these live in `_common`.
 
 **Emit order is part of the LP.** Row and column order decide which
 alternate optimum the solver returns, so moving a step in the table of
@@ -167,7 +167,7 @@ degenerate models. Check the effect with `tools/lp_snapshot.py`
 ### Required fields
 
 The data each feature needs is declared as module-level tuples at the
-top of `model.py`:
+top of `model/core.py`:
 
 ```python
 ALWAYS = ("dt", "nodeBalance",
@@ -854,10 +854,10 @@ small. Repeating the table from
 
 | You want to… | Start at | Then read |
 |---|---|---|
-| Add a constraint that uses only existing parameters | `model.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1) and list it in the `model.py` module docstring. |
-| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model.py`. Register it in autoscale `PARAMETER_TYPES` (CLAUDE.md invariant #1). |
+| Add a constraint that uses only existing parameters | `model/core.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1) and list it in the `model/core.py` module docstring. |
+| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model/core.py`. Register it in autoscale `PARAMETER_TYPES` (CLAUDE.md invariant #1). |
 | Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_emit_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `flex_data.py`. |
-| Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1), add them to the `model.py` module docstring, and check the LP with `tools/lp_snapshot.py`. |
+| Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1), add them to the `model/core.py` module docstring, and check the LP with `tools/lp_snapshot.py`. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. Cross-link: [scaling.md](scaling.md). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. Cross-link: [slack_convention.md](slack_convention.md). |
 | Add a new decomposition mode | `_benders.py` (+ `_region_filter.py`) for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |

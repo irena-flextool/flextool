@@ -34,7 +34,7 @@ N1 = ["n_1", "up", "electricity"]
 
 
 def _scale(step) -> pl.DataFrame:
-    from flextool.engine._reserve import reserve_shortfall_scale
+    from flextool.engine.model._reserve import reserve_shortfall_scale
 
     sc = reserve_shortfall_scale(step.flex_data)
     assert sc is not None
@@ -52,7 +52,7 @@ def test_timeseries_scale_is_the_reservation(tmp_path_factory) -> None:
     same Param, so the LP is byte-identical)."""
     step = solve(tmp_path_factory, alt="rs_ts",
                  base_chain=PLANT_CHAIN + ["wind", "reserve"], values=[])
-    from flextool.engine._reserve import reserve_shortfall_scale
+    from flextool.engine.model._reserve import reserve_shortfall_scale
 
     fd = step.flex_data
     assert reserve_shortfall_scale(fd) is fd.pdtReserve_upDown_group_reservation

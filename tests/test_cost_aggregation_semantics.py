@@ -969,7 +969,7 @@ def test_stochastic_branch_weight(
     term, so the two MUST agree.
 
     The LP objective folds ``pdt_branch_weight[d, t]`` into ``op_factor`` /
-    ``startup_factor`` (``flextool/engine/model.py``).  Option (A)
+    ``startup_factor`` (``flextool/engine/model/core.py``).  Option (A)
     makes the post-process do the same: ``calc_slacks`` / ``calc_costs``
     weight each per-(d, t) cost term by ``pdt_branch_weight`` (via
     ``flextool/process_outputs/_branch_weight.py``), so

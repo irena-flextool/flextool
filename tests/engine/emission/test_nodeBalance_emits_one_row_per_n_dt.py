@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from flextool.engine._pdt_join import compute_nodeBalance_dt
+from flextool.engine.model._pdt_join import compute_nodeBalance_dt
 from tests.engine.emission._helpers import (
     assert_cstr_present,
     assert_cstr_row_count,

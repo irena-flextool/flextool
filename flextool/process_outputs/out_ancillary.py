@@ -295,7 +295,7 @@ def co2_duals(par, s, v, r, debug):
     """CO2 emission-cap shadow prices in Currency / tCO2 (positive = cost).
 
     Units: the polars ``co2_max_period`` / ``co2_max_total`` constraints
-    (``model.py``) carry the cap RHS in **raw tonnes** (input
+    (``model/core.py``) carry the cap RHS in **raw tonnes** (input
     ``co2_max_period`` is ``[tCO2]``) against a tonnes LHS
     (``v_flow·unitsize·p_co2_content``), so the raw dual is already
     **Δobj / Δ(tonnes) = Currency/tCO2** — there is NO ÷1000.  (The legacy

@@ -56,7 +56,7 @@ from flextool.engine.input._axis_enums import (
     set_global_axis_enums,
 )
 from flextool.engine.input._param_shapes import promote_param_to_dt
-from flextool.engine._pdt_join import compute_pss_dt
+from flextool.engine.model._pdt_join import compute_pss_dt
 
 
 __all__ = [
@@ -1626,7 +1626,7 @@ def _inject_half_flows(
 #: inflow, penalties, profiles, …).  The master OMITS every terminal node
 #: from balance, so each of these is emptied (set to ``None``) — a node
 #: absent from ``nodeBalance`` / ``nodeStateBlock`` gets no balance row
-#: (Phase-3 design §1.3; ``model.py`` builds balance only over the
+#: (Phase-3 design §1.3; ``model/core.py`` builds balance only over the
 #: populated node sets).
 _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "nodeBalance_dt", "nodeBalancePeriod",
@@ -2166,7 +2166,7 @@ def master_network_data(
                         else _keep_proc(obj))
 
     # ``build_flextool``'s ALWAYS feature requires these four fields to be
-    # PRESENT (not None) even when empty (model.py ``ALWAYS``).  Emptying
+    # PRESENT (not None) even when empty (model/core.py ``ALWAYS``).  Emptying
     # them (head(0)) — rather than nulling — OMITS every terminal node from
     # balance while keeping the build's structural precondition satisfied:
     # the master's ``v_flow`` is then free except for ``maxFlow`` and its

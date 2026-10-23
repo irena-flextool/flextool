@@ -5,7 +5,7 @@
 objective is the sum of the terms the ``_obj_*`` / ``objective_terms`` steps return.  Every step takes the
 ``_Build`` context ``b``.  The core model that every run uses lives here as ``_eq_<family>`` /
 ``_obj_<family>``.  An optional feature that brings its own variables lives in its own module with
-``add_variables(b)`` / ``add_constraints(b)`` / ``objective_terms(b)``.  Shared helpers: ``_model_common``.
+``add_variables(b)`` / ``add_constraints(b)`` / ``objective_terms(b)``.  Shared helpers: ``_common``.
 
 Each row, objective term and variable has an ``EQ.`` / ``OBJ.`` / ``VAR.`` header with its formula;
 grep ``EQ. ─── <name>`` to find an equation.
@@ -28,7 +28,7 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
   vq_capacity_margin[g,d], vq_inertia[g,d,t], vq_non_synchronous[g,d,t]
                                        group floor slacks, fraction of the group's scale      [_group_slack]
 
-Equation families, in emit order (module in brackets when not model.py):
+Equation families, in emit order (module in brackets when not model/core.py):
   Balance & storage   rp_inter_period_{balance,cyclic,max_state}, maxState_rp_start; nodeBalance_eq;
                       nodeBalancePeriod_eq; node_balance_fix_quantity_eq_lower; node_storage_usage_fix_le;
                       stateConstantWithinBlock_eq, nodeBalanceBlock_eq
@@ -61,17 +61,17 @@ import polars as pl
 from polar_high import Sum, Where, Lag, Param
 from polar_high.engine import Expr, Var
 
-from flextool.engine import _commodity_ladder
-from flextool.engine import _cumulative_invest
-from flextool.engine import _dc_power_flow
-from flextool.engine import _delay
-from flextool.engine import _group_slack
-from flextool.engine import _non_anticipativity
-from flextool.engine import _online
-from flextool.engine import _reserve
-from flextool.engine import _unit_floors
+from flextool.engine.model import _commodity_ladder
+from flextool.engine.model import _cumulative_invest
+from flextool.engine.model import _dc_power_flow
+from flextool.engine.model import _delay
+from flextool.engine.model import _group_slack
+from flextool.engine.model import _non_anticipativity
+from flextool.engine.model import _online
+from flextool.engine.model import _reserve
+from flextool.engine.model import _unit_floors
 from flextool.engine.input._axis_enums import alias_to_axis, rename_to_axis
-from flextool.engine._model_common import (
+from flextool.engine.model._common import (
     _availability_factor,
     _coef_factor,
     _drop_uncapped,
@@ -82,7 +82,7 @@ from flextool.engine._model_common import (
     _var_view,
 )
 from flextool.engine.input._param_shapes import promote_param_to_dt
-from flextool.engine._pdt_join import (
+from flextool.engine.model._pdt_join import (
     compute_pss_dt,
     compute_nodeBalance_dt,
     compute_nodeState_dt,

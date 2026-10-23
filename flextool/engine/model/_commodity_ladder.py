@@ -3,7 +3,7 @@
 For commodities with price_method price_ladder_annual / price_ladder_cumulative, the purchase at each node
 and period is split into tiers (v_trade).  A balance row ties the tiers to the commodity flow, cap rows
 limit each tier per period (annual) or over the horizon (cumulative), and the objective prices each tier.
-The single commodity price term in model.py skips these commodities.  Earlier solves of a chain enter
+The single commodity price term in model/core.py skips these commodities.  Earlier solves of a chain enter
 through f_d_k (share of the period simulated so far) and the tier MWh they already bought.
 """
 
@@ -16,10 +16,10 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Expr
 
-from flextool.engine._model_common import _has_rows
+from flextool.engine.model._common import _has_rows
 
 if TYPE_CHECKING:
-    from flextool.engine.model import _Build
+    from flextool.engine.model.core import _Build
 
 
 # Tier quantities at or above this are unlimited (+Inf is written as 1e30) and get no cap row.

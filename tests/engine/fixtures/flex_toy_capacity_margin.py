@@ -6,7 +6,7 @@ constraint cannot be met by any producer (there are none), so the
 ``vq_capacity_margin`` slack absorbs the entire shortfall and is priced
 at ``penalty_capacity_margin × group_capacity_for_scaling × inflation_op``
 (period-only, no step_duration / timestep_weight / period_share — see
-``audit/objective_audit.md`` §9.3 and ``flextool/engine/_group_slack.py``
+``audit/objective_audit.md`` §9.3 and ``flextool/engine/model/_group_slack.py``
 ``objective_terms``).
 
 Topology
