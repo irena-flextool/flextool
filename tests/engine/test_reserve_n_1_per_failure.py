@@ -1,9 +1,11 @@
 """The n-1 (large_failure) reserve requirement is one row per failing process.
 
-``reserveBalance_{up,down}_n_1_eq[r, ud, g, p_fail, d, t]``: the reserve held by every provider of the group
-except the failing process ``p_fail`` (× unitsize × reliability), plus the shared shortfall, covers that
-process's flow into (up) / out of (down) the group's nodes × unitsize × ``large_failure_ratio``.  So the
-largest single failure sets the requirement, and a failing process cannot cover its own failure.  The
+``reserveBalance_{up,down}_n_1_eq[r, ud, g, p_fail, d, t]``: the group's total reserve ``v_reserve_total``
+minus the reserve of the failing process ``p_fail`` (× unitsize × reliability), plus the shared shortfall,
+covers that process's flow into (up) / out of (down) the group's nodes × unitsize × ``large_failure_ratio``.
+``reserve_total_upper`` bounds the total by the reserve of all providers, so the rows count the reserve of
+every provider except the failing process.  The largest single failure sets the requirement, and a failing
+process cannot cover its own failure.  The
 shortfall multiplier of the n-1 component is the largest failing process's bound (a max over failing
 processes, each summed over its own flows).
 
@@ -88,9 +90,15 @@ def two_failures(tmp_path_factory):
     return _two_failures(tmp_path_factory, "n1pf_two")
 
 
+def _reliability(step, unit: str, r: str, ud: str, node: str) -> float:
+    frame = utf8(step.flex_data.p_process_reserve_upDown_node_reliability.frame.lazy().collect())
+    return float(frame.filter((pl.col("p") == unit) & (pl.col("r") == r) & (pl.col("ud") == ud)
+                              & (pl.col("n") == node))["value"][0])
+
+
 def test_one_row_per_failing_process(two_failures) -> None:
-    """Per (d, t) one row per failing process; each carries only its own flow and the other process's
-    reserve."""
+    """Per (d, t) one row per failing process; each carries only its own flow, the group total and minus its
+    own reserve; the other process's reserve is in the group total's bound reserve_total_upper."""
     step = two_failures
     rows = _row_terms(build(step.flex_data), "reserveBalance_up_n_1_eq")
     n_dt = step.flex_data.dt.height
@@ -104,9 +112,17 @@ def test_one_row_per_failing_process(two_failures) -> None:
         flows = _cols(terms, "v_flow[")
         assert list(flows.values()) == [pytest.approx(coefs[fail])], row
         assert all(c.startswith(f"v_flow[{fail},") for c in flows), row
-        assert not _cols(terms, f"v_reserve[{fail},"), row
-        assert len(_cols(terms, f"v_reserve[{other},n_1,up,west,")) == 1, row
+        own = _cols(terms, f"v_reserve[{fail},")
+        assert list(own.values()) == [pytest.approx(-unitsize(step, fail) * _reliability(step, fail, *N1[:2], "west"),
+                                                    rel=1e-12)], row
+        assert not _cols(terms, f"v_reserve[{other},"), row
+        assert list(_cols(terms, "v_reserve_total[n_1,up,electricity,").values()) == [1.0], row
         assert len(_cols(terms, "vq_reserve[n_1,up,electricity,")) == 1, row
+    totals = _row_terms(build(step.flex_data), "reserve_total_upper")
+    assert len(totals) == n_dt
+    for row, terms in totals.items():
+        assert len(_cols(terms, f"v_reserve[{PLANT},n_1,up,west,")) == 1, row
+        assert len(_cols(terms, f"v_reserve[{WIND},n_1,up,west,")) == 1, row
 
 
 def test_requirement_is_the_largest_failure(two_failures) -> None:
@@ -143,9 +159,9 @@ def test_failing_unit_cannot_cover_itself(tmp_path_factory) -> None:
     assert ((short - requirement) >= -1e-6).all()
 
 
-def test_down_n_1_excludes_own_reserve(tmp_path_factory) -> None:
-    """n-1 DOWN: the failing consumer ``dr_increase_demand`` also offers downward reserve; its row has
-    the consumer's flow and coal's reserve, not the consumer's own reserve."""
+def _down_n_1(tpf, alt: str, extra: list | None = None):
+    """n-1 DOWN: the consumer ``dr_increase_demand`` fails (ratio 1) and provides downward reserve; coal
+    provides too.  ``extra`` appends override values."""
     grp = ["n1d", "down", "electricity"]
     ents = [["reserve", "n1d", None], ["reserve__upDown__group", grp, None],
             [REL, ["n1d", "down", "dr_increase_demand", "west"], None],
@@ -164,14 +180,27 @@ def test_down_n_1_excludes_own_reserve(tmp_path_factory) -> None:
         ["unit", "dr_increase_demand", "startup_method", b64("linear", "str")],
     ]
     a_ents, a_vals = _activator("n1d", "down")
-    step = solve(tmp_path_factory, alt="n1pf_down", base_chain=PLANT_CHAIN + ["dr_increase_demand"],
-                 entities=ents + a_ents, values=vals + a_vals)
+    return solve(tpf, alt=alt, base_chain=PLANT_CHAIN + ["dr_increase_demand"],
+                 entities=ents + a_ents, values=vals + a_vals + (extra or []))
+
+
+def test_down_n_1_excludes_own_reserve(tmp_path_factory) -> None:
+    """n-1 DOWN: the failing consumer ``dr_increase_demand`` also offers downward reserve; its row has
+    the consumer's flow, the group total and minus the consumer's own reserve; coal's reserve is only in
+    the total's bound reserve_total_upper."""
+    step = _down_n_1(tmp_path_factory, "n1pf_down")
     rows = _row_terms(build(step.flex_data), "reserveBalance_down_n_1_eq")
     assert len(rows) == step.flex_data.dt.height
     for row, terms in rows.items():
         assert row.startswith("reserveBalance_down_n_1_eq[n1d,down,electricity,dr_increase_demand,"), row
         assert len(_cols(terms, "v_flow[dr_increase_demand,west,")) == 1, row
-        assert not _cols(terms, "v_reserve[dr_increase_demand,"), row
+        own = _cols(terms, "v_reserve[dr_increase_demand,n1d,down,west,")
+        assert len(own) == 1 and next(iter(own.values())) < 0.0, row
+        assert len(_cols(terms, "v_reserve_total[n1d,down,electricity,")) == 1, row
+        assert not _cols(terms, f"v_reserve[{PLANT},"), row
+    totals = _row_terms(build(step.flex_data), "reserve_total_upper")
+    assert len(totals) == step.flex_data.dt.height
+    for row, terms in totals.items():
         assert len(_cols(terms, f"v_reserve[{PLANT},n1d,down,west,")) == 1, row
 
 

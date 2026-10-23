@@ -246,6 +246,8 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "non_anticipativity_online_integer", "non_anticipativity_online_linear",
     "non_anticipativity_invest_p", "non_anticipativity_invest_n",
     "non_anticipativity_divest_p", "non_anticipativity_divest_n",
+    # _reserve.py passes the n-1 row names from the _N_1_DIRECTIONS table.
+    "reserveBalance_up_n_1_eq", "reserveBalance_down_n_1_eq",
     # _cumulative_invest.py — every family passes its names from a loop
     # table.  {max,min}InvestGroup_entity_cumulative is left out: it has no
     # registry entry yet (specs/github_issues.md, refactor bug 4).

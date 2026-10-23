@@ -2076,8 +2076,12 @@ def write_v_dual_reserve_balance(
     # ``r_m`` column inside the brackets.  The sibling constraint
     # ``reserveBalance_dynamic_eq`` carries the same (r, ud, g, d, t) axes;
     # ``reserveBalance_*_n_1_eq`` carry (r, ud, g, p_fail, d, t), one row per
-    # failing process, so the ``max() over methods`` combine documented above
-    # (a future extension) must also take the max over p_fail.
+    # failing process; the group's total reserve is the auxiliary
+    # ``v_reserve_total`` (row ``reserve_total_upper``, whose dual has the
+    # magnitude of the sum of the n-1 row duals when the total is positive).
+    # The ``max() over methods`` combine documented above (a future
+    # extension) must take the max over the n-1 rows' p_fail, not read the
+    # ``reserve_total_upper`` row.
     df = extract_variable(
         h, "reserveBalance_timeseries_eq",
         ("reserve", "updown", "node_group"),

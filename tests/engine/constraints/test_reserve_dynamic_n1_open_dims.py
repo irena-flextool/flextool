@@ -142,13 +142,18 @@ def test_reserve_n_1_canonicalises(toy_group_reserve, ud, name):
     assert name in set(pb.cstr_names())
 
     # One row per failing process (p_fail = u) and step, with the failing
-    # flow's coefficient -(unitsize · ratio) = -(100 · 0.1) = -10 and no
-    # reserve of u itself (the failing process cannot cover its own loss).
+    # flow's coefficient -(unitsize · ratio) = -(100 · 0.1) = -10, the
+    # group total v_reserve_total (1) and minus u's own reserve
+    # -(unitsize · reliability) = -100: u is the only provider and fails, so
+    # it cannot cover its own loss.
     rows = _row_terms(m, name)
     assert sorted(rows) == [f"{name}[r1,{ud},g,u,d1,t01]", f"{name}[r1,{ud},g,u,d1,t02]"]
     for rname, terms in rows.items():
+        t = rname.split(",")[-1].rstrip("]")
         flow_terms = {c: v for c, v in terms.items() if c.startswith("v_flow[")}
         assert len(flow_terms) == 1, f"{rname}: {flow_terms}"
         (coeff,) = flow_terms.values()
         assert coeff == pytest.approx(-10.0, rel=1e-9), f"{rname}: {coeff}"
-        assert not [c for c in terms if c.startswith("v_reserve[")], rname
+        reserve_terms = {c: v for c, v in terms.items() if c.startswith("v_reserve[")}
+        assert reserve_terms == {f"v_reserve[u,r1,{ud},n1,d1,{t}]": pytest.approx(-100.0, rel=1e-12)}, rname
+        assert terms[f"v_reserve_total[r1,{ud},g,d1,{t}]"] == 1.0, rname

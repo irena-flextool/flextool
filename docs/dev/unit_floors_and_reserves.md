@@ -86,14 +86,38 @@ reserve without any `reservation` is therefore inactive.
 
 `reserveBalance_{up,down}_n_1_eq[r, ud, g, p_fail, d, t]`: one row per
 failing process `p_fail` (a process with `large_failure_ratio` at a node of
-g and a flow into, for up, or out of, for down, that node). LHS: the reserve
-of every provider of g except `p_fail` (× unitsize × reliability) plus the
-group's shared `vq_reserve · scale`; RHS: `p_fail`'s failing flows ×
-unitsize × ratio. The shared slack prices the largest deficit once (.mod
-parity). Rows grow with failing processes, nonzeros with failing processes
-× providers per group (each row repeats the other providers); an
-exact-equivalent aggregate form (a total-reserve variable per
-`(r, ud, g, d, t)`) is the remedy if a large model shows the growth.
+g and a flow into, for up, or out of, for down, that node). LHS:
+`v_reserve_total[r, ud, g, d, t]` minus the reserve of `p_fail` at every
+node of g (× unitsize × reliability) plus the group's shared
+`vq_reserve · scale`; RHS: `p_fail`'s failing flows × unitsize × ratio. The
+shared slack prices the largest deficit once (.mod parity).
+
+`v_reserve_total` (POWER column, no cost) exists for every group with an
+n-1 row and at least one provider; `reserve_total_upper` bounds it by the
+reserve of all providers: `v_reserve_total − reserve_sum ≤ 0`. Eliminating
+the total gives back the per-provider form (each n-1 row counts every
+provider except `p_fail`), so the reformulation is an exact projection.
+The inequality suffices because the total enters only `≥` requirement rows,
+with a positive sign, and has no cost. It needs `reserve_sum ≥ 0`, which
+holds because providers have reliability > 0
+(`process_reserve_upDown_node_active`) and unitsize > 0; otherwise
+`v_reserve_total ≥ 0` would add a constraint. A group without providers
+(or without reliability data) has no total: its rows are
+`vq_reserve · scale ≥ failure`.
+
+Nonzeros per `(r, ud, g, d, t)`, with P provider pairs `(p, n)`, and per
+failing process f its own provider pairs `own_f` and failing arcs `a_f`:
+`(P + 1) + Σ_f (2 + own_f + a_f)` (the per-provider form had
+`Σ_f (P − own_f + 1 + a_f)`), so they grow with providers plus failing
+processes. HiGHS presolve keeps the total columns (measured, cycle c4).
+
+Results: the objective and every value that is unique at the optimum are
+those of the per-provider form; `v_reserve` is costless, so its split among
+providers is often not unique and may differ between the two forms. The
+n-1 row duals keep their meaning; when the total is positive, the magnitude
+of the `reserve_total_upper` dual is the sum of the n-1 row duals of the
+group-step (HiGHS reports the `≤` row with the opposite sign to the `≥`
+rows). The total is not written to the outputs.
 
 ## Follow-ups (not implemented)
 

@@ -22,6 +22,7 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
   v_{invest,divest}_{p,n}[p|n,d]       capacity built / retired in d, count of unitsize
   v_reserve[p,r,ud,n,d,t]              reserve held by p for n; × unitsize = MW               [_reserve]
   vq_reserve[r,ud,g,d,t]               reserve shortfall, fraction of the requirement scale   [_reserve]
+  v_reserve_total[r,ud,g,d,t]          total reserve of a group with n-1 rows, MW             [_reserve]
   v_flow_back[p,source,sink,d,t]       reverse flow of 2-way 1-var and DC arcs; × unitsize = MW
   v_angle[n,d,t]                       voltage angle, rad in [−π, π]                          [_dc_power_flow]
   v_trade[c,n,d,i]                     commodity bought in tier i; × commodity unitsize = MWh [_commodity_ladder]
@@ -47,7 +48,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Objective           balance slack penalty, commodity cost and sales, CO2 price, variable cost, startup cost,
                       storage reference price, invest/divest annuities, existing fixed cost (optional constant)
   Feature modules     capacityMargin, inertia_constraint, non_sync_constraint + slack penalties [_group_slack];
-                      reserveBalance_*, reserve_process_*, reserve_storage_* + shortfall penalty [_reserve];
+                      reserveBalance_*, reserve_total_upper, reserve_process_*, reserve_storage_*
+                      + shortfall penalty [_reserve];
                       investment floors, cumulative, group and flow-group limits [_cumulative_invest];
                       commodity_ladder_balance, ladder_tier_cap_* + tier costs [_commodity_ladder]
   Stochastic ties     non_anticipativity_* (dispatch, then investment) [_non_anticipativity]
@@ -268,6 +270,7 @@ class _Build:
     v_flow_back: Var | None = None
     v_reserve: Var | None = None
     vq_reserve: Var | None = None
+    v_reserve_total: Var | None = None
     vq_capacity_margin: Var | None = None
     vq_inertia: Var | None = None
     vq_non_synchronous: Var | None = None
@@ -656,7 +659,7 @@ def _declare_variables(b: _Build) -> None:
     if b.has_divest_n:
         b.v_divest_n = m.add_var("v_divest_n", ("n", "d"), d.nd_divest_set)
 
-    # Reserve variables (v_reserve, vq_reserve): declared by _reserve.
+    # Reserve variables (v_reserve, vq_reserve, v_reserve_total): declared by _reserve.
     _reserve.add_variables(b)
 
     # ─── VAR. ─── v_flow_back ────────────────────────────────────────────────

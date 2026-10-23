@@ -149,6 +149,8 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     "v_reserve": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
     # flextool/engine/model/_reserve.py add_variables
     "vq_reserve": VarFamily(QuantityType.POWER),
+    # flextool/engine/model/_reserve.py add_variables (total reserve of an n-1 group, MW)
+    "v_reserve_total": VarFamily(QuantityType.POWER),
 
     # ── Commodity ladder.  v_trade is DIMENSIONLESS; row coef
     # ``unitsize`` turns it into ENERGY for the ladder caps and the
@@ -458,6 +460,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # flextool/engine/model/_reserve.py add_constraints (reserveBalance_up_n_1_eq / _down_n_1_eq)
     "reserveBalance_up_n_1_eq": CstrFamily(QuantityType.POWER),
     "reserveBalance_down_n_1_eq": CstrFamily(QuantityType.POWER),
+    # flextool/engine/model/_reserve.py add_constraints.  RHS 0, but typed POWER so its
+    # v_reserve · unitsize entries bucket as POWER like in the n-1 rows.
+    "reserve_total_upper": CstrFamily(QuantityType.POWER),
     # flextool/engine/model/_reserve.py add_constraints (reserve_process_upward / _downward)
     "reserve_process_upward": CstrFamily(QuantityType.POWER),
     "reserve_process_downward": CstrFamily(QuantityType.POWER),

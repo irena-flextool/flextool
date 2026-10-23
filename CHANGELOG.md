@@ -39,7 +39,8 @@
   fail), and a single failing unit could cover its own loss (too little).
   The largest possible reserve shortfall of such a group is now the largest
   single failure instead of the sum. Models with n-1 reserves will get
-  different reserve procurement and costs.
+  different reserve procurement and costs. Each failing unit or connection
+  adds one small constraint per reserve group and time step.
 
 - **Upward reserve of a unit with online variables comes out of its online
   capacity.** A unit with online variables (a `startup_method` `linear` or
