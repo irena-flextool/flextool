@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **Commodity price ladders in stochastic solves are weighted by branch
+  probability.** The purchase cost of a `price_ladder_annual` or
+  `price_ladder_cumulative` commodity is now weighted by the probability of
+  each forecast branch, like the other operating costs. Before, every branch
+  counted in full, which overstated ladder costs by one over the branch
+  probability and pushed the dispatch away from ladder commodities.
+
 - **`co2_max_total` limits the emissions of all represented years.** The
   total CO2 limit now applies to each period's annual emissions times its
   `years_represented`, summed over the periods: the same measure as the

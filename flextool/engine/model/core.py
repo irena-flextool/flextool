@@ -2614,6 +2614,8 @@ def _sum_terms(terms: list) -> Expr | None:
 # to the time it stands for, / period_share scales the modelled part of the period to a full year, and
 # inflation_op discounts that year's operating cost; branch_weight is 1 outside stochastic solves.  Terms for point events
 # (startups, end-of-horizon valuation) use w_ev[d,t] = w_op[d,t] / step_duration[d,t].
+# The commodity ladder (_commodity_ladder) uses the per-period form
+# inflation_op[d] / period_share[d] · branch_weight[d], because its purchases are per period.
 
 
 def _obj_balance_slack(b: _Build) -> Expr:

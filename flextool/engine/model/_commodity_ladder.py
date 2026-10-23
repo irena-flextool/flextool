@@ -2,8 +2,9 @@
 
 For commodities with price_method price_ladder_annual / price_ladder_cumulative, the purchase at each node
 and period is split into tiers (v_trade).  A balance row ties the tiers to the commodity flow, cap rows
-limit each tier per period (annual) or over the horizon (cumulative), and the objective prices each tier.
-The single commodity price term in model/core.py skips these commodities.  Earlier solves of a chain enter
+limit each tier per period (annual) or over the horizon (cumulative), and the objective prices each tier,
+weighted by the branch weight of the period in stochastic solves.  The single commodity price term in
+model/core.py skips these commodities.  Earlier solves of a chain enter
 through f_d_k (share of the period simulated so far) and the tier MWh they already bought.
 """
 
@@ -340,6 +341,37 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
 # Objective
 
 
+def _branch_weight(d) -> Param | None:
+    """bw[d]: the stochastic branch weight of each ladder period; None when there are no branch weights.
+
+    pdt_branch_weight (the weight of every other operational cost, in b.op_factor) reduced to one value
+    per period.  The tiers are bought per period, so the weight must be the same for every t of a period.
+    It is: reveals happen only at the first step of a period (create_stochastic_periods rejects anything
+    else), and every branch period copies its anchor's full active time, so all members of a sibling
+    cohort share the same t set and the weight denominator is the same for every t.  A change that breaks
+    this makes a period's weight vary over t, and the build raises instead of guessing a weight.  Ladder
+    periods without dt rows (v_trade is 0 there) get 1.0.
+    """
+    pdt_bw = getattr(d, "pdt_branch_weight", None)
+    if pdt_bw is None:
+        return None
+    periods = d.cnd_ladder.select("d").unique()
+    per_d = (pdt_bw.frame.group_by("d")
+             .agg(pl.col("value").min().alias("lo"), pl.col("value").max().alias("hi"))
+             .with_columns(pl.col("d").cast(periods.schema["d"], strict=False)))
+    if per_d["d"].null_count() > 0:
+        raise ValueError("_commodity_ladder: a period of pdt_branch_weight is not in the ladder's period "
+                         "vocabulary.")
+    varying = per_d.filter(pl.col("lo") != pl.col("hi")).sort("d")["d"].to_list()
+    if varying:
+        raise ValueError(f"_commodity_ladder: the stochastic branch weight varies within period(s) {varying}; "
+                         "a ladder purchase is per period and needs one weight per period.")
+    frame = (periods.join(per_d.select("d", value=pl.col("lo")), on="d", how="left")
+             .with_columns(pl.col("value").fill_null(1.0))
+             .sort("d"))
+    return Param(("d",), frame)
+
+
 def objective_terms(b: _Build) -> Expr | None:
     """Price of the ladder purchases."""
     if b.v_trade is None:
@@ -348,13 +380,20 @@ def objective_terms(b: _Build) -> Expr | None:
 
     # ─── OBJ. ─── commodity ladder ───────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # + Σ_{(c,n,d,i) ∈ cndi_ladder_cum} v_trade[c,n,d,i] · cu[c] · price_cum[c,i] · inflation_op[d] / period_share[d]
-    # + Σ_{(c,n,d,i) ∈ cndi_ladder_ann} v_trade[c,n,d,i] · cu[c] · price_ann[c,i,d] · inflation_op[d] / period_share[d]
-    #   cu = commodity_unitsize
-    # Each tier's purchase at its price, annualised per period.  v_trade is already a period sum, so no
-    # step duration, timestep weight or branch weight enters.
+    # + Σ_{(c,n,d,i) ∈ cndi_ladder_cum} v_trade[c,n,d,i] · cu[c] · price_cum[c,i]
+    #                                   · inflation_op[d] / period_share[d] · bw[d]
+    # + Σ_{(c,n,d,i) ∈ cndi_ladder_ann} v_trade[c,n,d,i] · cu[c] · price_ann[c,i,d]
+    #                                   · inflation_op[d] / period_share[d] · bw[d]
+    #   cu = commodity_unitsize;  bw[d] = branch_weight[d,t], the same for every t of d (factor 1 outside
+    #   stochastic solves)
+    # Each tier's purchase at its price, annualised per period and weighted by the probability of the
+    # period's branch, as w_op weights the other operational costs.  v_trade is already a period sum, so
+    # no step duration or timestep weight enters; a period whose branch weight varies over t raises.
     traded = b.v_trade * _commodity_unitsize_param(d)
     annualization = d.p_inflation_op / d.p_period_share
+    bw = _branch_weight(d)
+    if bw is not None:
+        annualization = annualization * bw
     obj = None
     if _has_rows(d.cndi_ladder_cum) and d.p_ladder_cum_price is not None:
         obj = Sum(Where(traded, d.cndi_ladder_cum) * d.p_ladder_cum_price * annualization)
