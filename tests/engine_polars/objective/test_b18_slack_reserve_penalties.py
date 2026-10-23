@@ -3,20 +3,20 @@
 Closed-form perturbation tests for six currently-untested terms:
 
 * B18-2 — ``vq_state_down · p_penalty_down · p_node_capacity_for_scaling
-          · op_factor``  (model.py:2389-2390)
+          · op_factor``  (model._obj_balance_slack)
 * B18-3 — ``vq_state_down · p_penalty_down · op_factor`` no-scaling
-          fallback branch (model.py:2391-2393)
+          fallback branch (model._obj_balance_slack)
 * B18-4 — ``vq_reserve · pdtReserve_upDown_group_reservation
           · p_reserve_upDown_group_penalty_reserve · op_factor``
-          (_reserve.py:581-609)
+          (_reserve.objective_terms)
 * B18-5 — ``vq_inertia · pdGroup_inertia_limit · pdGroup_penalty_inertia
-          · op_factor``  (_group_slack.py:1158-1164)
+          · op_factor``  (_group_slack.objective_terms)
 * B18-6 — ``vq_non_synchronous · p_group_capacity_for_scaling
           · pdGroup_penalty_non_synchronous · op_factor``
-          (_group_slack.py:1166-1172)
+          (_group_slack.objective_terms)
 * B18-7 — ``vq_capacity_margin · p_group_capacity_for_scaling
           · pdGroup_penalty_capacity_margin · p_inflation_op``
-          (_group_slack.py:1174-1182).  CRITICAL: NO step_duration /
+          (_group_slack.objective_terms).  CRITICAL: NO step_duration /
           timestep_weight / period_share / pdt_branch_weight — only
           ``inflation_op`` applies; the asymmetry is load-bearing.
 
@@ -98,7 +98,7 @@ def test_b18_2_vq_state_down_with_capacity_scaling(toy_costs_only_1d2t):
 
 def test_b18_3_vq_state_down_no_capacity_scaling_fallback(toy_costs_only_1d2t):
     """Covers B18-3 — when ``p_node_capacity_for_scaling is None`` the
-    code takes the fallback branch (model.py:2391-2393) which omits the
+    code takes the fallback branch (model._obj_balance_slack) which omits the
     ncs factor entirely (NOT a silent ×1).
     """
     base = _make_drain_data(toy_costs_only_1d2t, pen_down=1000.0, ncs=None)
@@ -122,7 +122,7 @@ def test_b18_4_vq_reserve_penalty_isolated(toy_group_reserve):
     Δobj == Δpen · Σ vq_reserve · pdtReserve · op_factor (op=1 here).
 
     Hand-calc: max_share=0 ⇒ no provider ⇒ reserveBalance forces vq=1
-    (the slack is capped at 1 in _reserve.py:273).  reservation=4 each
+    (the slack is capped at 1 in _reserve.add_variables).  reservation=4 each
     step ⇒ Σ over 2 steps of (vq=1 · res=4) = 8.  Δpen=200 ⇒ Δobj=1600.
     """
     d = toy_group_reserve

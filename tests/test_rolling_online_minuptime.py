@@ -8,7 +8,7 @@ was **never built** — the synthetic-solve early-return in
 producer of those frames, and returned without re-wiring them (unlike the
 documented RESERVE-1 / SECTION-1 / MINLOAD-1 / INFLOW-1 / NA-1 gaps).  With
 the frames ``None`` the ``minimum_uptime`` / ``minimum_downtime`` constraints
-(``model.py`` ``_add_online_block``) were silently dropped **even within a
+(``_online.add_constraints``) were silently dropped **even within a
 single roll**, so a unit authored with ``min_uptime`` / ``min_downtime`` was
 free to collapse below its own recent startup obligation inside a roll.
 

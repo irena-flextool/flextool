@@ -6,7 +6,7 @@ opened in roll N into roll N+1's early steps: the prior roll's realized
 committed ``v_startup`` / ``v_shutdown`` is handed off (``online_history``),
 rebuilt into ``uptime_carry`` / ``downtime_carry`` at the continuation roll
 (``_derived_params.online_mintime_carry_from_source``) and injected on the
-``minimum_uptime`` RHS / ``minimum_downtime`` LHS by ``_add_online_block``.
+``minimum_uptime`` RHS / ``minimum_downtime`` LHS by ``_online.add_constraints``.
 
 The carry is PERIOD-AWARE: an obligation is carried ONLY within the same
 period, never across a period boundary.  FlexTool's online dynamics are

@@ -635,7 +635,7 @@ def cast_value_axes(value, enums: dict[str, pl.Enum], *, strict: bool = False,
 # and the LP solves an under-constrained, too-cheap problem.  These
 # columns are left as the reader produced them (plain string labels);
 # ``model.py`` casts them explicitly against the correct timestep /
-# base-period vocabulary at each use site (model.py:1234-1291).  Mirrors
+# base-period vocabulary at each use site (model._eq_rp_storage_chain).  Mirrors
 # how coarse-block frames dodge the identical ``b``/branch collision by
 # using ``"bk"`` for the block axis.
 _FLEXDATA_SWEEP_SKIP_COLUMNS: "dict[str, frozenset[str]]" = {

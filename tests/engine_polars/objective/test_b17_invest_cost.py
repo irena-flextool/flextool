@@ -4,10 +4,10 @@ Closed-form perturbation tests for two currently-untested obj terms:
 
 * B17-3 — process divest lifetime FC credit
           ``- v_divest_p * p_unitsize * ed_lifetime_fixed_cost_divest``
-          model.py:2583-2591
+          model._obj_invest_divest
 * B17-4 — process divest annuity credit
           ``- v_divest_p * p_unitsize * ed_entity_annual_divest_discounted``
-          model.py:2587-2593
+          model._obj_invest_divest
 
 Both share a fixture: extend ``toy_invest_3d`` with a divest-eligible
 process holding ``existing=5`` units (so divestment is feasible).  Zero

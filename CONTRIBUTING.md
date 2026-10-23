@@ -47,6 +47,16 @@ Run a single scenario test:
 pytest tests/ -k "coal" -v
 ```
 
+### LP snapshot gate (model-layer refactors)
+
+A change to `flextool/engine_polars/model.py` or its feature modules that should not change the model is checked with `tools/lp_snapshot.py`: it builds the LP of a fixed fixture set and writes named MPS files, then compares two snapshots byte for byte (or, with `--canonical`, up to row/column order). Emit order is part of the LP, so this also shows what reordering steps does.
+
+```bash
+python tools/lp_snapshot.py snapshot -j 8 _audit_reports/lp_base   # before the change
+python tools/lp_snapshot.py snapshot -j 8 _audit_reports/lp_new    # after
+python tools/lp_snapshot.py compare _audit_reports/lp_base _audit_reports/lp_new
+```
+
 ### Golden File Tests
 
 Scenario tests compare solver outputs against golden files in `tests/expected/<scenario>/`. To regenerate golden files after intentional changes to the model or output processing:

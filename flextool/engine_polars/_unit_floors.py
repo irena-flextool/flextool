@@ -1,22 +1,11 @@
 """Unit output floors: minimum load, per-output floors and downward-reserve headroom.
 
-A unit's OUTPUT MEASURE A_p is the set of arcs that define its capacity (:func:`unit_measured_arcs`):
-the conversion_flow_coeff ≠ 0 output arcs of an indirect unit (the maxOutputSum arcs) or the single
-capped arc of a direct unit.  The ≥ rows minFlow_minload_*, minFlow_output_floor_*, minFlow_reserve and
-minFlow_reserve_arc keep a unit's flow above a floor that already accounts for the reserve it offers.
-
-Rdn is the reserve that REDUCES an arc: ``down`` at the node the unit delivers into (n = sink) and
-``up`` at the node it consumes from (n = source, a consumption cut), in the arc's flow units.
-v_reserve is node MW / unitsize (the reserveBalance convention), so a sink-side reserve, or a
-source-side reserve on an arc whose v_flow IS the input (an indirect unit's input arc, a sink-less
-unit), enters with factor 1; a source-side reserve on a direct input→output unit (v_flow is the
-output, the node draw is v_flow · slope) enters with factor 1 / slope.
-
-Connections are excluded (they offer downward reserve both by cutting import and by raising
-export).  An indirect unit cutting its INPUT (``up`` reserve at an input node) gets only the zero
-floor on that input arc: tying the input cut to the outputs would need the conversion mix, so
-combined with downward reserve on its outputs such a unit can end up below its minimum load.
-See docs/dev/unit_floors_and_reserves.md.
+Owns the rows minFlow_minload_*, minFlow_output_floor_*, minFlow_reserve and minFlow_reserve_arc.  They keep
+a unit's flow on its output measure A_p (:func:`unit_measured_arcs`) above a floor that already includes Rdn,
+the reserve that reduces the arc (``down`` at the sink, ``up`` at the source; see
+:func:`_reducing_reserve_selectors`).  Connections are excluded.  An indirect unit cutting its input gets
+only the zero floor on that input arc, so with downward reserve on its outputs it can end up below its
+minimum load.  See docs/dev/unit_floors_and_reserves.md.
 """
 
 from typing import TYPE_CHECKING

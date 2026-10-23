@@ -3,11 +3,11 @@
 Closed-form perturbation tests for three currently-untested obj terms:
 
 * B16-3 — eff sink-side O&M  (`+ v_flow * unitsize * p_pdt_varCost_sink * op_factor`)
-          model.py:2524-2529
+          model._obj_variable_cost
 * B16-4 — eff connection process O&M (`+ v_flow * unitsize * p_pdt_varCost_process * op_factor`)
-          model.py:2534-2539
+          model._obj_variable_cost
 * B16-7 — commodity sell revenue (`- v_flow * unitsize * p_commodity_price * op_factor`)
-          model.py:2443-2448
+          model._obj_commodity
 
 Each test perturbs exactly one parameter, holding v_flow fixed by
 construction (slack penalty 1e6 dwarfs all cost perturbations / inflow
@@ -192,7 +192,7 @@ def test_b16_4_eff_connection_varcost_isolated():
 # `p_sell` (n → SELL_n) with SELL_n a commodity-priced node.  The only
 # outlet for the +8 supply is the sell process, so v_flow=8 is forced
 # by balance.  Perturbing the commodity sell price changes only the
-# sell-revenue obj term (model.py:2443-2448), with the leading minus
+# sell-revenue obj term (model._obj_commodity), with the leading minus
 # sign making higher price ⇒ more negative obj.
 
 def _build_commodity_sell_data(price: float) -> FlexData:
@@ -275,7 +275,7 @@ def test_b16_7_commodity_sell_revenue_isolated():
 
     # Hand-calc: Δobj = -(price_pert - price_base) * Σ v_flow * unitsize * op
     #                 = -(7-5) * 16 * 1 * 1 = -32.  Leading minus comes from
-    # model.py:2446 ``obj = obj - Sum(...)``.
+    # OBJ. commodity_sales in ``model._obj_commodity``.
     expected_delta = -(pert_price - base_price) * base_flow_sum
     assert float(sol_pert.obj) - float(sol_base.obj) == pytest.approx(
         expected_delta, rel=1e-7)

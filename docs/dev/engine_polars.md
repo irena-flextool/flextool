@@ -113,102 +113,139 @@ This DB-driven validation matters because a 2D parameter authored as
 *names* in polars but the opposite axis semantics. Column-shape
 detection misses the difference; the per-level `index_name` doesn't.
 
-## Feature-conditional LP build
+## LP build: `model.py` and the feature modules
 
-`build_flextool(m, d)` is the heart of the engine. It walks a fixed
-list of feature blocks and adds variables, constraints, and objective
-terms to the `polar_high.Problem` `m` only when the corresponding
-fields of `FlexData` `d` are populated.
+`build_flextool(m, d)` builds the LP into the `polar_high.Problem` `m`
+from the `FlexData` `d`. Its body is a table of contents: a list of
+steps run in order, each taking the `_Build` context `b` (the problem,
+the data, the `has_*` feature flags, shared index sets, variables and a
+few shared expressions):
 
-The feature requirements are declared as module-level tuples at the
+1. `_prepare` — declares the dense axes, sets the `has_*` flags from the
+   data, checks required fields and builds the shared index sets
+   (`pss_dt`, `nodeBalance_dt`, `nodeState_dt`, …).
+2. `_declare_variables` — the one place where the decision space is
+   assembled: core variables are declared here and the feature modules'
+   `add_variables(b)` are called from here. Declaration order is the LP
+   column order.
+3. `_shared_expressions` — expressions read by several families (reserve
+   coupling sums, invest/divest-in-dispatch sums, `op_factor`).
+4. One `_eq_<family>(b)` per core equation family, in emit order,
+   interleaved with the feature modules' `add_constraints(b)`.
+5. `_obj_<family>(b)` and the modules' `objective_terms(b)` return their
+   term (or `None`); `build_flextool` sums them in order and calls
+   `m.set_objective`.
+
+Every family function starts with an early-return guard on its flag
+(`if not b.has_storage: return`), so a feature whose data is empty emits
+nothing. The `model.py` module docstring is the map: every variable with
+its dims and unit, and every equation family in emit order with the
+module it lives in. Each row, objective term and variable carries an
+`EQ.` / `OBJ.` / `VAR.` header with its formula, so
+`grep -rn "EQ. ─── maxFlow" flextool/engine_polars` finds an equation.
+
+**What lives where.** `model.py` holds the core model that every run
+uses: node balance, storage state, flows and capacity, conversion,
+investment maxima, CO2 caps, user constraints, profiles and the core
+objective. An optional feature that brings its own variables or rows
+lives in its own module, exposing the parts of the interface it needs —
+`add_variables(b)`, `add_constraints(b)`, `objective_terms(b)`:
+`_online` (unit commitment), `_unit_floors` (minimum load and
+reserve headroom), `_reserve`, `_group_slack` (capacity margin, inertia,
+non-synchronous share), `_cumulative_invest` (investment floors and
+group / cumulative / flow-group limits), `_commodity_ladder`,
+`_dc_power_flow`, `_delay` (delayed inputs, used by
+`conversion_indirect`) and `_non_anticipativity` (stochastic ties).
+Small helpers shared by these live in `_model_common`.
+
+**Emit order is part of the LP.** Row and column order decide which
+alternate optimum the solver returns, so moving a step in the table of
+contents (or a variable in `_declare_variables`) changes results on
+degenerate models. Check the effect with `tools/lp_snapshot.py`
+(see CONTRIBUTING.md "Running Tests").
+
+### Required fields
+
+The data each feature needs is declared as module-level tuples at the
 top of `model.py`:
 
 ```python
-ALWAYS = ("dt", "nodeBalance", "nodeBalance_dt",
-          "p_step_duration", "p_rp_cost_weight", "p_inflation_op",
-          "p_period_share", "p_inflow", "p_penalty_up", "p_penalty_down")
-PROCESSES = ("process_source_sink", "process_source_sink_eff",
-             "process_source_sink_noEff", "pss_dt", "flow_to_n",
-             "flow_from_commodity_eff", "flow_from_commodity_noEff",
+ALWAYS = ("dt", "nodeBalance",
+          "p_step_duration", "p_timestep_weight", "p_inflation_op", "p_period_share",
+          "p_inflow", "p_penalty_up", "p_penalty_down")
+PROCESSES = ("process_source_sink", "process_source_sink_eff", "process_source_sink_noEff",
+             "flow_to_n", "flow_from_commodity_eff", "flow_from_commodity_noEff",
              "p_unitsize", "p_flow_upper", "p_slope", "p_commodity_price")
-STORAGE = ("nodeState", "nodeState_dt", "dtttdt",
-           "p_state_upper", "p_state_unitsize")
+STORAGE = ("nodeState", "dtttdt", "p_state_upper", "p_state_unitsize")
 ONLINE = ("process_online", "p_online_dt", "p_min_load",
           "dtttdt", "p_process_existing_count")
-# ... INDIRECT, CO2_PRICE, CO2_CAP, USER_CSTR, PROFILES,
-#     MINLOAD_EFF, STARTUP_COST_LINEAR, STARTUP_COST_INTEGER,
-#     RAMP, INVEST, DIVEST
+# ... INDIRECT, CO2_CAP, CO2_CAP_TOTAL, USER_CSTR, PROFILES, MINLOAD_EFF,
+#     STARTUP_COST_LINEAR, STARTUP_COST_INTEGER, RAMP, INVEST, DIVEST
 ```
 
-`build_flextool` first runs `_check(d, ALWAYS, "always")` to assert the
-floor, then inspects each block's switch field (e.g. `nodeState` for
-storage, `process_indirect` for CHP) and calls `_check(d, BLOCK,
-"name")` when the switch is set. The check is **fail-fast**: if the
-switch is set but a required field is `None`, it raises `ValueError`.
-No silent degradation.
+`_prepare` runs `_check(d, ALWAYS, "always")`, sets each flag from its
+switch field (e.g. `has_storage` from `nodeState`, `has_indirect` from
+`process_indirect`) and calls `_check(d, TUPLE, "name")` for every
+active flag. The check is **fail-fast**: if the switch is set but a
+required field is `None`, it raises `ValueError`. No silent degradation.
 
-After validation the body of `build_flextool` becomes a long
-straight-line sequence of `if has_<feature>: ...` clauses. Each clause
-adds its variables, equation constraints, and objective contributions
-in one place. This shape is the **key invariant for extending the
-engine**: to add a new feature, declare its required-field tuple,
-populate those fields in the loader / writer ports, and gate every
-model element you add on the `has_<feature>` boolean.
+`_prepare` also declares FlexTool's dense trailing axes with
+`m.declare_dense_axes(("d", "t"))` — `(period, timestep)`. This
+unconditional call requires **polar-high>=2.4.0** (the version pin lives
+in `pyproject.toml`). Declaring the dense axes lets polar-high build the
+canonical matrix via the block-COO slice path: the pre-sorted dense axis
+is sliced as contiguous numpy blocks and the coefficient factors are
+multiplied with ufuncs, instead of wide relational joins. `Sum`-wrapped
+chains (FlexTool's `Sum`-heavy nodeBalance / reserves / co2 families)
+evaluate in a single pass via a captured `SumBlockMeta` recipe with a
+relabel fast-path. The block-COO output is bit-identical to the legacy
+polars path — the gain is the LP build's peak memory and wall time, not
+the LP itself.
 
-Before the first feature block, `build_flextool` declares FlexTool's
-dense trailing axes once with `m.declare_dense_axes(("d", "t"))` —
-`(period, timestep)`. This is an unconditional call requiring
-**polar-high>=2.4.0** (the interim `hasattr` capability guard has been
-dropped; the version pin lives in `pyproject.toml`). Declaring the dense
-axes lets polar-high build the canonical matrix via the block-COO slice
-path: the pre-sorted dense axis is sliced as contiguous numpy blocks and
-the coefficient factors are multiplied with ufuncs, instead of wide
-relational joins. `Sum`-wrapped chains (FlexTool's `Sum`-heavy
-nodeBalance / reserves / co2 families) evaluate in a single pass via a
-captured `SumBlockMeta` recipe with a relabel fast-path. The block-COO
-output is bit-identical to the legacy polars path — the gain is the LP
-build's peak memory and wall time, not the LP itself.
+### Worked example: storage
 
-### Worked example: STORAGE
-
-The storage block is a representative case:
-
-1. Required fields: `nodeState`, `nodeState_dt`, `dtttdt`,
-   `p_state_upper`, `p_state_unitsize`.
-2. Variable added: `v_state` indexed by `nodeState_dt = (n, d, t)`,
-   upper-bounded by `p_state_upper * p_state_unitsize`.
-3. Constraints added: the storage transition rule keyed on `dtttdt`
-   (the predecessor-lookup frame from `_timeline.py`), the start-of-
-   horizon `storage_fix_start`, and the end-state binding when
-   `storage_use_reference_value` is populated.
-4. Objective contribution: none directly — slack penalties only.
+1. Flag and fields: `b.has_storage` is set when `nodeState` has rows;
+   `STORAGE` lists `nodeState`, `dtttdt`, `p_state_upper`,
+   `p_state_unitsize`.
+2. Variable: `v_state[n, d, t]` over `nodeState_dt`
+   (`_declare_variables`), in units of the state unitsize. Its upper
+   bound depends on invest/divest, so it is the `maxState` row
+   (`_eq_max_state`), not a variable bound.
+3. Constraints: the state change enters `nodeBalance_eq` through
+   `_state_change_terms`, one term per `storage_binding_method`, using
+   the predecessor lookup `dtttdt` from `_timeline.py`. Start binding,
+   cyclic period binding, state profiles and the solve-horizon reference
+   value are `_eq_storage_start_binding`,
+   `_eq_storage_start_binding_cyclic`, `_eq_state_profiles` and
+   `_eq_storage_reference_value`.
+4. Objective: `_obj_storage_reference_price` when a reference price is
+   set; otherwise only the balance slack penalties.
 
 A bug report like "storage transition wrong at the period boundary"
-walks straight back to one of those four fields: most often `dtttdt`
-or `storage_bind_forward_only`, both populated by the loader and
-inspected here.
+walks straight back to `_state_change_terms` and the frames it reads:
+most often `dtttdt` or `storage_bind_forward_only`, both populated by
+the loader.
 
 ### RP-blended-weights inter-period coupling
 
-The `RP_BLENDED_WEIGHTS` feature block (gated on
-`d.nodeState_rp.height > 0`, the union of nodes whose
-`storage_binding_method` selects one of the blended-weights variants)
-adds the variables and constraints that close representative-period
-storage state across base periods. The block is structurally an
-extension of `STORAGE` and shares the `v_state` declaration; it adds
-on top:
+Representative-period storage (`b.has_rp`, set when `d.nodeState_rp`
+has rows — the union of nodes whose `storage_binding_method` selects one
+of the blended-weights variants) adds the variables and constraints that
+close representative-period storage state across base periods. It
+extends ordinary storage and shares the `v_state` declaration; on top it
+adds:
 
-| Element | Module | Role |
+| Element | Where | Role |
 |---|---|---|
-| `v_state_inter[n, b]` | `model.py` | Long-run state at base-period boundaries, free per `(n, b)`. |
-| `v_state_rp_start[n, d, t]` | `model.py` | Free starting state at the first step of each RP block. |
+| `v_state_inter[n, b]` | `model._declare_variables` | Long-run state at base-period boundaries, free per `(n, b)`. |
+| `v_state_rp_start[n, d, t]` | `model._declare_variables` | Free starting state at the first step of each RP block. |
 | `nodeState_rp_dt` | `_pdt_join.compute_nodeState_rp_dt` | The `(n, d, t)` join used to project `v_state` rows onto the RP cohort. |
 | `nodeState_rp_block_first_dt` | `_pdt_join.compute_nodeState_rp_block_first_dt` | Index set for `v_state_rp_start` — RP-block-first `(d, t)` tuples per RP node. |
-| `state_change_rp_interior` / `state_change_rp_start` | `model.py` `nodeBalance_eq` terms | Intra-period state-change. Interior steps use the ordinary within-timeset lag; the first step of each RP block replaces the lag with `v_state_rp_start` so each block starts free. |
-| `rp_inter_period_balance` | `model.py` | Inter-period balance over `(n, b, b_prev) ∈ nodeState_rp × rp_base_chain`, summing the per-RP-block drift weighted by `p_rp_weight[b, r]` and `p_state_unitsize[n]`. |
-| `rp_inter_period_cyclic` | `model.py` | End-to-start closure for the within-solve / within-period variants, indexed over `nodeState_rp × rp_base_first × rp_base_last`. The forward-only variant skips this constraint. |
-| `rp_inter_period_max_state` | `model.py` | Capacity bound on `v_state_inter[n, b]` over `(n, b, d) ∈ nodeState_rp × rp_base_period × period_in_use`, tightened by cumulative invest/divest exactly as the ordinary `maxState`. |
-| `maxState_rp_start` | `model.py` | Sibling capacity bound on `v_state_rp_start[n, d, t]` over `rp_block_first`. The RP variables don't get per-row `Var.upper` — both bounds are lifted into sibling constraints because `polar_high` doesn't yet support per-row variable bounds. |
+| `state_change_rp_interior` / `state_change_rp_start` | `model._state_change_terms` (`nodeBalance_eq` terms) | Intra-period state-change. Interior steps use the ordinary within-timeset lag; the first step of each RP block replaces the lag with `v_state_rp_start` so each block starts free. |
+| `rp_inter_period_balance` | `model._eq_rp_storage_chain` | Inter-period balance over `(n, b, b_prev) ∈ nodeState_rp × rp_base_chain`, summing the per-RP-block drift weighted by `p_rp_weight[b, r]` and `p_state_unitsize[n]`. |
+| `rp_inter_period_cyclic` | `model._eq_rp_storage_chain` | End-to-start closure for the within-solve / within-period variants, indexed over `nodeState_rp × rp_base_first × rp_base_last`. The forward-only variant skips this constraint. |
+| `rp_inter_period_max_state` | `model._eq_rp_storage_chain` | Capacity bound on `v_state_inter[n, b]` over `(n, b, d) ∈ nodeState_rp × rp_base_period × period_in_use`, tightened by cumulative invest/divest exactly as the ordinary `maxState`. |
+| `maxState_rp_start` | `model._eq_rp_storage_chain` | Sibling capacity bound on `v_state_rp_start[n, d, t]` over `rp_block_first`. Both bounds depend on invest/divest, so they are rows rather than variable bounds. |
 
 The three blended-weights methods that activate the block —
 `bind_within_solve_blended_weights`, `bind_within_period_blended_weights`,
@@ -233,7 +270,7 @@ import path. Both decode to the same nested
 `rp_weights.csv` frame and that `_emit_solve_writers` derives the
 `rp_base_chain`, `rp_base_first`, `rp_base_last`, and `rp_base__rep`
 companion sets from. See architecture.md
-[Feature blocks in `build_flextool`](architecture.md#feature-blocks-in-build_flextool)
+[Feature flags in `build_flextool`](architecture.md#feature-flags-in-build_flextool)
 for the entry in the gating table.
 
 ## Emitters (formerly writer ports)
@@ -576,7 +613,7 @@ on the child solve:
   from the Param frame at load time.
 - `fix_storage_price` arrives on the child as a dual carrier folded
   into `p_storage_state_reference_price`. The objective term added by
-  `use_reference_price` (model.py §10.1) values `v_state` at the last
+  `use_reference_price` (`model._obj_storage_reference_price`) values `v_state` at the last
   step of every `period_last` by that reference price, so the parent's
   shadow price on storage at the boundary becomes the child's
   end-of-period valuation:
@@ -592,7 +629,7 @@ on the child solve:
   unified and the dual carrier merely supplies values for the existing
   term.
 - `fix_storage_usage` adds the `node_storage_usage_fix_le` constraint
-  (`model.py`, gated on `n_fix_storage_usage` / `ndt_fix_storage_usage`
+  (`model._eq_storage_usage_fix`, gated on `n_fix_storage_usage` / `ndt_fix_storage_usage`
   / `p_fix_storage_usage` all being populated). The constraint pins
   cumulative realized usage at `nodeState_last_dt` to be at most the
   parent's allowance, indexed over the n_fix_storage_usage subset of
@@ -817,10 +854,10 @@ small. Repeating the table from
 
 | You want to… | Start at | Then read |
 |---|---|---|
-| Add a constraint that uses only existing parameters | `model.py` `build_flextool` body | The closest existing feature block. Wrap your additions in `if has_<feature>:` and skip a new requirement tuple. |
-| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct_params.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model.py`. |
+| Add a constraint that uses only existing parameters | `model.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1) and list it in the `model.py` module docstring. |
+| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct_params.py` (trivial DB read) or a new `_derived_*.py` (computed). Add the field to `FlexData`. Add it to the relevant feature's required-field tuple in `model.py`. Register it in autoscale `PARAMETER_TYPES` (CLAUDE.md invariant #1). |
 | Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new `_emit_*.py` otherwise | Wire the new function into `_apply_db_overrides` in `input.py`. |
-| Add a new feature block | `model.py` requirement tuples | Declare your `MY_FEATURE = (...)` tuple. Inspect a switch field via `has_my_feature = d.<switch> is not None and d.<switch>.height > 0`. Wrap the variable / constraint / objective additions in `if has_my_feature:`. Add a `_check(d, MY_FEATURE, "my_feature")` call alongside the existing ones. |
+| Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES` (CLAUDE.md invariant #1), add them to the `model.py` module docstring, and check the LP with `tools/lp_snapshot.py`. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. Cross-link: [scaling.md](scaling.md). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. Cross-link: [slack_convention.md](slack_convention.md). |
 | Add a new decomposition mode | `_benders.py` (+ `_region_filter.py`) for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |

@@ -18,7 +18,7 @@ oracles (B20):
           (``_commodity_ladder.objective_terms``).  Step_duration / timestep_weight do NOT
           enter the ladder term — that asymmetry is also pinned.
 * B20-4 — Legacy commodity price suppression for ladder commodities
-          (``model.py:2401-2414``).  When the same commodity carries
+          (``model._obj_commodity``).  When the same commodity carries
           both ``p_commodity_price`` AND a ladder, the legacy single-
           price term is filtered out so only the ladder pays.
 """
@@ -174,7 +174,7 @@ def test_b20_3_ladder_annualisation_factor_isolated(toy_1n1p_1d2t):
 def test_b20_4_legacy_commodity_price_suppressed_on_ladder(toy_1n1p_1d2t):
     """Covers B20-4 — when commodity FUEL has BOTH ``p_commodity_price``
     AND a ladder, the legacy single-price obj term is suppressed
-    (filtered out via ``~is_in(ladder_c)`` at model.py:2401-2414) so
+    (filtered out via ``~is_in(ladder_c)`` in ``model._obj_commodity``) so
     only the ladder pays.
 
     Setup: ``toy_1n1p_1d2t`` keeps ``p_commodity_price[FUEL]=1.0``;

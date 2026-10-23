@@ -376,7 +376,7 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
     # as a polars-numeric Param ``value`` column, the Utf8 must be cast
     # back to ``Float64`` at the producer — otherwise downstream
     # ``Param × Param`` multiplications (e.g. ``flow_upper_rhs *
-    # p_process_availability`` at ``model.py:1348``) raise
+    # p_process_availability`` in ``model._max_flow_rhs``) raise
     # ``InvalidOperationError: arithmetic on string and numeric``.
     # ``strict=False`` mirrors the casts in ``_read_long`` / pdtNode
     # path (input.py:958) — non-parseable values become null and the
@@ -6850,7 +6850,7 @@ def build_handoff_from_solution(
     # and each (period, step) in fix_storage_timesteps, sum v_flow primals
     # of arcs touching n, weighted by p_entity_unitsize[process] and
     # p_step_duration[d, t].  The formula mirrors the LP constraint
-    # ``node_storage_usage_fix_le`` (model.py:1401-1545) so the
+    # ``node_storage_usage_fix_le`` (model._eq_storage_usage_fix) so the
     # producer ↔ constraint round-trip closes exactly:
     #
     #   p_fix_storage_usage[n, d, t]
@@ -6871,7 +6871,7 @@ def build_handoff_from_solution(
     # specs/feature_fixes.md §3 and the user decision recorded there
     # (option a).  Pairing fix_usage with min_load_efficiency and
     # non-unit slope is now supported.  Per-process flow-coefficient
-    # ratio is still deferred (matches model.py:1424-1429).
+    # ratio is still deferred (matches model._eq_storage_usage_fix).
     #
     # Overrides the parent passthrough whenever this solve has any
     # fix_usage node × fix-step pair with extractable flows.
@@ -6940,7 +6940,7 @@ def build_handoff_from_solution(
                 .with_columns(pl.col("us").fill_null(1.0)))
 
             # n-as-sink: inflow contribution (negative, raw v_flow * unitsize).
-            # Mirrors constraint LHS sink_flow term (model.py:1500-1504).
+            # Mirrors constraint LHS sink_flow term (model._eq_storage_usage_fix).
             # Applied to all sink arcs touching fu_nodes regardless of
             # eff vs noEff partition.
             sink_side = (flows
@@ -6969,7 +6969,7 @@ def build_handoff_from_solution(
                     .join(fu_node_df, left_on="source", right_on="n",
                           how="inner"))
                 if pss_eff_fu.height > 0:
-                    # source_eff with slope multiplier (model.py:1505-1511
+                    # source_eff with slope multiplier (model._eq_storage_usage_fix
                     # gates on p_slope is not None — mirror that gate).
                     if flex_data.p_slope is not None:
                         slope_frame = (flex_data.p_slope.frame
@@ -6994,7 +6994,7 @@ def build_handoff_from_solution(
                         contrib_sides.append(source_eff_side)
 
                     # source_eff min_load_efficiency section term
-                    # (model.py:1512-1531).  Uses v_online_linear /
+                    # (model._eq_storage_usage_fix).  Uses v_online_linear /
                     # v_online_integer * section * unitsize.  No slope
                     # multiplier (per the constraint).
                     if (flex_data.process_min_load_eff is not None
@@ -7018,7 +7018,7 @@ def build_handoff_from_solution(
                                 ))
                             # Combine v_online_linear + v_online_integer
                             # (both contribute to the section term per
-                            # model.py:1518-1531; only one is typically
+                            # model._eq_storage_usage_fix; only one is typically
                             # present per process, but the sum is safe).
                             online_long = None
                             sol_vars = getattr(sol, "_vars", {}) or {}

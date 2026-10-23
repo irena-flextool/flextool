@@ -947,7 +947,7 @@ def test_pre_existing_fixed_uses_all_existing() -> None:
 
 def test_storage_state_reference_price_credit() -> None:
     """Sentinel: the reference-price credit IS now implemented in Python
-    at ``flextool/engine_polars/model.py:3406-3428`` (storage-state
+    in ``model._obj_storage_reference_price`` (storage-state
     reference-price objective term).  The wiring is exercised by
     ``tests/engine_polars/constraints/test_storage_handoff_wiring.py``
     (Sc B: ``test_storage_handoff_wiring_sc_b_fix_price``) which proves

@@ -8,7 +8,7 @@ through polar_high; row counts are obtained from
 Invariant
 ---------
 ``nodeBalance_eq`` is registered with ``over = nodeBalance_dt`` anti-joined
-with ``nodeStateBlock`` (see ``flextool/engine_polars/model.py:858``).
+with ``nodeStateBlock`` (see ``model._eq_node_balance``).
 The .mod's domain ``n in nodeBalance × dt`` minus ``n in nodeStateBlock``
 is reproduced by the cascade by construction; the test pins the
 materialised LP-row count to that derivation rule so a future writer

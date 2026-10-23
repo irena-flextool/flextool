@@ -1,8 +1,9 @@
 """Non-anticipativity: decisions taken before a forecast is revealed are equal in every forecast branch.
 
-Dispatch ties (storage net charge and first state, units online, reserves) hold over the tied steps
-dt_non_anticipativity, between the forecast branches of each anchor period.  Investment ties (v_invest /
-v_divest of processes and nodes) hold over the window pd_non_anticipativity of a recourse-investment solve.
+Owns the dispatch ties non_anticipativity_storage_use, _storage_state_first, _online_{integer,linear} and
+_reserve, which hold over the tied steps dt_non_anticipativity between the forecast branches of each anchor
+period, and the investment ties non_anticipativity_{invest,divest}_{p,n}, which hold over the window
+pd_non_anticipativity of a recourse-investment solve.  The module declares no variables.
 """
 
 import logging

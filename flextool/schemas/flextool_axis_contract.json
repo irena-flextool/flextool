@@ -137,7 +137,7 @@
       "source_type": "entity_class",
       "source": "reserve",
       "filter": "scenario_filter",
-      "note": "Reserve entities. Cascade column: 'r' (renamed from 'reserve' in _reserve.py:160 and downstream)."
+      "note": "Reserve entities. Cascade column: 'r' (renamed from 'reserve' in _reserve.load_data and downstream)."
     },
     {
       "name": "ud",
@@ -146,7 +146,7 @@
       "source": null,
       "tokens": ["up", "down"],
       "filter": null,
-      "note": "Fixed 2-value axis. Substrate of the schema is the 'upDown' entity class which has exactly two members ('up', 'down') — treated as synthetic to make the contract independent of the entity-class table for these two fixed tokens. Cascade column: 'ud' (renamed from 'upDown' in _reserve.py:160)."
+      "note": "Fixed 2-value axis. Substrate of the schema is the 'upDown' entity class which has exactly two members ('up', 'down') — treated as synthetic to make the contract independent of the entity-class table for these two fixed tokens. Cascade column: 'ud' (renamed from 'upDown' in _reserve.load_data)."
     },
     {
       "name": "constraint",

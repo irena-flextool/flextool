@@ -9,8 +9,8 @@ A failure prints a per-component diagnostic dict so the missing /
 mis-counted term is immediately visible.
 
 The component-by-component closed forms live in :mod:`_components` and
-mirror, term-for-term, the obj construction in
-``flextool/model.py:944-1212``.
+mirror, term-for-term, the ``_obj_*`` steps of
+``flextool/engine_polars/model.py``.
 
 NOTE: ``pdt_branch_weight`` is universally MISSING in polar_high and the
 audit lists it as such (see ``audit/objective_audit.md`` §11).  Every

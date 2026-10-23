@@ -5,8 +5,8 @@ Each function takes ``(data, sol)`` (where ``sol`` is a solved
 the obj.  Components return ``0.0`` cleanly when their feature isn't
 active in ``data``.
 
-Mirrors ``flextool/model.py:944-1212`` (the obj-construction block)
-section by section.  See ``audit/objective_audit.md`` for the
+Mirrors the ``_obj_*`` steps of ``flextool/engine_polars/model.py``
+(OBJ. headers) term by term.  See ``audit/objective_audit.md`` for the
 mod-side reference.
 
 NOTE: ``pdt_branch_weight`` is treated as 1.0 universally — both the
@@ -33,7 +33,7 @@ def _op_factor_frame(d) -> pl.DataFrame:
         op_factor = step_duration * timestep_weight * inflation_op
                     / period_share
 
-    Matches ``op_factor`` in ``flextool/model.py:945-946``.
+    Matches ``b.op_factor`` (``model._shared_expressions``).
     """
     return (
         d.p_step_duration.frame.rename({"value": "step_duration"})
@@ -98,7 +98,7 @@ def slack_obj(data, sol) -> float:
         weighted by step_duration * timestep_weight * inflation_op /
         period_share, and (if loaded) by node_capacity_for_scaling[n,d].
 
-    Mirrors ``flextool/model.py:953-960``.
+    Mirrors ``model._obj_balance_slack``.
     """
     vq_up = _sol_value_or_empty(sol, "vq_state_up")
     vq_dn = _sol_value_or_empty(sol, "vq_state_down")
@@ -134,7 +134,7 @@ def commodity_buy_eff_obj(data, sol) -> float:
     """§2.2: v_flow * unitsize * slope * commodity_price * op_factor,
     indexed on flow_from_commodity_eff.
 
-    Mirrors ``flextool/model.py:962-965``.
+    Mirrors OBJ. commodity_cost_eff (``model._obj_commodity``).
 
     NOTE: missing flow-coefficient ratio (sink/source) — currently
     treated as 1.0 (matches polar_high).  See audit §2.2.
@@ -166,7 +166,7 @@ def commodity_buy_noEff_obj(data, sol) -> float:
     """§2.1: v_flow * unitsize * commodity_price * op_factor,
     indexed on flow_from_commodity_noEff.
 
-    Mirrors ``flextool/model.py:982-985``.
+    Mirrors OBJ. commodity_cost_noEff (``model._obj_commodity``).
     """
     fcn = data.flow_from_commodity_noEff
     if _is_empty(fcn):
@@ -192,7 +192,7 @@ def commodity_sell_obj(data, sol) -> float:
     """§2.4: -Σ v_flow * unitsize * commodity_price * op_factor,
     indexed on flow_to_commodity (sink-side of priced commodity node).
 
-    Mirrors ``flextool/model.py:989-994``.  Sign is **negative**.
+    Mirrors OBJ. commodity_sales (``model._obj_commodity``).  Sign is **negative**.
     """
     ftc = data.flow_to_commodity
     if _is_empty(ftc):
@@ -222,7 +222,7 @@ def commodity_section_obj(data, sol) -> float:
         indexed on flow_from_commodity_eff filtered to
         process_min_load_eff.
 
-    Mirrors ``flextool/model.py:966-981``.
+    Mirrors the section term of OBJ. commodity_cost_eff (``model._obj_commodity``).
     """
     fce = data.flow_from_commodity_eff
     if _is_empty(fce) or data.process_min_load_eff is None:
@@ -260,7 +260,7 @@ def commodity_section_obj(data, sol) -> float:
 def co2_price_eff_obj(data, sol) -> float:
     """§4.2: source-side flow into CO2-priced node, with slope.
 
-    Mirrors ``flextool/model.py:996-999``.
+    Mirrors OBJ. co2_price_eff (``model._obj_co2_price``).
     """
     fc2 = data.flow_from_co2_priced
     if _is_empty(fc2):
@@ -291,7 +291,7 @@ def co2_price_eff_obj(data, sol) -> float:
 def co2_price_noEff_obj(data, sol) -> float:
     """§4.1: source-side flow into CO2-priced node (noEff).
 
-    Mirrors ``flextool/model.py:1015-1020``.
+    Mirrors ``model._obj_co2_price_noEff``.
     """
     fc2n = data.flow_from_co2_priced_noEff
     if _is_empty(fc2n):
@@ -319,7 +319,7 @@ def co2_price_noEff_obj(data, sol) -> float:
 def co2_section_obj(data, sol) -> float:
     """§4.3: Online section term in CO2-price envelope.
 
-    Mirrors ``flextool/model.py:1000-1012``.
+    Mirrors the section term of OBJ. co2_price_eff (``model._obj_co2_price``).
     """
     fc2 = data.flow_from_co2_priced
     if _is_empty(fc2) or data.process_min_load_eff is None:
@@ -361,7 +361,7 @@ def varcost_noEff_obj(data, sol) -> float:
     """§5.1: pdtProcess__source__sink__dt_varCost * v_flow * unitsize *
     op_factor.
 
-    Mirrors ``flextool/model.py:1025-1030``.
+    Mirrors OBJ. variable_cost_noEff (``model._obj_variable_cost``).
     """
     idx = data.pssdt_varCost_noEff
     if _is_empty(idx):
@@ -387,7 +387,7 @@ def varcost_eff_source_obj(data, sol) -> float:
     """§5.2: -Σ pdtProcess_source[...,'other_operational_cost']
     * (v_flow * unitsize * slope + section term) * op_factor.
 
-    Mirrors ``flextool/model.py:1040-1065``.  Sign is **negative**.
+    Mirrors OBJ. variable_cost_eff_source (``model._obj_variable_cost``).  Sign is **negative**.
     """
     idx = data.pssdt_varCost_eff_unit_source
     if _is_empty(idx):
@@ -439,7 +439,7 @@ def varcost_eff_sink_obj(data, sol) -> float:
     """§5.3: + pdtProcess_sink[...,'other_operational_cost']
     * v_flow * unitsize * op_factor.
 
-    Mirrors ``flextool/model.py:1070-1075``.
+    Mirrors OBJ. variable_cost_eff_sink (``model._obj_variable_cost``).
     """
     idx = data.pssdt_varCost_eff_unit_sink
     if _is_empty(idx):
@@ -465,7 +465,7 @@ def varcost_eff_connection_obj(data, sol) -> float:
     """§5.4: + pdtProcess[...,'other_operational_cost']
     * v_flow * unitsize * op_factor.
 
-    Mirrors ``flextool/model.py:1080-1085``.
+    Mirrors OBJ. variable_cost_eff_connection (``model._obj_variable_cost``).
     """
     idx = data.pssdt_varCost_eff_connection
     if _is_empty(idx):
@@ -495,7 +495,7 @@ def varcost_eff_connection_obj(data, sol) -> float:
 def startup_cost_obj(data, sol) -> float:
     """§6.1 + §6.2: v_startup * startup_cost * unitsize * startup_factor.
 
-    Mirrors ``flextool/model.py:1090-1099``.  Note: no step_duration —
+    Mirrors ``model._obj_startup_cost``.  Note: no step_duration —
     startups are point events.
     """
     if data.p_startup_cost is None or data.p_unitsize is None:
@@ -557,7 +557,7 @@ def _ed_param_for(data, attr: str, e_alias: str, ref=None):
 def invest_p_annuity_obj(data, sol) -> float:
     """§7.1: + Σ v_invest_p * unitsize * ed_entity_annual_discounted.
 
-    Mirrors ``flextool/model.py:1109-1110``.
+    Mirrors OBJ. invest_cost_p (``model._obj_invest_divest``).
     """
     vip = _sol_value_or_empty(sol, "v_invest_p")
     if _is_empty(vip) or data.p_unitsize is None:
@@ -576,7 +576,7 @@ def invest_p_annuity_obj(data, sol) -> float:
 def invest_n_annuity_obj(data, sol) -> float:
     """§7.2: + Σ v_invest_n * state_unitsize * ed_entity_annual_discounted.
 
-    Mirrors ``flextool/model.py:1132-1133``.
+    Mirrors OBJ. invest_cost_n (``model._obj_invest_divest``).
     """
     vin = _sol_value_or_empty(sol, "v_invest_n")
     if _is_empty(vin) or data.p_state_unitsize is None:
@@ -596,7 +596,7 @@ def invest_n_annuity_obj(data, sol) -> float:
 def lifetime_fixed_cost_p_obj(data, sol) -> float:
     """§7.3: + Σ v_invest_p * unitsize * ed_lifetime_fixed_cost.
 
-    Mirrors ``flextool/model.py:1111-1112``.
+    Mirrors OBJ. invest_cost_p (``model._obj_invest_divest``).
     """
     vip = _sol_value_or_empty(sol, "v_invest_p")
     if _is_empty(vip) or data.p_unitsize is None:
@@ -615,7 +615,7 @@ def lifetime_fixed_cost_p_obj(data, sol) -> float:
 def lifetime_fixed_cost_n_obj(data, sol) -> float:
     """§7.4: + Σ v_invest_n * state_unitsize * ed_lifetime_fixed_cost.
 
-    Mirrors ``flextool/model.py:1134-1135``.
+    Mirrors OBJ. invest_cost_n (``model._obj_invest_divest``).
     """
     vin = _sol_value_or_empty(sol, "v_invest_n")
     if _is_empty(vin) or data.p_state_unitsize is None:
@@ -635,7 +635,7 @@ def lifetime_fixed_cost_n_obj(data, sol) -> float:
 def divest_p_savings_obj(data, sol) -> float:
     """§7.5: -Σ v_divest_p * unitsize * ed_lifetime_fixed_cost_divest.
 
-    Mirrors ``flextool/model.py:1120-1121``.  Sign is **negative**.
+    Mirrors OBJ. divest_cost_p (``model._obj_invest_divest``).  Sign is **negative**.
     """
     vdp = _sol_value_or_empty(sol, "v_divest_p")
     if _is_empty(vdp) or data.p_unitsize is None:
@@ -654,7 +654,7 @@ def divest_p_savings_obj(data, sol) -> float:
 def divest_n_savings_obj(data, sol) -> float:
     """§7.6: -Σ v_divest_n * state_unitsize * ed_lifetime_fixed_cost_divest.
 
-    Mirrors ``flextool/model.py:1144-1145``.  Sign is **negative**.
+    Mirrors OBJ. divest_cost_n (``model._obj_invest_divest``).  Sign is **negative**.
     """
     vdn = _sol_value_or_empty(sol, "v_divest_n")
     if _is_empty(vdn) or data.p_state_unitsize is None:
@@ -674,7 +674,7 @@ def divest_n_savings_obj(data, sol) -> float:
 def divest_p_salvage_obj(data, sol) -> float:
     """§7.7: -Σ v_divest_p * unitsize * ed_entity_annual_divest_discounted.
 
-    Mirrors ``flextool/model.py:1122-1123``.  Sign is **negative**.
+    Mirrors OBJ. divest_cost_p (``model._obj_invest_divest``).  Sign is **negative**.
     """
     vdp = _sol_value_or_empty(sol, "v_divest_p")
     if _is_empty(vdp) or data.p_unitsize is None:
@@ -694,7 +694,7 @@ def divest_n_salvage_obj(data, sol) -> float:
     """§7.8: -Σ v_divest_n * state_unitsize *
     ed_entity_annual_divest_discounted.
 
-    Mirrors ``flextool/model.py:1146-1147``.  Sign is **negative**.
+    Mirrors OBJ. divest_cost_n (``model._obj_invest_divest``).  Sign is **negative**.
     """
     vdn = _sol_value_or_empty(sol, "v_divest_n")
     if _is_empty(vdn) or data.p_state_unitsize is None:
@@ -718,9 +718,10 @@ def divest_n_salvage_obj(data, sol) -> float:
 def existing_entity_fixed_cost_obj(data, sol) -> float:
     """§8.1: + Σ p_entity_all_existing * ed_fixed_cost * inflation_op.
 
-    Currently NOT wired in polar_high (model.py:1149-1161 documents the
-    deferral).  Computed here for completeness; tests that need to flag
-    this term should compare against it explicitly.
+    Added to the LP objective only with ``include_existing_fixed_cost=True``
+    (``model._obj_existing_fixed_cost``; off by default).  Computed here for
+    completeness; tests that need to flag this term should compare against
+    it explicitly.
     """
     if (data.p_ed_fixed_cost is None
             or data.p_entity_all_existing is None):
@@ -840,7 +841,7 @@ def storage_state_reference_price_obj(data, sol) -> float:
     storage_state_reference_price * timestep_weight * inflation_op
     / period_share.  Sign is **negative** — terminal state is rewarded.
 
-    Mirrors ``flextool/engine_polars/model.py`` §10.1 (B1b).  The term
+    Mirrors ``model._obj_storage_reference_price``.  The term
     fires when ``p_storage_state_reference_price`` is populated for at
     least one (n, d), and only at the last (d, t) of every period_last.
     No ``step_duration`` (terminal valuation is a point event — mirrors

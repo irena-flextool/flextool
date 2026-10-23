@@ -38,9 +38,9 @@ decorators removed).
 
 §D.6 branch-point continuity (inter-branch) is now DELIVERED.  The storage NA
 stack ties BOTH the per-(n, t) NET CHARGE (per-step charge delta,
-``model.py:219-234``) AND absolute ``v_state`` at the FIRST tied step of each
+``non_anticipativity_storage_use``) AND absolute ``v_state`` at the FIRST tied step of each
 anchor period (``non_anticipativity_storage_state_first``,
-``model.py`` 1b-block).  Telescoping the per-step net-charge ties over the
+both in ``_non_anticipativity.add_dispatch_constraints``).  Telescoping the per-step net-charge ties over the
 contiguous jump off that absolute branch-point anchor closes the whole tied
 range absolutely, so the constant realized↔forecast ``v_state`` offset
 (previously ~0.06 here) collapses to ~0.  The xfail that once guarded this is
@@ -54,7 +54,7 @@ continuation rolls), not the nominal 0.5 — so the test below asserts the
 branches equal EACH OTHER at the branch point, never equality to 0.5.
 
 The structural signal the frames test asserts is the exact precondition the
-operational-NA gate (``model.py:4519-4522``) requires to emit the four
+operational-NA gate (``_non_anticipativity.add_dispatch_constraints``) requires to emit the four
 ``non_anticipativity_*`` constraint families: a per-roll ``flex_data`` whose
 ``period_branch_full`` (with a non-empty ``d != b`` sub-cohort) and
 ``dt_non_anticipativity`` frames are both populated.
@@ -161,7 +161,7 @@ def test_rolling_na_frames_couple_branches_per_roll(rolling_result):
     populate, on every roll's ``flex_data``, both the ``period_branch_full``
     (d, b) anchor→sibling map — with a non-empty ``d != b`` sub-cohort — and
     the ``dt_non_anticipativity`` (d, t) tie set.  That is exactly the gate the
-    operational-NA families check at ``model.py:4519-4522`` before emitting
+    operational-NA families check in ``_non_anticipativity.add_dispatch_constraints`` before emitting
     the ``non_anticipativity_*`` constraints.
     """
     steps = _steps(rolling_result)
@@ -201,7 +201,7 @@ def test_rolling_na_ties_storage_across_branches(rolling_result):
     exists — the variable NA actually ties here is ``v_state`` (storage params
     ARE present).  The storage non-anticipativity family pins the per-(n, t)
     NET CHARGE across siblings — the consecutive ``v_state`` delta
-    ``v_state[n, d, t] - v_state[n, d, t_prev]`` (``model.py:219-234``) — NOT
+    ``v_state[n, d, t] - v_state[n, d, t_prev]`` (``non_anticipativity_storage_use``) — NOT
     absolute ``v_state``.  This test therefore witnesses the net charge: for
     each FORECAST-period ``d`` in the cohort (``v_state``'s ``d`` axis carries
     the realized trunk ``period1`` plus the three forecast copies

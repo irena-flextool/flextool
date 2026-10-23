@@ -204,7 +204,7 @@ def test_constraint_registry_covers_engine_sources() -> None:
 # here.  When a new ``add_cstr(f"...")`` family is added in the engine,
 # add a representative instantiation to this list.
 _DYNAMIC_CONSTRAINT_SAMPLES = [
-    # ramp — model.py:2328  f"ramp_{side}_{dir_}_constraint"
+    # ramp — model._eq_ramp  f"ramp_{side}_{dir_}_constraint"
     "ramp_sink_up_constraint", "ramp_sink_down_constraint",
     "ramp_source_up_constraint", "ramp_source_down_constraint",
     # unit commitment — _online.py / _unit_floors.py  f"...{sfx}", sfx ∈ {_linear,_integer}

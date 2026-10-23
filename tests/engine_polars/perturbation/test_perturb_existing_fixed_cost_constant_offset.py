@@ -9,8 +9,9 @@ The .mod has::
 
 This is a *constant* (no decision variables), so the solver drops it
 during optimisation but flextool reports it in the published
-``v_obj``.  polar_high currently does **not** add this constant to the
-reported obj — see ``flextool/model.py:1149`` ("DEFERRED").
+``v_obj``.  polar_high adds this constant to the objective only with
+``include_existing_fixed_cost=True`` (``model._obj_existing_fixed_cost``;
+off by default).
 
 Strategy: scale ``p_ed_fixed_cost`` × 2.0 on the work_coal_retire
 fixture (which has ``coal_plant`` existing with a non-zero fixed

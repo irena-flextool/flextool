@@ -179,7 +179,7 @@ def read_period_set(workdir_solve_data: Path, name: str,
     Returns None (not empty) when the Provider doesn't carry the key
     or it's empty so the seed assignment in ``_load_invest`` mirrors
     the original ``None``-or-non-empty contract that downstream
-    consumers (``model.py:1517``) gate on.
+    consumers (``model._eq_invest_period_caps``) gate on.
     """
     path = workdir_solve_data / f"{name}.csv"
     df = _provider_get(provider, path)

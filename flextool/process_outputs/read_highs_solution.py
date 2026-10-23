@@ -392,16 +392,16 @@ VARIABLE_SPECS: list[VariableSpec] = [
 
     # -- Investment-cap duals (period-only, simple 1/scale transform) -------
     # Most of these families are emitted by a split process/node producer
-    # — ``maxInvest_entity_period_p`` (model.py:2319) for the process arm
-    # and ``maxInvest_entity_period_n`` (model.py:2336) for the node arm
+    # — ``maxInvest_entity_period_p`` (model._eq_invest_period_caps) for the process arm
+    # and ``maxInvest_entity_period_n`` (same function) for the node arm
     # etc. — so the reader matches both via ``derived_from`` and unions
     # the resulting frames.
     _invest_dual("maxInvest_entity_period",          "entity", "maxInvest_period",
                  derived_from=("maxInvest_entity_period_p",
                                 "maxInvest_entity_period_n")),
     # ``maxInvest_entity_total`` is asymmetric: process side keeps the
-    # bare name (model.py:2442), node side gets the ``_n`` suffix
-    # (model.py:2494).  Period is summed out inside ``Sum(over=("d",))``
+    # bare name, node side gets the ``_n`` suffix
+    # (model._eq_invest_total_caps).  Period is summed out inside ``Sum(over=("d",))``
     # — no period component in either constraint name.
     _invest_dual("maxInvest_entity_total",           "entity", "maxInvest_total",
                  has_period=False,
@@ -441,7 +441,7 @@ VARIABLE_SPECS: list[VariableSpec] = [
     # min invest-total constraint is indexed per ``(entity, period)`` —
     # ``over = (p|n, d)`` (_cumulative_invest._eq_min_invest_total) with the LHS
     # summing over ``d_invest`` — so it KEEPS a period axis.  The max-side
-    # total sums the period out (``Sum(over=("d",))``, model.py:2578) and is
+    # total sums the period out (``Sum(over=("d",))``, model._eq_invest_total_caps) and is
     # therefore ``has_period=False``.  We use the default ``has_period=True``
     # to match the actual min constraint's row bracket.
     _invest_dual("minInvest_entity_total",           "entity", "minInvest_total",

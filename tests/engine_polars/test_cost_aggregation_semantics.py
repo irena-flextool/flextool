@@ -76,7 +76,7 @@ from flextool.engine_polars._param_shapes import promote_param_to_dt
 def _state_slack_term(d, sol, *, side: str) -> float:
     """Σ vq * pen * (ncs?) * step_dur * rpcw * infl / psh  for one side.
 
-    Mirrors model.py:1991-1997 (the .mod's §1.1 / §1.2 obj term).
+    Mirrors ``model._obj_balance_slack``.
     """
     var = "vq_state_up" if side == "up" else "vq_state_down"
     pen = d.p_penalty_up if side == "up" else d.p_penalty_down
@@ -109,7 +109,7 @@ def _state_slack_term(d, sol, *, side: str) -> float:
 
 def _commodity_buy_eff_term(d, sol) -> float:
     """Σ Where(v_flow * unitsize * slope, flow_from_commodity_eff)
-       * commodity_price * op_factor   — model.py:2000-2002."""
+       * commodity_price * op_factor   — ``model._obj_commodity``."""
     if d.flow_from_commodity_eff is None or d.flow_from_commodity_eff.height == 0:
         return 0.0
     df = (
@@ -138,7 +138,7 @@ def _commodity_buy_eff_term(d, sol) -> float:
 
 def _co2_price_term(d, sol) -> float:
     """Σ Where(v_flow * unitsize * slope, flow_from_co2_priced)
-       * co2_content * co2_price * op_factor — model.py:2034-2036."""
+       * co2_content * co2_price * op_factor — ``model._obj_co2_price``."""
     if d.flow_from_co2_priced is None or d.flow_from_co2_priced.height == 0:
         return 0.0
     df = (
@@ -173,7 +173,7 @@ def _capacity_margin_slack_term(d, sol) -> float:
 
     Period-only: NO step_duration, NO timestep_weight, NO /period_share.
     The × 1000 is the CUR/kW → CUR/MW unit conversion in
-    ``_group_slack.py:1233-1238`` (BUG A4 fix); mirrors
+    ``_group_slack.objective_terms`` (BUG A4 fix); mirrors
     ``flextool.process_outputs.calc_slacks.costPenalty_capacity_margin_d``'s
     ``.mul(1000.0)``.
     """

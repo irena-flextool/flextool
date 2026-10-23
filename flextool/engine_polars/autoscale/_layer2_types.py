@@ -94,22 +94,22 @@ class CstrFamily:
 
 VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ── Process / connection flow (dispatched per timestep).
-    # flextool/engine_polars/model.py:482
+    # flextool/engine_polars/model.py _declare_variables
     "v_flow": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
 
     # ── Storage / nodeBalance slacks.  Carry ENERGY directly (no
     # unitsize multiplier on the column).
-    # flextool/engine_polars/model.py:484
+    # flextool/engine_polars/model.py _declare_variables
     "vq_state_up": VarFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:485
+    # flextool/engine_polars/model.py _declare_variables
     "vq_state_down": VarFamily(QuantityType.ENERGY),
 
     # ── Storage state (per-step, per-block).  ENERGY column.
-    # flextool/engine_polars/model.py:490
+    # flextool/engine_polars/model.py _declare_variables
     "v_state": VarFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:502
+    # flextool/engine_polars/model.py _declare_variables
     "v_state_inter": VarFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:505
+    # flextool/engine_polars/model.py _declare_variables
     "v_state_rp_start": VarFamily(QuantityType.ENERGY),
 
     # ── Unit-commitment families.  Column counts a number of units
@@ -134,20 +134,20 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # matrix coefficient ``p_unitsize`` (process / connection) or
     # ``p_state_unitsize`` (node) sets the row's effective POWER /
     # ENERGY type.
-    # flextool/engine_polars/model.py:523
+    # flextool/engine_polars/model.py _declare_variables
     "v_invest_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine_polars/model.py:525
+    # flextool/engine_polars/model.py _declare_variables
     "v_divest_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine_polars/model.py:527
+    # flextool/engine_polars/model.py _declare_variables
     "v_invest_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
-    # flextool/engine_polars/model.py:529
+    # flextool/engine_polars/model.py _declare_variables
     "v_divest_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
 
     # ── Reserve.  DIMENSIONLESS column; ``p_unitsize`` multiplier
     # carries the per-row POWER coefficient.
-    # flextool/engine_polars/_reserve.py:275
+    # flextool/engine_polars/_reserve.py add_variables
     "v_reserve": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine_polars/_reserve.py:282
+    # flextool/engine_polars/_reserve.py add_variables
     "vq_reserve": VarFamily(QuantityType.POWER),
 
     # ── Commodity ladder.  v_trade is DIMENSIONLESS; row coef
@@ -208,40 +208,40 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
 
 CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Node balance (the central energy equation) — ENERGY.
-    # flextool/engine_polars/model.py:1336
+    # flextool/engine_polars/model.py _eq_node_balance
     "nodeBalance_eq": CstrFamily(QuantityType.ENERGY),
     # Per-period energy balance for balance_within_period nodes — ENERGY.
-    # flextool/engine_polars/model.py:nodeBalancePeriod_eq
+    # flextool/engine_polars/model.py _eq_node_balance_period
     "nodeBalancePeriod_eq": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:1792
+    # flextool/engine_polars/model.py _eq_block_coupling
     "nodeBalanceBlock_eq": CstrFamily(QuantityType.ENERGY),
 
     # ── Storage state max / state ladder.  ENERGY.
-    # flextool/engine_polars/model.py:2788
+    # flextool/engine_polars/model.py _eq_max_state
     "maxState": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:1159
+    # flextool/engine_polars/model.py _eq_rp_storage_chain
     "maxState_rp_start": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:1570
+    # flextool/engine_polars/model.py _eq_block_coupling
     "stateConstantWithinBlock_eq": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:905
+    # flextool/engine_polars/model.py _eq_rp_storage_chain
     "rp_inter_period_balance": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:1039
+    # flextool/engine_polars/model.py _eq_rp_storage_chain
     "rp_inter_period_cyclic": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:1144
+    # flextool/engine_polars/model.py _eq_rp_storage_chain
     "rp_inter_period_max_state": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:2985
+    # flextool/engine_polars/model.py _eq_storage_start_binding
     "storage_state_start_binding": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:3072
+    # flextool/engine_polars/model.py _eq_storage_start_binding_cyclic
     "storage_state_start_binding_cyclic_period": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:3124
+    # flextool/engine_polars/model.py _eq_storage_reference_value
     "storage_state_solve_horizon_reference_value": CstrFamily(QuantityType.ENERGY),
 
     # ── Flow caps from process side.  DIMENSIONLESS (capacity coefficient).
     # The cap is a fraction × existing_count; the row's effective type
     # lives in the coefficient, not the RHS.
-    # flextool/engine_polars/model.py:2045
+    # flextool/engine_polars/model.py _eq_max_flow
     "maxFlow": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:2075
+    # flextool/engine_polars/model.py _eq_max_flow
     "maxFlow_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
     # Reverse-flow capacity cap on v_flow_back for method_2way_1var_off
     # arcs (DC + non-DC).  flextool/engine_polars/model.py (maxFlow_back).
@@ -254,33 +254,33 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ``maxFlow_back`` over the full arc set.  Retained for back-compat.
     "maxToSink_back": CstrFamily(QuantityType.DIMENSIONLESS),
     # Ramp constraints, prefix-matched: ramp_<side>_<dir>_constraint.
-    # flextool/engine_polars/model.py:2164
+    # flextool/engine_polars/model.py _eq_ramp
     "ramp": CstrFamily(QuantityType.DIMENSIONLESS),
 
     # ── Investment caps — entity scope.
-    # flextool/engine_polars/model.py:2189
+    # flextool/engine_polars/model.py _eq_invest_max_units
     "maxInvest_var_bound": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/model.py:2197
+    # flextool/engine_polars/model.py _eq_invest_max_units
     "maxDivest_var_bound": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/model.py:2217
+    # flextool/engine_polars/model.py _eq_invest_max_units
     "maxInvest_var_bound_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:2225
+    # flextool/engine_polars/model.py _eq_invest_max_units
     "maxDivest_var_bound_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:2257
+    # flextool/engine_polars/model.py _eq_invest_period_caps
     "maxInvest_entity_period_p": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/model.py:2274
+    # flextool/engine_polars/model.py _eq_invest_period_caps
     "maxInvest_entity_period_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:2292
+    # flextool/engine_polars/model.py _eq_invest_period_caps
     "maxDivest_entity_period_p": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/model.py:2309
+    # flextool/engine_polars/model.py _eq_invest_period_caps
     "maxDivest_entity_period_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:2380
+    # flextool/engine_polars/model.py _eq_invest_total_caps
     "maxInvest_entity_total": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/model.py:2432
+    # flextool/engine_polars/model.py _eq_invest_total_caps
     "maxInvest_entity_total_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine_polars/model.py:2405
+    # flextool/engine_polars/model.py _eq_invest_total_caps
     "maxDivest_entity_total": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/model.py:2457
+    # flextool/engine_polars/model.py _eq_invest_total_caps
     "maxDivest_entity_total_n": CstrFamily(QuantityType.ENERGY),
 
     # Slice D per-path total caps (design §7.2/§14) — one cap row per
@@ -381,7 +381,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
 
     # ── User-defined constraints: composite LHS, RHS in caller's
     # coordinates.  Layer 2 skips per-row scaling.
-    # flextool/engine_polars/model.py:2740 (process_constraint_equal / _less_than / _greater_than)
+    # flextool/engine_polars/model.py _eq_user_constraints (process_constraint_equal / _less_than / _greater_than)
     "process_constraint_equal": CstrFamily(None),
     "process_constraint_less_than": CstrFamily(None),
     "process_constraint_greater_than": CstrFamily(None),
@@ -389,19 +389,19 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Node-balance fix (used by manual demand patching).  Zero RHS
     # in the most common case; treat as DIMENSIONLESS so the row
     # coefficient is the rescaled quantity.
-    # flextool/engine_polars/model.py:1392
+    # flextool/engine_polars/model.py _eq_node_balance_fix_quantity
     "node_balance_fix_quantity_eq_lower": CstrFamily(None),
-    # flextool/engine_polars/model.py:1539
+    # flextool/engine_polars/model.py _eq_storage_usage_fix
     "node_storage_usage_fix_le": CstrFamily(None),
 
     # ── Conversion (efficiency-balanced flow row).
-    # flextool/engine_polars/model.py:2509
+    # flextool/engine_polars/model.py _eq_conversion
     "conversion_indirect": CstrFamily(QuantityType.ENERGY),
 
     # ── CO2 caps — EMISSION_MASS.
-    # flextool/engine_polars/model.py:2542
+    # flextool/engine_polars/model.py _eq_co2_max_period
     "co2_max_period": CstrFamily(QuantityType.EMISSION_MASS),
-    # flextool/engine_polars/model.py:2577
+    # flextool/engine_polars/model.py _eq_co2_max_total
     "co2_max_total": CstrFamily(QuantityType.EMISSION_MASS),
 
     # ── Unit-commitment (online / startup / shutdown / minimum times).
@@ -438,9 +438,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # model.py _eq_min_input_share: homogeneous input-mixing row
     # (input_share_min) in unit-count flow units
     "minInputShare": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:3814 (minimum_uptime_<sfx>)
+    # flextool/engine_polars/_online.py add_constraints (minimum_uptime_<sfx>)
     "minimum_uptime": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine_polars/model.py:3853 (minimum_downtime_<sfx>)
+    # flextool/engine_polars/_online.py add_constraints (minimum_downtime_<sfx>)
     "minimum_downtime": CstrFamily(QuantityType.DIMENSIONLESS),
 
     # ── DC PF.
@@ -451,14 +451,14 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "dc_reference_angle_eq": CstrFamily(None),
 
     # ── Reserve.
-    # flextool/engine_polars/_reserve.py:373
+    # flextool/engine_polars/_reserve.py add_constraints
     "reserveBalance_timeseries_eq": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/_reserve.py:449
+    # flextool/engine_polars/_reserve.py add_constraints
     "reserveBalance_dynamic_eq": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/_reserve.py:508 (reserveBalance_up_n_1_eq / _down_n_1_eq)
+    # flextool/engine_polars/_reserve.py add_constraints (reserveBalance_up_n_1_eq / _down_n_1_eq)
     "reserveBalance_up_n_1_eq": CstrFamily(QuantityType.POWER),
     "reserveBalance_down_n_1_eq": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/_reserve.py:576 (reserve_process_upward / _downward)
+    # flextool/engine_polars/_reserve.py add_constraints (reserve_process_upward / _downward)
     "reserve_process_upward": CstrFamily(QuantityType.POWER),
     "reserve_process_downward": CstrFamily(QuantityType.POWER),
     # Storage energy-adequacy coupling for reserve_duration (#322).  Both
@@ -581,7 +581,7 @@ def lookup_cstr(name: str) -> CstrFamily:
     # in test_registry_coverage): a registry key ``K`` matches a dynamic
     # constraint name when ``name.startswith(K + "_")``.  This is what the
     # ``"ramp"`` entry relies on — the ramp family
-    # (``ramp_{side}_{dir}_constraint``, model.py:2328) carries middle and
+    # (``ramp_{side}_{dir}_constraint``, model._eq_ramp) carries middle and
     # suffix tokens (``_sink_up_constraint``) that neither the exact-match
     # nor the UC / member-class suffix-strip paths above can resolve.
     # Longest matching key wins so a more specific registration is never

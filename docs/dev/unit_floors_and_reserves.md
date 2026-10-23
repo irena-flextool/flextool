@@ -71,7 +71,7 @@ reserve without any `reservation` is therefore inactive.
 3. Connections: a net-position rule (`down at n ≤ f_into_n + (cap·avail −
    f_out_of_n)`), interacting with `v_flow_back` and the other end.
 4. `reserveBalance` lacks the .mod's slope factor for source-side reserves
-   of direct units; `_inverse_slope` in `model.py` follows the current
+   of direct units; `_unit_floors._inverse_slope` follows the current
    convention and must change with it (tripwire:
    `test_down_reserve_floor.py::test_direct_unit_input_side_up_reserve`).
 5. Connection `delay` is not implemented. Connections are never in

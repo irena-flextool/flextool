@@ -2,7 +2,7 @@
 ``lookup_cstr`` via prefix dispatch.
 
 The ramp constraints are emitted with dynamic f-string names
-(``model.py:2328`` — ``f"ramp_{side}_{dir_}_constraint"``), so the
+(``model._eq_ramp`` — ``f"ramp_{side}_{dir_}_constraint"``), so the
 static-literal grep in :mod:`test_registry_coverage` never sees them.
 Their Layer-2 registration is the single ``"ramp"`` entry in
 ``CONSTRAINT_FAMILIES``, which only resolves through the documented
@@ -25,7 +25,7 @@ from flextool.engine_polars.autoscale._layer2_types import (
 from flextool.engine_polars.autoscale._quantity_types import QuantityType
 
 
-# The exact names model.py:2327-2333 emits — (side, dir_) over the
+# The exact names model._eq_ramp emits — (side, dir_) over the
 # {sink, source} × {up, down} grid.
 RAMP_CONSTRAINT_NAMES = [
     f"ramp_{side}_{dir_}_constraint"

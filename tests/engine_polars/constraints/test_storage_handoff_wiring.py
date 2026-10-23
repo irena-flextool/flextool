@@ -9,7 +9,7 @@ no penalty: objective = 0 exactly.
 
 **Scenario B (fix_price)** — cyclic binding +
 ``p_storage_state_reference_price[s, d1] = 100.0``. The objective term
-at ``model.py:3406-3428`` fires:
+in ``model._obj_storage_reference_price`` fires:
 
     - Σ v_state[s, d1, t02] · p_state_unitsize[s] · ref_price[s, d1] · ref_price_factor
     = - v_state[s, d1, t02] · 10 · 100 · 1
@@ -20,13 +20,13 @@ LP maximises v_state[s, d1, t02], bounded by ``p_state_upper × p_state_unitsize
 state[t01] = state[t02] = 1.0 at optimum. Objective = -1000.
 
 Sc B is the verifier for the ``p_unitsize → p_state_unitsize`` bug
-fix at model.py:3427 — previously the term cross-joined per-process
+fix in ``model._obj_storage_reference_price`` — previously the term cross-joined per-process
 unitsize values, producing ``num_processes × 100 × v_state`` instead of
 ``state_unitsize × 100 × v_state``.
 
 **Scenario C (fix_usage)** — bind_forward_only + p_state_start=0.5 +
 discharge process s→n + demand at t02 + fix_usage cap.  The
-``node_storage_usage_fix_le`` constraint at ``model.py:1401-1545``
+``node_storage_usage_fix_le`` constraint (``model._eq_storage_usage_fix``)
 fires; LHS is the cumulative net discharge over the period, RHS is
 ``p_fix_storage_usage[s, d1, t02]``.
 
@@ -321,7 +321,7 @@ def test_fix_usage_producer_applies_slope(toy_storage_2t, tmp_path):
 def test_storage_handoff_wiring_sc_b_fix_price(toy_storage_2t):
     """Sc B — reference price = 100.0; objective = -1000 exactly.
 
-    The reference-price objective term at ``model.py:3406-3428`` fires
+    The reference-price objective term (``model._obj_storage_reference_price``) fires
     when ``p_storage_state_reference_price`` is populated and
     ``nodeState_last_dt`` + ``period_last`` are present.
 

@@ -942,7 +942,7 @@ class _BendersMaster:
         #
         # Objective SCALING: build the master objective ×s (the SAME ``s`` the
         # regions are built with).  The master invest coef, flow-cost, and the
-        # FlexTool objective are all multiplied by s natively (model.py:4128);
+        # FlexTool objective are all multiplied by s natively (build_flextool);
         # the appended η cols (coef 1.0) and the region cut slopes (∂(s·currency))
         # then live at the same scale, so the cut row is homogeneous in s and
         # cut validity is preserved (an exact monotone re-expression).  For the
@@ -977,7 +977,7 @@ class _BendersMaster:
         # ``v_invest_p`` column — it contributes an empty ``_C_cols`` entry
         # (zero invested capacity, zero handoff invest), and its flow is
         # bounded natively by the FlexTool ``maxFlow`` row at
-        # ``p_flow_upper_existing = existing/unitsize`` (model.py:2468-2473;
+        # ``p_flow_upper_existing = existing/unitsize`` (model._max_flow_rhs;
         # ``has_invest_p`` False ⇒ no ``-v_invest_p`` LHS term ⇒
         # ``v_flow ≤ existing/unitsize``).  Mixed masters (some pipes
         # investable, some existing-only) are handled in ONE master: the
@@ -1059,7 +1059,7 @@ class _BendersMaster:
         # --- invest annuity coefficient, read from the SAME source the
         # monolith uses: obj += Sum(v_invest_p * p_unitsize * annu)
         #                       + Sum(v_invest_p * p_unitsize * lifetime_fixed)
-        # (model.py ~3900-3910).  We collapse the two e-d cost params into a
+        # (OBJ. invest_cost_p, model._obj_invest_divest).  We collapse the two e-d cost params into a
         # single per-connection coefficient `C_cost = unitsize * (annu + lf)`.
         # Single invest period in the prototype; we sum over the periods the
         # connection is invest-eligible (pd_invest_set).

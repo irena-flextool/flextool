@@ -42,7 +42,7 @@ GATES (spec `benders_option_c.md` §3 + "Phase 3b impl — RP fixture"):
    period) and REP-DISTINCT (different wind cost + RP weight per rep), and the
    RP weight rides in through the `op_factor`-weighted clearing objective
    (`op_factor = step_duration · p_timestep_weight · inflation / period_share`,
-   `model.py:3664`) with the cut using the raw col_dual — NO RP multiply/divide
+   `model._shared_expressions`) with the cut using the raw col_dual — NO RP multiply/divide
    anywhere.  The loop's convergence to the exact RP-weighted `M_rp` using these
    raw slopes is the end-to-end proof that no factor is missing or extra.
 

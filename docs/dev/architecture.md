@@ -266,35 +266,56 @@ Same `build_flextool` body, three wrappers from `polar_high`:
   collapsed greenfield cross-region trade to autarky with an *invalid*
   bound. See [decomposition.md](decomposition.md).
 
-#### Feature blocks in `build_flextool`
+#### Feature flags in `build_flextool`
 
-LP construction is feature-by-feature; each block runs only when its switch
-field on `FlexData` is populated. Required-field lists are module-level
-tuples in `model.py`:
+`build_flextool` is a table of contents: `_prepare` → `_declare_variables`
+→ `_shared_expressions` → one `_eq_<family>(b)` per core equation family
+(plus the feature modules' `add_constraints(b)`) → `_obj_<family>(b)` /
+`objective_terms(b)` summed into the objective. Optional features with
+their own variables live in their own modules (`_online`, `_unit_floors`,
+`_reserve`, `_group_slack`, `_cumulative_invest`, `_commodity_ladder`,
+`_dc_power_flow`, `_delay`, `_non_anticipativity`). The `model.py` module
+docstring maps every variable and equation family; details in
+[engine_polars.md](engine_polars.md#lp-build-modelpy-and-the-feature-modules).
 
-| Constant | Switch field | Adds |
-|---|---|---|
-| `ALWAYS` | (floor) | `vq_state_up/down`, `nodeBalance_eq`, slack-only objective. |
-| `PROCESSES` | `process_source_sink` | `v_flow`, source/sink contributions to `nodeBalance_eq`, commodity buy. |
-| `INDIRECT` | `process_indirect` | `conversion_indirect_eq` for multi-flow processes. |
-| `CO2_PRICE` | `flow_from_co2_priced` | CO2 emission term in the objective. |
-| `CO2_CAP` | `flow_from_co2_capped` / `group_d_co2_capped` | Per-period CO2 cap constraint. |
-| `USER_CSTR` | `flow_constraint_idx` | User-defined `process_constraint_{eq,le,ge}` rows. |
-| `PROFILES` | `process_profile_{upper,lower,fixed}` | Profile bounds on `v_flow`. |
-| `STORAGE` | `nodeState` | `v_state`, storage transition, fix-start / fix-storage, end-state binding. |
-| `ONLINE` | `process_online` | `v_online`, min-load, uptime / downtime windows. |
-| `RAMP` | any `process_source_sink_ramp_limit_*` | Ramp-up / ramp-down constraints. |
-| `INVEST` / `DIVEST` | `pd_invest_set` / `pd_divest_set` (or `nd_*`) | `v_invest` / `v_divest`, cumulative caps, lifetime cost. |
-| `STARTUP_COST_*` | `pdt_online_{linear,integer}` | Startup-cost objective term. |
-| `MINLOAD_EFF` | `process_min_load_eff` | min_load_efficiency reformulation. |
-| `RP_BLENDED_WEIGHTS` | `nodeState_rp` family | Representative-period inter-period state coupling. |
+`_prepare` sets one `has_*` flag per feature on the `_Build` context from
+its switch field on `FlexData`; each family function returns early when
+its flag is off. Required-field lists are module-level tuples in
+`model.py`:
+
+| Flag | Switch field | Required tuple | Adds |
+|---|---|---|---|
+| (always) | — | `ALWAYS` | `vq_state_up/down`, `nodeBalance_eq`, balance slack penalty. |
+| `has_proc` | `process_source_sink` | `PROCESSES` | `v_flow`, flow terms of `nodeBalance_eq`, `maxFlow`, `maxOutputSum` (indirect units), commodity cost. |
+| `has_indirect` | `process_indirect` | `INDIRECT` | `conversion_indirect`, `minInputShare`. |
+| `has_co2_price` | `flow_from_co2_priced` | — (warns and skips without price / content) | CO2 price term in the objective. |
+| `has_co2_cap` / `has_co2_cap_total` | `flow_from_co2_capped[_noEff]` / `flow_from_co2_capped_total[_noEff]` | `CO2_CAP` / `CO2_CAP_TOTAL` | `co2_max_period` / `co2_max_total`. |
+| `has_user_cstr` | `cdt_eq` / `cdt_le` / `cdt_ge` | `USER_CSTR` | `process_constraint_{equal,less_than,greater_than}`. |
+| `has_profile` | `process_profile_{upper,lower,fixed}` | `PROFILES` | `profile_flow_*` bounds on `v_flow`. |
+| `has_storage` | `nodeState` | `STORAGE` | `v_state`, state change in `nodeBalance_eq`, `maxState`, start binding, state profiles, reference value. |
+| `has_rp` | `nodeState_rp` | — | Representative-period inter-period state coupling (`_eq_rp_storage_chain`). |
+| `has_nsb` | `nodeStateBlock` | — | `stateConstantWithinBlock_eq`, `nodeBalanceBlock_eq`. |
+| `has_online_{lin,int}` | `process_online_{linear,integer}` | `ONLINE` | `_online`: `v_online`, startup / shutdown, uptime / downtime; `_unit_floors`: min-load floors. |
+| `has_minload_eff` | `process_min_load_eff` | `MINLOAD_EFF` | min_load_efficiency section terms. |
+| `has_startup_cost_{lin,int}` | `pdt_online_{linear,integer}` | `STARTUP_COST_*` | Startup-cost objective term. |
+| `has_ramp` | any `process_source_sink_ramp_limit_*` | `RAMP` | Ramp-up / ramp-down constraints. |
+| `has_{invest,divest}_{p,n}` | `pd_{invest,divest}_set` / `nd_{invest,divest}_set` | `INVEST` / `DIVEST` | `v_invest` / `v_divest`, investment maxima, annuities. |
+| `has_reserve` | `reserve_upDown_group` | checked in `_reserve` | `_reserve`. |
+| `has_capacity_margin` / `has_inertia` / `has_non_sync` | `_group_slack.has_*` | — | `_group_slack`. |
+| `has_cumulative_invest` | `_cumulative_invest.has_feature` | — | `_cumulative_invest`. |
+| `has_ladder` | `_commodity_ladder.has_feature` | — | `_commodity_ladder`. |
+
+The DC power-flow, delay and non-anticipativity modules gate on their own
+data (`_dc_power_flow.has_feature`, `_delay.has_feature`,
+`period_branch_full` / `pd_non_anticipativity`).
 
 If a switch is set but a required field is missing, `build_flextool` raises
 `ValueError` rather than silently degrading.
 
 #### Block-COO dense-axis contract
 
-`build_flextool` declares FlexTool's dense trailing axes once, up front, via
+`_prepare` (the first step of `build_flextool`) declares FlexTool's dense
+trailing axes once, via
 `m.declare_dense_axes(("d", "t"))` — `(period, timestep)`. This is an
 unconditional call requiring **polar-high>=2.4.0** (the interim `hasattr`
 capability guard has been dropped; the pin lives in `pyproject.toml`). With the
@@ -328,7 +349,10 @@ for any downstream phase.
 
 ```
 __init__.py                       Public re-exports (table above)
-model.py                          build_flextool — LP build, feature blocks
+model.py                          build_flextool — LP build (table of
+                                  contents) + core equation families
+_online.py, _reserve.py, ...      LP feature modules (map: model.py docstring)
+_model_common.py                  Helpers shared by the LP modules
 input.py                          FlexData dataclass + loader entry point
 chain.py                          run_chain + ChainStep dataclass
 _orchestration.py                 run_orchestration / run_chain_from_db,

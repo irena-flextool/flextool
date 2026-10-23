@@ -7,7 +7,7 @@ Three focused tests:
   Extends ``toy_uc_3t`` with ``ramp_speed_up_sink`` so tight that the
   jump from off (v_flow=0) to producing (v_flow=min_load) at t02 is
   forbidden by the bare ramp RHS; the UC startup tightening
-  (``+ v_startup_lin`` on the RHS, model.py:1457-1467) is exactly what
+  (``+ v_startup_lin`` on the RHS, ``model._eq_ramp``) is exactly what
   makes the optimum feasible.  Also asserts the constraint family is
   emitted with the expected row count.
 
@@ -80,7 +80,7 @@ def test_ramp_sink_up_with_uc_startup_tightening(toy_uc_3t):
     in one step.  The startup tightening ``+ v_startup_lin`` lifts the
     RHS by 1.0 (a startup at t02), letting v_flow rise to 0.4.
 
-    Without the startup term in rhs_terms (model.py:1458-1462) the
+    Without the startup term in rhs_terms (``model._eq_ramp``) the
     optimum would have to pay slack on every step — here it does not.
     """
     d = toy_uc_3t

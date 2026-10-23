@@ -943,7 +943,7 @@ def ed_invest_period_set_lf(source: "InputSource",
     ``ed_invest_period`` set: keeps only the (e, d) pairs that carry
     a per-period invest cap (``maxInvest_entity_period`` /
     ``minInvest_entity_period`` constraint indices).  Used in
-    ``model.py:1517-1530`` to index the per-period invest cap rows.
+    ``model._eq_invest_period_caps`` to index the per-period invest cap rows.
     """
     methods_lf = _entity_method_lf(source, "invest_method")
     period_e = (methods_lf

@@ -6179,7 +6179,7 @@ def apply_derived_c(
     # the fast path emits None, the LP misses the scaling on penalty
     # terms (penalty becomes a free source of energy).  Default 1.0
     # produces the same numeric coefficient as the None-branch in
-    # ``model.py:2349-2356`` but exposes the field uniformly so future
+    # ``model._obj_balance_slack`` but exposes the field uniformly so future
     # consumers (e.g. region filter, warm cascade) see a populated
     # frame.
     ncs_db = p_node_capacity_for_scaling_from_source(

@@ -6,7 +6,7 @@ Invariant
 ---------
 ``maxFlow`` is registered with ``over = pss_dt`` (the cartesian product
 of ``process_source_sink`` × ``dt``); see
-``flextool/engine_polars/model.py:1359``.  The materialised LP-row count
+``model._eq_max_flow``.  The materialised LP-row count
 must equal ``|pss_dt|`` — one row per (p, source, sink, d, t) tuple.
 """
 from __future__ import annotations

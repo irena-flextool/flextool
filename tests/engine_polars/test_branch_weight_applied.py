@@ -37,7 +37,7 @@ test injects non-unit weights and asserts:
    which branch carries the larger probability — so a non-zero delta
    proves the normalised branch weights genuinely fold into the
    per-branch cost terms of the objective (``op_factor`` at
-   ``model.py:3664`` for pdt and ``model.py:3963`` for pd).  Were the
+   ``model._shared_expressions`` for pdt and ``model._obj_invest_divest`` for pd).  Were the
    weights silently clobbered to 1.0 (or otherwise not reaching the
    objective) this delta would be exactly 0.0.
 

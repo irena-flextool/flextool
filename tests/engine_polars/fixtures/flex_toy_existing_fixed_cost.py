@@ -12,8 +12,8 @@ Probes the constant-offset term
 This is a pure constant — the optimiser drops it, but flextool's
 reported ``v_obj`` includes it.  polar_high's loaders for
 ``p_ed_fixed_cost`` and ``p_entity_all_existing`` are populated, but
-the objective-side wiring is currently deferred (see
-``flextool/model.py:1149`` and ``audit/objective_audit.md`` §8.1).
+the objective term is added only with ``include_existing_fixed_cost=True``
+(``model._obj_existing_fixed_cost``; see ``audit/objective_audit.md`` §8.1).
 
 Topology
 --------

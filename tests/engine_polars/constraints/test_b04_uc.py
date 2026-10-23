@@ -4,8 +4,8 @@ Two focused tests on UC behavior in the polars engine:
 
 * ``test_linear_and_integer_uc_constraint_suffix_isolation`` — covers
   **B4.11**.  When BOTH ``process_online_linear`` and
-  ``process_online_integer`` are non-empty, ``_add_online_block`` is
-  invoked twice — once per kind — with a ``_<kind>`` suffix on every
+  ``process_online_integer`` are non-empty, ``_online.add_constraints``
+  emits every family once per kind — with a ``_<kind>`` suffix on every
   emitted constraint name (``maxOnline_linear`` vs
   ``maxOnline_integer``, etc.).  Without the suffix the second
   ``add_cstr`` call would raise ``ValueError("already declared")``.
@@ -16,7 +16,7 @@ Two focused tests on UC behavior in the polars engine:
 
 * ``test_uptime_downtime_invest_interaction`` — covers **B4.12**.
   Regression guard for the formerly-documented gap at
-  ``model.py:2920-2923``: the ``minimum_downtime`` constraint now
+  ``_online.add_constraints``: the ``minimum_downtime`` constraint now
   applies the same invest/divest LHS-tightening as ``maxOnline`` so the
   .mod's RHS ``existing_count + Σ v_invest_alive − Σ v_divest_alive``
   is faithfully reproduced.  With ``existing_count=0`` and the unit
@@ -111,8 +111,8 @@ def _make_two_kind_uc_data() -> FlexData:
     p_process_existing_count = Param(("p", "d"),
         pl.DataFrame({"p": ["u_lin", "u_int"], "d": ["d1", "d1"],
                       "value": [1.0, 1.0]}))
-    # ``p_min_load`` is required by the ONLINE feature gate (model.py:79
-    # ``_check``) even when ``process_minload`` is empty — populate as 0.
+    # ``p_min_load`` is required by the ONLINE feature gate (model.ONLINE,
+    # checked by ``_check``) even when ``process_minload`` is empty — populate as 0.
     p_min_load = Param(("p",),
         pl.DataFrame({"p": ["u_lin", "u_int"], "value": [0.0, 0.0]}))
     p_startup_cost = Param(("p", "d"),
@@ -155,11 +155,11 @@ def _make_two_kind_uc_data() -> FlexData:
 
 def test_linear_and_integer_uc_constraint_suffix_isolation():
     """Covers B4.11 — `_linear`/`_integer` constraint-name suffix
-    isolation in ``_add_online_block``.
+    isolation in ``_online.add_constraints``.
 
     Hand-calc: two processes (``u_lin`` linear, ``u_int`` integer) over
-    1 period × 2 steps.  ``_add_online_block`` is invoked twice — once
-    per kind — emitting ``maxOnline_linear`` (1 row × 2 steps) and
+    1 period × 2 steps.  ``_online.add_constraints`` emits once
+    per kind: ``maxOnline_linear`` (1 row × 2 steps) and
     ``maxOnline_integer`` (1 row × 2 steps) as DISTINCT families.
     Without the suffix the second call would raise.
     """

@@ -5,7 +5,7 @@
 Invariant
 ---------
 The cascade emits ``storage_state_start_binding`` (see
-``flextool/engine_polars/model.py:2224``) over
+``model._eq_storage_start_binding``) over
 
     fixed_first_dt = nodeState_first_dt ⋈ storage_fix_start_filtered
 
@@ -50,7 +50,7 @@ def test_storage_state_start_binding_emits_only_in_period_first(
 
     fd = last.flex_data
 
-    # Expected per the cascade's derivation in model.py:2186-2226.
+    # Expected per the derivation in ``model._eq_storage_start_binding``.
     fix_start = fd.storage_fix_start
     assert fix_start is not None and fix_start.height > 0, (
         "wind_battery fixture must populate storage_fix_start for this "

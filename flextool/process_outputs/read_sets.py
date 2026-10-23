@@ -769,7 +769,7 @@ def read_sets(
     #
     # Orthogonal gap (per audit §4): the v54 value list also accepts
     # ``bind_within_period`` and ``bind_intraperiod_blocks``, but
-    # ``nodeBalance_eq`` (model.py:615) has no constraint branch for either,
+    # ``nodeBalance_eq`` (model._eq_node_balance) has no constraint branch for either,
     # and FlexData carries no projection attribute for them.  Those methods
     # are accepted at ingestion but currently produce no constraint term —
     # tracked separately, not in scope here.
