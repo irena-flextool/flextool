@@ -218,8 +218,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     above).
 
     ``include_existing_fixed_cost``: add the fixed cost of existing
-    capacity, Σ existing · fixed_cost · inflation_op, as an objective
-    constant.  Off by default, so the solver objective excludes it.
+    capacity, Σ existing · fixed_cost · inflation_op · pd_branch_weight, to
+    the objective as a constant (OBJ. existing_fixed_cost).  It changes the
+    objective value, not the solution.  Off by default.
     ``scale_the_objective``: multiplier on the whole objective (1.0 = none).
     """
     b = _Build(m=m, d=d, include_existing_fixed_cost=include_existing_fixed_cost)
@@ -261,6 +262,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _obj_balance_slack,
         _obj_commodity,
         _obj_co2_price,
+        _obj_co2_price_noEff,
         _obj_variable_cost,
         _obj_startup_cost,
         _obj_storage_reference_price,
@@ -2488,17 +2490,30 @@ def _sum_terms(terms: list) -> Expr | None:
     return total
 
 
+# Every operational cost term is weighted by b.op_factor:
+#   w_op[d,t] = step_duration[d,t] · timestep_weight[d,t] · inflation_op[d] / period_share[d] · branch_weight[d,t]
+# step_duration turns a rate (currency/h) into currency per step, timestep_weight scales a representative step
+# to the time it stands for, / period_share scales the modelled part of the period to a full year, and
+# inflation_op discounts that year's operating cost; branch_weight is 1 outside stochastic solves.  Terms for point events
+# (startups, end-of-horizon valuation) use w_ev[d,t] = w_op[d,t] / step_duration[d,t].
+
+
 def _obj_balance_slack(b: _Build) -> Expr:
-    """Balance slack penalty."""
+    """Penalty on the node balance slacks."""
     d = b.d
     vq_up = b.vq_state_up
     vq_down = b.vq_state_down
     op_factor = b.op_factor
-    # §7: node_capacity_for_scaling factor on slack penalties.  The .mod
-    # treats `penalty_up/down` as €/MWh-of-node-capacity; our data has
-    # absolute €/MWh.  Multiplying by node_capacity_for_scaling[n,d] aligns
-    # with the .mod's convention and is critical for parity in scenarios
-    # that have non-1.0 capacity scaling.
+
+    # ─── OBJ. ─── balance_slack_penalty ──────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(n,d,t)} vq_state_up[n,d,t] · penalty_up[n,d,t] · ncs[n,d] · w_op[d,t]
+    #   + Σ_{(n,d,t)} vq_state_down[n,d,t] · penalty_down[n,d,t] · ncs[n,d] · w_op[d,t]
+    #   ∀ (n,d,t) with balance slacks (nodeBalance ∪ nodeBalancePeriod, penalty_method ≠ off)
+    #   ncs = node_capacity_for_scaling, factor 1 when the parameter is absent;   currency
+    # Prices the energy a node balance cannot supply (up) or absorb (down); penalty in currency/MWh.
+    # The slacks enter the balance without ncs, so with node_capacity_for_scaling ≠ 1 the effective
+    # penalty per MWh is penalty · ncs (see specs/github_issues.md, refactor bug 18).
     if d.p_node_capacity_for_scaling is not None:
         return (Sum(vq_up   * d.p_penalty_up
                     * d.p_node_capacity_for_scaling * op_factor)
@@ -2510,142 +2525,168 @@ def _obj_balance_slack(b: _Build) -> Expr:
 
 def _obj_commodity(b: _Build) -> Expr | None:
     """Commodity purchase cost and sales revenue."""
-    terms: list = []
+    if not b.has_proc:
+        return None
     d = b.d
     v_flow = b.v_flow
     v_online_lin = b.v_online_linear
     v_online_int = b.v_online_integer
     op_factor = b.op_factor
-    # Ladder commodities skip the legacy single-price commodity term —
-    # mirrors .mod:1984 ``c not in commodity_with_ladder``.  Filter the
-    # three commodity-flow index frames before they're consumed below.
-    flow_from_commodity_eff_legacy   = d.flow_from_commodity_eff
-    flow_from_commodity_noEff_legacy = d.flow_from_commodity_noEff
-    flow_to_commodity_legacy         = d.flow_to_commodity
-    if b.has_ladder and d.commodity_with_ladder is not None:
-        ladder_c = d.commodity_with_ladder["c"]
-        if flow_from_commodity_eff_legacy is not None:
-            flow_from_commodity_eff_legacy = (
-                flow_from_commodity_eff_legacy
-                .filter(~pl.col("c").is_in(ladder_c)))
-        if flow_from_commodity_noEff_legacy is not None:
-            flow_from_commodity_noEff_legacy = (
-                flow_from_commodity_noEff_legacy
-                .filter(~pl.col("c").is_in(ladder_c)))
-        if flow_to_commodity_legacy is not None:
-            flow_to_commodity_legacy = (
-                flow_to_commodity_legacy
-                .filter(~pl.col("c").is_in(ladder_c)))
+    # Commodities with a price ladder are priced by _commodity_ladder, not by the single commodity price.
+    ladder_c = (d.commodity_with_ladder["c"]
+                if b.has_ladder and d.commodity_with_ladder is not None else None)
 
-    if b.has_proc and flow_from_commodity_eff_legacy is not None and flow_from_commodity_eff_legacy.height > 0:
+    def _single_price(flows: "pl.DataFrame | None") -> "pl.DataFrame | None":
+        if flows is None or ladder_c is None:
+            return flows
+        return flows.filter(~pl.col("c").is_in(ladder_c))
+
+    buy_eff = _single_price(d.flow_from_commodity_eff)
+    buy_noEff = _single_price(d.flow_from_commodity_noEff)
+    sell = _single_price(d.flow_to_commodity)
+    terms: list = []
+
+    # ─── OBJ. ─── commodity_cost_eff ─────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,k,c) ∈ flow_from_commodity_eff, (d,t)}
+    #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
+    #     · commodity_price[c,d,t] · w_op[d,t]
+    # Cost of the commodity c bought from node s by processes with an efficiency: the input is the
+    # output flow times slope, plus the section input per online unit (min_load_efficiency units only,
+    # linear and integer online alike).  Price in currency/MWh.
+    if _has_rows(buy_eff):
         terms.append(Sum(
-            Where(v_flow * d.p_unitsize * d.p_slope, flow_from_commodity_eff_legacy)
+            Where(v_flow * d.p_unitsize * d.p_slope, buy_eff)
             * d.p_commodity_price * op_factor))
         if b.has_minload_eff:
-            # Section term: + v_online * section * unitsize, summed over
-            # eff (p, source, sink) tuples whose process is in
-            # process_min_load_eff, multiplied by commodity price.
             if b.has_online_lin:
                 terms.append(Sum(
                     Where(Where(v_online_lin, d.process_min_load_eff)
                           * d.p_section * d.p_unitsize,
-                          flow_from_commodity_eff_legacy)
+                          buy_eff)
                     * d.p_commodity_price * op_factor))
             if b.has_online_int:
                 terms.append(Sum(
                     Where(Where(v_online_int, d.process_min_load_eff)
                           * d.p_section * d.p_unitsize,
-                          flow_from_commodity_eff_legacy)
+                          buy_eff)
                     * d.p_commodity_price * op_factor))
-    if b.has_proc and flow_from_commodity_noEff_legacy is not None and flow_from_commodity_noEff_legacy.height > 0:
+
+    # ─── OBJ. ─── commodity_cost_noEff ───────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,k,c) ∈ flow_from_commodity_noEff, (d,t)} v_flow[p,s,k,d,t]·unitsize[p] · commodity_price[c,d,t] · w_op[d,t]
+    # Cost of the commodity bought by processes without an efficiency: the input equals the flow.
+    if _has_rows(buy_noEff):
         terms.append(Sum(
-            Where(v_flow * d.p_unitsize, flow_from_commodity_noEff_legacy)
+            Where(v_flow * d.p_unitsize, buy_noEff)
             * d.p_commodity_price * op_factor))
-    # §2.4 commodity sell: sink-side flow into priced node = revenue (negative
-    # cost contribution).  Note: full superset of (p, source, sink) — no
-    # eff/noEff split (the .mod sells regardless of process partition).
-    if (b.has_proc and flow_to_commodity_legacy is not None
-            and flow_to_commodity_legacy.height > 0
-            and d.p_commodity_price is not None):
+
+    # ─── OBJ. ─── commodity_sales ────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # − Σ_{(p,s,k,c) ∈ flow_to_commodity, (d,t)} v_flow[p,s,k,d,t]·unitsize[p] · commodity_price[c,d,t] · w_op[d,t]
+    # Revenue from flows into a commodity node k, sold at the commodity price (negative cost).  Every
+    # process arc counts, with or without efficiency: the sink-side flow is the delivered energy.
+    if _has_rows(sell) and d.p_commodity_price is not None:
         terms.append(-Sum(
-            Where(v_flow * d.p_unitsize, flow_to_commodity_legacy)
+            Where(v_flow * d.p_unitsize, sell)
             * d.p_commodity_price * op_factor))
     return _sum_terms(terms)
 
 
 def _obj_co2_price(b: _Build) -> Expr | None:
-    """CO2 emission cost."""
-    terms: list = []
+    """CO2 emission cost of processes with an efficiency."""
+    if not b.has_co2_price:
+        return None
     d = b.d
     v_flow = b.v_flow
     v_online_lin = b.v_online_linear
     v_online_int = b.v_online_integer
     op_factor = b.op_factor
-    if b.has_co2_price:
-        terms.append(Sum(
-            Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_priced)
-            * d.p_co2_content * d.p_co2_price * op_factor))
-        if b.has_minload_eff:
-            if b.has_online_lin:
-                terms.append(Sum(
-                    Where(Where(v_online_lin, d.process_min_load_eff)
-                          * d.p_section * d.p_unitsize,
-                          d.flow_from_co2_priced)
-                    * d.p_co2_content * d.p_co2_price * op_factor))
-            if b.has_online_int:
-                terms.append(Sum(
-                    Where(Where(v_online_int, d.process_min_load_eff)
-                          * d.p_section * d.p_unitsize,
-                          d.flow_from_co2_priced)
-                    * d.p_co2_content * d.p_co2_price * op_factor))
-    # §4.1 CO2 noEff buy: source-side flow into a CO2-priced node where
-    # the process is on the noEff side.  No slope, no section term.
-    if (d.flow_from_co2_priced_noEff is not None
-            and d.flow_from_co2_priced_noEff.height > 0
-            and d.p_co2_content is not None and d.p_co2_price is not None):
-        terms.append(Sum(
-            Where(v_flow * d.p_unitsize, d.flow_from_co2_priced_noEff)
-            * d.p_co2_content * d.p_co2_price * op_factor))
+    terms: list = []
+
+    # ─── OBJ. ─── co2_price_eff ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,k,c,g) ∈ flow_from_co2_priced, (d,t)}
+    #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
+    #     · co2_content[c] · co2_price[g,d,t] · w_op[d,t]
+    # Cost of the CO2 emitted when processes with an efficiency draw a CO2-bearing commodity c from a
+    # node of a CO2-priced group g; content in t/MWh, price in currency/t.  The section term exists
+    # for min_load_efficiency units only.  Flows into priced nodes earn no removal credit (see
+    # specs/github_issues.md, refactor bug 19).
+    terms.append(Sum(
+        Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_priced)
+        * d.p_co2_content * d.p_co2_price * op_factor))
+    if b.has_minload_eff:
+        if b.has_online_lin:
+            terms.append(Sum(
+                Where(Where(v_online_lin, d.process_min_load_eff)
+                      * d.p_section * d.p_unitsize,
+                      d.flow_from_co2_priced)
+                * d.p_co2_content * d.p_co2_price * op_factor))
+        if b.has_online_int:
+            terms.append(Sum(
+                Where(Where(v_online_int, d.process_min_load_eff)
+                      * d.p_section * d.p_unitsize,
+                      d.flow_from_co2_priced)
+                * d.p_co2_content * d.p_co2_price * op_factor))
     return _sum_terms(terms)
 
 
+def _obj_co2_price_noEff(b: _Build) -> Expr | None:
+    """CO2 emission cost of processes without an efficiency."""
+    d = b.d
+    if not (_has_rows(d.flow_from_co2_priced_noEff)
+            and d.p_co2_content is not None and d.p_co2_price is not None):
+        return None
+
+    # ─── OBJ. ─── co2_price_noEff ────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,k,c,g) ∈ flow_from_co2_priced_noEff, (d,t)}
+    #     v_flow[p,s,k,d,t]·unitsize[p] · co2_content[c] · co2_price[g,d,t] · w_op[d,t]
+    # As co2_price_eff for processes without an efficiency: the input equals the flow, no slope and
+    # no section term.
+    return Sum(
+        Where(b.v_flow * d.p_unitsize, d.flow_from_co2_priced_noEff)
+        * d.p_co2_content * d.p_co2_price * b.op_factor)
+
+
 def _obj_variable_cost(b: _Build) -> Expr | None:
-    """Variable operation and maintenance cost."""
-    terms: list = []
+    """Variable operation and maintenance cost of process flows."""
+    if not b.has_proc:
+        return None
     d = b.d
     v_flow = b.v_flow
     v_online_lin = b.v_online_linear
     v_online_int = b.v_online_integer
     op_factor = b.op_factor
-    # ─── Process variable cost (§5.1 noEff) ───────────────────────────────
-    # + Σ_{(p,source,sink,d,t) ∈ pssdt_varCost_noEff}
-    #     pdtProcess__source__sink__dt_varCost * v_flow * unitsize * op_factor
-    if (b.has_proc and d.pssdt_varCost_noEff is not None
-            and d.pssdt_varCost_noEff.height > 0
+    terms: list = []
+
+    # ─── OBJ. ─── variable_cost_noEff ────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,k,d,t) ∈ pssdt_varCost_noEff} v_flow[p,s,k,d,t]·unitsize[p] · varCost[p,s,k,d,t] · w_op[d,t]
+    # O&M cost of the flows of processes without an efficiency; varCost (currency/MWh) is the arc's
+    # combined process, source-side and sink-side other_operational_cost.
+    if (_has_rows(d.pssdt_varCost_noEff)
             and d.p_pssdt_varCost is not None):
         terms.append(Sum(
             Where(v_flow * d.p_unitsize, d.pssdt_varCost_noEff)
             * d.p_pssdt_varCost * op_factor))
 
-    # ─── Process variable cost (§5.2 eff unit, source-side O&M) ──────────
-    # The .mod term has a leading minus sign — it's an "anti-cost" that
-    # subtracts the source-side share of the process-side O&M (the slope
-    # already routes the source-side energy into the sink-side flow at
-    # commodity-price points).  Replicate the sign exactly.
-    #   - Σ pdtProcess_source[p,source,'other_operational_cost',d,t]
-    #         * (v_flow * unitsize * slope * (sink/source coef ratio if process_unit)
-    #            + section term if min_load_efficiency) * op_factor
-    if (b.has_proc and d.pssdt_varCost_eff_unit_source is not None
-            and d.pssdt_varCost_eff_unit_source.height > 0
+    # ─── OBJ. ─── variable_cost_eff_source ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # − Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_unit_source}
+    #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
+    #     · other_operational_cost_source[p,s,d,t] · w_op[d,t]
+    # O&M cost on the input side of units with an efficiency, priced on the input energy (flow times
+    # slope, plus the section input of min_load_efficiency units).  The term is subtracted, so a positive
+    # source-side cost lowers the objective (see specs/github_issues.md, refactor bug 20).  The
+    # sink/source coefficient ratio of the input is not applied (refactor bug 10).
+    if (_has_rows(d.pssdt_varCost_eff_unit_source)
             and d.p_pdt_varCost_source is not None):
-        # The flow-coefficient ratio is deferred (see audit §2.2/§5.2);
-        # all current test fixtures have both coefs = 1, so the term
-        # collapses to v_flow * unitsize * slope.
         flow_term = Where(v_flow * d.p_unitsize * d.p_slope,
                           d.pssdt_varCost_eff_unit_source)
         terms.append(-Sum(flow_term * d.p_pdt_varCost_source * op_factor))
         if b.has_minload_eff:
-            # section sub-term (linear / integer)
             section_idx = (d.pssdt_varCost_eff_unit_source
                            .join(d.process_min_load_eff, on="p", how="inner"))
             if section_idx.height > 0:
@@ -2662,21 +2703,21 @@ def _obj_variable_cost(b: _Build) -> Expr | None:
                               section_idx)
                         * d.p_pdt_varCost_source * op_factor))
 
-    # ─── Process variable cost (§5.3 eff unit, sink-side O&M) ────────────
-    # + Σ pdtProcess_sink[p,sink,'other_operational_cost',d,t]
-    #     * v_flow * unitsize * op_factor
-    if (b.has_proc and d.pssdt_varCost_eff_unit_sink is not None
-            and d.pssdt_varCost_eff_unit_sink.height > 0
+    # ─── OBJ. ─── variable_cost_eff_sink ─────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_unit_sink} v_flow[p,s,k,d,t]·unitsize[p] · other_operational_cost_sink[p,k,d,t] · w_op[d,t]
+    # O&M cost on the output side of units with an efficiency, priced on the output flow.
+    if (_has_rows(d.pssdt_varCost_eff_unit_sink)
             and d.p_pdt_varCost_sink is not None):
         terms.append(Sum(
             Where(v_flow * d.p_unitsize, d.pssdt_varCost_eff_unit_sink)
             * d.p_pdt_varCost_sink * op_factor))
 
-    # ─── Process variable cost (§5.4 eff connection) ─────────────────────
-    # + Σ pdtProcess[p,'other_operational_cost',d,t]
-    #     * v_flow * unitsize * op_factor
-    if (b.has_proc and d.pssdt_varCost_eff_connection is not None
-            and d.pssdt_varCost_eff_connection.height > 0
+    # ─── OBJ. ─── variable_cost_eff_connection ───────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_connection} v_flow[p,s,k,d,t]·unitsize[p] · other_operational_cost[p,d,t] · w_op[d,t]
+    # O&M cost of connections with an efficiency, priced on the flow of each direction.
+    if (_has_rows(d.pssdt_varCost_eff_connection)
             and d.p_pdt_varCost_process is not None):
         terms.append(Sum(
             Where(v_flow * d.p_unitsize, d.pssdt_varCost_eff_connection)
@@ -2685,196 +2726,182 @@ def _obj_variable_cost(b: _Build) -> Expr | None:
 
 
 def _obj_startup_cost(b: _Build) -> Expr | None:
-    """Startup cost."""
-    terms: list = []
+    """Startup cost of unit-commitment processes."""
+    if not (b.has_startup_cost_lin or b.has_startup_cost_int):
+        return None
     d = b.d
-    v_startup_lin = b.v_startup_linear
-    v_startup_int = b.v_startup_integer
-    # Startup cost: v_startup * startup_cost * unitsize, weighted by
-    # timestep_weight / inflation / period_share — *no step_duration*
-    # (startup is a discrete event, not duration-weighted).  Also carries
-    # ``pdt_branch_weight`` when stochastics active (mod:2110).
+    terms: list = []
+
+    # ─── OBJ. ─── startup_cost ───────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,d,t) ∈ pdt_online_{linear,integer}} v_startup_{linear,integer}[p,d,t] · startup_cost[p,d] · unitsize[p] · w_ev[d,t]
+    #   w_ev = timestep_weight · inflation_op / period_share · branch_weight
+    # Cost of starting up units, startup_cost in currency/MW started.  A startup is an event, so the
+    # weight has no step_duration.
     startup_factor = (d.p_timestep_weight * d.p_inflation_op
                       / d.p_period_share)
     if d.pdt_branch_weight is not None:
         startup_factor = startup_factor * d.pdt_branch_weight
     if b.has_startup_cost_lin:
         terms.append(Sum(
-            Where(v_startup_lin, d.pdt_online_linear)
+            Where(b.v_startup_linear, d.pdt_online_linear)
             * d.p_startup_cost * d.p_unitsize * startup_factor))
     if b.has_startup_cost_int:
         terms.append(Sum(
-            Where(v_startup_int, d.pdt_online_integer)
+            Where(b.v_startup_integer, d.pdt_online_integer)
             * d.p_startup_cost * d.p_unitsize * startup_factor))
     return _sum_terms(terms)
 
 
 def _obj_storage_reference_price(b: _Build) -> Expr | None:
-    """Value of the final storage state."""
-    terms: list = []
+    """Value of the storage content left at the end of the solve horizon."""
     d = b.d
-    v_state = b.v_state
-    # ─── §10.1 Storage-state reference-price revenue (mod:2107-2111) ─────
-    # For nodes with method ``use_reference_price`` (and also any node for
-    # which a fix_storage_price handoff dual has populated the parameter
-    # — both routes funnel through ``p_storage_state_reference_price``),
-    # value v_state at the last (d, t) of every period_last by the
-    # reference price:
-    #
-    #   - Σ_{n ∈ nodeState, (d, t) ∈ period__time_last : d ∈ period_last}
-    #         p_storage_state_reference_price[n, d]
-    #         * v_state[n, d, t] * unitsize[n]
-    #         * timestep_weight[d, t] * inflation_op[d] / period_share[d]
-    #         * pdt_branch_weight[d, t]
-    #
-    # The minus sign makes this a revenue term: a higher terminal state
-    # reduces the objective.  No step_duration (terminal valuation is a
-    # point event, not duration-weighted) — mirrors startup_factor.
-    if (b.has_storage
+    if not (b.has_storage
             and d.p_storage_state_reference_price is not None
-            and d.nodeState_last_dt is not None
-            and d.nodeState_last_dt.height > 0
-            and d.period_last is not None
-            and d.period_last.height > 0):
-        # Domain: (n, d, t) ∈ nodeState_last_dt where d ∈ period_last and
-        # (n, d) is populated in p_storage_state_reference_price.  Zero-
-        # valued rows contribute nothing but are kept (the loader does
-        # not filter zeros and the multiplier is exact).
-        ssrp_over = (d.nodeState_last_dt
+            and _has_rows(d.nodeState_last_dt)
+            and _has_rows(d.period_last)):
+        return None
+    over = (d.nodeState_last_dt
             .join(d.period_last, on="d", how="inner")
             .join(d.p_storage_state_reference_price.frame.select("n", "d"),
                   on=["n", "d"], how="inner")
             .select("n", "d", "t").unique())
-        if ssrp_over.height > 0:
-            ref_price_factor = (d.p_timestep_weight * d.p_inflation_op
-                                / d.p_period_share)
-            if d.pdt_branch_weight is not None:
-                ref_price_factor = ref_price_factor * d.pdt_branch_weight
-            terms.append(-Sum(
-                Where(v_state, ssrp_over) * d.p_state_unitsize
-                * d.p_storage_state_reference_price * ref_price_factor))
-    return _sum_terms(terms)
+    if over.height == 0:
+        return None
+
+    # ─── OBJ. ─── storage_reference_price ────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # − Σ_{(n,d,t) ∈ nodeState_last_dt, d ∈ period_last, (n,d) ∈ reference_price}
+    #     v_state[n,d,t]·state_unitsize[n] · reference_price[n,d] · w_ev[d,t]
+    #   w_ev = timestep_weight · inflation_op / period_share · branch_weight
+    # Values the energy left in storage at the end of the solve horizon (revenue, hence the minus),
+    # reference_price in currency/MWh.  The price comes from use_reference_price nodes or from the
+    # storage-price handoff of a previous solve.  An end-of-horizon valuation is a point event, so the
+    # weight has no step_duration.  Rows with a zero price are kept.
+    ref_price_factor = (d.p_timestep_weight * d.p_inflation_op
+                        / d.p_period_share)
+    if d.pdt_branch_weight is not None:
+        ref_price_factor = ref_price_factor * d.pdt_branch_weight
+    return -Sum(
+        Where(b.v_state, over) * d.p_state_unitsize
+        * d.p_storage_state_reference_price * ref_price_factor)
 
 
 def _obj_invest_divest(b: _Build) -> Expr | None:
-    """Investment and divestment annuities and fixed costs."""
-    terms: list = []
+    """Investment and divestment costs of processes and storage nodes."""
+    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n):
+        return None
     d = b.d
-    v_invest_p = b.v_invest_p
-    v_divest_p = b.v_divest_p
-    v_invest_n = b.v_invest_n
-    v_divest_n = b.v_divest_n
-    # Invest / divest objective contributions.
-    #
-    # Slice D — per-scenario (wait-and-see) stochastic investment.  Under
-    # ``recourse`` the invest axis is fanned, so every scenario branch
-    # (realised included) carries its OWN ``v_invest[e, d]`` columns at and
-    # after the branching period; each is probability-weighted by
-    # ``pd_branch_weight[d]`` so the objective is the expected value over
-    # scenario leaves.  Under ``none`` (default) the invest axis is
-    # realised-only, the weight would be 1.0, and the multiply is skipped
-    # for byte-parity.  (Replaces the .mod:2116-2119 "NOT weighted / the
-    # branch weight should be added if this is changed" note — this is that
-    # change.)  ALL EIGHT invest/divest annuity/fixed-cost Params are
-    # weighted: process-side annu/lf/lfd/annd AND node-side
-    # annu_n/lf_n/lfd_n/annd_n (else storage/node invest stays unweighted).
-    _recourse_wt = (getattr(d, "recourse_invest", False)
-                    and d.pd_branch_weight is not None)
+    terms: list = []
+    # Under recourse investment every scenario branch carries its own invest/divest variables from the
+    # branching period on, so each cost is weighted by the branch probability pd_branch_weight[d] and the
+    # term is the expected cost.  Otherwise bw = 1 and no weight is applied.
+    recourse = getattr(d, "recourse_invest", False) and d.pd_branch_weight is not None
 
-    def _wt(param):
-        """Multiply a ``(x, d)`` cost Param by ``pd_branch_weight[d]``
-        (Slice D).  No-op when the param is None or the flag is off."""
-        if param is None or not _recourse_wt:
-            return param
-        f = (param.frame
-                  .join(d.pd_branch_weight.frame.rename({"value": "w"}),
-                        on="d", how="left")
-                  .with_columns(value=pl.col("value")
-                                * pl.col("w").fill_null(1.0))
-                  .drop("w"))
-        return Param(param.dims, f)
+    def _cost(param: "Param | None", ent: str) -> "Param | None":
+        """Entity cost param (e, d) on axis ``ent``, times pd_branch_weight under recourse; None stays None."""
+        if param is None:
+            return None
+        cost = Param((ent, "d"), param.frame.pipe(rename_to_axis, {"e": ent}))
+        if not recourse:
+            return cost
+        f = (cost.frame
+             .join(d.pd_branch_weight.frame.rename({"value": "w"}), on="d", how="left")
+             .with_columns(value=pl.col("value") * pl.col("w").fill_null(1.0))
+             .drop("w"))
+        return Param(cost.dims, f)
 
+    # ─── OBJ. ─── invest_cost_p ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · annual_discounted[p,d] · bw[d]
+    #   + Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · lifetime_fixed_cost[p,d] · bw[d]
+    # Cost of process capacity built in period d, currency/MW: the investment annuity summed over the
+    # discounted years the capacity serves within the horizon, and the inflation-adjusted fixed cost
+    # over its remaining lifetime.  No w_op: both factors are already per period.
     if b.has_invest_p:
-        annu = Param(("p", "d"),
-            d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
-            if d.ed_entity_annual_discounted is not None else None
-        lf  = Param(("p", "d"),
-            d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "p"})) \
-            if d.ed_lifetime_fixed_cost is not None else None
+        annu = _cost(d.ed_entity_annual_discounted, "p")
+        lf = _cost(d.ed_lifetime_fixed_cost, "p")
         if annu is not None:
-            terms.append(Sum(v_invest_p * d.p_unitsize * _wt(annu)))
+            terms.append(Sum(b.v_invest_p * d.p_unitsize * annu))
         if lf is not None:
-            terms.append(Sum(v_invest_p * d.p_unitsize * _wt(lf)))
+            terms.append(Sum(b.v_invest_p * d.p_unitsize * lf))
+
+    # ─── OBJ. ─── divest_cost_p ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · lifetime_fixed_cost_divest[p,d] · bw[d]
+    #   − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · annual_divest_discounted[p,d] · bw[d]
+    # Saving from process capacity retired in period d, currency/MW: the fixed cost no longer paid and
+    # the salvage-value annuity over the discounted years of the remaining lifetime.
     if b.has_divest_p:
-        lfd = Param(("p", "d"),
-            d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "p"})) \
-            if d.ed_lifetime_fixed_cost_divest is not None else None
-        annd = Param(("p", "d"),
-            d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
-            if d.ed_entity_annual_divest_discounted is not None else None
+        lfd = _cost(d.ed_lifetime_fixed_cost_divest, "p")
+        annd = _cost(d.ed_entity_annual_divest_discounted, "p")
         if lfd is not None:
-            terms.append(-Sum(v_divest_p * d.p_unitsize * _wt(lfd)))
+            terms.append(-Sum(b.v_divest_p * d.p_unitsize * lfd))
         if annd is not None:
-            terms.append(-Sum(v_divest_p * d.p_unitsize * _wt(annd)))
+            terms.append(-Sum(b.v_divest_p * d.p_unitsize * annd))
+
+    # ─── OBJ. ─── invest_cost_n ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(n,d) ∈ nd_invest_set} v_invest_n[n,d]·state_unitsize[n] · annual_discounted[n,d] · bw[d]
+    #   + Σ_{(n,d) ∈ nd_invest_set} v_invest_n[n,d]·state_unitsize[n] · lifetime_fixed_cost[n,d] · bw[d]
+    # As invest_cost_p for storage capacity, currency/MWh of storage.
     if b.has_invest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
-        annu_n = Param(("n", "d"),
-            d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
-            if d.ed_entity_annual_discounted is not None else None
-        lf_n = Param(("n", "d"),
-            d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "n"})) \
-            if d.ed_lifetime_fixed_cost is not None else None
+        annu_n = _cost(d.ed_entity_annual_discounted, "n")
+        lf_n = _cost(d.ed_lifetime_fixed_cost, "n")
         if annu_n is not None:
-            terms.append(Sum(v_invest_n * us_n * _wt(annu_n)))
+            terms.append(Sum(b.v_invest_n * us_n * annu_n))
         if lf_n is not None:
-            terms.append(Sum(v_invest_n * us_n * _wt(lf_n)))
+            terms.append(Sum(b.v_invest_n * us_n * lf_n))
+
+    # ─── OBJ. ─── divest_cost_n ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · lifetime_fixed_cost_divest[n,d] · bw[d]
+    #   − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · annual_divest_discounted[n,d] · bw[d]
+    # As divest_cost_p for storage capacity.
     if b.has_divest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
-        lfd_n = Param(("n", "d"),
-            d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "n"})) \
-            if d.ed_lifetime_fixed_cost_divest is not None else None
-        annd_n = Param(("n", "d"),
-            d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
-            if d.ed_entity_annual_divest_discounted is not None else None
+        lfd_n = _cost(d.ed_lifetime_fixed_cost_divest, "n")
+        annd_n = _cost(d.ed_entity_annual_divest_discounted, "n")
         if lfd_n is not None:
-            terms.append(-Sum(v_divest_n * us_n * _wt(lfd_n)))
+            terms.append(-Sum(b.v_divest_n * us_n * lfd_n))
         if annd_n is not None:
-            terms.append(-Sum(v_divest_n * us_n * _wt(annd_n)))
+            terms.append(-Sum(b.v_divest_n * us_n * annd_n))
     return _sum_terms(terms)
 
 
 def _obj_existing_fixed_cost(b: _Build) -> None:
     """Fixed cost of existing capacity as an objective constant (opt-in)."""
-    m, d = b.m, b.d
-    # ─── §8.1 Existing-entity fixed cost (constant term) — opt-in ─────────
-    # mod:2107-2115:
-    #   + Σ_{e in entity, d in period_in_use}
-    #         p_entity_all_existing[e,d] * ed_fixed_cost[e,d]
-    #             * p_inflation_factor_operations_yearly[d] * pd_branch_weight[d]
-    # See ``include_existing_fixed_cost`` doc on ``build_flextool``.
-    if (b.include_existing_fixed_cost
+    d = b.d
+    if not (b.include_existing_fixed_cost
             and d.p_ed_fixed_cost is not None
             and d.p_entity_all_existing is not None):
-        fc_frame = (
-            d.p_entity_all_existing.frame.rename({"value": "exist"})
-            .join(d.p_ed_fixed_cost.frame.rename({"value": "fc"}),
-                  on=["e", "d"], how="inner")
-            .join(d.p_inflation_op.frame.rename({"value": "infl"}),
-                  on="d", how="inner")
-        )
-        if d.pd_branch_weight is not None:
-            fc_frame = (fc_frame
-                .join(d.pd_branch_weight.frame.rename({"value": "pdbw"}),
-                      on="d", how="inner"))
-            fc_frame = fc_frame.with_columns(
-                contrib=pl.col("exist") * pl.col("fc")
-                        * pl.col("infl") * pl.col("pdbw"))
-        else:
-            fc_frame = fc_frame.with_columns(
-                contrib=pl.col("exist") * pl.col("fc") * pl.col("infl"))
-        fc_const = fc_frame["contrib"].sum()
-        if fc_const:
-            m.add_obj_constant(float(fc_const))
+        return
+
+    # ─── OBJ. ─── existing_fixed_cost ────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(e,d)} existing[e,d] · fixed_cost[e,d] · inflation_op[d] · bw[d]
+    #   bw = pd_branch_weight, factor 1 when absent
+    # Fixed cost of the capacity that exists in each period, currency (fixed_cost in currency/MW/year).
+    # A constant: it moves the objective value but not the solution.  Added only with
+    # include_existing_fixed_cost; when pd_branch_weight is present, periods without a weight row drop out.
+    fc_frame = (
+        d.p_entity_all_existing.frame.rename({"value": "exist"})
+        .join(d.p_ed_fixed_cost.frame.rename({"value": "fc"}),
+              on=["e", "d"], how="inner")
+        .join(d.p_inflation_op.frame.rename({"value": "infl"}),
+              on="d", how="inner")
+    )
+    if d.pd_branch_weight is not None:
+        fc_frame = (fc_frame
+                    .join(d.pd_branch_weight.frame.rename({"value": "pdbw"}), on="d", how="inner")
+                    .with_columns(contrib=pl.col("exist") * pl.col("fc") * pl.col("infl") * pl.col("pdbw")))
+    else:
+        fc_frame = fc_frame.with_columns(
+            contrib=pl.col("exist") * pl.col("fc") * pl.col("infl"))
+    fc_const = fc_frame["contrib"].sum()
+    if fc_const:
+        b.m.add_obj_constant(float(fc_const))
 
 
 # ---------------------------------------------------------------------------
