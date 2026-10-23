@@ -4138,6 +4138,27 @@ def _find_scenario(workdir: Path) -> str | None:
     return None
 
 
+def _years_represented_boundary(dt: "pl.DataFrame | None", db_reader, provider,
+                                workdir: "Path | str | None") -> "Param | None":
+    """``p_years_represented_d`` over the periods of ``dt`` for a sub-solve that skipped ``apply_derived_a``.
+
+    Built only from the provider's canonical ``solve_data/p_years_represented.csv`` (the parent solve's
+    years, also for stochastic branch periods).  Without a provider or without that CSV the source arm
+    would give every period one year silently, so the Param stays None: a ``co2_max_total`` build then
+    raises and the outputs use their own fallback.  A header-only CSV (``years_represented`` not
+    authored) deliberately keeps the default of one year per period.
+    """
+    from flextool.engine.preprocess.params import _derived as _drv_yr
+
+    if (dt is None or dt.height == 0 or provider is None
+            or not _drv_yr._provider_has_key(provider, Path("solve_data") / "p_years_represented.csv")):
+        return None
+    active = (_drv_yr._read_active_solve(Path(workdir), provider=provider)
+              if workdir is not None else None)
+    return _drv_yr.p_years_represented_d_from_source(
+        db_reader, active, _drv_yr.periods_of_dt(dt), provider=provider)
+
+
 def load_flextool(source: "Path | str | FlexInputSource",
                    *,
                    db_reader: "object | None" = None,
@@ -4891,22 +4912,14 @@ def load_flextool(source: "Path | str | FlexInputSource",
             # sub-solve would report every period as 1 year.  Build it over
             # the sub-solve's dt periods; the provider's canonical
             # ``p_years_represented.csv`` carries the parent solve's years.
-            _dt_inv = getattr(flex_data, "dt", None)
-            if (flex_data.p_years_represented_d is None
-                    and _dt_inv is not None and _dt_inv.height > 0):
-                from flextool.engine.preprocess.params import _derived as _drv_yr
-                _active = None
+            if flex_data.p_years_represented_d is None:
                 try:  # the workdir as resolved in ``_apply_db_overrides``
                     _wd_yr = (source.workdir if hasattr(source, "workdir")
                               else source.input_dir.parent)
                 except Exception:  # pragma: no cover — defensive
                     _wd_yr = None
-                if provider is not None and _wd_yr is not None:
-                    _active = _drv_yr._read_active_solve(Path(_wd_yr), provider=provider)
-                flex_data.p_years_represented_d = (
-                    _drv_yr.p_years_represented_d_from_source(
-                        db_reader, _active, _drv_yr.periods_of_dt(_dt_inv),
-                        provider=provider))
+                flex_data.p_years_represented_d = _years_represented_boundary(
+                    getattr(flex_data, "dt", None), db_reader, provider, _wd_yr)
 
         # Δ.11 — overlay in-memory handoff carriers onto the FlexData
         # built so far.  Replaces the previous post-load ``apply_handoff``
