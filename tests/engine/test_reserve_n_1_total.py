@@ -384,6 +384,25 @@ def test_v_reserve_total_registered() -> None:
     assert lookup_cstr(TOTAL_ROW).rhs_type is QuantityType.POWER
 
 
+def test_reserve_total_domain_mismatch_raises(steps, monkeypatch) -> None:
+    """add_constraints raises when v_reserve_total is not declared for the groups whose n-1 rows need it
+    (add_variables and add_constraints compute the domain separately)."""
+    from flextool.engine.model import _reserve
+
+    fd = steps["one"].flex_data
+    # Precondition: the unpatched build declares the total, so the raise below comes from the mismatch.
+    assert any(nm.startswith(TOTAL_COL + "[") for nm in build(fd).canonicalise().col_names)
+    add_variables = _reserve.add_variables
+
+    def drop_total(b) -> None:
+        add_variables(b)
+        b.v_reserve_total = None
+
+    monkeypatch.setattr(_reserve, "add_variables", drop_total)
+    with pytest.raises(ValueError, match="add_variables and add_constraints must use the same domain"):
+        build(fd)
+
+
 def test_timeseries_duals_equal_per_provider_form(partitions) -> None:
     """On the combined-method model the reported reserve price (the reserveBalance_timeseries_eq duals)
     is the same in the canonical LP and in its per-provider form (the total substituted out of the n-1,

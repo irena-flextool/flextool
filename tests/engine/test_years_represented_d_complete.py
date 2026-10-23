@@ -144,3 +144,23 @@ def test_rolling_co2_max_total_without_years_represented_builds(tmp_path_factory
     for step in steps:
         assert _years_by_period(step.flex_data) == {"p2020": 1.0}, step.solve_name
         assert "co2_max_total" in set(build(step.flex_data).cstr_names()), step.solve_name
+
+
+def test_co2_max_total_without_years_represented_d_fails_clearly(tmp_path_factory) -> None:
+    """A ``co2_max_total`` build whose ``p_years_represented_d`` is None raises the feature check that
+    names both, instead of failing later or dropping the years."""
+    import dataclasses
+
+    import pytest
+
+    from tests.engine._unit_db import build
+
+    url, scen = make_db(tmp_path_factory, alt="yrd_co2_none", base_chain=["init", "west", "coal", "co2_limit"],
+                        values=[["group", "co2_limit", "co2_method", b64("total", "str")],
+                                ["group", "co2_limit", "co2_max_total", b64(1.0e6, "float")]])
+    steps = list(run(tmp_path_factory, url, scen).values())
+    assert len(steps) == 1
+    fd = steps[0].flex_data
+    assert "co2_max_total" in set(build(fd).cstr_names())
+    with pytest.raises(ValueError, match=r"'co2_max_total'.*p_years_represented_d"):
+        build(dataclasses.replace(fd, p_years_represented_d=None))

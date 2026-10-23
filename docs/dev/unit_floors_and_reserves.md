@@ -117,7 +117,8 @@ Nonzeros per `(r, ud, g, d, t)`, with P provider pairs `(p, n)`, and per
 failing process f its own provider pairs `own_f` and failing arcs `a_f`:
 `(P + 1) + Σ_f (2 + own_f + a_f)` (the per-provider form had
 `Σ_f (P − own_f + 1 + a_f)`), so they grow with providers plus failing
-processes. HiGHS presolve keeps the total columns (measured, cycle c4).
+processes. HiGHS presolve keeps the total columns (measured with HiGHS 1.14:
+presolve neither removes the total columns nor re-densifies the rows).
 
 Results: the objective and every value that is unique at the optimum are
 those of the per-provider form; `v_reserve` is costless, so its split among
