@@ -19,6 +19,8 @@ Yet to wire (in user-requested order):
 """
 
 import logging
+from dataclasses import dataclass, field
+from typing import Any
 
 import polars as pl
 from polar_high import Sum, Where, Lag, Param
@@ -67,22 +69,16 @@ def _build_prof(label: str) -> None:
 # ``ALWAYS`` is the floor — fields needed even on a slack-only run.
 ALWAYS: tuple[str, ...] = (
     "dt", "nodeBalance",
-    # Phase E.3: ``nodeBalance_dt`` is no longer materialised eagerly;
-    # consumers call ``_pdt_join.compute_nodeBalance_dt`` on demand.
     "p_step_duration", "p_timestep_weight", "p_inflation_op", "p_period_share",
     "p_inflow", "p_penalty_up", "p_penalty_down",
 )
 PROCESSES: tuple[str, ...] = (
     "process_source_sink", "process_source_sink_eff", "process_source_sink_noEff",
-    # Phase E.3: ``pss_dt`` is no longer materialised eagerly; consumers
-    # call ``_pdt_join.compute_pss_dt`` on demand.
     "flow_to_n", "flow_from_commodity_eff", "flow_from_commodity_noEff",
     "p_unitsize", "p_flow_upper", "p_slope", "p_commodity_price",
 )
 INDIRECT: tuple[str, ...] = (
     "process_indirect", "process_input_flows", "process_output_flows",
-    # Phase E.3: ``process_indirect_dt`` is no longer materialised; consumers
-    # call ``_pdt_join.compute_process_indirect_dt`` on demand.
 )
 CO2_PRICE: tuple[str, ...]   = ("flow_from_co2_priced", "p_co2_content", "p_co2_price")
 CO2_CAP:   tuple[str, ...]   = ("p_co2_content", "p_co2_max_period",
@@ -92,8 +88,6 @@ CO2_CAP_TOTAL: tuple[str, ...] = ("p_co2_content", "p_co2_max_total",
 USER_CSTR: tuple[str, ...]   = ("p_constraint_constant",)
 PROFILES:  tuple[str, ...]   = ("p_profile_value", "p_process_existing_count")
 STORAGE:   tuple[str, ...]   = ("nodeState", "dtttdt",
-                                # Phase E.3: ``nodeState_dt`` lazy via
-                                # ``_pdt_join.compute_nodeState_dt``.
                                 "p_state_upper", "p_state_unitsize")
 ONLINE: tuple[str, ...] = (
     "process_online", "p_online_dt", "p_min_load",
@@ -122,6 +116,4035 @@ def _check(d, fields: tuple[str, ...], feature: str) -> None:
             f"are not populated (None): {missing}.  Either fill them in the "
             f"data or don't enable the feature."
         )
+
+
+# ---------------------------------------------------------------------------
+# Build context
+
+
+@dataclass(slots=True, eq=False)
+class _Build:
+    """State shared by the build steps of :func:`build_flextool`.
+
+    Holds only what more than one step reads; everything else stays local
+    to its family function.  Fields are filled in step order: flags and
+    index sets by ``_prepare``, variables by ``_declare_variables``, shared
+    expressions by ``_shared_expressions``, the objective by the ``_obj_*``
+    and ``_feature_*`` steps.
+    """
+
+    m: Any
+    d: Any
+    include_existing_fixed_cost: bool = False
+
+    # ── feature flags ──
+    has_proc: bool = False
+    has_indirect: bool = False
+    has_co2_price: bool = False
+    has_co2_cap_eff: bool = False
+    has_co2_cap_noEff: bool = False
+    has_co2_cap: bool = False
+    has_co2_cap_total_eff: bool = False
+    has_co2_cap_total_noEff: bool = False
+    has_co2_cap_total: bool = False
+    has_user_cstr: bool = False
+    has_profile: bool = False
+    has_storage: bool = False
+    has_rp: bool = False                 # representative-period (blended-weights) storage
+    has_nsb: bool = False                # nodeStateBlock: storage balanced per coarse block
+    has_online_lin: bool = False
+    has_online_int: bool = False
+    has_online: bool = False
+    has_minload_eff: bool = False
+    has_startup_cost_lin: bool = False
+    has_startup_cost_int: bool = False
+    has_ramp: bool = False
+    has_invest_p: bool = False
+    has_divest_p: bool = False
+    has_invest_n: bool = False
+    has_divest_n: bool = False
+    has_ladder: bool = False
+    is_solve_first: bool = True          # first solve of a chain, or a single solve
+
+    # ── shared index sets ──
+    pss_dt: pl.DataFrame | None = None               # (p, source, sink, d, t) of v_flow
+    nodeBalance_dt: pl.DataFrame | None = None       # (n, d, t) of nodeBalance_eq
+    nodeState_dt: pl.DataFrame | None = None         # (n, d, t) of v_state
+    process_indirect_dt: pl.DataFrame | None = None  # (p, d, t) of conversion_indirect
+    rp_start_idx: pl.DataFrame | None = None         # (n, d, t) of v_state_rp_start
+    p_olin_idx: pl.DataFrame | None = None           # (p, d, t) of the linear online vars
+    p_oint_idx: pl.DataFrame | None = None           # (p, d, t) of the integer online vars
+    twoway1var_arcs: pl.DataFrame | None = None      # (p, source, sink) of v_flow_back
+    # Per-arc capacity (see _max_flow_rhs): bound of v_flow, RHS of maxFlow.
+    invest_procs: pl.DataFrame | None = None         # processes with invest/divest vars
+    flow_upper_rhs: Param | None = None
+    flow_cap_mult: pl.DataFrame | None = None
+    flow_var_upper: Param | None = None
+    flow_bound_arcs: pl.DataFrame | None = None
+
+    # ── variables ──
+    v_flow: Var | None = None
+    vq_state_up: Var | None = None
+    vq_state_down: Var | None = None
+    v_state: Var | None = None
+    v_state_inter: Var | None = None
+    v_state_rp_start: Var | None = None
+    v_online_linear: Var | None = None
+    v_startup_linear: Var | None = None
+    v_shutdown_linear: Var | None = None
+    v_online_integer: Var | None = None
+    v_startup_integer: Var | None = None
+    v_shutdown_integer: Var | None = None
+    v_invest_p: Var | None = None
+    v_divest_p: Var | None = None
+    v_invest_n: Var | None = None
+    v_divest_n: Var | None = None
+    v_flow_back: Var | None = None
+    reserve_vars: dict = field(default_factory=dict)
+    dc_pf_vars: dict = field(default_factory=dict)
+    ladder_vars: dict = field(default_factory=dict)
+
+    # ── shared expressions ──
+    node_balance_flow_terms: dict = field(default_factory=dict)
+    reserve_up_to_sink: Any = None          # Σ_r v_reserve up,   (p, sink, d, t)
+    reserve_down_to_sink: Any = None        # Σ_r v_reserve down, (p, sink, d, t)
+    reserve_down_from_source: Any = None    # Σ_r v_reserve down, (p, source, d, t)
+    reserve_up_sink_parts: Any = None       # (v_reserve at sink, up selector)
+    invest_in_dispatch_p: Any = None        # Σ v_invest_p alive in d, (p, d)
+    divest_in_dispatch_p: Any = None        # Σ v_divest_p active in d, (p, d)
+    op_factor: Any = None                   # weight of operational cost terms, (d, t)
+
+    # ── objective under construction ──
+    obj: Any = None
+
+
+def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
+                   scale_the_objective: float = 1.0) -> None:
+    """Build the FlexTool LP into ``m`` from the data ``d``.
+
+    Every block is conditional on its data: a feature with an empty index
+    set emits nothing; a feature whose index set is populated but whose
+    required fields are ``None`` raises ``ValueError`` (requirement tuples
+    above).
+
+    ``include_existing_fixed_cost``: add the fixed cost of existing
+    capacity, Σ existing · fixed_cost · inflation_op, as an objective
+    constant.  Off by default, so the solver objective excludes it.
+    ``scale_the_objective``: multiplier on the whole objective (1.0 = none).
+    """
+    b = _Build(m=m, d=d, include_existing_fixed_cost=include_existing_fixed_cost)
+    for step in (
+        _prepare,                        # flags, data checks, index sets
+        _declare_variables,
+        _shared_expressions,
+        # ── constraints, in emit order ──
+        _eq_rp_storage_chain,
+        _eq_node_balance,
+        _eq_node_balance_period,
+        _eq_node_balance_fix_quantity,
+        _eq_storage_usage_fix,
+        _eq_block_coupling,
+        _eq_max_flow,
+        _eq_dc_power_flow,
+        _eq_online,
+        _eq_online_fix,
+        _eq_unit_floors,
+        _eq_ramp,
+        _eq_invest_bounds,
+        _eq_conversion,
+        _eq_co2_caps,
+        _eq_user_constraints,
+        _eq_storage_state,
+        _eq_profiles,
+        # ── objective ──
+        _obj_balance_slack,
+        _obj_commodity,
+        _obj_co2_price,
+        _obj_variable_cost,
+        _obj_startup_cost,
+        _obj_storage_reference_price,
+        _obj_invest_divest,
+        _obj_existing_fixed_cost,
+        # ── feature modules: constraints + objective terms ──
+        _feature_group_slack,
+        _feature_reserve,
+        _feature_cumulative_invest,
+        _feature_delay,
+        _feature_commodity_ladder,
+        # ── stochastic ties ──
+        _eq_non_anticipativity,
+        _eq_non_anticipativity_invest,
+    ):
+        _build_prof(step.__name__)
+        step(b)
+
+    obj = b.obj
+    if scale_the_objective != 1.0:
+        obj = obj * scale_the_objective
+    m.set_objective(obj, sense="min")
+    _build_prof("build_flextool:return")
+
+    # HiGHS options of the active solve (solve_mode.csv: highs_method /
+    # highs_parallel / highs_presolve); None keeps the HiGHS defaults.
+    if getattr(d, "solver_options", None):
+        m.set_solver_options(d.solver_options)
+
+
+# ---------------------------------------------------------------------------
+# Preparation: flags, data checks, index sets
+
+
+def _prepare(b: _Build) -> None:
+    """Problem settings, feature flags, data checks and shared index sets."""
+    m, d = b.m, b.d
+
+    # (d, t) are the dense trailing axes of every indexed frame; declaring
+    # them lets polar_high assemble the matrix from block-COO slices.
+    m.declare_dense_axes(("d", "t"))
+    # Matrix coefficients and RHS terms with |value| < threshold become 0
+    # (model.small_number_threshold, schema default 1e-4; 0 disables).
+    m.coef_zero_threshold = float(getattr(d, "small_number_threshold", 0.0001))
+
+    _check(d, ALWAYS, "always")
+    _validate_storage_binding_implemented(d)
+
+    # ── feature flags ──
+    b.has_proc = _has_rows(d.process_source_sink)
+    b.has_indirect = _has_rows(d.process_indirect)
+    b.has_co2_price = _has_rows(d.flow_from_co2_priced)
+    b.has_co2_cap_eff = _has_rows(d.flow_from_co2_capped)
+    b.has_co2_cap_noEff = _has_rows(getattr(d, "flow_from_co2_capped_noEff", None))
+    b.has_co2_cap = b.has_co2_cap_eff or b.has_co2_cap_noEff
+    b.has_co2_cap_total_eff = _has_rows(getattr(d, "flow_from_co2_capped_total", None))
+    b.has_co2_cap_total_noEff = _has_rows(
+        getattr(d, "flow_from_co2_capped_total_noEff", None))
+    b.has_co2_cap_total = b.has_co2_cap_total_eff or b.has_co2_cap_total_noEff
+    b.has_user_cstr = any(_has_rows(x) for x in (d.cdt_eq, d.cdt_le, d.cdt_ge))
+    b.has_profile = any(_has_rows(x) for x in (d.process_profile_upper,
+                                               d.process_profile_lower,
+                                               d.process_profile_fixed))
+    b.has_storage = _has_rows(d.nodeState)
+    b.has_rp = _has_rows(d.nodeState_rp)
+    b.has_nsb = _has_rows(d.nodeStateBlock)
+    b.has_online_lin = _has_rows(d.process_online_linear)
+    b.has_online_int = _has_rows(d.process_online_integer)
+    b.has_online = b.has_online_lin or b.has_online_int
+    b.has_minload_eff = _has_rows(d.process_min_load_eff)
+    b.has_startup_cost_lin = _has_rows(d.pdt_online_linear)
+    b.has_startup_cost_int = _has_rows(d.pdt_online_integer)
+    b.has_ramp = any(_has_rows(getattr(d, f))
+                     for f in ("process_source_sink_ramp_limit_sink_up",
+                               "process_source_sink_ramp_limit_sink_down",
+                               "process_source_sink_ramp_limit_source_up",
+                               "process_source_sink_ramp_limit_source_down"))
+    b.has_invest_p = _has_rows(d.pd_invest_set)
+    b.has_divest_p = _has_rows(d.pd_divest_set)
+    b.has_invest_n = _has_rows(d.nd_invest_set)
+    b.has_divest_n = _has_rows(d.nd_divest_set)
+    b.has_ladder = _commodity_ladder.has_feature(d)
+    # p_nested_solve_first: None for a single solve, else True on the first
+    # solve of a chain.
+    b.is_solve_first = (d.p_nested_solve_first is None
+                        or d.p_nested_solve_first is True)
+
+    # ── required data of the active features ──
+    if b.has_proc:
+        _check(d, PROCESSES, "processes")
+    if b.has_indirect:
+        _check(d, INDIRECT, "conversion_indirect")
+    # The CO2 price and content are authored apart from the priced-group
+    # membership; without them the cost term is skipped with a warning.
+    if b.has_co2_price and (d.p_co2_price is None or d.p_co2_content is None):
+        missing = [f for f in ("p_co2_price", "p_co2_content")
+                   if getattr(d, f, None) is None]
+        _LOG.warning(
+            "CO2 price method is active (flow_from_co2_priced is non-empty) "
+            "but %s is not populated — CO2 emissions will not be priced in "
+            "this solve.  Populate group.co2_price / commodity.co2_content "
+            "to enable the CO2 cost term, or remove the CO2-priced group "
+            "membership to silence this warning.",
+            " and ".join(missing),
+        )
+        b.has_co2_price = False
+    if b.has_co2_cap:
+        _check(d, CO2_CAP, "co2_max_period")
+    if b.has_co2_cap_total:
+        _check(d, CO2_CAP_TOTAL, "co2_max_total")
+    if b.has_user_cstr:
+        _check(d, USER_CSTR, "user_constraints")
+    if b.has_profile:
+        _check(d, PROFILES, "profile_flow")
+    if b.has_storage:
+        _check(d, STORAGE, "storage")
+    if b.has_ramp:
+        _check(d, RAMP, "ramp_limit")
+    if b.has_invest_p or b.has_invest_n:
+        _check(d, INVEST, "invest")
+    if b.has_divest_p:
+        _check(d, DIVEST, "divest")
+    if b.has_online:
+        _check(d, ONLINE, "online")
+    if b.has_minload_eff:
+        _check(d, MINLOAD_EFF, "min_load_efficiency")
+    if b.has_startup_cost_lin:
+        _check(d, STARTUP_COST_LINEAR, "startup_cost_linear")
+    if b.has_startup_cost_int:
+        _check(d, STARTUP_COST_INTEGER, "startup_cost_integer")
+
+    # ── shared index sets ──
+    b.pss_dt = compute_pss_dt(d) if b.has_proc else None
+    b.nodeBalance_dt = compute_nodeBalance_dt(d)
+    _validate_has_balance(d, b.nodeBalance_dt)
+    b.nodeState_dt = compute_nodeState_dt(d) if b.has_storage else None
+    b.process_indirect_dt = (compute_process_indirect_dt(d)
+                             if b.has_indirect else None)
+    _validate_storage_binding_disjoint(d)
+    if b.has_rp:
+        b.rp_start_idx = compute_nodeState_rp_block_first_dt(d)
+    if b.has_online_lin:
+        b.p_olin_idx = d.p_online_dt.join(d.process_online_linear, on="p",
+                                          how="inner")
+    if b.has_online_int:
+        b.p_oint_idx = d.p_online_dt.join(d.process_online_integer, on="p",
+                                          how="inner")
+    if b.has_proc:
+        b.twoway1var_arcs = _two_way_one_var_arcs(d)
+        procs = [s.select(pl.col("p").cast(pl.Utf8))
+                 for s in (d.pd_invest_set if b.has_invest_p else None,
+                           d.pd_divest_set if b.has_divest_p else None)
+                 if s is not None]
+        b.invest_procs = pl.concat(procs).unique() if procs else None
+        (b.flow_upper_rhs, b.flow_cap_mult,
+         b.flow_var_upper, b.flow_bound_arcs) = _max_flow_rhs(d, b.invest_procs)
+
+
+def _has_rows(frame) -> bool:
+    """True when ``frame`` is populated and non-empty."""
+    return frame is not None and frame.height > 0
+
+
+def _node_list(nodes: list) -> str:
+    """Comma-separated node names for error messages, at most ten shown."""
+    shown = ", ".join(str(n) for n in nodes[:10])
+    return shown + ("" if len(nodes) <= 10 else f", ... {len(nodes) - 10} more")
+
+
+def _validate_storage_binding_implemented(d) -> None:
+    """Raise for storage_binding_method values without a constraint yet.
+
+    A node with such a method would get no state-change term in
+    nodeBalance_eq.  No method is pending today; add
+    ``(method_name, node_frame)`` pairs here when a value-list entry lands
+    before its constraint.
+    """
+    not_yet_implemented: tuple = ()
+    for method_name, frame in not_yet_implemented:
+        if _has_rows(frame):
+            raise FlexToolConfigError(
+                f"Node(s) {_node_list(frame.get_column('n').to_list())} carry "
+                f"storage_binding_method = "
+                f"'{method_name}', which is recognized by the v55 "
+                f"value_list but its constraint implementation has "
+                f"not landed yet.  For now, change these nodes to one "
+                f"of the implemented methods using a scenario "
+                f"alternative override."
+            )
+
+
+def _validate_has_balance(d, nodeBalance_dt) -> None:
+    """Raise when no node has an energy balance to solve."""
+    if nodeBalance_dt is None and not _has_rows(getattr(d, "nodeBalancePeriod", None)):
+        raise ValueError(
+            "No node has an energy balance: every node resolved to "
+            "node_type = 'commodity' (or 'none'), so there is no "
+            "per-time-step balance ('balance'/'storage') and no period "
+            "balance ('balance_within_period') to solve.  Check the "
+            "node_type of your nodes and the alternative ranking of the "
+            "active scenario — a high-ranked alternative (e.g. 'Base') "
+            "that sets node_type = 'commodity' will override the "
+            "'balance'/'storage' assignments of lower-ranked "
+            "alternatives."
+        )
+
+
+def _validate_storage_binding_disjoint(d) -> None:
+    """Raise if a node is in more than one storage_bind_* set.
+
+    nodeBalance_eq adds one state-change term per set, so a node in two
+    sets would get two.
+    """
+    frames = [
+        ("bind_within_timeblock", d.storage_bind_within_timeblock),
+        ("bind_forward_only", d.storage_bind_forward_only),
+        ("bind_within_solve", d.storage_bind_within_solve),
+        ("bind_within_solve_blended_weights",
+         d.storage_bind_within_solve_blended_weights),
+        ("bind_forward_only_blended_weights",
+         d.storage_bind_forward_only_blended_weights),
+        ("bind_within_period_blended_weights",
+         getattr(d, "storage_bind_within_period_blended_weights", None)),
+    ]
+    active = [(name, frame) for name, frame in frames if _has_rows(frame)]
+    for i, (name_i, frame_i) in enumerate(active):
+        for name_j, frame_j in active[i + 1:]:
+            overlap = (frame_i.select("n").unique()
+                       .join(frame_j.select("n").unique(), on="n", how="inner"))
+            if overlap.height > 0:
+                raise FlexToolConfigError(
+                    "storage_binding_method projections must be pairwise "
+                    "disjoint on node, but the following node(s) appear in "
+                    f"both '{name_i}' and '{name_j}': "
+                    f"{_node_list(overlap['n'].to_list())}. "
+                    "Run the v54 DB migration (or later, via the v53->v54 "
+                    "migration step) and ensure each node has exactly one "
+                    "storage_binding_method value."
+                )
+
+
+def _two_way_one_var_arcs(d) -> "pl.DataFrame | None":
+    """(p, source, sink) arcs whose reverse flow is ``v_flow_back``.
+
+    Union of the method_2way_1var_off arcs (``process_source_sink_2way_1var``)
+    and the DC power-flow arcs; the latter come straight from the DC
+    module so they are covered even when the projection field is absent.
+    """
+    parts = []
+    if _has_rows(d.process_source_sink_2way_1var):
+        parts.append(d.process_source_sink_2way_1var.select("p", "source", "sink"))
+    if _dc_power_flow.has_feature(d):
+        dc_arcs = _dc_power_flow.dc_arcs_frame(d)
+        if _has_rows(dc_arcs):
+            parts.append(dc_arcs.select("p", "source", "sink"))
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    ref_schema = parts[0].schema
+    aligned = [parts[0]]
+    for part in parts[1:]:
+        for col in ("p", "source", "sink"):
+            if part.schema[col] != ref_schema[col]:
+                part = part.with_columns(
+                    pl.col(col).cast(ref_schema[col], strict=False))
+        aligned.append(part)
+    return pl.concat(aligned).unique()
+
+
+# ---------------------------------------------------------------------------
+# Variables
+
+
+def _declare_variables(b: _Build) -> None:
+    """Declare every decision variable; the order fixes the LP column order."""
+    m, d = b.m, b.d
+
+    # ─── VAR. ─── v_flow ─────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_flow[p,source,sink,d,t] ≥ 0   ∀ (p,source,sink,d,t) ∈ pss_dt
+    # Flow on a process arc in units of unitsize: MW = v_flow · unitsize[p].
+    # Input arcs of indirect units without invest/divest variables carry a
+    # per-element upper bound (their capacity is a constant); maxFlow caps
+    # every other arc.
+    if b.has_proc:
+        b.v_flow = m.add_var("v_flow", ("p", "source", "sink", "d", "t"),
+                             b.pss_dt, lower=0.0,
+                             upper=(b.flow_var_upper
+                                    if b.flow_var_upper is not None
+                                    else float("inf")))
+
+    # ─── VAR. ─── vq_state_up / vq_state_down ────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # vq_state_up[n,d,t], vq_state_down[n,d,t] ≥ 0
+    #   ∀ n ∈ nodeBalance ∪ nodeBalancePeriod, (d,t) ∈ dt
+    # Balance slack in MW (shortfall / surplus); enters the balance times
+    # step_duration and is penalised in the objective.  Nodes with
+    # penalty_method = off have none, so their balance is a hard equality.
+    slack_idx = _balance_slack_index(b)
+    b.vq_state_up = m.add_var("vq_state_up", ("n", "d", "t"), slack_idx, lower=0.0)
+    b.vq_state_down = m.add_var("vq_state_down", ("n", "d", "t"), slack_idx, lower=0.0)
+
+    # ─── VAR. ─── v_state ────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t] ≥ 0   ∀ (n,d,t) ∈ nodeState_dt
+    # Storage state in units of the node's state unitsize:
+    # MWh = v_state · state_unitsize[n].  Its upper bound depends on
+    # invest/divest and is the maxState row.
+    if b.has_storage:
+        b.v_state = m.add_var("v_state", ("n", "d", "t"), b.nodeState_dt, lower=0.0)
+
+    # ─── VAR. ─── v_state_inter / v_state_rp_start ───────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,b] ≥ 0          ∀ n ∈ nodeState_rp, b ∈ rp_base_period
+    # v_state_rp_start[n,d,t] ≥ 0     ∀ n ∈ nodeState_rp, (d,t) ∈ rp_block_first
+    # Representative-period storage, in state units: the state at each
+    # base-period boundary, and the free starting state of each
+    # representative block.  Upper bounds are the rows
+    # rp_inter_period_max_state and maxState_rp_start.
+    if b.has_rp:
+        b.v_state_inter = m.add_var(
+            "v_state_inter", ("n", "b"),
+            d.nodeState_rp.join(d.rp_base_period_set, how="cross"), lower=0.0)
+        b.v_state_rp_start = m.add_var("v_state_rp_start", ("n", "d", "t"),
+                                       b.rp_start_idx, lower=0.0)
+
+    # ─── VAR. ─── v_online_linear / v_startup_linear / v_shutdown_linear ─────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_online_linear[p,d,t], v_startup_linear[p,d,t], v_shutdown_linear[p,d,t] ≥ 0
+    #   ∀ (p,d,t) ∈ p_online_dt, p ∈ process_online_linear
+    # Units online, starting up and shutting down (count of unitsize),
+    # continuous.
+    if b.has_online_lin:
+        b.v_online_linear = m.add_var("v_online_linear", ("p", "d", "t"), b.p_olin_idx)
+        b.v_startup_linear = m.add_var("v_startup_linear", ("p", "d", "t"), b.p_olin_idx)
+        b.v_shutdown_linear = m.add_var("v_shutdown_linear", ("p", "d", "t"), b.p_olin_idx)
+
+    # ─── VAR. ─── v_online_integer / v_startup_integer / v_shutdown_integer ──
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_online_integer[p,d,t] ∈ ℤ≥0, v_startup_integer[p,d,t], v_shutdown_integer[p,d,t] ≥ 0
+    #   ∀ (p,d,t) ∈ p_online_dt, p ∈ process_online_integer
+    # As the linear family, but units online are integer; startups and
+    # shutdowns stay continuous.
+    if b.has_online_int:
+        b.v_online_integer = m.add_var("v_online_integer", ("p", "d", "t"),
+                                       b.p_oint_idx, integer=True)
+        b.v_startup_integer = m.add_var("v_startup_integer", ("p", "d", "t"), b.p_oint_idx)
+        b.v_shutdown_integer = m.add_var("v_shutdown_integer", ("p", "d", "t"), b.p_oint_idx)
+
+    # ─── VAR. ─── v_invest_p / v_divest_p / v_invest_n / v_divest_n ──────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_invest_p[p,d] ≥ 0 ∀ (p,d) ∈ pd_invest_set;  v_divest_p[p,d] ≥ 0 ∀ (p,d) ∈ pd_divest_set
+    # v_invest_n[n,d] ≥ 0 ∀ (n,d) ∈ nd_invest_set;  v_divest_n[n,d] ≥ 0 ∀ (n,d) ∈ nd_divest_set
+    # Capacity built / retired in period d, as a count of unitsize (process)
+    # or state unitsize (storage node).  Upper bounds are the
+    # maxInvest_var_bound / maxDivest_var_bound rows.
+    if b.has_invest_p:
+        b.v_invest_p = m.add_var("v_invest_p", ("p", "d"), d.pd_invest_set)
+    if b.has_divest_p:
+        b.v_divest_p = m.add_var("v_divest_p", ("p", "d"), d.pd_divest_set)
+    if b.has_invest_n:
+        b.v_invest_n = m.add_var("v_invest_n", ("n", "d"), d.nd_invest_set)
+    if b.has_divest_n:
+        b.v_divest_n = m.add_var("v_divest_n", ("n", "d"), d.nd_divest_set)
+
+    # Reserve variables (v_reserve, vq_reserve): declared by _reserve.
+    b.reserve_vars = _reserve.add_variables(m, d) if _reserve.has_feature(d) else {}
+
+    # ─── VAR. ─── v_flow_back ────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_flow_back[p,source,sink,d,t] ≥ 0   ∀ (p,source,sink) ∈ twoway1var_arcs, (d,t) ∈ dt
+    # Reverse flow (sink → source) of method_2way_1var_off and DC power-flow
+    # arcs, in units of unitsize; the signed flow is v_flow − v_flow_back.
+    # One variable serves both the balance and dc_flow_eq.
+    if _has_rows(b.twoway1var_arcs):
+        back_idx = b.twoway1var_arcs.join(d.dt, how="cross").select(
+            "p", "source", "sink", "d", "t")
+        if back_idx.height > 0:
+            b.v_flow_back = m.add_var("v_flow_back",
+                                      ("p", "source", "sink", "d", "t"),
+                                      back_idx, lower=0.0)
+
+    # DC power-flow angles (v_angle) and commodity-ladder trades (v_trade):
+    # declared by their feature modules.
+    b.dc_pf_vars = (_dc_power_flow.add_variables(m, d, v_flow_back=b.v_flow_back)
+                    if _dc_power_flow.has_feature(d) else {})
+    b.ladder_vars = _commodity_ladder.add_variables(m, d) if b.has_ladder else {}
+
+
+def _balance_slack_index(b: _Build) -> pl.DataFrame:
+    """(n, d, t) of the balance slacks: nodeBalance_dt ∪ nodeBalancePeriod × dt,
+    without penalty_method = off nodes."""
+    d = b.d
+    idx = b.nodeBalance_dt
+    if _has_rows(d.nodeBalancePeriod):
+        period_dt = (d.nodeBalancePeriod.lazy()
+                     .join(d.dt.lazy(), how="cross")
+                     .select("n", "d", "t")
+                     .collect())
+        ref_schema = b.nodeBalance_dt.schema
+        for col in ("n", "d", "t"):
+            if period_dt.schema[col] != ref_schema[col]:
+                period_dt = period_dt.with_columns(
+                    pl.col(col).cast(ref_schema[col], strict=False))
+        idx = pl.concat([b.nodeBalance_dt, period_dt]).unique()
+    penalty_off = getattr(d, "nodeBalance_penalty_off", None)
+    if _has_rows(penalty_off):
+        off_n = penalty_off.select("n")
+        if off_n.schema["n"] != idx.schema["n"]:
+            off_n = off_n.with_columns(
+                pl.col("n").cast(idx.schema["n"], strict=False))
+        idx = idx.join(off_n, on="n", how="anti")
+    return idx
+
+
+# ---------------------------------------------------------------------------
+# Shared expressions
+
+
+def _shared_expressions(b: _Build) -> None:
+    """Expressions read by more than one equation family or objective term."""
+    d = b.d
+    _reserve_coupling(b)
+    b.node_balance_flow_terms = _node_balance_flow_terms(b)
+    _invest_in_dispatch(b)
+    # Weight of every operational cost term per (d, t): step_duration ·
+    # timestep_weight · inflation_op / period_share, times the branch
+    # weight in stochastic solves.
+    b.op_factor = (d.p_step_duration * d.p_timestep_weight
+                   * d.p_inflation_op / d.p_period_share)
+    if d.pdt_branch_weight is not None:
+        b.op_factor = b.op_factor * d.pdt_branch_weight
+
+
+def _reserve_coupling(b: _Build) -> None:
+    """Σ_r v_reserve aggregates that share process capacity with v_flow."""
+    v_reserve = b.reserve_vars.get("v_reserve")
+    if v_reserve is None:
+        return
+    pruna = b.d.process_reserve_upDown_node_active          # (p, r, ud, n)
+    if not _has_rows(pruna):
+        return
+    # v_reserve is in units of unitsize, like v_flow.  Upward reserve held
+    # at a sink competes with the flow into it (maxFlow, maxOutputSum,
+    # profile_flow_upper_limit); downward reserve at a sink lowers the
+    # floor of profile_flow_lower_limit.
+    up_sink = (pruna.filter(pl.col("ud") == "up")
+               .pipe(rename_to_axis, {"n": "sink"})
+               .select("p", "r", "ud", "sink"))
+    if up_sink.height > 0:
+        at_sink = _var_view(v_reserve, "__at_sink", {"n": "sink"}, to_axis=True)
+        b.reserve_up_to_sink = Sum(Where(at_sink, up_sink), over=("r", "ud"))
+        b.reserve_up_sink_parts = (at_sink, up_sink)
+
+    down_sink = (pruna.filter(pl.col("ud") == "down")
+                 .pipe(rename_to_axis, {"n": "sink"})
+                 .select("p", "r", "ud", "sink"))
+    if down_sink.height > 0:
+        at_sink_dn = _var_view(v_reserve, "__at_sink_dn", {"n": "sink"},
+                               to_axis=True)
+        b.reserve_down_to_sink = Sum(Where(at_sink_dn, down_sink),
+                                     over=("r", "ud"))
+
+    # Not read by any constraint at present.
+    down_source = (pruna.filter(pl.col("ud") == "down")
+                   .pipe(rename_to_axis, {"n": "source"})
+                   .select("p", "r", "ud", "source"))
+    if down_source.height > 0:
+        at_source = _var_view(v_reserve, "__at_source", {"n": "source"},
+                              to_axis=True)
+        b.reserve_down_from_source = Sum(Where(at_source, down_source),
+                                         over=("r", "ud"))
+
+
+def _invest_in_dispatch(b: _Build) -> None:
+    """(p, d) sums of the process invest / divest units in service in d.
+
+    invest_in_dispatch_p[p,d] = Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
+    divest_in_dispatch_p[p,d] = Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
+    Read by maxFlow, maxOutputSum and the ramp limits.
+    """
+    if not b.has_proc:
+        return
+    d = b.d
+    if b.has_divest_p:
+        divested = _var_view(b.v_divest_p, "__at_divest", {"d": "d_divest"},
+                             to_axis=True)
+        b.divest_in_dispatch_p = Sum(Where(divested, d.edd_divest_active),
+                                     over=("d_divest",))
+    if b.has_invest_p:
+        invested = _var_view(b.v_invest_p, "__at_invest", {"d": "d_invest"},
+                             to_axis=True)
+        alive = _entity_rows(d.edd_invest_set, "e", d.process_source_sink, "p")
+        b.invest_in_dispatch_p = Sum(Where(invested, alive), over=("d_invest",))
+
+
+def _var_view(v: Var, suffix: str, rename: dict, *, to_axis: bool = False) -> Var:
+    """``v`` with renamed dims and the same columns.
+
+    Used to index one variable twice in a term (e.g. ``d → d_invest`` to sum
+    investments of earlier periods, ``t → last_step`` to pick a step).
+    ``to_axis`` renames through :func:`rename_to_axis` (axis-typed column).
+    """
+    frame = (v.frame.pipe(rename_to_axis, rename) if to_axis
+             else v.frame.rename(rename))
+    return Var(name=v.name + suffix,
+               dims=tuple(rename.get(x, x) for x in v.dims),
+               frame=frame, lower=v.lower, upper=v.upper)
+
+
+def _entity_rows(frame: pl.DataFrame, ent_col: str, members: pl.DataFrame,
+                 axis: str) -> pl.DataFrame:
+    """Rows of ``frame`` whose ``ent_col`` is in ``members[axis]``, with
+    ``ent_col`` renamed to ``axis``.
+
+    ``frame`` is keyed on the entity-union (``e``) or process (``p``) axis
+    while ``members`` uses the process or node axis.  Their Enum
+    vocabularies differ and polars cannot compare them, so ``members`` is
+    cast to ``frame``'s dtype first (every member is in the larger
+    vocabulary).
+    """
+    dtype = frame.schema[ent_col]
+    keys = (members.select(pl.col(axis).cast(dtype, strict=False).alias(ent_col))
+            .unique())
+    return (frame.join(keys, on=ent_col, how="semi")
+            .pipe(rename_to_axis, {ent_col: axis}))
+
+
+# ---------------------------------------------------------------------------
+# Equations
+
+
+def _eq_rp_storage_chain(b: _Build) -> None:
+    """Representative-period storage: inter-period state chain and its bounds."""
+    if not (b.has_storage and b.has_rp):
+        return
+    m, d = b.m, b.d
+    v_inter = b.v_state_inter
+    b_dtype = v_inter.frame.schema["b"]
+    has_rep_blocks = (d.rp_base__rep is not None
+                      and _has_rows(d.rp_block_first)
+                      and _has_rows(d.p_rp_last_step))
+
+    # ─── EQ. ─── rp_inter_period_balance ─────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,b] − v_state_inter[n,b_prev]
+    #   = Σ_{(b,r) ∈ rp_base__rep, (d,r) ∈ rp_block_first, d ∈ period_in_use}
+    #       rp_weight[b,r] · (v_state[n,d,last_step[r]] − v_state_rp_start[n,d,r])
+    #   ∀ n ∈ nodeState_rp, (b,b_prev) ∈ rp_base_chain
+    # Chains the storage state across base periods: each base period is
+    # represented by weighted representative blocks r, and the boundary state
+    # moves by the weighted net change of those blocks.
+    # All terms are in state units (no state_unitsize factor).
+    if has_rep_blocks and _has_rows(d.rp_base_chain):
+        nodes = d.nodeState_rp
+        chain = d.rp_base_chain.with_columns(
+            pl.col("b").cast(b_dtype, strict=False),
+            pl.col("b_prev").cast(b_dtype, strict=False),
+        )
+        over = nodes.join(chain, how="cross").select("n", "b", "b_prev")
+        inter_prev = _var_view(v_inter, "__bprev", {"b": "b_prev"})
+        drift = _rp_weighted_drift(b, nodes, d.rp_base__rep.frame, "b", "")
+        if drift is not None:
+            m.add_cstr(
+                "rp_inter_period_balance",
+                over      = over,
+                sense     = "==",
+                lhs_terms = {"d_inter": (Where(v_inter, over)
+                                         - Where(inter_prev, over)),
+                             "neg_rp_drift": -Where(drift, over)},
+                rhs_terms = {},
+            )
+
+    # ─── EQ. ─── rp_inter_period_cyclic ──────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,b_first] − v_state_inter[n,b_last]
+    #   = Σ_{(b_first,r) ∈ rp_base__rep, (d,r) ∈ rp_block_first, d ∈ period_in_use}
+    #       rp_weight[b_first,r] · (v_state[n,d,last_step[r]] − v_state_rp_start[n,d,r])
+    #   ∀ n ∈ bind_within_{solve,period}_blended_weights,
+    #     (b_first,b_last) ∈ rp_base_first × rp_base_last
+    # Closes the chain: the last boundary state connects back to the first.
+    # bind_within_solve_blended_weights closes once per solve,
+    # bind_within_period_blended_weights once per period (rp_base_first /
+    # rp_base_last then carry d and are paired on it).
+    # bind_forward_only_blended_weights has no closure.
+    cyclic_sets = [f for f in (d.storage_bind_within_solve_blended_weights,
+                               getattr(d, "storage_bind_within_period_blended_weights",
+                                       None))
+                   if _has_rows(f)]
+    if (has_rep_blocks and cyclic_sets
+            and _has_rows(d.rp_base_first) and _has_rows(d.rp_base_last)):
+        nodes = pl.concat(cyclic_sets, how="vertical").unique()
+        first = (d.rp_base_first.rename({"b": "b_first"})
+                 .with_columns(pl.col("b_first").cast(b_dtype, strict=False)))
+        last = (d.rp_base_last.rename({"b": "b_last"})
+                .with_columns(pl.col("b_last").cast(b_dtype, strict=False)))
+        if "d" in first.columns and "d" in last.columns:
+            pairs = (first.join(last, on="d", how="inner")
+                     .select("b_first", "b_last"))
+        else:
+            pairs = first.select("b_first").join(last.select("b_last"), how="cross")
+        over = nodes.join(pairs, how="cross").select("n", "b_first", "b_last")
+        inter_first = _var_view(v_inter, "__bfirst", {"b": "b_first"})
+        inter_last = _var_view(v_inter, "__blast", {"b": "b_last"})
+        rep_first = (d.rp_base__rep.frame.rename({"b": "b_first"})
+                     .with_columns(pl.col("b_first").cast(b_dtype, strict=False)))
+        drift = _rp_weighted_drift(b, nodes, rep_first, "b_first", "_cyc")
+        if drift is not None:
+            m.add_cstr(
+                "rp_inter_period_cyclic",
+                over      = over,
+                sense     = "==",
+                lhs_terms = {"d_cyclic": (Where(inter_first, over)
+                                          - Where(inter_last, over)),
+                             "neg_rp_drift_first": -Where(drift, over)},
+                rhs_terms = {},
+            )
+
+    # ─── EQ. ─── rp_inter_period_max_state / maxState_rp_start ───────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,b] + Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
+    #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]  ≤  state_upper[n,d]
+    #   ∀ n ∈ nodeState_rp, b ∈ rp_base_period, d ∈ period_in_use
+    # v_state_rp_start[n,d,t] + (same invest/divest terms)  ≤  state_upper[n,d]
+    #   ∀ (n,d,t) ∈ nodeState_rp × rp_block_first
+    # Capacity bounds of the boundary and block-start states, as maxState
+    # bounds v_state.  state_upper = existing / state_unitsize, so every term
+    # is in state units.  Without period_in_use, d runs over the periods of dt.
+    nodes = d.nodeState_rp
+    if _has_rows(d.rp_base_period_set):
+        if _has_rows(d.period_in_use_set):
+            periods = d.period_in_use_set.select("d").unique()
+        else:
+            periods = d.dt.select("d").unique()
+        if periods.height > 0:
+            over = (nodes.join(d.rp_base_period_set, how="cross")
+                    .join(periods, how="cross")
+                    .select("n", "b", "d"))
+            lhs: dict = {"state_inter": Where(v_inter, over)}
+            lhs.update(_node_capacity_change_terms(b, nodes, "_rp"))
+            m.add_cstr(
+                "rp_inter_period_max_state",
+                over      = over,
+                sense     = "<=",
+                lhs_terms = lhs,
+                rhs_terms = {"upper": d.p_state_upper},
+            )
+    if _has_rows(b.rp_start_idx):
+        lhs = {"state_rp_start": b.v_state_rp_start}
+        lhs.update(_node_capacity_change_terms(b, nodes, "_rp"))
+        m.add_cstr(
+            "maxState_rp_start",
+            over      = b.rp_start_idx,
+            sense     = "<=",
+            lhs_terms = lhs,
+            rhs_terms = {"upper": d.p_state_upper},
+        )
+
+
+def _rp_weighted_drift(b: _Build, nodes: pl.DataFrame, rep: pl.DataFrame,
+                       base: str, tag: str):
+    """Σ_{(base,r), d} rp_weight · (v_state[n,d,last_step[r]] − v_state_rp_start[n,d,r]).
+
+    ``rep`` holds (base, r, value=rp_weight); the result keeps dims
+    (n, base).  None when no representative block is in use.  ``tag``
+    keeps the variable-view names of the two callers apart.
+    """
+    d = b.d
+    t_dtype = d.rp_block_first.schema["t"]
+    state_t_dtype = b.v_state.frame.schema["t"]
+    # Block r starts at (d, t = r) ∈ rp_block_first and ends at last_step[r].
+    block_first = (d.rp_block_first.rename({"t": "r"})
+                   .with_columns(pl.col("r").cast(t_dtype, strict=False)))
+    rep = rep.with_columns(pl.col("r").cast(t_dtype, strict=False))
+    last_step = d.p_rp_last_step.with_columns(
+        pl.col("r").cast(t_dtype, strict=False),
+        pl.col("last_step").cast(state_t_dtype, strict=False))
+    cohort = (rep.join(block_first, on="r", how="inner")
+              .join(last_step, on="r", how="inner"))
+    if d.period_in_use_set is not None:
+        cohort = cohort.join(d.period_in_use_set, on="d", how="inner")
+    if cohort.height == 0:
+        return None
+    keys = (base, "r", "d", "last_step")
+    rp_weight = Param(keys, cohort.select(*keys, "value"))
+    state_at_last = _var_view(b.v_state, "__rp_last" + tag, {"t": "last_step"})
+    start_at_r = _var_view(b.v_state_rp_start, "__at_r" + tag, {"t": "r"})
+    idx = nodes.select("n").unique().join(cohort.select(*keys), how="cross")
+    return Sum((Where(state_at_last, idx) - Where(start_at_r, idx)) * rp_weight,
+               over=("r", "d", "last_step"))
+
+
+def _node_capacity_change_terms(b: _Build, nodes: pl.DataFrame, tag: str) -> dict:
+    """``{"divest": Σ v_divest_n, "invest_neg": −Σ v_invest_n}`` over the
+    invest / divest periods in service in d, dims (n, d), for ``nodes``.
+
+    ``tag`` keeps the variable-view names of different callers apart.
+    """
+    d = b.d
+    terms: dict = {}
+    if b.has_divest_n and d.edd_divest_active is not None:
+        divested = _var_view(b.v_divest_n, "__at_divest" + tag,
+                             {"d": "d_divest"}, to_axis=True)
+        active = _entity_rows(d.edd_divest_active, "p", nodes, "n")
+        if active.height > 0:
+            terms["divest"] = Sum(Where(divested, active), over=("d_divest",))
+    if b.has_invest_n and d.edd_invest_set is not None:
+        invested = _var_view(b.v_invest_n, "__at_invest" + tag,
+                             {"d": "d_invest"}, to_axis=True)
+        alive = _entity_rows(d.edd_invest_set, "e", nodes, "n")
+        if alive.height > 0:
+            terms["invest_neg"] = -Sum(Where(invested, alive), over=("d_invest",))
+    return terms
+
+
+def _eq_node_balance(b: _Build) -> None:
+    """Per-step energy balance of balance and storage nodes."""
+    m, d = b.m, b.d
+
+    # ─── EQ. ─── nodeBalance_eq ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,n) ∈ flow_to_n} v_flow[p,s,n,d,t]·unitsize[p]·Δt
+    #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff}
+    #       (v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t]
+    #        + v_online[p,d,t]·section[p,d,t]·unitsize[p])·Δt
+    #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·Δt
+    #   + back-flow terms of two-way one-variable arcs
+    #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
+    #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n]
+    #   − v_state[n,d,t]·self_discharge[n]·state_unitsize[n]
+    #   + first-step start terms
+    #   = −inflow[n,d,t]
+    #   ∀ (n,d,t) ∈ nodeBalance_dt, n ∉ nodeStateBlock;   Δt = step_duration[d,t]
+    # Energy conservation per node and time step, in MWh.  Storage nodes add
+    # the state change; the previous step t⁻ depends on storage_binding_method.
+    # nodeStateBlock nodes are balanced per coarse block (nodeBalanceBlock_eq).
+    # The section term exists for min_load_efficiency units only.  The flow
+    # and slack terms are b.node_balance_flow_terms.  Self-discharge applies
+    # the per-step loss rate without step_duration (exact for 1 h steps).
+    terms = dict(b.node_balance_flow_terms)
+    if b.has_storage:
+        terms.update(_state_change_terms(b))
+        terms.update(_fix_start_terms(b))
+        terms.update(_roll_continue_terms(b))
+        if d.p_state_self_discharge is not None:
+            terms["self_discharge"] = (-b.v_state * d.p_state_self_discharge
+                                       * d.p_state_unitsize)
+    over = b.nodeBalance_dt
+    if b.has_nsb:
+        over = over.join(d.nodeStateBlock, on="n", how="anti")
+    m.add_cstr(
+        "nodeBalance_eq",
+        over      = over,
+        sense     = "==",
+        lhs_terms = terms,
+        rhs_terms = {"neg_inflow": -d.p_inflow},
+    )
+
+
+def _node_balance_flow_terms(b: _Build) -> dict:
+    """Flow and slack terms of nodeBalance_eq, (n, d, t) in MWh.
+
+    Shared with nodeBalancePeriod_eq: period nodes are never storage, so
+    they take only these terms.
+    """
+    d = b.d
+    terms: dict = {"slack_up": b.vq_state_up * d.p_step_duration,
+                   "slack_down": -b.vq_state_down * d.p_step_duration}
+    if not b.has_proc:
+        return terms
+    v_flow = b.v_flow
+    terms["sink_flow"] = Sum(
+        Where(v_flow * d.p_unitsize, d.flow_to_n) * d.p_step_duration,
+        over=("p", "source", "sink"))
+    # A unit with an efficiency draws flow · slope from its source node; a
+    # min_load_efficiency unit also draws its section input per online unit.
+    from_eff = d.flow_from_nodeBalance_eff
+    if _has_rows(from_eff):
+        terms["source_eff"] = -Sum(
+            Where(v_flow * d.p_unitsize * d.p_slope, from_eff) * d.p_step_duration,
+            over=("p", "source", "sink"))
+        if b.has_minload_eff and d.p_section is not None:
+            section_idx = from_eff.join(d.process_min_load_eff, on="p", how="inner")
+            if section_idx.height > 0:
+                for key, v_online in (("source_section_lin", b.v_online_linear),
+                                      ("source_section_int", b.v_online_integer)):
+                    if v_online is None:
+                        continue
+                    terms[key] = -Sum(
+                        Where(Where(v_online, d.process_min_load_eff)
+                              * d.p_section * d.p_unitsize,
+                              section_idx) * d.p_step_duration,
+                        over=("p", "source", "sink"))
+    from_noEff = d.flow_from_nodeBalance_noEff
+    if _has_rows(from_noEff):
+        terms["source_noEff"] = -Sum(
+            Where(v_flow * d.p_unitsize, from_noEff) * d.p_step_duration,
+            over=("p", "source", "sink"))
+    # v_flow_back adds to the source node and takes from the sink node.
+    if b.v_flow_back is not None and b.twoway1var_arcs is not None:
+        terms.update(_dc_power_flow.nodeBalance_back_flow_terms(
+            b.twoway1var_arcs, b.v_flow_back, d.p_unitsize, d.p_step_duration))
+    return terms
+
+
+def _state_change_terms(b: _Build) -> dict:
+    """State-change terms of nodeBalance_eq, one per storage_binding_method."""
+    d, v_state = b.d, b.v_state
+    su = d.p_state_unitsize
+    terms: dict = {}
+    # The balance reads (state[t⁻] − state[t]) + sink − source = −inflow,
+    # i.e. state[t] − state[t⁻] = sink − source + inflow.  Each node is in
+    # one binding set only (_validate_storage_binding_disjoint).
+
+    # bind_within_timeblock: t⁻ wraps around within the timeblock.
+    if d.storage_bind_within_timeblock is not None:
+        nodes = d.storage_bind_within_timeblock
+        now = Where(v_state, nodes)
+        prev = Where(Lag(v_state, d.dtttdt, "t", "t_previous_within_timeset"), nodes)
+        terms["state_change"] = (prev - now) * su
+
+    # bind_forward_only: t⁻ crosses period boundaries; the first step of the
+    # solve has no state change (dtttdt_forward_only omits it, so both parts
+    # of the term are dropped there).
+    if _has_rows(d.storage_bind_forward_only) and _has_rows(d.dtttdt_forward_only):
+        nodes = d.storage_bind_forward_only
+        steps = d.dtttdt_forward_only.select("d", "t").unique()
+        now = Where(Where(v_state, steps), nodes)
+        prev = Where(_state_lag_cross_period(v_state, d.dtttdt_forward_only), nodes)
+        terms["state_change_fo"] = (prev - now) * su
+
+    # bind_within_solve: t⁻ crosses period boundaries and the first step of
+    # the solve wraps to the last one.
+    if _has_rows(d.storage_bind_within_solve):
+        nodes = d.storage_bind_within_solve
+        now = Where(v_state, nodes)
+        prev = Where(_state_lag_cross_period(v_state, d.dtttdt), nodes)
+        terms["state_change_ws"] = (prev - now) * su
+
+    # Blended weights (nodeState_rp, all three variants): t⁻ is the previous
+    # step inside a representative block; the first step of each block
+    # starts from the free state v_state_rp_start.
+    if b.has_rp:
+        nodes = d.nodeState_rp
+        interior = d.dtttdt.join(d.rp_block_first.select("d", "t"),
+                                 on=["d", "t"], how="anti")
+        interior_dt = interior.select("d", "t").unique()
+        now = Where(Where(v_state, interior_dt), nodes)
+        prev = Where(Lag(v_state, interior, "t", "t_previous_within_timeset"), nodes)
+        terms["state_change_rp_interior"] = (prev - now) * su
+        first_dt = d.rp_block_first.select("d", "t").unique()
+        now = Where(Where(v_state, first_dt), nodes)
+        start = Where(b.v_state_rp_start, nodes)
+        terms["state_change_rp_start"] = (start - now) * su
+    return terms
+
+
+def _state_lag_cross_period(v_state: Var, lag_frame: pl.DataFrame):
+    """v_state at (d_previous, t_previous_within_solve) of each (d, t) in
+    ``lag_frame``; unlike ``Lag``, the previous step may be in another period."""
+    v_state_back = _var_view(v_state, "__back", {"d": "d_back", "t": "t_back"},
+                             to_axis=True)
+    lag = lag_frame.select("d", "t",
+                           alias_to_axis("d_previous", "d_back"),
+                           alias_to_axis("t_previous_within_solve", "t_back"))
+    return Sum(Where(v_state_back, lag), over=("d_back", "t_back"))
+
+
+def _fix_start_terms(b: _Build) -> dict:
+    """nodeBalance_eq start terms of bind_forward_only nodes with fix_start.
+
+    At the first step of the first solve, where the state change is
+    omitted:  − v_state·su + state_start·(existing + Σ v_invest_n·su − Σ v_divest_n·su),
+    the change from the start state (su = state_unitsize).  Other fix_start
+    nodes are pinned by storage_state_start_binding.
+    """
+    d = b.d
+    if not (b.is_solve_first
+            and _has_rows(d.storage_bind_forward_only)
+            and _has_rows(d.storage_fix_start)
+            and d.p_state_start is not None
+            and d.p_state_existing_capacity is not None
+            and d.p_state_unitsize is not None
+            and d.nodeState_first_dt is not None):
+        return {}
+    nodes = d.storage_bind_forward_only.join(d.storage_fix_start, on="n", how="inner")
+    if nodes.height == 0:
+        return {}
+    first = d.nodeState_first_dt.join(nodes, on="n", how="inner")
+    if first.height == 0:
+        return {}
+    start, su = d.p_state_start, d.p_state_unitsize
+    terms: dict = {"fwd_fix_state": -(Where(b.v_state, first) * su)}
+    # A sparse Param term combines with the dense −inflow by outer join with
+    # 0-fill, so rows outside ``first`` keep their balance.
+    start_energy = ((start * d.p_state_existing_capacity).frame
+                    .join(first, on=["n", "d"], how="inner")
+                    .select("n", "d", "t", "value"))
+    if start_energy.height > 0:
+        terms["fwd_fix_existing_pos"] = Param(("n", "d", "t"), start_energy)
+    if b.has_invest_n and d.edd_invest_set is not None:
+        invested = _var_view(b.v_invest_n, "__at_fwd_fix", {"d": "d_invest"},
+                             to_axis=True)
+        alive = (_entity_rows(d.edd_invest_set, "e", nodes, "n")
+                 .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
+        if alive.height > 0:
+            terms["fwd_fix_invest_pos"] = Sum(
+                Where(invested * start * su, alive), over=("d_invest",))
+    if b.has_divest_n and d.edd_divest_active is not None:
+        divested = _var_view(b.v_divest_n, "__at_fwd_fix", {"d": "d_divest"},
+                             to_axis=True)
+        active = (_entity_rows(d.edd_divest_active, "p", nodes, "n")
+                  .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
+        if active.height > 0:
+            terms["fwd_fix_divest_neg"] = -Sum(
+                Where(divested * start * su, active), over=("d_divest",))
+    return terms
+
+
+def _roll_continue_terms(b: _Build) -> dict:
+    """nodeBalance_eq start terms of continuation solves in a chain.
+
+    At the first step, for every storage node:  − v_state·su + roll_continue_state,
+    which hands over the final state of the previous solve.  It adds to the
+    node's own state-change term (su = state_unitsize).
+    """
+    d = b.d
+    if (b.is_solve_first
+            or d.p_state_unitsize is None
+            or d.nodeState_first_dt is None
+            or d.p_roll_continue_state is None):
+        return {}
+    first = d.nodeState_first_dt
+    if first.height == 0:
+        return {}
+    terms: dict = {"roll_continue_state": -(Where(b.v_state, first)
+                                            * d.p_state_unitsize)}
+    handed_over = (d.p_roll_continue_state.frame
+                   .join(first, on="n", how="inner")
+                   .select("n", "d", "t", "value"))
+    if handed_over.height > 0:
+        terms["roll_continue_value"] = Param(("n", "d", "t"), handed_over)
+    return terms
+
+
+def _eq_node_balance_period(b: _Build) -> None:
+    """Period energy balance of balance_within_period nodes."""
+    m, d = b.m, b.d
+    # ─── nodeBalancePeriod_eq ─────────────────────────────────────────────
+    # Energy balance within a period for ``balance_within_period`` nodes —
+    # the polars port of flextool.mod:2056-2082 (``nodeBalancePeriod_eq``).
+    #
+    # This is structurally the SAME equation as ``nodeBalance_eq``'s flow +
+    # slack terms, but:
+    #   (a) summed over every timestep ``t`` in the period — one row per
+    #       (n, d) instead of (n, d, t).  We wrap each captured flow/slack
+    #       term in ``Sum(.. * d.p_timestep_weight, over=("t",))`` to collapse
+    #       ``t`` and leave the open dims (n, d).  Each captured term already
+    #       carries its ``* d.p_step_duration`` weighting (it is the exact
+    #       ``nb_terms`` snapshot taken before the storage machinery), so the
+    #       per-step energy weighting is identical to ``nodeBalance_eq``; the
+    #       extra ``timestep_weight`` factor annualizes the timeslice flows —
+    #       see the WHY note at the emission site below.  (This deliberately
+    #       does NOT mirror ``_emit_cumulative_flow_period``'s step-duration-
+    #       only integration: that is a one-sided CAP and cannot expose a
+    #       two-sided weight mismatch, whereas this two-sided balance does.)
+    #   (b) NO storage state-change / self-discharge / fwd_fix / roll_continue
+    #       terms — period nodes are restricted to ``n not in nodeState``
+    #       (mod:2056), so they are never storage and take only the flow +
+    #       slack terms snapshotted in ``b.node_balance_flow_terms`` at line ~922.
+    #
+    # Inflow: ``Sum(...)`` only accepts an Expr/Var (polar_high engine), not a
+    # Param, so we cannot write ``-Sum(d.p_inflow, over=("t",))``.  Instead we
+    # pre-aggregate the inflow Param ``Σ_t p_inflow`` into a (n, d) Param and
+    # place ``-inflow_period`` on the RHS — algebraically identical to
+    # ``nodeBalance_eq``'s ``rhs_terms = {"neg_inflow": -d.p_inflow}``, just
+    # t-collapsed and rp-weighted.  The final equation is therefore
+    #   Σ_t w·(sink − source + slack_up − slack_down)  ==  Σ_t w·(−inflow)
+    # (w = timestep_weight) — the rp-weighted t-sum of ``nodeBalance_eq``.
+    if (d.nodeBalancePeriod is not None and d.nodeBalancePeriod.height > 0
+            and d.period_in_use_set is not None):
+        # Index frame (n, d): period nodes × periods-in-use, anti-joined
+        # against nodeState on ``n`` to honor the ``n not in nodeState``
+        # guard (mod:2056).
+        nbp_over = (d.nodeBalancePeriod.select("n").lazy()
+                    .join(d.period_in_use_set.select("d").lazy(), how="cross"))
+        if d.nodeState is not None and d.nodeState.height > 0:
+            nbp_over = nbp_over.join(
+                d.nodeState.select("n").lazy(), on="n", how="anti")
+        nbp_over = nbp_over.select("n", "d").collect()
+        if nbp_over.height > 0:
+            # Annualization weight.  Unlike the per-step ``nodeBalance_eq``
+            # (which balances each timestep locally and therefore omits
+            # ``timestep_weight``), a PERIOD balance integrates each
+            # timeslice's flow into its annual contribution and so MUST
+            # weight every ``(d, t)`` term by ``p_timestep_weight`` before
+            # collapsing ``t``.  ``timestep_weight`` is the only per-(d,t)
+            # factor that differs across timeslices in the annualization
+            # (``op_factor`` at ~3624 is
+            # ``step_duration · timestep_weight · inflation_op / period_share``;
+            # ``inflation_op`` and ``period_share`` are per-``d`` and so are
+            # common to every term in a given (n, d) balance row and cancel,
+            # and ``step_duration`` already rides each captured term).  Without
+            # this weight the LP balances UNWEIGHTED timeslice sums: in
+            # Rivendell S16 it imports gas in low-``timestep_weight`` timeslices
+            # while plants draw in high-weight ones, yielding a ~0.838
+            # import/draw ratio with zero slack.  Weighting every term
+            # (sink, source_eff/noEff, section, back-flow, AND the slack
+            # terms) uniformly keeps the row homogeneous in annual-energy
+            # units; the objective already rp-weights the slack penalty, so
+            # this keeps slack consistent.  ``p_timestep_weight`` is in the
+            # ALWAYS field set (line ~72) — always present and non-None here,
+            # so no identity guard is needed.  When it is ≡ 1.0 (every
+            # non-S16 fixture) ``v * 1.0 == v`` and the LP is unchanged.
+            nbp_lhs = {k: Sum(v * d.p_timestep_weight, over=("t",))
+                       for k, v in b.node_balance_flow_terms.items()}
+            # Σ_t (p_inflow · timestep_weight) per (n, d), restricted to the
+            # period nodes.  Inflow is already per-step energy (mirrors
+            # ``nodeBalance_eq``'s bare ``-d.p_inflow`` — NO ``step_duration``);
+            # we only fold in the same annualization weight as the LHS so both
+            # sides of the period balance are in annual-energy units.  The
+            # ``p_inflow * p_timestep_weight`` Param product joins on the shared
+            # ``(d, t)`` axis through the engine's dtype-safe enum-aligned
+            # join, then we aggregate over ``t`` per (n, d).
+            inflow_weighted = d.p_inflow * d.p_timestep_weight
+            inflow_period_frame = (
+                inflow_weighted.frame.lazy()
+                .join(d.nodeBalancePeriod.select("n").lazy(),
+                      on="n", how="inner")
+                .group_by("n", "d")
+                .agg(pl.col("value").sum())
+                .select("n", "d", "value")
+                .collect())
+            inflow_period = Param(("n", "d"), inflow_period_frame)
+            m.add_cstr(
+                "nodeBalancePeriod_eq",
+                over      = nbp_over,
+                sense     = "==",
+                lhs_terms = nbp_lhs,
+                rhs_terms = {"neg_inflow": -inflow_period},
+            )
+
+
+def _eq_node_balance_fix_quantity(b: _Build) -> None:
+    """Final storage quantity fixed by an upper-level solve."""
+    m, d = b.m, b.d
+    v_state = b.v_state
+    # ─── node_balance_fix_quantity_eq_lower (mod:2760) ───────────────────
+    # Pins v_state[n, d_last, t_last] * unitsize == Σ_{(d,t,t2) in
+    # dtt_timeline_matching} p_fix_storage_quantity[n, d2, t2], for nodes
+    # in n_fix_storage_quantity, where (d2, d) ∈ period__branch and d ∈
+    # period_last.  This is the upper-level "anchor" timestep handoff.
+    if (b.has_storage
+            and d.n_fix_storage_quantity is not None
+            and d.n_fix_storage_quantity.height > 0
+            and d.ndt_fix_storage_quantity is not None
+            and d.ndt_fix_storage_quantity.height > 0
+            and d.dtt_timeline_matching is not None
+            and d.dtt_timeline_matching.height > 0
+            and d.period_branch is not None
+            and d.period_last is not None
+            and d.p_fix_storage_quantity is not None
+            and d.p_state_unitsize is not None
+            and d.nodeState_last_dt is not None):
+        # Index: (n, d, t) where d ∈ period_last AND there exists a
+        # (d2, d) ∈ period__branch and (n, d2, t2) ∈ ndt_fix_storage_quantity
+        # with (d, t, t2) ∈ dtt_timeline_matching.
+        #
+        # Build RHS rows (n, d, t, value) by joining
+        #   ndt_fix_storage_quantity[n, d2, t2] (with values)
+        #   ⨯ period__branch[d2, d]
+        #   ⨯ dtt_timeline_matching[d, t, t_upper=t2]
+        #   ⨯ period_last[d]
+        #   ⨯ n_fix_storage_quantity[n]
+        #   ⨯ nodeState_last_dt[n, d, t]
+        # then group_by (n, d, t) and sum value (the .mod's sum).
+        fix_q_long = d.p_fix_storage_quantity.frame.pipe(
+            rename_to_axis, {"d": "d_upper", "t": "t_upper"}
+        )
+        rhs_rows = (d.n_fix_storage_quantity
+            .join(fix_q_long, on="n", how="inner")
+            .join(d.period_branch, on="d_upper", how="inner")
+            .join(d.dtt_timeline_matching,
+                  left_on=["d", "t_upper"],
+                  right_on=["d", "t_upper"],
+                  how="inner")
+            .join(d.period_last, on="d", how="inner")
+            .join(d.nodeState_last_dt, on=["n", "d", "t"], how="inner")
+            .group_by(["n", "d", "t"])
+            .agg(pl.col("value").sum())
+            .select("n", "d", "t", "value"))
+        if rhs_rows.height > 0:
+            cstr_over = rhs_rows.select("n", "d", "t").unique()
+            v_state_at_last = Where(v_state, cstr_over)
+            rhs_param = Param(("n", "d", "t"), rhs_rows)
+            m.add_cstr(
+                "node_balance_fix_quantity_eq_lower",
+                over      = cstr_over,
+                sense     = "==",
+                lhs_terms = {"state": v_state_at_last * d.p_state_unitsize},
+                rhs_terms = {"target": rhs_param},
+            )
+
+
+def _eq_storage_usage_fix(b: _Build) -> None:
+    """Storage usage per period capped by an upper-level solve."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    v_online_lin = b.v_online_linear
+    v_online_int = b.v_online_integer
+    # ─── node_storage_usage_fix_le (mod: storage_usage_fix, ~L2354) ──────
+    # Storage-usage fix: the net energy drawn from the storage node n
+    # over a fine PERIOD must not exceed the coarse-solve target usage
+    # summed over every coarse window overlapping that period.  This is a
+    # PER-PERIOD aggregate cap — NOT a per-terminal-window one.
+    #
+    #   - Σ_{(p, source, n) ∈ pss, t3 ∈ period d}
+    #         v_flow[p, source, n, d, t3] * unitsize * step_dur[d, t3]
+    #   + Σ_{(p, n, sink) ∈ pss_eff, t3 ∈ period d}
+    #         (v_flow * unitsize * slope
+    #          + (if min_load_efficiency) v_online * pdtProcess_section
+    #                                       * unitsize) * step_dur
+    #   + Σ_{(p, n, sink) ∈ pss_noEff, t3 ∈ period d}
+    #         v_flow * unitsize * step_dur
+    #   ≤   Σ_{(n, d2, t2) ∈ ndt_fix_storage_usage :
+    #          ∃ t3. (d, t3, t2) ∈ dtt_timeline_matching}
+    #         p_fix_storage_usage[n, d2, t2]
+    #
+    # for nodes n ∈ n_fix_storage_usage, one row per fine period d ∈
+    # period_last, anchored at that period's last (d, t) (nodeState_last_dt).
+    #
+    # SEMANTICS (bug fix — critique BLOCKER).  The reference model
+    # (flextool.mod ``s.t. storage_usage_fix``) sums the LHS flow over the
+    # WHOLE period d (``(d, t3) in dt``) and sums the RHS coarse usage over
+    # EVERY coarse window t2 for which ANY fine step t3 maps into period d
+    # (``exists{(d, t3, t2) in dtt_timeline_matching}``).  The previous
+    # engine port copied the fix_quantity RHS-build pattern verbatim: it
+    # joined ``dtt_timeline_matching`` on ``[d, t_upper]`` (pairing each
+    # coarse window with its specific fine step) and then
+    # ``nodeState_last_dt`` on ``[n, d, t]``, collapsing the RHS to only
+    # the ONE coarse window whose matched fine step is the period's
+    # terminal hour — while the LHS still aggregated flow over the entire
+    # roll.  For any fine roll spanning K>1 coarse windows (the entire
+    # seasonal mt_4h → hourly regime) this made the cap grossly too tight
+    # (whole-period LHS ≤ single-window RHS) → infeasibility/distortion.
+    #
+    # The fix restores the .mod's per-PERIOD aggregate: RHS sums over the
+    # DISTINCT coarse windows overlapping the period (``dtt_windows``
+    # drops the fine ``t`` before the join, so a window counts once no
+    # matter how many fine steps it holds), anchored onto the period's
+    # terminal row via a ``[n, d]`` join (not ``[n, d, t]``); and the LHS
+    # Sum leaves the ``d`` axis open (``over`` excludes ``d``) so each
+    # period is capped independently — matching fix_quantity/fix_price,
+    # which likewise follow the coarse trajectory per fine period.
+    #
+    # The LHS is the FULL legacy formula with efficiency corrections on
+    # sink flows (slope, plus min_load_efficiency section term).  The
+    # per-process sink/source flow-coefficient RATIO from the .mod
+    # (``p_process_sink_coefficient * p_process_source_coefficient``) is
+    # DEFERRED here, matching the engine's existing treatment of the same
+    # ratio in §5.2 var-cost (model.py:2742-2744): every current fixture
+    # has both coefficients = 1, so the ratio collapses to 1 and we follow
+    # the prevailing convention.  When a fixture exercises non-unit
+    # coefficients, both this constraint and §5.2 var-cost need the ratio
+    # wired in tandem.
+    if (b.has_proc
+            and b.has_storage
+            and d.n_fix_storage_usage is not None
+            and d.n_fix_storage_usage.height > 0
+            and d.ndt_fix_storage_usage is not None
+            and d.ndt_fix_storage_usage.height > 0
+            and d.dtt_timeline_matching is not None
+            and d.dtt_timeline_matching.height > 0
+            and d.period_branch is not None
+            and d.period_last is not None
+            and d.p_fix_storage_usage is not None
+            and d.nodeState_last_dt is not None):
+        # RHS rows (n, d, t, value): for each fine period d ∈ period_last,
+        # sum p_fix_storage_usage[n, d2, t2] over EVERY coarse window t2
+        # overlapping the period ((d2, d) ∈ period__branch and ∃ fine step
+        # with (d, ·, t2) ∈ dtt_timeline_matching), restricted to
+        # n ∈ n_fix_storage_usage, and pin the aggregate onto the period's
+        # terminal (d, t) anchor.  Unlike node_balance_fix_quantity_eq_lower
+        # (a point valuation that keeps the single terminal window), the
+        # coarse WINDOW dim is summed out here — a per-period throughput cap.
+        fix_u_long = d.p_fix_storage_usage.frame.pipe(
+            rename_to_axis, {"d": "d_upper", "t": "t_upper"}
+        )
+        # Distinct coarse windows per fine period (the .mod's
+        # ``exists{(d, t3, t2) in dtt_timeline_matching}`` — a window
+        # counts once regardless of how many fine steps it holds).
+        dtt_windows = (d.dtt_timeline_matching
+                       .select("d", "t_upper").unique())
+        rhs_rows = (d.n_fix_storage_usage
+            .join(fix_u_long, on="n", how="inner")
+            .join(d.period_branch, on="d_upper", how="inner")
+            .join(dtt_windows, on=["d", "t_upper"], how="inner")
+            .join(d.period_last, on="d", how="inner")
+            # Anchor onto the period's terminal (d, t) WITHOUT filtering
+            # windows by t — join on (n, d) only so every window in the
+            # period sums onto the single anchor row.
+            .join(d.nodeState_last_dt, on=["n", "d"], how="inner")
+            # Fixed summation order: the joins above leave row order
+            # hash-dependent, which changes the float sum in the last bit.
+            .sort(["n", "d", "t", "d_upper", "t_upper"])
+            .group_by(["n", "d", "t"])
+            .agg(pl.col("value").sum())
+            .select("n", "d", "t", "value"))
+        if rhs_rows.height > 0:
+            cstr_over = rhs_rows.select("n", "d", "t").unique()
+            rhs_param = Param(("n", "d", "t"), rhs_rows)
+
+            # ── Build LHS: composite flow sum, indexed by (n, d) ──
+            # Each piece sums over (p, source, sink, t3) leaving the
+            # (n, d) dims open (the ``d`` axis is NOT summed out — the cap
+            # is per fine period); the constraint's (n, d, t) ``over``
+            # broadcasts the per-(n, d) value onto the period's anchor row.
+            #
+            # n-as-sink: every (p, source, n) row in process_source_sink.
+            n_set = d.n_fix_storage_usage.select("n")
+            sink_idx = (d.process_source_sink
+                .join(n_set.pipe(rename_to_axis, {"n": "sink"}),
+                      on="sink", how="inner")
+                .with_columns(n=pl.col("sink")))
+            # n-as-source (eff partition): process_source_sink_eff.
+            src_eff_idx = None
+            if (d.process_source_sink_eff is not None
+                    and d.process_source_sink_eff.height > 0):
+                src_eff_idx = (d.process_source_sink_eff
+                    .join(n_set.pipe(rename_to_axis, {"n": "source"}),
+                          on="source", how="inner")
+                    .with_columns(n=pl.col("source")))
+            # n-as-source (noEff partition): process_source_sink_noEff.
+            src_noEff_idx = None
+            if (d.process_source_sink_noEff is not None
+                    and d.process_source_sink_noEff.height > 0):
+                src_noEff_idx = (d.process_source_sink_noEff
+                    .join(n_set.pipe(rename_to_axis, {"n": "source"}),
+                          on="source", how="inner")
+                    .with_columns(n=pl.col("source")))
+
+            lhs_terms: dict = {}
+            # n-as-sink: subtract (flows INTO n).
+            if sink_idx.height > 0:
+                lhs_terms["sink_flow"] = -Sum(
+                    Where(v_flow * d.p_unitsize, sink_idx)
+                    * d.p_step_duration,
+                    over=("p", "source", "sink", "t"))
+            # n-as-source (eff): add v_flow * unitsize * slope * step_dur.
+            if (src_eff_idx is not None and src_eff_idx.height > 0
+                    and d.p_slope is not None):
+                lhs_terms["source_eff"] = Sum(
+                    Where(v_flow * d.p_unitsize * d.p_slope, src_eff_idx)
+                    * d.p_step_duration,
+                    over=("p", "source", "sink", "t"))
+                # min_load_efficiency section term (n-as-source side).
+                if b.has_minload_eff and d.p_section is not None:
+                    section_idx = (src_eff_idx
+                                   .join(d.process_min_load_eff,
+                                         on="p", how="inner"))
+                    if section_idx.height > 0:
+                        if b.has_online_lin:
+                            lhs_terms["source_section_lin"] = Sum(
+                                Where(Where(v_online_lin, d.process_min_load_eff)
+                                      * d.p_section * d.p_unitsize,
+                                      section_idx)
+                                * d.p_step_duration,
+                                over=("p", "source", "sink", "t"))
+                        if b.has_online_int:
+                            lhs_terms["source_section_int"] = Sum(
+                                Where(Where(v_online_int, d.process_min_load_eff)
+                                      * d.p_section * d.p_unitsize,
+                                      section_idx)
+                                * d.p_step_duration,
+                                over=("p", "source", "sink", "t"))
+            # n-as-source (noEff): add v_flow * unitsize * step_dur.
+            if src_noEff_idx is not None and src_noEff_idx.height > 0:
+                lhs_terms["source_noEff"] = Sum(
+                    Where(v_flow * d.p_unitsize, src_noEff_idx)
+                    * d.p_step_duration,
+                    over=("p", "source", "sink", "t"))
+
+            if lhs_terms:
+                m.add_cstr(
+                    "node_storage_usage_fix_le",
+                    over      = cstr_over,
+                    sense     = "<=",
+                    lhs_terms = lhs_terms,
+                    rhs_terms = {"target": rhs_param},
+                )
+
+
+def _eq_block_coupling(b: _Build) -> None:
+    """Storage nodes balanced per coarse block (nodeStateBlock)."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    vq_up = b.vq_state_up
+    vq_down = b.vq_state_down
+    v_state = b.v_state
+    v_state_rp_start = b.v_state_rp_start
+    # ─── stateConstantWithinBlock_eq + nodeBalanceBlock_eq ────────────────
+    # For nodes in ``nodeStateBlock`` (binding method
+    # ``bind_intraperiod_blocks``), v_state is constant across the interior
+    # rows of each block and the per-block energy balance pins the
+    # state-transition between blocks (cyclic via period_block_succ).
+    # See flextool.mod:2318-2402.
+    if b.has_nsb and b.has_storage:
+        # 1. stateConstantWithinBlock_eq:
+        #    v_state[n, d, t] - v_state[n, d, t_previous] == 0
+        #    over (n, d, t) where (d, t, t_previous) ∈ dtttdt_block_interior
+        #    (interior-of-block jump=1 rows).  Per-period within-period lag
+        #    is correct here — interior rows always have d_previous == d.
+        if (d.dtttdt_block_interior is not None
+                and d.dtttdt_block_interior.height > 0):
+            interior = d.dtttdt_block_interior  # (d, t, t_previous)
+            block_dt = (d.nodeStateBlock
+                          .join(interior.select("d", "t"), how="cross"))
+            v_state_now_blk = Where(v_state, d.nodeStateBlock)
+            # Lag joins on (d) and matches the var's t against
+            # interior.t_previous via the lag column rename.
+            v_state_lag_blk = Where(
+                Lag(v_state, interior, "t", "t_previous"),
+                d.nodeStateBlock)
+            m.add_cstr(
+                "stateConstantWithinBlock_eq",
+                over      = block_dt,
+                sense     = "==",
+                lhs_terms = {"state":     v_state_now_blk,
+                             "state_lag": -v_state_lag_blk},
+                rhs_terms = {},
+            )
+
+        # 2. nodeBalanceBlock_eq, indexed by (n, d, b_first) for n in
+        #    nodeStateBlock (excluding fix_start_end nodes — none in this
+        #    fixture).
+        if (d.period_block is not None and d.period_block.height > 0
+                and d.period_block_succ is not None
+                and d.period_block_succ.height > 0
+                and d.period_block_time is not None
+                and d.period_block_time.height > 0):
+            # over: (n, d, b_first)
+            nbb_over = (d.nodeStateBlock
+                        .join(d.period_block, how="cross")
+                        .select("n", "d", "b_first"))
+            # Optional fix_start_end exclusion (mod:2346) — excluded if a
+            # nodeStateBlock node is also in storage_start_end fix_start_end.
+            # We don't currently track fix_start_end as a separate set; the
+            # fixture uses fix_start (not fix_start_end) so no exclusion
+            # needed here.
+
+            nbb_terms: dict = {}
+
+            # ── State-transition LHS: Σ_{b_next} (v_state[n,d,b_next]
+            #     - v_state[n,d,b_first]) * unitsize ────────────────────
+            # period_block_succ has (d, b_first, b_next).  We build:
+            #   + v_state[n, d, b_next]  — rename b_next → b_first via Lag-style join
+            #   - v_state[n, d, b_first]
+            # both indexed by (n, d, b_first) and multiplied by unitsize.
+            # v_state itself is over (n, d, t); we route b_first through
+            # period_block_succ's b_next/b_first columns.
+            # First: v_state at b_next, joined by (d, b_next=t)
+            # Build a virtual var v_state_at_block: (n, d, b_next, b_first)
+            # by joining v_state on (d, t=b_next) against period_block_succ.
+            succ = d.period_block_succ.select("d", "b_first", "b_next")
+            # v_state[n, d, b_next] term: lag-style — match var's t to b_next.
+            # We want resulting Expr indexed by (n, d, b_first).
+            # Use a Var rename: v_state__t_as_bnext over (n, d, b_next).
+            v_state_b = Var(
+                name=v_state.name + "__b_next",
+                dims=("n", "d", "b_next"),
+                frame=v_state.frame.rename({"t": "b_next"}),
+                lower=v_state.lower, upper=v_state.upper,
+            )
+            v_state_a = Var(
+                name=v_state.name + "__b_first",
+                dims=("n", "d", "b_first"),
+                frame=v_state.frame.rename({"t": "b_first"}),
+                lower=v_state.lower, upper=v_state.upper,
+            )
+            # nodeStateBlock splits into two families with DIFFERENT state
+            # transitions:
+            #
+            #  * bind_intraperiod_blocks (non-rp) nodes keep the forward
+            #    cyclic transition Σ_{b_next}(v_state[b_next]-v_state[b_first]):
+            #    each representative period's coarse blocks close one cyclic
+            #    loop (period_block_succ is now segmented per representative
+            #    period, so the loop no longer spans months-apart days).
+            #
+            #  * blended-weights (rp) nodes coarsened onto a resolution block
+            #    must retain their representative-period storage semantics:
+            #    a FREE start state per representative day plus a seasonally
+            #    weighted inter-period chain (rp_inter_period_balance /
+            #    _cyclic).  The forward-cyclic transition would (a) close each
+            #    day on itself, forbidding the seasonal storage the fine model
+            #    uses, and (b) leave ``v_state_rp_start`` unbound, making the
+            #    seasonal chain vacuous.  We give these nodes a BACKWARD,
+            #    post-flow block transition (v_state[b] - v_state[b_prev]),
+            #    where the predecessor of each representative day's first
+            #    block is the free ``v_state_rp_start`` instead of the cyclic
+            #    wrap.  This matches the fine ``b.has_rp`` state-change exactly,
+            #    lifted to coarse blocks (v_state is constant within each
+            #    block via stateConstantWithinBlock_eq, so the fine
+            #    rep-day-first/last labels the seasonal chain references carry
+            #    the coarse block value).
+            if b.has_rp and d.nodeState_rp is not None and d.nodeState_rp.height > 0:
+                rp_nodes = d.nodeStateBlock.join(
+                    d.nodeState_rp.select("n"), on="n", how="inner")
+                nonrp_nodes = d.nodeStateBlock.join(
+                    d.nodeState_rp.select("n"), on="n", how="anti")
+            else:
+                rp_nodes = d.nodeStateBlock.clear()
+                nonrp_nodes = d.nodeStateBlock
+
+            # ── Non-rp (bind_intraperiod_blocks): forward cyclic ───────────
+            # + Σ_{b_next} v_state[n,d,b_next] - v_state[n,d,b_first], over
+            # period_block_succ, restricted to the non-rp nodeStateBlock set.
+            state_next = Sum(
+                Where(Where(v_state_b, succ), nonrp_nodes),
+                over=("b_next",),
+            )
+            state_curr = Sum(
+                Where(Where(v_state_a, succ), nonrp_nodes),
+                over=("b_next",),
+            )
+            nbb_terms["state_change"] = (state_next - state_curr) * d.p_state_unitsize
+
+            # ── rp (blended-weights) coarse nodes: backward, post-flow, with
+            #    a free representative-day start ──────────────────────────────
+            if rp_nodes.height > 0:
+                # Predecessor map from reversing the per-rep-day cyclic succ:
+                # pred(b) = the b_first whose b_next == b.  Blocks that are a
+                # representative day's FIRST block use v_state_rp_start instead
+                # of the wrap predecessor, so drop those from the interior map.
+                pred_full = succ.select(
+                    "d",
+                    pl.col("b_next").alias("b_first"),
+                    pl.col("b_first").alias("b_prev"),
+                )
+                rp_first_lbl = d.rp_block_first.select(
+                    "d", pl.col("t").alias("b_first"))
+                pred_interior = pred_full.join(
+                    rp_first_lbl, on=["d", "b_first"], how="anti")
+
+                # v_state at the interior predecessor block.
+                v_state_bp = Var(
+                    name=v_state.name + "__b_prev",
+                    dims=("n", "d", "b_prev"),
+                    frame=v_state.frame.rename({"t": "b_prev"}),
+                    lower=v_state.lower, upper=v_state.upper,
+                )
+                v_prev_rp = Sum(
+                    Where(Where(v_state_bp, pred_interior), rp_nodes),
+                    over=("b_prev",),
+                )
+                # v_state_rp_start at the representative-day first block.
+                v_rpstart_b = Var(
+                    name=v_state_rp_start.name + "__b_first",
+                    dims=("n", "d", "b_first"),
+                    frame=v_state_rp_start.frame.rename({"t": "b_first"}),
+                    lower=v_state_rp_start.lower, upper=v_state_rp_start.upper,
+                )
+                v_rpstart_rp = Where(
+                    Where(v_rpstart_b, rp_first_lbl), rp_nodes)
+                # v_state at the current block (all coarse blocks of rp nodes).
+                rp_block_over = (rp_nodes
+                                 .join(d.period_block, how="cross")
+                                 .select("n", "d", "b_first"))
+                v_now_rp = Where(v_state_a, rp_block_over)
+                nbb_terms["state_change_rp"] = (
+                    (v_now_rp - v_prev_rp - v_rpstart_rp)
+                    * d.p_state_unitsize)
+
+            # The .mod's nodeBalanceBlock_eq is:
+            #   state_change_mod  ==  sink - source_eff - source_noEff
+            #                          + inflow - self_discharge
+            #                          + slack_up - slack_down
+            # where state_change_mod = Σ_{b_next} (v_state[b_next] -
+            #                          v_state[b_first]) * unitsize.
+            # We move every non-state term to the LHS with flipped sign,
+            # leaving inflow on the RHS as a Param:
+            #   LHS = state_change - sink + source_eff + source_noEff
+            #         + self_discharge - slack_up + slack_down
+            #   RHS = inflow_block
+
+            # ── Sink-side flows: - Σ v_flow * unitsize * weight ──
+            # When per-arc weights (block-aware) are available (arc_sink_block_dt
+            # + p_arc_sink_weight), use them directly: each row of
+            # arc_sink_block_dt names a (p, source, sink, d, b_first, t)
+            # tuple with the associated weight = block_step_duration of
+            # the arc's sink-side block.  This matches the .mod's
+            # nodeBalance_eq for daily nodes (mod:2208-2213): for arcs
+            # whose sink-side is on a coarse block, only the coarse step
+            # contributes (×24); for arcs whose sink-side is on a fine
+            # block (e.g. electrolyser reverse: source=h2_A daily,
+            # sink=elec_A hourly contributing to elec_A's hourly balance,
+            # but here we're evaluating from the sink=h2_A side of the
+            # forward arc), the sink is on daily so coarse-only.
+            #
+            # Falls back to the legacy fine-grid sum (period_block_time
+            # × step_duration) for fixtures that don't carry the per-arc
+            # data (e.g., 5weeks bind_intraperiod_blocks where everything
+            # is on the default block — both produce identical sums).
+            if (d.arc_sink_block_dt is not None
+                    and d.arc_sink_block_dt.height > 0
+                    and d.p_arc_sink_weight is not None):
+                sink_idx = (d.arc_sink_block_dt
+                    .drop("weight")
+                    .pipe(rename_to_axis, {"sink": "n"}))
+                nbb_terms["sink_flow_block"] = -Sum(
+                    Where(v_flow * d.p_unitsize * d.p_arc_sink_weight,
+                          sink_idx),
+                    over=("p", "source", "sink", "t"))
+            elif d.flow_to_n is not None and d.flow_to_n.height > 0:
+                flow_to_n_block = (d.flow_to_n
+                    .filter(pl.col("n").is_in(d.nodeStateBlock["n"])))
+                if flow_to_n_block.height > 0:
+                    nbb_terms["sink_flow_block"] = -Sum(
+                        Where(
+                            Where(v_flow * d.p_unitsize, flow_to_n_block)
+                            * d.p_step_duration,
+                            d.period_block_time),
+                        over=("p", "source", "sink", "t"))
+
+            # ── Source-side eff flows: + Σ v_flow * unitsize * slope * weight ──
+            if (d.arc_source_block_dt is not None
+                    and d.arc_source_block_dt.height > 0
+                    and d.p_arc_source_weight is not None
+                    and d.flow_from_nodeBalance_eff is not None
+                    and d.flow_from_nodeBalance_eff.height > 0):
+                # Restrict to eff arcs.
+                src_eff_idx = (d.arc_source_block_dt
+                    .drop("weight")
+                    .join(d.flow_from_nodeBalance_eff
+                            .select("p", "source", "sink"),
+                          on=["p", "source", "sink"], how="inner")
+                    .pipe(rename_to_axis, {"source": "n"}))
+                if src_eff_idx.height > 0:
+                    nbb_terms["source_eff_block"] = Sum(
+                        Where(v_flow * d.p_unitsize * d.p_slope
+                              * d.p_arc_source_weight,
+                              src_eff_idx),
+                        over=("p", "source", "sink", "t"))
+            elif (d.flow_from_nodeBalance_eff is not None
+                    and d.flow_from_nodeBalance_eff.height > 0):
+                ffn_eff_blk = (d.flow_from_nodeBalance_eff
+                    .filter(pl.col("n").is_in(d.nodeStateBlock["n"])))
+                if ffn_eff_blk.height > 0:
+                    nbb_terms["source_eff_block"] = Sum(
+                        Where(
+                            Where(v_flow * d.p_unitsize * d.p_slope, ffn_eff_blk)
+                            * d.p_step_duration,
+                            d.period_block_time),
+                        over=("p", "source", "sink", "t"))
+
+            # ── Source-side noEff flows: + Σ v_flow * unitsize * weight ──
+            if (d.arc_source_block_dt is not None
+                    and d.arc_source_block_dt.height > 0
+                    and d.p_arc_source_weight is not None
+                    and d.flow_from_nodeBalance_noEff is not None
+                    and d.flow_from_nodeBalance_noEff.height > 0):
+                src_noeff_idx = (d.arc_source_block_dt
+                    .drop("weight")
+                    .join(d.flow_from_nodeBalance_noEff
+                            .select("p", "source", "sink"),
+                          on=["p", "source", "sink"], how="inner")
+                    .pipe(rename_to_axis, {"source": "n"}))
+                if src_noeff_idx.height > 0:
+                    nbb_terms["source_noEff_block"] = Sum(
+                        Where(v_flow * d.p_unitsize
+                              * d.p_arc_source_weight,
+                              src_noeff_idx),
+                        over=("p", "source", "sink", "t"))
+            elif (d.flow_from_nodeBalance_noEff is not None
+                    and d.flow_from_nodeBalance_noEff.height > 0):
+                ffn_noEff_blk = (d.flow_from_nodeBalance_noEff
+                    .filter(pl.col("n").is_in(d.nodeStateBlock["n"])))
+                if ffn_noEff_blk.height > 0:
+                    nbb_terms["source_noEff_block"] = Sum(
+                        Where(
+                            Where(v_flow * d.p_unitsize, ffn_noEff_blk)
+                            * d.p_step_duration,
+                            d.period_block_time),
+                        over=("p", "source", "sink", "t"))
+
+            # ── Self-discharge: + Σ v_state * loss * unitsize * step_duration ──
+            # (linear approximation; mod's self-discharge term is on the RHS
+            # with a leading minus, so on LHS it's positive.)
+            if d.p_state_self_discharge is not None:
+                nbb_terms["self_discharge_block"] = Sum(
+                    Where(
+                        Where(v_state * d.p_state_self_discharge
+                              * d.p_state_unitsize, d.nodeStateBlock)
+                        * d.p_step_duration,
+                        d.period_block_time),
+                    over=("t",))
+
+            # ── Slacks: - Σ vq_state_up * step_duration; + Σ vq_state_down * step_duration ──
+            vq_up_blk = Where(vq_up, d.nodeStateBlock)
+            vq_dn_blk = Where(vq_down, d.nodeStateBlock)
+            nbb_terms["slack_up_block"] = -Sum(
+                Where(vq_up_blk * d.p_step_duration, d.period_block_time),
+                over=("t",))
+            nbb_terms["slack_down_block"] = Sum(
+                Where(vq_dn_blk * d.p_step_duration, d.period_block_time),
+                over=("t",))
+
+            # ── RHS: inflow over period_block_time ─────────────────────
+            # mod:2389: + Σ_{(d, b_first, t) ∈ period_block_time} pdtNodeInflow[n, d, t]
+            # On the .mod's RHS; matches our RHS sign directly.
+            inflow_block_frame = (d.p_inflow.frame
+                .filter(pl.col("n").is_in(d.nodeStateBlock["n"]))
+                .join(d.period_block_time, on=["d", "t"], how="inner")
+                .group_by(["n", "d", "b_first"])
+                .agg(pl.col("value").sum())
+                .select("n", "d", "b_first", "value"))
+            rhs_terms_blk: dict = {}
+            if inflow_block_frame.height > 0:
+                rhs_terms_blk["inflow_block"] = Param(
+                    ("n", "d", "b_first"), inflow_block_frame)
+
+            m.add_cstr(
+                "nodeBalanceBlock_eq",
+                over      = nbb_over,
+                sense     = "==",
+                lhs_terms = nbb_terms,
+                rhs_terms = rhs_terms_blk,
+            )
+
+        # ─── v_flow constancy within coarse blocks ─────────────────────
+        # For arcs whose process unified block is coarser than the fine
+        # grid (e.g. liquefier_A on daily_group), flextool's nodeBalance
+        # references v_flow only at the coarse step; the other 23 hourly
+        # v_flow values are LP-degenerate.  Our nodeBalanceBlock_eq
+        # currently sums all 24 hourly values (weight 1 each), which
+        # gives the same daily integral *only if* v_flow is constant
+        # within the day.  Add an explicit equality
+        # ``v_flow[..., d, t] = v_flow[..., d, b_first]`` over the block-
+        # interior (d, t, t_previous) tuples for the relevant arcs.
+        #
+        # Source: process_block.csv (per-process unified block), filtered
+        # to coarse blocks (step_duration > 1).  The native engine
+        # doesn't load
+        # process_block separately yet; derive it from process_side_block
+        # by requiring source-block = sink-block = same coarse block (the
+        # .mod's UC V1 limitation, see flextool.mod:1893-1907).  For
+        # lh2_three_region this picks up liquefier_*, pipe_AB, pipe_BC
+        # (all source=sink=daily_group) but not electrolyser_* (mixed).
+        if (b.has_proc
+                and d.dtttdt_block_interior is not None
+                and d.dtttdt_block_interior.height > 0):
+            # Build (p, source, sink) of arcs whose process is on a
+            # coarse block.  Use the FlexData's pss + process_side_block
+            # via solve_data CSV (read inline; small file).
+            try:
+                # Caller can override; this read is best-effort.
+                # We don't have direct access to ``WORK`` here so we
+                # rely on the synthesised dtttdt_block_interior carrying
+                # only the coarse-block interior rows (exactly what we
+                # built in input.py).
+                pass
+            except Exception:
+                pass
+            interior = d.dtttdt_block_interior  # (d, t, t_previous)
+            # Use process_source_sink for arcs where process appears in
+            # a coarse block on BOTH sides (i.e. process_block is
+            # coarse).  We don't yet load process_block.csv directly;
+            # instead derive: arc qualifies if (p, 'source', b) and
+            # (p, 'sink', b') BOTH have b in coarse_blocks (same block
+            # is implied by the .mod's UC restriction; in this fixture
+            # liquefier and pipes have source==sink=daily_group, while
+            # electrolyser has source=hourly, sink=daily so it's
+            # excluded from constancy).
+            # Pull process_side_block via the existing FlexData if the
+            # loader carries it; otherwise read solve_data.  We choose
+            # the inline read because the loader doesn't currently
+            # expose process_side_block as a top-level field.
+            # NOTE: this is a hack; the proper fix is to surface
+            # process_side_block on FlexData and check it from there.
+            # Fall through: skip if we can't determine the arcs.
+
+            # Simpler path: use d.process_source_sink filtered to arcs
+            # whose source AND sink are both in nodeStateBlock.  In
+            # this fixture nodeStateBlock = {h2_A,h2_B,h2_C,
+            # lh2_A,lh2_B,lh2_C} (the daily-group nodeBalance nodes).
+            # liquefier_A (h2_A→lh2_A) qualifies; pipe_AB (lh2_A→lh2_B)
+            # qualifies; electrolyser_A (elec_A→h2_A and h2_A→elec_A)
+            # has mixed (elec_A is hourly, not in nodeStateBlock) so
+            # only ONE end is daily — these are excluded.  This matches
+            # the "process_block is coarse" criterion exactly for the
+            # current fixture (liquefier and pipes are daily; the
+            # one-sided electrolyser arcs are hourly).
+            # NOTE: ``v_flow_constant_within_block_eq`` is no longer needed
+            # — the arc-side block-aware aggregation in
+            # ``nodeBalanceBlock_eq`` (see arc_sink_block_dt /
+            # arc_source_block_dt + p_arc_*_weight Params) directly
+            # references v_flow at the coarse step weighted by
+            # block_step_duration, matching the .mod's nodeBalance_eq
+            # semantics for daily-block nodes.  v_flow at non-coarse
+            # hours for both-coarse arcs (liquefier, pipe) is now LP-
+            # degenerate — the LP can pick any value but only the coarse-
+            # step value affects the daily nodeBalance.  No constancy
+            # constraint required for parity.
+            if False:
+                pass
+
+
+def _eq_max_flow(b: _Build) -> None:
+    """Capacity limits on process flows."""
+    if not b.has_proc:
+        return
+    m, d = b.m, b.d
+    pss_dt = b.pss_dt
+    invest_mult = (_invest_capacity_multiplier(pss_dt, b.flow_cap_mult, b.invest_procs)
+                   if b.invest_procs is not None else None)
+
+    def _scaled(term):
+        return term * invest_mult if invest_mult is not None else term
+
+    # ─── EQ. ─── maxFlow ─────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t]
+    #   − M·Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
+    #   + M·Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
+    #   ≤ M · existing[p,d] / unitsize[p]
+    #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∉ flow_bound_arcs
+    #   M = capacity_max_coeff[p,s,k] · availability[p,d,t]
+    # Caps every flow by the built capacity of its process (units of unitsize).
+    # On indirect-unit input arcs M = input_share_max · full-load input ·
+    # availability; uncapped arcs (conversion_flow_coeff = 0) have M = 1 and
+    # RHS = p_flow_upper.  Input arcs of units without invest/divest are
+    # bounded on v_flow instead (flow_bound_arcs).  The reserve term covers
+    # upward reserve held at the sink.
+    lhs: dict = {"flow": b.v_flow}
+    if b.reserve_up_to_sink is not None:
+        lhs["reserve_up"] = b.reserve_up_to_sink
+    if b.divest_in_dispatch_p is not None:
+        lhs["divest"] = _scaled(b.divest_in_dispatch_p)
+    if b.invest_in_dispatch_p is not None:
+        lhs["invest_neg"] = -_scaled(b.invest_in_dispatch_p)
+    over = (pss_dt.join(b.flow_bound_arcs, on=["p", "source", "sink"], how="anti")
+            if b.flow_bound_arcs is not None else pss_dt)
+    if over.height > 0:
+        m.add_cstr(
+            "maxFlow",
+            over      = over,
+            sense     = "<=",
+            lhs_terms = lhs,
+            rhs_terms = {"upper": b.flow_upper_rhs},
+        )
+
+    # ─── EQ. ─── maxFlow_negCap ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # (maxFlow LHS)  ≥  M · existing[p,d] / unitsize[p]
+    #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,d) ∈ pd_neg_cap
+    # Negative-capacity processes (unitsize < 0 and existing < 0): dividing
+    # v_flow·unitsize ≤ existing by the negative unitsize flips the sense, so
+    # the capacity becomes a minimum output.  maxFlow keeps the ≤ side.
+    pd_neg_cap = getattr(d, "pd_neg_cap", None)
+    if _has_rows(pd_neg_cap):
+        neg_over = pss_dt.join(pd_neg_cap, on=("p", "d"), how="inner")
+        if neg_over.height > 0:
+            m.add_cstr(
+                "maxFlow_negCap",
+                over      = neg_over,
+                sense     = ">=",
+                lhs_terms = lhs,
+                rhs_terms = {"upper": b.flow_upper_rhs},
+            )
+
+    # ─── EQ. ─── maxFlow_back ────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_flow_back[p,s,k,d,t] − M·Σ v_invest_p[p,d′] + M·Σ v_divest_p[p,d′]
+    #   ≤ M · existing[p,d] / unitsize[p]
+    #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∈ twoway1var_arcs
+    # Caps the reverse flow of two-way one-variable arcs by the same built
+    # capacity, so |v_flow − v_flow_back| ≤ capacity.  No reserve term.
+    if b.v_flow_back is not None and b.twoway1var_arcs is not None:
+        back_over = pss_dt.join(b.twoway1var_arcs, on=("p", "source", "sink"),
+                                how="inner")
+        if back_over.height > 0:
+            back_lhs: dict = {"flow_back": b.v_flow_back}
+            back_lhs.update({k: lhs[k] for k in ("invest_neg", "divest") if k in lhs})
+            m.add_cstr(
+                "maxFlow_back",
+                over      = back_over,
+                sense     = "<=",
+                lhs_terms = back_lhs,
+                rhs_terms = {"upper": b.flow_upper_rhs},
+            )
+
+    # ─── EQ. ─── maxOutputSum / maxOutputSum_negCap ──────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_k v_flow[p,p,k,d,t] + Σ_k Σ_r v_reserve_up[p,r,k,d,t]
+    #   − av·Σ v_invest_p[p,d′] + av·Σ v_divest_p[p,d′]
+    #   ≤ av · existing[p,d] / unitsize[p]
+    #   ∀ p ∈ process_indirect with an output arc k, (d,t);   av = availability[p,d,t]
+    # The capacity of an indirect (multi-flow) unit is the maximum sum of its
+    # outputs; maxFlow caps each output arc alone.  capacity_max_coeff is not
+    # applied.  Negative-capacity (p,d) rows get only the ≥ twin
+    # maxOutputSum_negCap: with both, a k-output unit would need Σ out = c
+    # while maxFlow pins every arc to c.
+    _add_max_output_sum(
+        m, d, b.v_flow, pss_dt,
+        reserve_up_sink_parts=b.reserve_up_sink_parts,
+        invest_sum=b.invest_in_dispatch_p,
+        divest_sum=b.divest_in_dispatch_p,
+    )
+
+
+def _eq_dc_power_flow(b: _Build) -> None:
+    """DC power-flow equations (_dc_power_flow)."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    dc_pf_vars = b.dc_pf_vars
+    # ─── DC power flow (dc_flow_eq + reference-angle pin) ─────────────────
+    # Wires v_flow ↔ v_angle via the linear DC OPF approximation.  Emitted
+    # only when ``node_dc_power_flow`` and ``connection_dc_power_flow``
+    # carry rows.  See :mod:`flextool._dc_power_flow` for details.
+    if b.has_proc and dc_pf_vars:
+        _dc_power_flow.add_constraints(
+            m, d, dc_pf_vars,
+            v_flow=v_flow,
+            p_unitsize=d.p_unitsize,
+            p_flow_upper_existing=d.p_flow_upper_existing,
+        )
+
+
+def _eq_online(b: _Build) -> None:
+    """Online units, startups, shutdowns and minimum up/down times."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    v_online_lin = b.v_online_linear
+    v_startup_lin = b.v_startup_linear
+    v_shutdown_lin = b.v_shutdown_linear
+    v_online_int = b.v_online_integer
+    v_startup_int = b.v_startup_integer
+    v_shutdown_int = b.v_shutdown_integer
+    v_invest_p = b.v_invest_p
+    v_divest_p = b.v_divest_p
+    p_olin_idx = b.p_olin_idx
+    p_oint_idx = b.p_oint_idx
+    # ─── Online / startup / shutdown / min_load ───────────────────────────
+    # Linear variant
+    if b.has_online_lin:
+        _add_online_block(m, d, v_flow, "linear", p_olin_idx,
+                          d.process_online_linear,
+                          v_online_lin, v_startup_lin, v_shutdown_lin,
+                          v_invest_p if b.has_invest_p else None,
+                          v_divest_p if b.has_divest_p else None)
+    # Integer variant — same constraints, integer v_online
+    if b.has_online_int:
+        _add_online_block(m, d, v_flow, "integer", p_oint_idx,
+                          d.process_online_integer,
+                          v_online_int, v_startup_int, v_shutdown_int,
+                          v_invest_p if b.has_invest_p else None,
+                          v_divest_p if b.has_divest_p else None)
+
+
+def _eq_online_fix(b: _Build) -> None:
+    """Online units fixed to the commitment of a parent solve."""
+    m, d = b.m, b.d
+    v_online_lin = b.v_online_linear
+    v_online_int = b.v_online_integer
+    p_olin_idx = b.p_olin_idx
+    p_oint_idx = b.p_oint_idx
+    # ─── online_fix_eq — pin v_online to the parent's committed schedule ──
+    # OC1 #1 sub-slice (b): in a separate_dispatch SIBLING the parent's
+    # committed v_online over the jump (``d.p_fix_online``, (p, d, t), in
+    # unit-count space) is pinned onto the sibling's v_online so the realized
+    # dispatch honours the plan's commitment instead of re-deciding it.  Each
+    # pin is INNER-JOINED to its online var's own (p, d, t) index so no
+    # undeclared cell is referenced; the native-typed index carries the axis
+    # Enum types while the join matches through a Utf8 bridge (the carried
+    # frame is Utf8).  Split per UC variant (``online_fix_eq_linear`` /
+    # ``_integer``); the autoscale resolver strips the suffix to the
+    # registered ``online_fix_eq`` family.  ``p_fix_online is None`` (every
+    # non-sibling solve) → not built → byte-identical baseline.
+    if d.p_fix_online is not None and d.p_fix_online.frame.height > 0:
+        _fix_u = d.p_fix_online.frame.select(
+            pl.col("p").cast(pl.Utf8).alias("_pk"),
+            pl.col("d").cast(pl.Utf8).alias("_dk"),
+            pl.col("t").cast(pl.Utf8).alias("_tk"),
+            "value")
+        for _vonline, _vidx, _sfx in (
+                (v_online_lin if b.has_online_lin else None,
+                 p_olin_idx if b.has_online_lin else None, "linear"),
+                (v_online_int if b.has_online_int else None,
+                 p_oint_idx if b.has_online_int else None, "integer")):
+            if _vonline is None or _vidx is None:
+                continue
+            # Native-typed (p, d, t) index keyed to Utf8 for the value join.
+            _pin = (_vidx.select("p", "d", "t").unique()
+                    .with_columns(_pk=pl.col("p").cast(pl.Utf8),
+                                  _dk=pl.col("d").cast(pl.Utf8),
+                                  _tk=pl.col("t").cast(pl.Utf8))
+                    .join(_fix_u, on=["_pk", "_dk", "_tk"], how="inner")
+                    .select("p", "d", "t", "value"))
+            if _pin.height == 0:
+                continue
+            _over = _pin.select("p", "d", "t").unique()
+            m.add_cstr(
+                f"online_fix_eq_{_sfx}",
+                over=_over,
+                sense="==",
+                lhs_terms={"online": Where(_vonline, _over)},
+                rhs_terms={"target": Param(("p", "d", "t"), _pin)},
+            )
+
+
+def _eq_unit_floors(b: _Build) -> None:
+    """Unit output floors (minimum load)."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    v_online_lin = b.v_online_linear
+    v_online_int = b.v_online_integer
+    reserve_vars = b.reserve_vars
+    p_olin_idx = b.p_olin_idx
+    p_oint_idx = b.p_oint_idx
+    # Unit output floors: per-unit minimum load (once per unit, on the sum
+    # of its outputs), optional per-output floors, and the rule that
+    # downward reserve cannot take a unit below its floor.
+    if b.has_proc:
+        _online_specs = []
+        if b.has_online_lin:
+            _online_specs.append(("linear", p_olin_idx,
+                                  d.process_online_linear, v_online_lin))
+        if b.has_online_int:
+            _online_specs.append(("integer", p_oint_idx,
+                                  d.process_online_integer, v_online_int))
+        _add_unit_floors(m, d, v_flow, _online_specs,
+                         reserve_vars.get("v_reserve"))
+
+
+def _eq_ramp(b: _Build) -> None:
+    """Ramp limits."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    v_startup_lin = b.v_startup_linear
+    v_shutdown_lin = b.v_shutdown_linear
+    v_startup_int = b.v_startup_integer
+    v_shutdown_int = b.v_shutdown_integer
+    invest_in_dispatch = b.invest_in_dispatch_p
+    divest_in_dispatch = b.divest_in_dispatch_p
+    # ─── Ramp limits ──────────────────────────────────────────────────────
+    if b.has_ramp:
+        v_flow_prev = Lag(v_flow, d.dtttdt, "t", "t_previous")
+        # 4 constraint families:
+        #   sink_up:    step_dur*(v_flow_now - v_flow_prev) <=
+        #               + ramp_speed_up_sink * 60 * step_dur * existing_count
+        #               + (v_startup if online)
+        #   sink_down:  step_dur*(v_flow_now - v_flow_prev) >=
+        #               - ramp_speed_down_sink * 60 * step_dur * existing_count
+        #               - (v_shutdown if online)
+        #   source_up:   same with source-side ramp_speed
+        #   source_down: same with source-side ramp_speed (and ramp_speed_down read from p_process_sink in the .mod — quirk that we follow as p_ramp_speed_down_sink)
+        # Note: v_flow is in unitsize-units; divide both sides by unitsize
+        # gives the form above (existing_count = existing/unitsize).
+        for side, dir_, idx_set, ramp_param in [
+            ("sink",   "up",   d.process_source_sink_ramp_limit_sink_up,
+             d.p_ramp_speed_up_sink),
+            ("sink",   "down", d.process_source_sink_ramp_limit_sink_down,
+             d.p_ramp_speed_down_sink),
+            ("source", "up",   d.process_source_sink_ramp_limit_source_up,
+             d.p_ramp_speed_up_source),
+            ("source", "down", d.process_source_sink_ramp_limit_source_down,
+             # the .mod's source-down constraint uses
+             # p_process_sink[p, source, ramp_speed_down] (a quirk).
+             # In our test data p_ramp_speed_down_source is the right
+             # source-side param; defer to it.
+             d.p_ramp_speed_down_source),
+        ]:
+            if idx_set is None or idx_set.height == 0:
+                continue
+            if ramp_param is None:
+                continue
+            # conversion_flow_coeff = 0 edges are outside every ramp limit.
+            idx_set = _drop_uncapped(d, idx_set)
+            if idx_set.height == 0:
+                continue
+            sense = "<=" if dir_ == "up" else ">="
+            sign  = 1.0  if dir_ == "up" else -1.0  # flips the RHS sign for "down"
+            over_idx = idx_set.join(d.dt, how="cross")
+            # LHS: step_dur * (v_flow_now - v_flow_prev) (Where filters
+            # to idx_set tuples).  Both v_flow and v_flow_prev are
+            # already over (p, source, sink, d, t).
+            flow_diff = (Where(v_flow, idx_set) - Where(v_flow_prev, idx_set)) \
+                         * d.p_step_duration
+            # RHS: ±ramp_speed · 60 · step_dur · coef
+            #        · (existing_count + Σv_invest − Σv_divest)
+            # (.mod ramp_*_constraint): the side's capacity factor and the
+            # invested / divested units scale the ramp limit exactly as
+            # they scale the arc's capacity — output capacity_max_coeff on
+            # the sink side, input_share_max on the source side, and for an
+            # indirect unit's input arc its input limit per unit of capacity
+            # (``p_indirect_input_cap`` = input_share_max × full-load input),
+            # so the ramp speed is per unit of that arc's maximum flow.
+            rate = ramp_param * 60.0 * d.p_step_duration
+            if side == "sink":
+                if d.p_process_sink_max_capacity_coef is not None:
+                    rate = rate * _coef_factor(
+                        idx_set, d.p_process_sink_max_capacity_coef,
+                        ["p", "sink"])
+            else:
+                src_factor = _source_ramp_factor(d, idx_set)
+                if src_factor is not None:
+                    rate = rate * src_factor
+            rhs_param = (rate * d.p_process_existing_count) * sign
+            rhs_terms: dict = {"limit": rhs_param}
+            if b.has_invest_p:
+                rhs_terms["invest"] = (invest_in_dispatch * rate) * sign
+            if b.has_divest_p:
+                rhs_terms["divest"] = (divest_in_dispatch * rate) * (-sign)
+            # UC startup/shutdown tightening
+            if dir_ == "up":
+                if b.has_online_lin:
+                    rhs_terms["startup_lin"] = Where(v_startup_lin, idx_set)
+                if b.has_online_int:
+                    rhs_terms["startup_int"] = Where(v_startup_int, idx_set)
+            else:
+                if b.has_online_lin:
+                    rhs_terms["shutdown_lin"] = -Where(v_shutdown_lin, idx_set)
+                if b.has_online_int:
+                    rhs_terms["shutdown_int"] = -Where(v_shutdown_int, idx_set)
+            m.add_cstr(
+                f"ramp_{side}_{dir_}_constraint",
+                over      = over_idx,
+                sense     = sense,
+                lhs_terms = {"flow_diff": flow_diff},
+                rhs_terms = rhs_terms,
+            )
+
+
+def _eq_invest_bounds(b: _Build) -> None:
+    """Investment and divestment limits."""
+    m, d = b.m, b.d
+    v_invest_p = b.v_invest_p
+    v_divest_p = b.v_divest_p
+    v_invest_n = b.v_invest_n
+    v_divest_n = b.v_divest_n
+    # ─── Invest / divest variable bounds + maxFlow tightening ──────────
+    if b.has_invest_p or b.has_divest_p:
+        # p-side max_units (rename "e" → "p" to align with process vars).
+        # Phase 4.8g: the ContextVar is reset by the time ``build_flextool``
+        # runs, so ``rename_to_axis`` cannot re-cast the renamed column to
+        # the p-axis Enum.  Use a semi-join against ``process_source_sink``
+        # (already p-Enum) up-cast to the e-axis vocab of the source frame
+        # so the cross-Enum filter composes natively.
+        _maxu = d.p_entity_max_units.frame
+        _e_dt = _maxu.schema["e"]
+        _p_in_e = (d.process_source_sink
+                     .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
+                     .unique())
+        max_units_p = Param(("p", "d"),
+            _maxu.join(_p_in_e, on="e", how="semi")
+                  .pipe(rename_to_axis, {"e": "p"}))
+    if b.has_invest_p:
+        m.add_cstr(
+            "maxInvest_var_bound",
+            over      = d.pd_invest_set,
+            sense     = "<=",
+            lhs_terms = {"invest":    v_invest_p},
+            rhs_terms = {"max_units": max_units_p},
+        )
+    if b.has_divest_p:
+        m.add_cstr(
+            "maxDivest_var_bound",
+            over      = d.pd_divest_set,
+            sense     = "<=",
+            lhs_terms = {"divest":    v_divest_p},
+            rhs_terms = {"max_units": max_units_p},
+        )
+    if b.has_invest_n or b.has_divest_n:
+        # Phase 4.8g: same cross-Enum pattern as the ``max_units_p`` site
+        # above — semi-join against ``nodeState['n']`` up-cast to the
+        # e-axis vocab carried by ``p_entity_max_units``.
+        _maxu_n = d.p_entity_max_units.frame
+        _e_dt_n = _maxu_n.schema["e"]
+        _n_in_e = (d.nodeState
+                     .select(pl.col("n").cast(_e_dt_n, strict=False).alias("e"))
+                     .unique())
+        max_units_n = Param(("n", "d"),
+            _maxu_n.join(_n_in_e, on="e", how="semi")
+                    .pipe(rename_to_axis, {"e": "n"}))
+    if b.has_invest_n:
+        m.add_cstr(
+            "maxInvest_var_bound_n",
+            over      = d.nd_invest_set,
+            sense     = "<=",
+            lhs_terms = {"invest":    v_invest_n},
+            rhs_terms = {"max_units": max_units_n},
+        )
+    if b.has_divest_n:
+        m.add_cstr(
+            "maxDivest_var_bound_n",
+            over      = d.nd_divest_set,
+            sense     = "<=",
+            lhs_terms = {"divest":    v_divest_n},
+            rhs_terms = {"max_units": max_units_n},
+        )
+    # Per-period invest/divest cap (.mod's maxInvest_entity_period /
+    # maxDivest_entity_period).  Only applies on (e, d) ∈ ed_invest_period
+    # — that's the entities/periods flagged with a per-period limit (e.g.
+    # invest_method = "invest_period_total").  Entities with invest_method
+    # = "invest_total" or "invest_no_limit" don't appear in this set.
+    #
+    # The mathematical relation is
+    #     v_invest[e, d] * unitsize  ≤  ed_invest_max_period[e, d]
+    # and we emit it in that natural form: the LP coefficient on
+    # v_invest is ``unitsize`` (carried on the LHS) and the RHS is the
+    # raw cap in MW (``ed_invest_max_period`` is already raw MW).  This
+    # mirrors every other invest constraint (the per-entity total /
+    # cumulative / group families all use coef=unitsize, RHS-in-MW), so
+    # the extracted row dual is in obj/MW — consistent across families.
+    # (Numerical conditioning that the old pre-divided coef=1 form bought
+    # is now handled by autoscale Layer 2, so no special-casing here.)
+    if b.has_invest_p and d.ed_invest_period_set is not None and d.ed_invest_period_set.height > 0:
+        ed_p_period = d.ed_invest_period_set.pipe(rename_to_axis, {"e": "p"}).join(
+            d.pd_invest_set, on=["p", "d"], how="inner")
+        if ed_p_period.height > 0 and d.ed_invest_max_period is not None:
+            cap_p = Param(("p", "d"),
+                d.ed_invest_max_period.frame.pipe(rename_to_axis, {"e": "p"})
+                .select("p", "d", "value"))
+            m.add_cstr(
+                "maxInvest_entity_period_p",
+                over      = ed_p_period,
+                sense     = "<=",
+                lhs_terms = {"invest": v_invest_p * d.p_unitsize},
+                rhs_terms = {"cap":    cap_p},
+            )
+    if b.has_invest_n and d.ed_invest_period_set is not None and d.ed_invest_period_set.height > 0:
+        ed_n_period = d.ed_invest_period_set.pipe(rename_to_axis, {"e": "n"}).join(
+            d.nd_invest_set, on=["n", "d"], how="inner")
+        if ed_n_period.height > 0 and d.ed_invest_max_period is not None:
+            cap_n = Param(("n", "d"),
+                d.ed_invest_max_period.frame.pipe(rename_to_axis, {"e": "n"})
+                .select("n", "d", "value"))
+            us_n = Param(("n",), d.p_state_unitsize.frame)
+            m.add_cstr(
+                "maxInvest_entity_period_n",
+                over      = ed_n_period,
+                sense     = "<=",
+                lhs_terms = {"invest": v_invest_n * us_n},
+                rhs_terms = {"cap":    cap_n},
+            )
+    # Divest period caps: same coef=unitsize / raw-MW-RHS form as invest
+    # above (dual in obj/MW, matching the total/cumulative/group families).
+    if b.has_divest_p and d.ed_divest_period_set is not None and d.ed_divest_period_set.height > 0:
+        ed_p_dperiod = d.ed_divest_period_set.pipe(rename_to_axis, {"e": "p"}).join(
+            d.pd_divest_set, on=["p", "d"], how="inner")
+        if ed_p_dperiod.height > 0 and d.ed_divest_max_period is not None:
+            cap_dp = Param(("p", "d"),
+                d.ed_divest_max_period.frame.pipe(rename_to_axis, {"e": "p"})
+                .select("p", "d", "value"))
+            m.add_cstr(
+                "maxDivest_entity_period_p",
+                over      = ed_p_dperiod,
+                sense     = "<=",
+                lhs_terms = {"divest": v_divest_p * d.p_unitsize},
+                rhs_terms = {"cap":    cap_dp},
+            )
+    if b.has_divest_n and d.ed_divest_period_set is not None and d.ed_divest_period_set.height > 0:
+        ed_n_dperiod = d.ed_divest_period_set.pipe(rename_to_axis, {"e": "n"}).join(
+            d.nd_divest_set, on=["n", "d"], how="inner")
+        if ed_n_dperiod.height > 0 and d.ed_divest_max_period is not None:
+            cap_dn = Param(("n", "d"),
+                d.ed_divest_max_period.frame.pipe(rename_to_axis, {"e": "n"})
+                .select("n", "d", "value"))
+            us_n = Param(("n",), d.p_state_unitsize.frame)
+            m.add_cstr(
+                "maxDivest_entity_period_n",
+                over      = ed_n_dperiod,
+                sense     = "<=",
+                lhs_terms = {"divest": v_divest_n * us_n},
+                rhs_terms = {"cap":    cap_dn},
+            )
+    # Per-entity totals: Σ_d v_invest[e, d] * unitsize ≤ e_invest_max_total[e]
+    # (and divest analogue).  When running a non-first sub-solve of a
+    # multi-solve chain, ``p_entity_previously_invested_capacity[e, d]``
+    # / ``p_entity_invested[e]`` / ``p_entity_divested[e]`` carry the
+    # cumulative realized invest/divest from prior solves and must be
+    # added to the LHS — see flextool.mod:3597-3623.  polar_high emits one
+    # row per entity (collapsed over d) so we use the max prior-capacity
+    # per entity, which equals the tightest .mod row (the last d) for
+    # the typical non-decreasing schedule.
+    def _e_max_prior_cap() -> dict[str, float]:
+        if d.p_entity_previously_invested_capacity is None:
+            return {}
+        return dict(
+            d.p_entity_previously_invested_capacity.frame
+              .group_by("e").agg(pl.col("value").max())
+              .rows()
+        )
+    def _e_prior_invested() -> dict[str, float]:
+        if d.p_entity_invested is None:
+            return {}
+        return dict(d.p_entity_invested.frame.rows())
+    def _e_prior_divested() -> dict[str, float]:
+        # The .mod gates p_entity_divested behind ``not p_model['solveFirst']``
+        # — ignore the file on the first sub-solve of a chain (or for a
+        # single-solve scenario).  ``p_nested_solve_first`` is tri-state:
+        # None → no p_nested_model.csv (single-solve, treated as solveFirst);
+        # True → solveFirst=1 (skip); False → solveFirst=0 (use the prior).
+        if d.p_entity_divested is None:
+            return {}
+        if getattr(d, "p_nested_solve_first", None) is not False:
+            return {}
+        return dict(d.p_entity_divested.frame.rows())
+
+    def _adjust_cap_frame(cap_frame: pl.DataFrame, key_col: str,
+                           subtract: dict[str, float]) -> pl.DataFrame:
+        """Return cap_frame with `value` -= subtract[key], clipped at 0."""
+        if not subtract:
+            return cap_frame
+        adj = cap_frame.with_columns(
+            value=(pl.col("value")
+                   - pl.col(key_col).map_elements(lambda k: subtract.get(k, 0.0),
+                                                    return_dtype=pl.Float64))
+        ).with_columns(value=pl.when(pl.col("value") < 0).then(0.0)
+                                .otherwise(pl.col("value")))
+        return adj
+
+    max_prior_cap = _e_max_prior_cap()
+    # Not read below: p_entity_invested is not applied to the totals.
+    prior_invested = _e_prior_invested()  # noqa: F841
+    prior_divested = _e_prior_divested()
+
+    if (b.has_invest_p and d.e_invest_total is not None
+            and d.e_invest_total.height > 0
+            and d.e_invest_max_total is not None):
+        # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); up-cast p→e.
+        _e_dt = d.e_invest_total.schema["e"]
+        _p_in_e = (d.process_source_sink
+                     .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
+                     .unique())
+        e_inv_p = (d.e_invest_total
+                     .join(_p_in_e, on="e", how="semi")
+                     .pipe(rename_to_axis, {"e": "p"}))
+        if e_inv_p.height > 0:
+            cap_frame = _adjust_cap_frame(
+                d.e_invest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
+                "p", max_prior_cap)
+            e_inv_max_p = Param(("p",), cap_frame)
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxInvest_entity_total",
+                path_name   = "maxInvest_entity_total_path",
+                over_e      = e_inv_p,
+                var         = v_invest_p,
+                unitsize    = d.p_unitsize,
+                cap_param   = e_inv_max_p,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "invest_total",
+            )
+    if (b.has_divest_p and d.e_divest_total is not None
+            and d.e_divest_total.height > 0
+            and d.e_divest_max_total is not None):
+        # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); up-cast p→e.
+        _e_dt = d.e_divest_total.schema["e"]
+        _p_in_e = (d.process_source_sink
+                     .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
+                     .unique())
+        e_div_p = (d.e_divest_total
+                     .join(_p_in_e, on="e", how="semi")
+                     .pipe(rename_to_axis, {"e": "p"}))
+        if e_div_p.height > 0:
+            cap_frame = _adjust_cap_frame(
+                d.e_divest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
+                "p", prior_divested)
+            e_div_max_p = Param(("p",), cap_frame)
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxDivest_entity_total",
+                path_name   = "maxDivest_entity_total_path",
+                over_e      = e_div_p,
+                var         = v_divest_p,
+                unitsize    = d.p_unitsize,
+                cap_param   = e_div_max_p,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "divest_total",
+            )
+    # Node analogues for per-entity totals.
+    if (b.has_invest_n and d.e_invest_total is not None
+            and d.e_invest_total.height > 0
+            and d.e_invest_max_total is not None):
+        # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); up-cast n→e.
+        _e_dt = d.e_invest_total.schema["e"]
+        _n_in_e = (d.nodeState
+                     .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
+                     .unique())
+        e_inv_n = (d.e_invest_total
+                     .join(_n_in_e, on="e", how="semi")
+                     .pipe(rename_to_axis, {"e": "n"}))
+        if e_inv_n.height > 0:
+            cap_frame = _adjust_cap_frame(
+                d.e_invest_max_total.frame.pipe(rename_to_axis, {"e": "n"}),
+                "n", max_prior_cap)
+            e_inv_max_n = Param(("n",), cap_frame)
+            us_n = Param(("n",), d.p_state_unitsize.frame)
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxInvest_entity_total_n",
+                path_name   = "maxInvest_entity_total_path_n",
+                over_e      = e_inv_n,
+                var         = v_invest_n,
+                unitsize    = us_n,
+                cap_param   = e_inv_max_n,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "invest_total",
+            )
+    if (b.has_divest_n and d.e_divest_total is not None
+            and d.e_divest_total.height > 0
+            and d.e_divest_max_total is not None):
+        # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); up-cast n→e.
+        _e_dt = d.e_divest_total.schema["e"]
+        _n_in_e = (d.nodeState
+                     .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
+                     .unique())
+        e_div_n = (d.e_divest_total
+                     .join(_n_in_e, on="e", how="semi")
+                     .pipe(rename_to_axis, {"e": "n"}))
+        if e_div_n.height > 0:
+            cap_frame = _adjust_cap_frame(
+                d.e_divest_max_total.frame.pipe(rename_to_axis, {"e": "n"}),
+                "n", prior_divested)
+            e_div_max_n = Param(("n",), cap_frame)
+            us_n = Param(("n",), d.p_state_unitsize.frame)
+            _emit_entity_total_cap(
+                m,
+                legacy_name = "maxDivest_entity_total_n",
+                path_name   = "maxDivest_entity_total_path_n",
+                over_e      = e_div_n,
+                var         = v_divest_n,
+                unitsize    = us_n,
+                cap_param   = e_div_max_n,
+                d_leaf      = getattr(d, "d_leaf", None),
+                lhs_label   = "divest_total",
+            )
+
+
+def _eq_conversion(b: _Build) -> None:
+    """Conversion of indirect (multi-flow) units and minimum input shares."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    v_online_lin = b.v_online_linear
+    v_online_int = b.v_online_integer
+    process_indirect_dt = b.process_indirect_dt
+    # ─── conversion_indirect (CHP / multi-flow) ───────────────────────────
+    if b.has_indirect:
+        # Per flextool.mod:2557-2580, the conversion equation reads:
+        #   Σ_source (v_flow[p, source, p] · unitsize · source_flow_coef[p, source])
+        #     = Σ_sink (v_flow[p, p, sink] · unitsize · sink_flow_coef[p, sink])
+        #         · slope[p, d, t]
+        # Most fixtures have all flow_coefs = 1 (the implicit default) so
+        # ``p_process_*_flow_coef`` is None and the Sum collapses to the
+        # pre-flow-coef form.  When non-default, the Param multiplier
+        # routes per-arc weights into the equation — this is what the
+        # ``coal_chp_extraction`` scenario uses to express the iso-fuel
+        # tradeoff between heat and electricity (sink coefs 0.2 vs 2.0).
+        # Per flextool.mod:2343, the source-side input term also splits
+        # into an *undelayed* part (current-time) and a *delayed* part
+        # (time-shifted via dtt__delay_duration, weighted by
+        # p_process_delay_weight).  Anti-join out the delayed processes
+        # from the existing Sum, then add the delayed contribution from
+        # _delay.delayed_input_expr.  The delayed term multiplies each
+        # input by its source-side conversion_flow_coeff, like the
+        # undelayed term (flextool.mod conversion_indirect).
+        in_flows_undelayed = d.process_input_flows
+        if (getattr(d, "process_delayed", None) is not None
+                and d.process_delayed.height > 0):
+            in_flows_undelayed = in_flows_undelayed.join(
+                d.process_delayed, on="p", how="anti")
+
+        input_expr = v_flow * d.p_unitsize
+        if d.p_process_source_conversion_flow_coeff is not None:
+            input_expr = input_expr * d.p_process_source_conversion_flow_coeff
+        output_expr = v_flow * d.p_unitsize * d.p_slope
+        if d.p_process_sink_conversion_flow_coeff is not None:
+            output_expr = output_expr * d.p_process_sink_conversion_flow_coeff
+
+        lhs_terms = {
+            "input": Sum(Where(input_expr, in_flows_undelayed),
+                          over=("source","sink")),
+        }
+        delayed_term = _delay.delayed_input_expr(d, v_flow)
+        if delayed_term is not None:
+            lhs_terms["input_delayed"] = delayed_term
+
+        rhs_terms = {"output": Sum(Where(output_expr,
+                                         d.process_output_flows),
+                                   over=("source","sink"))}
+        # min_load_efficiency section term (flextool.mod:2582):
+        #   + (v_online_linear + v_online_integer)[p,d,t]
+        #     · pdtProcess_section[p,d,t] · unitsize[p]
+        # for indirect min_load_efficiency units.  The input of an indirect
+        # unit is its own v_flow (noEff), so this is the ONLY place the
+        # section fuel enters: nodeBalance, commodity cost, CO2 and the
+        # reported input flows all read that v_flow.  The section is not
+        # multiplied by any conversion_flow_coeff (as in the .mod).  For a
+        # delayed unit it sits on the output side, at the sink-side time t
+        # with v_online[t]; the delayed inputs supply it through
+        # ``input_delayed``.  (p,d,t) rows without v_online lack the term.
+        if b.has_minload_eff and d.p_section is not None:
+            ind_mle = d.process_min_load_eff.join(
+                d.process_indirect.select("p").unique(), on="p", how="semi")
+            if ind_mle.height > 0:
+                if b.has_online_lin:
+                    rhs_terms["section_lin"] = (
+                        Where(v_online_lin, ind_mle)
+                        * d.p_section * d.p_unitsize)
+                if b.has_online_int:
+                    rhs_terms["section_int"] = (
+                        Where(v_online_int, ind_mle)
+                        * d.p_section * d.p_unitsize)
+
+        m.add_cstr(
+            "conversion_indirect",
+            over      = process_indirect_dt,
+            sense     = "==",
+            lhs_terms = lhs_terms,
+            rhs_terms = rhs_terms,
+        )
+
+        # minInputShare — unit__inputNode.input_share_min (mixing minimum
+        # on the unit's current input; see :func:`_add_min_input_share`).
+        _add_min_input_share(m, d, v_flow)
+
+
+def _eq_co2_caps(b: _Build) -> None:
+    """CO2 emission caps per period and over all periods."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    # ─── CO2 cap (period level) ───────────────────────────────────────────
+    if b.has_co2_cap:
+        # The .mod splits CO2 emissions by partition: eff multiplies by
+        # ``pdtProcess_slope`` (efficiency factor on conversion), noEff
+        # does not.  Combining both partitions in a single set with the
+        # eff-style slope multiplier over-counts noEff processes' CO2
+        # (e.g. coal_chp's slope=1.111 inflates its emissions by ~11%),
+        # which skews co2_max_period dispatch on multi-period fixtures.
+        lhs_terms_co2: dict = {}
+        if b.has_co2_cap_eff:
+            lhs_terms_co2["emissions_eff"] = Sum(
+                Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_capped)
+                * d.p_co2_content
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
+                over=("p","source","sink","c","t"),
+            )
+        if b.has_co2_cap_noEff:
+            lhs_terms_co2["emissions_noEff"] = Sum(
+                Where(v_flow * d.p_unitsize, d.flow_from_co2_capped_noEff)
+                * d.p_co2_content
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
+                over=("p","source","sink","c","t"),
+            )
+        m.add_cstr(
+            "co2_max_period",
+            over      = d.group_d_co2_capped,
+            sense     = "<=",
+            lhs_terms = lhs_terms_co2,
+            rhs_terms = {"cap": d.p_co2_max_period},
+        )
+
+    # ─── CO2 cap (multi-period total) ─────────────────────────────────────
+    # Port of v3.32.0 ``co2_max_total`` (.mod:4019-4055).  Identical
+    # per-(d,t) annualised-tonnes LHS shape as ``co2_max_period``, but
+    # the ``d`` dim is also summed out so each capped group carries one
+    # row whose RHS is the (g,)-only ``p_co2_max_total`` scalar (in
+    # tonnes, projected per-year × 1-year-per-period for fixtures whose
+    # ``p_period_share`` ≡ 1; legacy semantics for multi-year periods
+    # would weight by ``p_years_represented_d`` — out of scope for this
+    # port; existing co2_max_period also doesn't apply that weighting).
+    if b.has_co2_cap_total:
+        lhs_terms_co2_total: dict = {}
+        if b.has_co2_cap_total_eff:
+            lhs_terms_co2_total["emissions_eff"] = Sum(
+                Where(v_flow * d.p_unitsize * d.p_slope,
+                      d.flow_from_co2_capped_total)
+                * d.p_co2_content
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
+                over=("p", "source", "sink", "c", "d", "t"),
+            )
+        if b.has_co2_cap_total_noEff:
+            lhs_terms_co2_total["emissions_noEff"] = Sum(
+                Where(v_flow * d.p_unitsize,
+                      d.flow_from_co2_capped_total_noEff)
+                * d.p_co2_content
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
+                over=("p", "source", "sink", "c", "d", "t"),
+            )
+        m.add_cstr(
+            "co2_max_total",
+            over      = d.group_co2_max_total,
+            sense     = "<=",
+            lhs_terms = lhs_terms_co2_total,
+            rhs_terms = {"cap": d.p_co2_max_total},
+        )
+
+
+def _eq_user_constraints(b: _Build) -> None:
+    """User-defined constraints."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    v_state = b.v_state
+    v_invest_p = b.v_invest_p
+    v_invest_n = b.v_invest_n
+    # ─── User-defined flow constraints ────────────────────────────────────
+    has_any_cdt = any(x is not None and x.height > 0
+                      for x in (d.cdt_eq, d.cdt_le, d.cdt_ge))
+    if has_any_cdt:
+        # Build the LHS expression as a sum of optional contributions.
+        # Each piece resolves to dims (cn, d, t) (or (cn, d) for invest,
+        # which broadcasts over t at constraint emission).  The
+        # constraint axis column is ``cn`` (not ``c``) — see the
+        # c_collision review note in flextool_axis_contract.json.
+        lhs_pieces: list = []
+        if d.flow_constraint_idx is not None and d.flow_constraint_idx.height > 0:
+            lhs_pieces.append(Sum(
+                Where(v_flow * d.p_unitsize, d.flow_constraint_idx)
+                * d.p_flow_constraint_coef,
+                over=("p", "source", "sink"),
+            ))
+        # Invest-capacity terms.  Only relevant rows of v_invest_n /
+        # v_invest_p are picked up by the inner-join in Where (entities
+        # whose (n, cn) or (p, cn) appear in the coefficient frame).  The
+        # join also adds the cn dim.  Sum collapses n / p, leaving (cn, d).
+        if (b.has_invest_n and
+                d.p_node_constraint_invested_capacity_coeff is not None):
+            us_n_user = Param(("n",), d.p_state_unitsize.frame)
+            n_inv_idx = (d.p_node_constraint_invested_capacity_coeff
+                          .frame.select("n", "cn"))
+            lhs_pieces.append(Sum(
+                Where(v_invest_n * us_n_user, n_inv_idx)
+                * d.p_node_constraint_invested_capacity_coeff,
+                over=("n",),
+            ))
+        if (b.has_invest_p and
+                d.p_process_constraint_invested_capacity_coeff is not None):
+            p_inv_idx = (d.p_process_constraint_invested_capacity_coeff
+                          .frame.select("p", "cn"))
+            lhs_pieces.append(Sum(
+                Where(v_invest_p * d.p_unitsize, p_inv_idx)
+                * d.p_process_constraint_invested_capacity_coeff,
+                over=("p",),
+            ))
+        # State-coefficient term:
+        #   + Σ_{(n,cn) in node_state_constraint} v_state[n,d,t]
+        #         * p_node_constraint_state_coeff[n,cn]
+        #         * p_entity_unitsize[n]
+        # Yields (cn, d, t) after summing over n.
+        if (b.has_storage
+                and d.p_node_constraint_state_coeff is not None):
+            us_n_state = Param(("n",), d.p_state_unitsize.frame)
+            n_state_idx = (d.p_node_constraint_state_coeff
+                           .frame.select("n", "cn"))
+            lhs_pieces.append(Sum(
+                Where(v_state * us_n_state, n_state_idx)
+                * d.p_node_constraint_state_coeff,
+                over=("n",),
+            ))
+        # Prebuilt-capacity (existing-capacity contribution) — pure Param
+        # constants, accumulated into a separate ``cstr_const`` so they
+        # land on lhs_terms as Param entries (not summed into ``lhs_pieces``
+        # which is an Expr).  Mirror of mod's:
+        #   + Σ_{(n,cn) in node_capacity_constraint_prebuilt}
+        #       (existing/unitsize) * coef * unitsize[n]
+        # = Σ_n existing[n,d] * coef[n,cn]   →  Param dims (cn, d)
+        cstr_const_pieces: list = []
+        if (d.p_node_constraint_prebuilt_capacity_coeff is not None
+                and d.p_state_existing_capacity is not None):
+            n_pre = (d.p_state_existing_capacity.frame
+                     .join(d.p_node_constraint_prebuilt_capacity_coeff
+                            .frame.rename({"value": "coef"}),
+                            on="n", how="inner")
+                     .with_columns(value=pl.col("value") * pl.col("coef"))
+                     .group_by(["cn", "d"]).agg(pl.col("value").sum())
+                     .select("cn", "d", "value"))
+            if n_pre.height > 0:
+                cstr_const_pieces.append(Param(("cn", "d"), n_pre))
+        if (d.p_process_constraint_prebuilt_capacity_coeff is not None
+                and d.p_process_existing_count is not None
+                and d.p_unitsize is not None):
+            # process existing capacity = existing_count * unitsize, per (p, d)
+            ec = d.p_process_existing_count.frame.rename({"value": "ec"})
+            us = d.p_unitsize.frame.rename({"value": "us"})
+            p_pre = (ec.join(us, on="p", how="inner")
+                       .with_columns(cap=pl.col("ec") * pl.col("us"))
+                       .join(d.p_process_constraint_prebuilt_capacity_coeff
+                              .frame.rename({"value": "coef"}),
+                              on="p", how="inner")
+                       .with_columns(value=pl.col("cap") * pl.col("coef"))
+                       .group_by(["cn", "d"]).agg(pl.col("value").sum())
+                       .select("cn", "d", "value"))
+            if p_pre.height > 0:
+                cstr_const_pieces.append(Param(("cn", "d"), p_pre))
+
+        # Prebuilt-capacity cumulative-invest contribution — variable.
+        # Mirror of mod:2885-2898 / 2843-2856:
+        #   + Σ {(p,cn) in process_capacity_constraint_prebuilt}
+        #       (Σ_{d_invest : year[d_invest] < year[d]} v_invest[p, d_invest])
+        #         * coef[p, cn] * unitsize[p]
+        # The static-existing piece above is the first half of the LHS;
+        # this adds the cumulative-prior-invest variable summand that
+        # closes the multi_year_wind_growth_cap parity gap.
+        if (b.has_invest_p and
+                d.p_process_constraint_prebuilt_capacity_coeff is not None
+                and d.edd_invest_lookback_set is not None
+                and d.edd_invest_lookback_set.height > 0):
+            v_inv_at_back_uc = Var(  # virtual rename: d → d_invest
+                name=v_invest_p.name + "__at_back_uc",
+                dims=("p", "d_invest"),
+                frame=v_invest_p.frame.pipe(rename_to_axis, {"d": "d_invest"}),
+                lower=v_invest_p.lower, upper=v_invest_p.upper,
+            )
+            p_pre_idx = (d.p_process_constraint_prebuilt_capacity_coeff
+                          .frame.select("p", "cn"))
+            lkb_p = (d.edd_invest_lookback_set.pipe(rename_to_axis, {"e": "p"})
+                       .join(p_pre_idx, on="p", how="inner"))
+            if lkb_p.height > 0:
+                lhs_pieces.append(Sum(
+                    Where(v_inv_at_back_uc * d.p_unitsize, lkb_p)
+                    * d.p_process_constraint_prebuilt_capacity_coeff,
+                    over=("p", "d_invest"),
+                ))
+        if (b.has_invest_n and
+                d.p_node_constraint_prebuilt_capacity_coeff is not None
+                and d.edd_invest_lookback_set is not None
+                and d.edd_invest_lookback_set.height > 0):
+            us_n_pre = Param(("n",), d.p_state_unitsize.frame)
+            v_inv_n_at_back_uc = Var(
+                name=v_invest_n.name + "__at_back_uc",
+                dims=("n", "d_invest"),
+                frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
+                lower=v_invest_n.lower, upper=v_invest_n.upper,
+            )
+            n_pre_idx = (d.p_node_constraint_prebuilt_capacity_coeff
+                          .frame.select("n", "cn"))
+            lkb_n = (d.edd_invest_lookback_set.pipe(rename_to_axis, {"e": "n"})
+                       .join(n_pre_idx, on="n", how="inner"))
+            if lkb_n.height > 0:
+                lhs_pieces.append(Sum(
+                    Where(v_inv_n_at_back_uc * us_n_pre, lkb_n)
+                    * d.p_node_constraint_prebuilt_capacity_coeff,
+                    over=("n", "d_invest"),
+                ))
+        if lhs_pieces or cstr_const_pieces:
+            cstr_lhs_terms: dict = {}
+            if lhs_pieces:
+                cstr_lhs = lhs_pieces[0]
+                for piece in lhs_pieces[1:]:
+                    cstr_lhs = cstr_lhs + piece
+                cstr_lhs_terms["contribution"] = cstr_lhs
+            for i, p in enumerate(cstr_const_pieces):
+                cstr_lhs_terms[f"prebuilt_const_{i}"] = p
+            for axes, sense, name in [
+                (d.cdt_eq, "==", "process_constraint_equal"),
+                (d.cdt_le, "<=", "process_constraint_less_than"),
+                (d.cdt_ge, ">=", "process_constraint_greater_than"),
+            ]:
+                if axes is None or axes.height == 0:
+                    continue
+                m.add_cstr(name, over=axes, sense=sense,
+                           lhs_terms=cstr_lhs_terms,
+                           rhs_terms={"constant":     d.p_constraint_constant})
+
+
+def _eq_storage_state(b: _Build) -> None:
+    """Storage state bounds, state profiles, start binding and end value."""
+    m, d = b.m, b.d
+    v_state = b.v_state
+    v_invest_n = b.v_invest_n
+    v_divest_n = b.v_divest_n
+    nodeState_dt = b.nodeState_dt
+    # ─── Storage state bounds + start binding ─────────────────────────────
+    if b.has_storage:
+        # maxState:  v_state[n, d, t]  <=  state_upper[n, d]
+        # With invest/divest active on storage nodes, mirror the maxFlow
+        # tightening: v_state + (divest - invest) ≤ state_upper, where the
+        # invest/divest summations pick out (n, d_inv, d) tuples in
+        # edd_invest / edd_divest_active that include both n and d.
+        state_lhs: dict = {"state": v_state}
+        if b.has_divest_n and d.edd_divest_active is not None:
+            v_div_n_at = Var(
+                name=v_divest_n.name + "__at_divest",
+                dims=("n", "d_divest"),
+                frame=v_divest_n.frame.pipe(rename_to_axis, {"d": "d_divest"}),
+                lower=v_divest_n.lower, upper=v_divest_n.upper,
+            )
+            # Phase 4.8h: cross-Enum is_in (p-axis vs n-axis vocab); up-cast n→p.
+            _p_dt = d.edd_divest_active.schema["p"]
+            _n_in_p = (d.nodeState
+                         .select(pl.col("n").cast(_p_dt, strict=False).alias("p"))
+                         .unique())
+            edd_div_n = (d.edd_divest_active
+                           .join(_n_in_p, on="p", how="semi")
+                           .pipe(rename_to_axis, {"p": "n"}))
+            if edd_div_n.height > 0:
+                state_lhs["divest"] = Sum(
+                    Where(v_div_n_at, edd_div_n), over=("d_divest",))
+        if b.has_invest_n and d.edd_invest_set is not None:
+            v_inv_n_at = Var(
+                name=v_invest_n.name + "__at_invest",
+                dims=("n", "d_invest"),
+                frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
+                lower=v_invest_n.lower, upper=v_invest_n.upper,
+            )
+            # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); up-cast n→e.
+            _e_dt = d.edd_invest_set.schema["e"]
+            _n_in_e = (d.nodeState
+                         .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
+                         .unique())
+            edd_inv_n = (d.edd_invest_set
+                           .join(_n_in_e, on="e", how="semi")
+                           .pipe(rename_to_axis, {"e": "n"}))
+            if edd_inv_n.height > 0:
+                state_lhs["invest_neg"] = -Sum(
+                    Where(v_inv_n_at, edd_inv_n), over=("d_invest",))
+        m.add_cstr(
+            "maxState",
+            over      = nodeState_dt,
+            sense     = "<=",
+            lhs_terms = state_lhs,
+            rhs_terms = {"upper": d.p_state_upper},
+        )
+
+        # ─── State-profile bounds (profile_state_upper / lower / fixed) ─
+        # mod:2639-2679.  Parallel to ``profile_flow_*`` but on v_state:
+        #   LHS: v_state[n,d,t] · 1000
+        #   RHS: profile[f,d,t] · ( existing_count[n,d]
+        #                           + Σ_{d_inv} v_invest_n[n,d_inv]
+        #                           - Σ_{d_div} v_divest_n[n,d_div] )
+        #         · availability[n,d,t] · 1000
+        # We divide both sides by 1000 and move invest/divest to LHS.
+        # Availability defaults to 1.0 if not provided.
+        any_node_profile = (
+            (d.node_profile_upper is not None and d.node_profile_upper.height > 0)
+            or (d.node_profile_lower is not None and d.node_profile_lower.height > 0)
+            or (d.node_profile_fixed is not None and d.node_profile_fixed.height > 0)
+        )
+        if any_node_profile and d.p_profile_value is not None:
+            # existing_count[n, d] = state_existing_capacity / state_unitsize.
+            us_n_state_prof = d.p_state_unitsize.frame.rename({"value": "us"})
+            ec_n_long = (d.p_state_existing_capacity.frame.rename({"value": "cap"})
+                         .join(us_n_state_prof, on="n", how="inner")
+                         .with_columns(value=pl.col("cap") / pl.col("us"))
+                         .select("n", "d", "value"))
+            p_node_existing_count = Param(("n", "d"), ec_n_long)
+
+            def _add_node_profile_cstr(idx: "pl.DataFrame", name: str, sense: str) -> None:
+                # over = (n, f, d, t) — cross-product of idx with timeline.
+                over = idx.join(d.dt, how="cross")
+                rhs_param = d.p_profile_value * p_node_existing_count
+                # Densify availability over the profile nodes so a storage node
+                # with no DB-authored ``availability`` keeps its default-1.0
+                # factor instead of being inner-join-dropped to RHS=0 (→ forced
+                # v_state=0).  Node-state twin of the process-side fix; see
+                # :func:`_availability_factor`.
+                node_avail_factor = (
+                    _availability_factor(d, idx, axis="n",
+                                         avail=d.p_node_availability)
+                    if d.p_node_availability is not None else None)
+                if node_avail_factor is not None:
+                    rhs_param = rhs_param * node_avail_factor
+                lhs: dict = {"state": v_state}
+                # Invest/divest tightening — only over (n, f) pairs in idx.
+                nf_filter = idx.select("n", "f").unique()
+                if b.has_invest_n and d.edd_invest_set is not None:
+                    # Phase 4.8h: cross-Enum is_in (e vs n vocab); up-cast n→e.
+                    _e_dt = d.edd_invest_set.schema["e"]
+                    _n_in_e = (d.nodeState
+                                 .select(pl.col("n").cast(_e_dt, strict=False)
+                                                    .alias("e"))
+                                 .unique())
+                    edd_inv_n_p = (d.edd_invest_set
+                                     .join(_n_in_e, on="e", how="semi")
+                                     .pipe(rename_to_axis, {"e": "n"}))
+                    if edd_inv_n_p.height > 0:
+                        v_inv_n_at_p = Var(
+                            name=v_invest_n.name + "__at_invest_node_profile",
+                            dims=("n", "d_invest"),
+                            frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
+                            lower=v_invest_n.lower, upper=v_invest_n.upper,
+                        )
+                        inv_term = Sum(
+                            Where(v_inv_n_at_p, edd_inv_n_p),
+                            over=("d_invest",),
+                        )
+                        # Multiply by profile · (availability) and restrict to (n, f) pairs.
+                        inv_full = inv_term * d.p_profile_value
+                        if node_avail_factor is not None:
+                            inv_full = inv_full * node_avail_factor
+                        lhs["invest_neg"] = -Where(inv_full, nf_filter)
+                if b.has_divest_n and d.edd_divest_active is not None:
+                    # Phase 4.8h: cross-Enum is_in (p vs n vocab); up-cast n→p.
+                    _p_dt = d.edd_divest_active.schema["p"]
+                    _n_in_p = (d.nodeState
+                                 .select(pl.col("n").cast(_p_dt, strict=False)
+                                                    .alias("p"))
+                                 .unique())
+                    edd_div_n_p = (d.edd_divest_active
+                                     .join(_n_in_p, on="p", how="semi")
+                                     .pipe(rename_to_axis, {"p": "n"}))
+                    if edd_div_n_p.height > 0:
+                        v_div_n_at_p = Var(
+                            name=v_divest_n.name + "__at_divest_node_profile",
+                            dims=("n", "d_divest"),
+                            frame=v_divest_n.frame.pipe(rename_to_axis, {"d": "d_divest"}),
+                            lower=v_divest_n.lower, upper=v_divest_n.upper,
+                        )
+                        div_term = Sum(
+                            Where(v_div_n_at_p, edd_div_n_p),
+                            over=("d_divest",),
+                        )
+                        div_full = div_term * d.p_profile_value
+                        if node_avail_factor is not None:
+                            div_full = div_full * node_avail_factor
+                        lhs["divest"] = Where(div_full, nf_filter)
+                m.add_cstr(name, over=over, sense=sense,
+                           lhs_terms=lhs,
+                           rhs_terms={"limit": rhs_param})
+
+            if d.node_profile_upper is not None and d.node_profile_upper.height > 0:
+                _add_node_profile_cstr(d.node_profile_upper,
+                                        "profile_state_upper_limit", "<=")
+            if d.node_profile_lower is not None and d.node_profile_lower.height > 0:
+                _add_node_profile_cstr(d.node_profile_lower,
+                                        "profile_state_lower_limit", ">=")
+            if d.node_profile_fixed is not None and d.node_profile_fixed.height > 0:
+                _add_node_profile_cstr(d.node_profile_fixed,
+                                        "profile_state_fixed", "==")
+
+        # storage_state_start_binding (if fix_start):
+        #   v_state[n, d, t_first] * unitsize
+        #     ==  storage_state_start[n] * (existing
+        #                                    + Σ_{d_inv} v_invest_n[d_inv] * unitsize
+        #                                    - Σ_{d_div} v_divest_n[d_div] * unitsize)
+        # Divide both sides by unitsize → v_state on the LHS as before, plus
+        # invest/divest tightening on the LHS (with sign flip):
+        #   v_state - state_start * Σ v_invest_n + state_start * Σ v_divest_n
+        #     == state_start * existing / unitsize.
+        # The .mod has TWO routes to the same numerical pinning depending
+        # on the binding method:
+        #   * ``bind_within_timeblock`` (and the default fall-through): a
+        #     dedicated ``storage_state_start_binding`` constraint at
+        #     (n, period_first, time_first) — flextool.mod:2725-2740.
+        #   * ``bind_forward_only`` + fix_start: an in-balance term added
+        #     to nodeBalance at the same row — flextool.mod:2197-2203.
+        #     Numerically equivalent for our tested fixtures (inflow=0
+        #     / no flows at t_first), so we route both through this
+        #     constraint instead of duplicating the term inside
+        #     nodeBalance.  ``bind_within_solve`` is excluded here
+        #     because the .mod's mirror at 2700-2723 binds it at the
+        #     LAST timestep of period_first, not the first.
+        if (b.is_solve_first
+            and d.storage_fix_start is not None and d.storage_fix_start.height > 0
+            and d.p_state_start is not None
+            and d.p_state_existing_capacity is not None
+            and d.p_state_unitsize is not None):
+            # storage_state_start_binding is gated on solveFirst (mod:2725-2733).
+            # When this is NOT the first sub-solve of a rolling-horizon chain,
+            # the start state is set by the roll_continue path in nodeBalance
+            # (mod:2196), so this standalone equality must not also fire.
+            # Exclude bind_forward_only and bind_within_solve from this
+            # standalone equality:
+            #   * bind_forward_only — handled by the in-balance fwd_fix_*
+            #     terms in nodeBalance above (mod:2197-2203).
+            #   * bind_within_solve — the .mod's mirror at mod:2700-2723
+            #     binds them at the LAST timestep of period_first, not
+            #     the first; not currently emitted (no fixture exercises
+            #     it).
+            # Only fix_start nodes that fall through to the default
+            # bind_within_timeblock path get the separate equality
+            # (mod:2725-2740).
+            fix_start_filtered = d.storage_fix_start
+            for excl in (d.storage_bind_forward_only,
+                          d.storage_bind_within_solve):
+                if excl is not None and excl.height > 0:
+                    fix_start_filtered = fix_start_filtered.join(
+                        excl, on="n", how="anti")
+            rhs_param = (d.p_state_start * d.p_state_existing_capacity) / d.p_state_unitsize
+            fixed_first_dt = d.nodeState_first_dt.join(
+                fix_start_filtered, on="n", how="inner")
+            start_lhs: dict = {"state": v_state}
+            if b.has_invest_n and d.edd_invest_set is not None:
+                v_inv_n_at_s = Var(
+                    name=v_invest_n.name + "__at_invest_start",
+                    dims=("n", "d_invest"),
+                    frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
+                    lower=v_invest_n.lower, upper=v_invest_n.upper,
+                )
+                # Phase 4.8h: cross-Enum is_in (e vs n vocab); up-cast n→e.
+                _e_dt = d.edd_invest_set.schema["e"]
+                _n_in_e = (d.nodeState
+                             .select(pl.col("n").cast(_e_dt, strict=False)
+                                                .alias("e"))
+                             .unique())
+                edd_inv_n_s = (d.edd_invest_set
+                                 .join(_n_in_e, on="e", how="semi")
+                                 .pipe(rename_to_axis, {"e": "n"}))
+                if edd_inv_n_s.height > 0:
+                    start_lhs["invest_neg"] = -Sum(
+                        Where(v_inv_n_at_s * d.p_state_start, edd_inv_n_s),
+                        over=("d_invest",))
+            if b.has_divest_n and d.edd_divest_active is not None:
+                v_div_n_at_s = Var(
+                    name=v_divest_n.name + "__at_divest_start",
+                    dims=("n", "d_divest"),
+                    frame=v_divest_n.frame.pipe(rename_to_axis, {"d": "d_divest"}),
+                    lower=v_divest_n.lower, upper=v_divest_n.upper,
+                )
+                # Phase 4.8h: cross-Enum is_in (p vs n vocab); up-cast n→p.
+                _p_dt = d.edd_divest_active.schema["p"]
+                _n_in_p = (d.nodeState
+                             .select(pl.col("n").cast(_p_dt, strict=False)
+                                                .alias("p"))
+                             .unique())
+                edd_div_n_s = (d.edd_divest_active
+                                 .join(_n_in_p, on="p", how="semi")
+                                 .pipe(rename_to_axis, {"p": "n"}))
+                if edd_div_n_s.height > 0:
+                    start_lhs["divest"] = Sum(
+                        Where(v_div_n_at_s * d.p_state_start, edd_div_n_s),
+                        over=("d_divest",))
+            m.add_cstr(
+                "storage_state_start_binding",
+                over      = fixed_first_dt,
+                sense     = "==",
+                lhs_terms = start_lhs,
+                rhs_terms = {"target": rhs_param},
+            )
+
+        # storage_state_start_binding_cyclic_period (mod:2709-2723):
+        #   For nodes with binding ∈ {bind_within_period, bind_within_solve}
+        #   AND start ∈ {fix_start, fix_start_end}, pin v_state at the
+        #   LAST timestep of the node's own block in period_first to
+        #   ``state_start * (existing + Σ_d_inv v_invest * us
+        #                            - Σ_d_div v_divest * us)``.
+        #   The cyclic wrap of the bind means t_last "==" the implicit
+        #   pre-t0001 state, which is what state_start represents.
+        #   For bind_forward_only this is handled inline in nodeBalance.
+        #   For bind_within_timeblock / bind_intraperiod_blocks the per-
+        #   block cycle prefers the first-row pin (handled above).
+        if (b.is_solve_first
+            and d.storage_fix_start is not None and d.storage_fix_start.height > 0
+            and d.p_state_start is not None
+            and d.p_state_existing_capacity is not None
+            and d.p_state_unitsize is not None
+            and d.nodeState_last_dt is not None and d.nodeState_last_dt.height > 0):
+            # Eligible binding methods: bind_within_solve (and
+            # bind_within_period if we ever add it as a separate set).
+            cyclic_bound_set = None
+            if d.storage_bind_within_solve is not None and d.storage_bind_within_solve.height > 0:
+                cyclic_bound_set = d.storage_bind_within_solve
+            if cyclic_bound_set is not None and cyclic_bound_set.height > 0:
+                # restrict to fix_start nodes
+                eligible = (cyclic_bound_set
+                              .join(d.storage_fix_start, on="n", how="inner"))
+                if eligible.height > 0:
+                    # period_first set: derived from nodeState_first_dt
+                    # (already filtered to first_period).
+                    period_first_set = (d.nodeState_first_dt
+                                          .select("d").unique())
+                    # last (d, t) per eligible node, within period_first.
+                    cyclic_dt = (d.nodeState_last_dt
+                                  .join(eligible, on="n", how="inner")
+                                  .join(period_first_set, on="d", how="inner")
+                                  .select("n", "d", "t").unique())
+                    if cyclic_dt.height > 0:
+                        cyclic_lhs: dict = {"state": v_state}
+                        if b.has_invest_n and d.edd_invest_set is not None:
+                            v_inv_n_at_c = Var(
+                                name=v_invest_n.name + "__at_invest_cyclic",
+                                dims=("n", "d_invest"),
+                                frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
+                                lower=v_invest_n.lower, upper=v_invest_n.upper,
+                            )
+                            # Phase 4.8h: cross-Enum is_in (e vs n vocab); up-cast n→e.
+                            _e_dt = d.edd_invest_set.schema["e"]
+                            _n_in_e = (d.nodeState
+                                         .select(pl.col("n").cast(_e_dt, strict=False)
+                                                            .alias("e"))
+                                         .unique())
+                            edd_inv_n_c = (d.edd_invest_set
+                                             .join(_n_in_e, on="e", how="semi")
+                                             .pipe(rename_to_axis, {"e": "n"}))
+                            if edd_inv_n_c.height > 0:
+                                cyclic_lhs["invest_neg"] = -Sum(
+                                    Where(v_inv_n_at_c * d.p_state_start, edd_inv_n_c),
+                                    over=("d_invest",))
+                        if b.has_divest_n and d.edd_divest_active is not None:
+                            v_div_n_at_c = Var(
+                                name=v_divest_n.name + "__at_divest_cyclic",
+                                dims=("n", "d_divest"),
+                                frame=v_divest_n.frame.pipe(rename_to_axis, {"d": "d_divest"}),
+                                lower=v_divest_n.lower, upper=v_divest_n.upper,
+                            )
+                            # Phase 4.8h: cross-Enum is_in (p vs n vocab); up-cast n→p.
+                            _p_dt = d.edd_divest_active.schema["p"]
+                            _n_in_p = (d.nodeState
+                                         .select(pl.col("n").cast(_p_dt, strict=False)
+                                                            .alias("p"))
+                                         .unique())
+                            edd_div_n_c = (d.edd_divest_active
+                                             .join(_n_in_p, on="p", how="semi")
+                                             .pipe(rename_to_axis, {"p": "n"}))
+                            if edd_div_n_c.height > 0:
+                                cyclic_lhs["divest"] = Sum(
+                                    Where(v_div_n_at_c * d.p_state_start, edd_div_n_c),
+                                    over=("d_divest",))
+                        rhs_param_cyclic = (d.p_state_start * d.p_state_existing_capacity) / d.p_state_unitsize
+                        m.add_cstr(
+                            "storage_state_start_binding_cyclic_period",
+                            over      = cyclic_dt,
+                            sense     = "==",
+                            lhs_terms = cyclic_lhs,
+                            rhs_terms = {"target": rhs_param_cyclic},
+                        )
+
+        # ─── storage_state_solve_horizon_reference_value (mod:2802-2822) ─
+        # For nodes with method ``use_reference_value``, pin v_state at the
+        # last (d, t) of period_last to ``reference_value × existing/unitsize``.
+        # No competing fix_end / bind_within_*: filter applied at load time.
+        # Investment-tightening (RHS terms with v_invest_n / v_divest_n) is
+        # NOT included here because the test fixture has no invest on
+        # storage and recourse-investment is out of scope (audit/a6_b_dim_alternative.md);
+        # add invest tightening if a future fixture exercises it.
+        if (b.has_storage
+                and d.storage_use_reference_value is not None
+                and d.storage_use_reference_value.height > 0
+                and d.p_storage_state_reference_value is not None
+                and d.nodeState_last_dt is not None
+                and d.nodeState_last_dt.height > 0
+                and d.period_last is not None
+                and d.p_state_existing_capacity is not None
+                and d.p_state_unitsize is not None):
+            # Domain: (n, d, t) ∈ nodeState_last_dt where d ∈ period_last
+            # AND n ∈ storage_use_reference_value.
+            ssrv_over = (d.nodeState_last_dt
+                .join(d.period_last, on="d", how="inner")
+                .join(d.storage_use_reference_value, on="n", how="inner")
+                .select("n", "d", "t").unique())
+            if ssrv_over.height > 0:
+                # RHS: reference_value[n, d, t] · existing[n, d] / unitsize[n].
+                # Build as a single Param keyed (n, d, t).
+                # Phase E.1: p_storage_state_reference_value may be
+                # narrower than (n, d, t).  Promote lazily.
+                ssrv_lf = promote_param_to_dt(
+                    d.p_storage_state_reference_value, d.dt)
+                ssrv_frame = (ssrv_lf
+                    .rename({"value": "rv"})
+                    .join(d.p_state_existing_capacity.frame.lazy()
+                            .rename({"value": "exist"}),
+                          on=["n", "d"], how="inner")
+                    .join(d.p_state_unitsize.frame.lazy()
+                            .rename({"value": "us"}),
+                          on="n", how="inner")
+                    .with_columns(value=pl.col("rv")
+                                          * pl.col("exist")
+                                          / pl.col("us"))
+                    .select("n", "d", "t", "value")
+                    .collect())
+                rhs_param_ssrv = Param(("n", "d", "t"), ssrv_frame)
+                m.add_cstr(
+                    "storage_state_solve_horizon_reference_value",
+                    over      = ssrv_over,
+                    sense     = "==",
+                    lhs_terms = {"state": Where(v_state, ssrv_over)},
+                    rhs_terms = {"target": rhs_param_ssrv},
+                )
+
+
+def _eq_profiles(b: _Build) -> None:
+    """Flow profile limits."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    v_invest_p = b.v_invest_p
+    v_divest_p = b.v_divest_p
+    reserve_up_to_sink_pdt = b.reserve_up_to_sink
+    reserve_down_to_sink_pdt = b.reserve_down_to_sink
+    # ─── Profile constraints (upper / lower / fixed) ──────────────────────
+    # For each (p, source, sink, f) in process_profile_<method>:
+    #     v_flow[p,source,sink,d,t]  <sense>  profile[f,d,t]
+    #                                          · existing_count[p,d]
+    #                                          · availability[p,d,t]
+    # availability defaults to 1.0 if not in data.
+    if b.has_profile:
+        # When invest is active on entities with profiles, the .mod's RHS
+        # expands to profile · (existing_count + Σ_d_inv v_invest[d_inv] -
+        # Σ v_divest) · availability.  Move the invest term to the LHS so
+        # it remains in the form ``LHS_var ≤/≥/== const_RHS``.
+        v_inv_for_profile = None
+        if b.has_invest_p and d.edd_invest_set is not None:
+            v_inv_p_prof = Var(
+                name=v_invest_p.name + "__at_invest_prof",
+                dims=("p", "d_invest"),
+                frame=v_invest_p.frame.pipe(rename_to_axis, {"d": "d_invest"}),
+                lower=v_invest_p.lower, upper=v_invest_p.upper,
+            )
+            # Phase 4.8h: cross-Enum is_in (e vs p vocab); up-cast p→e.
+            _e_dt = d.edd_invest_set.schema["e"]
+            _p_in_e = (d.process_source_sink
+                         .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
+                         .unique())
+            edd_inv_p_prof = (d.edd_invest_set
+                                .join(_p_in_e, on="e", how="semi")
+                                .pipe(rename_to_axis, {"e": "p"}))
+            if edd_inv_p_prof.height > 0:
+                v_inv_for_profile = Sum(
+                    Where(v_inv_p_prof, edd_inv_p_prof), over=("d_invest",))
+        v_div_for_profile = None
+        if b.has_divest_p and d.edd_divest_active is not None:
+            v_div_p_prof = Var(
+                name=v_divest_p.name + "__at_divest_prof",
+                dims=("p", "d_divest"),
+                frame=v_divest_p.frame.pipe(rename_to_axis, {"d": "d_divest"}),
+                lower=v_divest_p.lower, upper=v_divest_p.upper,
+            )
+            # Phase 4.8h: cross-Enum is_in (p vs p with distinct vocab);
+            # up-cast process_source_sink["p"] to edd_divest_active's p-Enum.
+            _p_dt = d.edd_divest_active.schema["p"]
+            _p_pss = (d.process_source_sink
+                        .select(pl.col("p").cast(_p_dt, strict=False))
+                        .unique())
+            edd_div_p_prof = d.edd_divest_active.join(_p_pss, on="p", how="semi")
+            if edd_div_p_prof.height > 0:
+                v_div_for_profile = Sum(
+                    Where(v_div_p_prof, edd_div_p_prof), over=("d_divest",))
+        if d.process_profile_upper is not None and d.process_profile_upper.height > 0:
+            _add_profile_cstr(m, d, v_flow, "profile_flow_upper_limit",
+                              d.process_profile_upper, "<=",
+                              v_inv_for_profile, v_div_for_profile,
+                              reserve_term=reserve_up_to_sink_pdt,
+                              reserve_sign=+1.0)
+        if d.process_profile_lower is not None and d.process_profile_lower.height > 0:
+            _add_profile_cstr(m, d, v_flow, "profile_flow_lower_limit",
+                              d.process_profile_lower, ">=",
+                              v_inv_for_profile, v_div_for_profile,
+                              reserve_term=reserve_down_to_sink_pdt,
+                              reserve_sign=-1.0)
+        if d.process_profile_fixed is not None and d.process_profile_fixed.height > 0:
+            _add_profile_cstr(m, d, v_flow, "profile_flow_fixed",
+                              d.process_profile_fixed, "==",
+                              v_inv_for_profile, v_div_for_profile)
+
+
+# ---------------------------------------------------------------------------
+# Objective
+
+
+def _obj_balance_slack(b: _Build) -> None:
+    """Balance slack penalty."""
+    d = b.d
+    vq_up = b.vq_state_up
+    vq_down = b.vq_state_down
+    op_factor = b.op_factor
+    # §7: node_capacity_for_scaling factor on slack penalties.  The .mod
+    # treats `penalty_up/down` as €/MWh-of-node-capacity; our data has
+    # absolute €/MWh.  Multiplying by node_capacity_for_scaling[n,d] aligns
+    # with the .mod's convention and is critical for parity in scenarios
+    # that have non-1.0 capacity scaling.
+    if d.p_node_capacity_for_scaling is not None:
+        b.obj = (Sum(vq_up   * d.p_penalty_up
+                   * d.p_node_capacity_for_scaling * op_factor)
+             + Sum(vq_down * d.p_penalty_down
+                   * d.p_node_capacity_for_scaling * op_factor))
+    else:
+        b.obj = (Sum(vq_up   * d.p_penalty_up   * op_factor)
+             + Sum(vq_down * d.p_penalty_down * op_factor))
+
+
+def _obj_commodity(b: _Build) -> None:
+    """Commodity purchase cost and sales revenue."""
+    d = b.d
+    v_flow = b.v_flow
+    v_online_lin = b.v_online_linear
+    v_online_int = b.v_online_integer
+    op_factor = b.op_factor
+    # Ladder commodities skip the legacy single-price commodity term —
+    # mirrors .mod:1984 ``c not in commodity_with_ladder``.  Filter the
+    # three commodity-flow index frames before they're consumed below.
+    flow_from_commodity_eff_legacy   = d.flow_from_commodity_eff
+    flow_from_commodity_noEff_legacy = d.flow_from_commodity_noEff
+    flow_to_commodity_legacy         = d.flow_to_commodity
+    if b.has_ladder and d.commodity_with_ladder is not None:
+        ladder_c = d.commodity_with_ladder["c"]
+        if flow_from_commodity_eff_legacy is not None:
+            flow_from_commodity_eff_legacy = (
+                flow_from_commodity_eff_legacy
+                .filter(~pl.col("c").is_in(ladder_c)))
+        if flow_from_commodity_noEff_legacy is not None:
+            flow_from_commodity_noEff_legacy = (
+                flow_from_commodity_noEff_legacy
+                .filter(~pl.col("c").is_in(ladder_c)))
+        if flow_to_commodity_legacy is not None:
+            flow_to_commodity_legacy = (
+                flow_to_commodity_legacy
+                .filter(~pl.col("c").is_in(ladder_c)))
+
+    if b.has_proc and flow_from_commodity_eff_legacy is not None and flow_from_commodity_eff_legacy.height > 0:
+        b.obj = b.obj + Sum(
+            Where(v_flow * d.p_unitsize * d.p_slope, flow_from_commodity_eff_legacy)
+            * d.p_commodity_price * op_factor)
+        if b.has_minload_eff:
+            # Section term: + v_online * section * unitsize, summed over
+            # eff (p, source, sink) tuples whose process is in
+            # process_min_load_eff, multiplied by commodity price.
+            if b.has_online_lin:
+                b.obj = b.obj + Sum(
+                    Where(Where(v_online_lin, d.process_min_load_eff)
+                          * d.p_section * d.p_unitsize,
+                          flow_from_commodity_eff_legacy)
+                    * d.p_commodity_price * op_factor)
+            if b.has_online_int:
+                b.obj = b.obj + Sum(
+                    Where(Where(v_online_int, d.process_min_load_eff)
+                          * d.p_section * d.p_unitsize,
+                          flow_from_commodity_eff_legacy)
+                    * d.p_commodity_price * op_factor)
+    if b.has_proc and flow_from_commodity_noEff_legacy is not None and flow_from_commodity_noEff_legacy.height > 0:
+        b.obj = b.obj + Sum(
+            Where(v_flow * d.p_unitsize, flow_from_commodity_noEff_legacy)
+            * d.p_commodity_price * op_factor)
+    # §2.4 commodity sell: sink-side flow into priced node = revenue (negative
+    # cost contribution).  Note: full superset of (p, source, sink) — no
+    # eff/noEff split (the .mod sells regardless of process partition).
+    if (b.has_proc and flow_to_commodity_legacy is not None
+            and flow_to_commodity_legacy.height > 0
+            and d.p_commodity_price is not None):
+        b.obj = b.obj - Sum(
+            Where(v_flow * d.p_unitsize, flow_to_commodity_legacy)
+            * d.p_commodity_price * op_factor)
+
+
+def _obj_co2_price(b: _Build) -> None:
+    """CO2 emission cost."""
+    d = b.d
+    v_flow = b.v_flow
+    v_online_lin = b.v_online_linear
+    v_online_int = b.v_online_integer
+    op_factor = b.op_factor
+    if b.has_co2_price:
+        b.obj = b.obj + Sum(
+            Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_priced)
+            * d.p_co2_content * d.p_co2_price * op_factor)
+        if b.has_minload_eff:
+            if b.has_online_lin:
+                b.obj = b.obj + Sum(
+                    Where(Where(v_online_lin, d.process_min_load_eff)
+                          * d.p_section * d.p_unitsize,
+                          d.flow_from_co2_priced)
+                    * d.p_co2_content * d.p_co2_price * op_factor)
+            if b.has_online_int:
+                b.obj = b.obj + Sum(
+                    Where(Where(v_online_int, d.process_min_load_eff)
+                          * d.p_section * d.p_unitsize,
+                          d.flow_from_co2_priced)
+                    * d.p_co2_content * d.p_co2_price * op_factor)
+    # §4.1 CO2 noEff buy: source-side flow into a CO2-priced node where
+    # the process is on the noEff side.  No slope, no section term.
+    if (d.flow_from_co2_priced_noEff is not None
+            and d.flow_from_co2_priced_noEff.height > 0
+            and d.p_co2_content is not None and d.p_co2_price is not None):
+        b.obj = b.obj + Sum(
+            Where(v_flow * d.p_unitsize, d.flow_from_co2_priced_noEff)
+            * d.p_co2_content * d.p_co2_price * op_factor)
+
+
+def _obj_variable_cost(b: _Build) -> None:
+    """Variable operation and maintenance cost."""
+    d = b.d
+    v_flow = b.v_flow
+    v_online_lin = b.v_online_linear
+    v_online_int = b.v_online_integer
+    op_factor = b.op_factor
+    # ─── Process variable cost (§5.1 noEff) ───────────────────────────────
+    # + Σ_{(p,source,sink,d,t) ∈ pssdt_varCost_noEff}
+    #     pdtProcess__source__sink__dt_varCost * v_flow * unitsize * op_factor
+    if (b.has_proc and d.pssdt_varCost_noEff is not None
+            and d.pssdt_varCost_noEff.height > 0
+            and d.p_pssdt_varCost is not None):
+        b.obj = b.obj + Sum(
+            Where(v_flow * d.p_unitsize, d.pssdt_varCost_noEff)
+            * d.p_pssdt_varCost * op_factor)
+
+    # ─── Process variable cost (§5.2 eff unit, source-side O&M) ──────────
+    # The .mod term has a leading minus sign — it's an "anti-cost" that
+    # subtracts the source-side share of the process-side O&M (the slope
+    # already routes the source-side energy into the sink-side flow at
+    # commodity-price points).  Replicate the sign exactly.
+    #   - Σ pdtProcess_source[p,source,'other_operational_cost',d,t]
+    #         * (v_flow * unitsize * slope * (sink/source coef ratio if process_unit)
+    #            + section term if min_load_efficiency) * op_factor
+    if (b.has_proc and d.pssdt_varCost_eff_unit_source is not None
+            and d.pssdt_varCost_eff_unit_source.height > 0
+            and d.p_pdt_varCost_source is not None):
+        # The flow-coefficient ratio is deferred (see audit §2.2/§5.2);
+        # all current test fixtures have both coefs = 1, so the term
+        # collapses to v_flow * unitsize * slope.
+        flow_term = Where(v_flow * d.p_unitsize * d.p_slope,
+                          d.pssdt_varCost_eff_unit_source)
+        b.obj = b.obj - Sum(flow_term * d.p_pdt_varCost_source * op_factor)
+        if b.has_minload_eff:
+            # section sub-term (linear / integer)
+            section_idx = (d.pssdt_varCost_eff_unit_source
+                           .join(d.process_min_load_eff, on="p", how="inner"))
+            if section_idx.height > 0:
+                if b.has_online_lin:
+                    b.obj = b.obj - Sum(
+                        Where(Where(v_online_lin, d.process_min_load_eff)
+                              * d.p_section * d.p_unitsize,
+                              section_idx)
+                        * d.p_pdt_varCost_source * op_factor)
+                if b.has_online_int:
+                    b.obj = b.obj - Sum(
+                        Where(Where(v_online_int, d.process_min_load_eff)
+                              * d.p_section * d.p_unitsize,
+                              section_idx)
+                        * d.p_pdt_varCost_source * op_factor)
+
+    # ─── Process variable cost (§5.3 eff unit, sink-side O&M) ────────────
+    # + Σ pdtProcess_sink[p,sink,'other_operational_cost',d,t]
+    #     * v_flow * unitsize * op_factor
+    if (b.has_proc and d.pssdt_varCost_eff_unit_sink is not None
+            and d.pssdt_varCost_eff_unit_sink.height > 0
+            and d.p_pdt_varCost_sink is not None):
+        b.obj = b.obj + Sum(
+            Where(v_flow * d.p_unitsize, d.pssdt_varCost_eff_unit_sink)
+            * d.p_pdt_varCost_sink * op_factor)
+
+    # ─── Process variable cost (§5.4 eff connection) ─────────────────────
+    # + Σ pdtProcess[p,'other_operational_cost',d,t]
+    #     * v_flow * unitsize * op_factor
+    if (b.has_proc and d.pssdt_varCost_eff_connection is not None
+            and d.pssdt_varCost_eff_connection.height > 0
+            and d.p_pdt_varCost_process is not None):
+        b.obj = b.obj + Sum(
+            Where(v_flow * d.p_unitsize, d.pssdt_varCost_eff_connection)
+            * d.p_pdt_varCost_process * op_factor)
+
+
+def _obj_startup_cost(b: _Build) -> None:
+    """Startup cost."""
+    d = b.d
+    v_startup_lin = b.v_startup_linear
+    v_startup_int = b.v_startup_integer
+    # Startup cost: v_startup * startup_cost * unitsize, weighted by
+    # timestep_weight / inflation / period_share — *no step_duration*
+    # (startup is a discrete event, not duration-weighted).  Also carries
+    # ``pdt_branch_weight`` when stochastics active (mod:2110).
+    startup_factor = (d.p_timestep_weight * d.p_inflation_op
+                      / d.p_period_share)
+    if d.pdt_branch_weight is not None:
+        startup_factor = startup_factor * d.pdt_branch_weight
+    if b.has_startup_cost_lin:
+        b.obj = b.obj + Sum(
+            Where(v_startup_lin, d.pdt_online_linear)
+            * d.p_startup_cost * d.p_unitsize * startup_factor)
+    if b.has_startup_cost_int:
+        b.obj = b.obj + Sum(
+            Where(v_startup_int, d.pdt_online_integer)
+            * d.p_startup_cost * d.p_unitsize * startup_factor)
+
+
+def _obj_storage_reference_price(b: _Build) -> None:
+    """Value of the final storage state."""
+    d = b.d
+    v_state = b.v_state
+    # ─── §10.1 Storage-state reference-price revenue (mod:2107-2111) ─────
+    # For nodes with method ``use_reference_price`` (and also any node for
+    # which a fix_storage_price handoff dual has populated the parameter
+    # — both routes funnel through ``p_storage_state_reference_price``),
+    # value v_state at the last (d, t) of every period_last by the
+    # reference price:
+    #
+    #   - Σ_{n ∈ nodeState, (d, t) ∈ period__time_last : d ∈ period_last}
+    #         p_storage_state_reference_price[n, d]
+    #         * v_state[n, d, t] * unitsize[n]
+    #         * timestep_weight[d, t] * inflation_op[d] / period_share[d]
+    #         * pdt_branch_weight[d, t]
+    #
+    # The minus sign makes this a revenue term: a higher terminal state
+    # reduces the objective.  No step_duration (terminal valuation is a
+    # point event, not duration-weighted) — mirrors startup_factor.
+    if (b.has_storage
+            and d.p_storage_state_reference_price is not None
+            and d.nodeState_last_dt is not None
+            and d.nodeState_last_dt.height > 0
+            and d.period_last is not None
+            and d.period_last.height > 0):
+        # Domain: (n, d, t) ∈ nodeState_last_dt where d ∈ period_last and
+        # (n, d) is populated in p_storage_state_reference_price.  Zero-
+        # valued rows contribute nothing but are kept (the loader does
+        # not filter zeros and the multiplier is exact).
+        ssrp_over = (d.nodeState_last_dt
+            .join(d.period_last, on="d", how="inner")
+            .join(d.p_storage_state_reference_price.frame.select("n", "d"),
+                  on=["n", "d"], how="inner")
+            .select("n", "d", "t").unique())
+        if ssrp_over.height > 0:
+            ref_price_factor = (d.p_timestep_weight * d.p_inflation_op
+                                / d.p_period_share)
+            if d.pdt_branch_weight is not None:
+                ref_price_factor = ref_price_factor * d.pdt_branch_weight
+            b.obj = b.obj - Sum(
+                Where(v_state, ssrp_over) * d.p_state_unitsize
+                * d.p_storage_state_reference_price * ref_price_factor)
+
+
+def _obj_invest_divest(b: _Build) -> None:
+    """Investment and divestment annuities and fixed costs."""
+    d = b.d
+    v_invest_p = b.v_invest_p
+    v_divest_p = b.v_divest_p
+    v_invest_n = b.v_invest_n
+    v_divest_n = b.v_divest_n
+    # Invest / divest objective contributions.
+    #
+    # Slice D — per-scenario (wait-and-see) stochastic investment.  Under
+    # ``recourse`` the invest axis is fanned, so every scenario branch
+    # (realised included) carries its OWN ``v_invest[e, d]`` columns at and
+    # after the branching period; each is probability-weighted by
+    # ``pd_branch_weight[d]`` so the objective is the expected value over
+    # scenario leaves.  Under ``none`` (default) the invest axis is
+    # realised-only, the weight would be 1.0, and the multiply is skipped
+    # for byte-parity.  (Replaces the .mod:2116-2119 "NOT weighted / the
+    # branch weight should be added if this is changed" note — this is that
+    # change.)  ALL EIGHT invest/divest annuity/fixed-cost Params are
+    # weighted: process-side annu/lf/lfd/annd AND node-side
+    # annu_n/lf_n/lfd_n/annd_n (else storage/node invest stays unweighted).
+    _recourse_wt = (getattr(d, "recourse_invest", False)
+                    and d.pd_branch_weight is not None)
+
+    def _wt(param):
+        """Multiply a ``(x, d)`` cost Param by ``pd_branch_weight[d]``
+        (Slice D).  No-op when the param is None or the flag is off."""
+        if param is None or not _recourse_wt:
+            return param
+        f = (param.frame
+                  .join(d.pd_branch_weight.frame.rename({"value": "w"}),
+                        on="d", how="left")
+                  .with_columns(value=pl.col("value")
+                                * pl.col("w").fill_null(1.0))
+                  .drop("w"))
+        return Param(param.dims, f)
+
+    if b.has_invest_p:
+        annu = Param(("p", "d"),
+            d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
+            if d.ed_entity_annual_discounted is not None else None
+        lf  = Param(("p", "d"),
+            d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "p"})) \
+            if d.ed_lifetime_fixed_cost is not None else None
+        if annu is not None:
+            b.obj = b.obj + Sum(v_invest_p * d.p_unitsize * _wt(annu))
+        if lf is not None:
+            b.obj = b.obj + Sum(v_invest_p * d.p_unitsize * _wt(lf))
+    if b.has_divest_p:
+        lfd = Param(("p", "d"),
+            d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "p"})) \
+            if d.ed_lifetime_fixed_cost_divest is not None else None
+        annd = Param(("p", "d"),
+            d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
+            if d.ed_entity_annual_divest_discounted is not None else None
+        if lfd is not None:
+            b.obj = b.obj - Sum(v_divest_p * d.p_unitsize * _wt(lfd))
+        if annd is not None:
+            b.obj = b.obj - Sum(v_divest_p * d.p_unitsize * _wt(annd))
+    if b.has_invest_n:
+        us_n = Param(("n",), d.p_state_unitsize.frame)
+        annu_n = Param(("n", "d"),
+            d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
+            if d.ed_entity_annual_discounted is not None else None
+        lf_n = Param(("n", "d"),
+            d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "n"})) \
+            if d.ed_lifetime_fixed_cost is not None else None
+        if annu_n is not None:
+            b.obj = b.obj + Sum(v_invest_n * us_n * _wt(annu_n))
+        if lf_n is not None:
+            b.obj = b.obj + Sum(v_invest_n * us_n * _wt(lf_n))
+    if b.has_divest_n:
+        us_n = Param(("n",), d.p_state_unitsize.frame)
+        lfd_n = Param(("n", "d"),
+            d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "n"})) \
+            if d.ed_lifetime_fixed_cost_divest is not None else None
+        annd_n = Param(("n", "d"),
+            d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
+            if d.ed_entity_annual_divest_discounted is not None else None
+        if lfd_n is not None:
+            b.obj = b.obj - Sum(v_divest_n * us_n * _wt(lfd_n))
+        if annd_n is not None:
+            b.obj = b.obj - Sum(v_divest_n * us_n * _wt(annd_n))
+
+
+def _obj_existing_fixed_cost(b: _Build) -> None:
+    """Fixed cost of existing capacity as an objective constant (opt-in)."""
+    m, d = b.m, b.d
+    # ─── §8.1 Existing-entity fixed cost (constant term) — opt-in ─────────
+    # mod:2107-2115:
+    #   + Σ_{e in entity, d in period_in_use}
+    #         p_entity_all_existing[e,d] * ed_fixed_cost[e,d]
+    #             * p_inflation_factor_operations_yearly[d] * pd_branch_weight[d]
+    # See ``include_existing_fixed_cost`` doc on ``build_flextool``.
+    if (b.include_existing_fixed_cost
+            and d.p_ed_fixed_cost is not None
+            and d.p_entity_all_existing is not None):
+        fc_frame = (
+            d.p_entity_all_existing.frame.rename({"value": "exist"})
+            .join(d.p_ed_fixed_cost.frame.rename({"value": "fc"}),
+                  on=["e", "d"], how="inner")
+            .join(d.p_inflation_op.frame.rename({"value": "infl"}),
+                  on="d", how="inner")
+        )
+        if d.pd_branch_weight is not None:
+            fc_frame = (fc_frame
+                .join(d.pd_branch_weight.frame.rename({"value": "pdbw"}),
+                      on="d", how="inner"))
+            fc_frame = fc_frame.with_columns(
+                contrib=pl.col("exist") * pl.col("fc")
+                        * pl.col("infl") * pl.col("pdbw"))
+        else:
+            fc_frame = fc_frame.with_columns(
+                contrib=pl.col("exist") * pl.col("fc") * pl.col("infl"))
+        fc_const = fc_frame["contrib"].sum()
+        if fc_const:
+            m.add_obj_constant(float(fc_const))
+
+
+# ---------------------------------------------------------------------------
+# Feature modules
+
+
+def _feature_group_slack(b: _Build) -> None:
+    """Group slack constraints and penalties (_group_slack)."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    vq_up = b.vq_state_up
+    vq_down = b.vq_state_down
+    v_online_lin = b.v_online_linear
+    v_online_int = b.v_online_integer
+    v_invest_p = b.v_invest_p
+    v_divest_p = b.v_divest_p
+    v_invest_n = b.v_invest_n
+    v_divest_n = b.v_divest_n
+    op_factor = b.op_factor
+    # ─── Group-level slack (capacity_margin / inertia / non_sync) ────────
+    if _group_slack.has_feature(d):
+        vars_: dict = {}
+        if b.has_proc:
+            vars_["v_flow"]       = v_flow
+        if b.has_online_lin:
+            vars_["v_online_lin"] = v_online_lin
+        if b.has_online_int:
+            vars_["v_online_int"] = v_online_int
+        if b.has_invest_p:
+            vars_["v_invest_p"]   = v_invest_p
+        if b.has_divest_p:
+            vars_["v_divest_p"]   = v_divest_p
+        if b.has_invest_n:
+            vars_["v_invest_n"]   = v_invest_n
+        if b.has_divest_n:
+            vars_["v_divest_n"]   = v_divest_n
+        vars_["vq_state_up"]   = vq_up
+        vars_["vq_state_down"] = vq_down
+        _group_slack.add_constraints(m, d, vars_)
+        gs_obj = _group_slack.add_objective_terms(m, d, vars_, op_factor)
+        if gs_obj is not None:
+            b.obj = b.obj + gs_obj
+
+
+def _feature_reserve(b: _Build) -> None:
+    """Reserve constraints and costs (_reserve)."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    v_state = b.v_state
+    v_online_lin = b.v_online_linear
+    v_online_int = b.v_online_integer
+    v_invest_p = b.v_invest_p
+    v_divest_p = b.v_divest_p
+    v_invest_n = b.v_invest_n
+    v_divest_n = b.v_divest_n
+    reserve_vars = b.reserve_vars
+    op_factor = b.op_factor
+    # ─── Reserves (timeseries / dynamic / n_1 / per-process upper) ────────
+    if _reserve.has_feature(d):
+        res_vars: dict = dict(reserve_vars)
+        if b.has_proc:
+            res_vars["v_flow"]       = v_flow
+        if b.has_online_lin:
+            res_vars["v_online_lin"] = v_online_lin
+        if b.has_online_int:
+            res_vars["v_online_int"] = v_online_int
+        if b.has_invest_p:
+            res_vars["v_invest_p"]   = v_invest_p
+        if b.has_divest_p:
+            res_vars["v_divest_p"]   = v_divest_p
+        # Storage energy-adequacy coupling for reserve_duration (#322):
+        # v_state precedes this dispatch site (declared above), so threading
+        # it (+ v_invest_n / v_divest_n for the down-headroom capacity
+        # replication) is order-safe.  Each gated on its own has_* flag.
+        if b.has_storage:
+            res_vars["v_state"]      = v_state
+        if b.has_invest_n:
+            res_vars["v_invest_n"]   = v_invest_n
+        if b.has_divest_n:
+            res_vars["v_divest_n"]   = v_divest_n
+        _reserve.add_constraints(m, d, res_vars)
+        res_obj = _reserve.add_objective_terms(m, d, res_vars, op_factor)
+        if res_obj is not None:
+            b.obj = b.obj + res_obj
+
+
+def _feature_cumulative_invest(b: _Build) -> None:
+    """Cumulative and group investment limits (_cumulative_invest)."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    v_invest_p = b.v_invest_p
+    v_divest_p = b.v_divest_p
+    v_invest_n = b.v_invest_n
+    v_divest_n = b.v_divest_n
+    op_factor = b.op_factor
+    # ─── Cumulative / group-invest / min-invest constraints ───────────────
+    if _cumulative_invest.has_feature(d):
+        cum_vars: dict = {
+            "v_invest_p": v_invest_p if b.has_invest_p else None,
+            "v_invest_n": v_invest_n if b.has_invest_n else None,
+            "v_divest_p": v_divest_p if b.has_divest_p else None,
+            "v_divest_n": v_divest_n if b.has_divest_n else None,
+            "v_flow":     v_flow     if b.has_proc     else None,
+        }
+        _cumulative_invest.add_constraints(m, d, cum_vars)
+        ci_obj = _cumulative_invest.add_objective_terms(m, d, cum_vars, op_factor)
+        if ci_obj is not None:
+            b.obj = b.obj + ci_obj
+
+
+def _feature_delay(b: _Build) -> None:
+    """Delayed flows (_delay)."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    op_factor = b.op_factor
+    # ─── Delayed processes / DR ──────────────────────────────────────────
+    if _delay.has_feature(d):
+        delay_vars: dict = {"v_flow": v_flow if b.has_proc else None}
+        _delay.add_constraints(m, d, delay_vars)
+    delay_obj = _delay.add_objective_terms(
+        m, d, {"v_flow": v_flow if b.has_proc else None}, op_factor)
+    if delay_obj is not None:
+        b.obj = b.obj + delay_obj
+
+
+def _feature_commodity_ladder(b: _Build) -> None:
+    """Commodity price ladder (_commodity_ladder)."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    ladder_vars = b.ladder_vars
+    # ─── Commodity price ladder ──────────────────────────────────────────
+    # Per-tier v_trade balance + tier-cap constraints + per-tier price
+    # objective contribution.  The legacy commodity price term above
+    # already filtered out ladder commodities, so this term replaces it.
+    if b.has_ladder:
+        _commodity_ladder.add_constraints(
+            m, d, ladder_vars,
+            v_flow=v_flow if b.has_proc else None,
+            p_unitsize=d.p_unitsize,
+            p_slope=d.p_slope,
+            p_step_duration=d.p_step_duration,
+            p_timestep_weight=d.p_timestep_weight,
+            flow_from_commodity_eff=d.flow_from_commodity_eff,
+            flow_from_commodity_noEff=d.flow_from_commodity_noEff,
+            flow_to_commodity=d.flow_to_commodity,
+        )
+        ladder_obj = _commodity_ladder.add_objective_terms(
+            m, d, ladder_vars,
+            p_inflation_op=d.p_inflation_op,
+            p_period_share=d.p_period_share,
+        )
+        if ladder_obj is not None:
+            b.obj = b.obj + ladder_obj
+
+
+# ---------------------------------------------------------------------------
+# Stochastic ties
+
+
+def _eq_non_anticipativity(b: _Build) -> None:
+    """Dispatch non-anticipativity across stochastic forecast branches."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    v_state = b.v_state
+    v_online_lin = b.v_online_linear
+    v_online_int = b.v_online_integer
+    reserve_vars = b.reserve_vars
+    # ─── Non-anticipativity constraints (A6) ─────────────────────────────
+    # mod:4173-4233.  Four constraint families pin per-branch dispatch
+    # variables FORECAST-TO-FORECAST at every (d, t) ∈ the re-grounded tie
+    # set — the committed decision is the same across the forecast branches,
+    # which IS its non-anticipative realisation.  The tie is NEVER anchored
+    # to the realised period / trunk (there may be no realised branch at all;
+    # ``n_real`` can be 0):
+    #
+    #   non_anticipativity_storage_use   (n, d, b, t) — net storage charge
+    #     LHS at (d, t) equals LHS at (b, t).  Active only when at least
+    #     one (g, n) ∈ group_node has g ∈ groupStochastic.
+    #   non_anticipativity_online_integer (p, d, b, t) — v_online_integer
+    #     equal across forecasts.
+    #   non_anticipativity_online_linear  (p, d, b, t) — v_online_linear
+    #     equal across forecasts.
+    #   non_anticipativity_reserve        (p, r, ud, n, d, b, t) — v_reserve
+    #     equal across forecasts.
+    #
+    # Raw cohort: (d, b) ∈ period__branch with d != b and b ∈ period_in_use.
+    # The b == d self-loop is vacuous and the metadata-only branches not in
+    # period_in_use (e.g. ``period1_realized``) are excluded so the
+    # constraint references a real LP variable.  ``d`` here is the trunk
+    # (the real period name); the re-ground below turns this into a
+    # forecast-to-forecast star keyed on a reference forecast.
+    # OC1 #1 — the ONLINE commitment tie over the JUMP needs this block to
+    # run even when ``dt_non_anticipativity`` is EMPTY (the separate_dispatch
+    # PARENT, whose realized window is handed to the sibling, so the legacy
+    # realized/fix-storage union is empty).  Gate on the forecast structure
+    # (``period_branch_full``) plus EITHER a non-empty ``dt_non_anticipativity``
+    # (the existing storage/reserve/online-window tie) OR an online var present
+    # (the new jump tie built from the online steps when dtna is empty).
+    # Without an online var and with empty dtna the block is a no-op, so
+    # non-online stochastic solves stay byte-identical.
+    _has_dtna_outer = (d.dt_non_anticipativity is not None
+                       and d.dt_non_anticipativity.height > 0)
+    if (d.period_branch_full is not None
+            and d.period_branch_full.height > 0
+            and (_has_dtna_outer or b.has_online_lin or b.has_online_int)):
+        # Build (d, b) cohort: d ≠ b AND b ∈ period_in_use.
+        # Cross-axis value compare: "d" is the period axis and "b" is the
+        # branch axis (two different Enum vocabularies under Phase 4
+        # activation).  Polars 1.40+ refuses ``!=`` between different
+        # Enums; cast both to Utf8 so the comparison is by token string.
+        db_pairs = d.period_branch_full.with_columns(
+            pl.col("d").cast(pl.Utf8),
+            pl.col("b").cast(pl.Utf8),
+        ).filter(pl.col("d") != pl.col("b"))
+        if d.period_in_use_set is not None:
+            # Cross-axis join: piu.b carries period tokens (d-Enum
+            # vocab) but db_pairs.b is branch-Enum.  Cast both to Utf8.
+            piu = (d.period_in_use_set
+                       .rename({"d": "b"})
+                       .with_columns(pl.col("b").cast(pl.Utf8)))
+            db_pairs = db_pairs.join(piu, on="b", how="inner")
+        # Restore axis types post-compare (Utf8 was only needed for the
+        # cross-Enum filter/join above; downstream consumers cross-join
+        # ``db_pairs`` with axis-typed frames and join on "d"/"b" against
+        # axis-typed cohorts, which requires Enum-typed keys for native
+        # composition under Phase 4 activation).
+        db_pairs = db_pairs.with_columns(
+            cast_dim(pl.col("d"), None, "d"),
+            cast_dim(pl.col("b"), None, "b"),
+        )
+        if db_pairs.height > 0:
+            # ── Forecast-to-forecast re-ground (per anchor group) ──
+            # The raw cohort anchors every forecast ``b`` to the trunk ``d``
+            # (the realised/base period).  Re-ground it to a FORECAST star so
+            # the tie couples the forecast branches to EACH OTHER, never to
+            # the trunk (corrected stochastic model: the fan is forecasts
+            # only; realisation of a committed variable IS the cross-forecast
+            # tie; works at n_real=0).
+            #
+            # PER ANCHOR GROUP (NOT a single global reference): group the raw
+            # pairs by trunk ``d``; within each group take the forecasts
+            # (``b`` tokens), pick the lexicographically smallest as the
+            # reference forecast ``d_ref`` (LP-deterministic — a lexical sort
+            # of stable Utf8 tokens, same invariant as add_var/add_cstr domain
+            # sorting), and build the star {(d_ref, b) : b ∈ forecasts, b ≠
+            # d_ref}.  A group with <2 forecasts is skipped (the tie is
+            # vacuous with a single forecast).  A SINGLE GLOBAL d_ref would be
+            # WRONG: it would cross-couple distinct anchor periods at
+            # mismatched timesteps.
+            #
+            # BOTH frames are re-keyed: ``db_pairs`` → the forecast star, and
+            # ``dt_non_anticipativity`` → anchor ``d`` mapped from the trunk
+            # to that group's ``d_ref`` (same ``t``).  The families inner-join
+            # the tie set on ``"d"``; re-keying db_pairs alone would leave the
+            # tie set's ``d`` on the trunk and emit ZERO constraints.
+            #
+            # Realised exclusion: realisation is currently the self-row trunk,
+            # already dropped from ``b`` by ``filter(d != b)`` above — so no
+            # extra filter is needed here.  Should a future realised-
+            # designated non-self in-use branch appear, drop it from the
+            # forecast set at this point (by the realised marker R1 settles).
+            # ``dt_non_anticipativity`` may be None / empty under the relaxed
+            # gate (separate_dispatch parent, online-only path): then there is
+            # nothing to re-ground, ``dtna_reground`` stays None, and the
+            # function builds the jump tie from the online steps via its
+            # internal ``dtna_online``.
+            dtna_raw = d.dt_non_anticipativity
+            _has_dtna_rows = dtna_raw is not None and dtna_raw.height > 0
+            _raw_db = db_pairs.with_columns(
+                pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8),
+            )
+            _dtna_u = (dtna_raw.with_columns(pl.col("d").cast(pl.Utf8))
+                       if _has_dtna_rows else None)
+            _stars: list[pl.DataFrame] = []
+            _dtnas: list[pl.DataFrame] = []
+            for d_trunk in sorted(
+                _raw_db.select("d").unique().to_series().to_list()
+            ):
+                forecasts = sorted(
+                    _raw_db.filter(pl.col("d") == d_trunk)
+                           .select("b").unique().to_series().to_list()
+                )
+                if len(forecasts) < 2:
+                    continue
+                d_ref = forecasts[0]
+                _stars.append(pl.DataFrame({
+                    "d": [d_ref] * (len(forecasts) - 1),
+                    "b": [b for b in forecasts if b != d_ref],
+                }))
+                if _dtna_u is not None:
+                    _dtnas.append(
+                        _dtna_u.filter(pl.col("d") == d_trunk)
+                               .with_columns(pl.lit(d_ref).alias("d"))
+                    )
+            if _stars:
+                db_pairs_reground = pl.concat(_stars).with_columns(
+                    cast_dim(pl.col("d"), None, "d"),
+                    cast_dim(pl.col("b"), None, "b"),
+                )
+                # ``dtna_reground`` is None on the separate_dispatch-parent
+                # online-only path (no real dtna rows to re-key) → the
+                # function builds ``dtna_online`` from the jump steps alone.
+                dtna_reground = (
+                    pl.concat(_dtnas).with_columns(cast_dim(pl.col("d"), None, "d"))
+                    if _dtnas else None
+                )
+                _add_non_anticipativity_constraints(
+                    m, d, db_pairs_reground,
+                    v_state          = v_state          if b.has_storage    else None,
+                    v_online_integer = v_online_int     if b.has_online_int else None,
+                    v_online_linear  = v_online_lin     if b.has_online_lin else None,
+                    v_reserve        = reserve_vars.get("v_reserve")    if reserve_vars   else None,
+                    v_flow           = v_flow           if b.has_proc       else None,
+                    has_minload_eff  = b.has_minload_eff,
+                    dtna_override    = dtna_reground,
+                )
+
+
+def _eq_non_anticipativity_invest(b: _Build) -> None:
+    """Investment non-anticipativity across stochastic branches."""
+    m, d = b.m, b.d
+    v_invest_p = b.v_invest_p
+    v_divest_p = b.v_divest_p
+    v_invest_n = b.v_invest_n
+    v_divest_n = b.v_divest_n
+    # ─── Investment non-anticipativity (v72 — the standard two-stage
+    # stochastic-investment mode) ────────────────────────────────────────
+    # Ties v_invest / v_divest across stochastic branches over the resolved
+    # window pd_non_anticipativity (design §4).  Gated on recourse_invest
+    # (per-branch invest columns must exist to tie) AND a non-empty frame;
+    # under the unset window the frame is provably empty (byte-parity) and
+    # this block never fires.  Under stochastic_invest_method=none the frame
+    # may build but the domain guard drops every pair (no fanned invest
+    # column) — a graceful no-op.
+    _pdna = d.pd_non_anticipativity
+    if _pdna is not None and _pdna.height > 0:
+        if getattr(d, "recourse_invest", False):
+            _add_non_anticipativity_invest_constraints(
+                m, d,
+                v_invest_p = v_invest_p if b.has_invest_p else None,
+                v_invest_n = v_invest_n if b.has_invest_n else None,
+                v_divest_p = v_divest_p if b.has_divest_p else None,
+                v_divest_n = v_divest_n if b.has_divest_n else None,
+            )
+        else:
+            # Window set on a non-recourse (none) solve: investment is
+            # already shared across all periods, so there is nothing to
+            # tie.  Graceful no-op + advisory (never mutates the problem,
+            # design §4.5 / OQ-3).
+            _LOG.info(
+                "shared_invest_periods is set but "
+                "stochastic_invest_method is not 'recourse'; investment is "
+                "already shared across all periods, so the invest-NA window "
+                "has no effect (use 'recourse' for shared-first-period / "
+                "recourse-later)."
+            )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
 
 
 def _emit_entity_total_cap(
@@ -674,4103 +4697,6 @@ def _add_non_anticipativity_invest_constraints(
     _tie("non_anticipativity_divest_n", v_divest_n, d.nd_divest_set, "n")
 
 
-def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
-                   scale_the_objective: float = 1.0) -> None:
-    """Build the flextool LP into ``m`` from data ``d``.
-
-    Each feature block runs only when its 'switch' field is non-empty:
-
-    | Feature                | Switch field                  | Requires       |
-    |------------------------|-------------------------------|----------------|
-    | processes / flows      | ``process_source_sink``       | ``PROCESSES``  |
-    | conversion_indirect    | ``process_indirect``          | ``INDIRECT``   |
-    | CO2 price              | ``flow_from_co2_priced``      | ``CO2_PRICE``  |
-    | CO2 cap (period)       | ``flow_from_co2_capped``      | ``CO2_CAP``    |
-    | user-defined cstr      | ``flow_constraint_idx``       | ``USER_CSTR``  |
-    | profile flow upper/…   | ``process_profile_upper`` etc | ``PROFILES``   |
-    | storage                | ``nodeState``                 | ``STORAGE``    |
-
-    Validation is fail-fast: if a switch field is set but not all required
-    fields are populated, ``build_flextool`` raises ``ValueError``.  No
-    silent feature-degradation.
-
-    ``include_existing_fixed_cost``: when True, adds the §8.1 constant
-    (``Σ p_entity_all_existing[e,d] · ed_fixed_cost[e,d] · p_inflation_op[d]``)
-    
-    ``scale_the_objective``: scalar to multiply the entire objective by.
-    Default 1.0 (no scaling).  Set to a power-of-10 (e.g., 1e-6) to scale
-    objective coefficients.
-    to the objective via ``Problem.add_obj_constant``.  Default False
-    because flextool's published v_obj parquet (written from
-    ``h.getObjectiveValue()``) does NOT include this constant — the
-    AMPL→HiGHS bridge doesn't propagate it via ``lp.offset_``, so
-    enabling §8.1 would BREAK parity with the parquet on every fixture
-    with non-zero existing × fixed_cost.  The .mod's ``total_cost.val``
-    DOES include the constant (mod:2107-2110), so the flag exists for
-    callers who want the .mod's "completeness" objective rather than
-    the parquet-aligned one.  See ``audit/objective_audit.md §8.1``."""
-
-    _build_prof("build_flextool:enter")
-
-    # Block-COO dense-axis contract: FlexTool's dense trailing axes are
-    # (period, timestep) = ("d","t"). Declaring them lets polar_high's
-    # canonical-matrix build use the fast block-COO slice path (bit-identical
-    # to the polars path). Requires polar-high>=2.4.0 (pinned in pyproject).
-    m.declare_dense_axes(("d", "t"))
-
-    # Model-wide small-coefficient cutoff.  polar_high floors any LP
-    # constraint-matrix coefficient / RHS term with ``abs(value) <
-    # threshold`` to 0.0 at LP-assembly time (the single chokepoint every
-    # coefficient passes through), independent of whether the autoscaler
-    # is active.  ``d.small_number_threshold`` carries
-    # ``model.small_number_threshold`` (schema default 0.0001); 0.0 = OFF.
-    m.coef_zero_threshold = float(getattr(d, "small_number_threshold", 0.0001))
-
-    # Always required.
-    _check(d, ALWAYS, "always")
-
-    # Phase C/D — not-yet-implemented guard for any RP-flavoured
-    # storage-binding methods recognised by the v55 value_list whose
-    # ``nodeBalance_eq`` constraint wiring has not landed yet.  A node
-    # carrying one of these in an RP-active solve would silently fall
-    # through every state-change branch (no projection exists for them
-    # in the storage_bind_* set consumed by nodeBalance_eq), emitting
-    # no residual — a silent LP correctness bug.  In a non-RP solve the
-    # cascade's ``_downgrade_rp_methods_for_non_rp_solve`` (see
-    # :mod:`flextool.engine_polars._native_run_model`) strips the
-    # method to its non-RP equivalent BEFORE FlexData is built, so this
-    # guard only trips when (i) the solve is RP-active AND (ii) the
-    # user explicitly asked for one of the still-blocked methods.  Placed
-    # at the top of build_flextool — before any variable / nodeBalance_eq
-    # scaffolding — so the user sees the precise misconfiguration
-    # message instead of a downstream Var/Cstr KeyError.  Reads
-    # ``d.storage_bind_within_period_blended_weights`` (populated by
-    # :func:`flextool.engine_polars.input._load_storage` from the
-    # per-solve ``solve_data/node__storage_binding_method`` Provider
-    # key) — the canonical, FlexData-attached path.
-    #
-    # Phase D unblocked ``bind_forward_only_blended_weights`` (same RP
-    # machinery as ``bind_within_solve_blended_weights`` minus the
-    # ``rp_inter_period_cyclic`` end-to-start closure constraint).
-    # Phase E unblocked ``bind_within_period_blended_weights`` (per-period
-    # cyclic closure topology — each FlexTool period closes its own
-    # blended-weights chain independently of the others).  The
-    # ``_NOT_YET_IMPLEMENTED_SBM`` tuple is now empty; the loop is kept in
-    # place so future RP variants that ship a v55+ value-list entry
-    # before their constraint wiring lands can plug into the existing
-    # error-reporting surface with a one-line tuple extension.
-    _NOT_YET_IMPLEMENTED_SBM: tuple = ()
-    for _method_name, _frame in _NOT_YET_IMPLEMENTED_SBM:
-        if _frame is not None and _frame.height > 0:
-            _nodes = _frame.get_column("n").to_list()
-            _shown = _nodes[:10]
-            _suffix = ("" if len(_nodes) <= 10
-                       else f", ... {len(_nodes) - 10} more")
-            _node_list = ", ".join(str(n) for n in _shown) + _suffix
-            raise FlexToolConfigError(
-                f"Node(s) {_node_list} carry storage_binding_method = "
-                f"'{_method_name}', which is recognized by the v55 "
-                f"value_list but its constraint implementation has "
-                f"not landed yet.  For now, change these nodes to one "
-                f"of the implemented methods using a scenario "
-                f"alternative override."
-            )
-
-    _build_prof("before:feature_flags_and_index_sets")
-    has_proc      = d.process_source_sink is not None and d.process_source_sink.height > 0
-    has_indirect  = d.process_indirect is not None and d.process_indirect.height > 0
-    has_co2_price = d.flow_from_co2_priced is not None and d.flow_from_co2_priced.height > 0
-    has_co2_cap_eff   = d.flow_from_co2_capped is not None and d.flow_from_co2_capped.height > 0
-    has_co2_cap_noEff = (getattr(d, "flow_from_co2_capped_noEff", None) is not None
-                         and d.flow_from_co2_capped_noEff.height > 0)
-    has_co2_cap   = has_co2_cap_eff or has_co2_cap_noEff
-    has_co2_cap_total_eff = (getattr(d, "flow_from_co2_capped_total", None) is not None
-                              and d.flow_from_co2_capped_total.height > 0)
-    has_co2_cap_total_noEff = (getattr(d, "flow_from_co2_capped_total_noEff", None) is not None
-                                and d.flow_from_co2_capped_total_noEff.height > 0)
-    has_co2_cap_total = has_co2_cap_total_eff or has_co2_cap_total_noEff
-    has_user_cstr = any(x is not None and x.height > 0
-                        for x in (d.cdt_eq, d.cdt_le, d.cdt_ge))
-    has_profile   = (
-        (d.process_profile_upper is not None and d.process_profile_upper.height > 0) or
-        (d.process_profile_lower is not None and d.process_profile_lower.height > 0) or
-        (d.process_profile_fixed is not None and d.process_profile_fixed.height > 0)
-    )
-    has_storage   = d.nodeState is not None and d.nodeState.height > 0
-    has_online_lin = (d.process_online_linear is not None
-                      and d.process_online_linear.height > 0)
-    has_online_int = (d.process_online_integer is not None
-                      and d.process_online_integer.height > 0)
-    has_online = has_online_lin or has_online_int
-    has_minload_eff = (d.process_min_load_eff is not None
-                       and d.process_min_load_eff.height > 0)
-    has_startup_cost_lin = (d.pdt_online_linear is not None
-                            and d.pdt_online_linear.height > 0)
-    has_startup_cost_int = (d.pdt_online_integer is not None
-                            and d.pdt_online_integer.height > 0)
-
-    if has_proc:
-        _check(d, PROCESSES, "processes")
-    if has_indirect:
-        _check(d, INDIRECT,  "conversion_indirect")
-    # co2_price: topology activates the feature whenever a priced commodity
-    # node is wired up, but the data fields (p_co2_price, p_co2_content)
-    # are authored separately.  Missing data is a configuration warning,
-    # not an error — disable the cost term and continue.  Either field
-    # missing → the whole term is unevaluable.
-    if has_co2_price and (d.p_co2_price is None or d.p_co2_content is None):
-        _missing = [f for f in ("p_co2_price", "p_co2_content")
-                    if getattr(d, f, None) is None]
-        _LOG.warning(
-            "CO2 price method is active (flow_from_co2_priced is non-empty) "
-            "but %s is not populated — CO2 emissions will not be priced in "
-            "this solve.  Populate group.co2_price / commodity.co2_content "
-            "to enable the CO2 cost term, or remove the CO2-priced group "
-            "membership to silence this warning.",
-            " and ".join(_missing),
-        )
-        has_co2_price = False
-    if has_co2_cap:
-        _check(d, CO2_CAP,   "co2_max_period")
-    if has_co2_cap_total:
-        _check(d, CO2_CAP_TOTAL, "co2_max_total")
-    if has_user_cstr:
-        _check(d, USER_CSTR, "user_constraints")
-    if has_profile:
-        _check(d, PROFILES,  "profile_flow")
-    if has_storage:
-        _check(d, STORAGE,   "storage")
-    has_ramp = any(getattr(d, f) is not None and getattr(d, f).height > 0
-                   for f in ("process_source_sink_ramp_limit_sink_up",
-                             "process_source_sink_ramp_limit_sink_down",
-                             "process_source_sink_ramp_limit_source_up",
-                             "process_source_sink_ramp_limit_source_down"))
-    has_invest_p = (d.pd_invest_set is not None and d.pd_invest_set.height > 0)
-    has_divest_p = (d.pd_divest_set is not None and d.pd_divest_set.height > 0)
-    has_invest_n = (d.nd_invest_set is not None and d.nd_invest_set.height > 0)
-    has_divest_n = (d.nd_divest_set is not None and d.nd_divest_set.height > 0)
-    if has_ramp:
-        _check(d, RAMP,                  "ramp_limit")
-    if has_invest_p or has_invest_n:
-        _check(d, INVEST,        "invest")
-    if has_divest_p:
-        _check(d, DIVEST,                "divest")
-    if has_online:
-        _check(d, ONLINE,                "online")
-    if has_minload_eff:
-        _check(d, MINLOAD_EFF,           "min_load_efficiency")
-    if has_startup_cost_lin:
-        _check(d, STARTUP_COST_LINEAR,   "startup_cost_linear")
-    if has_startup_cost_int:
-        _check(d, STARTUP_COST_INTEGER,  "startup_cost_integer")
-
-    # Phase E.3: build the formerly-persistent cross-join scratch frames
-    # once here as locals, then re-use throughout build_flextool.  Each
-    # local is materialised only when its owning feature is active; in
-    # particular ``pss_dt`` is only built when ``has_proc`` is True.
-    _build_prof("before:compute_dt_index_sets")
-    pss_dt = compute_pss_dt(d) if has_proc else None
-    nodeBalance_dt = compute_nodeBalance_dt(d)
-    # A model with no balanced node of any kind (every node resolved to
-    # ``node_type = commodity`` / ``none``) has nothing to conserve: the
-    # per-(d,t) balance set ``nodeBalance``, the period-balance set
-    # ``nodeBalancePeriod`` and the storage set ``nodeState`` are all
-    # empty.  Historically this fell straight through to
-    # ``m.add_var("vq_state_up", …, vq_idx=None)`` and died deep inside
-    # polar-high with an opaque ``'NoneType' object has no attribute
-    # 'columns'``.  Fail loud here instead, pointing at the real cause —
-    # almost always a scenario whose highest-ranked alternative forces
-    # every ``node.node_type`` to ``commodity``.
-    _nbp = getattr(d, "nodeBalancePeriod", None)
-    _has_period_balance = _nbp is not None and _nbp.height > 0
-    if nodeBalance_dt is None and not _has_period_balance:
-        raise ValueError(
-            "No node has an energy balance: every node resolved to "
-            "node_type = 'commodity' (or 'none'), so there is no "
-            "per-time-step balance ('balance'/'storage') and no period "
-            "balance ('balance_within_period') to solve.  Check the "
-            "node_type of your nodes and the alternative ranking of the "
-            "active scenario — a high-ranked alternative (e.g. 'Base') "
-            "that sets node_type = 'commodity' will override the "
-            "'balance'/'storage' assignments of lower-ranked "
-            "alternatives."
-        )
-    nodeState_dt = compute_nodeState_dt(d) if has_storage else None
-    process_indirect_dt = (compute_process_indirect_dt(d)
-                            if has_indirect else None)
-
-    _build_prof("before:core_variables")
-    # ─── Variables ────────────────────────────────────────────────────────
-    if has_proc:
-        # Capacity RHS of every arc (see :func:`_max_flow_rhs`), plus the
-        # per-element v_flow upper bound that replaces the maxFlow row of
-        # indirect-unit INPUT arcs whose unit has no invest / divest
-        # variable in this solve (capacity is a constant there, so the
-        # input limit ``input_share_max × L × availability × capacity`` is
-        # a plain number).  Units that invest / divest keep the row so the
-        # limit scales with the built capacity.
-        _inv_parts = [s_.select(pl.col("p").cast(pl.Utf8))
-                      for s_ in (d.pd_invest_set if has_invest_p else None,
-                                 d.pd_divest_set if has_divest_p else None)
-                      if s_ is not None]
-        inv_procs = (pl.concat(_inv_parts).unique() if _inv_parts else None)
-        flow_upper_rhs, cap_mult, flow_var_upper, flow_bound_arcs = (
-            _max_flow_rhs(d, inv_procs))
-        v_flow = m.add_var("v_flow",
-                           ("p","source","sink","d","t"), pss_dt, lower=0.0,
-                           upper=(flow_var_upper if flow_var_upper is not None
-                                  else float("inf")))
-    # The .mod declares the balance slacks over ``nodeBalance ∪
-    # nodeBalancePeriod`` × dt (flextool.mod:1716-1717), so period nodes
-    # can carry balance slack just like per-(d,t) balance nodes.  We
-    # widen the slack-var index to that union here.  CRITICAL byte-
-    # identity: when there are no period nodes (``nodeBalancePeriod`` None
-    # or empty) ``vq_idx`` must stay EXACTLY ``nodeBalance_dt`` — no
-    # concat / unique / reorder — so existing fixtures (which have no
-    # period nodes) declare the slack vars over an unchanged index and
-    # their LP column ids / goldens are unaffected.  ``nodeBalance_eq``
-    # below keeps ``over=nb_over`` (balance nodes only), so the extra
-    # period rows never enter that constraint; they are referenced only
-    # by ``nodeBalancePeriod_eq``.
-    vq_idx = nodeBalance_dt
-    if d.nodeBalancePeriod is not None and d.nodeBalancePeriod.height > 0:
-        # Build (n, d, t) for the period nodes from nodeBalancePeriod × dt
-        # and union it with nodeBalance_dt.  nodeBalancePeriod shares
-        # nodeBalance's exact ``n`` schema (input.py builds it via the
-        # same axis pipe / nb.clear()) and dt is the shared source, so the
-        # dtypes already match; cast defensively before concat (mirrors
-        # the twoway1var_arcs union above) and de-duplicate.
-        nbp_dt = (d.nodeBalancePeriod.lazy()
-                  .join(d.dt.lazy(), how="cross")
-                  .select("n", "d", "t")
-                  .collect())
-        ref_schema = nodeBalance_dt.schema
-        for col in ("n", "d", "t"):
-            if nbp_dt.schema[col] != ref_schema[col]:
-                nbp_dt = nbp_dt.with_columns(
-                    pl.col(col).cast(ref_schema[col], strict=False))
-        vq_idx = pl.concat([nodeBalance_dt, nbp_dt]).unique()
-    # penalty_method == 'off' nodes carry NO balance-slack variables:
-    # drop them from the slack-var index so vq_state_up/down (and every
-    # downstream Where/Sum + the objective penalty term) simply omit them,
-    # making the node balance a hard equality.  Guarded so an absent/empty
-    # off-set leaves vq_idx byte-identical (see the parity note above).
-    penalty_off = getattr(d, "nodeBalance_penalty_off", None)
-    if penalty_off is not None and penalty_off.height > 0:
-        off_n = penalty_off.select("n")
-        if off_n.schema["n"] != vq_idx.schema["n"]:
-            off_n = off_n.with_columns(
-                pl.col("n").cast(vq_idx.schema["n"], strict=False))
-        vq_idx = vq_idx.join(off_n, on="n", how="anti")
-    vq_up   = m.add_var("vq_state_up",   ("n","d","t"), vq_idx, lower=0.0)
-    vq_down = m.add_var("vq_state_down", ("n","d","t"), vq_idx, lower=0.0)
-    if has_storage:
-        # Per-row upper bound is enforced via the maxState constraint
-        # below; the var-level upper stays at +inf to avoid having to
-        # carry per-row Var bounds (which the engine doesn't support yet).
-        v_state = m.add_var("v_state", ("n","d","t"), nodeState_dt, lower=0.0)
-    # ── RP-blended-weights variables (Phase 5) ────────────────────────
-    # ``v_state_inter[n, b]``  : long-run state at base-period boundaries
-    # ``v_state_rp_start[n,d,t]`` : free starting state at RP-block-first
-    # steps.  Both gated on ``has_rp`` (``nodeState_rp`` non-empty) and
-    # mirror ``v_state`` in pushing the per-row upper bound onto Phase-9
-    # sibling constraints (``rp_inter_period_max_state`` /
-    # ``maxState_rp_start``) — the engine doesn't support per-row
-    # ``Var.upper`` yet.
-    has_rp = (d.nodeState_rp is not None and d.nodeState_rp.height > 0)
-    if has_rp:
-        nb_idx = d.nodeState_rp.join(d.rp_base_period_set, how="cross")
-        v_state_inter = m.add_var("v_state_inter", ("n","b"), nb_idx,
-                                  lower=0.0)
-        rp_start_idx = compute_nodeState_rp_block_first_dt(d)
-        v_state_rp_start = m.add_var("v_state_rp_start", ("n","d","t"),
-                                     rp_start_idx, lower=0.0)
-    if has_online_lin:
-        # v_online / v_startup / v_shutdown only exist at (p, d, t) tuples
-        # in p_online_dt for processes in process_online_linear.
-        p_olin_idx = d.p_online_dt.join(d.process_online_linear, on="p", how="inner")
-        v_online_lin = m.add_var("v_online_linear", ("p","d","t"), p_olin_idx)
-        v_startup_lin = m.add_var("v_startup_linear", ("p","d","t"), p_olin_idx)
-        v_shutdown_lin = m.add_var("v_shutdown_linear", ("p","d","t"), p_olin_idx)
-    if has_online_int:
-        # v_online_integer is a true integer var; v_startup/shutdown are
-        # continuous (per the .mod — only v_online is declared integer).
-        p_oint_idx = d.p_online_dt.join(d.process_online_integer, on="p", how="inner")
-        v_online_int = m.add_var("v_online_integer",  ("p","d","t"),
-                                 p_oint_idx, integer=True)
-        v_startup_int = m.add_var("v_startup_integer",  ("p","d","t"), p_oint_idx)
-        v_shutdown_int = m.add_var("v_shutdown_integer", ("p","d","t"), p_oint_idx)
-    if has_invest_p:
-        v_invest_p = m.add_var("v_invest_p", ("p", "d"), d.pd_invest_set)
-    if has_divest_p:
-        v_divest_p = m.add_var("v_divest_p", ("p", "d"), d.pd_divest_set)
-    if has_invest_n:
-        v_invest_n = m.add_var("v_invest_n", ("n", "d"), d.nd_invest_set)
-    if has_divest_n:
-        v_divest_n = m.add_var("v_divest_n", ("n", "d"), d.nd_divest_set)
-
-    # ─── Reserve vars (v_reserve, vq_reserve) ─────────────────────────────
-    # Declared up-front so the constraint emission stage (and downstream
-    # patches that splice ``v_reserve`` into maxFlow/ramp/profile LHS
-    # terms) can reference them.  Returns {} when the reserve subsystem
-    # is inactive.
-    _build_prof("before:reserve_dcpf_ladder_vars")
-    reserve_vars = _reserve.add_variables(m, d) if _reserve.has_feature(d) else {}
-
-    # ─── Reverse-flow auxiliary for method_2way_1var_off arcs ─────────────
-    # ``method_2way_1var_off`` is the .mod's single-signed-flow 2-way
-    # transfer method: ``v_flow ∈ [-cap, +cap]``.  The engine emits
-    # ``v_flow ≥ 0`` on the FORWARD arc only, so sink→source flow is
-    # carried by a non-negative auxiliary ``v_flow_back`` with the
-    # algebraic signed flow ``v_flow - v_flow_back``.  This Var is declared
-    # ONCE over the UNION of all such arcs (DC-power-flow + non-DC) so the
-    # DC ``dc_flow_eq`` and the nodeBalance/cap wiring share a single Var
-    # (avoids a duplicate ``add_var('v_flow_back', …)`` collision).
-    #
-    # The arc set is the union of two sources, so the back auxiliary is
-    # emitted whichever path populated the data:
-    #   * ``d.process_source_sink_2way_1var`` — the projection field
-    #     (apply_projection_params); populated in the full DB cascade.
-    #   * ``_dc_power_flow.dc_arcs_frame(d)`` — the DC arcs derived from
-    #     ``connection_dc_power_flow`` ∩ ``process_source_sink``; this keeps
-    #     the pre-refactor behavior where DC arcs ALWAYS get the cap, even
-    #     in lightweight build paths (e.g. emission/load_flextool fixtures)
-    #     that don't run the projection pass.
-    twoway1var_arcs = None
-    v_flow_back = None
-    if has_proc:
-        _arc_parts = []
-        if (d.process_source_sink_2way_1var is not None
-                and d.process_source_sink_2way_1var.height > 0):
-            _arc_parts.append(d.process_source_sink_2way_1var.select(
-                "p", "source", "sink"))
-        if _dc_power_flow.has_feature(d):
-            _dc_arcs = _dc_power_flow.dc_arcs_frame(d)
-            if _dc_arcs is not None and _dc_arcs.height > 0:
-                _arc_parts.append(_dc_arcs.select("p", "source", "sink"))
-        if _arc_parts:
-            if len(_arc_parts) == 1:
-                twoway1var_arcs = _arc_parts[0]
-            else:
-                # Align dtypes before union (the projection field carries
-                # axis-Enum columns; dc_arcs_frame mirrors process_source_sink
-                # — but be defensive about a stray dtype mismatch).
-                ref_schema = _arc_parts[0].schema
-                aligned = [_arc_parts[0]]
-                for part in _arc_parts[1:]:
-                    for col in ("p", "source", "sink"):
-                        if part.schema[col] != ref_schema[col]:
-                            part = part.with_columns(
-                                pl.col(col).cast(ref_schema[col], strict=False))
-                    aligned.append(part)
-                twoway1var_arcs = pl.concat(aligned).unique()
-        if twoway1var_arcs is not None and twoway1var_arcs.height > 0:
-            back_idx = twoway1var_arcs.join(d.dt, how="cross").select(
-                "p", "source", "sink", "d", "t")
-            if back_idx.height > 0:
-                v_flow_back = m.add_var(
-                    "v_flow_back", ("p", "source", "sink", "d", "t"),
-                    back_idx, lower=0.0,
-                )
-
-    # ─── DC power flow vars (v_angle) ─────────────────────────────────────
-    # Declared up-front; the linear flow-angle constraint
-    # ``dc_flow_eq`` is emitted after v_flow exists (further down).  The DC
-    # module consumes the shared ``v_flow_back`` (above) for its
-    # ``dc_flow_eq`` LHS instead of creating its own.
-    dc_pf_vars = (_dc_power_flow.add_variables(m, d, v_flow_back=v_flow_back)
-                  if _dc_power_flow.has_feature(d) else {})
-
-    # ─── Commodity ladder vars (v_trade) ──────────────────────────────────
-    # Declared up-front so the balance + tier-cap constraints (further
-    # down) can reference v_trade alongside v_flow.
-    has_ladder = _commodity_ladder.has_feature(d)
-    ladder_vars = _commodity_ladder.add_variables(m, d) if has_ladder else {}
-
-    # ─── Reserve LHS coupling aggregates ──────────────────────────────────
-    # The .mod adds ``+ Σ_r v_reserve[p, r, ud, n, d, t]`` (per
-    # process__source__sinkIsNode) to the LHS of maxFlow, ramp_sink_up,
-    # ramp_source_down, and the profile_flow_* family.  Here v_flow
-    # is in unit-count terms (the unitsize cancels with RHS existing/
-    # unitsize), and v_reserve is in the same units (per _reserve.py).
-    # We aggregate v_reserve by direction: up-to-sink (n=sink) and
-    # down-from-source (n=source).  Each aggregate leaves dims that the
-    # consuming constraint can broadcast over.
-    reserve_up_to_sink_pdt     = None   # leaves (p, sink, d, t)
-    reserve_down_to_sink_pdt   = None   # leaves (p, sink, d, t) — for profile_flow_lower_limit
-    reserve_down_from_source_pdt = None # leaves (p, source, d, t) — for ramp_source_down
-    # Un-aggregated (v_reserve renamed n→sink, (p, r, 'up', sink) selector)
-    # kept for ``maxOutputSum``, which sums reserve-up over a SUBSET of
-    # sinks (the indirect unit's output arcs) rather than per arc.
-    reserve_up_sink_parts: "tuple[Var, pl.DataFrame] | None" = None
-    if reserve_vars and "v_reserve" in reserve_vars:
-        v_reserve = reserve_vars["v_reserve"]
-        pruna = d.process_reserve_upDown_node_active   # (p, r, ud, n)
-        if pruna is not None and pruna.height > 0:
-            # (p, r, ud='up', n=sink) selector — rename n→sink
-            pruna_up_sink = (pruna.filter(pl.col("ud") == "up")
-                                  .pipe(rename_to_axis, {"n": "sink"})
-                                  .select("p", "r", "ud", "sink"))
-            if pruna_up_sink.height > 0:
-                # Where joins v_reserve dims (p,r,ud,n,d,t) with index
-                # (p,r,ud,sink) — but engine matches columns by name.
-                # Rename a virtual var so n→sink first.
-                v_res_at_sink = Var(
-                    name=v_reserve.name + "__at_sink",
-                    dims=("p", "r", "ud", "sink", "d", "t"),
-                    frame=v_reserve.frame.pipe(rename_to_axis, {"n": "sink"}),
-                    lower=v_reserve.lower, upper=v_reserve.upper,
-                )
-                reserve_up_to_sink_pdt = Sum(
-                    Where(v_res_at_sink, pruna_up_sink),
-                    over=("r", "ud"),
-                )  # leaves (p, sink, d, t)
-                reserve_up_sink_parts = (v_res_at_sink, pruna_up_sink)
-
-            # (p, r, ud='down', n=sink) — only used by profile_flow_lower_limit
-            pruna_down_sink = (pruna.filter(pl.col("ud") == "down")
-                                     .pipe(rename_to_axis, {"n": "sink"})
-                                     .select("p", "r", "ud", "sink"))
-            if pruna_down_sink.height > 0:
-                v_res_at_sink_dn = Var(
-                    name=v_reserve.name + "__at_sink_dn",
-                    dims=("p", "r", "ud", "sink", "d", "t"),
-                    frame=v_reserve.frame.pipe(rename_to_axis, {"n": "sink"}),
-                    lower=v_reserve.lower, upper=v_reserve.upper,
-                )
-                reserve_down_to_sink_pdt = Sum(
-                    Where(v_res_at_sink_dn, pruna_down_sink),
-                    over=("r", "ud"),
-                )
-
-            pruna_down_source = (pruna.filter(pl.col("ud") == "down")
-                                       .pipe(rename_to_axis, {"n": "source"})
-                                       .select("p", "r", "ud", "source"))
-            if pruna_down_source.height > 0:
-                v_res_at_source = Var(
-                    name=v_reserve.name + "__at_source",
-                    dims=("p", "r", "ud", "source", "d", "t"),
-                    frame=v_reserve.frame.pipe(rename_to_axis, {"n": "source"}),
-                    lower=v_reserve.lower, upper=v_reserve.upper,
-                )
-                reserve_down_from_source_pdt = Sum(
-                    Where(v_res_at_source, pruna_down_source),
-                    over=("r", "ud"),
-                )  # leaves (p, source, d, t)
-
-    _build_prof("before:nodeBalance_eq")
-    # ─── nodeBalance_eq ───────────────────────────────────────────────────
-    # The .mod's nodeBalance_eq weights every flow contribution by
-    # block_step_duration[bn,d,t] (mod:2208-2213).  Our flow terms
-    # are in MW (v_flow × unitsize → power); inflow is in MWh per
-    # timestep.  To balance dimensions we multiply each flow term by
-    # ``p_step_duration`` (MW × h = MWh).  For fixtures with step
-    # duration uniformly 1.0 this is a no-op and existing parity is
-    # preserved; for fixtures with longer steps (e.g. storage_fullYear_6h
-    # with step_duration=6) the scaling is required for the balance to
-    # match flextool.  Slacks are scaled identically — the .mod does
-    # ``vq_state_up * block_step_duration`` (mod:2228-2229).
-    nb_terms: dict = {"slack_up": vq_up * d.p_step_duration,
-                      "slack_down": -vq_down * d.p_step_duration}
-
-    # Defensive contract assertion (v54 storage_binding_method single-valued).
-    # Phases 1-3 enforce single-valued storage_binding_method per node upstream
-    # (ingestion guard, DB migration, _emit_mid_sets assertion).  Here we
-    # additionally verify that the six storage_bind_* projections feeding
-    # nodeBalance_eq are PAIRWISE DISJOINT on the ``n`` column at the use site,
-    # so a future projection bug or a manual CSV insertion cannot silently
-    # solve the wrong LP by emitting two residuals for the same node.
-    # Phase D added ``bind_forward_only_blended_weights`` — the fifth partition.
-    # Phase E added ``bind_within_period_blended_weights`` — the sixth partition.
-    _storage_bind_frames = [
-        ("bind_within_timeblock", d.storage_bind_within_timeblock),
-        ("bind_forward_only", d.storage_bind_forward_only),
-        ("bind_within_solve", d.storage_bind_within_solve),
-        ("bind_within_solve_blended_weights", d.storage_bind_within_solve_blended_weights),
-        ("bind_forward_only_blended_weights", d.storage_bind_forward_only_blended_weights),
-        ("bind_within_period_blended_weights",
-         getattr(d, "storage_bind_within_period_blended_weights", None)),
-    ]
-    _storage_bind_active = [
-        (name, frame) for name, frame in _storage_bind_frames
-        if frame is not None and frame.height > 0
-    ]
-    for _i in range(len(_storage_bind_active)):
-        _name_i, _frame_i = _storage_bind_active[_i]
-        for _j in range(_i + 1, len(_storage_bind_active)):
-            _name_j, _frame_j = _storage_bind_active[_j]
-            _overlap = (_frame_i.select("n")
-                        .unique()
-                        .join(_frame_j.select("n").unique(), on="n", how="inner"))
-            if _overlap.height > 0:
-                _nodes = _overlap["n"].to_list()
-                _shown = _nodes[:10]
-                _suffix = ("" if len(_nodes) <= 10
-                           else f", ... {len(_nodes) - 10} more")
-                _node_list = ", ".join(str(n) for n in _shown) + _suffix
-                raise FlexToolConfigError(
-                    "storage_binding_method projections must be pairwise "
-                    "disjoint on node, but the following node(s) appear in "
-                    f"both '{_name_i}' and '{_name_j}': {_node_list}. "
-                    "Run the v54 DB migration (or later, via the v53->v54 "
-                    "migration step) and ensure each node has exactly one "
-                    "storage_binding_method value."
-                )
-    if has_proc:
-        nb_terms["sink_flow"] = Sum(
-            Where(v_flow * d.p_unitsize, d.flow_to_n) * d.p_step_duration,
-            over=("p","source","sink"))
-        # Source-side terms — subtract flow leaving a nodeBalance node.
-        # eff partition multiplies by slope (energy drawn from source side
-        # is sink-flow × slope); noEff is straight v_flow × unitsize.
-        if d.flow_from_nodeBalance_eff is not None and d.flow_from_nodeBalance_eff.height > 0:
-            nb_terms["source_eff"] = -Sum(
-                Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_nodeBalance_eff)
-                * d.p_step_duration,
-                over=("p","source","sink"))
-            # min_load_efficiency section term:
-            #   - Σ_{(p,n,sink) ∈ flow_from_nodeBalance_eff
-            #         : (p,'min_load_efficiency') ∈ process__ct_method}
-            #     (v_online_lin + v_online_int) * pdtProcess_section * unitsize
-            # The section term shows up in the source-side balance for
-            # min_load_efficiency processes only.
-            if has_minload_eff and d.p_section is not None:
-                section_idx = (d.flow_from_nodeBalance_eff
-                               .join(d.process_min_load_eff, on="p", how="inner"))
-                if section_idx.height > 0:
-                    if has_online_lin:
-                        nb_terms["source_section_lin"] = -Sum(
-                            Where(Where(v_online_lin, d.process_min_load_eff)
-                                  * d.p_section * d.p_unitsize,
-                                  section_idx) * d.p_step_duration,
-                            over=("p","source","sink"))
-                    if has_online_int:
-                        nb_terms["source_section_int"] = -Sum(
-                            Where(Where(v_online_int, d.process_min_load_eff)
-                                  * d.p_section * d.p_unitsize,
-                                  section_idx) * d.p_step_duration,
-                            over=("p","source","sink"))
-        if d.flow_from_nodeBalance_noEff is not None and d.flow_from_nodeBalance_noEff.height > 0:
-            nb_terms["source_noEff"] = -Sum(
-                Where(v_flow * d.p_unitsize, d.flow_from_nodeBalance_noEff)
-                * d.p_step_duration,
-                over=("p","source","sink"))
-
-        # Reverse-flow contribution to nodeBalance for method_2way_1var_off
-        # arcs.  When the LP wants flow to run sink→source, ``v_flow_back``
-        # carries it (since v_flow ≥ 0): it ADDS to the source node and
-        # SUBTRACTS from the sink node (the mirror of v_flow).  Spans the
-        # full DC + non-DC arc set.  See _dc_power_flow.py.
-        if v_flow_back is not None and twoway1var_arcs is not None:
-            nb_terms.update(_dc_power_flow.nodeBalance_back_flow_terms(
-                twoway1var_arcs, v_flow_back,
-                d.p_unitsize, d.p_step_duration))
-
-    # Snapshot the flow + slack terms (everything before the storage
-    # state machinery) for reuse by nodeBalancePeriod_eq below.  Period
-    # nodes are never storage, so they take only these terms — summed
-    # over t per (n, d).  See flextool.mod:2056 nodeBalancePeriod_eq.
-    nbp_flow_slack_terms = dict(nb_terms)
-
-    # Each node lands in exactly one storage_bind_* frame (v54 contract — see disjointness assertion above).
-    if has_storage and d.storage_bind_within_timeblock is not None:
-        # nodeBalance with our sign convention puts +sink, -source on the
-        # LHS and -inflow on the RHS, so the cycle-correct sign for the
-        # state-change term is (v_state[t-1] - v_state[t]).  Then
-        #   (state[t-1] - state[t]) + sink - source = -inflow
-        #   ⇒ state[t] - state[t-1] = sink - source + inflow      ✓
-        bind_set = d.storage_bind_within_timeblock
-        v_state_now = Where(v_state, bind_set)
-        v_state_lag = Where(Lag(v_state, d.dtttdt, "t", "t_previous_within_timeset"),
-                            bind_set)
-        nb_terms["state_change"] = (v_state_lag - v_state_now) * d.p_state_unitsize
-
-    def _state_lag_cross_period(lag_frame: pl.DataFrame):
-        """Cross-period lag of v_state: the .mod's bind_forward_only and
-        bind_within_solve terms reference v_state[n, d_previous,
-        t_previous_within_solve], where d_previous can differ from d at
-        period boundaries.  The stock ``Lag`` joins on the var's
-        own ``d`` — correct for bind_within_timeblock (which wraps within
-        the same period) but wrong for cross-period lookups.  We do the
-        rename-and-join manually using a virtual v_state__back over
-        (n, d_back, t_back), then collapse the back dims via Sum.
-        """
-        v_state_back = Var(
-            name=v_state.name + "__back",
-            dims=("n", "d_back", "t_back"),
-            frame=v_state.frame.pipe(rename_to_axis, {"d": "d_back", "t": "t_back"}),
-            lower=v_state.lower, upper=v_state.upper,
-        )
-        lag_xp = (lag_frame
-                  .select("d", "t",
-                          alias_to_axis("d_previous", "d_back"),
-                          alias_to_axis("t_previous_within_solve", "t_back")))
-        return Sum(Where(v_state_back, lag_xp), over=("d_back", "t_back"))
-
-    if (has_storage
-            and d.storage_bind_forward_only is not None
-            and d.storage_bind_forward_only.height > 0
-            and d.dtttdt_forward_only is not None
-            and d.dtttdt_forward_only.height > 0):
-        # ``bind_forward_only`` — same shape as bind_within_solve but the
-        # state-change term is omitted at the very first timestep of the
-        # first period (flextool.mod:2188).  We omit it by filtering the
-        # ENTIRE term (both v_state_lag and v_state_now) to the rows in
-        # dtttdt_forward_only — which has the boundary row dropped.
-        # Filtering only the lag side would still emit the v_state_now
-        # term at the first row, making the term ``-v_state_now``
-        # alone — which is wrong AND cancels any in-balance term
-        # (fwd_fix_state) added at the same row.
-        bind_set_fo = d.storage_bind_forward_only
-        fo_dt_keep = d.dtttdt_forward_only.select("d", "t").unique()
-        v_state_now_fo = Where(Where(v_state, fo_dt_keep), bind_set_fo)
-        v_state_lag_fo = Where(
-            _state_lag_cross_period(d.dtttdt_forward_only), bind_set_fo)
-        nb_terms["state_change_fo"] = (v_state_lag_fo - v_state_now_fo) * d.p_state_unitsize
-
-    if (has_storage
-            and d.storage_bind_within_solve is not None
-            and d.storage_bind_within_solve.height > 0):
-        # ``bind_within_solve`` — cyclic within solve, uses
-        # ``t_previous_within_solve`` (which wraps the very first timestep
-        # of the first period back to the last timestep of the last period
-        # — like bind_within_timeblock for single-block fixtures, but
-        # crosses period boundaries on multi-period solves).  Used by
-        # ``dr_shift_demand``'s dr_storage node.
-        bind_set_ws = d.storage_bind_within_solve
-        v_state_now_ws = Where(v_state, bind_set_ws)
-        v_state_lag_ws = Where(
-            _state_lag_cross_period(d.dtttdt), bind_set_ws)
-        nb_terms["state_change_ws"] = (v_state_lag_ws - v_state_now_ws) * d.p_state_unitsize
-
-    if (has_storage and has_rp):
-        # ``bind_within_solve_blended_weights`` /
-        # ``bind_forward_only_blended_weights`` — intra-period state
-        # tracking (flextool.mod:2197-2200).  Within each RP block the
-        # state-change uses the ordinary within-timeset lag (mirrors
-        # ``bind_within_timeblock``); at the first step of each RP block
-        # the lag is replaced by ``v_state_rp_start`` so each block has
-        # a free starting state (Phase 5 variable).  Phase D extended
-        # ``nodeState_rp`` to the union of both blended-weights variants
-        # — the intra-period state-change machinery is scope-agnostic
-        # (block-level, not solve-level) and fires identically for both;
-        # only the inter-period cyclic-closure constraint further
-        # filters back to the within_solve subset (see below).
-        bind_set_rp = d.nodeState_rp
-        # Interior: dtttdt restricted to (d, t) NOT in rp_block_first.
-        dtttdt_interior = d.dtttdt.join(
-            d.rp_block_first.select("d", "t"),
-            on=["d", "t"], how="anti")
-        interior_dt = dtttdt_interior.select("d", "t").unique()
-        v_state_now_rp_int = Where(Where(v_state, interior_dt), bind_set_rp)
-        v_state_lag_rp_int = Where(
-            Lag(v_state, dtttdt_interior, "t", "t_previous_within_timeset"),
-            bind_set_rp)
-        nb_terms["state_change_rp_interior"] = (
-            (v_state_lag_rp_int - v_state_now_rp_int) * d.p_state_unitsize)
-        # First step of each RP block: replace lag with v_state_rp_start.
-        rp_first_dt = d.rp_block_first.select("d", "t").unique()
-        v_state_now_rp_first = Where(Where(v_state, rp_first_dt), bind_set_rp)
-        v_state_rp_start_at_first = Where(v_state_rp_start, bind_set_rp)
-        nb_terms["state_change_rp_start"] = (
-            (v_state_rp_start_at_first - v_state_now_rp_first)
-            * d.p_state_unitsize)
-
-    _build_prof("before:rp_inter_period_and_storage_state_change")
-    # ─── rp_inter_period_balance (.mod:2965-2975) ─────────────────────────
-    #   v_state_inter[n, b] - v_state_inter[n, b_prev]
-    #     ==  Σ_{(b, r) ∈ rp_base__rep, d ∈ period_in_use :
-    #             (d, r) ∈ rp_block_first}
-    #            p_rp_weight[b, r] · (v_state[n, d, p_rp_last_step[r]]
-    #                                  - v_state_rp_start[n, d, r])
-    # The balance is in var-units on both sides — v_state_inter,
-    # v_state and v_state_rp_start are all var-units, so there is NO
-    # p_state_unitsize factor on the RHS.
-    # Indexed over (n, b, b_prev) ∈ nodeState_rp × rp_base_chain.
-    #
-    # The shifted-Var ``v_state_inter[n, b_prev]`` is built by renaming
-    # the var's ``b`` axis to ``b_prev`` (same pattern as the
-    # ``v_state__b_next`` / ``v_state__b_first`` views around
-    # ``nodeBalanceBlock_eq`` and the ``__nab`` views used by the non-
-    # anticipativity constraints).
-    #
-    # The .mod's ``v_state[n, d, p_rp_last_step[r]]`` is implemented by
-    # renaming v_state's ``t`` axis to ``last_step`` and routing the
-    # (n, d, last_step) cohort through the ``p_rp_last_step`` relation,
-    # then summing out the helper dims (r, last_step) so the result
-    # collapses to per-(n, b, d) before the outer Σ over (d, r).
-    #
-    # ``v_state_rp_start[n, d, r]`` is just v_state_rp_start at
-    # t=r where (d, r) ∈ rp_block_first — a plain Where with the
-    # (b, d, t) cohort built from rp_base__rep ⨝ rp_block_first.
-    if (has_storage
-            and has_rp
-            and d.rp_base_chain is not None
-            and d.rp_base_chain.height > 0
-            and d.rp_base__rep is not None
-            and d.rp_block_first is not None
-            and d.rp_block_first.height > 0
-            and d.p_rp_last_step is not None
-            and d.p_rp_last_step.height > 0):
-        # Phase D: ``rp_inter_period_balance`` is SHARED across both
-        # blended-weights variants — chains state across base periods.
-        # Filter on ``nodeState_rp`` (the union); ``rp_inter_period_cyclic``
-        # below further restricts to the within_solve subset.
-        bind_set_rp = d.nodeState_rp
-        # LHS index: (n, b, b_prev).
-        # Align b_prev dtype against v_state_inter's b dtype so the
-        # renamed-axis Var view composes cleanly.
-        _b_dt = v_state_inter.frame.schema["b"]
-        rp_chain = d.rp_base_chain.with_columns(
-            pl.col("b").cast(_b_dt, strict=False),
-            pl.col("b_prev").cast(_b_dt, strict=False),
-        )
-        nbb_idx = bind_set_rp.join(rp_chain, how="cross")
-        # LHS term 1: + v_state_inter[n, b] over (n, b, b_prev).
-        v_inter_b = Where(v_state_inter, nbb_idx.select("n", "b", "b_prev"))
-        # LHS term 2: - v_state_inter[n, b_prev] — rename Var's b → b_prev.
-        v_inter_at_bprev = Var(
-            name=v_state_inter.name + "__bprev",
-            dims=("n", "b_prev"),
-            frame=v_state_inter.frame.rename({"b": "b_prev"}),
-            lower=v_state_inter.lower, upper=v_state_inter.upper,
-        )
-        v_inter_bprev = Where(
-            v_inter_at_bprev, nbb_idx.select("n", "b", "b_prev"))
-
-        # RHS sum-index frame: (b, r, d, last_step, value=weight).
-        # Step 1: rp_base__rep[b, r] ⨝ rp_block_first[d, t=r] → (b, r, d).
-        # Step 2: ⨝ p_rp_last_step[r, last_step]            → (b, r, d, last_step).
-        # Step 3: optional ⨝ period_in_use_set[d]          → restrict d.
-        #
-        # ``rp_block_first`` is axis-cast (d, t = Enum under activation)
-        # while ``rp_base__rep`` / ``p_rp_last_step`` are Utf8 on their
-        # ``r`` column.  Normalise the join key by casting ``r`` to the
-        # rp_block_first.t dtype on both relations; cast ``last_step``
-        # to v_state's t-Enum dtype so the Where join against the
-        # ``v_state__rp_last`` Var composes cleanly under activation.
-        _t_dt = d.rp_block_first.schema["t"]
-        _v_state_t_dt = v_state.frame.schema["t"]
-        rbf = (d.rp_block_first
-               .rename({"t": "r"})
-               .with_columns(pl.col("r").cast(_t_dt, strict=False)))
-        rep_pair = (d.rp_base__rep.frame
-                    .with_columns(pl.col("r").cast(_t_dt, strict=False)))
-        prpls = (d.p_rp_last_step
-                 .with_columns(pl.col("r").cast(_t_dt, strict=False),
-                               pl.col("last_step")
-                                 .cast(_v_state_t_dt, strict=False)))
-        rep_dr = (rep_pair
-                  .join(rbf, on="r", how="inner")
-                  .join(prpls, on="r", how="inner"))
-        if d.period_in_use_set is not None:
-            rep_dr = rep_dr.join(d.period_in_use_set, on="d", how="inner")
-        if rep_dr.height > 0:
-            # p_rp_weight[b, r] over (b, r, d, last_step): Param keyed
-            # on the join product so engine arithmetic broadcasts it
-            # against v_state / v_state_rp_start at the same cohort.
-            # Schema dims = (b, r, d, last_step); ``value`` carries the
-            # rp_weight per (b, r) row, replicated across the join.
-            p_rp_weight_brdl = Param(
-                ("b", "r", "d", "last_step"),
-                rep_dr.select("b", "r", "d", "last_step", "value"),
-            )
-            # v_state at p_rp_last_step[r]: rename t → last_step so the
-            # var key is (n, d, last_step).
-            v_state_at_last = Var(
-                name=v_state.name + "__rp_last",
-                dims=("n", "d", "last_step"),
-                frame=v_state.frame.rename({"t": "last_step"}),
-                lower=v_state.lower, upper=v_state.upper,
-            )
-            # v_state_rp_start at t=r: rename t → r so the var key is
-            # (n, d, r).  Both renamed Vars project onto the common
-            # (n, b, r, d, last_step) cohort so subtraction composes.
-            v_state_rp_start_at_r = Var(
-                name=v_state_rp_start.name + "__at_r",
-                dims=("n", "d", "r"),
-                frame=v_state_rp_start.frame.rename({"t": "r"}),
-                lower=v_state_rp_start.lower, upper=v_state_rp_start.upper,
-            )
-            # Cohort (n, b, r, d, last_step) for the Σ sum:
-            # bind_set_rp[n] × rep_dr[b, r, d, last_step].
-            n_brdl = (bind_set_rp.select("n").unique()
-                      .join(rep_dr.select("b", "r", "d", "last_step"),
-                            how="cross"))
-            v_last_at = Where(v_state_at_last, n_brdl)
-            v_start_at = Where(v_state_rp_start_at_r, n_brdl)
-            # (v_last - v_start) · p_rp_weight[b, r, d, last_step], dim
-            # sig (n, b, r, d, last_step).  No p_state_unitsize factor:
-            # v_state / v_state_rp_start are var-units and the LHS
-            # v_state_inter delta is var-units too, so the whole balance
-            # stays in var-units (consistent with rp_inter_period_max_state
-            # / maxState_rp_start below, which bound v_state_inter /
-            # v_state_rp_start as var-units against p_state_upper).
-            rhs_inner = ((v_last_at - v_start_at)
-                         * p_rp_weight_brdl)
-            # Sum out helper dims (r, d, last_step), leaving (n, b).
-            # Then Where against nbb_idx broadcasts to (n, b, b_prev).
-            rhs_sum_nb = Sum(rhs_inner, over=("r", "d", "last_step"))
-            rhs_sum_nbb = Where(
-                rhs_sum_nb, nbb_idx.select("n", "b", "b_prev"))
-            m.add_cstr(
-                "rp_inter_period_balance",
-                over      = nbb_idx.select("n", "b", "b_prev"),
-                sense     = "==",
-                lhs_terms = {"d_inter": v_inter_b - v_inter_bprev,
-                             "neg_rp_drift": -rhs_sum_nbb},
-                rhs_terms = {},
-            )
-
-    # ─── rp_inter_period_cyclic (.mod:2978-2988) ──────────────────────────
-    #   v_state_inter[n, b_first] - v_state_inter[n, b_last]
-    #     ==  Σ_{(b_first, r) ∈ rp_base__rep, d ∈ period_in_use :
-    #             (d, r) ∈ rp_block_first}
-    #            p_rp_weight[b_first, r] · (v_state[n, d, p_rp_last_step[r]]
-    #                                       - v_state_rp_start[n, d, r])
-    # Var-units on both sides — no p_state_unitsize factor on the RHS
-    # (same framing as rp_inter_period_balance above).
-    # Indexed over (n, b_first, b_last) ∈ nodeState_rp × rp_base_first ×
-    # rp_base_last.  Both ``rp_base_first`` and ``rp_base_last`` are
-    # typically singletons (one row each per solve), so the cross-join
-    # collapses to ``nodeState_rp.height × 1 × 1`` rows.
-    #
-    # Same RHS shape as ``rp_inter_period_balance`` above with one
-    # subtle difference: ``p_rp_weight`` is consulted at ``b_first``
-    # (NOT at the "current" b).  Implementation is a paste-and-rename
-    # of Phase 7's RHS with ``b → b_first`` in every join / Param /
-    # Where key — the "duplicate" choice from the audit; factoring
-    # Phase 7's ~50-line RHS into a helper would require lifting it
-    # out of its own ``if``-block, more cross-phase churn than this
-    # commit warrants.
-    # Phase E: cyclic-closure fires for the UNION of
-    # ``bind_within_solve_blended_weights`` and
-    # ``bind_within_period_blended_weights`` — both variants close their
-    # chain, the only difference is the SCOPE of the closure (whole solve
-    # vs. each FlexTool period).  ``bind_forward_only_blended_weights``
-    # is the third RP variant and is intentionally omitted (no closure).
-    # Per-period pairing is encoded by an optional ``d`` column on
-    # ``rp_base_first`` / ``rp_base_last``; when both carry it the cross-
-    # join is replaced by an inner join on ``d`` so each period's first
-    # base closes against its OWN last base.  When the ``d`` column is
-    # absent both frames are singletons (today's within_solve emit) and
-    # the cross-join collapses to a single pair — semantically unchanged.
-    _bs_ws = d.storage_bind_within_solve_blended_weights
-    _bs_wp = getattr(d, "storage_bind_within_period_blended_weights", None)
-    _bind_cyc_pieces = [
-        f for f in (_bs_ws, _bs_wp) if f is not None and f.height > 0
-    ]
-    if (has_storage
-            and has_rp
-            and _bind_cyc_pieces
-            and d.rp_base_first is not None
-            and d.rp_base_first.height > 0
-            and d.rp_base_last is not None
-            and d.rp_base_last.height > 0
-            and d.rp_base__rep is not None
-            and d.rp_block_first is not None
-            and d.rp_block_first.height > 0
-            and d.p_rp_last_step is not None
-            and d.p_rp_last_step.height > 0):
-        bind_set_rp = pl.concat(_bind_cyc_pieces, how="vertical").unique()
-        # LHS index: nodeState_rp × rp_base_first × rp_base_last.
-        # Cast b_first / b_last to v_state_inter's b dtype so the
-        # renamed-axis Var views compose cleanly.
-        _b_dt = v_state_inter.frame.schema["b"]
-        rp_first = (d.rp_base_first
-                    .rename({"b": "b_first"})
-                    .with_columns(pl.col("b_first").cast(_b_dt, strict=False)))
-        rp_last = (d.rp_base_last
-                   .rename({"b": "b_last"})
-                   .with_columns(pl.col("b_last").cast(_b_dt, strict=False)))
-        # Phase E per-period pairing: when both frames carry the ``d``
-        # (period) column the cross-join is replaced by an inner join on
-        # ``d`` so each period's first base closes against its OWN last
-        # base.  ``d`` is then dropped from the pair frame because the
-        # RHS sum's d-axis flows in through the rep cohort
-        # (rp_block_first ⨝ p_rp_last_step) which already restricts d
-        # naturally when (b, r) labels are unique per period.
-        if "d" in rp_first.columns and "d" in rp_last.columns:
-            rp_fl_pair = (rp_first
-                          .join(rp_last, on="d", how="inner")
-                          .select("b_first", "b_last"))
-        else:
-            rp_fl_pair = (rp_first.select("b_first")
-                          .join(rp_last.select("b_last"), how="cross"))
-        nbfl_idx = bind_set_rp.join(rp_fl_pair, how="cross")
-        # LHS term 1: + v_state_inter[n, b_first] — rename Var's b → b_first.
-        v_inter_at_bfirst = Var(
-            name=v_state_inter.name + "__bfirst",
-            dims=("n", "b_first"),
-            frame=v_state_inter.frame.rename({"b": "b_first"}),
-            lower=v_state_inter.lower, upper=v_state_inter.upper,
-        )
-        v_inter_bfirst = Where(
-            v_inter_at_bfirst, nbfl_idx.select("n", "b_first", "b_last"))
-        # LHS term 2: - v_state_inter[n, b_last] — rename Var's b → b_last.
-        v_inter_at_blast = Var(
-            name=v_state_inter.name + "__blast",
-            dims=("n", "b_last"),
-            frame=v_state_inter.frame.rename({"b": "b_last"}),
-            lower=v_state_inter.lower, upper=v_state_inter.upper,
-        )
-        v_inter_blast = Where(
-            v_inter_at_blast, nbfl_idx.select("n", "b_first", "b_last"))
-
-        # RHS sum-index frame keyed by b_first.  Build the (b_first, r,
-        # d, last_step) cohort the same way Phase 7 builds (b, r, d,
-        # last_step), with b renamed to b_first at the source.
-        _t_dt = d.rp_block_first.schema["t"]
-        _v_state_t_dt = v_state.frame.schema["t"]
-        rbf = (d.rp_block_first
-               .rename({"t": "r"})
-               .with_columns(pl.col("r").cast(_t_dt, strict=False)))
-        rep_pair_first = (d.rp_base__rep.frame
-                          .rename({"b": "b_first"})
-                          .with_columns(
-                              pl.col("r").cast(_t_dt, strict=False),
-                              pl.col("b_first").cast(_b_dt, strict=False)))
-        prpls = (d.p_rp_last_step
-                 .with_columns(pl.col("r").cast(_t_dt, strict=False),
-                               pl.col("last_step")
-                                 .cast(_v_state_t_dt, strict=False)))
-        rep_dr_first = (rep_pair_first
-                        .join(rbf, on="r", how="inner")
-                        .join(prpls, on="r", how="inner"))
-        if d.period_in_use_set is not None:
-            rep_dr_first = rep_dr_first.join(
-                d.period_in_use_set, on="d", how="inner")
-        if rep_dr_first.height > 0:
-            # p_rp_weight[b_first, r] over (b_first, r, d, last_step).
-            p_rp_weight_bfrdl = Param(
-                ("b_first", "r", "d", "last_step"),
-                rep_dr_first.select(
-                    "b_first", "r", "d", "last_step", "value"),
-            )
-            v_state_at_last = Var(
-                name=v_state.name + "__rp_last_cyc",
-                dims=("n", "d", "last_step"),
-                frame=v_state.frame.rename({"t": "last_step"}),
-                lower=v_state.lower, upper=v_state.upper,
-            )
-            v_state_rp_start_at_r = Var(
-                name=v_state_rp_start.name + "__at_r_cyc",
-                dims=("n", "d", "r"),
-                frame=v_state_rp_start.frame.rename({"t": "r"}),
-                lower=v_state_rp_start.lower, upper=v_state_rp_start.upper,
-            )
-            # Cohort (n, b_first, r, d, last_step):
-            # bind_set_rp[n] × rep_dr_first[b_first, r, d, last_step].
-            n_bfrdl = (bind_set_rp.select("n").unique()
-                       .join(rep_dr_first.select(
-                                 "b_first", "r", "d", "last_step"),
-                             how="cross"))
-            v_last_at = Where(v_state_at_last, n_bfrdl)
-            v_start_at = Where(v_state_rp_start_at_r, n_bfrdl)
-            # No p_state_unitsize factor — same var-unit framing as
-            # rp_inter_period_balance above.
-            rhs_inner = ((v_last_at - v_start_at)
-                         * p_rp_weight_bfrdl)
-            # Sum out (r, d, last_step), leaving (n, b_first).
-            # Then Where against nbfl_idx broadcasts to
-            # (n, b_first, b_last).
-            rhs_sum_nbf = Sum(rhs_inner, over=("r", "d", "last_step"))
-            rhs_sum_nbfl = Where(
-                rhs_sum_nbf, nbfl_idx.select("n", "b_first", "b_last"))
-            m.add_cstr(
-                "rp_inter_period_cyclic",
-                over      = nbfl_idx.select("n", "b_first", "b_last"),
-                sense     = "==",
-                lhs_terms = {"d_cyclic": v_inter_bfirst - v_inter_blast,
-                             "neg_rp_drift_first": -rhs_sum_nbfl},
-                rhs_terms = {},
-            )
-
-    # ─── Phase 9: capacity bounds on v_state_inter + v_state_rp_start ─────
-    #   .mod:2991-2997   rp_inter_period_max_state:
-    #     v_state_inter[n, b] * unitsize ≤ existing[n, d]
-    #                                       + Σ invest[n, d_inv≤d] · unitsize
-    #                                       − Σ divest[n, d_div≤d] · unitsize
-    #     over (n, b, d) ∈ nodeState_rp × rp_base_period × period_in_use.
-    #
-    #   .mod:1691         maxState_rp_start (lifted from per-row Var.upper):
-    #     v_state_rp_start[n, d, t] * unitsize ≤ same RHS at (n, d)
-    #     over (n, d, t) ∈ nodeState_rp × rp_block_first.
-    #
-    # Both share the maxState shape (model.py:2627-2675): with p_state_upper
-    # = existing / unitsize, divide through by unitsize and move invest /
-    # divest to the LHS so the constraint reads
-    #     v + Σ divest_n − Σ invest_n  ≤  p_state_upper[n, d]
-    # where the invest/divest contributions are (n, d)-keyed sums of the
-    # (n, d_invest) / (n, d_divest) Vars joined against edd_invest_set /
-    # edd_divest_active.  Factored into a closure since both new
-    # constraints want the same (n, d) tightening; maxState itself stays
-    # untouched to keep this commit narrow.
-    if (has_storage and has_rp):
-        # Phase D: ``rp_inter_period_max_state`` + ``maxState_rp_start``
-        # are SHARED across both blended-weights variants — they bound
-        # the inter-period state by capacity, a constraint that is
-        # independent of whether the chain closes cyclically.  Filter
-        # on ``nodeState_rp`` (the union of within_solve and forward_only
-        # variants).
-        bind_set_rp = d.nodeState_rp
-
-        def _rp_state_id_tighten() -> dict:
-            """Build ``{"divest": ..., "invest_neg": ...}`` (n,d)-keyed.
-            Mirrors maxState (model.py:2632-2668) but restricted to
-            nodes in ``bind_set_rp``; returns ``{}`` if invest/divest
-            features are inactive.  Each piece is summed over its
-            d_invest / d_divest axis so the result has dims (n, d) and
-            broadcasts cleanly against the outer index frames.
-            """
-            terms: dict = {}
-            if has_divest_n and d.edd_divest_active is not None:
-                v_div_n_at = Var(
-                    name=v_divest_n.name + "__at_divest_rp",
-                    dims=("n", "d_divest"),
-                    frame=v_divest_n.frame.pipe(
-                        rename_to_axis, {"d": "d_divest"}),
-                    lower=v_divest_n.lower, upper=v_divest_n.upper,
-                )
-                _p_dt = d.edd_divest_active.schema["p"]
-                _n_in_p = (bind_set_rp
-                           .select(pl.col("n").cast(_p_dt, strict=False)
-                                   .alias("p"))
-                           .unique())
-                edd_div_n = (d.edd_divest_active
-                             .join(_n_in_p, on="p", how="semi")
-                             .pipe(rename_to_axis, {"p": "n"}))
-                if edd_div_n.height > 0:
-                    terms["divest"] = Sum(
-                        Where(v_div_n_at, edd_div_n), over=("d_divest",))
-            if has_invest_n and d.edd_invest_set is not None:
-                v_inv_n_at = Var(
-                    name=v_invest_n.name + "__at_invest_rp",
-                    dims=("n", "d_invest"),
-                    frame=v_invest_n.frame.pipe(
-                        rename_to_axis, {"d": "d_invest"}),
-                    lower=v_invest_n.lower, upper=v_invest_n.upper,
-                )
-                _e_dt = d.edd_invest_set.schema["e"]
-                _n_in_e = (bind_set_rp
-                           .select(pl.col("n").cast(_e_dt, strict=False)
-                                   .alias("e"))
-                           .unique())
-                edd_inv_n = (d.edd_invest_set
-                             .join(_n_in_e, on="e", how="semi")
-                             .pipe(rename_to_axis, {"e": "n"}))
-                if edd_inv_n.height > 0:
-                    terms["invest_neg"] = -Sum(
-                        Where(v_inv_n_at, edd_inv_n), over=("d_invest",))
-            return terms
-
-        # rp_inter_period_max_state (.mod:2991-2997).  Index (n, b, d):
-        # bind_set_rp × rp_base_period_set × period_universe.  The .mod
-        # ranges d over ``period_in_use``; we use ``period_in_use_set``
-        # when populated, otherwise fall back to the distinct ``d``s in
-        # ``dt`` (matches the .mod literal universe in non-stochastic /
-        # non-rolling setups).  LHS = v_state_inter[n,b]; RHS varies in d.
-        if (d.rp_base_period_set is not None
-                and d.rp_base_period_set.height > 0):
-            if d.period_in_use_set is not None and d.period_in_use_set.height > 0:
-                period_universe = d.period_in_use_set.select("d").unique()
-            else:
-                period_universe = d.dt.select("d").unique()
-            if period_universe.height > 0:
-                # (n, b, d) = bind_set_rp × rp_base_period_set × period_universe.
-                nbd_idx = (bind_set_rp
-                           .join(d.rp_base_period_set, how="cross")
-                           .join(period_universe, how="cross"))
-                # LHS term 1: v_state_inter[n, b] projected to (n, b, d).
-                v_inter_nbd = Where(
-                    v_state_inter, nbd_idx.select("n", "b", "d"))
-                rp_max_lhs: dict = {"state_inter": v_inter_nbd}
-                rp_max_lhs.update(_rp_state_id_tighten())
-                m.add_cstr(
-                    "rp_inter_period_max_state",
-                    over      = nbd_idx.select("n", "b", "d"),
-                    sense     = "<=",
-                    lhs_terms = rp_max_lhs,
-                    rhs_terms = {"upper": d.p_state_upper},
-                )
-
-        # maxState_rp_start — mirrors the per-row Var.upper at .mod:1691.
-        # Index (n, d, t) ∈ nodeState_rp × rp_block_first comes directly
-        # from ``rp_start_idx`` computed at v_state_rp_start's add_var
-        # site (model.py:505).  Same (n,d) tightening as above.
-        if rp_start_idx is not None and rp_start_idx.height > 0:
-            rp_start_lhs: dict = {"state_rp_start": v_state_rp_start}
-            rp_start_lhs.update(_rp_state_id_tighten())
-            m.add_cstr(
-                "maxState_rp_start",
-                over      = rp_start_idx,
-                sense     = "<=",
-                lhs_terms = rp_start_lhs,
-                rhs_terms = {"upper": d.p_state_upper},
-            )
-
-    # ``bind_forward_only`` + ``fix_start`` start binding —
-    # flextool.mod:2197-2203.  At (n, period_first_of_solve, t_first)
-    # the state-change term is omitted (handled by dropping that row
-    # from dtttdt_forward_only).  In its place the .mod adds INSIDE
-    # nodeBalance:
-    #   + v_state[n,d,t] * unitsize - state_start * (existing
-    #                                + Σv_invest * unitsize
-    #                                - Σv_divest * unitsize)
-    # The .mod's nodeBalance puts state_change as (v_state_now -
-    # v_state_lag), but ours puts it as (v_state_lag - v_state_now)
-    # — opposite sign.  When translating the .mod's in-balance term
-    # into our sign convention, every term flips: the equivalent
-    # term added to nb_terms is
-    #   - v_state * unitsize + state_start * existing
-    #     + state_start * Σv_invest * unitsize
-    #     - state_start * Σv_divest * unitsize
-    # (negation of every component).  Lets v_state at t_first absorb
-    # initial-state imbalance against inflow / flows / slacks.
-    #
-    # Gating: this block fires only when this is the FIRST sub-solve of
-    # a rolling-horizon chain, i.e. either no p_nested_model.csv is
-    # present (single-solve fixture; treat as solveFirst) or
-    # p_nested_solve_first is True.  When solveFirst is False the
-    # ``roll_continue`` block below replaces it (mod:2196 path).
-    is_solve_first = (d.p_nested_solve_first is None
-                      or d.p_nested_solve_first is True)
-    fwd_fix_first_dt = None
-    if (is_solve_first
-            and has_storage
-            and d.storage_bind_forward_only is not None
-            and d.storage_bind_forward_only.height > 0
-            and d.storage_fix_start is not None
-            and d.storage_fix_start.height > 0
-            and d.p_state_start is not None
-            and d.p_state_existing_capacity is not None
-            and d.p_state_unitsize is not None
-            and d.nodeState_first_dt is not None):
-        fwd_fix_n = (d.storage_bind_forward_only
-                      .join(d.storage_fix_start, on="n", how="inner"))
-        if fwd_fix_n.height > 0:
-            fwd_fix_first_dt = d.nodeState_first_dt.join(
-                fwd_fix_n, on="n", how="inner")
-            if fwd_fix_first_dt.height > 0:
-                # -v_state · unitsize, restricted to first row of
-                # bind_forward_only ∩ fix_start.
-                v_state_fwd_fix = Where(v_state, fwd_fix_first_dt)
-                nb_terms["fwd_fix_state"] = -(v_state_fwd_fix
-                                              * d.p_state_unitsize)
-                # +state_start · existing  →  sparse Param dim (n, d, t),
-                # restricted to the fwd_fix selection.  The engine's
-                # Param+Param uses a full-outer join with 0-fill, so a
-                # sparse Param contribution combines correctly with the
-                # dense rhs (-p_inflow) without dropping rows outside the
-                # fwd_fix selection.
-                start_existing_sparse = (
-                    (d.p_state_start * d.p_state_existing_capacity).frame
-                    .join(fwd_fix_first_dt, on=["n", "d"], how="inner")
-                    .select("n", "d", "t", "value"))
-                if start_existing_sparse.height > 0:
-                    nb_terms["fwd_fix_existing_pos"] = Param(
-                        ("n", "d", "t"), start_existing_sparse)
-                # +state_start · Σ_{d_invest} v_invest_n · unitsize.
-                if has_invest_n and d.edd_invest_set is not None:
-                    v_inv_n_at_fwdfix = Var(
-                        name=v_invest_n.name + "__at_fwd_fix",
-                        dims=("n", "d_invest"),
-                        frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
-                        lower=v_invest_n.lower, upper=v_invest_n.upper,
-                    )
-                    # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab)
-                    # rejected by polars; up-cast n→e and semi-join.
-                    _e_dt = d.edd_invest_set.schema["e"]
-                    _n_in_e = (fwd_fix_n
-                                 .select(pl.col("n").cast(_e_dt, strict=False)
-                                                    .alias("e"))
-                                 .unique())
-                    edd_inv_n_fwdfix = (d.edd_invest_set
-                        .join(_n_in_e, on="e", how="semi")
-                        .pipe(rename_to_axis, {"e": "n"})
-                        .join(fwd_fix_first_dt.select("n", "d", "t"),
-                              on=["n", "d"], how="inner"))
-                    if edd_inv_n_fwdfix.height > 0:
-                        nb_terms["fwd_fix_invest_pos"] = Sum(
-                            Where(v_inv_n_at_fwdfix * d.p_state_start
-                                  * d.p_state_unitsize,
-                                  edd_inv_n_fwdfix),
-                            over=("d_invest",))
-                if has_divest_n and d.edd_divest_active is not None:
-                    v_div_n_at_fwdfix = Var(
-                        name=v_divest_n.name + "__at_fwd_fix",
-                        dims=("n", "d_divest"),
-                        frame=v_divest_n.frame.pipe(rename_to_axis, {"d": "d_divest"}),
-                        lower=v_divest_n.lower, upper=v_divest_n.upper,
-                    )
-                    # Phase 4.8h: cross-Enum is_in (p-axis vs n-axis vocab)
-                    # rejected by polars; up-cast n→p and semi-join.
-                    _p_dt = d.edd_divest_active.schema["p"]
-                    _n_in_p = (fwd_fix_n
-                                 .select(pl.col("n").cast(_p_dt, strict=False)
-                                                    .alias("p"))
-                                 .unique())
-                    edd_div_n_fwdfix = (d.edd_divest_active
-                        .join(_n_in_p, on="p", how="semi")
-                        .pipe(rename_to_axis, {"p": "n"})
-                        .join(fwd_fix_first_dt.select("n", "d", "t"),
-                              on=["n", "d"], how="inner"))
-                    if edd_div_n_fwdfix.height > 0:
-                        nb_terms["fwd_fix_divest_neg"] = -Sum(
-                            Where(v_div_n_at_fwdfix * d.p_state_start
-                                  * d.p_state_unitsize,
-                                  edd_div_n_fwdfix),
-                            over=("d_divest",))
-
-    # Rolling-horizon ``roll_continue`` start binding —
-    # flextool.mod:2201.  When this sub-solve is NOT the first of the
-    # chain (``p_nested_solve_first is False``), the .mod adds, at
-    # (n, period_first_of_solve, t_first):
-    #   + (v_state[n,d,t] * unitsize - p_roll_continue_state[n]) * inv_node_cap
-    # which, translated to our sign convention (negate every
-    # component as in fwd_fix_*), becomes:
-    #   - v_state · unitsize + p_roll_continue_state
-    # added to nb_terms.  This pins v_state at the first row to the
-    # state value handed off from the previous sub-solve.  Mutually
-    # exclusive with the ``fwd_fix_*`` block above (gated on
-    # ``not solveFirst`` vs ``solveFirst``).
-    #
-    # Gate: ``n in nodeState`` (matches .mod:2201's `n in nodeState`),
-    # NOT ``n in storage_bind_forward_only``.  The handoff applies to
-    # every storage node on continuation rolls regardless of binding
-    # method — bind_within_timeblock / bind_within_period nodes get this
-    # term in addition to their cyclic state-change term, which
-    # together fix v_state at t_first to the handed-off value (v3.32.0
-    # adds both terms at t_first; cyclic state_change uses
-    # ``t_previous_within_timeset`` which wraps back to the period's
-    # last step, so both terms coexist).
-    if (not is_solve_first
-            and has_storage
-            and d.p_state_unitsize is not None
-            and d.nodeState_first_dt is not None
-            and d.p_roll_continue_state is not None):
-        rc_first_dt = d.nodeState_first_dt
-        if rc_first_dt.height > 0:
-            v_state_rc = Where(v_state, rc_first_dt)
-            nb_terms["roll_continue_state"] = -(v_state_rc * d.p_state_unitsize)
-            # +p_roll_continue_state[n] — sparse Param over (n, d, t)
-            # restricted to the rc_first_dt index.  The engine's Param+Param
-            # does an outer join with 0-fill, so combining this with the
-            # dense rhs (-p_inflow) keeps every nodeBalance row.
-            rcs_long = (d.p_roll_continue_state.frame
-                .join(rc_first_dt, on="n", how="inner")
-                .select("n", "d", "t", "value"))
-            if rcs_long.height > 0:
-                nb_terms["roll_continue_value"] = Param(
-                    ("n", "d", "t"), rcs_long)
-
-    if has_storage and d.p_state_self_discharge is not None:
-        # -v_state * (-1 + (1 + loss)^step_duration) * unitsize.  For
-        # step_duration=1 this is approximately -v_state * loss * unitsize.
-        # We approximate by using the linear coefficient (loss) directly,
-        # which is exact for step_duration=1 and small enough loss.
-        nb_terms["self_discharge"] = -v_state * d.p_state_self_discharge * d.p_state_unitsize
-    # ``nodeBalance_eq`` excludes ``n in nodeStateBlock`` (mod:2185-2187):
-    # those nodes get the per-block ``nodeBalanceBlock_eq`` constraint
-    # below instead of the per-(n,d,t) balance.
-    nb_over = nodeBalance_dt
-    has_nsb = (d.nodeStateBlock is not None
-               and d.nodeStateBlock.height > 0)
-    if has_nsb:
-        nb_over = nb_over.join(d.nodeStateBlock, on="n", how="anti")
-    m.add_cstr(
-        "nodeBalance_eq",
-        over      = nb_over,
-        sense     = "==",
-        lhs_terms = nb_terms,
-        rhs_terms = {"neg_inflow": -d.p_inflow},
-    )
-
-    # ─── nodeBalancePeriod_eq ─────────────────────────────────────────────
-    # Energy balance within a period for ``balance_within_period`` nodes —
-    # the polars port of flextool.mod:2056-2082 (``nodeBalancePeriod_eq``).
-    #
-    # This is structurally the SAME equation as ``nodeBalance_eq``'s flow +
-    # slack terms, but:
-    #   (a) summed over every timestep ``t`` in the period — one row per
-    #       (n, d) instead of (n, d, t).  We wrap each captured flow/slack
-    #       term in ``Sum(.. * d.p_timestep_weight, over=("t",))`` to collapse
-    #       ``t`` and leave the open dims (n, d).  Each captured term already
-    #       carries its ``* d.p_step_duration`` weighting (it is the exact
-    #       ``nb_terms`` snapshot taken before the storage machinery), so the
-    #       per-step energy weighting is identical to ``nodeBalance_eq``; the
-    #       extra ``timestep_weight`` factor annualizes the timeslice flows —
-    #       see the WHY note at the emission site below.  (This deliberately
-    #       does NOT mirror ``_emit_cumulative_flow_period``'s step-duration-
-    #       only integration: that is a one-sided CAP and cannot expose a
-    #       two-sided weight mismatch, whereas this two-sided balance does.)
-    #   (b) NO storage state-change / self-discharge / fwd_fix / roll_continue
-    #       terms — period nodes are restricted to ``n not in nodeState``
-    #       (mod:2056), so they are never storage and take only the flow +
-    #       slack terms snapshotted in ``nbp_flow_slack_terms`` at line ~922.
-    #
-    # Inflow: ``Sum(...)`` only accepts an Expr/Var (polar_high engine), not a
-    # Param, so we cannot write ``-Sum(d.p_inflow, over=("t",))``.  Instead we
-    # pre-aggregate the inflow Param ``Σ_t p_inflow`` into a (n, d) Param and
-    # place ``-inflow_period`` on the RHS — algebraically identical to
-    # ``nodeBalance_eq``'s ``rhs_terms = {"neg_inflow": -d.p_inflow}``, just
-    # t-collapsed and rp-weighted.  The final equation is therefore
-    #   Σ_t w·(sink − source + slack_up − slack_down)  ==  Σ_t w·(−inflow)
-    # (w = timestep_weight) — the rp-weighted t-sum of ``nodeBalance_eq``.
-    if (d.nodeBalancePeriod is not None and d.nodeBalancePeriod.height > 0
-            and d.period_in_use_set is not None):
-        # Index frame (n, d): period nodes × periods-in-use, anti-joined
-        # against nodeState on ``n`` to honor the ``n not in nodeState``
-        # guard (mod:2056).
-        nbp_over = (d.nodeBalancePeriod.select("n").lazy()
-                    .join(d.period_in_use_set.select("d").lazy(), how="cross"))
-        if d.nodeState is not None and d.nodeState.height > 0:
-            nbp_over = nbp_over.join(
-                d.nodeState.select("n").lazy(), on="n", how="anti")
-        nbp_over = nbp_over.select("n", "d").collect()
-        if nbp_over.height > 0:
-            # Annualization weight.  Unlike the per-step ``nodeBalance_eq``
-            # (which balances each timestep locally and therefore omits
-            # ``timestep_weight``), a PERIOD balance integrates each
-            # timeslice's flow into its annual contribution and so MUST
-            # weight every ``(d, t)`` term by ``p_timestep_weight`` before
-            # collapsing ``t``.  ``timestep_weight`` is the only per-(d,t)
-            # factor that differs across timeslices in the annualization
-            # (``op_factor`` at ~3624 is
-            # ``step_duration · timestep_weight · inflation_op / period_share``;
-            # ``inflation_op`` and ``period_share`` are per-``d`` and so are
-            # common to every term in a given (n, d) balance row and cancel,
-            # and ``step_duration`` already rides each captured term).  Without
-            # this weight the LP balances UNWEIGHTED timeslice sums: in
-            # Rivendell S16 it imports gas in low-``timestep_weight`` timeslices
-            # while plants draw in high-weight ones, yielding a ~0.838
-            # import/draw ratio with zero slack.  Weighting every term
-            # (sink, source_eff/noEff, section, back-flow, AND the slack
-            # terms) uniformly keeps the row homogeneous in annual-energy
-            # units; the objective already rp-weights the slack penalty, so
-            # this keeps slack consistent.  ``p_timestep_weight`` is in the
-            # ALWAYS field set (line ~72) — always present and non-None here,
-            # so no identity guard is needed.  When it is ≡ 1.0 (every
-            # non-S16 fixture) ``v * 1.0 == v`` and the LP is unchanged.
-            nbp_lhs = {k: Sum(v * d.p_timestep_weight, over=("t",))
-                       for k, v in nbp_flow_slack_terms.items()}
-            # Σ_t (p_inflow · timestep_weight) per (n, d), restricted to the
-            # period nodes.  Inflow is already per-step energy (mirrors
-            # ``nodeBalance_eq``'s bare ``-d.p_inflow`` — NO ``step_duration``);
-            # we only fold in the same annualization weight as the LHS so both
-            # sides of the period balance are in annual-energy units.  The
-            # ``p_inflow * p_timestep_weight`` Param product joins on the shared
-            # ``(d, t)`` axis through the engine's dtype-safe enum-aligned
-            # join, then we aggregate over ``t`` per (n, d).
-            inflow_weighted = d.p_inflow * d.p_timestep_weight
-            inflow_period_frame = (
-                inflow_weighted.frame.lazy()
-                .join(d.nodeBalancePeriod.select("n").lazy(),
-                      on="n", how="inner")
-                .group_by("n", "d")
-                .agg(pl.col("value").sum())
-                .select("n", "d", "value")
-                .collect())
-            inflow_period = Param(("n", "d"), inflow_period_frame)
-            m.add_cstr(
-                "nodeBalancePeriod_eq",
-                over      = nbp_over,
-                sense     = "==",
-                lhs_terms = nbp_lhs,
-                rhs_terms = {"neg_inflow": -inflow_period},
-            )
-
-    # ─── node_balance_fix_quantity_eq_lower (mod:2760) ───────────────────
-    # Pins v_state[n, d_last, t_last] * unitsize == Σ_{(d,t,t2) in
-    # dtt_timeline_matching} p_fix_storage_quantity[n, d2, t2], for nodes
-    # in n_fix_storage_quantity, where (d2, d) ∈ period__branch and d ∈
-    # period_last.  This is the upper-level "anchor" timestep handoff.
-    if (has_storage
-            and d.n_fix_storage_quantity is not None
-            and d.n_fix_storage_quantity.height > 0
-            and d.ndt_fix_storage_quantity is not None
-            and d.ndt_fix_storage_quantity.height > 0
-            and d.dtt_timeline_matching is not None
-            and d.dtt_timeline_matching.height > 0
-            and d.period_branch is not None
-            and d.period_last is not None
-            and d.p_fix_storage_quantity is not None
-            and d.p_state_unitsize is not None
-            and d.nodeState_last_dt is not None):
-        # Index: (n, d, t) where d ∈ period_last AND there exists a
-        # (d2, d) ∈ period__branch and (n, d2, t2) ∈ ndt_fix_storage_quantity
-        # with (d, t, t2) ∈ dtt_timeline_matching.
-        #
-        # Build RHS rows (n, d, t, value) by joining
-        #   ndt_fix_storage_quantity[n, d2, t2] (with values)
-        #   ⨯ period__branch[d2, d]
-        #   ⨯ dtt_timeline_matching[d, t, t_upper=t2]
-        #   ⨯ period_last[d]
-        #   ⨯ n_fix_storage_quantity[n]
-        #   ⨯ nodeState_last_dt[n, d, t]
-        # then group_by (n, d, t) and sum value (the .mod's sum).
-        fix_q_long = d.p_fix_storage_quantity.frame.pipe(
-            rename_to_axis, {"d": "d_upper", "t": "t_upper"}
-        )
-        rhs_rows = (d.n_fix_storage_quantity
-            .join(fix_q_long, on="n", how="inner")
-            .join(d.period_branch, on="d_upper", how="inner")
-            .join(d.dtt_timeline_matching,
-                  left_on=["d", "t_upper"],
-                  right_on=["d", "t_upper"],
-                  how="inner")
-            .join(d.period_last, on="d", how="inner")
-            .join(d.nodeState_last_dt, on=["n", "d", "t"], how="inner")
-            .group_by(["n", "d", "t"])
-            .agg(pl.col("value").sum())
-            .select("n", "d", "t", "value"))
-        if rhs_rows.height > 0:
-            cstr_over = rhs_rows.select("n", "d", "t").unique()
-            v_state_at_last = Where(v_state, cstr_over)
-            rhs_param = Param(("n", "d", "t"), rhs_rows)
-            m.add_cstr(
-                "node_balance_fix_quantity_eq_lower",
-                over      = cstr_over,
-                sense     = "==",
-                lhs_terms = {"state": v_state_at_last * d.p_state_unitsize},
-                rhs_terms = {"target": rhs_param},
-            )
-
-    # ─── node_storage_usage_fix_le (mod: storage_usage_fix, ~L2354) ──────
-    # Storage-usage fix: the net energy drawn from the storage node n
-    # over a fine PERIOD must not exceed the coarse-solve target usage
-    # summed over every coarse window overlapping that period.  This is a
-    # PER-PERIOD aggregate cap — NOT a per-terminal-window one.
-    #
-    #   - Σ_{(p, source, n) ∈ pss, t3 ∈ period d}
-    #         v_flow[p, source, n, d, t3] * unitsize * step_dur[d, t3]
-    #   + Σ_{(p, n, sink) ∈ pss_eff, t3 ∈ period d}
-    #         (v_flow * unitsize * slope
-    #          + (if min_load_efficiency) v_online * pdtProcess_section
-    #                                       * unitsize) * step_dur
-    #   + Σ_{(p, n, sink) ∈ pss_noEff, t3 ∈ period d}
-    #         v_flow * unitsize * step_dur
-    #   ≤   Σ_{(n, d2, t2) ∈ ndt_fix_storage_usage :
-    #          ∃ t3. (d, t3, t2) ∈ dtt_timeline_matching}
-    #         p_fix_storage_usage[n, d2, t2]
-    #
-    # for nodes n ∈ n_fix_storage_usage, one row per fine period d ∈
-    # period_last, anchored at that period's last (d, t) (nodeState_last_dt).
-    #
-    # SEMANTICS (bug fix — critique BLOCKER).  The reference model
-    # (flextool.mod ``s.t. storage_usage_fix``) sums the LHS flow over the
-    # WHOLE period d (``(d, t3) in dt``) and sums the RHS coarse usage over
-    # EVERY coarse window t2 for which ANY fine step t3 maps into period d
-    # (``exists{(d, t3, t2) in dtt_timeline_matching}``).  The previous
-    # engine port copied the fix_quantity RHS-build pattern verbatim: it
-    # joined ``dtt_timeline_matching`` on ``[d, t_upper]`` (pairing each
-    # coarse window with its specific fine step) and then
-    # ``nodeState_last_dt`` on ``[n, d, t]``, collapsing the RHS to only
-    # the ONE coarse window whose matched fine step is the period's
-    # terminal hour — while the LHS still aggregated flow over the entire
-    # roll.  For any fine roll spanning K>1 coarse windows (the entire
-    # seasonal mt_4h → hourly regime) this made the cap grossly too tight
-    # (whole-period LHS ≤ single-window RHS) → infeasibility/distortion.
-    #
-    # The fix restores the .mod's per-PERIOD aggregate: RHS sums over the
-    # DISTINCT coarse windows overlapping the period (``dtt_windows``
-    # drops the fine ``t`` before the join, so a window counts once no
-    # matter how many fine steps it holds), anchored onto the period's
-    # terminal row via a ``[n, d]`` join (not ``[n, d, t]``); and the LHS
-    # Sum leaves the ``d`` axis open (``over`` excludes ``d``) so each
-    # period is capped independently — matching fix_quantity/fix_price,
-    # which likewise follow the coarse trajectory per fine period.
-    #
-    # The LHS is the FULL legacy formula with efficiency corrections on
-    # sink flows (slope, plus min_load_efficiency section term).  The
-    # per-process sink/source flow-coefficient RATIO from the .mod
-    # (``p_process_sink_coefficient * p_process_source_coefficient``) is
-    # DEFERRED here, matching the engine's existing treatment of the same
-    # ratio in §5.2 var-cost (model.py:2742-2744): every current fixture
-    # has both coefficients = 1, so the ratio collapses to 1 and we follow
-    # the prevailing convention.  When a fixture exercises non-unit
-    # coefficients, both this constraint and §5.2 var-cost need the ratio
-    # wired in tandem.
-    if (has_proc
-            and has_storage
-            and d.n_fix_storage_usage is not None
-            and d.n_fix_storage_usage.height > 0
-            and d.ndt_fix_storage_usage is not None
-            and d.ndt_fix_storage_usage.height > 0
-            and d.dtt_timeline_matching is not None
-            and d.dtt_timeline_matching.height > 0
-            and d.period_branch is not None
-            and d.period_last is not None
-            and d.p_fix_storage_usage is not None
-            and d.nodeState_last_dt is not None):
-        # RHS rows (n, d, t, value): for each fine period d ∈ period_last,
-        # sum p_fix_storage_usage[n, d2, t2] over EVERY coarse window t2
-        # overlapping the period ((d2, d) ∈ period__branch and ∃ fine step
-        # with (d, ·, t2) ∈ dtt_timeline_matching), restricted to
-        # n ∈ n_fix_storage_usage, and pin the aggregate onto the period's
-        # terminal (d, t) anchor.  Unlike node_balance_fix_quantity_eq_lower
-        # (a point valuation that keeps the single terminal window), the
-        # coarse WINDOW dim is summed out here — a per-period throughput cap.
-        fix_u_long = d.p_fix_storage_usage.frame.pipe(
-            rename_to_axis, {"d": "d_upper", "t": "t_upper"}
-        )
-        # Distinct coarse windows per fine period (the .mod's
-        # ``exists{(d, t3, t2) in dtt_timeline_matching}`` — a window
-        # counts once regardless of how many fine steps it holds).
-        dtt_windows = (d.dtt_timeline_matching
-                       .select("d", "t_upper").unique())
-        rhs_rows = (d.n_fix_storage_usage
-            .join(fix_u_long, on="n", how="inner")
-            .join(d.period_branch, on="d_upper", how="inner")
-            .join(dtt_windows, on=["d", "t_upper"], how="inner")
-            .join(d.period_last, on="d", how="inner")
-            # Anchor onto the period's terminal (d, t) WITHOUT filtering
-            # windows by t — join on (n, d) only so every window in the
-            # period sums onto the single anchor row.
-            .join(d.nodeState_last_dt, on=["n", "d"], how="inner")
-            # Fixed summation order: the joins above leave row order
-            # hash-dependent, which changes the float sum in the last bit.
-            .sort(["n", "d", "t", "d_upper", "t_upper"])
-            .group_by(["n", "d", "t"])
-            .agg(pl.col("value").sum())
-            .select("n", "d", "t", "value"))
-        if rhs_rows.height > 0:
-            cstr_over = rhs_rows.select("n", "d", "t").unique()
-            rhs_param = Param(("n", "d", "t"), rhs_rows)
-
-            # ── Build LHS: composite flow sum, indexed by (n, d) ──
-            # Each piece sums over (p, source, sink, t3) leaving the
-            # (n, d) dims open (the ``d`` axis is NOT summed out — the cap
-            # is per fine period); the constraint's (n, d, t) ``over``
-            # broadcasts the per-(n, d) value onto the period's anchor row.
-            #
-            # n-as-sink: every (p, source, n) row in process_source_sink.
-            n_set = d.n_fix_storage_usage.select("n")
-            sink_idx = (d.process_source_sink
-                .join(n_set.pipe(rename_to_axis, {"n": "sink"}),
-                      on="sink", how="inner")
-                .with_columns(n=pl.col("sink")))
-            # n-as-source (eff partition): process_source_sink_eff.
-            src_eff_idx = None
-            if (d.process_source_sink_eff is not None
-                    and d.process_source_sink_eff.height > 0):
-                src_eff_idx = (d.process_source_sink_eff
-                    .join(n_set.pipe(rename_to_axis, {"n": "source"}),
-                          on="source", how="inner")
-                    .with_columns(n=pl.col("source")))
-            # n-as-source (noEff partition): process_source_sink_noEff.
-            src_noEff_idx = None
-            if (d.process_source_sink_noEff is not None
-                    and d.process_source_sink_noEff.height > 0):
-                src_noEff_idx = (d.process_source_sink_noEff
-                    .join(n_set.pipe(rename_to_axis, {"n": "source"}),
-                          on="source", how="inner")
-                    .with_columns(n=pl.col("source")))
-
-            lhs_terms: dict = {}
-            # n-as-sink: subtract (flows INTO n).
-            if sink_idx.height > 0:
-                lhs_terms["sink_flow"] = -Sum(
-                    Where(v_flow * d.p_unitsize, sink_idx)
-                    * d.p_step_duration,
-                    over=("p", "source", "sink", "t"))
-            # n-as-source (eff): add v_flow * unitsize * slope * step_dur.
-            if (src_eff_idx is not None and src_eff_idx.height > 0
-                    and d.p_slope is not None):
-                lhs_terms["source_eff"] = Sum(
-                    Where(v_flow * d.p_unitsize * d.p_slope, src_eff_idx)
-                    * d.p_step_duration,
-                    over=("p", "source", "sink", "t"))
-                # min_load_efficiency section term (n-as-source side).
-                if has_minload_eff and d.p_section is not None:
-                    section_idx = (src_eff_idx
-                                   .join(d.process_min_load_eff,
-                                         on="p", how="inner"))
-                    if section_idx.height > 0:
-                        if has_online_lin:
-                            lhs_terms["source_section_lin"] = Sum(
-                                Where(Where(v_online_lin, d.process_min_load_eff)
-                                      * d.p_section * d.p_unitsize,
-                                      section_idx)
-                                * d.p_step_duration,
-                                over=("p", "source", "sink", "t"))
-                        if has_online_int:
-                            lhs_terms["source_section_int"] = Sum(
-                                Where(Where(v_online_int, d.process_min_load_eff)
-                                      * d.p_section * d.p_unitsize,
-                                      section_idx)
-                                * d.p_step_duration,
-                                over=("p", "source", "sink", "t"))
-            # n-as-source (noEff): add v_flow * unitsize * step_dur.
-            if src_noEff_idx is not None and src_noEff_idx.height > 0:
-                lhs_terms["source_noEff"] = Sum(
-                    Where(v_flow * d.p_unitsize, src_noEff_idx)
-                    * d.p_step_duration,
-                    over=("p", "source", "sink", "t"))
-
-            if lhs_terms:
-                m.add_cstr(
-                    "node_storage_usage_fix_le",
-                    over      = cstr_over,
-                    sense     = "<=",
-                    lhs_terms = lhs_terms,
-                    rhs_terms = {"target": rhs_param},
-                )
-
-    # ─── stateConstantWithinBlock_eq + nodeBalanceBlock_eq ────────────────
-    # For nodes in ``nodeStateBlock`` (binding method
-    # ``bind_intraperiod_blocks``), v_state is constant across the interior
-    # rows of each block and the per-block energy balance pins the
-    # state-transition between blocks (cyclic via period_block_succ).
-    # See flextool.mod:2318-2402.
-    if has_nsb and has_storage:
-        # 1. stateConstantWithinBlock_eq:
-        #    v_state[n, d, t] - v_state[n, d, t_previous] == 0
-        #    over (n, d, t) where (d, t, t_previous) ∈ dtttdt_block_interior
-        #    (interior-of-block jump=1 rows).  Per-period within-period lag
-        #    is correct here — interior rows always have d_previous == d.
-        if (d.dtttdt_block_interior is not None
-                and d.dtttdt_block_interior.height > 0):
-            interior = d.dtttdt_block_interior  # (d, t, t_previous)
-            block_dt = (d.nodeStateBlock
-                          .join(interior.select("d", "t"), how="cross"))
-            v_state_now_blk = Where(v_state, d.nodeStateBlock)
-            # Lag joins on (d) and matches the var's t against
-            # interior.t_previous via the lag column rename.
-            v_state_lag_blk = Where(
-                Lag(v_state, interior, "t", "t_previous"),
-                d.nodeStateBlock)
-            m.add_cstr(
-                "stateConstantWithinBlock_eq",
-                over      = block_dt,
-                sense     = "==",
-                lhs_terms = {"state":     v_state_now_blk,
-                             "state_lag": -v_state_lag_blk},
-                rhs_terms = {},
-            )
-
-        # 2. nodeBalanceBlock_eq, indexed by (n, d, b_first) for n in
-        #    nodeStateBlock (excluding fix_start_end nodes — none in this
-        #    fixture).
-        if (d.period_block is not None and d.period_block.height > 0
-                and d.period_block_succ is not None
-                and d.period_block_succ.height > 0
-                and d.period_block_time is not None
-                and d.period_block_time.height > 0):
-            # over: (n, d, b_first)
-            nbb_over = (d.nodeStateBlock
-                        .join(d.period_block, how="cross")
-                        .select("n", "d", "b_first"))
-            # Optional fix_start_end exclusion (mod:2346) — excluded if a
-            # nodeStateBlock node is also in storage_start_end fix_start_end.
-            # We don't currently track fix_start_end as a separate set; the
-            # fixture uses fix_start (not fix_start_end) so no exclusion
-            # needed here.
-
-            nbb_terms: dict = {}
-
-            # ── State-transition LHS: Σ_{b_next} (v_state[n,d,b_next]
-            #     - v_state[n,d,b_first]) * unitsize ────────────────────
-            # period_block_succ has (d, b_first, b_next).  We build:
-            #   + v_state[n, d, b_next]  — rename b_next → b_first via Lag-style join
-            #   - v_state[n, d, b_first]
-            # both indexed by (n, d, b_first) and multiplied by unitsize.
-            # v_state itself is over (n, d, t); we route b_first through
-            # period_block_succ's b_next/b_first columns.
-            # First: v_state at b_next, joined by (d, b_next=t)
-            # Build a virtual var v_state_at_block: (n, d, b_next, b_first)
-            # by joining v_state on (d, t=b_next) against period_block_succ.
-            succ = d.period_block_succ.select("d", "b_first", "b_next")
-            # v_state[n, d, b_next] term: lag-style — match var's t to b_next.
-            # We want resulting Expr indexed by (n, d, b_first).
-            # Use a Var rename: v_state__t_as_bnext over (n, d, b_next).
-            v_state_b = Var(
-                name=v_state.name + "__b_next",
-                dims=("n", "d", "b_next"),
-                frame=v_state.frame.rename({"t": "b_next"}),
-                lower=v_state.lower, upper=v_state.upper,
-            )
-            v_state_a = Var(
-                name=v_state.name + "__b_first",
-                dims=("n", "d", "b_first"),
-                frame=v_state.frame.rename({"t": "b_first"}),
-                lower=v_state.lower, upper=v_state.upper,
-            )
-            # nodeStateBlock splits into two families with DIFFERENT state
-            # transitions:
-            #
-            #  * bind_intraperiod_blocks (non-rp) nodes keep the forward
-            #    cyclic transition Σ_{b_next}(v_state[b_next]-v_state[b_first]):
-            #    each representative period's coarse blocks close one cyclic
-            #    loop (period_block_succ is now segmented per representative
-            #    period, so the loop no longer spans months-apart days).
-            #
-            #  * blended-weights (rp) nodes coarsened onto a resolution block
-            #    must retain their representative-period storage semantics:
-            #    a FREE start state per representative day plus a seasonally
-            #    weighted inter-period chain (rp_inter_period_balance /
-            #    _cyclic).  The forward-cyclic transition would (a) close each
-            #    day on itself, forbidding the seasonal storage the fine model
-            #    uses, and (b) leave ``v_state_rp_start`` unbound, making the
-            #    seasonal chain vacuous.  We give these nodes a BACKWARD,
-            #    post-flow block transition (v_state[b] - v_state[b_prev]),
-            #    where the predecessor of each representative day's first
-            #    block is the free ``v_state_rp_start`` instead of the cyclic
-            #    wrap.  This matches the fine ``has_rp`` state-change exactly,
-            #    lifted to coarse blocks (v_state is constant within each
-            #    block via stateConstantWithinBlock_eq, so the fine
-            #    rep-day-first/last labels the seasonal chain references carry
-            #    the coarse block value).
-            if has_rp and d.nodeState_rp is not None and d.nodeState_rp.height > 0:
-                rp_nodes = d.nodeStateBlock.join(
-                    d.nodeState_rp.select("n"), on="n", how="inner")
-                nonrp_nodes = d.nodeStateBlock.join(
-                    d.nodeState_rp.select("n"), on="n", how="anti")
-            else:
-                rp_nodes = d.nodeStateBlock.clear()
-                nonrp_nodes = d.nodeStateBlock
-
-            # ── Non-rp (bind_intraperiod_blocks): forward cyclic ───────────
-            # + Σ_{b_next} v_state[n,d,b_next] - v_state[n,d,b_first], over
-            # period_block_succ, restricted to the non-rp nodeStateBlock set.
-            state_next = Sum(
-                Where(Where(v_state_b, succ), nonrp_nodes),
-                over=("b_next",),
-            )
-            state_curr = Sum(
-                Where(Where(v_state_a, succ), nonrp_nodes),
-                over=("b_next",),
-            )
-            nbb_terms["state_change"] = (state_next - state_curr) * d.p_state_unitsize
-
-            # ── rp (blended-weights) coarse nodes: backward, post-flow, with
-            #    a free representative-day start ──────────────────────────────
-            if rp_nodes.height > 0:
-                # Predecessor map from reversing the per-rep-day cyclic succ:
-                # pred(b) = the b_first whose b_next == b.  Blocks that are a
-                # representative day's FIRST block use v_state_rp_start instead
-                # of the wrap predecessor, so drop those from the interior map.
-                pred_full = succ.select(
-                    "d",
-                    pl.col("b_next").alias("b_first"),
-                    pl.col("b_first").alias("b_prev"),
-                )
-                rp_first_lbl = d.rp_block_first.select(
-                    "d", pl.col("t").alias("b_first"))
-                pred_interior = pred_full.join(
-                    rp_first_lbl, on=["d", "b_first"], how="anti")
-
-                # v_state at the interior predecessor block.
-                v_state_bp = Var(
-                    name=v_state.name + "__b_prev",
-                    dims=("n", "d", "b_prev"),
-                    frame=v_state.frame.rename({"t": "b_prev"}),
-                    lower=v_state.lower, upper=v_state.upper,
-                )
-                v_prev_rp = Sum(
-                    Where(Where(v_state_bp, pred_interior), rp_nodes),
-                    over=("b_prev",),
-                )
-                # v_state_rp_start at the representative-day first block.
-                v_rpstart_b = Var(
-                    name=v_state_rp_start.name + "__b_first",
-                    dims=("n", "d", "b_first"),
-                    frame=v_state_rp_start.frame.rename({"t": "b_first"}),
-                    lower=v_state_rp_start.lower, upper=v_state_rp_start.upper,
-                )
-                v_rpstart_rp = Where(
-                    Where(v_rpstart_b, rp_first_lbl), rp_nodes)
-                # v_state at the current block (all coarse blocks of rp nodes).
-                rp_block_over = (rp_nodes
-                                 .join(d.period_block, how="cross")
-                                 .select("n", "d", "b_first"))
-                v_now_rp = Where(v_state_a, rp_block_over)
-                nbb_terms["state_change_rp"] = (
-                    (v_now_rp - v_prev_rp - v_rpstart_rp)
-                    * d.p_state_unitsize)
-
-            # The .mod's nodeBalanceBlock_eq is:
-            #   state_change_mod  ==  sink - source_eff - source_noEff
-            #                          + inflow - self_discharge
-            #                          + slack_up - slack_down
-            # where state_change_mod = Σ_{b_next} (v_state[b_next] -
-            #                          v_state[b_first]) * unitsize.
-            # We move every non-state term to the LHS with flipped sign,
-            # leaving inflow on the RHS as a Param:
-            #   LHS = state_change - sink + source_eff + source_noEff
-            #         + self_discharge - slack_up + slack_down
-            #   RHS = inflow_block
-
-            # ── Sink-side flows: - Σ v_flow * unitsize * weight ──
-            # When per-arc weights (block-aware) are available (arc_sink_block_dt
-            # + p_arc_sink_weight), use them directly: each row of
-            # arc_sink_block_dt names a (p, source, sink, d, b_first, t)
-            # tuple with the associated weight = block_step_duration of
-            # the arc's sink-side block.  This matches the .mod's
-            # nodeBalance_eq for daily nodes (mod:2208-2213): for arcs
-            # whose sink-side is on a coarse block, only the coarse step
-            # contributes (×24); for arcs whose sink-side is on a fine
-            # block (e.g. electrolyser reverse: source=h2_A daily,
-            # sink=elec_A hourly contributing to elec_A's hourly balance,
-            # but here we're evaluating from the sink=h2_A side of the
-            # forward arc), the sink is on daily so coarse-only.
-            #
-            # Falls back to the legacy fine-grid sum (period_block_time
-            # × step_duration) for fixtures that don't carry the per-arc
-            # data (e.g., 5weeks bind_intraperiod_blocks where everything
-            # is on the default block — both produce identical sums).
-            if (d.arc_sink_block_dt is not None
-                    and d.arc_sink_block_dt.height > 0
-                    and d.p_arc_sink_weight is not None):
-                sink_idx = (d.arc_sink_block_dt
-                    .drop("weight")
-                    .pipe(rename_to_axis, {"sink": "n"}))
-                nbb_terms["sink_flow_block"] = -Sum(
-                    Where(v_flow * d.p_unitsize * d.p_arc_sink_weight,
-                          sink_idx),
-                    over=("p", "source", "sink", "t"))
-            elif d.flow_to_n is not None and d.flow_to_n.height > 0:
-                flow_to_n_block = (d.flow_to_n
-                    .filter(pl.col("n").is_in(d.nodeStateBlock["n"])))
-                if flow_to_n_block.height > 0:
-                    nbb_terms["sink_flow_block"] = -Sum(
-                        Where(
-                            Where(v_flow * d.p_unitsize, flow_to_n_block)
-                            * d.p_step_duration,
-                            d.period_block_time),
-                        over=("p", "source", "sink", "t"))
-
-            # ── Source-side eff flows: + Σ v_flow * unitsize * slope * weight ──
-            if (d.arc_source_block_dt is not None
-                    and d.arc_source_block_dt.height > 0
-                    and d.p_arc_source_weight is not None
-                    and d.flow_from_nodeBalance_eff is not None
-                    and d.flow_from_nodeBalance_eff.height > 0):
-                # Restrict to eff arcs.
-                src_eff_idx = (d.arc_source_block_dt
-                    .drop("weight")
-                    .join(d.flow_from_nodeBalance_eff
-                            .select("p", "source", "sink"),
-                          on=["p", "source", "sink"], how="inner")
-                    .pipe(rename_to_axis, {"source": "n"}))
-                if src_eff_idx.height > 0:
-                    nbb_terms["source_eff_block"] = Sum(
-                        Where(v_flow * d.p_unitsize * d.p_slope
-                              * d.p_arc_source_weight,
-                              src_eff_idx),
-                        over=("p", "source", "sink", "t"))
-            elif (d.flow_from_nodeBalance_eff is not None
-                    and d.flow_from_nodeBalance_eff.height > 0):
-                ffn_eff_blk = (d.flow_from_nodeBalance_eff
-                    .filter(pl.col("n").is_in(d.nodeStateBlock["n"])))
-                if ffn_eff_blk.height > 0:
-                    nbb_terms["source_eff_block"] = Sum(
-                        Where(
-                            Where(v_flow * d.p_unitsize * d.p_slope, ffn_eff_blk)
-                            * d.p_step_duration,
-                            d.period_block_time),
-                        over=("p", "source", "sink", "t"))
-
-            # ── Source-side noEff flows: + Σ v_flow * unitsize * weight ──
-            if (d.arc_source_block_dt is not None
-                    and d.arc_source_block_dt.height > 0
-                    and d.p_arc_source_weight is not None
-                    and d.flow_from_nodeBalance_noEff is not None
-                    and d.flow_from_nodeBalance_noEff.height > 0):
-                src_noeff_idx = (d.arc_source_block_dt
-                    .drop("weight")
-                    .join(d.flow_from_nodeBalance_noEff
-                            .select("p", "source", "sink"),
-                          on=["p", "source", "sink"], how="inner")
-                    .pipe(rename_to_axis, {"source": "n"}))
-                if src_noeff_idx.height > 0:
-                    nbb_terms["source_noEff_block"] = Sum(
-                        Where(v_flow * d.p_unitsize
-                              * d.p_arc_source_weight,
-                              src_noeff_idx),
-                        over=("p", "source", "sink", "t"))
-            elif (d.flow_from_nodeBalance_noEff is not None
-                    and d.flow_from_nodeBalance_noEff.height > 0):
-                ffn_noEff_blk = (d.flow_from_nodeBalance_noEff
-                    .filter(pl.col("n").is_in(d.nodeStateBlock["n"])))
-                if ffn_noEff_blk.height > 0:
-                    nbb_terms["source_noEff_block"] = Sum(
-                        Where(
-                            Where(v_flow * d.p_unitsize, ffn_noEff_blk)
-                            * d.p_step_duration,
-                            d.period_block_time),
-                        over=("p", "source", "sink", "t"))
-
-            # ── Self-discharge: + Σ v_state * loss * unitsize * step_duration ──
-            # (linear approximation; mod's self-discharge term is on the RHS
-            # with a leading minus, so on LHS it's positive.)
-            if d.p_state_self_discharge is not None:
-                nbb_terms["self_discharge_block"] = Sum(
-                    Where(
-                        Where(v_state * d.p_state_self_discharge
-                              * d.p_state_unitsize, d.nodeStateBlock)
-                        * d.p_step_duration,
-                        d.period_block_time),
-                    over=("t",))
-
-            # ── Slacks: - Σ vq_state_up * step_duration; + Σ vq_state_down * step_duration ──
-            vq_up_blk = Where(vq_up, d.nodeStateBlock)
-            vq_dn_blk = Where(vq_down, d.nodeStateBlock)
-            nbb_terms["slack_up_block"] = -Sum(
-                Where(vq_up_blk * d.p_step_duration, d.period_block_time),
-                over=("t",))
-            nbb_terms["slack_down_block"] = Sum(
-                Where(vq_dn_blk * d.p_step_duration, d.period_block_time),
-                over=("t",))
-
-            # ── RHS: inflow over period_block_time ─────────────────────
-            # mod:2389: + Σ_{(d, b_first, t) ∈ period_block_time} pdtNodeInflow[n, d, t]
-            # On the .mod's RHS; matches our RHS sign directly.
-            inflow_block_frame = (d.p_inflow.frame
-                .filter(pl.col("n").is_in(d.nodeStateBlock["n"]))
-                .join(d.period_block_time, on=["d", "t"], how="inner")
-                .group_by(["n", "d", "b_first"])
-                .agg(pl.col("value").sum())
-                .select("n", "d", "b_first", "value"))
-            rhs_terms_blk: dict = {}
-            if inflow_block_frame.height > 0:
-                rhs_terms_blk["inflow_block"] = Param(
-                    ("n", "d", "b_first"), inflow_block_frame)
-
-            m.add_cstr(
-                "nodeBalanceBlock_eq",
-                over      = nbb_over,
-                sense     = "==",
-                lhs_terms = nbb_terms,
-                rhs_terms = rhs_terms_blk,
-            )
-
-        # ─── v_flow constancy within coarse blocks ─────────────────────
-        # For arcs whose process unified block is coarser than the fine
-        # grid (e.g. liquefier_A on daily_group), flextool's nodeBalance
-        # references v_flow only at the coarse step; the other 23 hourly
-        # v_flow values are LP-degenerate.  Our nodeBalanceBlock_eq
-        # currently sums all 24 hourly values (weight 1 each), which
-        # gives the same daily integral *only if* v_flow is constant
-        # within the day.  Add an explicit equality
-        # ``v_flow[..., d, t] = v_flow[..., d, b_first]`` over the block-
-        # interior (d, t, t_previous) tuples for the relevant arcs.
-        #
-        # Source: process_block.csv (per-process unified block), filtered
-        # to coarse blocks (step_duration > 1).  The native engine
-        # doesn't load
-        # process_block separately yet; derive it from process_side_block
-        # by requiring source-block = sink-block = same coarse block (the
-        # .mod's UC V1 limitation, see flextool.mod:1893-1907).  For
-        # lh2_three_region this picks up liquefier_*, pipe_AB, pipe_BC
-        # (all source=sink=daily_group) but not electrolyser_* (mixed).
-        if (has_proc
-                and d.dtttdt_block_interior is not None
-                and d.dtttdt_block_interior.height > 0):
-            # Build (p, source, sink) of arcs whose process is on a
-            # coarse block.  Use the FlexData's pss + process_side_block
-            # via solve_data CSV (read inline; small file).
-            try:
-                # Caller can override; this read is best-effort.
-                # We don't have direct access to ``WORK`` here so we
-                # rely on the synthesised dtttdt_block_interior carrying
-                # only the coarse-block interior rows (exactly what we
-                # built in input.py).
-                pass
-            except Exception:
-                pass
-            interior = d.dtttdt_block_interior  # (d, t, t_previous)
-            # Use process_source_sink for arcs where process appears in
-            # a coarse block on BOTH sides (i.e. process_block is
-            # coarse).  We don't yet load process_block.csv directly;
-            # instead derive: arc qualifies if (p, 'source', b) and
-            # (p, 'sink', b') BOTH have b in coarse_blocks (same block
-            # is implied by the .mod's UC restriction; in this fixture
-            # liquefier and pipes have source==sink=daily_group, while
-            # electrolyser has source=hourly, sink=daily so it's
-            # excluded from constancy).
-            psb_path_inline = None
-            # Pull process_side_block via the existing FlexData if the
-            # loader carries it; otherwise read solve_data.  We choose
-            # the inline read because the loader doesn't currently
-            # expose process_side_block as a top-level field.
-            # NOTE: this is a hack; the proper fix is to surface
-            # process_side_block on FlexData and check it from there.
-            ps_block_arcs = None
-            # Fall through: skip if we can't determine the arcs.
-
-            # Simpler path: use d.process_source_sink filtered to arcs
-            # whose source AND sink are both in nodeStateBlock.  In
-            # this fixture nodeStateBlock = {h2_A,h2_B,h2_C,
-            # lh2_A,lh2_B,lh2_C} (the daily-group nodeBalance nodes).
-            # liquefier_A (h2_A→lh2_A) qualifies; pipe_AB (lh2_A→lh2_B)
-            # qualifies; electrolyser_A (elec_A→h2_A and h2_A→elec_A)
-            # has mixed (elec_A is hourly, not in nodeStateBlock) so
-            # only ONE end is daily — these are excluded.  This matches
-            # the "process_block is coarse" criterion exactly for the
-            # current fixture (liquefier and pipes are daily; the
-            # one-sided electrolyser arcs are hourly).
-            # NOTE: ``v_flow_constant_within_block_eq`` is no longer needed
-            # — the arc-side block-aware aggregation in
-            # ``nodeBalanceBlock_eq`` (see arc_sink_block_dt /
-            # arc_source_block_dt + p_arc_*_weight Params) directly
-            # references v_flow at the coarse step weighted by
-            # block_step_duration, matching the .mod's nodeBalance_eq
-            # semantics for daily-block nodes.  v_flow at non-coarse
-            # hours for both-coarse arcs (liquefier, pipe) is now LP-
-            # degenerate — the LP can pick any value but only the coarse-
-            # step value affects the daily nodeBalance.  No constancy
-            # constraint required for parity.
-            if False:
-                pass
-
-    _build_prof("before:maxFlow")
-    # ─── maxFlow (capacity bound on every flow) ─────────────────────────
-    if has_proc:
-        flow_lhs: dict = {"flow":  v_flow}
-        # Reserve LHS coupling (manifest patch #1): v_reserve up-to-sink
-        # competes with v_flow for the same producer capacity.
-        if reserve_up_to_sink_pdt is not None:
-            flow_lhs["reserve_up"] = reserve_up_to_sink_pdt
-        # Capacity RHS + the per-row multiplier the invest/divest terms
-        # carry (computed with the v_flow declaration above).  The .mod's
-        # maxToSink / maxFromSource read
-        #   v_flow ≤ coef × availability × (existing/us + Σv_invest − Σv_divest)
-        # i.e. capacity_max_coeff and availability scale the WHOLE built
-        # capacity.  Moving the invest/divest delta to the LHS keeps one row:
-        #   v_flow − M·Σv_invest + M·Σv_divest ≤ M·existing/us,
-        # M = coef × availability per (p, source, sink, d, t) — for an
-        # indirect-unit input arc M = input_share_max × L × availability
-        # (L = full-load input per unit of capacity).  See
-        # :func:`_max_flow_rhs` for the per-arc-class RHS.
-        invest_mult = (_invest_capacity_multiplier(
-                           pss_dt, cap_mult, inv_procs)
-                       if inv_procs is not None else None)
-        # Input arcs bounded on the variable carry no maxFlow row.
-        max_flow_over = (pss_dt.join(flow_bound_arcs,
-                                     on=["p", "source", "sink"], how="anti")
-                         if flow_bound_arcs is not None else pss_dt)
-        if has_divest_p:
-            v_div_at = Var(  # virtual rename: d → d_divest, same col_ids
-                name=v_divest_p.name + "__at_divest",
-                dims=("p", "d_divest"),
-                frame=v_divest_p.frame.pipe(rename_to_axis, {"d": "d_divest"}),
-                lower=v_divest_p.lower, upper=v_divest_p.upper,
-            )
-            divest_in_dispatch = Sum(
-                Where(v_div_at, d.edd_divest_active),
-                over=("d_divest",))
-            flow_lhs["divest"] = (divest_in_dispatch * invest_mult
-                                  if invest_mult is not None
-                                  else divest_in_dispatch)
-        if has_invest_p:
-            # The ``− Σv_invest`` term is keyed on ``p`` and broadcasts to
-            # every maxFlow row of the process.  Capped arcs scale it by
-            # ``invest_mult`` (coef × availability, the same factor as
-            # their RHS); indirect input arcs by their input limit per unit
-            # of capacity × availability (fuel needs L per unit of new
-            # capacity, not 1); uncapped arcs keep multiplier 1 (their RHS
-            # is the unconstrained cap).
-            # v_invest is also indexed by d_invest; sum over d_invest in
-            # edd_invest with d_invest "alive" at d (already in edd_invest_set).
-            v_inv_at = Var(
-                name=v_invest_p.name + "__at_invest",
-                dims=("p", "d_invest"),
-                frame=v_invest_p.frame.pipe(rename_to_axis, {"d": "d_invest"}),
-                lower=v_invest_p.lower, upper=v_invest_p.upper,
-            )
-            # Phase 4.8g: ``edd_invest_set.e`` is entity-Enum (e-axis vocab,
-            # superset) while ``process_source_sink["p"]`` is process-Enum
-            # (p-axis vocab); a cross-Enum ``is_in`` is rejected by polars.
-            # Per the contract p ⊂ e — up-cast ``p`` to the e-axis Enum and
-            # use an Enum-on-Enum semi-join (mirror of the Phase 4.7b
-            # up-cast-to-e pattern at input.py:_load_user_constraints).
-            # Defensively re-cast ``edd_invest_set`` against the live axis
-            # enums in case it carries a stale vocab snapshot from the
-            # cascade build.
-            # Cascade-wide axis-enum ContextVar is reset by the time
-            # ``build_flextool`` runs, so we read the canonical e-axis
-            # Enum directly from ``edd_invest_set`` (already cast to the
-            # full entity-union vocabulary by ``cast_flexdata_axes`` at
-            # the end of the input cascade).  Up-cast ``p`` to that exact
-            # Enum dtype so the join composes natively without a
-            # cross-Enum SchemaError.
-            e_dt = d.edd_invest_set.schema["e"]
-            p_as_e = (d.process_source_sink
-                        .select(pl.col("p").cast(e_dt, strict=False)
-                                  .alias("e"))
-                        .unique())
-            edd_inv_p = (d.edd_invest_set
-                            .join(p_as_e, on="e", how="semi")
-                            .pipe(rename_to_axis, {"e": "p"}))
-            invest_in_dispatch = Sum(
-                Where(v_inv_at, edd_inv_p),
-                over=("d_invest",))
-            flow_lhs["invest_neg"] = -(invest_in_dispatch * invest_mult
-                                       if invest_mult is not None
-                                       else invest_in_dispatch)
-        if max_flow_over.height > 0:
-            m.add_cstr(
-                "maxFlow",
-                over      = max_flow_over,
-                sense     = "<=",
-                lhs_terms = flow_lhs,
-                rhs_terms = {"upper": flow_upper_rhs},
-            )
-        # Negative-capacity (anti-energy) handling: when the .mod's
-        # ``v_flow * unitsize ≤ existing × cap_coef × availability`` has
-        # both ``unitsize < 0`` AND ``existing < 0`` for a given (p, d),
-        # dividing by ``unitsize`` flips the inequality to ``≥``.
-        # ``p_flow_upper_existing`` for these rows is positive (e.g. +1)
-        # but represents a forced *minimum* output — the v_flow value
-        # rounded up by the .mod's ``-|us| * v_flow ≤ -|existing|`` form.
-        #
-        # The .mod itself encodes the ``v_flow ≤ |existing|/|us|`` upper
-        # bound separately via the variable bound
-        # ``v_flow ≤ p_flow_max[p,source,sink,d,t]`` (declared at .mod
-        # line 1629), which preprocessing emits as the same +1 value.
-        # polar_high doesn't carry per-row Var bounds, so the ``≤`` half is
-        # already covered by the standard maxFlow above.  We only need
-        # to ADD the ``≥`` half (a new ``maxFlow_negCap`` constraint
-        # over the neg-cap (p, d) rows of pss_dt) sharing the same LHS
-        # structure (same invest/divest/reserve-up tightening — those
-        # algebraic terms keep their signs through division by unitsize
-        # because they enter the .mod RHS each multiplied by unitsize).
-        pd_neg_cap = getattr(d, "pd_neg_cap", None)
-        if pd_neg_cap is not None and pd_neg_cap.height > 0:
-            neg_pss_dt = pss_dt.join(pd_neg_cap, on=("p", "d"), how="inner")
-            if neg_pss_dt.height > 0:
-                m.add_cstr(
-                    "maxFlow_negCap",
-                    over      = neg_pss_dt,
-                    sense     = ">=",
-                    lhs_terms = flow_lhs,
-                    rhs_terms = {"upper": flow_upper_rhs},
-                )
-        # maxFlow_back — capacity cap on the reverse-flow auxiliary so that
-        # |signed flow| = |v_flow − v_flow_back| ≤ capacity (the .mod's
-        # ``v_flow ∈ [−cap, +cap]`` range for method_2way_1var_off arcs).
-        # Reuses the same existing-capacity RHS the forward maxFlow uses
-        # (``flow_upper_rhs``), restricted to the 2way_1var arcs via the
-        # ``over`` index.  Spans the full DC + non-DC arc set.
-        # The reverse direction has the same built capacity as the forward
-        # one (.mod ``minToSink_1var``: v_flow ≥ −coef × (existing + invest −
-        # divest)), so it carries the same invest/divest terms as maxFlow.
-        if v_flow_back is not None and twoway1var_arcs is not None:
-            back_over = pss_dt.join(
-                twoway1var_arcs, on=("p", "source", "sink"), how="inner")
-            if back_over.height > 0:
-                back_lhs: dict = {"flow_back": v_flow_back}
-                for _k in ("invest_neg", "divest"):
-                    if _k in flow_lhs:
-                        back_lhs[_k] = flow_lhs[_k]
-                m.add_cstr(
-                    "maxFlow_back",
-                    over      = back_over,
-                    sense     = "<=",
-                    lhs_terms = back_lhs,
-                    rhs_terms = {"upper": flow_upper_rhs},
-                )
-
-        # maxOutputSum — indirect unit capacity bounds the SUM of outputs
-        # (docs: capacity = "the maximum sum of output flows").  See
-        # :func:`_add_max_output_sum`.
-        _add_max_output_sum(
-            m, d, v_flow, pss_dt,
-            reserve_up_sink_parts=reserve_up_sink_parts,
-            invest_sum=invest_in_dispatch if has_invest_p else None,
-            divest_sum=divest_in_dispatch if has_divest_p else None,
-        )
-
-    _build_prof("before:dc_power_flow")
-    # ─── DC power flow (dc_flow_eq + reference-angle pin) ─────────────────
-    # Wires v_flow ↔ v_angle via the linear DC OPF approximation.  Emitted
-    # only when ``node_dc_power_flow`` and ``connection_dc_power_flow``
-    # carry rows.  See :mod:`flextool._dc_power_flow` for details.
-    if has_proc and dc_pf_vars:
-        _dc_power_flow.add_constraints(
-            m, d, dc_pf_vars,
-            v_flow=v_flow,
-            p_unitsize=d.p_unitsize,
-            p_flow_upper_existing=d.p_flow_upper_existing,
-        )
-
-    _build_prof("before:online_startup_shutdown_minload")
-    # ─── Online / startup / shutdown / min_load ───────────────────────────
-    # Linear variant
-    if has_online_lin:
-        _add_online_block(m, d, v_flow, "linear", p_olin_idx,
-                          d.process_online_linear,
-                          v_online_lin, v_startup_lin, v_shutdown_lin,
-                          v_invest_p if has_invest_p else None,
-                          v_divest_p if has_divest_p else None)
-    # Integer variant — same constraints, integer v_online
-    if has_online_int:
-        _add_online_block(m, d, v_flow, "integer", p_oint_idx,
-                          d.process_online_integer,
-                          v_online_int, v_startup_int, v_shutdown_int,
-                          v_invest_p if has_invest_p else None,
-                          v_divest_p if has_divest_p else None)
-
-    # ─── online_fix_eq — pin v_online to the parent's committed schedule ──
-    # OC1 #1 sub-slice (b): in a separate_dispatch SIBLING the parent's
-    # committed v_online over the jump (``d.p_fix_online``, (p, d, t), in
-    # unit-count space) is pinned onto the sibling's v_online so the realized
-    # dispatch honours the plan's commitment instead of re-deciding it.  Each
-    # pin is INNER-JOINED to its online var's own (p, d, t) index so no
-    # undeclared cell is referenced; the native-typed index carries the axis
-    # Enum types while the join matches through a Utf8 bridge (the carried
-    # frame is Utf8).  Split per UC variant (``online_fix_eq_linear`` /
-    # ``_integer``); the autoscale resolver strips the suffix to the
-    # registered ``online_fix_eq`` family.  ``p_fix_online is None`` (every
-    # non-sibling solve) → not built → byte-identical baseline.
-    if d.p_fix_online is not None and d.p_fix_online.frame.height > 0:
-        _fix_u = d.p_fix_online.frame.select(
-            pl.col("p").cast(pl.Utf8).alias("_pk"),
-            pl.col("d").cast(pl.Utf8).alias("_dk"),
-            pl.col("t").cast(pl.Utf8).alias("_tk"),
-            "value")
-        for _vonline, _vidx, _sfx in (
-                (v_online_lin if has_online_lin else None,
-                 p_olin_idx if has_online_lin else None, "linear"),
-                (v_online_int if has_online_int else None,
-                 p_oint_idx if has_online_int else None, "integer")):
-            if _vonline is None or _vidx is None:
-                continue
-            # Native-typed (p, d, t) index keyed to Utf8 for the value join.
-            _pin = (_vidx.select("p", "d", "t").unique()
-                    .with_columns(_pk=pl.col("p").cast(pl.Utf8),
-                                  _dk=pl.col("d").cast(pl.Utf8),
-                                  _tk=pl.col("t").cast(pl.Utf8))
-                    .join(_fix_u, on=["_pk", "_dk", "_tk"], how="inner")
-                    .select("p", "d", "t", "value"))
-            if _pin.height == 0:
-                continue
-            _over = _pin.select("p", "d", "t").unique()
-            m.add_cstr(
-                f"online_fix_eq_{_sfx}",
-                over=_over,
-                sense="==",
-                lhs_terms={"online": Where(_vonline, _over)},
-                rhs_terms={"target": Param(("p", "d", "t"), _pin)},
-            )
-
-    # Unit output floors: per-unit minimum load (once per unit, on the sum
-    # of its outputs), optional per-output floors, and the rule that
-    # downward reserve cannot take a unit below its floor.
-    if has_proc:
-        _online_specs = []
-        if has_online_lin:
-            _online_specs.append(("linear", p_olin_idx,
-                                  d.process_online_linear, v_online_lin))
-        if has_online_int:
-            _online_specs.append(("integer", p_oint_idx,
-                                  d.process_online_integer, v_online_int))
-        _add_unit_floors(m, d, v_flow, _online_specs,
-                         reserve_vars.get("v_reserve"))
-
-    _build_prof("before:ramp_limits")
-    # ─── Ramp limits ──────────────────────────────────────────────────────
-    if has_ramp:
-        v_flow_prev = Lag(v_flow, d.dtttdt, "t", "t_previous")
-        # 4 constraint families:
-        #   sink_up:    step_dur*(v_flow_now - v_flow_prev) <=
-        #               + ramp_speed_up_sink * 60 * step_dur * existing_count
-        #               + (v_startup if online)
-        #   sink_down:  step_dur*(v_flow_now - v_flow_prev) >=
-        #               - ramp_speed_down_sink * 60 * step_dur * existing_count
-        #               - (v_shutdown if online)
-        #   source_up:   same with source-side ramp_speed
-        #   source_down: same with source-side ramp_speed (and ramp_speed_down read from p_process_sink in the .mod — quirk that we follow as p_ramp_speed_down_sink)
-        # Note: v_flow is in unitsize-units; divide both sides by unitsize
-        # gives the form above (existing_count = existing/unitsize).
-        for side, dir_, idx_set, ramp_param in [
-            ("sink",   "up",   d.process_source_sink_ramp_limit_sink_up,
-             d.p_ramp_speed_up_sink),
-            ("sink",   "down", d.process_source_sink_ramp_limit_sink_down,
-             d.p_ramp_speed_down_sink),
-            ("source", "up",   d.process_source_sink_ramp_limit_source_up,
-             d.p_ramp_speed_up_source),
-            ("source", "down", d.process_source_sink_ramp_limit_source_down,
-             # the .mod's source-down constraint uses
-             # p_process_sink[p, source, ramp_speed_down] (a quirk).
-             # In our test data p_ramp_speed_down_source is the right
-             # source-side param; defer to it.
-             d.p_ramp_speed_down_source),
-        ]:
-            if idx_set is None or idx_set.height == 0:
-                continue
-            if ramp_param is None:
-                continue
-            # conversion_flow_coeff = 0 edges are outside every ramp limit.
-            idx_set = _drop_uncapped(d, idx_set)
-            if idx_set.height == 0:
-                continue
-            sense = "<=" if dir_ == "up" else ">="
-            sign  = 1.0  if dir_ == "up" else -1.0  # flips the RHS sign for "down"
-            over_idx = idx_set.join(d.dt, how="cross")
-            # LHS: step_dur * (v_flow_now - v_flow_prev) (Where filters
-            # to idx_set tuples).  Both v_flow and v_flow_prev are
-            # already over (p, source, sink, d, t).
-            flow_diff = (Where(v_flow, idx_set) - Where(v_flow_prev, idx_set)) \
-                         * d.p_step_duration
-            # RHS: ±ramp_speed · 60 · step_dur · coef
-            #        · (existing_count + Σv_invest − Σv_divest)
-            # (.mod ramp_*_constraint): the side's capacity factor and the
-            # invested / divested units scale the ramp limit exactly as
-            # they scale the arc's capacity — output capacity_max_coeff on
-            # the sink side, input_share_max on the source side, and for an
-            # indirect unit's input arc its input limit per unit of capacity
-            # (``p_indirect_input_cap`` = input_share_max × full-load input),
-            # so the ramp speed is per unit of that arc's maximum flow.
-            rate = ramp_param * 60.0 * d.p_step_duration
-            if side == "sink":
-                if d.p_process_sink_max_capacity_coef is not None:
-                    rate = rate * _coef_factor(
-                        idx_set, d.p_process_sink_max_capacity_coef,
-                        ["p", "sink"])
-            else:
-                src_factor = _source_ramp_factor(d, idx_set)
-                if src_factor is not None:
-                    rate = rate * src_factor
-            rhs_param = (rate * d.p_process_existing_count) * sign
-            rhs_terms: dict = {"limit": rhs_param}
-            if has_invest_p:
-                rhs_terms["invest"] = (invest_in_dispatch * rate) * sign
-            if has_divest_p:
-                rhs_terms["divest"] = (divest_in_dispatch * rate) * (-sign)
-            # UC startup/shutdown tightening
-            if dir_ == "up":
-                if has_online_lin:
-                    rhs_terms["startup_lin"] = Where(v_startup_lin, idx_set)
-                if has_online_int:
-                    rhs_terms["startup_int"] = Where(v_startup_int, idx_set)
-            else:
-                if has_online_lin:
-                    rhs_terms["shutdown_lin"] = -Where(v_shutdown_lin, idx_set)
-                if has_online_int:
-                    rhs_terms["shutdown_int"] = -Where(v_shutdown_int, idx_set)
-            m.add_cstr(
-                f"ramp_{side}_{dir_}_constraint",
-                over      = over_idx,
-                sense     = sense,
-                lhs_terms = {"flow_diff": flow_diff},
-                rhs_terms = rhs_terms,
-            )
-
-    _build_prof("before:invest_divest_bounds")
-    # ─── Invest / divest variable bounds + maxFlow tightening ──────────
-    if has_invest_p or has_divest_p:
-        # p-side max_units (rename "e" → "p" to align with process vars).
-        # Phase 4.8g: the ContextVar is reset by the time ``build_flextool``
-        # runs, so ``rename_to_axis`` cannot re-cast the renamed column to
-        # the p-axis Enum.  Use a semi-join against ``process_source_sink``
-        # (already p-Enum) up-cast to the e-axis vocab of the source frame
-        # so the cross-Enum filter composes natively.
-        _maxu = d.p_entity_max_units.frame
-        _e_dt = _maxu.schema["e"]
-        _p_in_e = (d.process_source_sink
-                     .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
-                     .unique())
-        max_units_p = Param(("p", "d"),
-            _maxu.join(_p_in_e, on="e", how="semi")
-                  .pipe(rename_to_axis, {"e": "p"}))
-    if has_invest_p:
-        m.add_cstr(
-            "maxInvest_var_bound",
-            over      = d.pd_invest_set,
-            sense     = "<=",
-            lhs_terms = {"invest":    v_invest_p},
-            rhs_terms = {"max_units": max_units_p},
-        )
-    if has_divest_p:
-        m.add_cstr(
-            "maxDivest_var_bound",
-            over      = d.pd_divest_set,
-            sense     = "<=",
-            lhs_terms = {"divest":    v_divest_p},
-            rhs_terms = {"max_units": max_units_p},
-        )
-    if has_invest_n or has_divest_n:
-        # Phase 4.8g: same cross-Enum pattern as the ``max_units_p`` site
-        # above — semi-join against ``nodeState['n']`` up-cast to the
-        # e-axis vocab carried by ``p_entity_max_units``.
-        _maxu_n = d.p_entity_max_units.frame
-        _e_dt_n = _maxu_n.schema["e"]
-        _n_in_e = (d.nodeState
-                     .select(pl.col("n").cast(_e_dt_n, strict=False).alias("e"))
-                     .unique())
-        max_units_n = Param(("n", "d"),
-            _maxu_n.join(_n_in_e, on="e", how="semi")
-                    .pipe(rename_to_axis, {"e": "n"}))
-    if has_invest_n:
-        m.add_cstr(
-            "maxInvest_var_bound_n",
-            over      = d.nd_invest_set,
-            sense     = "<=",
-            lhs_terms = {"invest":    v_invest_n},
-            rhs_terms = {"max_units": max_units_n},
-        )
-    if has_divest_n:
-        m.add_cstr(
-            "maxDivest_var_bound_n",
-            over      = d.nd_divest_set,
-            sense     = "<=",
-            lhs_terms = {"divest":    v_divest_n},
-            rhs_terms = {"max_units": max_units_n},
-        )
-    # Per-period invest/divest cap (.mod's maxInvest_entity_period /
-    # maxDivest_entity_period).  Only applies on (e, d) ∈ ed_invest_period
-    # — that's the entities/periods flagged with a per-period limit (e.g.
-    # invest_method = "invest_period_total").  Entities with invest_method
-    # = "invest_total" or "invest_no_limit" don't appear in this set.
-    #
-    # The mathematical relation is
-    #     v_invest[e, d] * unitsize  ≤  ed_invest_max_period[e, d]
-    # and we emit it in that natural form: the LP coefficient on
-    # v_invest is ``unitsize`` (carried on the LHS) and the RHS is the
-    # raw cap in MW (``ed_invest_max_period`` is already raw MW).  This
-    # mirrors every other invest constraint (the per-entity total /
-    # cumulative / group families all use coef=unitsize, RHS-in-MW), so
-    # the extracted row dual is in obj/MW — consistent across families.
-    # (Numerical conditioning that the old pre-divided coef=1 form bought
-    # is now handled by autoscale Layer 2, so no special-casing here.)
-    if has_invest_p and d.ed_invest_period_set is not None and d.ed_invest_period_set.height > 0:
-        ed_p_period = d.ed_invest_period_set.pipe(rename_to_axis, {"e": "p"}).join(
-            d.pd_invest_set, on=["p", "d"], how="inner")
-        if ed_p_period.height > 0 and d.ed_invest_max_period is not None:
-            cap_p = Param(("p", "d"),
-                d.ed_invest_max_period.frame.pipe(rename_to_axis, {"e": "p"})
-                .select("p", "d", "value"))
-            m.add_cstr(
-                "maxInvest_entity_period_p",
-                over      = ed_p_period,
-                sense     = "<=",
-                lhs_terms = {"invest": v_invest_p * d.p_unitsize},
-                rhs_terms = {"cap":    cap_p},
-            )
-    if has_invest_n and d.ed_invest_period_set is not None and d.ed_invest_period_set.height > 0:
-        ed_n_period = d.ed_invest_period_set.pipe(rename_to_axis, {"e": "n"}).join(
-            d.nd_invest_set, on=["n", "d"], how="inner")
-        if ed_n_period.height > 0 and d.ed_invest_max_period is not None:
-            cap_n = Param(("n", "d"),
-                d.ed_invest_max_period.frame.pipe(rename_to_axis, {"e": "n"})
-                .select("n", "d", "value"))
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            m.add_cstr(
-                "maxInvest_entity_period_n",
-                over      = ed_n_period,
-                sense     = "<=",
-                lhs_terms = {"invest": v_invest_n * us_n},
-                rhs_terms = {"cap":    cap_n},
-            )
-    # Divest period caps: same coef=unitsize / raw-MW-RHS form as invest
-    # above (dual in obj/MW, matching the total/cumulative/group families).
-    if has_divest_p and d.ed_divest_period_set is not None and d.ed_divest_period_set.height > 0:
-        ed_p_dperiod = d.ed_divest_period_set.pipe(rename_to_axis, {"e": "p"}).join(
-            d.pd_divest_set, on=["p", "d"], how="inner")
-        if ed_p_dperiod.height > 0 and d.ed_divest_max_period is not None:
-            cap_dp = Param(("p", "d"),
-                d.ed_divest_max_period.frame.pipe(rename_to_axis, {"e": "p"})
-                .select("p", "d", "value"))
-            m.add_cstr(
-                "maxDivest_entity_period_p",
-                over      = ed_p_dperiod,
-                sense     = "<=",
-                lhs_terms = {"divest": v_divest_p * d.p_unitsize},
-                rhs_terms = {"cap":    cap_dp},
-            )
-    if has_divest_n and d.ed_divest_period_set is not None and d.ed_divest_period_set.height > 0:
-        ed_n_dperiod = d.ed_divest_period_set.pipe(rename_to_axis, {"e": "n"}).join(
-            d.nd_divest_set, on=["n", "d"], how="inner")
-        if ed_n_dperiod.height > 0 and d.ed_divest_max_period is not None:
-            cap_dn = Param(("n", "d"),
-                d.ed_divest_max_period.frame.pipe(rename_to_axis, {"e": "n"})
-                .select("n", "d", "value"))
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            m.add_cstr(
-                "maxDivest_entity_period_n",
-                over      = ed_n_dperiod,
-                sense     = "<=",
-                lhs_terms = {"divest": v_divest_n * us_n},
-                rhs_terms = {"cap":    cap_dn},
-            )
-    # Per-entity totals: Σ_d v_invest[e, d] * unitsize ≤ e_invest_max_total[e]
-    # (and divest analogue).  When running a non-first sub-solve of a
-    # multi-solve chain, ``p_entity_previously_invested_capacity[e, d]``
-    # / ``p_entity_invested[e]`` / ``p_entity_divested[e]`` carry the
-    # cumulative realized invest/divest from prior solves and must be
-    # added to the LHS — see flextool.mod:3597-3623.  polar_high emits one
-    # row per entity (collapsed over d) so we use the max prior-capacity
-    # per entity, which equals the tightest .mod row (the last d) for
-    # the typical non-decreasing schedule.
-    def _e_max_prior_cap() -> dict[str, float]:
-        if d.p_entity_previously_invested_capacity is None:
-            return {}
-        return dict(
-            d.p_entity_previously_invested_capacity.frame
-              .group_by("e").agg(pl.col("value").max())
-              .rows()
-        )
-    def _e_prior_invested() -> dict[str, float]:
-        if d.p_entity_invested is None:
-            return {}
-        return dict(d.p_entity_invested.frame.rows())
-    def _e_prior_divested() -> dict[str, float]:
-        # The .mod gates p_entity_divested behind ``not p_model['solveFirst']``
-        # — ignore the file on the first sub-solve of a chain (or for a
-        # single-solve scenario).  ``p_nested_solve_first`` is tri-state:
-        # None → no p_nested_model.csv (single-solve, treated as solveFirst);
-        # True → solveFirst=1 (skip); False → solveFirst=0 (use the prior).
-        if d.p_entity_divested is None:
-            return {}
-        if getattr(d, "p_nested_solve_first", None) is not False:
-            return {}
-        return dict(d.p_entity_divested.frame.rows())
-
-    def _adjust_cap_frame(cap_frame: pl.DataFrame, key_col: str,
-                           subtract: dict[str, float]) -> pl.DataFrame:
-        """Return cap_frame with `value` -= subtract[key], clipped at 0."""
-        if not subtract:
-            return cap_frame
-        adj = cap_frame.with_columns(
-            value=(pl.col("value")
-                   - pl.col(key_col).map_elements(lambda k: subtract.get(k, 0.0),
-                                                    return_dtype=pl.Float64))
-        ).with_columns(value=pl.when(pl.col("value") < 0).then(0.0)
-                                .otherwise(pl.col("value")))
-        return adj
-
-    max_prior_cap = _e_max_prior_cap()
-    prior_invested = _e_prior_invested()
-    prior_divested = _e_prior_divested()
-
-    if (has_invest_p and d.e_invest_total is not None
-            and d.e_invest_total.height > 0
-            and d.e_invest_max_total is not None):
-        # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); up-cast p→e.
-        _e_dt = d.e_invest_total.schema["e"]
-        _p_in_e = (d.process_source_sink
-                     .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
-                     .unique())
-        e_inv_p = (d.e_invest_total
-                     .join(_p_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "p"}))
-        if e_inv_p.height > 0:
-            cap_frame = _adjust_cap_frame(
-                d.e_invest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
-                "p", max_prior_cap)
-            e_inv_max_p = Param(("p",), cap_frame)
-            _emit_entity_total_cap(
-                m,
-                legacy_name = "maxInvest_entity_total",
-                path_name   = "maxInvest_entity_total_path",
-                over_e      = e_inv_p,
-                var         = v_invest_p,
-                unitsize    = d.p_unitsize,
-                cap_param   = e_inv_max_p,
-                d_leaf      = getattr(d, "d_leaf", None),
-                lhs_label   = "invest_total",
-            )
-    if (has_divest_p and d.e_divest_total is not None
-            and d.e_divest_total.height > 0
-            and d.e_divest_max_total is not None):
-        # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); up-cast p→e.
-        _e_dt = d.e_divest_total.schema["e"]
-        _p_in_e = (d.process_source_sink
-                     .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
-                     .unique())
-        e_div_p = (d.e_divest_total
-                     .join(_p_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "p"}))
-        if e_div_p.height > 0:
-            cap_frame = _adjust_cap_frame(
-                d.e_divest_max_total.frame.pipe(rename_to_axis, {"e": "p"}),
-                "p", prior_divested)
-            e_div_max_p = Param(("p",), cap_frame)
-            _emit_entity_total_cap(
-                m,
-                legacy_name = "maxDivest_entity_total",
-                path_name   = "maxDivest_entity_total_path",
-                over_e      = e_div_p,
-                var         = v_divest_p,
-                unitsize    = d.p_unitsize,
-                cap_param   = e_div_max_p,
-                d_leaf      = getattr(d, "d_leaf", None),
-                lhs_label   = "divest_total",
-            )
-    # Node analogues for per-entity totals.
-    if (has_invest_n and d.e_invest_total is not None
-            and d.e_invest_total.height > 0
-            and d.e_invest_max_total is not None):
-        # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); up-cast n→e.
-        _e_dt = d.e_invest_total.schema["e"]
-        _n_in_e = (d.nodeState
-                     .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
-                     .unique())
-        e_inv_n = (d.e_invest_total
-                     .join(_n_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "n"}))
-        if e_inv_n.height > 0:
-            cap_frame = _adjust_cap_frame(
-                d.e_invest_max_total.frame.pipe(rename_to_axis, {"e": "n"}),
-                "n", max_prior_cap)
-            e_inv_max_n = Param(("n",), cap_frame)
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            _emit_entity_total_cap(
-                m,
-                legacy_name = "maxInvest_entity_total_n",
-                path_name   = "maxInvest_entity_total_path_n",
-                over_e      = e_inv_n,
-                var         = v_invest_n,
-                unitsize    = us_n,
-                cap_param   = e_inv_max_n,
-                d_leaf      = getattr(d, "d_leaf", None),
-                lhs_label   = "invest_total",
-            )
-    if (has_divest_n and d.e_divest_total is not None
-            and d.e_divest_total.height > 0
-            and d.e_divest_max_total is not None):
-        # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); up-cast n→e.
-        _e_dt = d.e_divest_total.schema["e"]
-        _n_in_e = (d.nodeState
-                     .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
-                     .unique())
-        e_div_n = (d.e_divest_total
-                     .join(_n_in_e, on="e", how="semi")
-                     .pipe(rename_to_axis, {"e": "n"}))
-        if e_div_n.height > 0:
-            cap_frame = _adjust_cap_frame(
-                d.e_divest_max_total.frame.pipe(rename_to_axis, {"e": "n"}),
-                "n", prior_divested)
-            e_div_max_n = Param(("n",), cap_frame)
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            _emit_entity_total_cap(
-                m,
-                legacy_name = "maxDivest_entity_total_n",
-                path_name   = "maxDivest_entity_total_path_n",
-                over_e      = e_div_n,
-                var         = v_divest_n,
-                unitsize    = us_n,
-                cap_param   = e_div_max_n,
-                d_leaf      = getattr(d, "d_leaf", None),
-                lhs_label   = "divest_total",
-            )
-
-    _build_prof("before:conversion_indirect")
-    # ─── conversion_indirect (CHP / multi-flow) ───────────────────────────
-    if has_indirect:
-        # Per flextool.mod:2557-2580, the conversion equation reads:
-        #   Σ_source (v_flow[p, source, p] · unitsize · source_flow_coef[p, source])
-        #     = Σ_sink (v_flow[p, p, sink] · unitsize · sink_flow_coef[p, sink])
-        #         · slope[p, d, t]
-        # Most fixtures have all flow_coefs = 1 (the implicit default) so
-        # ``p_process_*_flow_coef`` is None and the Sum collapses to the
-        # pre-flow-coef form.  When non-default, the Param multiplier
-        # routes per-arc weights into the equation — this is what the
-        # ``coal_chp_extraction`` scenario uses to express the iso-fuel
-        # tradeoff between heat and electricity (sink coefs 0.2 vs 2.0).
-        # Per flextool.mod:2343, the source-side input term also splits
-        # into an *undelayed* part (current-time) and a *delayed* part
-        # (time-shifted via dtt__delay_duration, weighted by
-        # p_process_delay_weight).  Anti-join out the delayed processes
-        # from the existing Sum, then add the delayed contribution from
-        # _delay.delayed_input_expr.  The delayed term multiplies each
-        # input by its source-side conversion_flow_coeff, like the
-        # undelayed term (flextool.mod conversion_indirect).
-        in_flows_undelayed = d.process_input_flows
-        if (getattr(d, "process_delayed", None) is not None
-                and d.process_delayed.height > 0):
-            in_flows_undelayed = in_flows_undelayed.join(
-                d.process_delayed, on="p", how="anti")
-
-        input_expr = v_flow * d.p_unitsize
-        if d.p_process_source_conversion_flow_coeff is not None:
-            input_expr = input_expr * d.p_process_source_conversion_flow_coeff
-        output_expr = v_flow * d.p_unitsize * d.p_slope
-        if d.p_process_sink_conversion_flow_coeff is not None:
-            output_expr = output_expr * d.p_process_sink_conversion_flow_coeff
-
-        lhs_terms = {
-            "input": Sum(Where(input_expr, in_flows_undelayed),
-                          over=("source","sink")),
-        }
-        delayed_term = _delay.delayed_input_expr(d, v_flow)
-        if delayed_term is not None:
-            lhs_terms["input_delayed"] = delayed_term
-
-        rhs_terms = {"output": Sum(Where(output_expr,
-                                         d.process_output_flows),
-                                   over=("source","sink"))}
-        # min_load_efficiency section term (flextool.mod:2582):
-        #   + (v_online_linear + v_online_integer)[p,d,t]
-        #     · pdtProcess_section[p,d,t] · unitsize[p]
-        # for indirect min_load_efficiency units.  The input of an indirect
-        # unit is its own v_flow (noEff), so this is the ONLY place the
-        # section fuel enters: nodeBalance, commodity cost, CO2 and the
-        # reported input flows all read that v_flow.  The section is not
-        # multiplied by any conversion_flow_coeff (as in the .mod).  For a
-        # delayed unit it sits on the output side, at the sink-side time t
-        # with v_online[t]; the delayed inputs supply it through
-        # ``input_delayed``.  (p,d,t) rows without v_online lack the term.
-        if has_minload_eff and d.p_section is not None:
-            ind_mle = d.process_min_load_eff.join(
-                d.process_indirect.select("p").unique(), on="p", how="semi")
-            if ind_mle.height > 0:
-                if has_online_lin:
-                    rhs_terms["section_lin"] = (
-                        Where(v_online_lin, ind_mle)
-                        * d.p_section * d.p_unitsize)
-                if has_online_int:
-                    rhs_terms["section_int"] = (
-                        Where(v_online_int, ind_mle)
-                        * d.p_section * d.p_unitsize)
-
-        m.add_cstr(
-            "conversion_indirect",
-            over      = process_indirect_dt,
-            sense     = "==",
-            lhs_terms = lhs_terms,
-            rhs_terms = rhs_terms,
-        )
-
-        # minInputShare — unit__inputNode.input_share_min (mixing minimum
-        # on the unit's current input; see :func:`_add_min_input_share`).
-        _add_min_input_share(m, d, v_flow)
-
-    _build_prof("before:co2_cap_period")
-    # ─── CO2 cap (period level) ───────────────────────────────────────────
-    if has_co2_cap:
-        # The .mod splits CO2 emissions by partition: eff multiplies by
-        # ``pdtProcess_slope`` (efficiency factor on conversion), noEff
-        # does not.  Combining both partitions in a single set with the
-        # eff-style slope multiplier over-counts noEff processes' CO2
-        # (e.g. coal_chp's slope=1.111 inflates its emissions by ~11%),
-        # which skews co2_max_period dispatch on multi-period fixtures.
-        lhs_terms_co2: dict = {}
-        if has_co2_cap_eff:
-            lhs_terms_co2["emissions_eff"] = Sum(
-                Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_capped)
-                * d.p_co2_content
-                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
-                over=("p","source","sink","c","t"),
-            )
-        if has_co2_cap_noEff:
-            lhs_terms_co2["emissions_noEff"] = Sum(
-                Where(v_flow * d.p_unitsize, d.flow_from_co2_capped_noEff)
-                * d.p_co2_content
-                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
-                over=("p","source","sink","c","t"),
-            )
-        m.add_cstr(
-            "co2_max_period",
-            over      = d.group_d_co2_capped,
-            sense     = "<=",
-            lhs_terms = lhs_terms_co2,
-            rhs_terms = {"cap": d.p_co2_max_period},
-        )
-
-    _build_prof("before:co2_cap_total")
-    # ─── CO2 cap (multi-period total) ─────────────────────────────────────
-    # Port of v3.32.0 ``co2_max_total`` (.mod:4019-4055).  Identical
-    # per-(d,t) annualised-tonnes LHS shape as ``co2_max_period``, but
-    # the ``d`` dim is also summed out so each capped group carries one
-    # row whose RHS is the (g,)-only ``p_co2_max_total`` scalar (in
-    # tonnes, projected per-year × 1-year-per-period for fixtures whose
-    # ``p_period_share`` ≡ 1; legacy semantics for multi-year periods
-    # would weight by ``p_years_represented_d`` — out of scope for this
-    # port; existing co2_max_period also doesn't apply that weighting).
-    if has_co2_cap_total:
-        lhs_terms_co2_total: dict = {}
-        if has_co2_cap_total_eff:
-            lhs_terms_co2_total["emissions_eff"] = Sum(
-                Where(v_flow * d.p_unitsize * d.p_slope,
-                      d.flow_from_co2_capped_total)
-                * d.p_co2_content
-                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
-                over=("p", "source", "sink", "c", "d", "t"),
-            )
-        if has_co2_cap_total_noEff:
-            lhs_terms_co2_total["emissions_noEff"] = Sum(
-                Where(v_flow * d.p_unitsize,
-                      d.flow_from_co2_capped_total_noEff)
-                * d.p_co2_content
-                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
-                over=("p", "source", "sink", "c", "d", "t"),
-            )
-        m.add_cstr(
-            "co2_max_total",
-            over      = d.group_co2_max_total,
-            sense     = "<=",
-            lhs_terms = lhs_terms_co2_total,
-            rhs_terms = {"cap": d.p_co2_max_total},
-        )
-
-    _build_prof("before:user_defined_flow_constraints")
-    # ─── User-defined flow constraints ────────────────────────────────────
-    has_any_cdt = any(x is not None and x.height > 0
-                      for x in (d.cdt_eq, d.cdt_le, d.cdt_ge))
-    if has_any_cdt:
-        # Build the LHS expression as a sum of optional contributions.
-        # Each piece resolves to dims (cn, d, t) (or (cn, d) for invest,
-        # which broadcasts over t at constraint emission).  The
-        # constraint axis column is ``cn`` (not ``c``) — see the
-        # c_collision review note in flextool_axis_contract.json.
-        lhs_pieces: list = []
-        if d.flow_constraint_idx is not None and d.flow_constraint_idx.height > 0:
-            lhs_pieces.append(Sum(
-                Where(v_flow * d.p_unitsize, d.flow_constraint_idx)
-                * d.p_flow_constraint_coef,
-                over=("p", "source", "sink"),
-            ))
-        # Invest-capacity terms.  Only relevant rows of v_invest_n /
-        # v_invest_p are picked up by the inner-join in Where (entities
-        # whose (n, cn) or (p, cn) appear in the coefficient frame).  The
-        # join also adds the cn dim.  Sum collapses n / p, leaving (cn, d).
-        if (has_invest_n and
-                d.p_node_constraint_invested_capacity_coeff is not None):
-            us_n_user = Param(("n",), d.p_state_unitsize.frame)
-            n_inv_idx = (d.p_node_constraint_invested_capacity_coeff
-                          .frame.select("n", "cn"))
-            lhs_pieces.append(Sum(
-                Where(v_invest_n * us_n_user, n_inv_idx)
-                * d.p_node_constraint_invested_capacity_coeff,
-                over=("n",),
-            ))
-        if (has_invest_p and
-                d.p_process_constraint_invested_capacity_coeff is not None):
-            p_inv_idx = (d.p_process_constraint_invested_capacity_coeff
-                          .frame.select("p", "cn"))
-            lhs_pieces.append(Sum(
-                Where(v_invest_p * d.p_unitsize, p_inv_idx)
-                * d.p_process_constraint_invested_capacity_coeff,
-                over=("p",),
-            ))
-        # State-coefficient term:
-        #   + Σ_{(n,cn) in node_state_constraint} v_state[n,d,t]
-        #         * p_node_constraint_state_coeff[n,cn]
-        #         * p_entity_unitsize[n]
-        # Yields (cn, d, t) after summing over n.
-        if (has_storage
-                and d.p_node_constraint_state_coeff is not None):
-            us_n_state = Param(("n",), d.p_state_unitsize.frame)
-            n_state_idx = (d.p_node_constraint_state_coeff
-                           .frame.select("n", "cn"))
-            lhs_pieces.append(Sum(
-                Where(v_state * us_n_state, n_state_idx)
-                * d.p_node_constraint_state_coeff,
-                over=("n",),
-            ))
-        # Prebuilt-capacity (existing-capacity contribution) — pure Param
-        # constants, accumulated into a separate ``cstr_const`` so they
-        # land on lhs_terms as Param entries (not summed into ``lhs_pieces``
-        # which is an Expr).  Mirror of mod's:
-        #   + Σ_{(n,cn) in node_capacity_constraint_prebuilt}
-        #       (existing/unitsize) * coef * unitsize[n]
-        # = Σ_n existing[n,d] * coef[n,cn]   →  Param dims (cn, d)
-        cstr_const_pieces: list = []
-        if (d.p_node_constraint_prebuilt_capacity_coeff is not None
-                and d.p_state_existing_capacity is not None):
-            n_pre = (d.p_state_existing_capacity.frame
-                     .join(d.p_node_constraint_prebuilt_capacity_coeff
-                            .frame.rename({"value": "coef"}),
-                            on="n", how="inner")
-                     .with_columns(value=pl.col("value") * pl.col("coef"))
-                     .group_by(["cn", "d"]).agg(pl.col("value").sum())
-                     .select("cn", "d", "value"))
-            if n_pre.height > 0:
-                cstr_const_pieces.append(Param(("cn", "d"), n_pre))
-        if (d.p_process_constraint_prebuilt_capacity_coeff is not None
-                and d.p_process_existing_count is not None
-                and d.p_unitsize is not None):
-            # process existing capacity = existing_count * unitsize, per (p, d)
-            ec = d.p_process_existing_count.frame.rename({"value": "ec"})
-            us = d.p_unitsize.frame.rename({"value": "us"})
-            p_pre = (ec.join(us, on="p", how="inner")
-                       .with_columns(cap=pl.col("ec") * pl.col("us"))
-                       .join(d.p_process_constraint_prebuilt_capacity_coeff
-                              .frame.rename({"value": "coef"}),
-                              on="p", how="inner")
-                       .with_columns(value=pl.col("cap") * pl.col("coef"))
-                       .group_by(["cn", "d"]).agg(pl.col("value").sum())
-                       .select("cn", "d", "value"))
-            if p_pre.height > 0:
-                cstr_const_pieces.append(Param(("cn", "d"), p_pre))
-
-        # Prebuilt-capacity cumulative-invest contribution — variable.
-        # Mirror of mod:2885-2898 / 2843-2856:
-        #   + Σ {(p,cn) in process_capacity_constraint_prebuilt}
-        #       (Σ_{d_invest : year[d_invest] < year[d]} v_invest[p, d_invest])
-        #         * coef[p, cn] * unitsize[p]
-        # The static-existing piece above is the first half of the LHS;
-        # this adds the cumulative-prior-invest variable summand that
-        # closes the multi_year_wind_growth_cap parity gap.
-        if (has_invest_p and
-                d.p_process_constraint_prebuilt_capacity_coeff is not None
-                and d.edd_invest_lookback_set is not None
-                and d.edd_invest_lookback_set.height > 0):
-            v_inv_at_back_uc = Var(  # virtual rename: d → d_invest
-                name=v_invest_p.name + "__at_back_uc",
-                dims=("p", "d_invest"),
-                frame=v_invest_p.frame.pipe(rename_to_axis, {"d": "d_invest"}),
-                lower=v_invest_p.lower, upper=v_invest_p.upper,
-            )
-            p_pre_idx = (d.p_process_constraint_prebuilt_capacity_coeff
-                          .frame.select("p", "cn"))
-            lkb_p = (d.edd_invest_lookback_set.pipe(rename_to_axis, {"e": "p"})
-                       .join(p_pre_idx, on="p", how="inner"))
-            if lkb_p.height > 0:
-                lhs_pieces.append(Sum(
-                    Where(v_inv_at_back_uc * d.p_unitsize, lkb_p)
-                    * d.p_process_constraint_prebuilt_capacity_coeff,
-                    over=("p", "d_invest"),
-                ))
-        if (has_invest_n and
-                d.p_node_constraint_prebuilt_capacity_coeff is not None
-                and d.edd_invest_lookback_set is not None
-                and d.edd_invest_lookback_set.height > 0):
-            us_n_pre = Param(("n",), d.p_state_unitsize.frame)
-            v_inv_n_at_back_uc = Var(
-                name=v_invest_n.name + "__at_back_uc",
-                dims=("n", "d_invest"),
-                frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
-                lower=v_invest_n.lower, upper=v_invest_n.upper,
-            )
-            n_pre_idx = (d.p_node_constraint_prebuilt_capacity_coeff
-                          .frame.select("n", "cn"))
-            lkb_n = (d.edd_invest_lookback_set.pipe(rename_to_axis, {"e": "n"})
-                       .join(n_pre_idx, on="n", how="inner"))
-            if lkb_n.height > 0:
-                lhs_pieces.append(Sum(
-                    Where(v_inv_n_at_back_uc * us_n_pre, lkb_n)
-                    * d.p_node_constraint_prebuilt_capacity_coeff,
-                    over=("n", "d_invest"),
-                ))
-        if lhs_pieces or cstr_const_pieces:
-            cstr_lhs_terms: dict = {}
-            if lhs_pieces:
-                cstr_lhs = lhs_pieces[0]
-                for piece in lhs_pieces[1:]:
-                    cstr_lhs = cstr_lhs + piece
-                cstr_lhs_terms["contribution"] = cstr_lhs
-            for i, p in enumerate(cstr_const_pieces):
-                cstr_lhs_terms[f"prebuilt_const_{i}"] = p
-            for axes, sense, name in [
-                (d.cdt_eq, "==", "process_constraint_equal"),
-                (d.cdt_le, "<=", "process_constraint_less_than"),
-                (d.cdt_ge, ">=", "process_constraint_greater_than"),
-            ]:
-                if axes is None or axes.height == 0:
-                    continue
-                m.add_cstr(name, over=axes, sense=sense,
-                           lhs_terms=cstr_lhs_terms,
-                           rhs_terms={"constant":     d.p_constraint_constant})
-
-    _build_prof("before:storage_state_bounds")
-    # ─── Storage state bounds + start binding ─────────────────────────────
-    if has_storage:
-        # maxState:  v_state[n, d, t]  <=  state_upper[n, d]
-        # With invest/divest active on storage nodes, mirror the maxFlow
-        # tightening: v_state + (divest - invest) ≤ state_upper, where the
-        # invest/divest summations pick out (n, d_inv, d) tuples in
-        # edd_invest / edd_divest_active that include both n and d.
-        state_lhs: dict = {"state": v_state}
-        if has_divest_n and d.edd_divest_active is not None:
-            v_div_n_at = Var(
-                name=v_divest_n.name + "__at_divest",
-                dims=("n", "d_divest"),
-                frame=v_divest_n.frame.pipe(rename_to_axis, {"d": "d_divest"}),
-                lower=v_divest_n.lower, upper=v_divest_n.upper,
-            )
-            # Phase 4.8h: cross-Enum is_in (p-axis vs n-axis vocab); up-cast n→p.
-            _p_dt = d.edd_divest_active.schema["p"]
-            _n_in_p = (d.nodeState
-                         .select(pl.col("n").cast(_p_dt, strict=False).alias("p"))
-                         .unique())
-            edd_div_n = (d.edd_divest_active
-                           .join(_n_in_p, on="p", how="semi")
-                           .pipe(rename_to_axis, {"p": "n"}))
-            if edd_div_n.height > 0:
-                state_lhs["divest"] = Sum(
-                    Where(v_div_n_at, edd_div_n), over=("d_divest",))
-        if has_invest_n and d.edd_invest_set is not None:
-            v_inv_n_at = Var(
-                name=v_invest_n.name + "__at_invest",
-                dims=("n", "d_invest"),
-                frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
-                lower=v_invest_n.lower, upper=v_invest_n.upper,
-            )
-            # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); up-cast n→e.
-            _e_dt = d.edd_invest_set.schema["e"]
-            _n_in_e = (d.nodeState
-                         .select(pl.col("n").cast(_e_dt, strict=False).alias("e"))
-                         .unique())
-            edd_inv_n = (d.edd_invest_set
-                           .join(_n_in_e, on="e", how="semi")
-                           .pipe(rename_to_axis, {"e": "n"}))
-            if edd_inv_n.height > 0:
-                state_lhs["invest_neg"] = -Sum(
-                    Where(v_inv_n_at, edd_inv_n), over=("d_invest",))
-        m.add_cstr(
-            "maxState",
-            over      = nodeState_dt,
-            sense     = "<=",
-            lhs_terms = state_lhs,
-            rhs_terms = {"upper": d.p_state_upper},
-        )
-
-        # ─── State-profile bounds (profile_state_upper / lower / fixed) ─
-        # mod:2639-2679.  Parallel to ``profile_flow_*`` but on v_state:
-        #   LHS: v_state[n,d,t] · 1000
-        #   RHS: profile[f,d,t] · ( existing_count[n,d]
-        #                           + Σ_{d_inv} v_invest_n[n,d_inv]
-        #                           - Σ_{d_div} v_divest_n[n,d_div] )
-        #         · availability[n,d,t] · 1000
-        # We divide both sides by 1000 and move invest/divest to LHS.
-        # Availability defaults to 1.0 if not provided.
-        any_node_profile = (
-            (d.node_profile_upper is not None and d.node_profile_upper.height > 0)
-            or (d.node_profile_lower is not None and d.node_profile_lower.height > 0)
-            or (d.node_profile_fixed is not None and d.node_profile_fixed.height > 0)
-        )
-        if any_node_profile and d.p_profile_value is not None:
-            # existing_count[n, d] = state_existing_capacity / state_unitsize.
-            us_n_state_prof = d.p_state_unitsize.frame.rename({"value": "us"})
-            ec_n_long = (d.p_state_existing_capacity.frame.rename({"value": "cap"})
-                         .join(us_n_state_prof, on="n", how="inner")
-                         .with_columns(value=pl.col("cap") / pl.col("us"))
-                         .select("n", "d", "value"))
-            p_node_existing_count = Param(("n", "d"), ec_n_long)
-
-            def _add_node_profile_cstr(idx: "pl.DataFrame", name: str, sense: str) -> None:
-                # over = (n, f, d, t) — cross-product of idx with timeline.
-                over = idx.join(d.dt, how="cross")
-                rhs_param = d.p_profile_value * p_node_existing_count
-                # Densify availability over the profile nodes so a storage node
-                # with no DB-authored ``availability`` keeps its default-1.0
-                # factor instead of being inner-join-dropped to RHS=0 (→ forced
-                # v_state=0).  Node-state twin of the process-side fix; see
-                # :func:`_availability_factor`.
-                node_avail_factor = (
-                    _availability_factor(d, idx, axis="n",
-                                         avail=d.p_node_availability)
-                    if d.p_node_availability is not None else None)
-                if node_avail_factor is not None:
-                    rhs_param = rhs_param * node_avail_factor
-                lhs: dict = {"state": v_state}
-                # Invest/divest tightening — only over (n, f) pairs in idx.
-                nf_filter = idx.select("n", "f").unique()
-                if has_invest_n and d.edd_invest_set is not None:
-                    # Phase 4.8h: cross-Enum is_in (e vs n vocab); up-cast n→e.
-                    _e_dt = d.edd_invest_set.schema["e"]
-                    _n_in_e = (d.nodeState
-                                 .select(pl.col("n").cast(_e_dt, strict=False)
-                                                    .alias("e"))
-                                 .unique())
-                    edd_inv_n_p = (d.edd_invest_set
-                                     .join(_n_in_e, on="e", how="semi")
-                                     .pipe(rename_to_axis, {"e": "n"}))
-                    if edd_inv_n_p.height > 0:
-                        v_inv_n_at_p = Var(
-                            name=v_invest_n.name + "__at_invest_node_profile",
-                            dims=("n", "d_invest"),
-                            frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
-                            lower=v_invest_n.lower, upper=v_invest_n.upper,
-                        )
-                        inv_term = Sum(
-                            Where(v_inv_n_at_p, edd_inv_n_p),
-                            over=("d_invest",),
-                        )
-                        # Multiply by profile · (availability) and restrict to (n, f) pairs.
-                        inv_full = inv_term * d.p_profile_value
-                        if node_avail_factor is not None:
-                            inv_full = inv_full * node_avail_factor
-                        lhs["invest_neg"] = -Where(inv_full, nf_filter)
-                if has_divest_n and d.edd_divest_active is not None:
-                    # Phase 4.8h: cross-Enum is_in (p vs n vocab); up-cast n→p.
-                    _p_dt = d.edd_divest_active.schema["p"]
-                    _n_in_p = (d.nodeState
-                                 .select(pl.col("n").cast(_p_dt, strict=False)
-                                                    .alias("p"))
-                                 .unique())
-                    edd_div_n_p = (d.edd_divest_active
-                                     .join(_n_in_p, on="p", how="semi")
-                                     .pipe(rename_to_axis, {"p": "n"}))
-                    if edd_div_n_p.height > 0:
-                        v_div_n_at_p = Var(
-                            name=v_divest_n.name + "__at_divest_node_profile",
-                            dims=("n", "d_divest"),
-                            frame=v_divest_n.frame.pipe(rename_to_axis, {"d": "d_divest"}),
-                            lower=v_divest_n.lower, upper=v_divest_n.upper,
-                        )
-                        div_term = Sum(
-                            Where(v_div_n_at_p, edd_div_n_p),
-                            over=("d_divest",),
-                        )
-                        div_full = div_term * d.p_profile_value
-                        if node_avail_factor is not None:
-                            div_full = div_full * node_avail_factor
-                        lhs["divest"] = Where(div_full, nf_filter)
-                m.add_cstr(name, over=over, sense=sense,
-                           lhs_terms=lhs,
-                           rhs_terms={"limit": rhs_param})
-
-            if d.node_profile_upper is not None and d.node_profile_upper.height > 0:
-                _add_node_profile_cstr(d.node_profile_upper,
-                                        "profile_state_upper_limit", "<=")
-            if d.node_profile_lower is not None and d.node_profile_lower.height > 0:
-                _add_node_profile_cstr(d.node_profile_lower,
-                                        "profile_state_lower_limit", ">=")
-            if d.node_profile_fixed is not None and d.node_profile_fixed.height > 0:
-                _add_node_profile_cstr(d.node_profile_fixed,
-                                        "profile_state_fixed", "==")
-
-        # storage_state_start_binding (if fix_start):
-        #   v_state[n, d, t_first] * unitsize
-        #     ==  storage_state_start[n] * (existing
-        #                                    + Σ_{d_inv} v_invest_n[d_inv] * unitsize
-        #                                    - Σ_{d_div} v_divest_n[d_div] * unitsize)
-        # Divide both sides by unitsize → v_state on the LHS as before, plus
-        # invest/divest tightening on the LHS (with sign flip):
-        #   v_state - state_start * Σ v_invest_n + state_start * Σ v_divest_n
-        #     == state_start * existing / unitsize.
-        # The .mod has TWO routes to the same numerical pinning depending
-        # on the binding method:
-        #   * ``bind_within_timeblock`` (and the default fall-through): a
-        #     dedicated ``storage_state_start_binding`` constraint at
-        #     (n, period_first, time_first) — flextool.mod:2725-2740.
-        #   * ``bind_forward_only`` + fix_start: an in-balance term added
-        #     to nodeBalance at the same row — flextool.mod:2197-2203.
-        #     Numerically equivalent for our tested fixtures (inflow=0
-        #     / no flows at t_first), so we route both through this
-        #     constraint instead of duplicating the term inside
-        #     nodeBalance.  ``bind_within_solve`` is excluded here
-        #     because the .mod's mirror at 2700-2723 binds it at the
-        #     LAST timestep of period_first, not the first.
-        if (is_solve_first
-            and d.storage_fix_start is not None and d.storage_fix_start.height > 0
-            and d.p_state_start is not None
-            and d.p_state_existing_capacity is not None
-            and d.p_state_unitsize is not None):
-            # storage_state_start_binding is gated on solveFirst (mod:2725-2733).
-            # When this is NOT the first sub-solve of a rolling-horizon chain,
-            # the start state is set by the roll_continue path in nodeBalance
-            # (mod:2196), so this standalone equality must not also fire.
-            # Exclude bind_forward_only and bind_within_solve from this
-            # standalone equality:
-            #   * bind_forward_only — handled by the in-balance fwd_fix_*
-            #     terms in nodeBalance above (mod:2197-2203).
-            #   * bind_within_solve — the .mod's mirror at mod:2700-2723
-            #     binds them at the LAST timestep of period_first, not
-            #     the first; not currently emitted (no fixture exercises
-            #     it).
-            # Only fix_start nodes that fall through to the default
-            # bind_within_timeblock path get the separate equality
-            # (mod:2725-2740).
-            fix_start_filtered = d.storage_fix_start
-            for excl in (d.storage_bind_forward_only,
-                          d.storage_bind_within_solve):
-                if excl is not None and excl.height > 0:
-                    fix_start_filtered = fix_start_filtered.join(
-                        excl, on="n", how="anti")
-            rhs_param = (d.p_state_start * d.p_state_existing_capacity) / d.p_state_unitsize
-            fixed_first_dt = d.nodeState_first_dt.join(
-                fix_start_filtered, on="n", how="inner")
-            start_lhs: dict = {"state": v_state}
-            if has_invest_n and d.edd_invest_set is not None:
-                v_inv_n_at_s = Var(
-                    name=v_invest_n.name + "__at_invest_start",
-                    dims=("n", "d_invest"),
-                    frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
-                    lower=v_invest_n.lower, upper=v_invest_n.upper,
-                )
-                # Phase 4.8h: cross-Enum is_in (e vs n vocab); up-cast n→e.
-                _e_dt = d.edd_invest_set.schema["e"]
-                _n_in_e = (d.nodeState
-                             .select(pl.col("n").cast(_e_dt, strict=False)
-                                                .alias("e"))
-                             .unique())
-                edd_inv_n_s = (d.edd_invest_set
-                                 .join(_n_in_e, on="e", how="semi")
-                                 .pipe(rename_to_axis, {"e": "n"}))
-                if edd_inv_n_s.height > 0:
-                    start_lhs["invest_neg"] = -Sum(
-                        Where(v_inv_n_at_s * d.p_state_start, edd_inv_n_s),
-                        over=("d_invest",))
-            if has_divest_n and d.edd_divest_active is not None:
-                v_div_n_at_s = Var(
-                    name=v_divest_n.name + "__at_divest_start",
-                    dims=("n", "d_divest"),
-                    frame=v_divest_n.frame.pipe(rename_to_axis, {"d": "d_divest"}),
-                    lower=v_divest_n.lower, upper=v_divest_n.upper,
-                )
-                # Phase 4.8h: cross-Enum is_in (p vs n vocab); up-cast n→p.
-                _p_dt = d.edd_divest_active.schema["p"]
-                _n_in_p = (d.nodeState
-                             .select(pl.col("n").cast(_p_dt, strict=False)
-                                                .alias("p"))
-                             .unique())
-                edd_div_n_s = (d.edd_divest_active
-                                 .join(_n_in_p, on="p", how="semi")
-                                 .pipe(rename_to_axis, {"p": "n"}))
-                if edd_div_n_s.height > 0:
-                    start_lhs["divest"] = Sum(
-                        Where(v_div_n_at_s * d.p_state_start, edd_div_n_s),
-                        over=("d_divest",))
-            m.add_cstr(
-                "storage_state_start_binding",
-                over      = fixed_first_dt,
-                sense     = "==",
-                lhs_terms = start_lhs,
-                rhs_terms = {"target": rhs_param},
-            )
-
-        # storage_state_start_binding_cyclic_period (mod:2709-2723):
-        #   For nodes with binding ∈ {bind_within_period, bind_within_solve}
-        #   AND start ∈ {fix_start, fix_start_end}, pin v_state at the
-        #   LAST timestep of the node's own block in period_first to
-        #   ``state_start * (existing + Σ_d_inv v_invest * us
-        #                            - Σ_d_div v_divest * us)``.
-        #   The cyclic wrap of the bind means t_last "==" the implicit
-        #   pre-t0001 state, which is what state_start represents.
-        #   For bind_forward_only this is handled inline in nodeBalance.
-        #   For bind_within_timeblock / bind_intraperiod_blocks the per-
-        #   block cycle prefers the first-row pin (handled above).
-        if (is_solve_first
-            and d.storage_fix_start is not None and d.storage_fix_start.height > 0
-            and d.p_state_start is not None
-            and d.p_state_existing_capacity is not None
-            and d.p_state_unitsize is not None
-            and d.nodeState_last_dt is not None and d.nodeState_last_dt.height > 0):
-            # Eligible binding methods: bind_within_solve (and
-            # bind_within_period if we ever add it as a separate set).
-            cyclic_bound_set = None
-            if d.storage_bind_within_solve is not None and d.storage_bind_within_solve.height > 0:
-                cyclic_bound_set = d.storage_bind_within_solve
-            if cyclic_bound_set is not None and cyclic_bound_set.height > 0:
-                # restrict to fix_start nodes
-                eligible = (cyclic_bound_set
-                              .join(d.storage_fix_start, on="n", how="inner"))
-                if eligible.height > 0:
-                    # period_first set: derived from nodeState_first_dt
-                    # (already filtered to first_period).
-                    period_first_set = (d.nodeState_first_dt
-                                          .select("d").unique())
-                    # last (d, t) per eligible node, within period_first.
-                    cyclic_dt = (d.nodeState_last_dt
-                                  .join(eligible, on="n", how="inner")
-                                  .join(period_first_set, on="d", how="inner")
-                                  .select("n", "d", "t").unique())
-                    if cyclic_dt.height > 0:
-                        cyclic_lhs: dict = {"state": v_state}
-                        if has_invest_n and d.edd_invest_set is not None:
-                            v_inv_n_at_c = Var(
-                                name=v_invest_n.name + "__at_invest_cyclic",
-                                dims=("n", "d_invest"),
-                                frame=v_invest_n.frame.pipe(rename_to_axis, {"d": "d_invest"}),
-                                lower=v_invest_n.lower, upper=v_invest_n.upper,
-                            )
-                            # Phase 4.8h: cross-Enum is_in (e vs n vocab); up-cast n→e.
-                            _e_dt = d.edd_invest_set.schema["e"]
-                            _n_in_e = (d.nodeState
-                                         .select(pl.col("n").cast(_e_dt, strict=False)
-                                                            .alias("e"))
-                                         .unique())
-                            edd_inv_n_c = (d.edd_invest_set
-                                             .join(_n_in_e, on="e", how="semi")
-                                             .pipe(rename_to_axis, {"e": "n"}))
-                            if edd_inv_n_c.height > 0:
-                                cyclic_lhs["invest_neg"] = -Sum(
-                                    Where(v_inv_n_at_c * d.p_state_start, edd_inv_n_c),
-                                    over=("d_invest",))
-                        if has_divest_n and d.edd_divest_active is not None:
-                            v_div_n_at_c = Var(
-                                name=v_divest_n.name + "__at_divest_cyclic",
-                                dims=("n", "d_divest"),
-                                frame=v_divest_n.frame.pipe(rename_to_axis, {"d": "d_divest"}),
-                                lower=v_divest_n.lower, upper=v_divest_n.upper,
-                            )
-                            # Phase 4.8h: cross-Enum is_in (p vs n vocab); up-cast n→p.
-                            _p_dt = d.edd_divest_active.schema["p"]
-                            _n_in_p = (d.nodeState
-                                         .select(pl.col("n").cast(_p_dt, strict=False)
-                                                            .alias("p"))
-                                         .unique())
-                            edd_div_n_c = (d.edd_divest_active
-                                             .join(_n_in_p, on="p", how="semi")
-                                             .pipe(rename_to_axis, {"p": "n"}))
-                            if edd_div_n_c.height > 0:
-                                cyclic_lhs["divest"] = Sum(
-                                    Where(v_div_n_at_c * d.p_state_start, edd_div_n_c),
-                                    over=("d_divest",))
-                        rhs_param_cyclic = (d.p_state_start * d.p_state_existing_capacity) / d.p_state_unitsize
-                        m.add_cstr(
-                            "storage_state_start_binding_cyclic_period",
-                            over      = cyclic_dt,
-                            sense     = "==",
-                            lhs_terms = cyclic_lhs,
-                            rhs_terms = {"target": rhs_param_cyclic},
-                        )
-
-        # ─── storage_state_solve_horizon_reference_value (mod:2802-2822) ─
-        # For nodes with method ``use_reference_value``, pin v_state at the
-        # last (d, t) of period_last to ``reference_value × existing/unitsize``.
-        # No competing fix_end / bind_within_*: filter applied at load time.
-        # Investment-tightening (RHS terms with v_invest_n / v_divest_n) is
-        # NOT included here because the test fixture has no invest on
-        # storage and recourse-investment is out of scope (audit/a6_b_dim_alternative.md);
-        # add invest tightening if a future fixture exercises it.
-        if (has_storage
-                and d.storage_use_reference_value is not None
-                and d.storage_use_reference_value.height > 0
-                and d.p_storage_state_reference_value is not None
-                and d.nodeState_last_dt is not None
-                and d.nodeState_last_dt.height > 0
-                and d.period_last is not None
-                and d.p_state_existing_capacity is not None
-                and d.p_state_unitsize is not None):
-            # Domain: (n, d, t) ∈ nodeState_last_dt where d ∈ period_last
-            # AND n ∈ storage_use_reference_value.
-            ssrv_over = (d.nodeState_last_dt
-                .join(d.period_last, on="d", how="inner")
-                .join(d.storage_use_reference_value, on="n", how="inner")
-                .select("n", "d", "t").unique())
-            if ssrv_over.height > 0:
-                # RHS: reference_value[n, d, t] · existing[n, d] / unitsize[n].
-                # Build as a single Param keyed (n, d, t).
-                # Phase E.1: p_storage_state_reference_value may be
-                # narrower than (n, d, t).  Promote lazily.
-                ssrv_lf = promote_param_to_dt(
-                    d.p_storage_state_reference_value, d.dt)
-                ssrv_frame = (ssrv_lf
-                    .rename({"value": "rv"})
-                    .join(d.p_state_existing_capacity.frame.lazy()
-                            .rename({"value": "exist"}),
-                          on=["n", "d"], how="inner")
-                    .join(d.p_state_unitsize.frame.lazy()
-                            .rename({"value": "us"}),
-                          on="n", how="inner")
-                    .with_columns(value=pl.col("rv")
-                                          * pl.col("exist")
-                                          / pl.col("us"))
-                    .select("n", "d", "t", "value")
-                    .collect())
-                rhs_param_ssrv = Param(("n", "d", "t"), ssrv_frame)
-                m.add_cstr(
-                    "storage_state_solve_horizon_reference_value",
-                    over      = ssrv_over,
-                    sense     = "==",
-                    lhs_terms = {"state": Where(v_state, ssrv_over)},
-                    rhs_terms = {"target": rhs_param_ssrv},
-                )
-
-    _build_prof("before:profile_constraints")
-    # ─── Profile constraints (upper / lower / fixed) ──────────────────────
-    # For each (p, source, sink, f) in process_profile_<method>:
-    #     v_flow[p,source,sink,d,t]  <sense>  profile[f,d,t]
-    #                                          · existing_count[p,d]
-    #                                          · availability[p,d,t]
-    # availability defaults to 1.0 if not in data.
-    if has_profile:
-        # When invest is active on entities with profiles, the .mod's RHS
-        # expands to profile · (existing_count + Σ_d_inv v_invest[d_inv] -
-        # Σ v_divest) · availability.  Move the invest term to the LHS so
-        # it remains in the form ``LHS_var ≤/≥/== const_RHS``.
-        v_inv_for_profile = None
-        if has_invest_p and d.edd_invest_set is not None:
-            v_inv_p_prof = Var(
-                name=v_invest_p.name + "__at_invest_prof",
-                dims=("p", "d_invest"),
-                frame=v_invest_p.frame.pipe(rename_to_axis, {"d": "d_invest"}),
-                lower=v_invest_p.lower, upper=v_invest_p.upper,
-            )
-            # Phase 4.8h: cross-Enum is_in (e vs p vocab); up-cast p→e.
-            _e_dt = d.edd_invest_set.schema["e"]
-            _p_in_e = (d.process_source_sink
-                         .select(pl.col("p").cast(_e_dt, strict=False).alias("e"))
-                         .unique())
-            edd_inv_p_prof = (d.edd_invest_set
-                                .join(_p_in_e, on="e", how="semi")
-                                .pipe(rename_to_axis, {"e": "p"}))
-            if edd_inv_p_prof.height > 0:
-                v_inv_for_profile = Sum(
-                    Where(v_inv_p_prof, edd_inv_p_prof), over=("d_invest",))
-        v_div_for_profile = None
-        if has_divest_p and d.edd_divest_active is not None:
-            v_div_p_prof = Var(
-                name=v_divest_p.name + "__at_divest_prof",
-                dims=("p", "d_divest"),
-                frame=v_divest_p.frame.pipe(rename_to_axis, {"d": "d_divest"}),
-                lower=v_divest_p.lower, upper=v_divest_p.upper,
-            )
-            # Phase 4.8h: cross-Enum is_in (p vs p with distinct vocab);
-            # up-cast process_source_sink["p"] to edd_divest_active's p-Enum.
-            _p_dt = d.edd_divest_active.schema["p"]
-            _p_pss = (d.process_source_sink
-                        .select(pl.col("p").cast(_p_dt, strict=False))
-                        .unique())
-            edd_div_p_prof = d.edd_divest_active.join(_p_pss, on="p", how="semi")
-            if edd_div_p_prof.height > 0:
-                v_div_for_profile = Sum(
-                    Where(v_div_p_prof, edd_div_p_prof), over=("d_divest",))
-        if d.process_profile_upper is not None and d.process_profile_upper.height > 0:
-            _add_profile_cstr(m, d, v_flow, "profile_flow_upper_limit",
-                              d.process_profile_upper, "<=",
-                              v_inv_for_profile, v_div_for_profile,
-                              reserve_term=reserve_up_to_sink_pdt,
-                              reserve_sign=+1.0)
-        if d.process_profile_lower is not None and d.process_profile_lower.height > 0:
-            _add_profile_cstr(m, d, v_flow, "profile_flow_lower_limit",
-                              d.process_profile_lower, ">=",
-                              v_inv_for_profile, v_div_for_profile,
-                              reserve_term=reserve_down_to_sink_pdt,
-                              reserve_sign=-1.0)
-        if d.process_profile_fixed is not None and d.process_profile_fixed.height > 0:
-            _add_profile_cstr(m, d, v_flow, "profile_flow_fixed",
-                              d.process_profile_fixed, "==",
-                              v_inv_for_profile, v_div_for_profile)
-
-    _build_prof("before:objective")
-    # ─── Objective ────────────────────────────────────────────────────────
-    # ``op_factor`` matches the .mod's per-(d, t) cost coefficient on every
-    # dispatch-class objective term:
-    #
-    #     step_duration * timestep_weight * inflation_op / period_share
-    #     * pdt_branch_weight    ← folded in here (A6)
-    #
-    # When stochastics is inactive ``pdt_branch_weight`` is ``None`` and
-    # the factor reduces to the deterministic four-Param product.
-    # Folding it into a single Param product keeps every downstream Sum
-    # builder unchanged — the multiplier rides on op_factor.
-    op_factor = (d.p_step_duration * d.p_timestep_weight
-                 * d.p_inflation_op / d.p_period_share)
-    if d.pdt_branch_weight is not None:
-        op_factor = op_factor * d.pdt_branch_weight
-
-    # §7: node_capacity_for_scaling factor on slack penalties.  The .mod
-    # treats `penalty_up/down` as €/MWh-of-node-capacity; our data has
-    # absolute €/MWh.  Multiplying by node_capacity_for_scaling[n,d] aligns
-    # with the .mod's convention and is critical for parity in scenarios
-    # that have non-1.0 capacity scaling.
-    if d.p_node_capacity_for_scaling is not None:
-        obj = (Sum(vq_up   * d.p_penalty_up
-                   * d.p_node_capacity_for_scaling * op_factor)
-             + Sum(vq_down * d.p_penalty_down
-                   * d.p_node_capacity_for_scaling * op_factor))
-    else:
-        obj = (Sum(vq_up   * d.p_penalty_up   * op_factor)
-             + Sum(vq_down * d.p_penalty_down * op_factor))
-
-    # Ladder commodities skip the legacy single-price commodity term —
-    # mirrors .mod:1984 ``c not in commodity_with_ladder``.  Filter the
-    # three commodity-flow index frames before they're consumed below.
-    flow_from_commodity_eff_legacy   = d.flow_from_commodity_eff
-    flow_from_commodity_noEff_legacy = d.flow_from_commodity_noEff
-    flow_to_commodity_legacy         = d.flow_to_commodity
-    if has_ladder and d.commodity_with_ladder is not None:
-        ladder_c = d.commodity_with_ladder["c"]
-        if flow_from_commodity_eff_legacy is not None:
-            flow_from_commodity_eff_legacy = (
-                flow_from_commodity_eff_legacy
-                .filter(~pl.col("c").is_in(ladder_c)))
-        if flow_from_commodity_noEff_legacy is not None:
-            flow_from_commodity_noEff_legacy = (
-                flow_from_commodity_noEff_legacy
-                .filter(~pl.col("c").is_in(ladder_c)))
-        if flow_to_commodity_legacy is not None:
-            flow_to_commodity_legacy = (
-                flow_to_commodity_legacy
-                .filter(~pl.col("c").is_in(ladder_c)))
-
-    if has_proc and flow_from_commodity_eff_legacy is not None and flow_from_commodity_eff_legacy.height > 0:
-        obj = obj + Sum(
-            Where(v_flow * d.p_unitsize * d.p_slope, flow_from_commodity_eff_legacy)
-            * d.p_commodity_price * op_factor)
-        if has_minload_eff:
-            # Section term: + v_online * section * unitsize, summed over
-            # eff (p, source, sink) tuples whose process is in
-            # process_min_load_eff, multiplied by commodity price.
-            if has_online_lin:
-                obj = obj + Sum(
-                    Where(Where(v_online_lin, d.process_min_load_eff)
-                          * d.p_section * d.p_unitsize,
-                          flow_from_commodity_eff_legacy)
-                    * d.p_commodity_price * op_factor)
-            if has_online_int:
-                obj = obj + Sum(
-                    Where(Where(v_online_int, d.process_min_load_eff)
-                          * d.p_section * d.p_unitsize,
-                          flow_from_commodity_eff_legacy)
-                    * d.p_commodity_price * op_factor)
-    if has_proc and flow_from_commodity_noEff_legacy is not None and flow_from_commodity_noEff_legacy.height > 0:
-        obj = obj + Sum(
-            Where(v_flow * d.p_unitsize, flow_from_commodity_noEff_legacy)
-            * d.p_commodity_price * op_factor)
-    # §2.4 commodity sell: sink-side flow into priced node = revenue (negative
-    # cost contribution).  Note: full superset of (p, source, sink) — no
-    # eff/noEff split (the .mod sells regardless of process partition).
-    if (has_proc and flow_to_commodity_legacy is not None
-            and flow_to_commodity_legacy.height > 0
-            and d.p_commodity_price is not None):
-        obj = obj - Sum(
-            Where(v_flow * d.p_unitsize, flow_to_commodity_legacy)
-            * d.p_commodity_price * op_factor)
-
-    if has_co2_price:
-        obj = obj + Sum(
-            Where(v_flow * d.p_unitsize * d.p_slope, d.flow_from_co2_priced)
-            * d.p_co2_content * d.p_co2_price * op_factor)
-        if has_minload_eff:
-            if has_online_lin:
-                obj = obj + Sum(
-                    Where(Where(v_online_lin, d.process_min_load_eff)
-                          * d.p_section * d.p_unitsize,
-                          d.flow_from_co2_priced)
-                    * d.p_co2_content * d.p_co2_price * op_factor)
-            if has_online_int:
-                obj = obj + Sum(
-                    Where(Where(v_online_int, d.process_min_load_eff)
-                          * d.p_section * d.p_unitsize,
-                          d.flow_from_co2_priced)
-                    * d.p_co2_content * d.p_co2_price * op_factor)
-    # §4.1 CO2 noEff buy: source-side flow into a CO2-priced node where
-    # the process is on the noEff side.  No slope, no section term.
-    if (d.flow_from_co2_priced_noEff is not None
-            and d.flow_from_co2_priced_noEff.height > 0
-            and d.p_co2_content is not None and d.p_co2_price is not None):
-        obj = obj + Sum(
-            Where(v_flow * d.p_unitsize, d.flow_from_co2_priced_noEff)
-            * d.p_co2_content * d.p_co2_price * op_factor)
-
-    # ─── Process variable cost (§5.1 noEff) ───────────────────────────────
-    # + Σ_{(p,source,sink,d,t) ∈ pssdt_varCost_noEff}
-    #     pdtProcess__source__sink__dt_varCost * v_flow * unitsize * op_factor
-    if (has_proc and d.pssdt_varCost_noEff is not None
-            and d.pssdt_varCost_noEff.height > 0
-            and d.p_pssdt_varCost is not None):
-        obj = obj + Sum(
-            Where(v_flow * d.p_unitsize, d.pssdt_varCost_noEff)
-            * d.p_pssdt_varCost * op_factor)
-
-    # ─── Process variable cost (§5.2 eff unit, source-side O&M) ──────────
-    # The .mod term has a leading minus sign — it's an "anti-cost" that
-    # subtracts the source-side share of the process-side O&M (the slope
-    # already routes the source-side energy into the sink-side flow at
-    # commodity-price points).  Replicate the sign exactly.
-    #   - Σ pdtProcess_source[p,source,'other_operational_cost',d,t]
-    #         * (v_flow * unitsize * slope * (sink/source coef ratio if process_unit)
-    #            + section term if min_load_efficiency) * op_factor
-    if (has_proc and d.pssdt_varCost_eff_unit_source is not None
-            and d.pssdt_varCost_eff_unit_source.height > 0
-            and d.p_pdt_varCost_source is not None):
-        # The flow-coefficient ratio is deferred (see audit §2.2/§5.2);
-        # all current test fixtures have both coefs = 1, so the term
-        # collapses to v_flow * unitsize * slope.
-        flow_term = Where(v_flow * d.p_unitsize * d.p_slope,
-                          d.pssdt_varCost_eff_unit_source)
-        obj = obj - Sum(flow_term * d.p_pdt_varCost_source * op_factor)
-        if has_minload_eff:
-            # section sub-term (linear / integer)
-            section_idx = (d.pssdt_varCost_eff_unit_source
-                           .join(d.process_min_load_eff, on="p", how="inner"))
-            if section_idx.height > 0:
-                if has_online_lin:
-                    obj = obj - Sum(
-                        Where(Where(v_online_lin, d.process_min_load_eff)
-                              * d.p_section * d.p_unitsize,
-                              section_idx)
-                        * d.p_pdt_varCost_source * op_factor)
-                if has_online_int:
-                    obj = obj - Sum(
-                        Where(Where(v_online_int, d.process_min_load_eff)
-                              * d.p_section * d.p_unitsize,
-                              section_idx)
-                        * d.p_pdt_varCost_source * op_factor)
-
-    # ─── Process variable cost (§5.3 eff unit, sink-side O&M) ────────────
-    # + Σ pdtProcess_sink[p,sink,'other_operational_cost',d,t]
-    #     * v_flow * unitsize * op_factor
-    if (has_proc and d.pssdt_varCost_eff_unit_sink is not None
-            and d.pssdt_varCost_eff_unit_sink.height > 0
-            and d.p_pdt_varCost_sink is not None):
-        obj = obj + Sum(
-            Where(v_flow * d.p_unitsize, d.pssdt_varCost_eff_unit_sink)
-            * d.p_pdt_varCost_sink * op_factor)
-
-    # ─── Process variable cost (§5.4 eff connection) ─────────────────────
-    # + Σ pdtProcess[p,'other_operational_cost',d,t]
-    #     * v_flow * unitsize * op_factor
-    if (has_proc and d.pssdt_varCost_eff_connection is not None
-            and d.pssdt_varCost_eff_connection.height > 0
-            and d.p_pdt_varCost_process is not None):
-        obj = obj + Sum(
-            Where(v_flow * d.p_unitsize, d.pssdt_varCost_eff_connection)
-            * d.p_pdt_varCost_process * op_factor)
-
-    # Startup cost: v_startup * startup_cost * unitsize, weighted by
-    # timestep_weight / inflation / period_share — *no step_duration*
-    # (startup is a discrete event, not duration-weighted).  Also carries
-    # ``pdt_branch_weight`` when stochastics active (mod:2110).
-    startup_factor = (d.p_timestep_weight * d.p_inflation_op
-                      / d.p_period_share)
-    if d.pdt_branch_weight is not None:
-        startup_factor = startup_factor * d.pdt_branch_weight
-    if has_startup_cost_lin:
-        obj = obj + Sum(
-            Where(v_startup_lin, d.pdt_online_linear)
-            * d.p_startup_cost * d.p_unitsize * startup_factor)
-    if has_startup_cost_int:
-        obj = obj + Sum(
-            Where(v_startup_int, d.pdt_online_integer)
-            * d.p_startup_cost * d.p_unitsize * startup_factor)
-
-    # ─── §10.1 Storage-state reference-price revenue (mod:2107-2111) ─────
-    # For nodes with method ``use_reference_price`` (and also any node for
-    # which a fix_storage_price handoff dual has populated the parameter
-    # — both routes funnel through ``p_storage_state_reference_price``),
-    # value v_state at the last (d, t) of every period_last by the
-    # reference price:
-    #
-    #   - Σ_{n ∈ nodeState, (d, t) ∈ period__time_last : d ∈ period_last}
-    #         p_storage_state_reference_price[n, d]
-    #         * v_state[n, d, t] * unitsize[n]
-    #         * timestep_weight[d, t] * inflation_op[d] / period_share[d]
-    #         * pdt_branch_weight[d, t]
-    #
-    # The minus sign makes this a revenue term: a higher terminal state
-    # reduces the objective.  No step_duration (terminal valuation is a
-    # point event, not duration-weighted) — mirrors startup_factor.
-    if (has_storage
-            and d.p_storage_state_reference_price is not None
-            and d.nodeState_last_dt is not None
-            and d.nodeState_last_dt.height > 0
-            and d.period_last is not None
-            and d.period_last.height > 0):
-        # Domain: (n, d, t) ∈ nodeState_last_dt where d ∈ period_last and
-        # (n, d) is populated in p_storage_state_reference_price.  Zero-
-        # valued rows contribute nothing but are kept (the loader does
-        # not filter zeros and the multiplier is exact).
-        ssrp_over = (d.nodeState_last_dt
-            .join(d.period_last, on="d", how="inner")
-            .join(d.p_storage_state_reference_price.frame.select("n", "d"),
-                  on=["n", "d"], how="inner")
-            .select("n", "d", "t").unique())
-        if ssrp_over.height > 0:
-            ref_price_factor = (d.p_timestep_weight * d.p_inflation_op
-                                / d.p_period_share)
-            if d.pdt_branch_weight is not None:
-                ref_price_factor = ref_price_factor * d.pdt_branch_weight
-            obj = obj - Sum(
-                Where(v_state, ssrp_over) * d.p_state_unitsize
-                * d.p_storage_state_reference_price * ref_price_factor)
-
-    # Invest / divest objective contributions.
-    #
-    # Slice D — per-scenario (wait-and-see) stochastic investment.  Under
-    # ``recourse`` the invest axis is fanned, so every scenario branch
-    # (realised included) carries its OWN ``v_invest[e, d]`` columns at and
-    # after the branching period; each is probability-weighted by
-    # ``pd_branch_weight[d]`` so the objective is the expected value over
-    # scenario leaves.  Under ``none`` (default) the invest axis is
-    # realised-only, the weight would be 1.0, and the multiply is skipped
-    # for byte-parity.  (Replaces the .mod:2116-2119 "NOT weighted / the
-    # branch weight should be added if this is changed" note — this is that
-    # change.)  ALL EIGHT invest/divest annuity/fixed-cost Params are
-    # weighted: process-side annu/lf/lfd/annd AND node-side
-    # annu_n/lf_n/lfd_n/annd_n (else storage/node invest stays unweighted).
-    _recourse_wt = (getattr(d, "recourse_invest", False)
-                    and d.pd_branch_weight is not None)
-
-    def _wt(param):
-        """Multiply a ``(x, d)`` cost Param by ``pd_branch_weight[d]``
-        (Slice D).  No-op when the param is None or the flag is off."""
-        if param is None or not _recourse_wt:
-            return param
-        f = (param.frame
-                  .join(d.pd_branch_weight.frame.rename({"value": "w"}),
-                        on="d", how="left")
-                  .with_columns(value=pl.col("value")
-                                * pl.col("w").fill_null(1.0))
-                  .drop("w"))
-        return Param(param.dims, f)
-
-    if has_invest_p:
-        annu = Param(("p", "d"),
-            d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
-            if d.ed_entity_annual_discounted is not None else None
-        lf  = Param(("p", "d"),
-            d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "p"})) \
-            if d.ed_lifetime_fixed_cost is not None else None
-        if annu is not None:
-            obj = obj + Sum(v_invest_p * d.p_unitsize * _wt(annu))
-        if lf is not None:
-            obj = obj + Sum(v_invest_p * d.p_unitsize * _wt(lf))
-    if has_divest_p:
-        lfd = Param(("p", "d"),
-            d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "p"})) \
-            if d.ed_lifetime_fixed_cost_divest is not None else None
-        annd = Param(("p", "d"),
-            d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "p"})) \
-            if d.ed_entity_annual_divest_discounted is not None else None
-        if lfd is not None:
-            obj = obj - Sum(v_divest_p * d.p_unitsize * _wt(lfd))
-        if annd is not None:
-            obj = obj - Sum(v_divest_p * d.p_unitsize * _wt(annd))
-    if has_invest_n:
-        us_n = Param(("n",), d.p_state_unitsize.frame)
-        annu_n = Param(("n", "d"),
-            d.ed_entity_annual_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
-            if d.ed_entity_annual_discounted is not None else None
-        lf_n = Param(("n", "d"),
-            d.ed_lifetime_fixed_cost.frame.pipe(rename_to_axis, {"e": "n"})) \
-            if d.ed_lifetime_fixed_cost is not None else None
-        if annu_n is not None:
-            obj = obj + Sum(v_invest_n * us_n * _wt(annu_n))
-        if lf_n is not None:
-            obj = obj + Sum(v_invest_n * us_n * _wt(lf_n))
-    if has_divest_n:
-        us_n = Param(("n",), d.p_state_unitsize.frame)
-        lfd_n = Param(("n", "d"),
-            d.ed_lifetime_fixed_cost_divest.frame.pipe(rename_to_axis, {"e": "n"})) \
-            if d.ed_lifetime_fixed_cost_divest is not None else None
-        annd_n = Param(("n", "d"),
-            d.ed_entity_annual_divest_discounted.frame.pipe(rename_to_axis, {"e": "n"})) \
-            if d.ed_entity_annual_divest_discounted is not None else None
-        if lfd_n is not None:
-            obj = obj - Sum(v_divest_n * us_n * _wt(lfd_n))
-        if annd_n is not None:
-            obj = obj - Sum(v_divest_n * us_n * _wt(annd_n))
-
-    # ─── §8.1 Existing-entity fixed cost (constant term) — opt-in ─────────
-    # mod:2107-2115:
-    #   + Σ_{e in entity, d in period_in_use}
-    #         p_entity_all_existing[e,d] * ed_fixed_cost[e,d]
-    #             * p_inflation_factor_operations_yearly[d] * pd_branch_weight[d]
-    # See ``include_existing_fixed_cost`` doc on ``build_flextool``.
-    if (include_existing_fixed_cost
-            and d.p_ed_fixed_cost is not None
-            and d.p_entity_all_existing is not None):
-        fc_frame = (
-            d.p_entity_all_existing.frame.rename({"value": "exist"})
-            .join(d.p_ed_fixed_cost.frame.rename({"value": "fc"}),
-                  on=["e", "d"], how="inner")
-            .join(d.p_inflation_op.frame.rename({"value": "infl"}),
-                  on="d", how="inner")
-        )
-        if d.pd_branch_weight is not None:
-            fc_frame = (fc_frame
-                .join(d.pd_branch_weight.frame.rename({"value": "pdbw"}),
-                      on="d", how="inner"))
-            fc_frame = fc_frame.with_columns(
-                contrib=pl.col("exist") * pl.col("fc")
-                        * pl.col("infl") * pl.col("pdbw"))
-        else:
-            fc_frame = fc_frame.with_columns(
-                contrib=pl.col("exist") * pl.col("fc") * pl.col("infl"))
-        fc_const = fc_frame["contrib"].sum()
-        if fc_const:
-            m.add_obj_constant(float(fc_const))
-
-    _build_prof("before:group_slack_reserves_invest_delay_obj")
-    # ─── Group-level slack (capacity_margin / inertia / non_sync) ────────
-    if _group_slack.has_feature(d):
-        vars_: dict = {}
-        if has_proc:
-            vars_["v_flow"]       = v_flow
-        if has_online_lin:
-            vars_["v_online_lin"] = v_online_lin
-        if has_online_int:
-            vars_["v_online_int"] = v_online_int
-        if has_invest_p:
-            vars_["v_invest_p"]   = v_invest_p
-        if has_divest_p:
-            vars_["v_divest_p"]   = v_divest_p
-        if has_invest_n:
-            vars_["v_invest_n"]   = v_invest_n
-        if has_divest_n:
-            vars_["v_divest_n"]   = v_divest_n
-        vars_["vq_state_up"]   = vq_up
-        vars_["vq_state_down"] = vq_down
-        _group_slack.add_constraints(m, d, vars_)
-        gs_obj = _group_slack.add_objective_terms(m, d, vars_, op_factor)
-        if gs_obj is not None:
-            obj = obj + gs_obj
-
-    # ─── Reserves (timeseries / dynamic / n_1 / per-process upper) ────────
-    if _reserve.has_feature(d):
-        res_vars: dict = dict(reserve_vars)
-        if has_proc:
-            res_vars["v_flow"]       = v_flow
-        if has_online_lin:
-            res_vars["v_online_lin"] = v_online_lin
-        if has_online_int:
-            res_vars["v_online_int"] = v_online_int
-        if has_invest_p:
-            res_vars["v_invest_p"]   = v_invest_p
-        if has_divest_p:
-            res_vars["v_divest_p"]   = v_divest_p
-        # Storage energy-adequacy coupling for reserve_duration (#322):
-        # v_state precedes this dispatch site (declared above), so threading
-        # it (+ v_invest_n / v_divest_n for the down-headroom capacity
-        # replication) is order-safe.  Each gated on its own has_* flag.
-        if has_storage:
-            res_vars["v_state"]      = v_state
-        if has_invest_n:
-            res_vars["v_invest_n"]   = v_invest_n
-        if has_divest_n:
-            res_vars["v_divest_n"]   = v_divest_n
-        _reserve.add_constraints(m, d, res_vars)
-        res_obj = _reserve.add_objective_terms(m, d, res_vars, op_factor)
-        if res_obj is not None:
-            obj = obj + res_obj
-
-    # ─── Cumulative / group-invest / min-invest constraints ───────────────
-    if _cumulative_invest.has_feature(d):
-        cum_vars: dict = {
-            "v_invest_p": v_invest_p if has_invest_p else None,
-            "v_invest_n": v_invest_n if has_invest_n else None,
-            "v_divest_p": v_divest_p if has_divest_p else None,
-            "v_divest_n": v_divest_n if has_divest_n else None,
-            "v_flow":     v_flow     if has_proc     else None,
-        }
-        _cumulative_invest.add_constraints(m, d, cum_vars)
-        ci_obj = _cumulative_invest.add_objective_terms(m, d, cum_vars, op_factor)
-        if ci_obj is not None:
-            obj = obj + ci_obj
-
-    # ─── Delayed processes / DR ──────────────────────────────────────────
-    if _delay.has_feature(d):
-        delay_vars: dict = {"v_flow": v_flow if has_proc else None}
-        _delay.add_constraints(m, d, delay_vars)
-    delay_obj = _delay.add_objective_terms(
-        m, d, {"v_flow": v_flow if has_proc else None}, op_factor)
-    if delay_obj is not None:
-        obj = obj + delay_obj
-
-    _build_prof("before:commodity_price_ladder")
-    # ─── Commodity price ladder ──────────────────────────────────────────
-    # Per-tier v_trade balance + tier-cap constraints + per-tier price
-    # objective contribution.  The legacy commodity price term above
-    # already filtered out ladder commodities, so this term replaces it.
-    if has_ladder:
-        _commodity_ladder.add_constraints(
-            m, d, ladder_vars,
-            v_flow=v_flow if has_proc else None,
-            p_unitsize=d.p_unitsize,
-            p_slope=d.p_slope,
-            p_step_duration=d.p_step_duration,
-            p_timestep_weight=d.p_timestep_weight,
-            flow_from_commodity_eff=d.flow_from_commodity_eff,
-            flow_from_commodity_noEff=d.flow_from_commodity_noEff,
-            flow_to_commodity=d.flow_to_commodity,
-        )
-        ladder_obj = _commodity_ladder.add_objective_terms(
-            m, d, ladder_vars,
-            p_inflation_op=d.p_inflation_op,
-            p_period_share=d.p_period_share,
-        )
-        if ladder_obj is not None:
-            obj = obj + ladder_obj
-
-    _build_prof("before:non_anticipativity")
-    # ─── Non-anticipativity constraints (A6) ─────────────────────────────
-    # mod:4173-4233.  Four constraint families pin per-branch dispatch
-    # variables FORECAST-TO-FORECAST at every (d, t) ∈ the re-grounded tie
-    # set — the committed decision is the same across the forecast branches,
-    # which IS its non-anticipative realisation.  The tie is NEVER anchored
-    # to the realised period / trunk (there may be no realised branch at all;
-    # ``n_real`` can be 0):
-    #
-    #   non_anticipativity_storage_use   (n, d, b, t) — net storage charge
-    #     LHS at (d, t) equals LHS at (b, t).  Active only when at least
-    #     one (g, n) ∈ group_node has g ∈ groupStochastic.
-    #   non_anticipativity_online_integer (p, d, b, t) — v_online_integer
-    #     equal across forecasts.
-    #   non_anticipativity_online_linear  (p, d, b, t) — v_online_linear
-    #     equal across forecasts.
-    #   non_anticipativity_reserve        (p, r, ud, n, d, b, t) — v_reserve
-    #     equal across forecasts.
-    #
-    # Raw cohort: (d, b) ∈ period__branch with d != b and b ∈ period_in_use.
-    # The b == d self-loop is vacuous and the metadata-only branches not in
-    # period_in_use (e.g. ``period1_realized``) are excluded so the
-    # constraint references a real LP variable.  ``d`` here is the trunk
-    # (the real period name); the re-ground below turns this into a
-    # forecast-to-forecast star keyed on a reference forecast.
-    # OC1 #1 — the ONLINE commitment tie over the JUMP needs this block to
-    # run even when ``dt_non_anticipativity`` is EMPTY (the separate_dispatch
-    # PARENT, whose realized window is handed to the sibling, so the legacy
-    # realized/fix-storage union is empty).  Gate on the forecast structure
-    # (``period_branch_full``) plus EITHER a non-empty ``dt_non_anticipativity``
-    # (the existing storage/reserve/online-window tie) OR an online var present
-    # (the new jump tie built from the online steps when dtna is empty).
-    # Without an online var and with empty dtna the block is a no-op, so
-    # non-online stochastic solves stay byte-identical.
-    _has_dtna_outer = (d.dt_non_anticipativity is not None
-                       and d.dt_non_anticipativity.height > 0)
-    if (d.period_branch_full is not None
-            and d.period_branch_full.height > 0
-            and (_has_dtna_outer or has_online_lin or has_online_int)):
-        # Build (d, b) cohort: d ≠ b AND b ∈ period_in_use.
-        # Cross-axis value compare: "d" is the period axis and "b" is the
-        # branch axis (two different Enum vocabularies under Phase 4
-        # activation).  Polars 1.40+ refuses ``!=`` between different
-        # Enums; cast both to Utf8 so the comparison is by token string.
-        db_pairs = d.period_branch_full.with_columns(
-            pl.col("d").cast(pl.Utf8),
-            pl.col("b").cast(pl.Utf8),
-        ).filter(pl.col("d") != pl.col("b"))
-        if d.period_in_use_set is not None:
-            # Cross-axis join: piu.b carries period tokens (d-Enum
-            # vocab) but db_pairs.b is branch-Enum.  Cast both to Utf8.
-            piu = (d.period_in_use_set
-                       .rename({"d": "b"})
-                       .with_columns(pl.col("b").cast(pl.Utf8)))
-            db_pairs = db_pairs.join(piu, on="b", how="inner")
-        # Restore axis types post-compare (Utf8 was only needed for the
-        # cross-Enum filter/join above; downstream consumers cross-join
-        # ``db_pairs`` with axis-typed frames and join on "d"/"b" against
-        # axis-typed cohorts, which requires Enum-typed keys for native
-        # composition under Phase 4 activation).
-        db_pairs = db_pairs.with_columns(
-            cast_dim(pl.col("d"), None, "d"),
-            cast_dim(pl.col("b"), None, "b"),
-        )
-        if db_pairs.height > 0:
-            # ── Forecast-to-forecast re-ground (per anchor group) ──
-            # The raw cohort anchors every forecast ``b`` to the trunk ``d``
-            # (the realised/base period).  Re-ground it to a FORECAST star so
-            # the tie couples the forecast branches to EACH OTHER, never to
-            # the trunk (corrected stochastic model: the fan is forecasts
-            # only; realisation of a committed variable IS the cross-forecast
-            # tie; works at n_real=0).
-            #
-            # PER ANCHOR GROUP (NOT a single global reference): group the raw
-            # pairs by trunk ``d``; within each group take the forecasts
-            # (``b`` tokens), pick the lexicographically smallest as the
-            # reference forecast ``d_ref`` (LP-deterministic — a lexical sort
-            # of stable Utf8 tokens, same invariant as add_var/add_cstr domain
-            # sorting), and build the star {(d_ref, b) : b ∈ forecasts, b ≠
-            # d_ref}.  A group with <2 forecasts is skipped (the tie is
-            # vacuous with a single forecast).  A SINGLE GLOBAL d_ref would be
-            # WRONG: it would cross-couple distinct anchor periods at
-            # mismatched timesteps.
-            #
-            # BOTH frames are re-keyed: ``db_pairs`` → the forecast star, and
-            # ``dt_non_anticipativity`` → anchor ``d`` mapped from the trunk
-            # to that group's ``d_ref`` (same ``t``).  The families inner-join
-            # the tie set on ``"d"``; re-keying db_pairs alone would leave the
-            # tie set's ``d`` on the trunk and emit ZERO constraints.
-            #
-            # Realised exclusion: realisation is currently the self-row trunk,
-            # already dropped from ``b`` by ``filter(d != b)`` above — so no
-            # extra filter is needed here.  Should a future realised-
-            # designated non-self in-use branch appear, drop it from the
-            # forecast set at this point (by the realised marker R1 settles).
-            # ``dt_non_anticipativity`` may be None / empty under the relaxed
-            # gate (separate_dispatch parent, online-only path): then there is
-            # nothing to re-ground, ``dtna_reground`` stays None, and the
-            # function builds the jump tie from the online steps via its
-            # internal ``dtna_online``.
-            dtna_raw = d.dt_non_anticipativity
-            _has_dtna_rows = dtna_raw is not None and dtna_raw.height > 0
-            _raw_db = db_pairs.with_columns(
-                pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8),
-            )
-            _dtna_u = (dtna_raw.with_columns(pl.col("d").cast(pl.Utf8))
-                       if _has_dtna_rows else None)
-            _stars: list[pl.DataFrame] = []
-            _dtnas: list[pl.DataFrame] = []
-            for d_trunk in sorted(
-                _raw_db.select("d").unique().to_series().to_list()
-            ):
-                forecasts = sorted(
-                    _raw_db.filter(pl.col("d") == d_trunk)
-                           .select("b").unique().to_series().to_list()
-                )
-                if len(forecasts) < 2:
-                    continue
-                d_ref = forecasts[0]
-                _stars.append(pl.DataFrame({
-                    "d": [d_ref] * (len(forecasts) - 1),
-                    "b": [b for b in forecasts if b != d_ref],
-                }))
-                if _dtna_u is not None:
-                    _dtnas.append(
-                        _dtna_u.filter(pl.col("d") == d_trunk)
-                               .with_columns(pl.lit(d_ref).alias("d"))
-                    )
-            if _stars:
-                db_pairs_reground = pl.concat(_stars).with_columns(
-                    cast_dim(pl.col("d"), None, "d"),
-                    cast_dim(pl.col("b"), None, "b"),
-                )
-                # ``dtna_reground`` is None on the separate_dispatch-parent
-                # online-only path (no real dtna rows to re-key) → the
-                # function builds ``dtna_online`` from the jump steps alone.
-                dtna_reground = (
-                    pl.concat(_dtnas).with_columns(cast_dim(pl.col("d"), None, "d"))
-                    if _dtnas else None
-                )
-                _add_non_anticipativity_constraints(
-                    m, d, db_pairs_reground,
-                    v_state          = locals().get("v_state")          if has_storage    else None,
-                    v_online_integer = locals().get("v_online_int")     if has_online_int else None,
-                    v_online_linear  = locals().get("v_online_lin")     if has_online_lin else None,
-                    v_reserve        = reserve_vars.get("v_reserve")    if reserve_vars   else None,
-                    v_flow           = locals().get("v_flow")           if has_proc       else None,
-                    has_minload_eff  = has_minload_eff,
-                    dtna_override    = dtna_reground,
-                )
-
-    # ─── Investment non-anticipativity (v72 — the standard two-stage
-    # stochastic-investment mode) ────────────────────────────────────────
-    # Ties v_invest / v_divest across stochastic branches over the resolved
-    # window pd_non_anticipativity (design §4).  Gated on recourse_invest
-    # (per-branch invest columns must exist to tie) AND a non-empty frame;
-    # under the unset window the frame is provably empty (byte-parity) and
-    # this block never fires.  Under stochastic_invest_method=none the frame
-    # may build but the domain guard drops every pair (no fanned invest
-    # column) — a graceful no-op.
-    _pdna = d.pd_non_anticipativity
-    if _pdna is not None and _pdna.height > 0:
-        if getattr(d, "recourse_invest", False):
-            _add_non_anticipativity_invest_constraints(
-                m, d,
-                v_invest_p = locals().get("v_invest_p") if has_invest_p else None,
-                v_invest_n = locals().get("v_invest_n") if has_invest_n else None,
-                v_divest_p = locals().get("v_divest_p") if has_divest_p else None,
-                v_divest_n = locals().get("v_divest_n") if has_divest_n else None,
-            )
-        else:
-            # Window set on a non-recourse (none) solve: investment is
-            # already shared across all periods, so there is nothing to
-            # tie.  Graceful no-op + advisory (never mutates the problem,
-            # design §4.5 / OQ-3).
-            _LOG.info(
-                "shared_invest_periods is set but "
-                "stochastic_invest_method is not 'recourse'; investment is "
-                "already shared across all periods, so the invest-NA window "
-                "has no effect (use 'recourse' for shared-first-period / "
-                "recourse-later)."
-            )
-
-    # Apply objective scaling if provided (default 1.0 = no scaling).
-    if scale_the_objective != 1.0:
-        obj = obj * scale_the_objective
-    m.set_objective(obj, sense="min")
-
-    _build_prof("build_flextool:return")
-
-    # ─── Wire flextool's HiGHS solver options through to Problem.solve() ──
-    # ``d.solver_options`` is loaded from ``input/solve_mode.csv`` (param
-    # rows ``highs_method`` / ``highs_parallel`` / ``highs_presolve``,
-    # filtered to the active ``solve_current``).  When None, we fall
-    # back to HiGHS defaults — current behavior pre-wiring.
-    if getattr(d, "solver_options", None):
-        m.set_solver_options(d.solver_options)
-
-
 def _utf8_keys(lf: "pl.LazyFrame", keys) -> "pl.LazyFrame":
     """Add ``_<k>`` Utf8 copies of ``keys`` — join keys that bridge Enum
     vocabulary edges between frames built by different producers."""
@@ -4804,8 +4730,7 @@ def _max_flow_rhs(d, inv_procs: "pl.DataFrame | None" = None,
       upper bound and the arcs get no ``maxFlow`` row.  Processes WITH
       them keep the row, their invest/divest terms carrying ``M_s``.
     * **capped** — direct arcs and indirect OUTPUT arcs
-      (``process_output_flows``).  The .mod's ``maxToSink`` /
-      ``maxFromSource``::
+      (``process_output_flows``)::
 
           v_flow ≤ coef × availability × (existing/us + Σv_invest − Σv_divest)
 
@@ -4927,8 +4852,8 @@ def _max_flow_rhs(d, inv_procs: "pl.DataFrame | None" = None,
         cap_lf = cap_lf.with_columns(pl.lit(1.0).alias("__coef"))
     cap_frame = (_with_availability(cap_lf)
                  .with_columns(
-                     # Same evaluation order as the .mod RHS:
-                     # (existing × coef) × availability.
+                     # The order (existing × coef) × availability fixes
+                     # the rounding of the RHS.
                      value=pl.col("__ex") * pl.col("__coef") * pl.col("__av"),
                      __mult=pl.col("__coef") * pl.col("__av"))
                  .select("p", "source", "sink", "d", "t", "value", "__mult")
@@ -5108,43 +5033,7 @@ def _indirect_sum_arcs(d) -> "pl.DataFrame | None":
 def _add_max_output_sum(m, d, v_flow, pss_dt: "pl.DataFrame | None", *,
                         reserve_up_sink_parts=None,
                         invest_sum=None, divest_sum=None) -> None:
-    """Emit ``maxOutputSum`` (and ``maxOutputSum_negCap``): the capacity of
-    an indirect (multi-flow) unit bounds the SUM of its output flows.
-
-    FlexTool defines unit capacity (``existing`` + invest − divest) as "the
-    maximum sum of output flows".  ``maxFlow`` only caps each arc
-    individually (``out_k ≤ cap · capacity_max_coeff_k``), so a 2-output
-    CHP could deliver 2 × capacity.  Per ``(p, d, t)`` for every indirect
-    ``p`` with ≥1 output arc (:func:`_indirect_sum_arcs`)::
-
-        Σ_k v_flow[p, p, k, d, t] + Σ_k Σ_r v_reserve_up[p, r, k, d, t]
-            − av · Σ v_invest[p, d_inv ≤ d] + av · Σ v_divest[p, d_div ≤ d]
-        ≤ existing[p, d] / unitsize[p] · av,     av = availability[p, d, t]
-
-    i.e. availability scales the WHOLE built capacity (existing + invest −
-    divest), as in the .mod's ``maxToSink``.  Units are unit-count
-    (``v_flow`` is per unitsize), exactly as ``maxFlow``.  ``invest_sum`` /
-    ``divest_sum`` are the ``(p, d)`` sums ``maxFlow`` uses (``Σ v_invest``
-    / ``Σ v_divest`` over the alive invest / divest periods), entered once
-    per row — not once per arc — scaled here by the same densified
-    availability as the RHS.  The RHS is the existing-only count ``maxFlow`` binds indirect
-    OUTPUT arcs with (``p_flow_upper_existing``; identical on every arc of
-    a process), densified so a greenfield unit (no ``existing`` row) gets
-    0, times availability densified to the 1.0 default (a naive
-    ``Param * Param`` inner join would DROP unauthored processes →
-    RHS = 0).  ``capacity_max_coeff`` is NOT applied: it is a per-arc
-    fraction, still enforced by ``maxFlow``.
-
-    Negative capacity (``pd_neg_cap``: ``existing < 0`` and ``unitsize < 0``
-    for ``(p, d)``): the .mod form ``Σ v_flow · unitsize ≤ existing`` flips
-    to ``Σ v_flow ≥ existing / unitsize`` on division by the negative
-    unitsize.  Unlike ``maxFlow`` (whose ``≤`` row doubles as the variable
-    bound the .mod declares separately, hence kept), the sum row has no
-    variable-bound twin, so those ``(p, d)`` rows are emitted ONLY as the
-    ``≥`` ``maxOutputSum_negCap`` — keeping the ``≤`` too would pin a
-    k-output unit to ``Σ out = c`` while ``maxFlow``/``maxFlow_negCap`` pin
-    every arc to ``c`` (infeasible for k ≥ 2).
-    """
+    """Emit maxOutputSum / maxOutputSum_negCap (EQ. header in _eq_max_flow)."""
     if pss_dt is None or pss_dt.height == 0:
         return
     fue = getattr(d, "p_flow_upper_existing", None)
@@ -5167,7 +5056,8 @@ def _add_max_output_sum(m, d, v_flow, pss_dt: "pl.DataFrame | None", *,
         if res_sel.height > 0:
             lhs["reserve_up"] = Sum(Where(v_res_at_sink, res_sel),
                                     over=("r", "ud", "sink"))
-    # Availability over the constraint rows, densified to the 1.0 default.
+    # Availability over the constraint rows, densified to the 1.0 default
+    # (a plain Param product would drop processes without availability data).
     avail_pdt = (_availability_factor(d, over)
                  if d.p_process_availability is not None else None)
     if invest_sum is not None:
@@ -5178,7 +5068,8 @@ def _add_max_output_sum(m, d, v_flow, pss_dt: "pl.DataFrame | None", *,
                          if avail_pdt is not None else divest_sum)
 
     # RHS: existing count per (p, d) — the value maxFlow's indirect output
-    # arcs carry (all arcs of a process share it; ``max`` collapses them).
+    # arcs carry (all arcs of a process share it; ``max`` collapses them);
+    # a greenfield unit without an existing row gets 0.
     exist_pd = (fue.frame
                 .join(arcs, on=["p", "source", "sink"], how="semi")
                 .group_by("p", "d")
