@@ -429,7 +429,7 @@ def _compute_p_entity_existing_chain(
 
     Kept as a single compute so the orchestrator runs it once and funnels
     each row-stream through :func:`_emit`, so the per-sub-solve
-    :mod:`._flex_data_accumulator` captures the resulting frames.
+    ``tests/engine/_flex_data_accumulator.py`` captures the resulting frames.
     """
     solve_first = _read_solve_first_flag(solve_data_dir, provider=provider)
     entities = _read_singles(input_dir / "entity.csv", provider=provider)

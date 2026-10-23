@@ -20,7 +20,7 @@ Phase E-b lift — derive_X / _write split
 
 Each writer is now a thin ``_write(derive_X(...), path)`` wrapper around
 its ``derive_*`` companion that materialises a canonical polars frame.
-The accumulator in :mod:`._flex_data_accumulator` captures these frames
+The accumulator in ``tests/engine/_flex_data_accumulator.py`` captures these frames
 via its patched ``_write`` helper, so downstream Phase D / E-a
 consumers can read them straight out of memory instead of round-tripping
 through ``solve_data/*.csv`` on disk.

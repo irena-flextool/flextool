@@ -45,7 +45,7 @@ if str(TESTS_DIR) not in sys.path:
 from db_utils import json_to_db  # noqa: E402
 
 from flextool.engine import run_chain_from_db  # noqa: E402
-from flextool.engine._flex_data_accumulator import (  # noqa: E402
+from tests.engine._flex_data_accumulator import (  # noqa: E402
     expected_basenames,
 )
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402

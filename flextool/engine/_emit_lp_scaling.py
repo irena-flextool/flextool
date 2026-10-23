@@ -258,7 +258,7 @@ def _compute_lp_scaling_frames(
     # via ``repr(v)``.  The byte-parity gate requires we preserve it too.
     # The Phase C accumulator parity test (which round-trips through
     # ``pl.read_csv`` -> Float64 cast) skips this basename for the same
-    # reason — see ``_flex_data_accumulator.expected_basenames()`` for
+    # reason — see ``tests/engine/_flex_data_accumulator.expected_basenames()`` for
     # the exclusion list.
     grp_raw: dict[tuple[str, str], float] = {}
     rows_graw: list[tuple[str, str, float]] = []

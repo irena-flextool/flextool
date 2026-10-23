@@ -43,7 +43,7 @@ This module currently covers the **cross-solve carrier set**, the
 **handoff carriers** (Phase 2 translator), and other high-traffic keys
 touched by orchestration and the ``_solve_context`` loaders.  The
 single-use ``solve_data/*`` emit-and-forget keys (most of
-:func:`_flex_data_accumulator.expected_basenames`) still appear as
+``tests/engine/_flex_data_accumulator.expected_basenames()``) still appear as
 inline string literals at their producer call sites — migrating them
 to constants is a mechanical follow-up that can land in batches
 without changing semantics.
