@@ -417,29 +417,29 @@ VARIABLE_SPECS: list[VariableSpec] = [
                  derived_from=("maxInvestGroup_entity_total_p",
                                 "maxInvestGroup_entity_total_n")),
     # ``maxInvestGroup_entity_cumulative`` keeps a single non-suffixed
-    # name (_cumulative_invest.py:990).
+    # name (_cumulative_invest._eq_group_invest_cumulative).
     _invest_dual("maxInvestGroup_entity_cumulative", "group",  "maxInvestGroup_cumulative"),
 
     # -- Investment-floor (min-side) duals ----------------------------------
     # Mirror of the maxInvest families above, reading the row duals of the
-    # ``>=`` lower-floor constraints emitted by ``_emit_*_minmax`` /
-    # ``_emit_group_invest_*`` (flextool/engine_polars/_cumulative_invest.py).
+    # ``>=`` lower-floor constraints emitted by ``_eq_min_*`` /
+    # ``_eq_group_*`` (flextool/engine_polars/_cumulative_invest.py).
     # Purely additive (Increment 3): makes ``v_dual_min*`` available for the
     # later synthesis increment; nothing consumes these yet.  Same scale
     # sentinel + ``source="row_dual"`` as the max-side; absent families
     # degrade to an empty frame identically.
     #
     # ``minInvest_entity_period`` splits process (``_p``) / node (``_n``)
-    # arms (_cumulative_invest.py:383,397) — same shape as the max-side.
+    # arms (_cumulative_invest._eq_min_entity_period) — same shape as the max-side.
     _invest_dual("minInvest_entity_period",          "entity", "minInvest_period",
                  derived_from=("minInvest_entity_period_p",
                                 "minInvest_entity_period_n")),
     # ``minInvest_entity_total`` is NOT name-symmetric with its max-side
     # counterpart: the process arm carries the ``_p`` suffix
-    # (``minInvest_entity_total_p``, _cumulative_invest.py:460) rather than
+    # (``minInvest_entity_total_p``, _cumulative_invest._eq_min_invest_total) rather than
     # the bare name ``maxInvest_entity_total`` keeps.  More importantly, the
     # min invest-total constraint is indexed per ``(entity, period)`` —
-    # ``over = (p|n, d)`` (_cumulative_invest.py:450,490) with the LHS
+    # ``over = (p|n, d)`` (_cumulative_invest._eq_min_invest_total) with the LHS
     # summing over ``d_invest`` — so it KEEPS a period axis.  The max-side
     # total sums the period out (``Sum(over=("d",))``, model.py:2578) and is
     # therefore ``has_period=False``.  We use the default ``has_period=True``
@@ -457,7 +457,7 @@ VARIABLE_SPECS: list[VariableSpec] = [
                  derived_from=("minInvestGroup_entity_total_p",
                                 "minInvestGroup_entity_total_n")),
     # ``minInvestGroup_entity_cumulative`` keeps a single non-suffixed
-    # name (_cumulative_invest.py:1001), like the max-side cumulative.
+    # name (_cumulative_invest._eq_group_invest_cumulative), like the max-side cumulative.
     _invest_dual("minInvestGroup_entity_cumulative", "group",  "minInvestGroup_cumulative"),
 
     # -- CO2 emission-cap duals ---------------------------------------------

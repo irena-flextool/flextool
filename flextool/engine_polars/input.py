@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 
 from . import _group_slack
 from . import _reserve
-from . import _cumulative_invest
 from . import _delay
 from . import _dc_power_flow
 from . import _commodity_ladder
@@ -3800,7 +3799,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
     out["pdt_min_instant_flow"]           = (Param(("g", "d", "t"), pdt_min)
                                               if pdt_min is not None else None)
     # NB: the instant-flow constraint support is no longer materialised
-    # as a separate ``gdt_*InstantFlow`` field — ``_emit_instant_flow``
+    # as a separate ``gdt_*InstantFlow`` field — ``_cumulative_invest._eq_instant_flow``
     # derives the (g, d, t) domain from the resolved cap directly.
 
     return out
@@ -4605,10 +4604,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
             reserve_data = {k: v for k, v in reserve_data.items() if k != "group_node"}
 
         # ─── Cumulative / group-invest / min-invest data ─────────────────────
-        # The module's ``load_data`` is a no-op stub; ``flextool/input.py`` is
-        # the canonical loader.  Call it for symmetry, then populate the new
-        # ``FlexData`` fields from the canonical helper below.
-        _cumulative_invest.load_data(inp=inp, sd=sd, dt=dt)
         ci_data = _load_cumulative_invest(inp=inp, sd=sd, dt=dt, provider=provider)
 
         # ─── Delayed processes / DR data ─────────────────────────────────────

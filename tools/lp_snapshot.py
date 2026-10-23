@@ -1228,33 +1228,28 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
         "reserve_process_upward", "reserve_process_downward",
     ),
     "_cumulative_invest.py": (
-        # _emit_invest_period_minmax: f"min{Kind}_entity_period_{p,n}"
+        # every family passes its names from a loop table
         "minInvest_entity_period_p", "minInvest_entity_period_n",
         "minDivest_entity_period_p", "minDivest_entity_period_n",
-        # _emit_invest_total_minmax: f"min{Kind}_entity_total_{p,n}"
         "minInvest_entity_total_p", "minInvest_entity_total_n",
         "minDivest_entity_total_p", "minDivest_entity_total_n",
-        # _emit_cumulative_capacity
         "maxCumulative_capacity_p", "maxCumulative_capacity_n",
         "minCumulative_capacity_p", "minCumulative_capacity_n",
-        # _emit_group_invest_period: f"{pre}{Kind}Group_entity_period_{p,n}"
         *(f"{pre}{kind}Group_entity_period_{s}"
           for pre in ("max", "min") for kind in ("Invest", "Divest")
           for s in ("p", "n")),
-        # _emit_group_invest_total: invest -> _{p,n}; divest -> legacy/path
-        *(f"{pre}InvestGroup_entity_total_{s}"
-          for pre in ("max", "min") for s in ("p", "n")),
-        *(f"{pre}DivestGroup_entity_total_{s}"
-          for pre in ("max", "min") for s in ("p", "n")),
-        # _emit_group_total_divest_cap emits path_name only for "<="
+        *(f"{pre}{kind}Group_entity_total_{s}"
+          for pre in ("max", "min") for kind in ("Invest", "Divest")
+          for s in ("p", "n")),
+        # the _path rows exist for the max divest cap only
         "maxDivestGroup_entity_total_path_p",
         "maxDivestGroup_entity_total_path_n",
-        # _emit_group_invest_cumulative / cumulative flow / instant flow
         *(f"{pre}{tail}"
           for pre in ("max", "min")
           for tail in ("InvestGroup_entity_cumulative",
                        "Cumulative_flow_solve", "Cumulative_flow_period",
                        "Instant_flow")),
+        "fix_v_invest_no_investment_eq_p", "fix_v_invest_no_investment_eq_n",
     ),
 }
 
@@ -1269,18 +1264,13 @@ UNREACHABLE: dict[str, str] = {
                  "fix_v_invest_no_investment_eq_n")
 }
 
-# Literal names that are only ever expanded with a suffix in the source.
-_LITERAL_IS_TEMPLATE = {"maxCumulative_capacity", "minCumulative_capacity"}
-
-
 def constraint_universe() -> dict[str, str]:
     """family name -> source file, for every add_cstr in COVERAGE_SOURCES."""
     out: dict[str, str] = {}
     for fname in COVERAGE_SOURCES:
         text = (ENGINE_DIR / fname).read_text()
         for name in _ADD_CSTR_LITERAL.findall(text):
-            if name not in _LITERAL_IS_TEMPLATE:
-                out.setdefault(name, fname)
+            out.setdefault(name, fname)
         for name in DYNAMIC_CSTR_NAMES.get(fname, ()):
             out.setdefault(name, fname)
     return out

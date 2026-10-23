@@ -1694,7 +1694,7 @@ def g_invest_cumulative(source: "InputSource") -> pl.DataFrame:
 # index_name and constant maps, and crashing on pure period maps (no
 # ``t`` column to select).  The ``(g, d, t)`` support is now derived
 # directly from the resolved ``pdt_*_instant_flow`` cap inside
-# ``_cumulative_invest._emit_instant_flow``, which routes shape detection
+# ``_cumulative_invest._eq_instant_flow``, which routes shape detection
 # through ``_param_shapes.resolve_param_shape``.
 
 

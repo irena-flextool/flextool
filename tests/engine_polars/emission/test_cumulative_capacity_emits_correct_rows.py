@@ -4,7 +4,7 @@ sets.
 
 Fixture: ``work_network_coal_wind_battery_invest_cumulative`` — wires
 the ``ed_invest_cumulative`` entity-period set used by
-``_cumulative_invest._emit_cumulative_capacity``.  The .mod splits the
+``_cumulative_invest._eq_cumulative_capacity``.  The .mod splits the
 LP rows by entity kind (process / node), one row per
 ``(p, d) ∈ ed_invest_cumulative ∩ process_side`` and one per
 ``(n, d) ∈ ed_invest_cumulative ∩ node_side``.

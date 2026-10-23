@@ -163,6 +163,7 @@ class _Build:
     has_capacity_margin: bool = False
     has_inertia: bool = False
     has_non_sync: bool = False
+    has_cumulative_invest: bool = False
     is_solve_first: bool = True          # first solve of a chain, or a single solve
 
     # ── shared index sets ──
@@ -282,7 +283,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _group_slack.objective_terms,
         _reserve.add_constraints,
         _reserve.objective_terms,
-        _feature_cumulative_invest,
+        _cumulative_invest.add_constraints,
         _feature_delay,
         _feature_commodity_ladder,
         # ── stochastic ties ──
@@ -355,6 +356,7 @@ def _prepare(b: _Build) -> None:
     b.has_capacity_margin = _group_slack.has_capacity_margin(d)
     b.has_inertia = _group_slack.has_inertia(d)
     b.has_non_sync = _group_slack.has_non_sync(d)
+    b.has_cumulative_invest = _cumulative_invest.has_feature(d)
     # p_nested_solve_first: None for a single solve, else True on the first
     # solve of a chain.
     b.is_solve_first = (d.p_nested_solve_first is None
@@ -2919,29 +2921,6 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
 
 # ---------------------------------------------------------------------------
 # Feature modules
-
-
-def _feature_cumulative_invest(b: _Build) -> Expr | None:
-    """Cumulative and group investment limits (_cumulative_invest)."""
-    m, d = b.m, b.d
-    v_flow = b.v_flow
-    v_invest_p = b.v_invest_p
-    v_divest_p = b.v_divest_p
-    v_invest_n = b.v_invest_n
-    v_divest_n = b.v_divest_n
-    op_factor = b.op_factor
-    # ─── Cumulative / group-invest / min-invest constraints ───────────────
-    if _cumulative_invest.has_feature(d):
-        cum_vars: dict = {
-            "v_invest_p": v_invest_p if b.has_invest_p else None,
-            "v_invest_n": v_invest_n if b.has_invest_n else None,
-            "v_divest_p": v_divest_p if b.has_divest_p else None,
-            "v_divest_n": v_divest_n if b.has_divest_n else None,
-            "v_flow":     v_flow     if b.has_proc     else None,
-        }
-        _cumulative_invest.add_constraints(m, d, cum_vars)
-        return _cumulative_invest.add_objective_terms(m, d, cum_vars, op_factor)
-    return None
 
 
 def _feature_delay(b: _Build) -> Expr | None:

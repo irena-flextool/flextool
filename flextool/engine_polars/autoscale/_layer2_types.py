@@ -297,21 +297,18 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
 
     # min-invest / min-divest entity totals — group_capacity resolved
     # via _p / _n suffix in _cumulative_invest.py.
-    # flextool/engine_polars/_cumulative_invest.py:456 (minInvest_entity_total_p)
-    # flextool/engine_polars/_cumulative_invest.py:496 (minInvest_entity_total_n)
+    # _cumulative_invest._eq_min_invest_total (minInvest_entity_total_{p,n})
     "minInvest_entity_total": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
-    # flextool/engine_polars/_cumulative_invest.py:464 (minDivest_entity_total_p)
-    # flextool/engine_polars/_cumulative_invest.py:504 (minDivest_entity_total_n)
+    # _cumulative_invest._eq_min_divest_total (minDivest_entity_total_{p,n})
     "minDivest_entity_total": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
 
     # min-invest / min-divest entity period (prefix-matched _p/_n) —
     # POWER for _p, ENERGY for _n.
-    # flextool/engine_polars/_cumulative_invest.py:381 (minInvest_entity_period_p)
-    # flextool/engine_polars/_cumulative_invest.py:395 (minInvest_entity_period_n)
+    # _cumulative_invest._eq_min_entity_period (min{Invest,Divest}_entity_period_{p,n})
     "minInvest_entity_period": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
@@ -321,8 +318,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
 
     # Group invest / divest variants — `[MW or MWh]` resolved at
     # apply time.
-    # flextool/engine_polars/_cumulative_invest.py:681 (maxInvestGroup_entity_period_p)
-    # flextool/engine_polars/_cumulative_invest.py:701 (maxInvestGroup_entity_period_n)
+    # _cumulative_invest._eq_group_entity_period ({max,min}{Invest,Divest}Group_entity_period_{p,n})
     "maxInvestGroup_entity_period": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
@@ -335,8 +331,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "minDivestGroup_entity_period": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
-    # flextool/engine_polars/_cumulative_invest.py:786 (maxInvestGroup_entity_total_p)
-    # flextool/engine_polars/_cumulative_invest.py:819 (maxInvestGroup_entity_total_n)
+    # _cumulative_invest._eq_group_invest_total / _eq_group_divest_total
     "maxInvestGroup_entity_total": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
@@ -351,14 +346,13 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     ),
     # Slice D per-path divest-group total cap (design §7.2 item 4 /
     # §14): ``maxDivestGroup_entity_total_path_{p,n}`` emitted by
-    # ``_emit_group_total_divest_cap`` when >1 scenario leaf exists.  The
+    # ``_cumulative_invest._eq_group_divest_total`` when >1 scenario leaf exists.  The
     # ``_p`` / ``_n`` member-class suffix resolves POWER vs ENERGY off
     # this key (``lookup_cstr`` strips it since the resolver is set).
     "maxDivestGroup_entity_total_path": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
-    # flextool/engine_polars/_cumulative_invest.py:845 (maxInvestGroup_entity_cumulative_p)
-    # flextool/engine_polars/_cumulative_invest.py:869 (maxInvestGroup_entity_cumulative_n)
+    # _cumulative_invest._eq_group_invest_cumulative ({max,min}InvestGroup_entity_cumulative)
     "maxInvestGroup_entity_cumulative": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
@@ -367,8 +361,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     ),
 
     # Cumulative capacity per-entity — `_p` / `_n` suffix.
-    # flextool/engine_polars/_cumulative_invest.py:588 (maxCumulative_capacity_p)
-    # flextool/engine_polars/_cumulative_invest.py:632 (maxCumulative_capacity_n)
+    # _cumulative_invest._eq_cumulative_capacity ({max,min}Cumulative_capacity_{p,n})
     "maxCumulative_capacity": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
@@ -377,13 +370,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     ),
 
     # Group-level cumulative / period / instant flow — POWER.
-    # flextool/engine_polars/_cumulative_invest.py:1050 (maxCumulative_flow_solve)
-    # flextool/engine_polars/_cumulative_invest.py:1085 (maxCumulative_flow_period)
+    # _cumulative_invest._eq_cumulative_flow_solve / _eq_cumulative_flow_period
     "maxCumulative_flow_solve": CstrFamily(QuantityType.POWER),
     "minCumulative_flow_solve": CstrFamily(QuantityType.POWER),
     "maxCumulative_flow_period": CstrFamily(QuantityType.POWER),
     "minCumulative_flow_period": CstrFamily(QuantityType.POWER),
-    # flextool/engine_polars/_cumulative_invest.py:1111 (maxInstant_flow / minInstant_flow)
+    # _cumulative_invest._eq_instant_flow ({max,min}Instant_flow)
     "maxInstant_flow": CstrFamily(QuantityType.POWER),
     "minInstant_flow": CstrFamily(QuantityType.POWER),
 
@@ -492,7 +484,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "ladder_tier_cap_cumulative_roll": CstrFamily(QuantityType.ENERGY),
 
     # ── Forbid-invest rows.  RHS = 0 by construction; skip per-row.
-    # flextool/engine_polars/_cumulative_invest.py:284, 298
+    # _cumulative_invest._eq_fix_no_investment
     "fix_v_invest_no_investment_eq_p": CstrFamily(None),
     "fix_v_invest_no_investment_eq_n": CstrFamily(None),
 

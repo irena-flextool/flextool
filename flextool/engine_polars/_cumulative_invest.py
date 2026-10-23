@@ -1,1220 +1,659 @@
-"""Cumulative / group-invest / min-max invest constraint pack.
+"""Investment floors, cumulative capacity limits, group investment limits and flow-group limits.
 
-This module is one of the ``_*.py`` feature packs that the merge agent
-plugs into ``flextool.model.build_flextool``.  It is **self-contained**:
-it imports only from ``polar_high`` and reads the ``FlexData`` (``d``)
-+ the ``vars`` dict that the caller supplies — it never touches
-``flextool/model.py`` or ``flextool/input.py``.
-
-Constraints emitted (mod-name → polar_high row name):
-
-  Per-entity invest / divest, period-scope (mirror of the existing
-  ``maxInvest_entity_period`` / ``maxDivest_entity_period`` already in
-  model.py — we add the **min** counterparts and the
-  ``no_investment``-pin):
-
-    * ``minInvest_entity_period``      — per (e, d) lower bound
-    * ``minDivest_entity_period``      — per (e, d) lower bound
-    * ``fix_v_invest_no_investment_eq``— pin v_invest = 0 on
-                                         ``ed_invest_forbidden_no_investment``
-
-  Per-entity invest / divest, total-scope (sister of the existing
-  ``maxInvest_entity_total`` / ``maxDivest_entity_total``):
-
-    * ``minInvest_entity_total``       — per (e, d) lower bound on
-                                         Σ_d_invest v_invest
-    * ``minDivest_entity_total``       — per e lower bound
-
-  Cumulative (existing + invest − divest) capacity, per-(e, d):
-
-    * ``maxCumulative_capacity``
-    * ``minCumulative_capacity``
-
-  Group-level invest / divest:
-
-    * ``maxInvestGroup_entity_period`` / ``minInvestGroup_entity_period``
-    * ``maxDivestGroup_entity_period`` / ``minDivestGroup_entity_period``
-    * ``maxInvestGroup_entity_total``  / ``minInvestGroup_entity_total``
-    * ``maxDivestGroup_entity_total``  / ``minDivestGroup_entity_total``
-    * ``maxInvestGroup_entity_cumulative``
-    * ``minInvestGroup_entity_cumulative``
-
-  Group-level cumulative / instant flow bounds:
-
-    * ``maxCumulative_flow_solve``  / ``minCumulative_flow_solve``
-    * ``maxCumulative_flow_period`` / ``minCumulative_flow_period``
-    * ``maxInstant_flow``           / ``minInstant_flow``
-
-Variables are **not** declared here — the caller's ``v_invest_p``,
-``v_invest_n``, ``v_divest_p``, ``v_divest_n``, ``v_flow``,
-``v_online_linear``, ``v_online_integer`` are supplied in ``vars``.
-
-Deferred (require feature stack outside this module's scope):
-
-  * ``p_years_represented_d`` weighting on the cumulative-flow-solve
-    LHS (mod uses ``p_rp_cost_weight * p_years_represented_d /
-    complete_period_share_of_year`` per (d, t); we use the simpler
-    ``step_duration`` integration since current scenarios run with
-    ``p_years_represented_d = 1`` and a single representative year).
-  * ``p_process_sink_conversion_flow_coeff /
-    p_process_source_conversion_flow_coeff`` factor on eff source-flow
-    contributions to the cumulative/instant flow LHS — same gap as the
-    existing ``nodeBalance_eq``.
-  * ``p_entity_previously_invested_capacity`` and ``p_entity_divested``
-    history terms on the per-entity-total and group-total constraints
-    — only relevant for multi-solve handoffs.
-  * ``inv_group_cap`` row scaling on the group-flow constraints.
-  * The ``multi_year_wind_growth_cap`` per-period cap (no single mod
-    constraint corresponds; appears to be an externally-preprocessed
-    per-(e, d) ``ed_invest_max_period`` override that already lives
-    on the existing ``maxInvest_entity_period`` constraint — no new
-    constraint emitted here).
+Owns the rows that bound investment from below per entity (per period and over the horizon), bound the
+cumulative capacity (existing + invested − divested) of an entity, bound what a group of entities invests
+or divests (per period, over the horizon, cumulatively), and bound the flow into a flow group (over the
+solve, per period, per step).  The per-entity investment maxima are core rows in model.py.  The module
+declares no variables and adds no objective terms: it reads v_invest_*, v_divest_* and v_flow from the
+build context, and its rows are emitted only when some of its data is populated (has_feature).
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import polars as pl
-from polar_high import Sum, Where, Param
-from polar_high.engine import Var
+from polar_high import Param, Sum, Where
+from polar_high.engine import Expr, Var
+
+from ._axis_enums import align_join_dtypes
+from ._model_common import _has_rows, _var_view
+
+if TYPE_CHECKING:
+    from .model import _Build
 
 
 # ---------------------------------------------------------------------------
-# Field requirements
+# Feature flag (set on the build context by model._prepare)
 
-# Lightweight feature gate: any of these fields, populated and non-empty,
-# turns this pack on.  We don't insist on any single one — the pack
-# emits whichever subset of constraints have data backing them.
+# Any of these fields populated and non-empty turns the module on; each family is further gated on its
+# own data.
 _GATE_FIELDS: tuple[str, ...] = (
-    # per-entity totals (max already in model.py — min added here)
     "e_invest_min_total", "e_divest_min_total",
-    # per-entity period (max already in model.py — min added here)
     "ed_invest_min_period", "ed_divest_min_period",
-    # no_investment pin
     "ed_invest_forbidden_no_investment",
-    # cumulative capacity
-    "ed_invest_cumulative", "ed_cumulative_max_capacity",
-    "ed_cumulative_min_capacity",
-    # group-invest
+    "ed_invest_cumulative", "ed_cumulative_max_capacity", "ed_cumulative_min_capacity",
     "gd_invest_period", "gd_divest_period",
-    "g_invest_total",   "g_divest_total",  "g_invest_cumulative",
+    "g_invest_total", "g_divest_total", "g_invest_cumulative",
     "group_entity",
-    # group-flow
     "p_group_max_cumulative_flow", "p_group_min_cumulative_flow",
-    "pd_max_cumulative_flow",      "pd_min_cumulative_flow",
-    "pdt_max_instant_flow",        "pdt_min_instant_flow",
+    "pd_max_cumulative_flow", "pd_min_cumulative_flow",
+    "pdt_max_instant_flow", "pdt_min_instant_flow",
     "group_process_node",
 )
 
 
 def has_feature(d) -> bool:
-    """True iff the data carries any of the cumulative / group-invest /
-    min-max-invest fields populated and non-empty."""
+    """True when any of the module's data fields (sets or Params) is populated and non-empty."""
     for f in _GATE_FIELDS:
         v = getattr(d, f, None)
         if v is None:
             continue
-        # ``_GATE_FIELDS`` mixes raw ``pl.DataFrame`` sets (``.height``)
-        # and ``Param`` caps (``.frame.height``); normalise both.
-        frame = getattr(v, "frame", v)
+        frame = getattr(v, "frame", v)           # a Param carries its rows in .frame
         if getattr(frame, "height", 0) > 0:
             return True
     return False
 
 
-def load_data(*args, **kwargs):
-    """No-op.  ``flextool/input.py`` is the canonical loader; this pack
-    only consumes whatever fields the loader has populated.  Kept on the
-    module API to satisfy the merge-agent contract."""
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 
-def _is_node(d, e_set: pl.DataFrame) -> pl.DataFrame:
-    """Return the subset of ``e_set`` whose ``e`` column is a node."""
-    if d.nodeState is None or d.nodeState.height == 0:
+
+def _unitsize(d, axis: str) -> Param | None:
+    """unitsize[p] for the process axis ``p``, state_unitsize[n] for the node axis ``n``; None when missing."""
+    if axis == "p":
+        return d.p_unitsize
+    return None if d.p_state_unitsize is None else Param(("n",), d.p_state_unitsize.frame)
+
+
+def _entities_of_kind(d, e_set: pl.DataFrame, axis: str) -> pl.DataFrame:
+    """Rows of ``e_set`` (keyed on e) whose entity is a process (axis p) or a storage node (axis n)."""
+    members, col = (d.process_source_sink, "p") if axis == "p" else (d.nodeState, "n")
+    if not _has_rows(members):
         return e_set.head(0)
-    return e_set.filter(pl.col("e").is_in(d.nodeState["n"].unique()))
+    return e_set.filter(pl.col("e").is_in(members[col].unique()))
 
 
-def _is_process(d, e_set: pl.DataFrame) -> pl.DataFrame:
-    if d.process_source_sink is None or d.process_source_sink.height == 0:
-        return e_set.head(0)
-    return e_set.filter(pl.col("e").is_in(d.process_source_sink["p"].unique()))
+def _on_var_axis(frame: pl.DataFrame, axis: str, var: Var) -> pl.DataFrame:
+    """``frame`` (keyed on the entity-union axis e) renamed to ``axis`` and restricted to the entities of ``var``.
 
-
-def _us_p(d) -> Param | None:
-    """Process-side unitsize (renamed from p → e for symmetric joins)."""
-    if d.p_unitsize is None:
-        return None
-    return Param(("e",), d.p_unitsize.frame.rename({"p": "e"}))
-
-
-def _us_n(d) -> Param | None:
-    """Node-side unitsize (renamed from n → e)."""
-    if d.p_state_unitsize is None:
-        return None
-    return Param(("e",), d.p_state_unitsize.frame.rename({"n": "e"}))
-
-
-def _v_invest_at(v_invest, side: str):
-    """Rename a v_invest variable's ``d`` dim to ``d_invest`` so it can
-    participate in Σ_{d_invest} aggregations bound to a constraint
-    indexed by an outer ``d``."""
-    if v_invest is None:
-        return None
-    pri = "p" if side == "p" else "n"
-    return Var(
-        name=v_invest.name + "__cuminv_at",
-        dims=(pri, "d_invest"),
-        frame=v_invest.frame.rename({"d": "d_invest"}),
-        lower=v_invest.lower, upper=v_invest.upper,
-    )
-
-
-def _eff_lhs_term(d, vars):
-    """Build the eff-source-side LHS contribution that is shared by the
-    cumulative- and instant-flow constraints.
-
-    Returns an Expr over (g, d, t) (when called inside a flow_period /
-    flow_solve constraint we further multiply by step_duration before
-    binding).  When ``flow_from_n`` is missing or empty the term is
-    None.  Mirrors the .mod's
-
-        - sum_{(p,n,sink) in pss_eff} v_flow * unitsize * slope
-          - section term (deferred — only relevant when min_load_eff
-            entities are inside a group; we conservatively skip).
+    The entity-union Enum is cast to the narrower process / node Enum of ``var`` first, so that the
+    membership test compares matching dtypes.
     """
-    v_flow = vars.get("v_flow")
-    if v_flow is None or d.process_source_sink_eff is None:
-        return None
-    if d.flow_from_n is None or d.flow_from_n.height == 0:
-        return None
-    if d.group_process_node is None or d.group_process_node.height == 0:
-        return None
-
-    # Restrict flow_from_n to eff partition + the (p, n) pairs the group
-    # sees.  flow_from_n has columns (p, source, sink, n) where n is the
-    # source node; group_process_node has (g, p, n).
-    pss_eff = d.process_source_sink_eff
-    flow_from_n_eff = (d.flow_from_n
-                       .join(pss_eff, on=["p", "source", "sink"], how="inner")
-                       .join(d.group_process_node, on=["p", "n"], how="inner"))
-    if flow_from_n_eff.height == 0:
-        return None
-    # eff source-flow:  v_flow * unitsize * slope  (introduces g via the join)
-    return -Sum(
-        Where(v_flow * d.p_unitsize * d.p_slope, flow_from_n_eff),
-        over=("p", "source", "sink", "n"),
-    )
+    out = frame.rename({"e": axis})
+    dtype = var.frame.schema[axis]
+    if out.schema[axis] != dtype:
+        out = out.with_columns(pl.col(axis).cast(dtype, strict=False))
+    return out.filter(pl.col(axis).is_in(var.frame[axis].unique()))
 
 
-def _noEff_lhs_term(d, vars):
-    """Source-noEff contribution: ``- Σ v_flow * unitsize`` over (p,
-    source, sink, n) where (p, n, sink) ∈ pss_noEff and (g, p, n) ∈
-    group_process_node."""
-    v_flow = vars.get("v_flow")
-    if v_flow is None or d.process_source_sink_noEff is None:
-        return None
-    if d.flow_from_n is None or d.flow_from_n.height == 0:
-        return None
-    if d.group_process_node is None or d.group_process_node.height == 0:
-        return None
-    flow_from_n_noeff = (d.flow_from_n
-                         .join(d.process_source_sink_noEff,
-                               on=["p", "source", "sink"], how="inner")
-                         .join(d.group_process_node, on=["p", "n"], how="inner"))
-    if flow_from_n_noeff.height == 0:
-        return None
-    return -Sum(
-        Where(v_flow * d.p_unitsize, flow_from_n_noeff),
-        over=("p", "source", "sink", "n"),
-    )
+def _group_flow(b: _Build) -> Expr | None:
+    """Net flow into each flow group, MW, indexed (g, d, t); None when no group sees a flow.
 
-
-def _sink_lhs_term(d, vars):
-    """Sink-flow contribution: ``+ Σ v_flow * unitsize`` over (p,
-    source, sink) where (p, source, n=sink) ∈ pss and (g, p, n) ∈
-    group_process_node."""
-    v_flow = vars.get("v_flow")
-    if v_flow is None or d.process_source_sink is None:
-        return None
-    if d.flow_to_n is None or d.flow_to_n.height == 0:
-        return None
-    if d.group_process_node is None or d.group_process_node.height == 0:
-        return None
-    flow_to_n_grp = d.flow_to_n.join(
-        d.group_process_node, on=["p", "n"], how="inner")
-    if flow_to_n_grp.height == 0:
-        return None
-    return Sum(
-        Where(v_flow * d.p_unitsize, flow_to_n_grp),
-        over=("p", "source", "sink", "n"),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Constraint emission
-
-def add_constraints(m, d, vars: dict) -> None:
-    """Emit every constraint family this pack handles, gated row-by-row
-    on the underlying ``FlexData`` field being populated."""
-
-    v_invest_p = vars.get("v_invest_p")
-    v_invest_n = vars.get("v_invest_n")
-    vars.get("v_divest_p")
-    vars.get("v_divest_n")
-
-    has_inv_p = v_invest_p is not None
-    has_inv_n = v_invest_n is not None
-
-    # ─── fix_v_invest_no_investment_eq ──────────────────────────────
-    # Pin v_invest[e, d] == 0 on (e, d) ∈ ed_invest_forbidden_no_investment.
-    # Mod: flextool.mod ``fix_v_invest_no_investment_eq``.
-    forbid = getattr(d, "ed_invest_forbidden_no_investment", None)
-    if forbid is not None and forbid.height > 0:
-        if has_inv_p:
-            # ``forbid["e"]`` is the entity-union Enum; after renaming to
-            # ``p`` we must align it with ``v_invest_p``'s narrower
-            # process-only ``p`` Enum before joining (Phase 4 Enum
-            # cross-vocab guard — never cast back to Utf8).
-            from ._axis_enums import align_join_dtypes
-            f_p = forbid.rename({"e": "p"})
-            inv_p_idx = v_invest_p.frame.select("p", "d")
-            f_p, inv_p_idx = align_join_dtypes(f_p, inv_p_idx, ("p", "d"))
-            f_p = f_p.join(inv_p_idx, on=["p", "d"], how="inner")
-            if f_p.height > 0:
-                m.add_cstr(
-                    "fix_v_invest_no_investment_eq_p",
-                    over      = f_p,
-                    sense     = "==",
-                    lhs_terms = {"invest": v_invest_p},
-                    rhs_terms = {"zero":   0.0},
-                )
-        if has_inv_n:
-            from ._axis_enums import align_join_dtypes
-            f_n = forbid.rename({"e": "n"})
-            inv_n_idx = v_invest_n.frame.select("n", "d")
-            f_n, inv_n_idx = align_join_dtypes(f_n, inv_n_idx, ("n", "d"))
-            f_n = f_n.join(inv_n_idx, on=["n", "d"], how="inner")
-            if f_n.height > 0:
-                m.add_cstr(
-                    "fix_v_invest_no_investment_eq_n",
-                    over      = f_n,
-                    sense     = "==",
-                    lhs_terms = {"invest": v_invest_n},
-                    rhs_terms = {"zero":   0.0},
-                )
-
-    # ─── minInvest_entity_period / minDivest_entity_period ───────────
-    # Mirror of the existing maxInvest/maxDivest_entity_period in
-    # model.py:402-455 but with sense `>=` and a different RHS param.
-    _emit_invest_period_minmax(m, d, vars, kind="invest", sense=">=")
-    _emit_invest_period_minmax(m, d, vars, kind="divest", sense=">=")
-
-    # ─── minInvest_entity_total / minDivest_entity_total ─────────────
-    # Sister of model.py:459-531 maxInvest/maxDivest_entity_total.
-    _emit_invest_total_minmax(m, d, vars, kind="invest", sense=">=")
-    _emit_invest_total_minmax(m, d, vars, kind="divest", sense=">=")
-
-    # ─── maxCumulative_capacity / minCumulative_capacity ─────────────
-    # LHS:  + p_entity_all_existing[e,d]
-    #       + Σ_{d_invest} v_invest[e, d_invest] * unitsize
-    #       - v_divest[e, d] * unitsize  (if (e, d) ∈ ed_divest)
-    # RHS:  ed_cumulative_{max,min}_capacity[e, d]
-    _emit_cumulative_capacity(m, d, vars, sense="<=")
-    _emit_cumulative_capacity(m, d, vars, sense=">=")
-
-    # ─── Group invest / divest, period scope ─────────────────────────
-    _emit_group_invest_period(m, d, vars, kind="invest", sense="<=")
-    _emit_group_invest_period(m, d, vars, kind="invest", sense=">=")
-    _emit_group_invest_period(m, d, vars, kind="divest", sense="<=")
-    _emit_group_invest_period(m, d, vars, kind="divest", sense=">=")
-
-    # ─── Group invest / divest, total scope ──────────────────────────
-    _emit_group_invest_total(m, d, vars, kind="invest", sense="<=")
-    _emit_group_invest_total(m, d, vars, kind="invest", sense=">=")
-    _emit_group_invest_total(m, d, vars, kind="divest", sense="<=")
-    _emit_group_invest_total(m, d, vars, kind="divest", sense=">=")
-
-    # ─── Group invest, cumulative (max + min) ────────────────────────
-    _emit_group_invest_cumulative(m, d, vars, sense="<=")
-    _emit_group_invest_cumulative(m, d, vars, sense=">=")
-
-    # ─── Group cumulative-flow / instant-flow ────────────────────────
-    _emit_cumulative_flow_solve(m, d, vars, sense="<=")
-    _emit_cumulative_flow_solve(m, d, vars, sense=">=")
-    _emit_cumulative_flow_period(m, d, vars, sense="<=")
-    _emit_cumulative_flow_period(m, d, vars, sense=">=")
-    _emit_instant_flow(m, d, vars, sense="<=")
-    _emit_instant_flow(m, d, vars, sense=">=")
-
-
-def add_objective_terms(m, d, vars: dict, op_factor) -> None:
-    """No objective contribution — every constraint here is a structural
-    (in)equality, not a cost term."""
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Per-entity period min/max
-
-def _emit_invest_period_minmax(m, d, vars: dict,
-                                kind: str, sense: str) -> None:
-    """Emit the min variant of {invest|divest}_entity_period."""
-    # Pull the right (set, max-param, min-param) trio.
-    if kind == "invest":
-        idx_set   = getattr(d, "ed_invest_period_set", None)
-        cap_param = getattr(d, "ed_invest_min_period", None)
-        v_p = vars.get("v_invest_p")
-        v_n = vars.get("v_invest_n")
-    else:  # divest
-        idx_set   = getattr(d, "ed_divest_period_set", None)
-        cap_param = getattr(d, "ed_divest_min_period", None)
-        v_p = vars.get("v_divest_p")
-        v_n = vars.get("v_divest_n")
-    if idx_set is None or idx_set.height == 0 or cap_param is None:
-        return
-    suffix = f"min{kind.capitalize()}_entity_period"
-
-    # Process side
-    if v_p is not None and d.p_unitsize is not None:
-        sub = idx_set.rename({"e": "p"}).join(
-            v_p.frame.select("p", "d"), on=["p", "d"], how="inner")
-        if sub.height > 0:
-            cap = Param(("p", "d"), cap_param.frame.rename({"e": "p"}))
-            m.add_cstr(
-                f"{suffix}_p",
-                over      = sub,
-                sense     = sense,
-                lhs_terms = {kind: v_p * d.p_unitsize},
-                rhs_terms = {"cap": cap},
-            )
-    # Node side
-    if v_n is not None and d.p_state_unitsize is not None:
-        sub = idx_set.rename({"e": "n"}).join(
-            v_n.frame.select("n", "d"), on=["n", "d"], how="inner")
-        if sub.height > 0:
-            cap = Param(("n", "d"), cap_param.frame.rename({"e": "n"}))
-            us  = Param(("n",),     d.p_state_unitsize.frame)
-            m.add_cstr(
-                f"{suffix}_n",
-                over      = sub,
-                sense     = sense,
-                lhs_terms = {kind: v_n * us},
-                rhs_terms = {"cap": cap},
-            )
-
-
-# ---------------------------------------------------------------------------
-# Per-entity total min/max
-
-def _emit_invest_total_minmax(m, d, vars: dict,
-                               kind: str, sense: str) -> None:
-    """Emit ``minInvest_entity_total`` / ``minDivest_entity_total``.
-
-    For invest: indexed by (e, d) — Σ_{d_invest in edd_invest} v_invest
-    summed; vs ``e_invest_min_total[e]``.
-    For divest: indexed by e only — Σ_d v_divest summed; vs
-    ``e_divest_min_total[e]``.
+    F[g,d,t] = Σ_{(p,s,k,n) ∈ flow_to_n, (g,p,n) ∈ gpn} v_flow[p,s,k,d,t] · unitsize[p]
+             − Σ_{(p,s,k,n) ∈ flow_from_n ∩ pss_eff, (g,p,n) ∈ gpn} v_flow[p,s,k,d,t] · unitsize[p] · slope[p,d,t]
+             − Σ_{(p,s,k,n) ∈ flow_from_n ∩ pss_noEff, (g,p,n) ∈ gpn} v_flow[p,s,k,d,t] · unitsize[p]
+      gpn = group_process_node;  flow_to_n / flow_from_n carry the sink / source node as n
     """
-    if kind == "invest":
-        e_set     = getattr(d, "e_invest_total", None)
-        cap_param = getattr(d, "e_invest_min_total", None)
-        edd_set   = getattr(d, "edd_invest_set", None)
-        v_p = vars.get("v_invest_p")
-        v_n = vars.get("v_invest_n")
-    else:
-        e_set     = getattr(d, "e_divest_total", None)
-        cap_param = getattr(d, "e_divest_min_total", None)
-        edd_set   = None
-        v_p = vars.get("v_divest_p")
-        v_n = vars.get("v_divest_n")
-    if e_set is None or e_set.height == 0 or cap_param is None:
-        return
-    cstr_name = f"min{kind.capitalize()}_entity_total"
-
-    # Process side
-    if v_p is not None and d.p_unitsize is not None:
-        e_p = _is_process(d, e_set).rename({"e": "p"})
-        if e_p.height > 0:
-            cap_p = Param(("p",), cap_param.frame.rename({"e": "p"}))
-            if kind == "invest":
-                # over = (e_p × period_invest), as in maxInvest_entity_total.
-                # We don't have period_invest as a separate frame, but
-                # the canonical way is to use edd_invest's outer d column.
-                if edd_set is None:
-                    return
-                edd_p = (edd_set.rename({"e": "p"}).join(
-                    e_p, on="p", how="inner")
-                    .filter(pl.col("p").is_in(v_p.frame["p"].unique())))
-                if edd_p.height == 0:
-                    return
-                # outer index = unique (p, d) from edd_p
-                outer = edd_p.select("p", "d").unique()
-                v_inv_at = Var(
-                    name=v_p.name + "__cuminv_total_at",
-                    dims=("p", "d_invest"),
-                    frame=v_p.frame.rename({"d": "d_invest"}),
-                    lower=v_p.lower, upper=v_p.upper,
-                )
-                inv_sum = Sum(Where(v_inv_at * d.p_unitsize, edd_p),
-                              over=("d_invest",))
-                m.add_cstr(
-                    f"{cstr_name}_p",
-                    over      = outer,
-                    sense     = sense,
-                    lhs_terms = {"invest_total": inv_sum},
-                    rhs_terms = {"cap":          cap_p},
-                )
-            else:  # divest — sum over d
-                m.add_cstr(
-                    f"{cstr_name}_p",
-                    over      = e_p,
-                    sense     = sense,
-                    lhs_terms = {"divest_total":
-                        Sum(Where(v_p * d.p_unitsize, e_p), over=("d",))},
-                    rhs_terms = {"cap": cap_p},
-                )
-
-    # Node side
-    if v_n is not None and d.p_state_unitsize is not None:
-        e_n = _is_node(d, e_set).rename({"e": "n"})
-        if e_n.height > 0:
-            cap_n = Param(("n",), cap_param.frame.rename({"e": "n"}))
-            us_n  = Param(("n",), d.p_state_unitsize.frame)
-            if kind == "invest":
-                if edd_set is None:
-                    return
-                edd_n = (edd_set.rename({"e": "n"}).join(
-                    e_n, on="n", how="inner")
-                    .filter(pl.col("n").is_in(v_n.frame["n"].unique())))
-                if edd_n.height == 0:
-                    return
-                outer = edd_n.select("n", "d").unique()
-                v_inv_at = Var(
-                    name=v_n.name + "__cuminv_total_at",
-                    dims=("n", "d_invest"),
-                    frame=v_n.frame.rename({"d": "d_invest"}),
-                    lower=v_n.lower, upper=v_n.upper,
-                )
-                inv_sum = Sum(Where(v_inv_at * us_n, edd_n),
-                              over=("d_invest",))
-                m.add_cstr(
-                    f"{cstr_name}_n",
-                    over      = outer,
-                    sense     = sense,
-                    lhs_terms = {"invest_total": inv_sum},
-                    rhs_terms = {"cap":          cap_n},
-                )
-            else:
-                m.add_cstr(
-                    f"{cstr_name}_n",
-                    over      = e_n,
-                    sense     = sense,
-                    lhs_terms = {"divest_total":
-                        Sum(Where(v_n * us_n, e_n), over=("d",))},
-                    rhs_terms = {"cap": cap_n},
-                )
-
-
-# ---------------------------------------------------------------------------
-# Cumulative capacity
-
-def _emit_cumulative_capacity(m, d, vars: dict, sense: str) -> None:
-    """``maxCumulative_capacity`` / ``minCumulative_capacity``.
-
-        + p_entity_all_existing[e, d]
-        + Σ_{d_invest : (e,d_invest,d) in edd_invest} v_invest * unitsize
-        - (if (e, d) in ed_divest then v_divest * unitsize)
-        <=  ed_cumulative_max_capacity[e, d]   (sense='<=')
-        >=  ed_cumulative_min_capacity[e, d]   (sense='>=')
-    """
-    idx = getattr(d, "ed_invest_cumulative", None)
-    if idx is None or idx.height == 0:
-        return
-    cap_field = ("ed_cumulative_max_capacity" if sense == "<="
-                 else "ed_cumulative_min_capacity")
-    cap_param = getattr(d, cap_field, None)
-    if cap_param is None:
-        return
-    name = "maxCumulative_capacity" if sense == "<=" else "minCumulative_capacity"
-    existing_param = getattr(d, "p_entity_all_existing", None)
-    edd_set = getattr(d, "edd_invest_set", None)
-    if edd_set is None:
-        return
-
-    v_inv_p = vars.get("v_invest_p")
-    v_inv_n = vars.get("v_invest_n")
-    v_div_p = vars.get("v_divest_p")
-    v_div_n = vars.get("v_divest_n")
-
-    # Process side
-    if v_inv_p is not None and d.p_unitsize is not None:
-        # ``idx``'s ``e`` carries the entity-union Enum (entities cover
-        # processes + nodes); ``v_inv_p.frame["p"]`` carries the
-        # process-only Enum.  Cast the renamed ``p`` column to the
-        # narrower process Enum so the ``is_in`` membership test
-        # composes against a matching dtype.  Per the entity-union axis
-        # convention: cast at the boundary, never let polars sort it
-        # out via List(Enum).
-        idx_p = idx.rename({"e": "p"})
-        _p_dtype = v_inv_p.frame.schema["p"]
-        if idx_p.schema["p"] != _p_dtype:
-            idx_p = idx_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
-        idx_p = idx_p.filter(
-            pl.col("p").is_in(v_inv_p.frame["p"].unique()))
-        if idx_p.height > 0:
-            edd_p = edd_set.rename({"e": "p"})
-            # Reconcile the renamed entity-union ``p`` (from ``edd_set``)
-            # against ``idx_p``'s narrower process-only ``p`` Enum.
-            from ._axis_enums import align_join_dtypes
-            edd_p, idx_p_aligned = align_join_dtypes(
-                edd_p, idx_p, ("p",),
-            )
-            edd_p = edd_p.join(idx_p_aligned, on=["p", "d"], how="inner")
-            v_inv_at = Var(
-                name=v_inv_p.name + "__cumcap_at",
-                dims=("p", "d_invest"),
-                frame=v_inv_p.frame.rename({"d": "d_invest"}),
-                lower=v_inv_p.lower, upper=v_inv_p.upper,
-            )
-            invest_term = Sum(Where(v_inv_at * d.p_unitsize, edd_p),
-                              over=("d_invest",))
-            lhs: dict = {"invest_cum": invest_term}
-            if v_div_p is not None:
-                # Only subtract divest where (p, d) ∈ ed_divest_set.
-                # Filter to v_divest_p's own frame which is exactly
-                # pd_divest_set.
-                lhs["divest"] = -Where(v_div_p * d.p_unitsize, idx_p)
-            cap_p = Param(("p", "d"), cap_param.frame.rename({"e": "p"}))
-            rhs: dict = {"cap": cap_p}
-            if existing_param is not None:
-                exist_p = Param(("p", "d"),
-                    existing_param.frame.rename({"e": "p"}))
-                # Move existing to the RHS as -existing.
-                rhs["minus_existing"] = -exist_p
-            m.add_cstr(
-                f"{name}_p",
-                over      = idx_p,
-                sense     = sense,
-                lhs_terms = lhs,
-                rhs_terms = rhs,
-            )
-
-    # Node side
-    if v_inv_n is not None and d.p_state_unitsize is not None:
-        # Mirror of the process-side cast.  ``idx``'s ``e`` is the
-        # entity-union Enum; ``v_inv_n.frame["n"]`` is the node-only
-        # Enum.  Cast at the boundary before ``is_in``.
-        idx_n = idx.rename({"e": "n"})
-        _n_dtype = v_inv_n.frame.schema["n"]
-        if idx_n.schema["n"] != _n_dtype:
-            idx_n = idx_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
-        idx_n = idx_n.filter(
-            pl.col("n").is_in(v_inv_n.frame["n"].unique()))
-        if idx_n.height > 0:
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            edd_n = edd_set.rename({"e": "n"})
-            from ._axis_enums import align_join_dtypes
-            edd_n, idx_n_aligned = align_join_dtypes(
-                edd_n, idx_n, ("n",),
-            )
-            edd_n = edd_n.join(idx_n_aligned, on=["n", "d"], how="inner")
-            v_inv_at = Var(
-                name=v_inv_n.name + "__cumcap_at",
-                dims=("n", "d_invest"),
-                frame=v_inv_n.frame.rename({"d": "d_invest"}),
-                lower=v_inv_n.lower, upper=v_inv_n.upper,
-            )
-            invest_term = Sum(Where(v_inv_at * us_n, edd_n),
-                              over=("d_invest",))
-            lhs: dict = {"invest_cum": invest_term}
-            if v_div_n is not None:
-                lhs["divest"] = -Where(v_div_n * us_n, idx_n)
-            cap_n = Param(("n", "d"), cap_param.frame.rename({"e": "n"}))
-            rhs: dict = {"cap": cap_n}
-            if existing_param is not None:
-                exist_n = Param(("n", "d"),
-                    existing_param.frame.rename({"e": "n"}))
-                rhs["minus_existing"] = -exist_n
-            m.add_cstr(
-                f"{name}_n",
-                over      = idx_n,
-                sense     = sense,
-                lhs_terms = lhs,
-                rhs_terms = rhs,
-            )
-
-
-# ---------------------------------------------------------------------------
-# Group invest / divest — period scope
-
-def _emit_group_invest_period(m, d, vars: dict,
-                               kind: str, sense: str) -> None:
-    """Σ_{(g,e) in group_entity : (e,d) in ed_{kind}}
-         v_{kind}[e, d] * unitsize  <sense>  pdGroup[g, ?, d]"""
-    if kind == "invest":
-        gd_idx = getattr(d, "gd_invest_period", None)
-        cap_field = ("p_group_invest_max_period" if sense == "<="
-                     else "p_group_invest_min_period")
-        v_p = vars.get("v_invest_p")
-        v_n = vars.get("v_invest_n")
-    else:
-        gd_idx = getattr(d, "gd_divest_period", None)
-        cap_field = ("p_group_retire_max_period" if sense == "<="
-                     else "p_group_retire_min_period")
-        v_p = vars.get("v_divest_p")
-        v_n = vars.get("v_divest_n")
-    cap_param = getattr(d, cap_field, None)
-    group_entity = getattr(d, "group_entity", None)
-    if (gd_idx is None or gd_idx.height == 0
-            or cap_param is None
-            or group_entity is None or group_entity.height == 0):
-        return
-    pre = "max" if sense == "<=" else "min"
-    name = f"{pre}{kind.capitalize()}Group_entity_period"
-
-    # Process branch
-    if v_p is not None and d.p_unitsize is not None:
-        ge_p = group_entity.rename({"e": "p"}).filter(
-            pl.col("p").is_in(v_p.frame["p"].unique()))
-        if ge_p.height > 0:
-            # join group_entity (g, p) with v_p frame (p, d), filter to
-            # gd_idx (g, d)
-            joined = (ge_p.join(v_p.frame.select("p", "d"), on="p", how="inner")
-                          .join(gd_idx, on=["g", "d"], how="inner"))
-            if joined.height > 0:
-                lhs = Sum(
-                    Where(v_p * d.p_unitsize, joined.select("g", "p", "d")),
-                    over=("p",),
-                )
-                m.add_cstr(
-                    f"{name}_p",
-                    over      = gd_idx,
-                    sense     = sense,
-                    lhs_terms = {kind: lhs},
-                    rhs_terms = {"cap": cap_param},
-                )
-    # Node branch
-    if v_n is not None and d.p_state_unitsize is not None:
-        us_n = Param(("n",), d.p_state_unitsize.frame)
-        ge_n = group_entity.rename({"e": "n"}).filter(
-            pl.col("n").is_in(v_n.frame["n"].unique()))
-        if ge_n.height > 0:
-            joined = (ge_n.join(v_n.frame.select("n", "d"), on="n", how="inner")
-                          .join(gd_idx, on=["g", "d"], how="inner"))
-            if joined.height > 0:
-                lhs = Sum(
-                    Where(v_n * us_n, joined.select("g", "n", "d")),
-                    over=("n",),
-                )
-                m.add_cstr(
-                    f"{name}_n",
-                    over      = gd_idx,
-                    sense     = sense,
-                    lhs_terms = {kind: lhs},
-                    rhs_terms = {"cap": cap_param},
-                )
-
-
-# ---------------------------------------------------------------------------
-# Group invest / divest — total scope
-
-def _emit_group_total_divest_cap(
-    m, *, legacy_name: str, path_name: str, outer: pl.DataFrame,
-    ge: pl.DataFrame, axis: str, var, unitsize, cap_param,
-    sense: str, d_leaf,
-) -> None:
-    """Per-path divest-group total cap (design §7.2 (G) item 4).
-
-    The divest group total sums ``v_divest * unitsize`` over ALL ``d``
-    (``edd_set`` is None on the divest side) grouped by ``g`` — under
-    recourse that cross-scenario double-counts one cap.  When more than
-    one scenario leaf covers the divest periods (recourse, sense
-    ``"<="``), emit ``path_name`` indexed by ``(g, leaf)`` with the
-    inner sum masked to each leaf's periods.  Single leaf — deterministic
-    / flag-off — or the ``">="`` floor keeps the legacy ``over=g`` shape
-    and NAME (byte-parity; the design registers only the ``max`` path
-    cap).
-    """
-    dl = None
-    if (sense == "<=" and d_leaf is not None
-            and getattr(d_leaf, "height", 0) > 0):
-        inv_periods = var.frame.select("d").unique()
-        _d_dt = var.frame.schema["d"]
-        dlx = d_leaf
-        if dlx.schema["d"] != _d_dt:
-            dlx = dlx.with_columns(pl.col("d").cast(_d_dt, strict=False))
-        dl = dlx.join(inv_periods, on="d", how="semi")
-    n_leaves = (dl["leaf"].n_unique()
-                if dl is not None and dl.height > 0 else 1)
-    if n_leaves <= 1:
-        m.add_cstr(
-            legacy_name,
-            over      = outer,
-            sense     = sense,
-            lhs_terms = {"divest_grp": Sum(Where(var * unitsize, ge),
-                                           over=(axis, "d"))},
-            rhs_terms = {"cap": cap_param},
-        )
-        return
-    mask = ge.join(dl, how="cross")
-    over_path = outer.join(dl.select("leaf").unique().sort("leaf"),
-                           how="cross")
-    m.add_cstr(
-        path_name,
-        over      = over_path,
-        sense     = sense,
-        lhs_terms = {"divest_grp": Sum(Where(var * unitsize, mask),
-                                       over=(axis, "d"))},
-        rhs_terms = {"cap": cap_param},
-    )
-
-
-def _emit_group_invest_total(m, d, vars: dict,
-                              kind: str, sense: str) -> None:
-    """Mod:
-
-      maxInvestGroup_entity_total {g in g_invest_total, d in period_invest} :
-        + Σ_{(g,e), d_inv : (e,d_inv,d) in edd_invest}
-              v_invest[e, d_inv] * unitsize
-        + Σ_{(g,e)} p_entity_previously_invested_capacity[e, d]   (deferred)
-        <=  p_group[g, 'invest_max_total']                       (scalar over g)
-
-    For divest the index is just g (no per-d outer) and LHS sums over d.
-    """
-    group_entity = getattr(d, "group_entity", None)
-    if group_entity is None or group_entity.height == 0:
-        return
-    if kind == "invest":
-        g_set     = getattr(d, "g_invest_total", None)
-        cap_field = ("p_group_invest_max_total" if sense == "<="
-                     else "p_group_invest_min_total")
-        edd_set   = getattr(d, "edd_invest_set", None)
-        v_p = vars.get("v_invest_p")
-        v_n = vars.get("v_invest_n")
-    else:
-        g_set     = getattr(d, "g_divest_total", None)
-        cap_field = ("p_group_retire_max_total" if sense == "<="
-                     else "p_group_retire_min_total")
-        edd_set   = None
-        v_p = vars.get("v_divest_p")
-        v_n = vars.get("v_divest_n")
-    cap_param = getattr(d, cap_field, None)
-    if g_set is None or g_set.height == 0 or cap_param is None:
-        return
-    pre = "max" if sense == "<=" else "min"
-    name = f"{pre}{kind.capitalize()}Group_entity_total"
-
-    if kind == "invest":
-        # outer = (g × d) — use periods where ANY (e, d_inv, d) ∈ edd_invest
-        if edd_set is None:
-            return
-        # outer (g, d): for each g, every d that appears in edd for some
-        # (g, e) in group_entity.
-        ge = group_entity.rename({"e": "_e"}).filter(
-            pl.col("g").is_in(g_set["g"].unique()))
-        # Build outer (g, d) frame from edd_set ∩ group_entity
-        edd_for_g = (ge.join(edd_set.rename({"e": "_e"}),
-                              on="_e", how="inner")
-                       .select("g", "d").unique())
-        if edd_for_g.height == 0:
-            return
-
-        # Process branch
-        if v_p is not None and d.p_unitsize is not None:
-            # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); cast
-            # at the boundary, never let polars sort it out via List(Enum).
-            _p_dtype = v_p.frame.schema["p"]
-            ge_p = group_entity.rename({"e": "p"})
-            if ge_p.schema["p"] != _p_dtype:
-                ge_p = ge_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
-            ge_p = ge_p.filter(pl.col("p").is_in(v_p.frame["p"].unique()))
-            edd_p = edd_set.rename({"e": "p"})
-            if edd_p.schema["p"] != _p_dtype:
-                edd_p = edd_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
-            edd_p = edd_p.filter(pl.col("p").is_in(v_p.frame["p"].unique()))
-            joined = ge_p.join(edd_p, on="p", how="inner")
-            if joined.height > 0:
-                v_inv_at = Var(
-                    name=v_p.name + "__grp_total_at",
-                    dims=("p", "d_invest"),
-                    frame=v_p.frame.rename({"d": "d_invest"}),
-                    lower=v_p.lower, upper=v_p.upper,
-                )
-                inv_sum = Sum(
-                    Where(v_inv_at * d.p_unitsize, joined),
-                    over=("p", "d_invest"),
-                )
-                m.add_cstr(
-                    f"{name}_p",
-                    over      = edd_for_g,
-                    sense     = sense,
-                    lhs_terms = {"invest_grp": inv_sum},
-                    rhs_terms = {"cap": cap_param},
-                )
-        # Node branch
-        if v_n is not None and d.p_state_unitsize is not None:
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); cast
-            # at the boundary, never let polars sort it out via List(Enum).
-            _n_dtype = v_n.frame.schema["n"]
-            ge_n = group_entity.rename({"e": "n"})
-            if ge_n.schema["n"] != _n_dtype:
-                ge_n = ge_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
-            ge_n = ge_n.filter(pl.col("n").is_in(v_n.frame["n"].unique()))
-            edd_n = edd_set.rename({"e": "n"})
-            if edd_n.schema["n"] != _n_dtype:
-                edd_n = edd_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
-            edd_n = edd_n.filter(pl.col("n").is_in(v_n.frame["n"].unique()))
-            joined = ge_n.join(edd_n, on="n", how="inner")
-            if joined.height > 0:
-                v_inv_at = Var(
-                    name=v_n.name + "__grp_total_at",
-                    dims=("n", "d_invest"),
-                    frame=v_n.frame.rename({"d": "d_invest"}),
-                    lower=v_n.lower, upper=v_n.upper,
-                )
-                inv_sum = Sum(
-                    Where(v_inv_at * us_n, joined),
-                    over=("n", "d_invest"),
-                )
-                m.add_cstr(
-                    f"{name}_n",
-                    over      = edd_for_g,
-                    sense     = sense,
-                    lhs_terms = {"invest_grp": inv_sum},
-                    rhs_terms = {"cap": cap_param},
-                )
-    else:
-        # divest: outer = g, sum over (e, d) ∈ ed_divest where (g, e) ∈ group_entity
-        outer = g_set.select("g")
-        # Process branch
-        if v_p is not None and d.p_unitsize is not None:
-            # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); cast
-            # at the boundary, never let polars sort it out via List(Enum).
-            _p_dtype = v_p.frame.schema["p"]
-            ge_p = group_entity.rename({"e": "p"})
-            if ge_p.schema["p"] != _p_dtype:
-                ge_p = ge_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
-            ge_p = ge_p.filter(
-                pl.col("p").is_in(v_p.frame["p"].unique())) \
-                .filter(pl.col("g").is_in(g_set["g"].unique()))
-            if ge_p.height > 0:
-                _emit_group_total_divest_cap(
-                    m,
-                    legacy_name = f"{name}_p",
-                    path_name   = f"{name}_path_p",
-                    outer       = outer,
-                    ge          = ge_p,
-                    axis        = "p",
-                    var         = v_p,
-                    unitsize    = d.p_unitsize,
-                    cap_param   = cap_param,
-                    sense       = sense,
-                    d_leaf      = getattr(d, "d_leaf", None),
-                )
-        # Node branch
-        if v_n is not None and d.p_state_unitsize is not None:
-            us_n = Param(("n",), d.p_state_unitsize.frame)
-            # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); cast
-            # at the boundary, never let polars sort it out via List(Enum).
-            _n_dtype = v_n.frame.schema["n"]
-            ge_n = group_entity.rename({"e": "n"})
-            if ge_n.schema["n"] != _n_dtype:
-                ge_n = ge_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
-            ge_n = ge_n.filter(
-                pl.col("n").is_in(v_n.frame["n"].unique())) \
-                .filter(pl.col("g").is_in(g_set["g"].unique()))
-            if ge_n.height > 0:
-                _emit_group_total_divest_cap(
-                    m,
-                    legacy_name = f"{name}_n",
-                    path_name   = f"{name}_path_n",
-                    outer       = outer,
-                    ge          = ge_n,
-                    axis        = "n",
-                    var         = v_n,
-                    unitsize    = us_n,
-                    cap_param   = cap_param,
-                    sense       = sense,
-                    d_leaf      = getattr(d, "d_leaf", None),
-                )
-
-
-# ---------------------------------------------------------------------------
-# Group invest cumulative
-
-def _emit_group_invest_cumulative(m, d, vars: dict, sense: str) -> None:
-    """maxInvestGroup_entity_cumulative / min variant.
-
-    LHS:
-      + Σ_{(g,e), d_inv : (e,d_inv,d) in edd_invest} v_invest * unitsize
-      + Σ_{(g,e)} p_entity_previously_invested_capacity[e, d]   (deferred)
-      + Σ_{(g,e)} p_entity_all_existing[e, d]
-      [- divest terms for the min variant — deferred per audit note]
-    RHS:
-      + p_group[g, 'invest_max_cumulative']  (or min_cumulative)
-    """
-    group_entity = getattr(d, "group_entity", None)
-    g_set        = getattr(d, "g_invest_cumulative", None)
-    edd_set      = getattr(d, "edd_invest_set", None)
-    if (group_entity is None or group_entity.height == 0
-            or g_set is None or g_set.height == 0
-            or edd_set is None):
-        return
-    cap_field = ("p_group_invest_max_cumulative" if sense == "<="
-                 else "p_group_invest_min_cumulative")
-    cap_param = getattr(d, cap_field, None)
-    if cap_param is None:
-        return
-    pre = "max" if sense == "<=" else "min"
-    name = f"{pre}InvestGroup_entity_cumulative"
-
-    # Build outer (g, d): every (g, d) where the group has a member with
-    # an edd_invest row at that d.
-    ge = group_entity.rename({"e": "_e"}).filter(
-        pl.col("g").is_in(g_set["g"].unique()))
-    outer = (ge.join(edd_set.rename({"e": "_e"}), on="_e", how="inner")
-               .select("g", "d").unique())
-    if outer.height == 0:
-        return
-
-    # LHS pieces: invest sum (process + node) and existing sum.
-    v_inv_p = vars.get("v_invest_p")
-    v_inv_n = vars.get("v_invest_n")
-    existing = getattr(d, "p_entity_all_existing", None)
-
-    lhs_terms: dict = {}
-    if v_inv_p is not None and d.p_unitsize is not None:
-        # Phase 4.8h: cross-Enum is_in (e-axis vs p-axis vocab); cast
-        # at the boundary, never let polars sort it out via List(Enum).
-        _p_dtype = v_inv_p.frame.schema["p"]
-        ge_p = group_entity.rename({"e": "p"})
-        if ge_p.schema["p"] != _p_dtype:
-            ge_p = ge_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
-        ge_p = ge_p.filter(
-            pl.col("p").is_in(v_inv_p.frame["p"].unique())).filter(
-            pl.col("g").is_in(g_set["g"].unique()))
-        edd_p = edd_set.rename({"e": "p"})
-        if edd_p.schema["p"] != _p_dtype:
-            edd_p = edd_p.with_columns(pl.col("p").cast(_p_dtype, strict=False))
-        edd_p = edd_p.filter(
-            pl.col("p").is_in(v_inv_p.frame["p"].unique()))
-        joined = ge_p.join(edd_p, on="p", how="inner")
-        if joined.height > 0:
-            v_inv_at = Var(
-                name=v_inv_p.name + "__grp_cum_at",
-                dims=("p", "d_invest"),
-                frame=v_inv_p.frame.rename({"d": "d_invest"}),
-                lower=v_inv_p.lower, upper=v_inv_p.upper,
-            )
-            lhs_terms["invest_p"] = Sum(
-                Where(v_inv_at * d.p_unitsize, joined),
-                over=("p", "d_invest"),
-            )
-    if v_inv_n is not None and d.p_state_unitsize is not None:
-        us_n = Param(("n",), d.p_state_unitsize.frame)
-        # Phase 4.8h: cross-Enum is_in (e-axis vs n-axis vocab); cast
-        # at the boundary, never let polars sort it out via List(Enum).
-        _n_dtype = v_inv_n.frame.schema["n"]
-        ge_n = group_entity.rename({"e": "n"})
-        if ge_n.schema["n"] != _n_dtype:
-            ge_n = ge_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
-        ge_n = ge_n.filter(
-            pl.col("n").is_in(v_inv_n.frame["n"].unique())).filter(
-            pl.col("g").is_in(g_set["g"].unique()))
-        edd_n = edd_set.rename({"e": "n"})
-        if edd_n.schema["n"] != _n_dtype:
-            edd_n = edd_n.with_columns(pl.col("n").cast(_n_dtype, strict=False))
-        edd_n = edd_n.filter(
-            pl.col("n").is_in(v_inv_n.frame["n"].unique()))
-        joined = ge_n.join(edd_n, on="n", how="inner")
-        if joined.height > 0:
-            v_inv_at = Var(
-                name=v_inv_n.name + "__grp_cum_at",
-                dims=("n", "d_invest"),
-                frame=v_inv_n.frame.rename({"d": "d_invest"}),
-                lower=v_inv_n.lower, upper=v_inv_n.upper,
-            )
-            lhs_terms["invest_n"] = Sum(
-                Where(v_inv_at * us_n, joined),
-                over=("n", "d_invest"),
-            )
-
-    rhs_terms: dict = {"cap": cap_param}
-    # existing(g, d) is a known constant — push to RHS with sign flip.
-    if existing is not None:
-        # existing has dims (e, d); join to group_entity, sum over e
-        ex_frame = (existing.frame
-                    .join(group_entity, on="e", how="inner")
-                    .group_by(["g", "d"]).agg(pl.col("value").sum())
-                    .filter(pl.col("g").is_in(g_set["g"].unique())))
-        if ex_frame.height > 0:
-            ex_param = Param(("g", "d"), ex_frame.select("g", "d", "value"))
-            rhs_terms["minus_existing"] = -ex_param
-
-    if lhs_terms:
-        m.add_cstr(
-            name,
-            over      = outer,
-            sense     = sense,
-            lhs_terms = lhs_terms,
-            rhs_terms = rhs_terms,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Group cumulative-flow (whole solve)
-
-def _flow_lhs(d, vars):
-    """Build the (sink + eff_source + noEff_source) LHS for cumulative
-    / instant flow constraints, returning a single Expr or None.
-
-    Open dims: (g, d, t) when the v_flow Var has dims (p, source, sink,
-    d, t).  Caller multiplies by step_duration & sums over (d, t) for
-    cumulative variants, or just binds to the (g, d, t) frame for
-    instant.
-    """
-    parts = []
-    for fn in (_sink_lhs_term, _eff_lhs_term, _noEff_lhs_term):
-        term = fn(d, vars)
-        if term is not None:
-            parts.append(term)
+    d, v_flow = b.d, b.v_flow
+    gpn = d.group_process_node
+    if v_flow is None or not _has_rows(gpn):
+        return None
+    parts: list[Expr] = []
+    if d.process_source_sink is not None and _has_rows(d.flow_to_n):
+        arcs = d.flow_to_n.join(gpn, on=["p", "n"], how="inner")
+        if arcs.height > 0:
+            parts.append(Sum(Where(v_flow * d.p_unitsize, arcs), over=("p", "source", "sink", "n")))
+    if d.process_source_sink_eff is not None and _has_rows(d.flow_from_n):
+        arcs = (d.flow_from_n.join(d.process_source_sink_eff, on=["p", "source", "sink"], how="inner")
+                .join(gpn, on=["p", "n"], how="inner"))
+        if arcs.height > 0:
+            parts.append(-Sum(Where(v_flow * d.p_unitsize * d.p_slope, arcs), over=("p", "source", "sink", "n")))
+    if d.process_source_sink_noEff is not None and _has_rows(d.flow_from_n):
+        arcs = (d.flow_from_n.join(d.process_source_sink_noEff, on=["p", "source", "sink"], how="inner")
+                .join(gpn, on=["p", "n"], how="inner"))
+        if arcs.height > 0:
+            parts.append(-Sum(Where(v_flow * d.p_unitsize, arcs), over=("p", "source", "sink", "n")))
     if not parts:
         return None
-    out = parts[0]
-    for p in parts[1:]:
-        out = out + p
-    return out
+    total = parts[0]
+    for part in parts[1:]:
+        total = total + part
+    return total
 
 
-def _emit_cumulative_flow_solve(m, d, vars: dict, sense: str) -> None:
-    """Single-row constraint per group g in g_max_cumulative_flow_solve
-    (resp. g_min_cumulative_flow_solve).  LHS is integrated over the
-    whole horizon (Σ_{(d,t)} step_duration · flow_term)."""
-    cap_field = ("p_group_max_cumulative_flow" if sense == "<="
-                 else "p_group_min_cumulative_flow")
-    cap_param = getattr(d, cap_field, None)
-    if cap_param is None or cap_param.frame.height == 0:
-        return
-    flow_lhs = _flow_lhs(d, vars)
-    if flow_lhs is None:
-        return
-    pre = "max" if sense == "<=" else "min"
-    name = f"{pre}Cumulative_flow_solve"
+def _instant_flow_support(cap_frame: pl.DataFrame, dt: pl.DataFrame) -> pl.DataFrame:
+    """The (g, d, t) rows of an instant-flow limit: the cap's own axes, the missing ones filled from ``dt``.
 
-    # Outer index: g only.
-    outer = cap_param.frame.select("g").unique()
-    # LHS:  Σ_{(d,t)} flow_lhs * step_duration  → collapses (d, t)
-    # RHS:  p_group[g, ?] * hours_in_solve.
-    # hours_in_solve = Σ_{(d,t)} step_duration[d, t]  — a scalar but
-    # easier to compute from the frame here.
-    hours_in_solve = float(d.p_step_duration.frame["value"].sum())
-    # Cap_param has dims (g,); multiply by hours_in_solve scalar.
-    rhs_param = Param(("g",), cap_param.frame.with_columns(
-        value=pl.col("value") * hours_in_solve))
-    lhs_int = Sum(flow_lhs * d.p_step_duration, over=("d", "t"))
-    m.add_cstr(
-        name,
-        over      = outer,
-        sense     = sense,
-        lhs_terms = {"flow_int": lhs_int},
-        rhs_terms = {"cap":      rhs_param},
-    )
-
-
-def _emit_cumulative_flow_period(m, d, vars: dict, sense: str) -> None:
-    cap_field = ("pd_max_cumulative_flow" if sense == "<="
-                 else "pd_min_cumulative_flow")
-    cap_param = getattr(d, cap_field, None)
-    if cap_param is None or cap_param.frame.height == 0:
-        return
-    flow_lhs = _flow_lhs(d, vars)
-    if flow_lhs is None:
-        return
-    pre = "max" if sense == "<=" else "min"
-    name = f"{pre}Cumulative_flow_period"
-
-    # Outer index: (g, d) where pd_*_cumulative_flow is set.
-    outer = cap_param.frame.select("g", "d").unique()
-    # hours_in_period[d] = Σ_t step_duration[d, t]
-    hip = (d.p_step_duration.frame
-           .group_by("d").agg(pl.col("value").sum())
-           .rename({"value": "hours_in_period"}))
-    rhs_frame = (cap_param.frame.join(hip, on="d", how="inner")
-                  .with_columns(value=pl.col("value")
-                                       * pl.col("hours_in_period"))
-                  .select("g", "d", "value"))
-    rhs_param = Param(("g", "d"), rhs_frame)
-    # LHS: integrate over t only — Σ_t flow_lhs * step_duration.
-    # Sum collapses 't' but keeps 'd'.
-    lhs_int = Sum(flow_lhs * d.p_step_duration, over=("t",))
-    m.add_cstr(
-        name,
-        over      = outer,
-        sense     = sense,
-        lhs_terms = {"flow_int": lhs_int},
-        rhs_terms = {"cap":      rhs_param},
-    )
-
-
-def _instant_flow_support(cap_frame: pl.DataFrame,
-                          dt: pl.DataFrame) -> pl.DataFrame:
-    """Broadcast a resolved instant-flow cap to its full ``(g, d, t)``
-    constraint support against the active ``(d, t)`` grid.
-
-    The cap is produced by ``pdt_*_instant_flow_from_source`` via
-    ``resolve_param_shape`` / ``broadcast_to_period_time``, so it is
-    keyed by whatever axes were authored — scalar → ``(g,)``, period map
-    → ``(g, d)``, time map → ``(g, t)``, period+time → ``(g, d, t)``.
-    The missing axes are filled from ``dt`` (the active ``(d, t)`` grid)
-    so the obligation binds at every active timestep.
-
-    Deriving the support from the cap keeps it in lock-step with the RHS
-    and replaces the old separate raw-source projection, which detected
-    the axis by column name — silently dropping Spine's silent-default
-    ``"x"`` index_name and constant maps, and crashing on pure period
-    maps (no ``t`` column to select).
+    The cap comes from ``resolve_param_shape`` / ``broadcast_to_period_time`` keyed by the authored axes:
+    a scalar gives (g,), a period map (g, d), a time map (g, t), a period-time map (g, d, t).  Deriving
+    the rows from the resolved cap keeps them in step with the RHS, so the limit binds at every active
+    step of every authored shape (including Spine's default ``"x"`` index name and constant maps).
     """
     has_d = "d" in cap_frame.columns
     has_t = "t" in cap_frame.columns
-    if has_d and has_t:                       # MAP_PERIOD_TIME
+    if has_d and has_t:
         over = cap_frame.select("g", "d", "t")
-    elif has_d:                               # MAP_PERIOD
-        over = (cap_frame.select("g", "d").unique()
-                         .join(dt, on="d", how="inner"))
-    elif has_t:                               # MAP_TIME
-        over = (cap_frame.select("g", "t").unique()
-                         .join(dt, on="t", how="inner"))
-    else:                                     # SCALAR — broadcast over grid
+    elif has_d:
+        over = cap_frame.select("g", "d").unique().join(dt, on="d", how="inner")
+    elif has_t:
+        over = cap_frame.select("g", "t").unique().join(dt, on="t", how="inner")
+    else:
         over = cap_frame.select("g").unique().join(dt, how="cross")
     return over.select("g", "d", "t").unique()
 
 
-def _emit_instant_flow(m, d, vars: dict, sense: str) -> None:
-    cap_field = ("pdt_max_instant_flow" if sense == "<="
-                 else "pdt_min_instant_flow")
-    cap_param = getattr(d, cap_field, None)
-    if cap_param is None or cap_param.frame.height == 0:
+# ---------------------------------------------------------------------------
+# Constraints
+
+
+def add_constraints(b: _Build) -> None:
+    """Every family of the module, in emit order, when some of its data is populated."""
+    if not b.has_cumulative_invest:
         return
-    flow_lhs = _flow_lhs(d, vars)
-    if flow_lhs is None:
+    _eq_fix_no_investment(b)
+    _eq_min_entity_period(b)
+    _eq_min_invest_total(b)
+    _eq_min_divest_total(b)
+    _eq_cumulative_capacity(b)
+    _eq_group_entity_period(b)
+    _eq_group_invest_total(b)
+    _eq_group_divest_total(b)
+    _eq_group_invest_cumulative(b)
+    _eq_cumulative_flow_solve(b)
+    _eq_cumulative_flow_period(b)
+    _eq_instant_flow(b)
+
+
+def _eq_fix_no_investment(b: _Build) -> None:
+    """fix_v_invest_no_investment_eq_{p,n}: no investment in the cells where investment is forbidden."""
+    forbid = b.d.ed_invest_forbidden_no_investment
+    if not _has_rows(forbid):
         return
 
-    dt = d.p_step_duration.frame.select("d", "t").unique()
-    over = _instant_flow_support(cap_param.frame, dt)
+    # ─── EQ. ─── fix_v_invest_no_investment_eq_{p,n} ─────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_invest_p[p,d] = 0   ∀ (p,d) ∈ ed_invest_forbidden_no_investment ∩ pd_invest_set
+    # v_invest_n[n,d] = 0   ∀ (n,d) ∈ ed_invest_forbidden_no_investment ∩ nd_invest_set
+    # Pins investment to zero where the entity's invest method forbids it.
+    # Never emits rows: ed_invest_set (the v_invest_* domain) already excludes the forbidden cells, so the
+    # row domain is empty (specs/github_issues.md, refactor bug 7).
+    for name, var, axis in (("fix_v_invest_no_investment_eq_p", b.v_invest_p, "p"),
+                            ("fix_v_invest_no_investment_eq_n", b.v_invest_n, "n")):
+        if var is None:
+            continue
+        over, var_idx = align_join_dtypes(forbid.rename({"e": axis}), var.frame.select(axis, "d"), (axis, "d"))
+        over = over.join(var_idx, on=[axis, "d"], how="inner")
+        if over.height == 0:
+            continue
+        b.m.add_cstr(
+            name,
+            over      = over,
+            sense     = "==",
+            lhs_terms = {"invest": var},
+            rhs_terms = {"zero":   0.0},
+        )
+
+
+def _eq_min_entity_period(b: _Build) -> None:
+    """min{Invest,Divest}_entity_period_{p,n}: capacity built or retired per period, from below."""
+    d = b.d
+    if d.ed_invest_min_period is None and d.ed_divest_min_period is None:
+        return
+
+    # ─── EQ. ─── min{Invest,Divest}_entity_period_{p,n} ──────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_invest_p[p,d] · unitsize[p]        ≥ invest_min_period[p,d]   ∀ (p,d) ∈ ed_invest_period_set ∩ pd_invest_set
+    # v_invest_n[n,d] · state_unitsize[n]  ≥ invest_min_period[n,d]   ∀ (n,d) ∈ ed_invest_period_set ∩ nd_invest_set
+    # v_divest_p[p,d] · unitsize[p]        ≥ divest_min_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ pd_divest_set
+    # v_divest_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ nd_divest_set
+    # Forces a minimum capacity to be built or retired in a period; the floor twin of
+    # max{Invest,Divest}_entity_period in model.py.  Capacity in MW (MWh for storage nodes).
+    for name, period_set, cap, var, axis, kind in (
+        ("minInvest_entity_period_p", d.ed_invest_period_set, d.ed_invest_min_period, b.v_invest_p, "p", "invest"),
+        ("minInvest_entity_period_n", d.ed_invest_period_set, d.ed_invest_min_period, b.v_invest_n, "n", "invest"),
+        ("minDivest_entity_period_p", d.ed_divest_period_set, d.ed_divest_min_period, b.v_divest_p, "p", "divest"),
+        ("minDivest_entity_period_n", d.ed_divest_period_set, d.ed_divest_min_period, b.v_divest_n, "n", "divest"),
+    ):
+        unitsize = _unitsize(d, axis)
+        if not _has_rows(period_set) or cap is None or var is None or unitsize is None:
+            continue
+        over = period_set.rename({"e": axis}).join(var.frame.select(axis, "d"), on=[axis, "d"], how="inner")
+        if over.height == 0:
+            continue
+        b.m.add_cstr(
+            name,
+            over      = over,
+            sense     = ">=",
+            lhs_terms = {kind:  var * unitsize},
+            rhs_terms = {"cap": Param((axis, "d"), cap.frame.rename({"e": axis}))},
+        )
+
+
+def _eq_min_invest_total(b: _Build) -> None:
+    """minInvest_entity_total_{p,n}: capacity invested and still alive, from below."""
+    d = b.d
+    e_set, cap, edd = d.e_invest_total, d.e_invest_min_total, d.edd_invest_set
+    if not _has_rows(e_set) or cap is None or edd is None:
+        return
+
+    # ─── EQ. ─── minInvest_entity_total_{p,n} ────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]  ≥ invest_min_total[p]
+    #   ∀ p ∈ e_invest_total ∩ processes, d with (p,·,d) ∈ edd_invest_set
+    #   _n: the node analogue with v_invest_n and state_unitsize[n]
+    # In every period, the capacity invested in the periods still alive then is at least the minimum.
+    # Capacity invested by earlier solves of a chain is not counted.  When the process side has
+    # min-total entities but none of them has an edd_invest_set row, the node side is skipped as well
+    # (specs/github_issues.md, refactor bug 28).
+    for name, var, axis in (("minInvest_entity_total_p", b.v_invest_p, "p"),
+                            ("minInvest_entity_total_n", b.v_invest_n, "n")):
+        unitsize = _unitsize(d, axis)
+        if var is None or unitsize is None:
+            continue
+        members = _entities_of_kind(d, e_set, axis).rename({"e": axis})
+        if members.height == 0:
+            continue
+        lifetime = (edd.rename({"e": axis}).join(members, on=axis, how="inner")
+                    .filter(pl.col(axis).is_in(var.frame[axis].unique())))
+        if lifetime.height == 0:
+            break
+        invest = _var_view(var, "__cuminv_total_at", {"d": "d_invest"})
+        b.m.add_cstr(
+            name,
+            over      = lifetime.select(axis, "d").unique(),
+            sense     = ">=",
+            lhs_terms = {"invest_total": Sum(Where(invest * unitsize, lifetime), over=("d_invest",))},
+            rhs_terms = {"cap":          Param((axis,), cap.frame.rename({"e": axis}))},
+        )
+
+
+def _eq_min_divest_total(b: _Build) -> None:
+    """minDivest_entity_total_{p,n}: capacity retired over the horizon, from below."""
+    d = b.d
+    e_set, cap = d.e_divest_total, d.e_divest_min_total
+    if not _has_rows(e_set) or cap is None:
+        return
+
+    # ─── EQ. ─── minDivest_entity_total_{p,n} ────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_d v_divest_p[p,d] · unitsize[p]  ≥ divest_min_total[p]   ∀ p ∈ e_divest_total ∩ processes
+    #   _n: the node analogue with v_divest_n and state_unitsize[n]
+    # Forces a minimum capacity to be retired over the horizon.  Capacity divested by earlier solves of
+    # a chain is not counted.
+    for name, var, axis in (("minDivest_entity_total_p", b.v_divest_p, "p"),
+                            ("minDivest_entity_total_n", b.v_divest_n, "n")):
+        unitsize = _unitsize(d, axis)
+        if var is None or unitsize is None:
+            continue
+        members = _entities_of_kind(d, e_set, axis).rename({"e": axis})
+        if members.height == 0:
+            continue
+        b.m.add_cstr(
+            name,
+            over      = members,
+            sense     = ">=",
+            lhs_terms = {"divest_total": Sum(Where(var * unitsize, members), over=("d",))},
+            rhs_terms = {"cap":          Param((axis,), cap.frame.rename({"e": axis}))},
+        )
+
+
+def _eq_cumulative_capacity(b: _Build) -> None:
+    """{max,min}Cumulative_capacity_{p,n}: total capacity of an entity per period, from above and below."""
+    d = b.d
+    idx, edd = d.ed_invest_cumulative, d.edd_invest_set
+    if not _has_rows(idx) or edd is None:
+        return
+    existing = d.p_entity_all_existing
+
+    # ─── EQ. ─── {max,min}Cumulative_capacity_{p,n} ──────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p] − v_divest_p[p,d] · unitsize[p]
+    #   ≤ cumulative_max_capacity[p,d] − existing[p,d]        (maxCumulative_capacity_p)
+    #   ≥ cumulative_min_capacity[p,d] − existing[p,d]        (minCumulative_capacity_p)
+    #   ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities
+    #   _n: the node analogue with v_invest_n / v_divest_n and state_unitsize[n]
+    # Keeps the capacity of an entity in a period (existing + invested and still alive − divested)
+    # within its cumulative limits, MW (MWh for storage nodes).  Existing capacity is a constant on the
+    # right-hand side.  The divest term is the divestment of period d only, present where v_divest exists
+    # (specs/github_issues.md, refactor bug 29).
+    for name, sense, cap, var, divest, axis in (
+        ("maxCumulative_capacity_p", "<=", d.ed_cumulative_max_capacity, b.v_invest_p, b.v_divest_p, "p"),
+        ("maxCumulative_capacity_n", "<=", d.ed_cumulative_max_capacity, b.v_invest_n, b.v_divest_n, "n"),
+        ("minCumulative_capacity_p", ">=", d.ed_cumulative_min_capacity, b.v_invest_p, b.v_divest_p, "p"),
+        ("minCumulative_capacity_n", ">=", d.ed_cumulative_min_capacity, b.v_invest_n, b.v_divest_n, "n"),
+    ):
+        unitsize = _unitsize(d, axis)
+        if cap is None or var is None or unitsize is None:
+            continue
+        rows = _on_var_axis(idx, axis, var)
+        if rows.height == 0:
+            continue
+        lifetime, rows_aligned = align_join_dtypes(edd.rename({"e": axis}), rows, (axis,))
+        lifetime = lifetime.join(rows_aligned, on=[axis, "d"], how="inner")
+        invest = _var_view(var, "__cumcap_at", {"d": "d_invest"})
+        lhs: dict = {"invest_cum": Sum(Where(invest * unitsize, lifetime), over=("d_invest",))}
+        if divest is not None:
+            lhs["divest"] = -Where(divest * unitsize, rows)
+        rhs: dict = {"cap": Param((axis, "d"), cap.frame.rename({"e": axis}))}
+        if existing is not None:
+            rhs["minus_existing"] = -Param((axis, "d"), existing.frame.rename({"e": axis}))
+        b.m.add_cstr(
+            name,
+            over      = rows,
+            sense     = sense,
+            lhs_terms = lhs,
+            rhs_terms = rhs,
+        )
+
+
+def _eq_group_entity_period(b: _Build) -> None:
+    """{max,min}{Invest,Divest}Group_entity_period_{p,n}: what a group builds or retires per period."""
+    d = b.d
+    group_entity = d.group_entity
+    if not _has_rows(group_entity):
+        return
+
+    # ─── EQ. ─── {max,min}{Invest,Divest}Group_entity_period_{p,n} ───────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{p : (g,p) ∈ group_entity} v_invest_p[p,d] · unitsize[p]  ≤ group_invest_max_period[g,d]   (max…_p)
+    #                                                             ≥ group_invest_min_period[g,d]   (min…_p)
+    #   ∀ (g,d) ∈ gd_invest_period
+    #   Divest: v_divest_p with group_retire_{max,min}_period over gd_divest_period
+    #   _n: the node analogues with v_invest_n / v_divest_n and state_unitsize[n]
+    # Bounds the capacity a group of entities builds or retires in one period, MW (MWh for storage
+    # nodes); processes and storage nodes of a group get separate rows.  Group retire_{max,min}_period is
+    # not a schema parameter (specs/github_issues.md, refactor bug 5).
+    for kind, sense, gd_idx, cap, sides in (
+        ("invest", "<=", d.gd_invest_period, d.p_group_invest_max_period,
+         (("maxInvestGroup_entity_period_p", b.v_invest_p, "p"),
+          ("maxInvestGroup_entity_period_n", b.v_invest_n, "n"))),
+        ("invest", ">=", d.gd_invest_period, d.p_group_invest_min_period,
+         (("minInvestGroup_entity_period_p", b.v_invest_p, "p"),
+          ("minInvestGroup_entity_period_n", b.v_invest_n, "n"))),
+        ("divest", "<=", d.gd_divest_period, d.p_group_retire_max_period,
+         (("maxDivestGroup_entity_period_p", b.v_divest_p, "p"),
+          ("maxDivestGroup_entity_period_n", b.v_divest_n, "n"))),
+        ("divest", ">=", d.gd_divest_period, d.p_group_retire_min_period,
+         (("minDivestGroup_entity_period_p", b.v_divest_p, "p"),
+          ("minDivestGroup_entity_period_n", b.v_divest_n, "n"))),
+    ):
+        if not _has_rows(gd_idx) or cap is None:
+            continue
+        for name, var, axis in sides:
+            unitsize = _unitsize(d, axis)
+            if var is None or unitsize is None:
+                continue
+            members = group_entity.rename({"e": axis}).filter(pl.col(axis).is_in(var.frame[axis].unique()))
+            if members.height == 0:
+                continue
+            terms = (members.join(var.frame.select(axis, "d"), on=axis, how="inner")
+                     .join(gd_idx, on=["g", "d"], how="inner"))
+            if terms.height == 0:
+                continue
+            b.m.add_cstr(
+                name,
+                over      = gd_idx,
+                sense     = sense,
+                lhs_terms = {kind:  Sum(Where(var * unitsize, terms.select("g", axis, "d")), over=(axis,))},
+                rhs_terms = {"cap": cap},
+            )
+
+
+def _eq_group_invest_total(b: _Build) -> None:
+    """{max,min}InvestGroup_entity_total_{p,n}: capacity a group has invested and still alive."""
+    d = b.d
+    group_entity, g_set, edd = d.group_entity, d.g_invest_total, d.edd_invest_set
+    if not _has_rows(group_entity) or not _has_rows(g_set) or edd is None:
+        return
+    # (g, d): the periods in which some member of the group has investments alive.
+    over = (group_entity.rename({"e": "_e"}).filter(pl.col("g").is_in(g_set["g"].unique()))
+            .join(edd.rename({"e": "_e"}), on="_e", how="inner")
+            .select("g", "d").unique())
     if over.height == 0:
         return
 
-    pre = "max" if sense == "<=" else "min"
-    name = f"{pre}Instant_flow"
-    m.add_cstr(
-        name,
-        over      = over,
-        sense     = sense,
-        lhs_terms = {"flow": flow_lhs},
-        rhs_terms = {"cap":  cap_param},
-    )
+    # ─── EQ. ─── {max,min}InvestGroup_entity_total_{p,n} ─────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
+    #   ≤ group_invest_max_total[g]   (maxInvestGroup_entity_total_p)
+    #   ≥ group_invest_min_total[g]   (minInvestGroup_entity_total_p)
+    #   ∀ g ∈ g_invest_total, d with some member alive in edd_invest_set
+    #   _n: the node analogue with v_invest_n and state_unitsize[n]
+    # In every period, the capacity the group has invested and still alive stays within the group's
+    # totals; processes and storage nodes of a group get separate rows.  Capacity invested by earlier
+    # solves of a chain is not counted.
+    for name, sense, cap, var, axis in (
+        ("maxInvestGroup_entity_total_p", "<=", d.p_group_invest_max_total, b.v_invest_p, "p"),
+        ("maxInvestGroup_entity_total_n", "<=", d.p_group_invest_max_total, b.v_invest_n, "n"),
+        ("minInvestGroup_entity_total_p", ">=", d.p_group_invest_min_total, b.v_invest_p, "p"),
+        ("minInvestGroup_entity_total_n", ">=", d.p_group_invest_min_total, b.v_invest_n, "n"),
+    ):
+        unitsize = _unitsize(d, axis)
+        if cap is None or var is None or unitsize is None:
+            continue
+        terms = _on_var_axis(group_entity, axis, var).join(_on_var_axis(edd, axis, var), on=axis, how="inner")
+        if terms.height == 0:
+            continue
+        invest = _var_view(var, "__grp_total_at", {"d": "d_invest"})
+        b.m.add_cstr(
+            name,
+            over      = over,
+            sense     = sense,
+            lhs_terms = {"invest_grp": Sum(Where(invest * unitsize, terms), over=(axis, "d_invest"))},
+            rhs_terms = {"cap":        cap},
+        )
+
+
+def _eq_group_divest_total(b: _Build) -> None:
+    """{max,min}DivestGroup_entity_total[_path]_{p,n}: capacity a group retires over the horizon."""
+    d = b.d
+    group_entity, g_set = d.group_entity, d.g_divest_total
+    if not _has_rows(group_entity) or not _has_rows(g_set):
+        return
+    over = g_set.select("g")
+    d_leaf = getattr(d, "d_leaf", None)
+
+    # ─── EQ. ─── {max,min}DivestGroup_entity_total[_path]_{p,n} ──────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{p : (g,p) ∈ group_entity} Σ_d v_divest_p[p,d] · unitsize[p]
+    #   ≤ group_retire_max_total[g]   (maxDivestGroup_entity_total_p)
+    #   ≥ group_retire_min_total[g]   (minDivestGroup_entity_total_p)
+    #   ∀ g ∈ g_divest_total
+    #   _n: the node analogue with v_divest_n and state_unitsize[n]
+    #   _path (max only): one row per (g, leaf), Σ_d over the periods of the leaf
+    # Bounds the capacity a group retires over the horizon; processes and storage nodes of a group get
+    # separate rows.  With one scenario leaf (deterministic) the max row is the plain total; with
+    # several (recourse) it becomes the _path row, so the cap applies to each scenario path instead of
+    # adding up divestments of alternative branches.  Group retire_{max,min}_total is not a schema
+    # parameter (specs/github_issues.md, refactor bug 5).
+    for name, path_name, sense, cap, var, axis in (
+        ("maxDivestGroup_entity_total_p", "maxDivestGroup_entity_total_path_p", "<=",
+         d.p_group_retire_max_total, b.v_divest_p, "p"),
+        ("maxDivestGroup_entity_total_n", "maxDivestGroup_entity_total_path_n", "<=",
+         d.p_group_retire_max_total, b.v_divest_n, "n"),
+        ("minDivestGroup_entity_total_p", None, ">=", d.p_group_retire_min_total, b.v_divest_p, "p"),
+        ("minDivestGroup_entity_total_n", None, ">=", d.p_group_retire_min_total, b.v_divest_n, "n"),
+    ):
+        unitsize = _unitsize(d, axis)
+        if cap is None or var is None or unitsize is None:
+            continue
+        members = _on_var_axis(group_entity, axis, var).filter(pl.col("g").is_in(g_set["g"].unique()))
+        if members.height == 0:
+            continue
+        # (d, leaf) pairs of the scenario tree, restricted to the periods var exists in.
+        leaf_periods = None
+        if path_name is not None and _has_rows(d_leaf):
+            d_dtype = var.frame.schema["d"]
+            leaf_periods = (d_leaf if d_leaf.schema["d"] == d_dtype
+                            else d_leaf.with_columns(pl.col("d").cast(d_dtype, strict=False)))
+            leaf_periods = leaf_periods.join(var.frame.select("d").unique(), on="d", how="semi")
+        if leaf_periods is None or leaf_periods.height == 0 or leaf_periods["leaf"].n_unique() <= 1:
+            row_name, rows, mask = name, over, members
+        else:
+            row_name = path_name
+            mask = members.join(leaf_periods, how="cross")
+            rows = over.join(leaf_periods.select("leaf").unique().sort("leaf"), how="cross")
+        b.m.add_cstr(
+            row_name,
+            over      = rows,
+            sense     = sense,
+            lhs_terms = {"divest_grp": Sum(Where(var * unitsize, mask), over=(axis, "d"))},
+            rhs_terms = {"cap":        cap},
+        )
+
+
+def _eq_group_invest_cumulative(b: _Build) -> None:
+    """{max,min}InvestGroup_entity_cumulative: existing plus invested capacity of a group per period."""
+    d = b.d
+    group_entity, g_set, edd = d.group_entity, d.g_invest_cumulative, d.edd_invest_set
+    if not _has_rows(group_entity) or not _has_rows(g_set) or edd is None:
+        return
+    in_groups = pl.col("g").is_in(g_set["g"].unique())
+    # (g, d): the periods in which some member of the group has investments alive.
+    over = (group_entity.rename({"e": "_e"}).filter(in_groups)
+            .join(edd.rename({"e": "_e"}), on="_e", how="inner")
+            .select("g", "d").unique())
+    if over.height == 0:
+        return
+
+    # ─── EQ. ─── {max,min}InvestGroup_entity_cumulative ──────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
+    #   + Σ_{n : (g,n) ∈ group_entity} Σ_{d′ : (n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′] · state_unitsize[n]
+    #   ≤ group_invest_max_cumulative[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (max…)
+    #   ≥ group_invest_min_cumulative[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (min…)
+    #   ∀ g ∈ g_invest_cumulative, d with some member alive in edd_invest_set
+    # Keeps the capacity of a group in a period (existing + invested and still alive) within its
+    # cumulative limits; processes and storage nodes share one row.  Divestments and capacity invested by
+    # earlier solves of a chain are not counted.  Missing from the autoscale registry and reachable only
+    # with off-schema group parameters (specs/github_issues.md, refactor bugs 4 and 5).
+    for name, sense, cap in (("maxInvestGroup_entity_cumulative", "<=", d.p_group_invest_max_cumulative),
+                             ("minInvestGroup_entity_cumulative", ">=", d.p_group_invest_min_cumulative)):
+        if cap is None:
+            continue
+        lhs: dict = {}
+        for key, var, axis in (("invest_p", b.v_invest_p, "p"), ("invest_n", b.v_invest_n, "n")):
+            unitsize = _unitsize(d, axis)
+            if var is None or unitsize is None:
+                continue
+            terms = (_on_var_axis(group_entity, axis, var).filter(in_groups)
+                     .join(_on_var_axis(edd, axis, var), on=axis, how="inner"))
+            if terms.height == 0:
+                continue
+            invest = _var_view(var, "__grp_cum_at", {"d": "d_invest"})
+            lhs[key] = Sum(Where(invest * unitsize, terms), over=(axis, "d_invest"))
+        if not lhs:
+            continue
+        rhs: dict = {"cap": cap}
+        if d.p_entity_all_existing is not None:
+            group_existing = (d.p_entity_all_existing.frame
+                              .join(group_entity, on="e", how="inner")
+                              .group_by(["g", "d"]).agg(pl.col("value").sum())
+                              .filter(in_groups))
+            if group_existing.height > 0:
+                rhs["minus_existing"] = -Param(("g", "d"), group_existing.select("g", "d", "value"))
+        b.m.add_cstr(
+            name,
+            over      = over,
+            sense     = sense,
+            lhs_terms = lhs,
+            rhs_terms = rhs,
+        )
+
+
+def _eq_cumulative_flow_solve(b: _Build) -> None:
+    """{max,min}Cumulative_flow_solve: net flow into a flow group summed over the solve."""
+    d = b.d
+    flow = _group_flow(b)
+    if flow is None:
+        return
+    hours_in_solve = float(d.p_step_duration.frame["value"].sum())
+
+    # ─── EQ. ─── {max,min}Cumulative_flow_solve ──────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(d,t)} F[g,d,t] · Δt[d,t]  ≤ max_cumulative_flow[g] · Σ_{(d,t)} Δt[d,t]   (max…)
+    #                               ≥ min_cumulative_flow[g] · Σ_{(d,t)} Δt[d,t]   (min…)
+    #   ∀ g with a max / min_cumulative_flow
+    #   F = net flow into the group (_group_flow), Δt = step_duration
+    # Limits the energy flowing into a flow group over the solve to an average power times the hours of
+    # the solve.  The steps are weighted by step_duration only (no rp or years-represented weights);
+    # eff source flows carry the slope but no conversion_flow_coeff, and the min-load section input is
+    # not counted (specs/github_issues.md, refactor bug 30).
+    for name, sense, cap in (("maxCumulative_flow_solve", "<=", d.p_group_max_cumulative_flow),
+                             ("minCumulative_flow_solve", ">=", d.p_group_min_cumulative_flow)):
+        if cap is None or cap.frame.height == 0:
+            continue
+        b.m.add_cstr(
+            name,
+            over      = cap.frame.select("g").unique(),
+            sense     = sense,
+            lhs_terms = {"flow_int": Sum(flow * d.p_step_duration, over=("d", "t"))},
+            rhs_terms = {"cap":      Param(("g",), cap.frame.with_columns(value=pl.col("value") * hours_in_solve))},
+        )
+
+
+def _eq_cumulative_flow_period(b: _Build) -> None:
+    """{max,min}Cumulative_flow_period: net flow into a flow group summed over each period."""
+    d = b.d
+    flow = _group_flow(b)
+    if flow is None:
+        return
+    hours_in_period = (d.p_step_duration.frame
+                       .group_by("d").agg(pl.col("value").sum())
+                       .rename({"value": "hours_in_period"}))
+
+    # ─── EQ. ─── {max,min}Cumulative_flow_period ─────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_t F[g,d,t] · Δt[d,t]  ≤ max_cumulative_flow[g,d] · Σ_t Δt[d,t]   (max…)
+    #                         ≥ min_cumulative_flow[g,d] · Σ_t Δt[d,t]   (min…)
+    #   ∀ (g,d) with a max / min_cumulative_flow
+    #   F = net flow into the group (_group_flow), Δt = step_duration
+    # Limits the energy flowing into a flow group in each period to an average power times the hours of
+    # the period.  Same weighting and flow terms as the _solve rows.
+    for name, sense, cap in (("maxCumulative_flow_period", "<=", d.pd_max_cumulative_flow),
+                             ("minCumulative_flow_period", ">=", d.pd_min_cumulative_flow)):
+        if cap is None or cap.frame.height == 0:
+            continue
+        rhs = (cap.frame.join(hours_in_period, on="d", how="inner")
+               .with_columns(value=pl.col("value") * pl.col("hours_in_period"))
+               .select("g", "d", "value"))
+        b.m.add_cstr(
+            name,
+            over      = cap.frame.select("g", "d").unique(),
+            sense     = sense,
+            lhs_terms = {"flow_int": Sum(flow * d.p_step_duration, over=("t",))},
+            rhs_terms = {"cap":      Param(("g", "d"), rhs)},
+        )
+
+
+def _eq_instant_flow(b: _Build) -> None:
+    """{max,min}Instant_flow: net flow into a flow group in every step."""
+    d = b.d
+    flow = _group_flow(b)
+    if flow is None:
+        return
+    dt = d.p_step_duration.frame.select("d", "t").unique()
+
+    # ─── EQ. ─── {max,min}Instant_flow ───────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # F[g,d,t]  ≤ max_instant_flow[g,d,t]   (maxInstant_flow)
+    #           ≥ min_instant_flow[g,d,t]   (minInstant_flow)
+    #   ∀ (g,d,t) ∈ _instant_flow_support(cap, dt)
+    #   F = net flow into the group (_group_flow), MW
+    # Limits the net power flowing into a flow group in every step.  The cap may be authored as a
+    # scalar, period map, time map or period-time map; the rows cover every active step of its shape.
+    for name, sense, cap in (("maxInstant_flow", "<=", d.pdt_max_instant_flow),
+                             ("minInstant_flow", ">=", d.pdt_min_instant_flow)):
+        if cap is None or cap.frame.height == 0:
+            continue
+        over = _instant_flow_support(cap.frame, dt)
+        if over.height == 0:
+            continue
+        b.m.add_cstr(
+            name,
+            over      = over,
+            sense     = sense,
+            lhs_terms = {"flow": flow},
+            rhs_terms = {"cap":  cap},
+        )

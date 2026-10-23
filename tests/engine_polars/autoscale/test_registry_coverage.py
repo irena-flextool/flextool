@@ -224,7 +224,7 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     # the registered ``online_fix_eq`` base).
     "online_fix_eq_linear", "online_fix_eq_integer",
     # Slice D per-path total caps — model.py ``_eq_invest_total_caps``
-    # and _cumulative_invest.py ``_emit_group_total_divest_cap`` pass the
+    # and _cumulative_invest.py ``_eq_group_divest_total`` pass the
     # constraint name as a variable (legacy vs ``…_path``), so the
     # literal-grep test above cannot see them.  Pin both the legacy and
     # the ``_path`` shapes behaviorally (design §7.3/§14).
@@ -246,6 +246,27 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "non_anticipativity_online_integer", "non_anticipativity_online_linear",
     "non_anticipativity_invest_p", "non_anticipativity_invest_n",
     "non_anticipativity_divest_p", "non_anticipativity_divest_n",
+    # _cumulative_invest.py — every family passes its names from a loop
+    # table.  {max,min}InvestGroup_entity_cumulative is left out: it has no
+    # registry entry yet (specs/github_issues.md, refactor bug 4).
+    "minInvest_entity_period_p", "minInvest_entity_period_n",
+    "minDivest_entity_period_p", "minDivest_entity_period_n",
+    "minInvest_entity_total_p", "minInvest_entity_total_n",
+    "minDivest_entity_total_p", "minDivest_entity_total_n",
+    "maxCumulative_capacity_p", "maxCumulative_capacity_n",
+    "minCumulative_capacity_p", "minCumulative_capacity_n",
+    "maxInvestGroup_entity_period_p", "maxInvestGroup_entity_period_n",
+    "minInvestGroup_entity_period_p", "minInvestGroup_entity_period_n",
+    "maxDivestGroup_entity_period_p", "maxDivestGroup_entity_period_n",
+    "minDivestGroup_entity_period_p", "minDivestGroup_entity_period_n",
+    "maxInvestGroup_entity_total_p", "maxInvestGroup_entity_total_n",
+    "minInvestGroup_entity_total_p", "minInvestGroup_entity_total_n",
+    "maxDivestGroup_entity_total_p", "maxDivestGroup_entity_total_n",
+    "minDivestGroup_entity_total_p", "minDivestGroup_entity_total_n",
+    "maxCumulative_flow_solve", "minCumulative_flow_solve",
+    "maxCumulative_flow_period", "minCumulative_flow_period",
+    "maxInstant_flow", "minInstant_flow",
+    "fix_v_invest_no_investment_eq_p", "fix_v_invest_no_investment_eq_n",
 ]
 
 

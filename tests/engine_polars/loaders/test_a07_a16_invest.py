@@ -9,7 +9,7 @@ chain and the variable emitter.
 A.16 covers ``flextool.engine_polars.input._load_cumulative_invest``
 (the cascade-of-15+ optional CSVs that drive cumulative-capacity and
 group-invest constraints) and a single direct call into
-``flextool.engine_polars._cumulative_invest._emit_group_invest_cumulative``
+``flextool.engine_polars._cumulative_invest._eq_group_invest_cumulative``
 to pin the all-three-required-or-no-emit guard.
 
 Both helper families are pure: they take ``Path`` arguments + a
@@ -30,7 +30,7 @@ from flextool.engine_polars.input import (
     _load_cumulative_invest,
 )
 from flextool.engine_polars._cumulative_invest import (
-    _emit_group_invest_cumulative,
+    _eq_group_invest_cumulative,
     has_feature,
 )
 from flextool.engine_polars._flex_data_provider import FlexDataProvider
@@ -168,7 +168,7 @@ def test_skip_set_seeds_when_synthetic_solve(tmp_path: Path):
 
 
 # ====================================================================
-# A.16 — _load_cumulative_invest + _emit_group_invest_cumulative
+# A.16 — _load_cumulative_invest + _eq_group_invest_cumulative
 # ====================================================================
 
 def test_group_entity_solve_data_precedence_and_input_fallback(tmp_path: Path):
@@ -212,7 +212,7 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
         returns True for the gate),
       * leave ``ed_cumulative_max_capacity = None`` per the Δ.12-drop
         contract (override-only field; never seeded by the loader).
-    Then call ``_emit_group_invest_cumulative`` with a stub data object
+    Then call ``_eq_group_invest_cumulative`` with a stub data object
     where ``group_entity`` and ``edd_invest_set`` are None — the
     all-three-required guard must early-return without emitting any
     constraint (record m.add_cstr calls and assert empty).
@@ -256,7 +256,7 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
         def __init__(self): self.calls = []
         def add_cstr(self, *a, **kw): self.calls.append((a, kw))
     m = _Recorder()
-    _emit_group_invest_cumulative(m, d_stub, vars={}, sense="<=")
+    _eq_group_invest_cumulative(SimpleNamespace(m=m, d=d_stub, v_invest_p=None, v_invest_n=None))
     # Hand-calc: group_entity is None -> early return; no add_cstr call.
     assert m.calls == []
 
@@ -267,7 +267,7 @@ def test_min_invest_total_seed_param(tmp_path: Path):
     ``e_invest_min_total.csv`` with one row entity=e1,value=3.0.
     ``_read_e_seed`` casts value to Float64, fills nulls with 0.0, and
     wraps as ``Param(("e",), ...)``.  Drives the lower-bound RHS in
-    ``_emit_invest_total_minmax(kind='invest', sense='>=')``.
+    ``_eq_min_invest_total``.
     """
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
