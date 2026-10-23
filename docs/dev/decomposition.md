@@ -513,7 +513,7 @@ the optimisation but do not enter the realised outputs.
 
 The wiring lives in `_stochastic.StochasticSolver` (called from
 `RecursiveSolveBuilder`); non-anticipativity constraints are emitted
-by `_add_non_anticipativity_constraints` in `model.py`. See
+by `_non_anticipativity.py` (`add_dispatch_constraints`, `add_invest_constraints`). See
 [engine_polars.md § Stochastic branches](engine_polars.md#stochastic-branches).
 
 ## 5. RELEASE notes context

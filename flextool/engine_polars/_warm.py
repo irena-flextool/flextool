@@ -869,10 +869,12 @@ def _build_warm_problem(
     Late-imports ``build_flextool`` to avoid a build-time cycle between
     this module and ``model.py``.
     """
+    from flextool.engine_polars._solver_dispatch import apply_data_solver_options
     from flextool.engine_polars.model import build_flextool
 
     pb = Problem()
     build_flextool(pb, data, scale_the_objective=scale_the_objective)
+    apply_data_solver_options(pb, data)
     if solver_options:
         pb.set_solver_options(solver_options)
     warm = WarmProblem(pb)

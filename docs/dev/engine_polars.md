@@ -747,8 +747,8 @@ preprocessor:
   Investment stays realized-only; recourse-invest is a future
   capability requiring a deeper refactor.
 
-The non-anticipativity constraints (`_add_non_anticipativity_constraints`
-in `model.py`) close the LP back together at the anchor period across
+The non-anticipativity constraints (`add_dispatch_constraints`
+in `_non_anticipativity.py`) close the LP back together at the anchor period across
 sibling branches — there are four families covering `v_state`,
 `v_online`, `v_reserve`, and `v_flow`. The implementation pins the
 sibling-branch variables via Var renaming (`d → b`) so the engine's

@@ -497,7 +497,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "fix_v_invest_no_investment_eq_n": CstrFamily(None),
 
     # ── Non-anticipativity (cross-branch equality).  RHS = 0; skip.
-    # flextool/engine_polars/model.py:273, 306, 336, 364
+    # flextool/engine_polars/_non_anticipativity.py:add_dispatch_constraints
     "non_anticipativity_storage_use": CstrFamily(None),
     "non_anticipativity_storage_state_first": CstrFamily(None),
     "non_anticipativity_online_integer": CstrFamily(None),
@@ -505,8 +505,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "non_anticipativity_reserve": CstrFamily(None),
 
     # ── Investment non-anticipativity (cross-branch invest/divest
-    # equality; v72). RHS = 0; skip per-row.  Divest is mandatory (§4.4).
-    # flextool/engine_polars/model.py:_add_non_anticipativity_invest_constraints
+    # equality). RHS = 0; skip per-row.
+    # flextool/engine_polars/_non_anticipativity.py:add_invest_constraints
     "non_anticipativity_invest_p": CstrFamily(None),
     "non_anticipativity_invest_n": CstrFamily(None),
     "non_anticipativity_divest_p": CstrFamily(None),

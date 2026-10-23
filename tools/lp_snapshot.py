@@ -89,7 +89,7 @@ CANONICAL_PREFIX = "flextool/schemas/canonical_databases/"
 COVERAGE_SOURCES = (
     "model.py", "_reserve.py", "_group_slack.py", "_cumulative_invest.py",
     "_delay.py", "_commodity_ladder.py", "_dc_power_flow.py",
-    "_online.py", "_unit_floors.py",
+    "_online.py", "_unit_floors.py", "_non_anticipativity.py",
 )
 
 
@@ -1187,9 +1187,6 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
         "maxDivest_entity_total", "maxDivest_entity_total_path",
         "maxInvest_entity_total_n", "maxInvest_entity_total_path_n",
         "maxDivest_entity_total_n", "maxDivest_entity_total_path_n",
-        # _add_non_anticipativity_invest_constraints._tie(name, ...)
-        "non_anticipativity_invest_p", "non_anticipativity_invest_n",
-        "non_anticipativity_divest_p", "non_anticipativity_divest_n",
         # f"ramp_{side}_{dir_}_constraint"
         "ramp_sink_up_constraint", "ramp_sink_down_constraint",
         "ramp_source_up_constraint", "ramp_source_down_constraint",
@@ -1218,6 +1215,13 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
         *(f"{base}_{kind}"
           for base in ("minFlow_minload", "minFlow_output_floor")
           for kind in ("linear", "integer")),
+    ),
+    "_non_anticipativity.py": (
+        # f"non_anticipativity_online_{kind}"
+        "non_anticipativity_online_integer", "non_anticipativity_online_linear",
+        # add_invest_constraints loop table
+        "non_anticipativity_invest_p", "non_anticipativity_invest_n",
+        "non_anticipativity_divest_p", "non_anticipativity_divest_n",
     ),
     "_reserve.py": (
         "reserveBalance_up_n_1_eq", "reserveBalance_down_n_1_eq",

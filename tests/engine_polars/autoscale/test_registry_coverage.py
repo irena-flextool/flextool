@@ -238,11 +238,12 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     # passes the constraint name from a loop table.
     "maxInvest_entity_period_p", "maxInvest_entity_period_n",
     "maxDivest_entity_period_p", "maxDivest_entity_period_n",
-    # Invest non-anticipativity (v72) — model.py
-    # ``_add_non_anticipativity_invest_constraints`` passes the family
-    # name as a variable (the ``_tie`` helper), so the literal grep above
-    # cannot see them.  All four resolve via an exact CONSTRAINT_FAMILIES
-    # entry (RHS = 0, CstrFamily(None)); divest is mandatory (§4.4).
+    # Non-anticipativity — _non_anticipativity.py passes the online family
+    # as f"non_anticipativity_online_{kind}" and the invest/divest families
+    # as a variable from a loop table, so the literal grep above cannot see
+    # them.  All resolve via an exact CONSTRAINT_FAMILIES entry (RHS = 0,
+    # CstrFamily(None)).
+    "non_anticipativity_online_integer", "non_anticipativity_online_linear",
     "non_anticipativity_invest_p", "non_anticipativity_invest_n",
     "non_anticipativity_divest_p", "non_anticipativity_divest_n",
 ]

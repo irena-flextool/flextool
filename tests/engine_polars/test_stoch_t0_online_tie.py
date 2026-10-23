@@ -6,7 +6,7 @@ now: it is chosen before the scenario is known, so ``v_online`` is tied EQUAL
 across the forecast branches over the whole jump.  The dispatch sibling then
 FIXES that committed ``v_online`` over the jump while flows realize.
 
-Mechanism (``model._add_non_anticipativity_constraints``): the online non-
+Mechanism (``_non_anticipativity.add_dispatch_constraints``): the online non-
 anticipativity families join ``dtna_online`` = ``dt_non_anticipativity`` when
 ``has_dtna``, ELSE (a ``separate_dispatch`` PARENT hands its realized window
 to the sibling, so its ``dt_non_anticipativity`` is empty) the FULL set of

@@ -115,6 +115,7 @@ from flextool.engine_polars.autoscale import (
 )
 from flextool.engine_polars._region_filter import HalfFlow, RegionSplit
 from flextool.engine_polars._solve_state import FlexToolConfigError
+from flextool.engine_polars._solver_dispatch import apply_data_solver_options
 from flextool.engine_polars._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
 )
@@ -947,6 +948,7 @@ class _BendersMaster:
         # cut validity is preserved (an exact monotone re-expression).  For the
         # small fixtures s=1.0 ⇒ byte-identical to the un-scaled build.
         _build_flextool(m, reduced, scale_the_objective=self._obj_scale)
+        apply_data_solver_options(m, reduced)
 
         self._m = m
         self._wp = WarmProblem(m)
@@ -2062,6 +2064,7 @@ def solve_benders(
     if build_problem is None:
         def build_problem(pb, d):
             _build_flextool(pb, d, scale_the_objective=scale_the_objective)
+            apply_data_solver_options(pb, d)
 
     _data_enums = getattr(data, "_axis_enums", None)
     _enums_token = None

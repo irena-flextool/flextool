@@ -207,6 +207,18 @@ _PARAM_MAP: dict[str, dict[str, str]] = {
 }
 
 
+def apply_data_solver_options(problem: "Problem", data: Any) -> None:
+    """Store the HiGHS options carried by the data on ``problem``.
+
+    ``data.solver_options`` holds the HiGHS rows of ``solve_mode.csv`` for the
+    active solve (see ``input._load_solver_options``); ``None`` or empty keeps
+    whatever ``problem`` already holds.  Called right after ``build_flextool``
+    on every path that builds a Problem for solving.
+    """
+    if getattr(data, "solver_options", None):
+        problem.set_solver_options(data.solver_options)
+
+
 def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
     """Translate a :class:`SolverConfig` into the raw options dict that
     polar-high's ``solve()`` consumes.
@@ -555,6 +567,7 @@ __all__ = [
     "FlexToolUserError",
     "_parse_highs_opt_file",
     "_resolve_effective_highs_options",
+    "apply_data_solver_options",
     "build_solver_options",
     "probe_solver_licenses",
     "run_one_solve",

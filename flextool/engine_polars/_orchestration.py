@@ -2101,6 +2101,7 @@ def _drive_cascade(
         load_flextool,
     )
     from flextool.engine_polars.model import build_flextool
+    from flextool.engine_polars._solver_dispatch import apply_data_solver_options
     from flextool.engine_polars._output_writer import (
         OutputWriterState,
         write_outputs_for_solve,
@@ -3449,6 +3450,7 @@ def _drive_cascade(
                 pb = Problem()
                 _phase_prof("build_start")
                 build_flextool(pb, data, scale_the_objective=effective_obj_scale)
+                apply_data_solver_options(pb, data)
                 _phase_prof("build_done")
                 if _memrec_local is not None and _emit_phase:
                     _memrec_local.checkpoint(
