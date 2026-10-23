@@ -115,7 +115,7 @@ def workdir_provider_for_paths(
     the parent-qualified Provider key (``"<parent>/<stem>"``) computed
     by :func:`_provider_key`.
     """
-    from ._flex_data_provider import FlexDataProvider
+    from flextool.engine._flex_data_provider import FlexDataProvider
 
     workdir = Path(workdir)
     provider = FlexDataProvider()

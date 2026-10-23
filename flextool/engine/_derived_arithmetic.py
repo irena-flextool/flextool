@@ -69,7 +69,7 @@ from flextool.engine._axis_enums import (
     rename_to_axis,
 )
 
-from ._derived_params import (
+from flextool.engine._derived_params import (
     UNITSIZE_DEFAULT,
     _entity_unitsize_lf,
     _node_unitsize_lf,

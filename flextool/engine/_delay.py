@@ -15,9 +15,9 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Expr, Var
 
-from ._axis_enums import cast_dim
-from ._derived_params import process_delayed__duration_from_weight
-from ._emit_provider_io import _provider_key
+from flextool.engine._axis_enums import cast_dim
+from flextool.engine._derived_params import process_delayed__duration_from_weight
+from flextool.engine._emit_provider_io import _provider_key
 
 
 def _provider_get(provider, path: Path) -> pl.DataFrame | None:

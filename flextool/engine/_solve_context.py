@@ -42,8 +42,8 @@ from pathlib import Path
 
 import polars as pl
 
-from ._axis_enums import schema_dtype
-from ._input_source import _install_csv_cache, _read_csv_file
+from flextool.engine._axis_enums import schema_dtype
+from flextool.engine._input_source import _install_csv_cache, _read_csv_file
 
 
 # ---------------------------------------------------------------------------
@@ -536,7 +536,7 @@ def _provider_fetch_or_raise(
     provider: "object", path: Path, consumer: str,
 ) -> pl.DataFrame:
     """Fetch *path*'s carrier from *provider* strictly; raise on miss."""
-    from ._emit_provider_io import _provider_key
+    from flextool.engine._emit_provider_io import _provider_key
     key = _provider_key(path)
     if provider.has(key):
         df = provider.get(key)
@@ -840,7 +840,7 @@ def _load_period_share(solve_data_dir: Path,
         # Provider-strict: at least one of the canonical variants must
         # carry the frame.  We probe ``_calc`` first (the producer's
         # default), then the legacy non-``_calc`` name as a fallback.
-        from ._emit_provider_io import _provider_key
+        from flextool.engine._emit_provider_io import _provider_key
         for path in cand_paths:
             key = _provider_key(path)
             if provider.has(key):

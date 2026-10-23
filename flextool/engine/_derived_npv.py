@@ -86,7 +86,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import (
+from flextool.engine._axis_enums import (
     alias_to_axis,
     schema_dtype,
 )
@@ -249,7 +249,7 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
     Returns ``ed_lf`` with an extra ``value`` column (Float64).
     ``ed_lf`` must carry columns ``[e, d, ...]``.
     """
-    from ._derived_params import _anchor_expand_explicit
+    from flextool.engine._derived_params import _anchor_expand_explicit
     explicit = _anchor_expand_explicit(
         per_param
           .filter(~pl.col("is_scalar"))
@@ -382,7 +382,7 @@ def _years_for_period_lf(source: "InputSource",
     ``p_years_represented.csv`` arm carrying fan-member year rows.
     """
     # Materialise scalars eagerly — they're solve-level, tiny.
-    from ._derived_params import _years_for_period_from_source
+    from flextool.engine._derived_params import _years_for_period_from_source
     yfp = _years_for_period_from_source(
         source, active_solve, period_universe, provider=provider)
     rows: list[tuple[str, str, float]] = []
@@ -551,7 +551,7 @@ def period_walk_iterator(
     ``(d, d_all)`` pair domain (Slice B; always ``None`` until the
     recourse flag lands, Slice C/D); the keyword is forwarded verbatim.
     """
-    from ._derived_walks import (
+    from flextool.engine._derived_walks import (
         period_walk_iterator as _walk,
         WindowMethod,
     )
@@ -1283,7 +1283,7 @@ def apply_npv(flex_data: object,
     (no_invest short-circuit, no period_with_history, etc.) — that
     ``None`` is the explicit "field stays default" signal.
     """
-    from ._derived_params import (
+    from flextool.engine._derived_params import (
         _read_active_solve, _solve_periods, _period_in_use_set,
         _periodAll_from_source, _read_period_with_history,
         _expand_invest_branch_periods, _enter_recourse_anchor_scope,
@@ -1301,7 +1301,7 @@ def apply_npv(flex_data: object,
     # AFTER apply_npv.  Precondition check hoisted above the NPV builder
     # calls (§6).  ``None`` flag-off → walks unfiltered → byte-parity.
     if _recourse_branch_axis_present():
-        from ._derived_branch import (
+        from flextool.engine._derived_branch import (
             assert_recourse_npv_preconditions,
             dd_same_scenario_annuity_df,
         )

@@ -27,12 +27,12 @@ from pathlib import Path
 
 import polars as pl
 
-from ._axis_enums import (
+from flextool.engine._axis_enums import (
     cast_dim,
     rename_to_axis,
     schema_dtype,
 )
-from ._emit_provider_io import _provider_key
+from flextool.engine._emit_provider_io import _provider_key
 
 
 # Substrate handle for the cascade-wide axis enum vocabulary.

@@ -72,8 +72,8 @@ import polars as pl
 
 from polar_high import Param
 
-from ._emit_provider_io import _provider_key
-from ._axis_enums import (
+from flextool.engine._emit_provider_io import _provider_key
+from flextool.engine._axis_enums import (
     alias_to_axis,
     schema_dtype,
 )
@@ -749,7 +749,7 @@ def p_profile_value_lf(source: "InputSource",
     # ``_emit_provider_io.workdir_provider_for_paths`` which is on the
     # PROVIDER_IMPL_ALLOWLIST.
     if workdir is not None and provider is None:
-        from ._emit_provider_io import workdir_provider_for_paths
+        from flextool.engine._emit_provider_io import workdir_provider_for_paths
         provider = workdir_provider_for_paths(workdir, [
             "solve_data/period__branch.csv",
             "solve_data/solve_branch__time_branch.csv",

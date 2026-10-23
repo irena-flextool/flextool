@@ -44,7 +44,7 @@ import polars as pl
 
 from polar_high import Param
 
-from ._axis_enums import (
+from flextool.engine._axis_enums import (
     alias_to_axis,
     axis_lazyframe,
     cast_dim,
@@ -54,10 +54,10 @@ from ._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from ._constants import HOURS_PER_YEAR
-from ._emit_provider_io import _provider_key
-from ._solve_state import CommissioningLagError, LineageFilterError
-from ._param_shapes import (
+from flextool.engine._constants import HOURS_PER_YEAR
+from flextool.engine._emit_provider_io import _provider_key
+from flextool.engine._solve_state import CommissioningLagError, LineageFilterError
+from flextool.engine._param_shapes import (
     broadcast_to_period_time,
     promote_param_to_dt,
     resolve_param_shape,
@@ -1754,7 +1754,7 @@ def apply_derived_a(
     # apply_derived_a entry stays the single integration point.
     # Δ.12b: defensive try/except removed — apply_profile_cascade is
     # parity-bound (cluster C tests gate it).
-    from ._derived_profile import apply_profile_cascade
+    from flextool.engine._derived_profile import apply_profile_cascade
     apply_profile_cascade(flex_data, source, workdir, provider=provider)
 
     # 9. p_penalty_up / p_penalty_down (Δ.10 cluster F) ----------------
@@ -1763,7 +1763,7 @@ def apply_derived_a(
     # (the slice from ``pdtNode.csv``).
     # Δ.12b: unconditional — penalty helpers always produce a Param
     # when nodeBalance is non-empty (sentinel default applied inside).
-    from ._derived_arithmetic import (
+    from flextool.engine._derived_arithmetic import (
         p_penalty_up_from_source,
         p_penalty_down_from_source,
     )
@@ -3176,7 +3176,7 @@ def apply_derived_b(
     # ``unitsize_long.filter(p ∈ pss["p"].unique())``.
     # Δ.12b: unconditional when pss is non-empty.
     if pss_frame is not None and pss_frame.height > 0:
-        from ._derived_arithmetic import p_unitsize_from_source
+        from flextool.engine._derived_arithmetic import p_unitsize_from_source
         flex_data.p_unitsize = p_unitsize_from_source(source, pss_frame)
 
     # ─── §F.1b p_all_entity_unitsize  (scaling family — all entities) ────
@@ -3215,7 +3215,7 @@ def apply_derived_b(
     # (p, sink) when any non-default, non-zero coef remains.
     # Δ.12b: helper exceptions propagate; the anti-join inner gate
     # (only when zero-rows exist) is preserved as a structural filter.
-    from ._derived_arithmetic import (
+    from flextool.engine._derived_arithmetic import (
         p_process_source_conversion_flow_coeff_from_source,
         p_process_sink_conversion_flow_coeff_from_source,
     )
@@ -4136,7 +4136,7 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
             "d": schema_dtype(_enums, "d"),
         })
     # Δ.7 — delegate to the lazy port consuming the shared walker.
-    from ._derived_existing import edd_invest_lookback_set_lf
+    from flextool.engine._derived_existing import edd_invest_lookback_set_lf
     ed_invest_lf = ed_invest.lazy().select("e", "d")
     return edd_invest_lookback_set_lf(
         source, active_solve, ed_invest_lf, periods, workdir,
@@ -4196,7 +4196,7 @@ def edd_divest_active_from_source(source: "InputSource",
                .join(yr_d, on="d", how="inner")
                .filter(pl.col("yr_divest") <= pl.col("yr")))
     if lineage is not None:
-        from ._derived_walks import (
+        from flextool.engine._derived_walks import (
             _apply_lineage_filter,
             _assert_lineage_castable,
         )
@@ -5895,7 +5895,7 @@ def p_node_capacity_for_scaling_from_source(source: "InputSource",
     # carry ``vq_state_up/down``), so union the period nodes in before the
     # cross-join.  Dtype-safe; when the period set is empty the union
     # collapses to exactly ``nb`` → byte-identical legacy behavior.
-    from ._projection_params import (
+    from flextool.engine._projection_params import (
         nodeBalance as _nodeBalance_proj,
         nodeBalancePeriod as _nodeBalancePeriod_proj,
     )
@@ -8955,7 +8955,7 @@ def apply_derived_e(
             source, pse, nodeState_df)
         # §F.2 p_state_unitsize (Δ.10 cluster F) — per-node unitsize
         # restricted to nodeState.
-        from ._derived_arithmetic import p_state_unitsize_from_source
+        from flextool.engine._derived_arithmetic import p_state_unitsize_from_source
         flex_data.p_state_unitsize = p_state_unitsize_from_source(
             source, nodeState_df)
 
@@ -10039,7 +10039,7 @@ def apply_derived_f(
     Δ.4 deleted the deprecated wrapper alias; Δ.5 ports the lifetime
     cascade family to lazy polars.
     """
-    from . import _derived_npv
+    from flextool.engine import _derived_npv
 
     # 1. Cluster A (lazy NPV / inflation / fixed cost cascade).
     _derived_npv.apply_npv(flex_data, source, workdir, provider=provider)

@@ -16,10 +16,10 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Expr
 
-from ._model_common import _has_rows
+from flextool.engine._model_common import _has_rows
 
 if TYPE_CHECKING:
-    from .model import _Build
+    from flextool.engine.model import _Build
 
 
 # Tier quantities at or above this are unlimited (+Inf is written as 1e30) and get no cap row.

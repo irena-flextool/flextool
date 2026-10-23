@@ -48,8 +48,8 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from ._axis_enums import alias_to_axis
-from ._constants import HOURS_PER_YEAR
+from flextool.engine._axis_enums import alias_to_axis
+from flextool.engine._constants import HOURS_PER_YEAR
 
 if TYPE_CHECKING:
     from flextool.engine._input_source import InputSource

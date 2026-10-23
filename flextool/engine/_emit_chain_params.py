@@ -38,7 +38,7 @@ from flextool.engine._derived_params import (
 )
 
 if TYPE_CHECKING:
-    from ._solve_handoff import SolveHandoff  # noqa: F401 — retained for legacy callers
+    from flextool.engine._solve_handoff import SolveHandoff  # noqa: F401 — retained for legacy callers
 
 
 def _ed_value_frame(

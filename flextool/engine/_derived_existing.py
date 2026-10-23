@@ -75,7 +75,7 @@ from flextool.engine._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from ._derived_walks import period_walk_iterator, WindowMethod
+from flextool.engine._derived_walks import period_walk_iterator, WindowMethod
 
 
 # Substrate handle for the cascade-wide axis enum vocabulary.
@@ -410,11 +410,11 @@ def commissioning_year_lf(source: "InputSource",
     # resolving ``p_years_d.csv`` from the wrong solve → no in-use seam).
     _lag_cfg = _construction_lag_configured(source)
 
-    from ._derived_params import _p_years_d_lf
+    from flextool.engine._derived_params import _p_years_d_lf
     pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         if _lag_cfg:
-            from ._solve_state import CommissioningLagError
+            from flextool.engine._solve_state import CommissioningLagError
             raise CommissioningLagError(
                 "commissioning_year_lf could not resolve a period-year "
                 "calendar (_p_years_d_lf returned None) on a model with a "
@@ -462,7 +462,7 @@ def commissioning_year_lf(source: "InputSource",
     # round-to-zero / immediate model, whose seam set is non-empty (the lag
     # simply snaps back onto the order period).  Surface it loudly.
     if _lag_cfg and seams.select(pl.len()).collect().item() == 0:
-        from ._solve_state import CommissioningLagError
+        from flextool.engine._solve_state import CommissioningLagError
         raise CommissioningLagError(
             "commissioning_year_lf resolved an EMPTY seam set over "
             "period_in_use on a model with a configured "
@@ -1468,7 +1468,7 @@ def _lifetime_expired_pairs_lf(source: "InputSource",
     Uses :func:`._derived_params._read_period_first` /
     :func:`._derived_params._p_years_d_lf` for the workdir-aware reads.
     """
-    from ._derived_params import _read_period_first, _p_years_d_lf
+    from flextool.engine._derived_params import _read_period_first, _p_years_d_lf
     period_first = _read_period_first(source, active_solve, None)
     if not period_first:
         return pl.LazyFrame(schema={
@@ -1582,12 +1582,12 @@ def apply_existing_chain(flex_data: object,
     sweep validates.  When parity drifts, the test surfaces the
     fixture and the diff frame.
     """
-    from ._derived_params import (
+    from flextool.engine._derived_params import (
         _read_active_solve, _period_in_use_set,
         _read_period_with_history,
     )
-    from .input import _read_solve_first
-    from ._emit_provider_io import _provider_key
+    from flextool.engine.input import _read_solve_first
+    from flextool.engine._emit_provider_io import _provider_key
     from polar_high import Param as _Param
 
     def _provider_get(p):

@@ -24,9 +24,9 @@ from pathlib import Path
 
 import polars as pl
 
-from . import _provider_keys as K
-from ._axis_enums import alias_to_axis
-from ._emit_provider_io import _emit
+from flextool.engine import _provider_keys as K
+from flextool.engine._axis_enums import alias_to_axis
+from flextool.engine._emit_provider_io import _emit
 
 
 # ---------------------------------------------------------------------------

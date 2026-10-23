@@ -16,11 +16,11 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Expr, Var
 
-from ._axis_enums import align_join_dtypes
-from ._model_common import _has_rows, _var_view
+from flextool.engine._axis_enums import align_join_dtypes
+from flextool.engine._model_common import _has_rows, _var_view
 
 if TYPE_CHECKING:
-    from .model import _Build
+    from flextool.engine.model import _Build
 
 
 # ---------------------------------------------------------------------------

@@ -61,17 +61,17 @@ import polars as pl
 from polar_high import Sum, Where, Lag, Param
 from polar_high.engine import Expr, Var
 
-from . import _commodity_ladder
-from . import _cumulative_invest
-from . import _dc_power_flow
-from . import _delay
-from . import _group_slack
-from . import _non_anticipativity
-from . import _online
-from . import _reserve
-from . import _unit_floors
-from ._axis_enums import alias_to_axis, rename_to_axis
-from ._model_common import (
+from flextool.engine import _commodity_ladder
+from flextool.engine import _cumulative_invest
+from flextool.engine import _dc_power_flow
+from flextool.engine import _delay
+from flextool.engine import _group_slack
+from flextool.engine import _non_anticipativity
+from flextool.engine import _online
+from flextool.engine import _reserve
+from flextool.engine import _unit_floors
+from flextool.engine._axis_enums import alias_to_axis, rename_to_axis
+from flextool.engine._model_common import (
     _availability_factor,
     _coef_factor,
     _drop_uncapped,
@@ -81,15 +81,15 @@ from ._model_common import (
     _utf8_keys,
     _var_view,
 )
-from ._param_shapes import promote_param_to_dt
-from ._pdt_join import (
+from flextool.engine._param_shapes import promote_param_to_dt
+from flextool.engine._pdt_join import (
     compute_pss_dt,
     compute_nodeBalance_dt,
     compute_nodeState_dt,
     compute_nodeState_rp_block_first_dt,
     compute_process_indirect_dt,
 )
-from ._solve_state import FlexToolConfigError
+from flextool.engine._solve_state import FlexToolConfigError
 
 _LOG = logging.getLogger(__name__)
 

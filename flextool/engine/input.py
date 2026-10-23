@@ -27,14 +27,14 @@ import polars as pl
 from polar_high import Param
 
 if TYPE_CHECKING:
-    from ._input_source import FlexInputSource, InputSource
+    from flextool.engine._input_source import FlexInputSource, InputSource
 
-from . import _group_slack
-from . import _reserve
-from . import _delay
-from . import _dc_power_flow
-from . import _commodity_ladder
-from ._axis_enums import (  # substrate retained for Path B — see handoff
+from flextool.engine import _group_slack
+from flextool.engine import _reserve
+from flextool.engine import _delay
+from flextool.engine import _dc_power_flow
+from flextool.engine import _commodity_ladder
+from flextool.engine._axis_enums import (  # substrate retained for Path B — see handoff
     alias_to_axis,
     cast_dim,
     cast_flexdata_axes,
@@ -43,9 +43,9 @@ from ._axis_enums import (  # substrate retained for Path B — see handoff
     lit_axis,
     set_global_axis_enums,
 )
-from ._block_layout import BlockLayout
-from ._emit_provider_io import _provider_key
-from ._input_source import read_csv_fallback
+from flextool.engine._block_layout import BlockLayout
+from flextool.engine._emit_provider_io import _provider_key
+from flextool.engine._input_source import read_csv_fallback
 
 
 def _loadflex_prof(label: str) -> None:
@@ -1224,7 +1224,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         pss_noe_path = sd / "process_source_sink_noEff.csv"
         if not _provider_has(provider, "solve_data/process_source_sink", pss_path):
             return empty_return
-        from ._axis_enums import schema_dtype
+        from flextool.engine._axis_enums import schema_dtype
         empty_pss = pl.DataFrame(
             schema={
                 "p": schema_dtype(None, "p"),
@@ -1278,7 +1278,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         pss_source_canonical = _read_canonical_set(sd / "process_source.csv", "source")
         pss_sink_canonical   = _read_canonical_set(sd / "process_sink.csv",   "sink")
     else:
-        from ._projection_params import process_source_sink_canonical, _try_entities
+        from flextool.engine._projection_params import process_source_sink_canonical, _try_entities
         canonical = process_source_sink_canonical(source)
         if canonical.height == 0:
             return empty_return
@@ -1990,7 +1990,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         try:
             scc = sd / "solve_current.csv"
             if _provider_has(provider, "solve_data/solve_current", scc):
-                from ._derived_params import (_read_active_solve,
+                from flextool.engine._derived_params import (_read_active_solve,
                                                 _resolve_synthetic_solve,
                                                 _solve_in_spine)
                 # workdir = sd.parent (sd is solve_data/)
@@ -2006,7 +2006,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     # Workdir-CSV seeds for the invest/divest cascade live in
     # ``_invest_seeds.py`` — keeps the synthetic-solve fallback I/O off
     # ``input.py`` so the override chain stays the dominant data path.
-    from ._invest_seeds import (
+    from flextool.engine._invest_seeds import (
         read_invest_set as _seed_invest_set,
         read_forbidden_no_investment as _seed_forbidden_ni,
         read_set_seed as _seed_set,
@@ -2019,7 +2019,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         # from Spine directly (``solve.invest_periods`` for ``<base>``
         # at the anchor key is empty → no invest activity).  No disk
         # reads needed for the gate.
-        from ._derived_params import _solve_periods as _sp
+        from flextool.engine._derived_params import _solve_periods as _sp
         invest_periods = _sp(db_reader, active_solve, "invest_periods")
         if not invest_periods:
             return blank
@@ -2123,7 +2123,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     # ``ed_divest_period_set_from_source`` when active_solve is in
     # Spine; the workdir-CSV seeds below cover the synthetic per-sub-
     # solve case.
-    from ._invest_seeds import read_period_set as _seed_period_set
+    from flextool.engine._invest_seeds import read_period_set as _seed_period_set
 
     # Multi-solve handoff state.  These files are written between
     # sub-solves; the .mod uses them as constants on the
@@ -2366,7 +2366,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     p_startup_cost = None
     pdt_online_lin = pdt_online_int = None
     if source is not None:
-        from ._direct_params import p_startup_cost_from_source
+        from flextool.engine._direct_params import p_startup_cost_from_source
         sc_param = p_startup_cost_from_source(source, period_filter=dt)
         if sc_param is not None and sc_param.frame.height > 0:
             sc_frame = sc_param.frame.filter(pl.col("value") != 0)

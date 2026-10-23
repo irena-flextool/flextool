@@ -296,7 +296,7 @@ def period_walk_iterator(
         return ed_lf.select("e", "d").with_columns(
             factor=pl.lit(0.0, dtype=pl.Float64))
     # Lazy import to avoid circular dependency at module-load time.
-    from ._derived_params import _p_years_d_lf
+    from flextool.engine._derived_params import _p_years_d_lf
     # Slice D α-1 (§5.1): under recourse the caller forwards ``provider`` so
     # the canonical ``p_years_d.csv`` arm — which byte-copies fan-member year
     # rows — goes live, giving branch periods their anchor's year-from-start
@@ -457,7 +457,7 @@ def period_walk_iterator(
                   .unique())
 
     # Inflation factor sum.
-    from ._derived_npv import _inflation_factors_lf
+    from flextool.engine._derived_npv import _inflation_factors_lf
     factors_lf = _inflation_factors_lf(
         source, active_solve, period_universe, provider=provider)
     if factor_side == "inv":

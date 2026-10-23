@@ -12,11 +12,11 @@ from typing import TYPE_CHECKING
 import polars as pl
 from polar_high import Param, Sum, Where
 
-from ._axis_enums import cast_dim, rename_to_axis
-from ._model_common import _has_rows, _var_view
+from flextool.engine._axis_enums import cast_dim, rename_to_axis
+from flextool.engine._model_common import _has_rows, _var_view
 
 if TYPE_CHECKING:
-    from .model import _Build
+    from flextool.engine.model import _Build
 
 _LOG = logging.getLogger(__name__)
 
