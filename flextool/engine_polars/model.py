@@ -2228,6 +2228,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
             # windows by t — join on (n, d) only so every window in the
             # period sums onto the single anchor row.
             .join(d.nodeState_last_dt, on=["n", "d"], how="inner")
+            # Fixed summation order: the joins above leave row order
+            # hash-dependent, which changes the float sum in the last bit.
+            .sort(["n", "d", "t", "d_upper", "t_upper"])
             .group_by(["n", "d", "t"])
             .agg(pl.col("value").sum())
             .select("n", "d", "t", "value"))
