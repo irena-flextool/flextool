@@ -710,7 +710,7 @@ Carbon dioxide emissions are added to FlexTool by associating relevant `commodit
 The other CO2 parameters are handeled through a group of nodes (Here *coal_price* or *coal_limit* `groups`). Therefore one needs to create a group and add all the nodes that supply these commodities (eg. coal_market) to a group with a `group_node` entity. (Here the entity *co2_price--coal_market*)
 To set a price one needs to create set the co2_method parameter to *price* (constant) and create the `co2_price` parameter with the desired value. This price is added to the price of the commodity. 
 
-Alternatively one can set a limit on the co2 used by setting the `co2_method` parameter to *period* or *total* and setting the `co2_max_period` (periodic map [tCO2]) parameter or `co2_max_total` (constant [tCO2]) parameter. 
+Alternatively one can set a limit on the co2 used by setting the `co2_method` parameter to *period* or *total* and setting the `co2_max_period` (periodic map [tCO2/a], annual emissions in each period) parameter or `co2_max_total` (constant [tCO2], emissions over the whole solve: annual emissions times `years_represented`, summed over the periods) parameter. 
 
 There methods can be combined by setting the `co2_method` to *price_period*, *price_total*, *period_total* or *price_period_total*.
 

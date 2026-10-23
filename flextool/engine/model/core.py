@@ -131,7 +131,7 @@ INDIRECT: tuple[str, ...] = (
 CO2_CAP:   tuple[str, ...]   = ("p_co2_content", "p_co2_max_period",
                                 "group_d_co2_capped")
 CO2_CAP_TOTAL: tuple[str, ...] = ("p_co2_content", "p_co2_max_total",
-                                   "group_co2_max_total")
+                                   "group_co2_max_total", "p_years_represented_d")
 USER_CSTR: tuple[str, ...]   = ("p_constraint_constant",)
 PROFILES:  tuple[str, ...]   = ("p_profile_value", "p_process_existing_count")
 STORAGE:   tuple[str, ...]   = ("nodeState", "dtttdt",
@@ -147,6 +147,19 @@ RAMP: tuple[str, ...] = ("dtttdt", "p_step_duration", "p_process_existing_count"
 INVEST: tuple[str, ...] = ("p_entity_max_units",)
 DIVEST: tuple[str, ...] = ("p_entity_max_units", "edd_divest_active",
                             "pd_divest_set")
+
+
+def _check_years_cover_dt(d) -> None:
+    """Raise if ``p_years_represented_d`` lacks a period of ``dt``.
+
+    co2_max_total multiplies each period's emissions by its years; a period without a row would silently
+    drop out of the cap.  The loader builds the Param over the dt periods, so a gap is a loader bug."""
+    have = set(d.p_years_represented_d.frame["d"].cast(pl.Utf8).to_list())
+    missing = [p for p in d.dt["d"].cast(pl.Utf8).unique(maintain_order=True).to_list() if p not in have]
+    if missing:
+        raise ValueError(
+            f"build_flextool: p_years_represented_d lacks periods {missing} of dt, so co2_max_total would "
+            f"drop their emissions; this is a loader bug (the Param must cover every dt period).")
 
 
 def _check(d, fields: tuple[str, ...], feature: str) -> None:
@@ -438,6 +451,7 @@ def _prepare(b: _Build) -> None:
         _check(d, CO2_CAP, "co2_max_period")
     if b.has_co2_cap_total:
         _check(d, CO2_CAP_TOTAL, "co2_max_total")
+        _check_years_cover_dt(d)
     if b.has_user_cstr:
         _check(d, USER_CSTR, "user_constraints")
     if b.has_profile:
@@ -2146,28 +2160,32 @@ def _eq_co2_max_total(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total, d,t}
     #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
-    #     · co2_content[c]·w[d,t]
-    #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total_noEff, d,t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
+    #     · co2_content[c]·w_y[d,t]
+    #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total_noEff, d,t}
+    #     v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
     #   ≤ co2_max_total[g]
-    #   ∀ g ∈ group_co2_max_total;   w = step_duration · timestep_weight / period_share
-    # Caps the CO2 emissions of a group over the whole horizon (tonnes); the emission terms are those of
-    # co2_max_period (section fuel included), summed over the periods as well.  Each period contributes its
-    # annualised emissions, not weighted by the years it represents (see specs/github_issues.md, refactor
-    # bug 13).
+    #   ∀ g ∈ group_co2_max_total;   w_y = step_duration · timestep_weight / period_share · years_represented[d]
+    # Caps the CO2 emissions of a group over the horizon the solve represents (tonnes): each period's
+    # annualised emissions (as in co2_max_period, section fuel included) times the years the period
+    # represents, summed over the periods — the measure of the model CO2 output.  years_represented is not
+    # discounted.  Rolling and chained solves get the full cap in every roll/solve (see
+    # specs/github_issues.md, refactor bug 38).
     lhs: dict = {}
     if b.has_co2_cap_total_eff:
         for key, term in _eff_fuel_input(b, d.flow_from_co2_capped_total):
             lhs[f"emissions_{key}"] = Sum(
                 term
                 * d.p_co2_content
-                * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
+                * d.p_step_duration * d.p_timestep_weight / d.p_period_share
+                * d.p_years_represented_d,
                 over=("p", "source", "sink", "c", "d", "t"),
             )
     if b.has_co2_cap_total_noEff:
         lhs["emissions_noEff"] = Sum(
             Where(v_flow * d.p_unitsize, d.flow_from_co2_capped_total_noEff)
             * d.p_co2_content
-            * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
+            * d.p_step_duration * d.p_timestep_weight / d.p_period_share
+            * d.p_years_represented_d,
             over=("p", "source", "sink", "c", "d", "t"),
         )
     m.add_cstr(

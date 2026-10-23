@@ -457,3 +457,43 @@ parameter feeders (`write_p_entity_period_existing_capacity`, the
 `p_entity_*` chain params) and the in-memory `par.entity_all_capacity`
 path are untouched.  The `period_capacity` / `periods_already_emitted`
 dedup machinery is now vestigial and left for a separate teardown.
+
+## test_a_lot — 2026-10-23 — CO2 caps count min-load section fuel
+
+**Files.** `test_a_lot/` — `unit__outputNode__dt.csv`, `unit_capacity__d.csv`,
+`node__dt.csv`, `connection__dt.csv`, `costs__dt.csv`, `costs_discounted.csv`,
+`cost_unit_{annualized,discounted}__d.csv`, `cost_node_{annualized,discounted}__d.csv`.
+The two `cost_connection_*` files are unchanged.
+
+**Cause.** Fix "CO2 caps include min-load section fuel": `co2_max_period` /
+`co2_max_total` now count `v_online·section·unitsize` of `min_load_efficiency`
+units, as the CO2 price and the reported emissions already did.  In
+`test_a_lot`, `coal_plant` is such a unit (linear UC) and the `co2_limit`
+period cap of p2035 (1.2e6 t/a) binds.  The companion change to
+`co2_max_total` (years represented) does not touch this scenario (its
+`co2_method` is `period`); its outputs are byte-identical with and without it.
+
+**Evidence** (run like `tests/test_scenarios.py`, HiGHS with `tests/highs.opt`):
+- (a) `co2_max_period[co2_limit,p2035]` binds before and after (non-zero dual;
+  reported `co2_price_period` 67.65 CUR/t both times); p2020–p2030 rows are slack.
+- (b) reported `CO2_annualized[co2_limit,p2035]` (`group_CO2__d.csv`): before
+  **1 208 683.2 t/a > cap 1.2e6** (the excess 8 683 t is the uncounted section
+  fuel); after **1 200 000 t/a** = cap.  p2020–p2030 unchanged
+  (1 667 474.4 / 1 670 022.2 / 1 670 022.2).
+- (c) objective 20 655 120 922 → 20 656 442 644 CUR (+1.32e6, +0.0064 %);
+  `costs_discounted.csv` totals move by the same +1.32 M (investment +4.86,
+  storage investment +4.50, commodity −1.29, co2 −1.09, starts −3.98,
+  upward slack −1.68).
+- Every changed row is period p2035 (plus the horizon totals in
+  `costs_discounted.csv`): coal_plant output falls (t0001 62.49 → 30.30 MW;
+  `process__d_co2` coal_plant p2035 24 193 → 11 730 t/a), wind investment in
+  p2035 rises 323.94 → 353.49 MW, battery storage investment and CHP output
+  rise, the heat slack penalty falls.
+- `test_a_lot_but_not_multi_year` (single period p2020, 3e6 t/a cap does not
+  bind) and the other CO2 / min-load goldens (`coal_co2_limit`,
+  `coal_co2_price`, `multi_year_one_solve_co2_limit`,
+  `network_coal_wind_battery_co2_fullYear_availability`,
+  `network_coal_wind_reserve_co2_capacity_margin`, `coal_min_load*`) pass
+  unchanged.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate test_a_lot`.

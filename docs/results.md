@@ -95,7 +95,7 @@ These are period-level tables only — there are no per-timestep per-entity cost
 - `node` entity `price_t` parameter — [CUR/MWh] dual of the balance constraint for every node that maintains an energy balance (nominal currency at period `d`, un-discounted from NPV)
 - `group__reserve__upDown` entity `reserve_price_t` parameter — [CUR/MWh] dual of the reserve balance constraint
 - `group` entity `co2_price_period` parameter — [CUR/tCO2] shadow price of the per-period CO2 cap (nominal currency, sign-flipped so a binding cap shows positive)
-- `group` entity `co2_price_total` parameter — [CUR/tCO2] shadow price of the cumulative CO2 cap (NPV currency, broadcast across periods)
+- `group` entity `co2_price_total` parameter — [CUR/tCO2] shadow price of the cumulative CO2 cap, per tonne over the represented years (NPV currency, broadcast across periods)
 
 ## Energy flows
 

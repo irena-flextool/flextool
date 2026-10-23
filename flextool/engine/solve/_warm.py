@@ -264,6 +264,8 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     # Commodity / CO2 — composite obj.
     "p_commodity_price", "p_co2_price", "p_co2_max_period",
     "p_co2_max_total", "p_co2_content",
+    # Years per period — LHS weight of co2_max_total only.
+    "p_years_represented_d",
     # Commodity ladder (cumulative + annual) — RHS / cap terms of
     # ``ladder_tier_cap_cumulative_roll`` / ``ladder_tier_cap_annual_roll``.
     # The rolling cumulative accumulator (``p_ladder_cum_realized_mwh``)
@@ -451,6 +453,7 @@ _WARM_PARAM_GATES: dict[str, tuple[str, ...]] = {
     "p_co2_price":      ("flow_from_co2_priced",),
     "p_co2_max_period": ("group_co2_max_period",),
     "p_co2_max_total":  ("group_co2_max_total",),
+    "p_years_represented_d": ("group_co2_max_total",),
     "p_co2_content":    ("flow_from_co2_priced", "flow_from_co2_capped",
                           "group_co2_max_period",
                           "flow_from_co2_capped_total",

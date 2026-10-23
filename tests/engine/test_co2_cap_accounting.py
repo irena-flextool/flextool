@@ -5,6 +5,10 @@ from the capped group's nodes times the commodity's ``co2_content``.  For a ``mi
 fuel is ``v_flow·slope + v_online·section`` (times unitsize), as in the CO2 price, the commodity cost and the
 node balance; before, the caps left out the section fuel of the units online.
 
+``co2_max_total`` caps the tonnes over the horizon the solve represents: each period's annualised emissions
+times the years it represents (``years_represented``), as in the model-wide ``CO2`` output.  Before, every
+period counted as one year.
+
 Fixtures: ``tests.json`` + override alternatives (built from JSON).  The ``coal_min_load`` alternative makes
 ``coal_plant`` (500 MW, eff 0.4, 0.3 at min load 0.5, linear startup) a min_load_efficiency unit, so slope =
 1.667 and section = 0.833 (MWh fuel per MWh output, per MW online); ``co2_limit`` caps group ``co2_limit``
@@ -13,13 +17,18 @@ Fixtures: ``tests.json`` + override alternatives (built from JSON).  The ``coal_
 from __future__ import annotations
 
 import collections
+import dataclasses
 
 import polars as pl
 import pytest
+from polar_high import Param
 
 from tests.engine._unit_db import COAL, PLANT, b64, build, flow, online, solve, uc, utf8
 
 MINLOAD_CHAIN = ["init", "west", "coal", "co2_limit", "coal_min_load"]
+# Four 5-year periods (p2020..p2035) in one solve, coal + wind with investments, co2_limit group.
+MULTI_YEAR_CHAIN = ["init", "west", "coal", "coal_invest", "wind", "wind_invest", "5weeks",
+                    "invest_solveSequence_5weeks", "invest_allYears_5weeks", "co2_limit"]
 GROUP = "co2_limit"
 
 
@@ -128,3 +137,78 @@ def test_co2_max_total_counts_minload_section(tmp_path_factory) -> None:
     emitted = _annual_emissions(step, "linear", "p2020")
     assert emitted <= 2.5e6 * (1 + 1e-6)
     assert emitted >= 2.5e6 * (1 - 1e-3)
+
+
+def _total_cap(method: str, cap: float) -> list:
+    return [["group", GROUP, "co2_method", b64(method, "str")],
+            ["group", GROUP, "co2_max_total", b64(cap, "float")]]
+
+
+@pytest.fixture(scope="module")
+def multi_year_period_total(tmp_path_factory):
+    """Both caps on the multi-year chain (``co2_max_total`` 2e7 t)."""
+    return solve(tmp_path_factory, alt="co2c_my_pt", base_chain=MULTI_YEAR_CHAIN,
+                 values=_total_cap("period_total", 2.0e7))
+
+
+def test_co2_max_total_weights_years_represented(multi_year_period_total) -> None:
+    """Every ``co2_max_total`` coefficient is ``years_represented[d]`` (5) times the same column's
+    coefficient in ``co2_max_period[d]``."""
+    fd = multi_year_period_total.flex_data
+    years = dict(_frame(fd.p_years_represented_d).select("d", "value").iter_rows())
+    assert set(years.values()) == {5.0}
+    pb = build(fd)
+    total = _row_terms(pb, "co2_max_total")[f"co2_max_total[{GROUP}]"]
+    period = _row_terms(pb, "co2_max_period")
+    checked = 0
+    for d, y in years.items():
+        for col, coef in period[f"co2_max_period[{GROUP},{d}]"].items():
+            assert total[col] == pytest.approx(y * coef, rel=1e-12), col
+            checked += 1
+    assert checked == len(total) > 0
+
+
+def test_co2_max_total_requires_years_for_every_period(multi_year_period_total) -> None:
+    """The build refuses a ``p_years_represented_d`` that is missing (``None``) or lacks a dt period: the
+    period's emissions would silently drop out of the cap."""
+    fd = multi_year_period_total.flex_data
+    with pytest.raises(ValueError, match="p_years_represented_d"):
+        build(dataclasses.replace(fd, p_years_represented_d=None))
+    short = Param(("d",), fd.p_years_represented_d.frame.filter(pl.col("d").cast(pl.Utf8) != "p2030"))
+    with pytest.raises(ValueError, match="p2030"):
+        build(dataclasses.replace(fd, p_years_represented_d=short))
+
+
+def _horizon_emissions(step) -> float:
+    """Σ_d years[d] · Σ_t (annualised CO2 of the capped eff arcs), tonnes, from the solution."""
+    fd = step.flex_data
+    mle = fd.process_min_load_eff
+    assert mle is None or mle.height == 0  # no section fuel in this chain
+    w = (_frame(fd.p_step_duration).rename({"value": "sd"})
+         .join(_frame(fd.p_timestep_weight).rename({"value": "tw"}), on=["d", "t"])
+         .join(_frame(fd.p_period_share).rename({"value": "ps"}), on="d")
+         .join(_frame(fd.p_years_represented_d).rename({"value": "yr"}), on="d"))
+    arcs = _frame(fd.flow_from_co2_capped_total)
+    rows = (utf8(step.solution.value("v_flow")).rename({"value": "v"})
+            .join(arcs, on=["p", "source", "sink"])
+            .join(_frame(fd.p_unitsize).rename({"value": "us"}), on="p")
+            .join(_frame(fd.p_slope).rename({"value": "slope"}), on=["p", "d", "t"])
+            .join(_frame(fd.p_co2_content).rename({"value": "co2"}), on="c")
+            .join(w, on=["d", "t"]))
+    assert rows.height > 0
+    return float(rows.select((pl.col("v") * pl.col("us") * pl.col("slope") * pl.col("co2") * pl.col("sd")
+                              * pl.col("tw") / pl.col("ps") * pl.col("yr")).sum()).item())
+
+
+def test_co2_max_total_caps_horizon_tonnes(tmp_path_factory) -> None:
+    """With a cap of half the uncapped horizon emissions, the solved horizon emissions (annualised × years,
+    summed over the periods) meet the cap exactly.  Before, the cap allowed five times as much."""
+    free = solve(tmp_path_factory, alt="co2c_my_free", base_chain=MULTI_YEAR_CHAIN,
+                 values=_total_cap("total", 1.0e12))
+    uncapped = _horizon_emissions(free)
+    cap = 0.5 * uncapped
+    capped = solve(tmp_path_factory, alt="co2c_my_half", base_chain=MULTI_YEAR_CHAIN,
+                   values=_total_cap("total", cap))
+    emitted = _horizon_emissions(capped)
+    assert emitted <= cap * (1 + 1e-6)
+    assert emitted >= cap * (1 - 1e-4)

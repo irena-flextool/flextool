@@ -314,11 +314,16 @@ def _toy_2node_chp_with_co2_total(d: FlexData, *,
     g_set = pl.DataFrame({"g": ["g1"]})
     p_cap = Param(("g",),
         pl.DataFrame({"g": ["g1"], "value": [cap]}))
+    # One year per period, so the cap reads as in the hand calculation below.
+    periods = sorted(set(d.dt["d"].to_list())) + list(extra_periods)
+    p_years = Param(("d",),
+        pl.DataFrame({"d": periods, "value": [1.0] * len(periods)}))
     new = dataclasses.replace(d,
         p_co2_content=p_co2_content,
         flow_from_co2_capped_total=flow_from_co2_capped_total,
         group_co2_max_total=g_set,
         p_co2_max_total=p_cap,
+        p_years_represented_d=p_years,
     )
     if not extra_periods:
         return new
@@ -378,7 +383,7 @@ def test_b10_co2_max_total_constraint_emitted_and_binds(toy_2node_chp):
     ``v_h * 100 * 0.5 ≥ 5`` and ``v_e * 100 * 1.0 ≥ 10``, so v_h ≥ 0.1
     and v_e ≥ 0.1, giving v_in ≥ 0.15.  Per-(d, t) emissions =
     ``v_in * 100 * co2_content(2.0) * step_duration(1) * rp_weight(1) /
-    period_share(1)``.  Across 4 (d, t) cells the unconstrained total
+    period_share(1) * years_represented(1)``.  Across 4 (d, t) cells the unconstrained total
     is at least ``4 * 0.15 * 100 * 2.0 = 120`` tonnes.
 
     Pin a horizon cap of 60 tonnes — comfortably below 120.  The cap

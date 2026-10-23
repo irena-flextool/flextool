@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **`co2_max_total` limits the emissions of all represented years.** The
+  total CO2 limit now applies to each period's annual emissions times its
+  `years_represented`, summed over the periods: the same measure as the
+  model-wide `CO2` output. Before, each period counted as one year, so with
+  multi-year periods the limit was `years_represented` times too loose.
+  Models that use a `co2_method` with `total` and `years_represented`
+  above 1 get a tighter limit. In rolling or multi-solve chains each solve
+  still gets the full limit.
+
 - **Years represented in rolling solves and stochastic branches.** The
   outputs that scale annual values by `years_represented` (the model-wide
   `CO2 [Mt]` and `years_represented__d`) now use each period's years also
