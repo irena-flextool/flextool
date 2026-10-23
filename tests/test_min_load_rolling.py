@@ -8,7 +8,7 @@ real Spine solve) crashed in ``build_flextool`` with::
     populated (None): ['p_section']
 
 Cause: the synthetic-solve early-return in
-``flextool/engine_polars/input.py::_apply_db_overrides`` skips the
+``flextool/engine/input.py::_apply_db_overrides`` skips the
 ``apply_derived_*`` passes, and ``apply_derived_c`` is the *sole*
 producer of ``flex_data.p_section`` after the Δ.12-drop deleted the
 ``pdtProcess_section.csv`` loader seed.  ``process_min_load_eff`` (a
@@ -40,7 +40,7 @@ if str(TEST_DIR) not in sys.path:
 
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 
 

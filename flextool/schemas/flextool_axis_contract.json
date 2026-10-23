@@ -16,7 +16,7 @@
       "source": "node",
       "filter": "scenario_filter",
       "column_synonyms": ["node"],
-      "note": "Node entities. Cascade column synonym: 'node' (renamed to 'n' in most helpers; see flextool/engine_polars/_axis_enums.py _AXIS_SYNONYMS)."
+      "note": "Node entities. Cascade column synonym: 'node' (renamed to 'n' in most helpers; see flextool/engine/_axis_enums.py _AXIS_SYNONYMS)."
     },
     {
       "name": "p",
@@ -197,7 +197,7 @@
     {
       "axis": "block",
       "tokens": ["default"],
-      "introduced_by": "flextool/engine_polars/_block_layout.py DEFAULT_BLOCK",
+      "introduced_by": "flextool/engine/_block_layout.py DEFAULT_BLOCK",
       "note": "Synthetic fallback block name assigned to nodes/processes that lack an explicit resolution group."
     }
   ],
@@ -226,10 +226,10 @@
       "id": "c_collision",
       "summary": "The cascade letter 'c' is used both for commodity (the commodity entity-class axis) and for constraint (in _direct_params._node_constraint_coef / _process_constraint_coef where the 'constraint' column is renamed to 'c').",
       "code_sites": [
-        "flextool/engine_polars/_direct_params.py:285",
-        "flextool/engine_polars/_direct_params.py:306",
-        "flextool/engine_polars/input.py:1547",
-        "flextool/engine_polars/input.py:1564"
+        "flextool/engine/_direct_params.py:285",
+        "flextool/engine/_direct_params.py:306",
+        "flextool/engine/input.py:1547",
+        "flextool/engine/input.py:1564"
       ],
       "options": [
         "(a) Rename the constraint-axis column to 'cn' in those helpers (lowest-risk; localised).",
@@ -243,9 +243,9 @@
       "id": "b_collision",
       "summary": "The cascade letter 'b' is used both for stochastic branch (in _derived_branch.py) and for block (in _derived_block.py / _block_layout.py). Both are derived axes with distinct vocabularies. No frame holds both at once, but Phase 1 must disambiguate to keep one enum-per-column-name in build_axis_enums.",
       "code_sites": [
-        "flextool/engine_polars/_derived_branch.py:138, 150, 155, 177, 182, 191, 201",
-        "flextool/engine_polars/_derived_block.py:140, 165, 176",
-        "flextool/engine_polars/_block_layout.py:1435"
+        "flextool/engine/_derived_branch.py:138, 150, 155, 177, 182, 191, 201",
+        "flextool/engine/_derived_block.py:140, 165, 176",
+        "flextool/engine/_block_layout.py:1435"
       ],
       "options": [
         "(a) Rename block→'bk' and keep branch→'b'.",
@@ -259,7 +259,7 @@
       "id": "i_axis_depth",
       "summary": "The 'i' (tier_index) axis depth is discovered at runtime from commodity.price_ladder_* parameter maps. Vocabulary is integer strings '1'..'N' but N is not in the schema.",
       "code_sites": [
-        "flextool/engine_polars/_commodity_ladder.py"
+        "flextool/engine/_commodity_ladder.py"
       ],
       "options": [
         "(a) Build the 'i' enum lazily at first use after backend ingest discovers N.",
@@ -272,11 +272,11 @@
       "id": "d_axis_source",
       "summary": "The original audit reported axis 'd' source=timeline. Verification in the cascade (renames 'period'→'d' at many sites; no timeline-name lookup) shows 'd' is the PERIOD axis, not timeline. Sourced from solve.years_represented keys, solve.realized_periods array, solve.invest_periods keys, solve.realized_invest_periods keys.",
       "code_sites": [
-        "flextool/engine_polars/_derived_block.py:169",
-        "flextool/engine_polars/_derived_block.py:180",
-        "flextool/engine_polars/_derived_branch.py:150",
-        "flextool/engine_polars/_invest_seeds.py:80",
-        "flextool/engine_polars/_invest_seeds.py:107"
+        "flextool/engine/_derived_block.py:169",
+        "flextool/engine/_derived_block.py:180",
+        "flextool/engine/_derived_branch.py:150",
+        "flextool/engine/_invest_seeds.py:80",
+        "flextool/engine/_invest_seeds.py:107"
       ],
       "resolution": "Updated axis row in this contract: source_type=parameter_keys with the four solve parameters listed."
     },

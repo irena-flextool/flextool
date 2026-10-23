@@ -36,12 +36,12 @@ by the LAST (dispatch) sub-solve and so do NOT reflect the invest grid:
 
 * the invest ``(d, t)`` grid and per-period
   ``complete_period_share_of_year`` come from
-  :func:`flextool.engine_polars._per_solve_sets.derive_per_solve_aggregates`;
+  :func:`flextool.engine._per_solve_sets.derive_per_solve_aggregates`;
 * ``Σ_t timestep_weight(d, t)`` per period comes from the ACTUAL per-``(d,
   t)`` weights the engine builds, NOT a step-count shortcut —
-  :func:`flextool.engine_polars._derived_params.p_timestep_weight_from_source`
+  :func:`flextool.engine._derived_params.p_timestep_weight_from_source`
   for the default / ``timeset_weights`` regimes, and
-  :func:`flextool.engine_polars._emit_solve_writers._compute_rp_frames` for
+  :func:`flextool.engine._emit_solve_writers._compute_rp_frames` for
   ``representative_period_weights`` (RP).
 
 Why the ACTUAL weight, not the step count ``n_d``
@@ -63,14 +63,14 @@ from collections import defaultdict
 
 import polars as pl
 
-from flextool.engine_polars._derived_params import (
+from flextool.engine._derived_params import (
     p_timestep_weight_from_source,
 )
-from flextool.engine_polars._emit_solve_writers import _compute_rp_frames
-from flextool.engine_polars._per_solve_sets import derive_per_solve_aggregates
-from flextool.engine_polars._solve_config import SolveConfig
-from flextool.engine_polars._spinedb_reader import SpineDbReader
-from flextool.engine_polars._timeline import TimelineConfig
+from flextool.engine._emit_solve_writers import _compute_rp_frames
+from flextool.engine._per_solve_sets import derive_per_solve_aggregates
+from flextool.engine._solve_config import SolveConfig
+from flextool.engine._spinedb_reader import SpineDbReader
+from flextool.engine._timeline import TimelineConfig
 
 # Per-node absolute shed tolerance (MWh).  Nodes whose residual unserved
 # energy is at/below this are treated as non-shedding and get NO increment,

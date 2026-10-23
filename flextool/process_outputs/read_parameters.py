@@ -40,7 +40,7 @@ from flextool.process_outputs._inmemory_helpers import (
 if TYPE_CHECKING:
     from polar_high import Solution
 
-    from flextool.engine_polars.input import FlexData
+    from flextool.engine.input import FlexData
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ def _pdtX_per_entity(
     # below requires explicit "d" and "t" columns, so promote via
     # flex_data.dt when needed.
     if "d" not in param.dims or "t" not in param.dims:
-        from flextool.engine_polars._param_shapes import promote_param_to_dt
+        from flextool.engine._param_shapes import promote_param_to_dt
         if flex_data is None or flex_data.dt is None:
             return _empty_pdtX_per_entity(
                 flex_data=flex_data,
@@ -289,7 +289,7 @@ def _pdtX_multi_col(
         # when the source was authored as scalar / 1d_map.  Promote via
         # flex_data.dt so the pivot below sees explicit d/t columns.
         if "d" not in param.dims or "t" not in param.dims:
-            from flextool.engine_polars._param_shapes import promote_param_to_dt
+            from flextool.engine._param_shapes import promote_param_to_dt
             if flex_data is None or flex_data.dt is None:
                 out = _empty_pdtX_multi_col(col_names=col_names)
                 if densify_col_tuples is None:
@@ -1020,7 +1020,7 @@ def read_parameters(
         The active solve identifier.  Used to inject the leading
         ``solve`` index level the downstream wide-format consumers
         expect.  Defaults to ``"solve"`` for tests; production callers
-        in :mod:`flextool.engine_polars._orchestration` pass the real
+        in :mod:`flextool.engine._orchestration` pass the real
         ``complete_solve_name``.
 
     Returns
@@ -1098,7 +1098,7 @@ def read_parameters(
     # reserve_upDown_group_penalty — Series with MultiIndex (reserve,
     # upDown, node_group); the same dense penalty the LP objective uses
     # (authored penalty_reserve, else the default).
-    from flextool.engine_polars._reserve import reserve_penalty
+    from flextool.engine._reserve import reserve_penalty
     reserve_pen = reserve_penalty(flex_data)
     if reserve_pen is not None and reserve_pen.frame.height > 0:
         p.reserve_upDown_group_penalty = series_with_multi_index(
@@ -1236,7 +1236,7 @@ def read_parameters(
     # LP uses in the reserve balances and the penalty (largest possible
     # requirement; the reservation for timeseries groups).  The reserve
     # shortfall in MW and its penalty cost are rebuilt with it.
-    from flextool.engine_polars._reserve import reserve_shortfall_scale
+    from flextool.engine._reserve import reserve_shortfall_scale
     p.reserve_upDown_group_shortfall_scale = _pdtX_multi_col(
         reserve_shortfall_scale(flex_data), solve_name=solve_name,
         col_dims=("r", "ud", "g"),

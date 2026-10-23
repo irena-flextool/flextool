@@ -33,7 +33,7 @@ How it works
   ``initialize_database``) + ``migrate_database`` (never from a
   checked-in ``.sqlite``), optionally edited by a named JSON patch that
   appends an override alternative and a new scenario.
-* ``flextool.engine_polars.model.build_flextool`` is wrapped (in the
+* ``flextool.engine.model.build_flextool`` is wrapped (in the
   worker process only; production code is untouched).  Right after each
   build returns -- before autoscale or any solver touches the Problem --
   the Problem is written with ``Problem.write_mps(emit_names=True)``.
@@ -81,7 +81,7 @@ from typing import Callable
 
 REPO = Path(__file__).resolve().parents[1]
 TESTS_DIR = REPO / "tests"
-ENGINE_DIR = REPO / "flextool" / "engine_polars"
+ENGINE_DIR = REPO / "flextool" / "engine"
 CANONICAL_PREFIX = "flextool/schemas/canonical_databases/"
 
 # Files whose ``add_cstr`` calls define the constraint-family universe
@@ -415,7 +415,7 @@ def _patch_reserve_dynamic_n1_down(data: dict) -> dict:
         ["unit", "dr_increase_demand", "startup_method", "linear"],
     ]
     # timeseries "activator" requirements on west_north (activate the
-    # reserves' relationships, as in tests/engine_polars)
+    # reserves' relationships, as in tests/engine)
     for r, ud in (("dyn", "up"), ("n1d", "down")):
         grp = [r, ud, "west_north"]
         ents.append(["reserve__upDown__group", grp])
@@ -779,8 +779,8 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path) -> int:
 
     from db_utils import json_to_db  # tests/db_utils.py
 
-    import flextool.engine_polars.model as model_mod
-    from flextool.engine_polars import run_chain_from_db
+    import flextool.engine.model as model_mod
+    from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
     from flextool.update_flextool.initialize_database import (
         initialize_database,

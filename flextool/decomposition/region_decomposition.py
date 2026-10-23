@@ -21,8 +21,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from flextool.engine_polars._flex_data_provider import FlexDataProvider
-from flextool.engine_polars._solve_state import FlexToolConfigError
+from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine._solve_state import FlexToolConfigError
 
 
 def write_input_for_region(

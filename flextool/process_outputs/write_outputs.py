@@ -142,7 +142,7 @@ def _provider_lookup_df(provider, parent: str, stem: str):
 
     Provider key convention matches the emit_* writers' ``_emit(...)``
     callsites — ``"<parent>/<basename-without-csv>"`` (see
-    :mod:`flextool.engine_polars._emit_provider_io`).  The cascade keeps
+    :mod:`flextool.engine._emit_provider_io`).  The cascade keeps
     these frames in memory only (no on-disk fallback), so a ``None``
     *provider* yields ``None`` for every key.
     """
@@ -172,7 +172,7 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
     flowGroup indicators sum nothing and emit all-zero rows in production.
 
     Also backfills the 12 ``nodeGroupDispatch__*`` arc-union MultiIndex
-    sets emitted by ``flextool/engine_polars/_emit_arc_unions.py``.
+    sets emitted by ``flextool/engine/_emit_arc_unions.py``.
     Without these, ``calc_group_flows`` finds zero rows for the unit /
     connection aggregator joins, and ``out_group.nodeGroup_flows`` emits
     only the slack/inflow/loss column families — group_flows__dt loses
@@ -808,7 +808,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             solve parquet aggregation, and pandas joins/muls would
             mismatch.  Single-solve scenarios can ignore.
         flex_data_provider: optional per-sub-solve
-            :class:`flextool.engine_polars._flex_data_provider.FlexDataProvider`
+            :class:`flextool.engine._flex_data_provider.FlexDataProvider`
             from the orchestration step (typically ``last_step.flex_data_provider``).
             Used by :func:`_backfill_group_indicator_sets` to read the
             ``input/nodeGroup*`` + ``solve_data/nodeGroupDispatch__*``
@@ -1277,7 +1277,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
     # (legitimately absent) raw shard.
     if not read_parquet_dir:
         try:
-            from flextool.engine_polars._parquet_bundle import write_manifest
+            from flextool.engine._parquet_bundle import write_manifest
             raw_dir = raw_output_dir or 'output_raw'
             bundle_root = os.path.dirname(raw_dir) or '.'
             write_manifest(bundle_root)

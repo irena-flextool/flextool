@@ -52,9 +52,9 @@ from flextool.process_outputs.read_highs_solution import (
 
 if TYPE_CHECKING:
     import highspy
-    from flextool.engine_polars._solve_handoff import SolveHandoff
-    from flextool.engine_polars.input import FlexData
-    from flextool.engine_polars._output_writer import OutputWriterState
+    from flextool.engine._solve_handoff import SolveHandoff
+    from flextool.engine.input import FlexData
+    from flextool.engine._output_writer import OutputWriterState
 
 _logger = logging.getLogger(__name__)
 

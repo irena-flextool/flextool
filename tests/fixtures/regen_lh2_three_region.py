@@ -397,7 +397,7 @@ def _build_trade_invest_overlay(
     See ``specs/benders_option_c_fixture_recipe.md`` for the numeric
     argument; the verified ground truth (monolith trades, current
     Lagrangian collapses to autarky) is exercised by
-    ``tests/engine_polars/test_benders_phase0_fixture.py``.
+    ``tests/engine/test_benders_phase0_fixture.py``.
     """
     new_entities: list[tuple] = []
     pv: list[tuple] = []

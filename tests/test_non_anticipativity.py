@@ -28,7 +28,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from flextool.engine_polars import run_chain_from_db
+from flextool.engine import run_chain_from_db
 from flextool.lean_parquet import read_lean_parquet
 
 

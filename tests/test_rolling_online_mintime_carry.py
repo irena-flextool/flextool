@@ -33,7 +33,7 @@ if str(TEST_DIR) not in sys.path:
 
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 
 pytestmark = [pytest.mark.solver]

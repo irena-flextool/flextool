@@ -1,0 +1,110 @@
+"""flextool integration with the polar_high LP eDSL.
+
+This subpackage is **flextool-specific** — it knows the on-disk layout
+of flextool's ``input/`` + ``solve_data/`` CSVs (``input.py``) and the
+shape of flextool's optimization model (``model.py``). The
+``polar_high`` package itself knows nothing of flextool.
+"""
+
+# Determinism wrapper for polar_high.Problem.add_var / add_cstr.
+#
+# polars 1.40 .unique() defaults to maintain_order=False and joins
+# don't promise stable row order.  Across processes the hash-bucket
+# placement of strings changes with PYTHONHASHSEED, so the index
+# frames flextool passes to add_var (and the over frames passed to
+# add_cstr) can land in different row orders run-to-run.  That gave
+# us different LP column orderings — and HiGHS, fed the same LP with
+# different column orderings, picks different vertices among alt-
+# optima, which flipped scenario goldens.
+#
+# Site-by-site sorting at every .unique()/.join() in the cascade is
+# whack-a-mole.  A single-point fix at the LP emission boundary in
+# polar_high.Problem.add_var / add_cstr is robust: sort the (dim or
+# axis) columns of the frame just before col_ids/row_ids are assigned
+# so the LP is byte-identical across processes regardless of upstream
+# polars hash-bucket randomness.
+def _install_polar_high_determinism() -> None:
+    import polars as pl
+    import polar_high.engine as _phe
+    if getattr(_phe.Problem.add_var, "_flextool_deterministic", False):
+        return  # idempotent
+    _orig_add_var = _phe.Problem.add_var
+    _orig_add_cstr = _phe.Problem.add_cstr
+
+    def add_var(self, name, dims, index, lower=0.0, upper=float("inf"),
+                integer=False):
+        if isinstance(dims, str):
+            dim_tuple = (dims,)
+        else:
+            dim_tuple = tuple(dims)
+        # Sort by dim columns when all are present so col_ids are
+        # assigned in a canonical order.  Empty / scalar frames fall
+        # through unchanged.
+        if (index is not None and index.height > 0
+                and all(d in index.columns for d in dim_tuple)):
+            keys = list(dim_tuple)
+            # Skip the O(n log n) sort when the frame is already
+            # lex-sorted by the dim keys.  ``pl.struct(keys).is_sorted()``
+            # is an O(n) monotonic scan that compares fields
+            # left-to-right and respects Enum CATEGORY order, so it agrees
+            # exactly with ``.sort(keys)``.  The wrapper's OUTPUT is
+            # unchanged ("frame sorted by the key"): already-sorted input
+            # equals sort(input), so LP col ids — and goldens — cannot
+            # move.  The big (entity, d, t) grids built by cross-joining a
+            # pre-sorted dt are already sorted, so this avoids re-sorting
+            # multi-million-row frames on every build.
+            if not index.select(pl.struct(keys)).to_series().is_sorted():
+                index = index.sort(keys)
+        return _orig_add_var(self, name, dims, index, lower=lower,
+                              upper=upper, integer=integer)
+    add_var._flextool_deterministic = True
+
+    def add_cstr(self, name, *, over=None, sense, lhs_terms,
+                  rhs_terms=None):
+        if over is not None and over.height > 0:
+            keys = list(over.columns)
+            # Same skip-when-already-sorted optimisation as add_var; see
+            # the note there.  Output stays "over sorted by its columns",
+            # so row ids and goldens are unaffected.
+            if not over.select(pl.struct(keys)).to_series().is_sorted():
+                over = over.sort(keys)
+        return _orig_add_cstr(self, name, over=over, sense=sense,
+                                lhs_terms=lhs_terms, rhs_terms=rhs_terms)
+    add_cstr._flextool_deterministic = True
+
+    _phe.Problem.add_var = add_var
+    _phe.Problem.add_cstr = add_cstr
+
+
+_install_polar_high_determinism()
+
+
+# Sub-module imports are deliberately placed AFTER
+# _install_polar_high_determinism() above: they pull in polar_high (via
+# `from polar_high import …`) and rely on Problem.add_var / add_cstr
+# already being wrapped at first call. Reordering would break the
+# determinism guarantee documented above.
+from flextool.engine.input import (  # noqa: E402  # see determinism note above
+    FlexData, load_flextool,
+)
+from flextool.engine.model import build_flextool  # noqa: E402  # see determinism note above
+from flextool.engine.chain import run_chain, ChainStep  # noqa: E402  # see determinism note above
+from flextool.engine._input_source import FlexInputSource, CsvSource, InputSource  # noqa: E402  # see determinism note above
+from flextool.engine._spinedb_reader import SpineDbReader  # noqa: E402  # see determinism note above
+from flextool.engine._inmemory_reader import InMemoryReader  # noqa: E402  # see determinism note above
+from flextool.engine._solve_handoff import (  # noqa: E402  # see determinism note above
+    SolveHandoff,
+)
+from flextool.engine._orchestration import (  # noqa: E402  # see determinism note above
+    OrchestrationStep, run_chain_from_db, run_orchestration,
+)
+
+__all__ = [
+    "FlexData", "load_flextool", "build_flextool",
+    "run_chain", "ChainStep",
+    "FlexInputSource", "CsvSource",
+    "InputSource", "SpineDbReader", "InMemoryReader",
+    # Γ.8.D — native orchestrator + handoff carrier.
+    "SolveHandoff",
+    "OrchestrationStep", "run_chain_from_db", "run_orchestration",
+]

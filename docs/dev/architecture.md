@@ -21,7 +21,7 @@ flowchart LR
   spdb --> backend["SpineDBBackend<br/>(EAV → polars frames)"]
   backend --> derive["input_derivation<br/>(per-solve preprocessing)"]
   derive --> provider["FlexDataProvider<br/>(in-memory transport)"]
-  provider --> build["engine_polars.build_flextool<br/>(polar_high.Problem)"]
+  provider --> build["engine.build_flextool<br/>(polar_high.Problem)"]
   build --> solve["HiGHS via highspy<br/>(Problem / WarmProblem)"]
   solve --> handoff["SolveHandoff<br/>(Provider keys)"]
   handoff -->|next roll / sub-solve| derive
@@ -48,7 +48,7 @@ Key invariants:
 ```mermaid
 flowchart LR
   root["Root wrapper scripts<br/>run_flextool.py, write_outputs.py,<br/>scenario_results.py, ..."] --> cli["flextool/cli/cmd_*"]
-  cli --> engine["flextool/engine_polars<br/>cascade + LP build + HiGHS solve"]
+  cli --> engine["flextool/engine<br/>cascade + LP build + HiGHS solve"]
   cli --> backend["flextool/spinedb_backend"]
   cli --> derive["flextool/input_derivation"]
   cli --> decomp["flextool/decomposition"]
@@ -96,7 +96,7 @@ flextool/                          The installed Python package
 ├── input_derivation/              Per-solve preprocessing computations
 │                                    (the live successor to the retired
 │                                    flextoolrunner/preprocessing).
-├── engine_polars/                 Optimization engine + cascade coordinator:
+├── engine/                 Optimization engine + cascade coordinator:
 │                                    FlexData, FlexDataProvider, derived
 │                                    parameter / set emitters (_emit_*.py),
 │                                    build_flextool, run_orchestration /
@@ -156,7 +156,7 @@ migration_artifacts/               (none — the migration scratchpad was
 
 tests/                             Test suite (single root):
   tests/                             — top-level unit & integration tests
-  tests/engine_polars/               — engine-internal unit tests (cluster,
+  tests/engine/               — engine-internal unit tests (cluster,
                                        constraints, scaling, perturbation, ...)
   tests/spinedb_backend/             — backend unit tests
   tests/model/                       — model-level end-to-end suites
@@ -167,7 +167,7 @@ tests/                             Test suite (single root):
                                        demand
   tests/scenarios.yaml + tests/expected/  — the scenario integration suite
   tests/conftest.py                  — shared top-level fixtures
-  tests/engine_polars/conftest.py    — engine-internal fixtures
+  tests/engine/conftest.py    — engine-internal fixtures
                                        (scenario_workdir, ...)
 
 execution_tests/                   Spine Toolbox subprocess execution tests.
@@ -223,7 +223,7 @@ three-step pattern:
 Output is an in-memory `FlexData` augmented with derived fields, exposed to
 the engine through `FlexDataProvider`.
 
-### `flextool/engine_polars/` — the optimization engine
+### `flextool/engine/` — the optimization engine
 
 The dominant package. Builds a `polar_high.Problem` from `FlexData`, solves
 it with HiGHS, and threads cross-solve state through `SolveHandoff` (in
@@ -231,7 +231,7 @@ memory; CSVs only emitted under `csv_dump=True` for debugging).
 
 #### Public surface
 
-Exported from `flextool.engine_polars` (`__init__.py`):
+Exported from `flextool.engine` (`__init__.py`):
 
 | Symbol | Purpose |
 |---|---|
@@ -253,7 +253,7 @@ Same `build_flextool` body, three wrappers from `polar_high`:
   once, then mutates marked Params (`_apply_warm_updates` in
   `_solve_handoff.py`) between rolls. The optimisation room for the future
   rolling-overlap work (only update changing coefficients) lives here.
-- **Benders (regional)** — `engine_polars._benders.solve_benders` driven by
+- **Benders (regional)** — `engine._benders.solve_benders` driven by
   the orchestrator. Slices `FlexData` by region via `_region_filter`, then
   runs a **Benders decomposition**: a coordinating *master* (a persistent
   `polar_high.WarmProblem`) holds the inter-regional trade flows and the
@@ -276,7 +276,7 @@ their own variables live in their own modules (`_online`, `_unit_floors`,
 `_reserve`, `_group_slack`, `_cumulative_invest`, `_commodity_ladder`,
 `_dc_power_flow`, `_delay`, `_non_anticipativity`). The `model.py` module
 docstring maps every variable and equation family; details in
-[engine_polars.md](engine_polars.md#lp-build-modelpy-and-the-feature-modules).
+[engine.md](engine.md#lp-build-modelpy-and-the-feature-modules).
 
 `_prepare` sets one `has_*` flag per feature on the `_Build` context from
 its switch field on `FlexData`; each family function returns early when
@@ -330,7 +330,7 @@ the peak-memory and wall-time of the build.
 #### Cross-solve state (Provider keys + `SolveHandoff`)
 
 Inside the cascade everything moves through `FlexDataProvider`. The
-relevant key families are declared in `engine_polars/_provider_keys.py`:
+relevant key families are declared in `engine/_provider_keys.py`:
 
 - `HANDOFF_*` — quantities the just-solved problem produces for the next
   iteration (`fix_storage_quantity/price/usage`, `roll_end_state`,
@@ -445,7 +445,7 @@ turning `existing_count = existing/unitsize` into a spurious fraction
   `_per_entity_param_lf` in both the `existing` and `npv` mirrors).
 
 **Audited state** (see the coverage test
-`tests/engine_polars/test_silent_default_index_pdt.py`):
+`tests/engine/test_silent_default_index_pdt.py`):
 
 - *Safe* — `availability`, `inflow`, `other_operational_cost`,
   `reservation` (resolver-routed); the `existing`/`lifetime`/
@@ -629,8 +629,8 @@ CI-enforced verify chain (`tests.yml::template-check`):
 group and prepare sub-problems for the Benders solve mode (the filter-only
 `--region` CLI entry point that materialises one region's standalone input
 directory). The in-engine slicer used by the live Benders driver lives at
-`engine_polars/_region_filter.py`; the master + cut loop is in
-`engine_polars/_benders.py`.
+`engine/_region_filter.py`; the master + cut loop is in
+`engine/_benders.py`.
 
 ### `flextool/model_builder/` and `flextool/representative_periods/`
 
@@ -732,7 +732,7 @@ from flextool import (
     initialize_database,
     update_flextool,
 )
-from flextool.engine_polars import (
+from flextool.engine import (
     FlexData,
     FlexDataProvider,
     SolveHandoff,
@@ -741,7 +741,7 @@ from flextool.engine_polars import (
     run_chain_from_db,
     run_orchestration,
 )
-from flextool.engine_polars._db_loader import FlexToolRunner
+from flextool.engine._db_loader import FlexToolRunner
 from flextool.spinedb_backend import SpineDBBackend
 from flextool.process_inputs import TabularReader, write_to_flextool_input_db
 from flextool.process_outputs import write_outputs, post_process_results
@@ -879,7 +879,7 @@ slack semantics.
 4. **Precision cleanup (`--precision-digits`).** Every numeric value is
    rounded to 10 significant figures so benign precision artifacts don't
    trip near-duplicate detection.
-5. **Autoscale package** (`engine_polars/autoscale/`). Three layers,
+5. **Autoscale package** (`engine/autoscale/`). Three layers,
    on by default (gate via `--scaling=off` / `FLEXTOOL_SCALING=off`;
    intermediate modes are `solver_only`, `basic`, `full`):
    - **Layer 1 — detect** (`_ranges.py`). Walks the assembled LP and
@@ -933,7 +933,7 @@ slack semantics.
      range) and folds D's escape-tier valve into the same pass, so the
      LP arriving at HiGHS is comfortably within the solver's
      conditioning sweet spot.
-6. **YAML audit** (`engine_polars/autoscale/_report.py`). After every
+6. **YAML audit** (`engine/autoscale/_report.py`). After every
    solve, writes `solve_data/autoscale_<solve>.yaml` covering Layer 1
    ranges, the Layer 2 plan (per-type exponents + post-L2 ranges),
    and the Layer 3 plan (`user_bound_scale`, escape-tier).
@@ -942,7 +942,7 @@ slack semantics.
    solve's **post-autoscale** LP is still wide-ranged (i.e. the autoscaler
    could not tame the spread), and even then it is framed as a possibility
    — never as the certified cause. Accept/reject itself is decided by
-   `engine_polars/_solve_acceptance.py` from the solver's own diagnostics
+   `engine/_solve_acceptance.py` from the solver's own diagnostics
    (see "Solve acceptance" below), not by the range report.
 7. **Manual override.** `--user-bound-scale N` (or DB
    `solve.user_bound_scale`) pins Layer 3's bound-scale exponent and
@@ -962,7 +962,7 @@ HiGHS refuses to *certify* — post-solve leaves the dual objective slightly
 inconsistent, so HiGHS reports `kUnknown` rather than a failure. FlexTool
 consumes the primal for every output, so such a solve is usable.
 
-`engine_polars/_solve_acceptance.py::classify_acceptance` decides from the
+`engine/_solve_acceptance.py::classify_acceptance` decides from the
 solver's own diagnostics (`polar_high.Solution.solve_diagnostics()`, a
 snapshot of `getModelStatus()` + `getInfo()`):
 
@@ -1021,7 +1021,7 @@ tests/
 ├── scenarios.yaml               Integration-suite scenario definitions.
 ├── expected/                    Golden CSVs (per-scenario, regenerated
 │                                  when the suite genuinely changes).
-├── engine_polars/               Engine-internal unit tests.
+├── engine/               Engine-internal unit tests.
 ├── spinedb_backend/             Backend unit tests.
 ├── model/                       Model-level end-to-end suites.
 ├── gui/                         GUI startup tests.
@@ -1030,10 +1030,10 @@ tests/
 ```
 
 `scenario_workdir(scenario_name, db_fixture="main")` (defined in
-`tests/engine_polars/conftest.py`) is a session-scoped fixture that
+`tests/engine/conftest.py`) is a session-scoped fixture that
 builds a per-scenario workdir on demand by running the full cascade with
 `csv_dump=True`. It replaced the historical bulky CSV snapshot pattern
-that previously sat under `tests/engine_polars/data/work_*/` (~521 MB
+that previously sat under `tests/engine/data/work_*/` (~521 MB
 gitignored); the directories that remain contain only a single
 `golden_obj.json` golden file each. Tests do not depend on pre-built
 fixture directories.
@@ -1041,8 +1041,8 @@ fixture directories.
 ### Three-tier gate
 
 - **Inner loop** — module-specific tests, run after every edit
-  (typically `tests/engine_polars/<area>/`).
-- **Broader gate** — `tests/engine_polars/` full sweep, once per commit
+  (typically `tests/engine/<area>/`).
+- **Broader gate** — `tests/engine/` full sweep, once per commit
   batch.
 - **Activation truth** — full `tests/` including the integration scenario
   suite, run rarely (overnight / release).

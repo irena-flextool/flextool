@@ -32,7 +32,7 @@ from flextool.process_outputs._inmemory_helpers import (
 if TYPE_CHECKING:
     from polar_high import Solution
 
-    from flextool.engine_polars.input import FlexData
+    from flextool.engine.input import FlexData
 
 
 # ---------------------------------------------------------------------------

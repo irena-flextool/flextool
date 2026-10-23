@@ -56,7 +56,7 @@ if str(TEST_DIR) not in sys.path:
 
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 
 
@@ -790,7 +790,7 @@ def test_same_level_cold_rebuild_releases_prior_highs(
     dispatch-on-dispatch stack).  Structural assertion via the env-gated
     cross-level audit; LP is trivial so no GB needed.
     """
-    from flextool.engine_polars import _orchestration
+    from flextool.engine import _orchestration
 
     monkeypatch.setenv("FLEXTOOL_LEVEL_RELEASE_AUDIT", "1")
     _orchestration._LEVEL_RELEASE_AUDIT.clear()

@@ -43,7 +43,7 @@ from build_lh2_three_region import (  # noqa: E402
 )
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402
 
 
 # Tolerance lifted from the existing scenario-test convention.

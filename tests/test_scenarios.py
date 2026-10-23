@@ -33,7 +33,7 @@ if str(TEST_DIR) not in sys.path:
 
 from db_utils import round_for_comparison  # noqa: E402  # imports after sys.path manipulation above
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
+from flextool.engine import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402  # imports after sys.path manipulation above
 
 
@@ -212,9 +212,9 @@ def test_scenario(
 ) -> None:
     regenerate = request.config.getoption("--regenerate")
 
-    # Run the model via the engine_polars cascade (the legacy GMPL
+    # Run the model via the engine cascade (the legacy GMPL
     # ``FlexToolRunner.run_model`` path was removed in Δ.22 — see
-    # ``flextool/engine_polars/_solver_base.py``).  ``run_chain_from_db``
+    # ``flextool/engine/_solver_base.py``).  ``run_chain_from_db``
     # writes ``input/`` + ``solve_data/`` and drives the per-solve
     # cascade end-to-end; the post-process CSVs are then written by
     # ``write_outputs`` below (which needs the last sub-solve's

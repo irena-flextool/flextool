@@ -2,7 +2,7 @@
 
 The :mod:`input_derivation` tier sits between
 :mod:`flextool.spinedb_backend` (raw EAV → polars materialisation) and
-the in-cascade :class:`flextool.engine_polars._flex_data_provider.FlexDataProvider`
+the in-cascade :class:`flextool.engine._flex_data_provider.FlexDataProvider`
 that the rest of the engine consumes.
 
 Architecture
@@ -44,7 +44,7 @@ import spinedb_api as api
 from spinedb_api import DatabaseMapping
 
 if TYPE_CHECKING:
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.engine._flex_data_provider import FlexDataProvider
 
 
 __all__ = ["run"]
@@ -53,7 +53,7 @@ __all__ = ["run"]
 def _provider_key(filename: str) -> str:
     """Canonical Provider key for ``input/<stem>.csv`` style paths.
 
-    Matches the convention in :mod:`flextool.engine_polars._emit_provider_io`:
+    Matches the convention in :mod:`flextool.engine._emit_provider_io`:
     ``"<parent_dir_name>/<stem>"``.
     """
     p = Path(filename)
@@ -85,7 +85,7 @@ def run(
     3. **DB-driven derivations** (DC power flow, process method,
        commodity ladder cumulative + annual + sets).
     4. **Native preprocessing emitters** — the dozen modules under
-       :mod:`flextool.engine_polars._emit_*` that produce the
+       :mod:`flextool.engine._emit_*` that produce the
        ``solve_data/*.csv`` artefacts the cascade consumes pre-solve.
        Each is invoked directly with ``provider=`` so its frames flow
        into the Provider and disk emission is skipped.
@@ -210,7 +210,7 @@ def run(
         # Step 3 — write_input-time native preprocessing emitters.
         # Each emit_* threads the Provider directly so frames flow into
         # memory rather than disk.
-        from flextool.engine_polars import (
+        from flextool.engine import (
             _emit_leaf_sets as _leaf,
             _emit_mid_sets as _mid,
             _emit_calc_params as _calc,

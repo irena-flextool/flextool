@@ -34,7 +34,7 @@ import polars as pl
 # Legacy pandas output namespace spells them out so plot / write_outputs
 # / out_*.py modules read them as ``period`` / ``time`` / ``node`` /
 # ``process`` etc.  Keep this map in sync with the per-field comments in
-# :class:`flextool.engine_polars.input.FlexData`.
+# :class:`flextool.engine.input.FlexData`.
 DIM_NAMES: dict[str, str] = {
     "n": "node",
     "p": "process",

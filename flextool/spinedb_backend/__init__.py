@@ -14,7 +14,7 @@ Architecture
 The Backend owns the EAV → tabular transformation.  Its methods return
 canonical-schema :class:`polars.DataFrame` objects; **no disk writes**
 happen anywhere in this package.  Disk emission is the Provider's job
-(via :meth:`flextool.engine_polars._flex_data_provider.FlexDataProvider.snapshot_processed_inputs`).
+(via :meth:`flextool.engine._flex_data_provider.FlexDataProvider.snapshot_processed_inputs`).
 
 See ``specs/step_2_5_audit.md`` Section 1 and Section 7 (items 1-4)
 for the migration plan.

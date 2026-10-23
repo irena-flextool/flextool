@@ -62,7 +62,7 @@ dependencies = [
     # commodity-ladder trade model encode the corrected `full`-autoscale
     # solutions, which the pre-3.6.1 (buggy) floor mis-computes — the hard floor.
     # 3.7.0 adds Solution.solve_diagnostics(), which the cascade solve-acceptance
-    # path (engine_polars/_solve_acceptance.py) calls to decide whether a
+    # path (engine/_solve_acceptance.py) calls to decide whether a
     # HiGHS-uncertified solve is usable — required, or that call AttributeErrors.
     # 3.8.0 adds per-element variable bounds (Param-valued ``upper``), which
     # the indirect-unit input-arc limit (input_share_max) uses on

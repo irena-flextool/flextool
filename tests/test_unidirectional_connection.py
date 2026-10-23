@@ -18,7 +18,7 @@ from spinedb_api import DatabaseMapping, import_data
 
 from flextool.input_derivation._specs import METHODS_MAPPING
 from flextool.input_derivation._process_method import derive_process_method
-from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.engine._flex_data_provider import FlexDataProvider
 from flextool.spinedb_backend import SpineDBBackend
 import spinedb_api as _spinedb_api
 

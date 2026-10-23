@@ -55,7 +55,7 @@ python -m pytest tests/spinedb_backend/test_axis_contract.py -v
    - `synthetic` — fixed tokens introduced by cascade derivations (no DB source).
    - `union` — composite axis combining other axes' vocabularies.
 2. Fill in the `source` field — string / list / object per `source_type`.
-3. Add `column_synonyms` if the cascade uses friendly column names that should map to the same enum (mirrors `_AXIS_SYNONYMS` in `flextool/engine_polars/_axis_enums.py`).
+3. Add `column_synonyms` if the cascade uses friendly column names that should map to the same enum (mirrors `_AXIS_SYNONYMS` in `flextool/engine/_axis_enums.py`).
 4. Add `filter` if the vocabulary is intersected with another set (e.g. scenario filter, realized periods).
 5. If introducing synthetic tokens that aren't from the DB, register them in `synthetic_token_allowlist` AND in the axis's `tokens` field (for `source_type: synthetic`) or `tokens_default_extension` (for hybrid axes).
 6. Update the schema (`flextool_axis_contract.schema.json`) only if you need a new `source_type` enum value or a new optional field shape.

@@ -451,7 +451,7 @@ Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [
 
 ### Flex-temporal decomposition (per-group step duration)
 
-- `new_stepduration` - Hours. Members of this group operate at this step duration in the LP. Overrides the solve-level `new_stepduration` for the entities in this group. Enables mixed-resolution dispatch (e.g. hourly electricity on default-resolution nodes, daily hydrogen on a coarsened group). See the per-entity blocks logic in `engine_polars` for how block-aware constraints handle the mix.
+- `new_stepduration` - Hours. Members of this group operate at this step duration in the LP. Overrides the solve-level `new_stepduration` for the entities in this group. Enables mixed-resolution dispatch (e.g. hourly electricity on default-resolution nodes, daily hydrogen on a coarsened group). See the per-entity blocks logic in `engine` for how block-aware constraints handle the mix.
 
 ### Controlling outputs
 

@@ -23,8 +23,8 @@ OUTPUT_CONFIG = str(REPO_ROOT / "templates" / "default_plots.yaml")
 if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
-from flextool.engine_polars._flex_data_provider import FlexDataProvider  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
+from flextool.engine._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402  # imports after sys.path manipulation above
 
 

@@ -77,7 +77,7 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
     """Δ.21 — drive the native polar_high cascade.
 
     Returns a tuple ``(return_code, last_step)`` where ``last_step``
-    is the :class:`flextool.engine_polars.OrchestrationStep` of the
+    is the :class:`flextool.engine.OrchestrationStep` of the
     final (or only) sub-solve, used by the caller to thread
     ``flex_data`` + ``solution`` into ``write_outputs`` for the
     in-memory parameter / set namespace path (Δ.31).
@@ -93,7 +93,7 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
     # ``solve_data/`` from the writer-port modules.
     csv_dump_on = bool(getattr(args, 'csv_dump', False))
 
-    from flextool.engine_polars import run_chain_from_db
+    from flextool.engine import run_chain_from_db
 
     # Drive the native cascade end-to-end.  ``run_chain_from_db``
     # handles flextool's preprocessing (write_input) AND the per-solve
@@ -799,7 +799,6 @@ def main():
         for _noisy in (
             "flextool.process_outputs.handoff_writers",
             "flextool.process_outputs.read_highs_solution",
-            "flextool.engine_polars.handoff_writers",
         ):
             logging.getLogger(_noisy).setLevel(logging.WARNING)
 
@@ -855,7 +854,7 @@ def main():
     # Benders decomposition is now DB-driven and per-solve: the
     # orchestrator reads ``solve.decomposition`` for each solve and runs
     # the Benders region driver for the ones set to ``benders``
-    # (see engine_polars._orchestration / docs/dev/decomposition.md).  The
+    # (see engine._orchestration / docs/dev/decomposition.md).  The
     # old global ``--decomposition lagrangian`` standalone path was
     # removed; nothing special happens here — the normal run path below
     # handles every scheme.
@@ -898,7 +897,7 @@ def main():
         # on top is just noise.  Other exceptions get the full
         # traceback because they're (probably) bugs in flextool.
         try:
-            from flextool.engine_polars._solver_dispatch import (
+            from flextool.engine._solver_dispatch import (
                 FlexToolUserError,
             )
         except Exception:  # noqa: BLE001

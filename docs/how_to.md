@@ -1278,7 +1278,7 @@ Additional parameters:
 - `solver_precommand` creates a text in front of the cplex call. This is useful when dealing with floating licences. The command allows to call the licence server to reserve the licence for the duration of the cplex program with a command line argument.
 - `solver_arguments` is an array containing additional CPLEX solver commands
 
-<!-- TODO: expand in dev/engine_polars.md — document the exact CPLEX command line under the polars-based LP build. -->
+<!-- TODO: expand in dev/engine.md — document the exact CPLEX command line under the polars-based LP build. -->
 
 ![Cplex parameters](./img/concept/cplex.png)
 
@@ -1403,8 +1403,8 @@ The choice is per solve, so a single chain can mix schemes (e.g. a
 Benders investment solve followed by a monolithic dispatch solve — the
 Benders invest solve's realised trade + in-region capacity threads into
 the downstream dispatch). The per-solve routing is in
-`flextool/engine_polars/_orchestration.py` and the coordinator (master +
-cut loop) in `flextool/engine_polars/_benders.py`. `benders_max_iter`
+`flextool/engine/_orchestration.py` and the coordinator (master +
+cut loop) in `flextool/engine/_benders.py`. `benders_max_iter`
 caps the cut loop and `benders_tolerance` is the relative
 optimality-gap threshold for declaring convergence. Use Benders when the
 per-region solve is cheap but the monolithic solve is expensive; if the
@@ -1416,7 +1416,7 @@ usually better.
 
 `timeset.timeset_weights` lets each timestep within a `timeset` carry a custom weight that is applied to the cost and slack terms in the objective. The typical use case is a coarse, OSeMOSYS-style timeslice structure where some timesteps cover more year-hours than others (wet vs. dry season, peak vs. off-peak day-types) — `timeset_duration` already controls how long each step is, but `timeset_weights` is what scales the *contribution to the annual cost* when those slices are uneven.
 
-The parameter is a flat Map on the `timeset` entity: index is the timestep name, value is a float. Weights are normalised per period to sum to 1 and then re-scaled by the number of active timesteps, so uniform input reproduces weight = 1 per step (the default behaviour) and the absolute magnitude of the weights does not matter — only the relative shape does. Decoder lives in `flextool/engine_polars/_timeline.py` (`_decode_timeset_weights`) and the per-period normalisation is documented under `TimelineConfig.timeset_weights` in the same file. See also the `timeset_weights` entry in [Reference](reference.md).
+The parameter is a flat Map on the `timeset` entity: index is the timestep name, value is a float. Weights are normalised per period to sum to 1 and then re-scaled by the number of active timesteps, so uniform input reproduces weight = 1 per step (the default behaviour) and the absolute magnitude of the weights does not matter — only the relative shape does. Decoder lives in `flextool/engine/_timeline.py` (`_decode_timeset_weights`) and the per-period normalisation is documented under `TimelineConfig.timeset_weights` in the same file. See also the `timeset_weights` entry in [Reference](reference.md).
 
 !!! note "Mutually exclusive: timeset_weights and representative_period_weights"
     A single `timeset` may carry **either** `timeset_weights` (per-step weights for non-RP timeslice models) **or** `representative_period_weights` (per-period weights for RP-clustered models), not both. The runner errors out if both are set on the same timeset.
@@ -1441,7 +1441,7 @@ Auto-scaling never changes the LP optimum: every variable and constraint is unsc
 - you are tuning a freshly-converted model and want to spot unit-mix mistakes early
 - a rejected solve's hint flagged the *post-autoscale* LP as still wide-ranged (scaling *may* be implicated) — the YAML shows which layer (or which quantity type) could not compress the spread
 
-The autoscale package lives at `flextool/engine_polars/autoscale/` (`_ranges.py` / `_layer2.py` / `_layer3.py` / `_report.py`). For the user-facing guide and tuning tips, see [dev/scaling.md](dev/scaling.md).
+The autoscale package lives at `flextool/engine/autoscale/` (`_ranges.py` / `_layer2.py` / `_layer3.py` / `_report.py`). For the user-facing guide and tuning tips, see [dev/scaling.md](dev/scaling.md).
 
 ## How to export a partial Excel template (parameter-group picker)
 

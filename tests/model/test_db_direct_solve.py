@@ -1,7 +1,7 @@
 """DB-direct solve / overlay regression tests.
 
 This module hosts the survivors from the retired
-``tests/engine_polars/test_db_direct_parity.py``.  That file was Phase H
+``tests/engine/test_db_direct_parity.py``.  That file was Phase H
 migration scaffolding whose bulk verified CSV-loaded FlexData equals
 DB-direct-loaded FlexData (via ``_load_pair``); the migration is long
 established and those CSV-vs-DB comparisons no longer pull their weight.
@@ -37,7 +37,7 @@ The tests salvaged here have ongoing value:
 
 Fixture work folders are built dynamically per session via the
 ``scenario_workdir`` factory (``tests/conftest.py``).  The pre-v4.0.0
-committed ``tests/engine_polars/data/work_*`` snapshots that this
+committed ``tests/engine/data/work_*`` snapshots that this
 module used to read from disk are gone; each test now builds its
 workdir on demand from the JSON-backed SpineDB fixtures.
 """
@@ -46,8 +46,8 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine_polars import InMemoryReader, SpineDbReader, load_flextool
-from flextool.engine_polars import _direct_params as dp
+from flextool.engine import InMemoryReader, SpineDbReader, load_flextool
+from flextool.engine import _direct_params as dp
 from polar_high import Param
 
 
@@ -410,7 +410,7 @@ def test_load_flextool_with_db_reader_solves_correctly(scenario_workdir):
     so the solve must agree to numerical tolerance.
     """
     from polar_high import Problem
-    from flextool.engine_polars import build_flextool
+    from flextool.engine import build_flextool
     work = scenario_workdir("coal")
     reader = SpineDbReader(work / "tests.sqlite", "coal")
     data = load_flextool(work, db_reader=reader)
@@ -512,7 +512,7 @@ def test_db_direct_solve_parity_with_derived_a(work, sqlite, scenario, parquet,
             "regressing on the DB-direct side.  TODO Γ.4: rebuild fixture "
             "from a clean preprocessing run and re-enable.")
     from polar_high import Problem
-    from flextool.engine_polars import build_flextool
+    from flextool.engine import build_flextool
     fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
@@ -553,7 +553,7 @@ def test_db_direct_solve_parity_with_projections(work, sqlite, scenario, parquet
     reserve subsystem on a fixture that doesn't model reserves).
     """
     from polar_high import Problem
-    from flextool.engine_polars import build_flextool
+    from flextool.engine import build_flextool
     fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
     reader = SpineDbReader(fixture / sqlite, scenario)
     data = load_flextool(fixture, db_reader=reader)
@@ -602,7 +602,7 @@ def test_db_direct_solve_parity_with_derived_b(work, sqlite, scenario, parquet,
             "(e_invest_total mismatch between CSV and Spine).  See "
             "test_db_direct_solve_parity_with_derived_a for diagnosis.")
     from polar_high import Problem
-    from flextool.engine_polars import build_flextool
+    from flextool.engine import build_flextool
     fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
@@ -654,7 +654,7 @@ def test_db_direct_solve_parity_with_derived_c(work, sqlite, scenario,
     overlay applied.
     """
     from polar_high import Problem
-    from flextool.engine_polars import build_flextool
+    from flextool.engine import build_flextool
     fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
@@ -706,7 +706,7 @@ def test_db_direct_solve_parity_with_derived_d(work, sqlite, scenario,
     angle, and the reserve relationship Projection.
     """
     from polar_high import Problem
-    from flextool.engine_polars import build_flextool
+    from flextool.engine import build_flextool
     fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
@@ -761,7 +761,7 @@ def test_db_direct_solve_parity_with_derived_e(work, sqlite, scenario,
     storage-use-reference-value exclusion + rolling-handoff carriers.
     """
     from polar_high import Problem
-    from flextool.engine_polars import build_flextool
+    from flextool.engine import build_flextool
     fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
@@ -811,7 +811,7 @@ def test_db_direct_solve_parity_with_derived_f(work, sqlite, scenario,
     side.
     """
     from polar_high import Problem
-    from flextool.engine_polars import build_flextool
+    from flextool.engine import build_flextool
     fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
@@ -862,7 +862,7 @@ def test_db_direct_solve_parity_with_derived_g(work, sqlite, scenario,
     branch normalisation).
     """
     from polar_high import Problem
-    from flextool.engine_polars import build_flextool
+    from flextool.engine import build_flextool
     fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:

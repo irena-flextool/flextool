@@ -14,7 +14,7 @@ dispatch (the 2-stage seed of a future multi-stage market structure):
 ``'separate_dispatch'`` is hard-rejected by the W4a guard until a later
 slice lands the separate-dispatch machinery.  The engine-side
 read/resolver + guard are covered by
-``tests/engine_polars/test_w4a_dispatch_realization_guard.py``.
+``tests/engine/test_w4a_dispatch_realization_guard.py``.
 
 This migration is a structural clone of the v71
 ``stochastic_invest_method`` line.

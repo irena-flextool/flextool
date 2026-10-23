@@ -12,7 +12,7 @@ Related modules:
 * :mod:`flextool.spinedb_backend` — the EAV → polars materialisers
   (``SpineDBBackend.entities`` / ``parameter_values`` /
   ``parameter_defaults``);
-* :mod:`flextool.engine_polars._emit_*` — the native polars writers
+* :mod:`flextool.engine._emit_*` — the native polars writers
   that consume the materialised frames and emit derived ``solve_data/``
   frames.
 """

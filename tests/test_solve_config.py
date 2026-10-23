@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 
-from flextool.engine_polars._solve_config import SolverSettings, SolveConfig
+from flextool.engine._solve_config import SolverSettings, SolveConfig
 
 
 @dataclass

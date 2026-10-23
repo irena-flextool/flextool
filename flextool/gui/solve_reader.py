@@ -25,7 +25,7 @@ from dataclasses import dataclass
 import spinedb_api as api
 from spinedb_api import DatabaseMapping
 
-from flextool.engine_polars._db_reader import (
+from flextool.engine._db_reader import (
     DictMode,
     get_single_entities,
     params_to_dict,

@@ -4,7 +4,7 @@
 # Lines starting with "#" are comments.  This file is consumed via
 #     gurobi_cl ReadParams=<this-file> ResultFile=<sol> <mps>
 # by FlexTool's commercial-solver subprocess driver
-# (flextool/engine_polars/_subprocess_solve.py).
+# (flextool/engine/_subprocess_solve.py).
 #
 # Any value set here is overridden line-by-line by the scenario's
 # ``solver_options`` Map (and by the translated convenience knobs

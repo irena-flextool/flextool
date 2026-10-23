@@ -1,6 +1,6 @@
 """End-to-end gating test for the ``energy_margin`` demand-margin feature.
 
-The feature (``flextool/engine_polars/_emit_energy_margin.py``, wired into
+The feature (``flextool/engine/_emit_energy_margin.py``, wired into
 ``_emit_solve_time.run`` right after ``emit_pdtNodeInflow``) multiplies a
 node's ``pdtNodeInflow`` by its ``energy_margin_multiplier`` factor, but ONLY:
 
@@ -99,7 +99,7 @@ def _build_db(tmp_path_factory, *, with_margin: bool) -> str:
 def _run(url: str, work_folder: Path) -> dict:
     """Drive the full cascade, retaining per-step providers for the
     emitted-``pdtNodeInflow`` assertions."""
-    from flextool.engine_polars import run_chain_from_db
+    from flextool.engine import run_chain_from_db
 
     steps = run_chain_from_db(
         url, SCENARIO, work_folder=work_folder,

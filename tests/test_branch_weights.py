@@ -37,10 +37,10 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine_polars._emit_period_calc import (
+from flextool.engine._emit_period_calc import (
     emit_branch_weights,
 )
-from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.engine._flex_data_provider import FlexDataProvider
 
 
 # ---------------------------------------------------------------------------

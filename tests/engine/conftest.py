@@ -1,0 +1,90 @@
+"""Pytest sys.path setup for engine integration tests.
+
+Layers:
+  * polar-high is installed as a real dependency (``pip install -e``).
+  * ``flextool.engine`` is in the flextool-engine repo and importable
+    via the repo's package layout (no path injection needed).
+  * ``tests/engine/fixtures/`` — synthetic flextool-flavoured fixtures
+    that import flextool, kept on sys.path so test files can do
+    ``from flex_toy_<feature> import ...``.
+
+Also resets the global axis-enums :class:`contextvars.ContextVar` between
+tests so a prior test's ``load_flextool`` doesn't pollute the next test's
+joins with stale Enum vocabularies (cross-test ContextVar leak).
+
+The ``scenario_workdir`` factory lives in ``tests/conftest.py`` so tests
+under ``tests/model/`` (and any other sibling directory) can use it too;
+the engine conftest used to host it but moving it up made the
+sibling-tree migration possible without code duplication.
+"""
+
+import sys
+from pathlib import Path
+
+import pytest
+
+HERE = Path(__file__).resolve().parent
+FIXTURES = HERE / "fixtures"
+if str(FIXTURES) not in sys.path:
+    sys.path.insert(0, str(FIXTURES))
+# Under pytest --import-mode=importlib, the directory of a test file is not
+# automatically prepended to sys.path.  We host ``_golden.py`` and a couple
+# of other private helpers next to the test files, and they're imported by
+# bare name (``from _golden import ...``).  Make those resolvable.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+DATA_DIR = HERE / "data"
+
+
+# Phase 3d: canonical cross-cluster sweep list is exported from
+# ``_parity_sweep.py`` (a sibling module, not conftest) so test files
+# can import it without pytest's conftest discovery firing.
+from _parity_sweep import PARITY_SWEEP_CASES  # noqa: F401,E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_global_axis_enums():
+    """Reset the cascade-wide axis_enums ContextVar before each test.
+
+    ``load_flextool`` sets the global ContextVar on success (input.py
+    finally block ~line 4089) so ``build_flextool`` and other
+    post-load consumers see the live vocabulary.  But the
+    ContextVar persists into the next test in the same pytest worker,
+    pinning Enum dtypes that may differ from the next test's
+    fixture's vocabulary — surfacing as "enum on left does not match
+    enum on right" SchemaError in joins.
+
+    Resetting before each test guarantees a clean slate.
+    """
+    from flextool.engine._axis_enums import set_global_axis_enums
+    set_global_axis_enums(None)
+    yield
+    set_global_axis_enums(None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_recourse_walk_scope():
+    """Reset the recourse walker process-globals before/after each test.
+
+    :func:`._derived_params._enter_recourse_anchor_scope` arms three
+    module-globals for the active solve — the recourse anchor-pairs holder
+    and the boundary-scoped walker Provider + workdir (Slice D α-1).  A real
+    recourse solve leaves them ARMED when it finishes; in production the next
+    solve's cascade clears them (``input._apply_db_overrides`` calls
+    :func:`._derived_params._reset_recourse_scope` first — the F1 guarantee).
+
+    A solver-free unit test that calls ``period_walk_iterator`` /
+    ``commissioning_year_lf`` directly never runs that cascade, so without
+    this fixture it would inherit a PRIOR recourse solve test's Provider +
+    workdir on the same pytest worker and resolve the seam calendar from the
+    wrong solve's ``p_years_d.csv`` — silently producing an empty/garbage
+    commissioning frame (the construction-lead-time staging tests then see
+    the lag "vanish": all periods serving).  Reset before AND after each test
+    to give every test the same clean slate the F1 cascade guarantees a real
+    solve.
+    """
+    from flextool.engine import _derived_params as _drv
+    _drv._reset_recourse_scope()
+    yield
+    _drv._reset_recourse_scope()

@@ -84,7 +84,7 @@ def staged_provider(
     prev_cwd = os.getcwd()
     try:
         os.chdir(workdir)
-        from flextool.engine_polars._flex_data_provider import (
+        from flextool.engine._flex_data_provider import (
             FlexDataProvider,
         )
         provider = FlexDataProvider()
@@ -119,7 +119,7 @@ def _region_dir_from_provider(
     out = tmp_path_factory.mktemp(f"input_region_{region}")
     # Strip ``input/`` prefix so the snapshot lays files at <out>/<f>.csv
     # to match the historical disk layout.
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.engine._flex_data_provider import FlexDataProvider
     flat = FlexDataProvider()
     for key, frame in region_provider.items():
         if key.startswith("input/"):

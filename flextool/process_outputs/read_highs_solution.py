@@ -69,7 +69,7 @@ from flextool.lean_parquet import write_lean_parquet
 if TYPE_CHECKING:
     import highspy
 
-    from flextool.engine_polars.input import FlexData
+    from flextool.engine.input import FlexData
 
 _logger = logging.getLogger(__name__)
 
@@ -245,7 +245,7 @@ def _resolve_inv_scale_the_objective(
     Phase G — when ``scale_the_objective`` is supplied directly (cascade-
     threaded), use it and skip the disk read entirely.  Otherwise reads
     ``<work_folder>/solve_data/scale_the_objective.csv`` (Agent 12;
-    emitted by :func:`flextool.engine_polars._emit_solve_writers.write_scale_the_objective`).
+    emitted by :func:`flextool.engine._emit_solve_writers.write_scale_the_objective`).
     Falls back to ``1 / 1e-6`` when the file is missing / empty /
     unreadable — mirrors the ``default 1e-6`` clause on
     ``param scale_the_objective`` in ``flextool.mod``.
@@ -423,7 +423,7 @@ VARIABLE_SPECS: list[VariableSpec] = [
     # -- Investment-floor (min-side) duals ----------------------------------
     # Mirror of the maxInvest families above, reading the row duals of the
     # ``>=`` lower-floor constraints emitted by ``_eq_min_*`` /
-    # ``_eq_group_*`` (flextool/engine_polars/_cumulative_invest.py).
+    # ``_eq_group_*`` (flextool/engine/_cumulative_invest.py).
     # Purely additive (Increment 3): makes ``v_dual_min*`` available for the
     # later synthesis increment; nothing consumes these yet.  Same scale
     # sentinel + ``source="row_dual"`` as the max-side; absent families

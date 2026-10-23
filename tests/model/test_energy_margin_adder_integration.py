@@ -1,7 +1,7 @@
 """End-to-end gating test for the ADDITIVE ``energy_margin_adder`` feature.
 
 Sibling to ``test_energy_margin_integration.py`` (the multiplier).  The
-adder (``flextool/engine_polars/_emit_energy_margin_adder.py``, wired into
+adder (``flextool/engine/_emit_energy_margin_adder.py``, wired into
 ``_emit_solve_time.run`` right AFTER the multiplier) applies, ONLY in the
 solve that carries investment periods and ONLY to nodes whose
 ``energy_margin_method == 'inflow_adder'``:
@@ -16,7 +16,7 @@ Why a REAL cascade test (the emit unit test is not enough)
 The sibling MULTIPLIER once shipped with an INVERTED sign that passed
 synthetic positive-demand unit tests and was only caught by a real
 negative-demand run.  The adder emitter's synthetic parity tests live in
-``tests/engine_polars/test_energy_margin_adder_emit.py``; this module
+``tests/engine/test_energy_margin_adder_emit.py``; this module
 proves the SIGN and the ROW-CREATION on real HiGHS cascade solves, where a
 sign inversion would REDUCE demand / lower cost instead of deepening it.
 
@@ -175,7 +175,7 @@ def _build_db_period_map(tmp_path_factory, tag: str) -> str:
 def _run(url: str, work_folder: Path) -> dict:
     """Drive the full cascade, retaining per-step providers for the
     emitted-``pdtNodeInflow`` assertions and per-step objectives."""
-    from flextool.engine_polars import run_chain_from_db
+    from flextool.engine import run_chain_from_db
 
     steps = run_chain_from_db(
         url, SCENARIO, work_folder=work_folder,

@@ -30,8 +30,8 @@ from dataclasses import dataclass, field
 import spinedb_api as api
 from spinedb_api import DatabaseMapping
 
-from flextool.engine_polars._db_reader import DictMode, params_to_dict
-from flextool.engine_polars._derived_existing import _INVEST_NOT_ALLOWED
+from flextool.engine._db_reader import DictMode, params_to_dict
+from flextool.engine._derived_existing import _INVEST_NOT_ALLOWED
 
 # The schema default of ``unit__node__profile.profile_method``. A unit whose
 # arc never sets ``profile_method`` explicitly returns NO row from the param
@@ -55,7 +55,7 @@ class VreUnit:
             unset — carried for later phases, unused by the Phase 1-2 math).
         investable: Whether the unit's ``invest_method`` permits *building* new
             capacity — i.e. a method NOT in
-            :data:`flextool.engine_polars._derived_existing._INVEST_NOT_ALLOWED`
+            :data:`flextool.engine._derived_existing._INVEST_NOT_ALLOWED`
             (``not_allowed`` and the retire-only methods). This is exactly the
             engine's ``entityInvest`` membership test, kept canonical by
             importing that set.

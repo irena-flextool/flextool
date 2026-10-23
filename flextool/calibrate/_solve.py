@@ -13,7 +13,7 @@ Warm start
 Warm start is enabled via the environment, not the ``--warm-start`` CLI
 flag, because it is the env vars the engine actually reads
 (``FLEXTOOL_WARM_START`` / ``FLEXTOOL_BASIS_CACHE_DIR`` in
-``flextool.engine_polars._orchestration``).  A *stable* basis-cache
+``flextool.engine._orchestration``).  A *stable* basis-cache
 directory shared across iterations lets HiGHS reuse the previous
 iteration's basis when the structural model is unchanged (the adder is
 RHS-only, so the warm-start fingerprint is stable across iterations).

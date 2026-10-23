@@ -87,7 +87,7 @@ reserve without any `reservation` is therefore inactive.
    `_projection_params.process_delayed`), so a connection is modelled as
    if no delay were set, and `_validators.validate_connection_delay` warns
    once per connection with a non-zero delay
-   (`tests/engine_polars/test_connection_delay_ignored.py`). Applying a
+   (`tests/engine/test_connection_delay_ignored.py`). Applying a
    connection delay needs a delayed term in the node balance; when it is
    added, drop the filters and the warning.
 6. Dynamic and n-1 reserves activate only if some group of the same

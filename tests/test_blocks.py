@@ -1,4 +1,4 @@
-"""Unit tests for ``flextool.engine_polars._blocks`` (Agent 1.1).
+"""Unit tests for ``flextool.engine._blocks`` (Agent 1.1).
 
 The module's public surface: ``derive_blocks``, ``derive_overlap_set``,
 ``validate_group_membership``, ``emit_block_data`` and the end-to-end
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine_polars._blocks import (
+from flextool.engine._blocks import (
     BlockAssignments,
     BlockBoundaries,
     BlockPredecessors,
@@ -27,8 +27,8 @@ from flextool.engine_polars._blocks import (
     emit_block_data,
     validate_group_membership,
 )
-from flextool.engine_polars._flex_data_provider import FlexDataProvider
-from flextool.engine_polars._solve_state import FlexToolConfigError
+from flextool.engine._flex_data_provider import FlexDataProvider
+from flextool.engine._solve_state import FlexToolConfigError
 
 
 # ---------------------------------------------------------------------------

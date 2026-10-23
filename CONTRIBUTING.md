@@ -49,7 +49,7 @@ pytest tests/ -k "coal" -v
 
 ### LP snapshot gate (model-layer refactors)
 
-A change to `flextool/engine_polars/model.py` or its feature modules that should not change the model is checked with `tools/lp_snapshot.py`: it builds the LP of a fixed fixture set and writes named MPS files, then compares two snapshots byte for byte (or, with `--canonical`, up to row/column order). Emit order is part of the LP, so this also shows what reordering steps does.
+A change to `flextool/engine/model.py` or its feature modules that should not change the model is checked with `tools/lp_snapshot.py`: it builds the LP of a fixed fixture set and writes named MPS files, then compares two snapshots byte for byte (or, with `--canonical`, up to row/column order). Emit order is part of the LP, so this also shows what reordering steps does.
 
 ```bash
 python tools/lp_snapshot.py snapshot -j 8 _audit_reports/lp_base   # before the change
@@ -247,7 +247,7 @@ elif next_version == N:
 
 - **Focused changes** — one feature, one bug fix, or one refactoring per PR. Don't mix unrelated changes.
 - **Tests** — add or update tests for any new or changed functionality. If you're fixing a bug, add a test that would have caught it.
-- **Vectorized derive parity** — when you change a heavy `_emit_*` preprocessing derive, gate the vectorized derive against a reference implementation with a `tests/engine_polars/test_vectorize_<family>_parity.py` test, under a two-tier policy: **Tier A** strict byte-equality (`df_vec.equals(df_legacy)`) for pure lookup/coalesce families, **Tier B** tolerance (`rtol≈1e-12`, parsing both sides' rendered values back to float) for families that sum many terms. Run that per-family parity test in the inner loop.
+- **Vectorized derive parity** — when you change a heavy `_emit_*` preprocessing derive, gate the vectorized derive against a reference implementation with a `tests/engine/test_vectorize_<family>_parity.py` test, under a two-tier policy: **Tier A** strict byte-equality (`df_vec.equals(df_legacy)`) for pure lookup/coalesce families, **Tier B** tolerance (`rtol≈1e-12`, parsing both sides' rendered values back to float) for families that sum many terms. Run that per-family parity test in the inner loop.
 - **Updated golden files** — if your change affects solver outputs, regenerate the affected golden files and include them in the PR.
 - **Updated master template** — if your change modifies the database schema, include the regenerated `schemas/spinedb_schema.json`.
 - **Clear description** — explain what the PR does and why. Reference any related issues.
@@ -259,10 +259,10 @@ elif next_version == N:
 - [ ] No unintended changes to golden files
 - [ ] Master template is up-to-date (If schema changed. Check [CONTRIBUTING.md updating the data structure](#updating-the-data-structure))
 - [ ] Code follows existing patterns and style
-- [ ] New `add_var` / `add_cstr` / schema parameter is registered in the autoscale registries (`flextool/engine_polars/autoscale/_layer2_types.py`, `_quantity_types.py`); ran the affected tests with `FLEXTOOL_AUTOSCALE_STRICT=1`. A missing entry silently degrades the solve to an un-scaled LP — see [architecture.md "Numerical scaling"](docs/dev/architecture.md).
+- [ ] New `add_var` / `add_cstr` / schema parameter is registered in the autoscale registries (`flextool/engine/autoscale/_layer2_types.py`, `_quantity_types.py`); ran the affected tests with `FLEXTOOL_AUTOSCALE_STRICT=1`. A missing entry silently degrades the solve to an un-scaled LP — see [architecture.md "Numerical scaling"](docs/dev/architecture.md).
 - [ ] Any parameter broadcast over `(d,t)` goes through `_param_shapes` (`resolve_param_shape` / `broadcast_to_period_time` / `promote_param_to_dt`), never column-name axis detection — see [architecture.md "Parameter shapes & (d,t) broadcasting"](docs/dev/architecture.md).
 - [ ] New / changed tests build their DB from JSON or schema under `tmp_path` (no checked-in `.sqlite` dependency).
-- [ ] A changed heavy `_emit_*` derive is gated by a `tests/engine_polars/test_vectorize_<family>_parity.py` test against a reference implementation (Tier A `.equals` for pure lookup/coalesce families, Tier B `rtol≈1e-12` for many-term sums).
+- [ ] A changed heavy `_emit_*` derive is gated by a `tests/engine/test_vectorize_<family>_parity.py` test against a reference implementation (Tier A `.equals` for pure lookup/coalesce families, Tier B `rtol≈1e-12` for many-term sums).
 
 ### Review Process
 

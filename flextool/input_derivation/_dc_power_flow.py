@@ -17,7 +17,7 @@ the group-level ``transfer_method`` mechanism that DC PF activates).
 
 This module replaces the on-disk emission and the
 ``input_writer._write_dc_power_flow_data`` call site.  No CSV touches
-disk here; the cascade consumer (:mod:`flextool.engine_polars._dc_power_flow`)
+disk here; the cascade consumer (:mod:`flextool.engine._dc_power_flow`)
 reads the four frames from the Provider.
 
 See ``specs/step_2_5_audit.md`` Section 7 item 9 for the migration

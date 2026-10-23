@@ -9,7 +9,7 @@ penalty (unserved-energy / over-supply slack) variables:
 
 ``'off'`` removes the node's ``vq_state_up`` / ``vq_state_down`` slack
 variables at model-build time; the engine-side gating is covered by
-``tests/engine_polars/test_penalty_method_off.py``.
+``tests/engine/test_penalty_method_off.py``.
 """
 
 from __future__ import annotations

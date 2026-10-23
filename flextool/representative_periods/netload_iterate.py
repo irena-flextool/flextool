@@ -55,7 +55,7 @@ Solve subset mechanism
 ``cmd_run_flextool`` has NO ``--solves`` flag; the authoritative, DB-driven
 way to run a subset of a scenario's solves is the ``model.solves`` Array,
 resolved under the scenario's alternative stack
-(:meth:`flextool.engine_polars._solve_config.SolveConfig.load_from_db`).  The
+(:meth:`flextool.engine._solve_config.SolveConfig.load_from_db`).  The
 driver therefore writes a dedicated ``model.solves`` OVERRIDE alternative at
 the TOP of the scenario's stack (mirroring
 :mod:`flextool.calibrate._db_alt`): set to the invest solve(s) for an
@@ -81,7 +81,7 @@ from flextool.calibrate._readers import (
 )
 from flextool.calibrate._solve import run_solve
 from flextool.calibrate._solve_status import assess_solve
-from flextool.engine_polars._db_reader import get_single_entities
+from flextool.engine._db_reader import get_single_entities
 from flextool.gui.solve_reader import read_scenario_solves
 from flextool.representative_periods.preprocess import (
     preprocess_representative_periods,

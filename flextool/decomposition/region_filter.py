@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Iterable
 import polars as pl
 
 if TYPE_CHECKING:  # pragma: no cover
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.engine._flex_data_provider import FlexDataProvider
 
 
 # ---------------------------------------------------------------------------
@@ -1111,7 +1111,7 @@ def build_region_provider(
     (``_EXPLICIT_SPECS`` / ``_infer_column_spec_from_header`` /
     ``_virtual_rows``); only the data carrier changes.
     """
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.engine._flex_data_provider import FlexDataProvider
 
     mem = discover_region_membership_from_provider(provider, region)
     if all_regions is not None:

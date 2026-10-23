@@ -281,8 +281,8 @@ def test_rp_fold_edges_conserve_and_match_tw(tmp_path):
         _rp_fold_edges_and_tw,
         _rp_weight_sum_by_period,
     )
-    from flextool.engine_polars._solve_config import SolveConfig
-    from flextool.engine_polars._timeline import TimelineConfig
+    from flextool.engine._solve_config import SolveConfig
+    from flextool.engine._timeline import TimelineConfig
 
     url = json_to_db(RP_FIXTURE_JSON, tmp_path / "c.sqlite")
     sc = SolveConfig.load_from_db_url(url, RP_SCENARIO)
@@ -341,12 +341,12 @@ def test_rp_weight_sum_uses_actual_nonuniform_weights(tmp_path):
         _rp_weight_sum_by_period,
         _weight_sum_by_period,
     )
-    from flextool.engine_polars._per_solve_sets import (
+    from flextool.engine._per_solve_sets import (
         derive_per_solve_aggregates,
     )
-    from flextool.engine_polars._solve_config import SolveConfig
-    from flextool.engine_polars._spinedb_reader import SpineDbReader
-    from flextool.engine_polars._timeline import TimelineConfig
+    from flextool.engine._solve_config import SolveConfig
+    from flextool.engine._spinedb_reader import SpineDbReader
+    from flextool.engine._timeline import TimelineConfig
 
     url = json_to_db(RP_FIXTURE_JSON, tmp_path / "c.sqlite")
     src = SpineDbReader(url, RP_SCENARIO)
@@ -367,7 +367,7 @@ def test_rp_weight_sum_uses_actual_nonuniform_weights(tmp_path):
         if ts in tc.rp_weights:
             import polars as pl
 
-            from flextool.engine_polars._emit_solve_writers import (
+            from flextool.engine._emit_solve_writers import (
                 _compute_rp_frames,
             )
             tl = tc.timesets__timeline[ts]

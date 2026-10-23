@@ -73,7 +73,7 @@ def _registry_facet_targets() -> "dict[tuple[str, str], list[tuple[str, tuple[st
     ``("period", "tier")``).
     """
     try:
-        from flextool.engine_polars._param_shapes import (
+        from flextool.engine._param_shapes import (
             LeafKind,
             PARAM_ALLOWED_SHAPES,
             facet_keys,
@@ -502,7 +502,7 @@ def _group_map_records(
         # array slot number OR the period token.  Reconstruct an Array
         # so the round-trip preserves the SpineDB ``"array"`` type — a
         # hard requirement for ``model.solves``, ``solve.realized_periods``
-        # and friends, which downstream code (engine_polars._solve_config
+        # and friends, which downstream code (engine._solve_config
         # ``params_to_dict``) only treats as ordered sequences when the
         # parsed value is an ``Array`` instance.  Index_name is preserved
         # from the source so the engine's axis labels stay intact.

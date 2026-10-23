@@ -69,8 +69,8 @@ OUTPUT_CONFIG = str(REPO_ROOT / "templates" / "default_plots.yaml")
 if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
-from flextool.engine_polars._flex_data_provider import FlexDataProvider  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
+from flextool.engine._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402  # imports after sys.path manipulation above
 
 
@@ -90,7 +90,7 @@ def _run_scenario(
     Δ.22 migration: ``SolverRunner.run`` was deleted, so the legacy
     ``runner.run_model()`` path raises :class:`NotImplementedError`.
     The native cascade replacement is
-    :func:`flextool.engine_polars.run_chain_from_db`.  ``csv_dump=True``
+    :func:`flextool.engine.run_chain_from_db`.  ``csv_dump=True``
     triggers the per-solve snapshot to ``solve_data/`` so the
     cost-aggregation hand-derivations below can read
     ``p_step_duration.csv`` / ``p_rp_cost_weight.csv`` /
@@ -949,7 +949,7 @@ def test_storage_state_reference_price_credit() -> None:
     """Sentinel: the reference-price credit IS now implemented in Python
     in ``model._obj_storage_reference_price`` (storage-state
     reference-price objective term).  The wiring is exercised by
-    ``tests/engine_polars/constraints/test_storage_handoff_wiring.py``
+    ``tests/engine/constraints/test_storage_handoff_wiring.py``
     (Sc B: ``test_storage_handoff_wiring_sc_b_fix_price``) which proves
     the term fires with the correct sign and unitsize scaling.
 
@@ -969,7 +969,7 @@ def test_stochastic_branch_weight(
     term, so the two MUST agree.
 
     The LP objective folds ``pdt_branch_weight[d, t]`` into ``op_factor`` /
-    ``startup_factor`` (``flextool/engine_polars/model.py``).  Option (A)
+    ``startup_factor`` (``flextool/engine/model.py``).  Option (A)
     makes the post-process do the same: ``calc_slacks`` / ``calc_costs``
     weight each per-(d, t) cost term by ``pdt_branch_weight`` (via
     ``flextool/process_outputs/_branch_weight.py``), so

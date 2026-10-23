@@ -692,7 +692,7 @@ def prepare_dispatch_data(
         # is intentionally NOT rendered here.  It is, by construction, the
         # (group, connection) projection of the two directional sets
         # (connection→node ∪ node→connection; see
-        # engine_polars/_emit_arc_unions.py), so every connection it lists is
+        # engine/_emit_arc_unions.py), so every connection it lists is
         # already drawn by the directional paths above.  Rendering it too would
         # double-count each connection's flow.  The engine's authoritative
         # group-flow computation (process_outputs/calc_group_flows.py) likewise

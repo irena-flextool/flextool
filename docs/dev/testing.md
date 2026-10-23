@@ -1,7 +1,7 @@
 # Testing
 
 FlexTool has a multi-layer test pyramid: fast unit/integration tests on
-the `engine_polars` building blocks, scenario goldens built on demand
+the `engine` building blocks, scenario goldens built on demand
 from JSON fixtures, and end-to-end scenario runs that compare output
 CSVs against committed reference files. This page is a developer
 pointer — where the tests live, how the JSON-fixture architecture
@@ -11,12 +11,12 @@ markers gate CI.
 For the high-level test-layout inventory see
 [`architecture.md`](architecture.md) ("Test layout and fixture
 architecture"). For the engine internals being tested see
-[`engine_polars.md`](engine_polars.md). For the JSON-fixture rollout
+[`engine.md`](engine.md). For the JSON-fixture rollout
 narrative see the `CHANGELOG.md` entry for v3.47.0.
 
-## Layer 1 — engine_polars unit & integration
+## Layer 1 — engine unit & integration
 
-Lives under `tests/engine_polars/`. Covers the LP build path, derived
+Lives under `tests/engine/`. Covers the LP build path, derived
 parameter expansion, writer port, scaling pipeline (see
 [`scaling.md`](scaling.md)), decomposition (see
 [`decomposition.md`](decomposition.md)), warm-start handoff, fast load,
@@ -39,12 +39,12 @@ fixtures.
 
 Tests range from millisecond-class unit tests (block layout, derived
 params) to solver-touching parity tests. Synthetic flextool-flavoured
-fixtures live in `tests/engine_polars/fixtures/` and are auto-added to
-`sys.path` by `tests/engine_polars/conftest.py` so test modules can
+fixtures live in `tests/engine/fixtures/` and are auto-added to
+`sys.path` by `tests/engine/conftest.py` so test modules can
 `from flex_toy_<feature> import …` directly.
 
 **Meta-provider invariants.**
-`tests/engine_polars/test_meta_provider_invariants.py` enforces the
+`tests/engine/test_meta_provider_invariants.py` enforces the
 Provider-only cascade contract as executable tests, not convention:
 
 - `test_no_disk_csv_reads_in_cascade` — fails if a cascade module
@@ -79,7 +79,7 @@ Canonical fixtures currently in `tests/fixtures/`:
 
 | Fixture | Role |
 |---|---|
-| `tests.json` | Main fixture; `tests/scenarios.yaml` and most engine_polars tests build their work-folders from here. Also the source for the generated `templates_examples.json` canonical DB. |
+| `tests.json` | Main fixture; `tests/scenarios.yaml` and most engine tests build their work-folders from here. Also the source for the generated `templates_examples.json` canonical DB. |
 | `stochastics.json` | Stochastic / forecast-branch scenarios. Source for the generated `howto_stochastics.json` canonical DB. |
 | `stochastics_pbt_inflow.json` | PBT inflow scenarios (period-block-time stochastic inflow). |
 | `lh2_three_region.json` | LH2 three-region monolithic + Benders parity fixture (see [`decomposition.md`](decomposition.md)). |
@@ -95,8 +95,8 @@ dependencies.
 ### `scenario_workdir` — on-demand cascade fixture
 
 `scenario_workdir(scenario_name, db_fixture="main")`, defined in
-`tests/engine_polars/conftest.py`, is the session-scoped fixture that
-replaced the historical `tests/engine_polars/data/work_*/` snapshot
+`tests/engine/conftest.py`, is the session-scoped fixture that
+replaced the historical `tests/engine/data/work_*/` snapshot
 pattern. For a requested `(scenario, db_fixture)` pair it:
 
 1. Resolves `db_fixture` against the per-fixture session-scoped DB
@@ -119,7 +119,7 @@ def test_foo(scenario_workdir):
     # work is a Path to a populated workdir with input/output CSVs.
 ```
 
-The two `tests/engine_polars/data/work_<scenario>/` directories that
+The two `tests/engine/data/work_<scenario>/` directories that
 survive after Stage 4 (`work_lh2_three_region`, `work_test_a_lot`)
 hold only a single `golden_obj.json` golden objective each. No
 migrated test depends on the gitignored bulk CSV snapshot pattern;
@@ -196,9 +196,9 @@ through the Toolbox DAG rather than the Python runner directly.
 on the same loop):
 
 - **Inner loop** — module-specific tests after every edit, typically
-  `pytest tests/engine_polars/<area>/`. Run continuously while
+  `pytest tests/engine/<area>/`. Run continuously while
   iterating.
-- **Broader gate** — `pytest tests/engine_polars/` full sweep, once
+- **Broader gate** — `pytest tests/engine/` full sweep, once
   per commit batch (~27 minutes on a recent reference run).
 - **Activation truth** — `pytest tests/` (Layer 1 + scenario
   integration suite + `tests/model/` + `tests/gui/` +
@@ -257,7 +257,7 @@ The `smoke` marker is attached automatically to scenarios in
 ```bash
 pytest -m smoke              # the CI smoke gate, fast
 pytest -m "not solver"       # everything that doesn't touch a solver
-pytest tests/engine_polars/  # broader gate — engine layer
+pytest tests/engine/  # broader gate — engine layer
 pytest tests/                # activation truth (slow)
 ```
 
@@ -272,7 +272,7 @@ CSVs into `tests/expected/coal/`, and lets you commit the diff.
 
 ## Determinism guards
 
-`engine_polars` emitters keep cross-solve determinism through explicit
+`engine` emitters keep cross-solve determinism through explicit
 polars sort keys on every set / parameter frame before it enters the
 `polar_high.Problem`. The downstream LP row / column IDs are then
 assigned in canonical order regardless of Python hash randomisation.
@@ -284,7 +284,7 @@ test so scenarios that share solve names cannot cross-contaminate.
 ## Adding a new test
 
 - **Engine unit test.** Drop a `test_*.py` file into
-  `tests/engine_polars/` (or the matching `loaders/` / `constraints/`
+  `tests/engine/` (or the matching `loaders/` / `constraints/`
   / `objective/` subdirectory) — pytest auto-discovers.
 - **New scenario golden.** Append a scenario entry to
   `tests/scenarios.yaml`, then
@@ -301,7 +301,7 @@ test so scenarios that share solve names cannot cross-contaminate.
 
 - [`architecture.md`](architecture.md) — pipeline end-to-end,
   Repository layout, verify-hook inventory
-- [`engine_polars.md`](engine_polars.md) — the core under Layer 1
+- [`engine.md`](engine.md) — the core under Layer 1
 - [`db_schema.md`](db_schema.md) — schema migration chain that
   `sync_master_json_template --verify` enforces
 - [`decomposition.md`](decomposition.md) — Benders parity context

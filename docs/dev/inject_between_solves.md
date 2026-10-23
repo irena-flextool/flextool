@@ -6,7 +6,7 @@ data from an external tool — another optimisation model, a market
 simulator, a Python data step — into a FlexTool cascade *between*
 sub-solves of the same run.
 
-[rc]: ../../flextool/engine_polars/_orchestration.py
+[rc]: ../../flextool/engine/_orchestration.py
 
 ## Purpose
 
@@ -33,7 +33,7 @@ script imports `run_chain_from_db` and passes a callable.
 ## API
 
 ```python
-from flextool.engine_polars import run_chain_from_db
+from flextool.engine import run_chain_from_db
 
 run_chain_from_db(
     input_db_url,
@@ -51,9 +51,9 @@ It is invoked **once per sub-solve iteration**, after the natural
 handoff translators and before preprocessing. Returning `{}` (or
 `None`) means "no override this iteration".
 
-Full source: `flextool/engine_polars/_orchestration.py` (entry point),
-`flextool/engine_polars/_native_run_model.py` (invocation site),
-`flextool/engine_polars/_provider_translators.py`
+Full source: `flextool/engine/_orchestration.py` (entry point),
+`flextool/engine/_native_run_model.py` (invocation site),
+`flextool/engine/_provider_translators.py`
 (`translate_overrides_to_provider`, `read_handoff_frame`,
 `dump_provider_sources`).
 
@@ -61,8 +61,8 @@ Full source: `flextool/engine_polars/_orchestration.py` (entry point),
 
 Only the 11 keys below are overridable. Supplying any other key raises
 `ValueError` in `translate_overrides_to_provider`. The constants live
-in `flextool.engine_polars._provider_keys`; import as
-`from flextool.engine_polars import _provider_keys as K`.
+in `flextool.engine._provider_keys`; import as
+`from flextool.engine import _provider_keys as K`.
 
 | Key constant | What it overrides | Required columns |
 |---|---|---|
@@ -170,8 +170,8 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine_polars import run_chain_from_db
-from flextool.engine_polars import _provider_keys as K
+from flextool.engine import run_chain_from_db
+from flextool.engine import _provider_keys as K
 
 
 WATCH_DIR = Path("overrides_in")
@@ -271,7 +271,7 @@ itself, not this hook.
 
 ## See also
 
-- [`tests/engine_polars/test_override_provider.py`](../../tests/engine_polars/test_override_provider.py) —
+- [`tests/engine/test_override_provider.py`](../../tests/engine/test_override_provider.py) —
   end-to-end test of the override path plus the audit-dump variant.
   Useful as a reference for additional patterns (capturing a real
   handoff frame, scaling it, asserting the propagated effect).

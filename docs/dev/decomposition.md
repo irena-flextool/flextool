@@ -3,7 +3,7 @@
 Decomposition in FlexTool means splitting a monolithic LP into smaller
 solvable pieces, then recombining their solutions. FlexTool supports
 three independent flavours, all implemented natively in
-`engine_polars`:
+`engine`:
 
 - **Spatial / Benders** — partition the network into regions joined
   only by the inter-regional trade flows; a coordinating master holds
@@ -28,7 +28,7 @@ exception noted in [§6](#6-where-they-compose).
 
 The engine-side overview of the per-solve pipeline and warm-start /
 Benders / cascade solve modes lives in
-[engine_polars.md](engine_polars.md); this page focuses on the
+[engine.md](engine.md); this page focuses on the
 decomposition mechanics themselves.
 
 ## 1. Picking a decomposition
@@ -122,7 +122,7 @@ The reference catalogue entry is `group.decomposition_method` in
 `benders_regional` (the `_region` suffix makes the geographic flavour
 explicit, leaving naming room for any future temporal variant). The
 source of truth is
-`flextool/engine_polars/_region_filter.py:load_decomposition_method`.
+`flextool/engine/_region_filter.py:load_decomposition_method`.
 
 ### 2.3 Half-flow rewriting
 
@@ -250,7 +250,7 @@ want decomposed, optionally overriding the two `benders_*` knobs:
 Because the decision is per solve, a single chain can mix schemes — for
 example a Benders investment solve followed by a monolithic
 full-resolution dispatch solve. The orchestrator
-(`engine_polars._orchestration`) reads each solve's resolved
+(`engine._orchestration`) reads each solve's resolved
 `decomposition` value as it iterates `model.solves`. This is distinct
 from the group-level `group.decomposition_method`
 (`none` / `benders_regional`), which declares *which groups are
@@ -275,19 +275,19 @@ solving — useful for inspecting how the rewriter sees a given region.
 
 | Symbol | Module |
 |---|---|
-| `solve_benders(data, *, ...)` — top-level entry | `flextool/engine_polars/_benders.py` |
+| `solve_benders(data, *, ...)` — top-level entry | `flextool/engine/_benders.py` |
 | `BendersResult` — return type | same |
 | `Coupling`, `_build_arcs`, the master + cut loop | same |
-| `master_network_data` (network-only reduced FlexData for the master) | `flextool/engine_polars/_region_filter.py` |
+| `master_network_data` (network-only reduced FlexData for the master) | `flextool/engine/_region_filter.py` |
 | `RegionSplit`, `HalfFlow`, `split` | same |
 | `load_decomposition_method` (reads ``decomposition_method`` from solve_data) | same |
 | `WarmProblem.add_cut_row` / `add_recourse_col` / `solve(retry_on_unknown=…)` | `polar_high` (external) |
 
-The per-solve routing lives in `flextool/engine_polars/_orchestration.py`
+The per-solve routing lives in `flextool/engine/_orchestration.py`
 (`_PolarHighCascadeSolver._run_benders_solve`, driven by
 `SolveConfig.decomposition_for`). The Benders path is also surfaced
 as a "Solve modes" entry in
-[engine_polars.md § Solve modes](engine_polars.md#solve-modes).
+[engine.md § Solve modes](engine.md#solve-modes).
 
 ## 3. Flex-temporal decomposition
 
@@ -390,9 +390,9 @@ Two structural assumptions:
 
 ### 3.5 Block-aware emitters
 
-The `_emit_*.py` modules in `engine_polars` (formerly `_writer_*.py`,
+The `_emit_*.py` modules in `engine` (formerly `_writer_*.py`,
 renamed in the writer→emitter Phases 1–5; see
-[engine_polars.md § Emitters](engine_polars.md#emitters-formerly-writer-ports))
+[engine.md § Emitters](engine.md#emitters-formerly-writer-ports))
 are block-aware. The major touch points:
 
 - **Node balance** — built on the block of the node, joined with
@@ -432,7 +432,7 @@ even for entities on a coarse block.
   scenario.
 
 The engine-side overview of flex-temporal lives in
-[engine_polars.md § Flex-temporal decomposition](engine_polars.md#flex-temporal-decomposition).
+[engine.md § Flex-temporal decomposition](engine.md#flex-temporal-decomposition).
 
 ## 4. Rolling / nested solves
 
@@ -466,7 +466,7 @@ Engine wiring:
 - The cascade reuses the same LP shell via `polar_high.WarmProblem`
   when consecutive rolls' `FlexData` fingerprints match; otherwise
   cold-rebuild. See
-  [engine_polars.md § Warm-start cascade](engine_polars.md#warm-start-cascade-polar_highwarmproblem).
+  [engine.md § Warm-start cascade](engine.md#warm-start-cascade-polar_highwarmproblem).
 
 ### 4.2 Nested
 
@@ -514,7 +514,7 @@ the optimisation but do not enter the realised outputs.
 The wiring lives in `_stochastic.StochasticSolver` (called from
 `RecursiveSolveBuilder`); non-anticipativity constraints are emitted
 by `_non_anticipativity.py` (`add_dispatch_constraints`, `add_invest_constraints`). See
-[engine_polars.md § Stochastic branches](engine_polars.md#stochastic-branches).
+[engine.md § Stochastic branches](engine.md#stochastic-branches).
 
 ## 5. RELEASE notes context
 
@@ -557,7 +557,7 @@ features. Quick map (full text in
 
 ## 7. See also
 
-- [engine_polars.md](engine_polars.md) — the engine guide; Solve modes
+- [engine.md](engine.md) — the engine guide; Solve modes
   section covers monolithic / warm / Benders and Flex-temporal
   decomposition section covers the BlockLayout shape.
 - [architecture.md](architecture.md) — top-level architecture; how the

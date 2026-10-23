@@ -61,7 +61,7 @@ def _has_facet_leaf_shape(entity_class: str, param_name: str) -> bool:
     if not entity_class or not param_name:
         return False
     try:
-        from flextool.engine_polars._param_shapes import (
+        from flextool.engine._param_shapes import (
             LeafKind,
             PARAM_ALLOWED_SHAPES,
             shape_to_axes,

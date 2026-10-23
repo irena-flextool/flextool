@@ -13,7 +13,7 @@ import numpy as np
 import spinedb_api as api
 from spinedb_api import DatabaseMapping, import_data, Map
 
-from flextool.engine_polars._db_reader import DictMode, params_to_dict
+from flextool.engine._db_reader import DictMode, params_to_dict
 from flextool.representative_periods import force_include
 from flextool.representative_periods.clustering import greedy_convex_hull_clustering
 from flextool.representative_periods.netload import (

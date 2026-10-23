@@ -42,8 +42,8 @@ TEST_DIR = Path(__file__).parent
 FIXTURES_DIR = TEST_DIR / "fixtures"
 
 # ---------------------------------------------------------------------------
-# Re-export the engine_polars constraint conftest as a top-level plugin so
-# the engine_polars/objective conftest can reuse its fixtures.  pytest 8.x
+# Re-export the engine constraint conftest as a top-level plugin so
+# the engine/objective conftest can reuse its fixtures.  pytest 8.x
 # forbids ``pytest_plugins`` in non-top-level conftests, so the registration
 # lives here.  The constraint conftest itself is loaded by file path because
 # ``tests/`` is not a package.  pytest also tries to import the plugin by
@@ -53,19 +53,19 @@ FIXTURES_DIR = TEST_DIR / "fixtures"
 # fixtures, not assertion-heavy test code.)
 # ---------------------------------------------------------------------------
 _CONSTRAINTS_CONFTEST = (
-    TEST_DIR / "engine_polars" / "constraints" / "conftest.py"
+    TEST_DIR / "engine" / "constraints" / "conftest.py"
 )
 if _CONSTRAINTS_CONFTEST.exists() and (
-    "_engine_polars_constraints_conftest" not in sys.modules
+    "_engine_constraints_conftest" not in sys.modules
 ):
     _spec = importlib.util.spec_from_file_location(
-        "_engine_polars_constraints_conftest", _CONSTRAINTS_CONFTEST,
+        "_engine_constraints_conftest", _CONSTRAINTS_CONFTEST,
     )
     _constraints_module = importlib.util.module_from_spec(_spec)
-    sys.modules["_engine_polars_constraints_conftest"] = _constraints_module
+    sys.modules["_engine_constraints_conftest"] = _constraints_module
     _spec.loader.exec_module(_constraints_module)
 
-pytest_plugins = ["_engine_polars_constraints_conftest"]
+pytest_plugins = ["_engine_constraints_conftest"]
 REPO_ROOT = TEST_DIR.parent
 
 # Make db_utils importable from this directory
@@ -803,7 +803,7 @@ def scenario_workdir(
     ``provider.snapshot_processed_inputs`` materialises the
     parent-qualified Provider key layout.  The combination reproduces
     what the disk-staged generator used to seed
-    ``tests/engine_polars/data/`` produced.
+    ``tests/engine/data/`` produced.
 
     The full cascade (HiGHS solve included) is required because the bulk
     of the per-solve emitters run *inside* the cascade loop and populate
@@ -823,7 +823,7 @@ def scenario_workdir(
             work = scenario_workdir("base")
             data = load_flextool(work)
     """
-    from flextool.engine_polars._orchestration import run_chain_from_db
+    from flextool.engine._orchestration import run_chain_from_db
 
     url_by_fixture = {
         "main": test_db_url,
@@ -907,7 +907,7 @@ def scenario_workdir(
 def _reset_global_axis_enums() -> None:
     """Reset the cascade-wide axis_enums ContextVar before every test.
 
-    ``flextool.engine_polars.input.load_flextool`` sets the global
+    ``flextool.engine.input.load_flextool`` sets the global
     ``axis_enums`` ContextVar on success (input.py finally block
     ~line 4216).  The ContextVar persists into the next test in the
     same pytest worker, pinning Enum dtypes that may differ from the
@@ -916,21 +916,21 @@ def _reset_global_axis_enums() -> None:
     as test-order-dependent flakes where a downstream test inherits
     a polluted vocabulary and silently produces wrong-shape output.
 
-    The ``tests/engine_polars/conftest.py`` already has a local
+    The ``tests/engine/conftest.py`` already has a local
     ``autouse=True`` version of this fixture covering tests in that
     subtree.  SCEN-3 (``test_examples_scenario_solves[test_a_lot]``
     passes alone, fails in full sweep) hypothesised that polluters
-    from OUTSIDE ``tests/engine_polars/`` (e.g. ``test_scenarios.py``,
+    from OUTSIDE ``tests/engine/`` (e.g. ``test_scenarios.py``,
     ``test_xlsx_workflow.py``, ``model/test_examples_e2e.py``) leak
     axis_enums state into subsequent tests because the local fixture
     didn't cover them.  Lifting the reset to the top-level conftest
-    closes that gap for ALL tests, not just the engine_polars
+    closes that gap for ALL tests, not just the engine
     subtree.
 
     Cheap (a single ContextVar assignment) and harmless to run
     between every test.
     """
-    from flextool.engine_polars._axis_enums import set_global_axis_enums
+    from flextool.engine._axis_enums import set_global_axis_enums
     set_global_axis_enums(None)
     yield
     set_global_axis_enums(None)

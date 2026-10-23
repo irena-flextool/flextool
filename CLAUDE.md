@@ -18,13 +18,13 @@ the authoritative sources before non-trivial work:
 
 1. **Autoscale registries must stay complete.** Every new
    `add_var(...)` / `add_cstr(...)` and every new schema parameter MUST be
-   registered in `flextool/engine_polars/autoscale/_layer2_types.py`
+   registered in `flextool/engine/autoscale/_layer2_types.py`
    (`VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES`) and `_quantity_types.py`
    (`PARAMETER_TYPES`). A missing entry does **not** crash — it's caught
    and the solve silently reverts to an un-scaled LP. Run autoscale-
    exercising tests with `FLEXTOOL_AUTOSCALE_STRICT=1` to make gaps loud.
    Dynamic f-string constraint names are pinned in
-   `tests/engine_polars/autoscale/test_registry_coverage.py`.
+   `tests/engine/autoscale/test_registry_coverage.py`.
    → architecture.md "Numerical scaling → Layer 2".
 
 2. **Never broadcast a parameter over `(d,t)` by column name.** Route
@@ -56,9 +56,9 @@ the authoritative sources before non-trivial work:
    lists) and the `__eo` / `__to` sort keys. Every heavy `_emit_*`
    derive is gated by a `test_vectorize_<family>_parity.py` (Tier A
    `.equals` / Tier B `rtol≈1e-12`).
-   → docs/dev/engine_polars.md "Vectorized per-roll emit".
+   → docs/dev/engine.md "Vectorized per-roll emit".
 
 ## Running / testing
 See `CONTRIBUTING.md` "Running Tests". Inner loop is the area-specific
-suite (`tests/engine_polars/<area>/`); the full `tests/` integration
+suite (`tests/engine/<area>/`); the full `tests/` integration
 sweep runs rarely.

@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine_polars import run_chain_from_db
+from flextool.engine import run_chain_from_db
 
 
 pytestmark = pytest.mark.solver

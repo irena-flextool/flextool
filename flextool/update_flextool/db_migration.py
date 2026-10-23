@@ -1357,7 +1357,7 @@ def migrate_database(
                 # Drop ``model.debug`` from the schema.  The parameter
                 # was a leftover from the legacy flextoolrunner / GAMS
                 # path that emitted ``input/debug.csv``; no
-                # engine_polars module reads it.  Debug control now
+                # engine module reads it.  Debug control now
                 # lives purely on the CLI (``--debug={off,basic,full}``)
                 # and in the GUI's ProjectSettings.debug_level — see
                 # ``flextool/cli/cmd_run_flextool.py`` and
@@ -1406,7 +1406,7 @@ def migrate_database(
                 # ``conversion_indirect`` equations).  Pure name
                 # change — description, default value (1.0), value-
                 # list bindings and engine semantics are untouched.
-                # The schema template JSON, engine_polars frame attrs,
+                # The schema template JSON, engine frame attrs,
                 # CSV filename suffixes, input_derivation cl_pars,
                 # autoscale quantity types, pandas accessors and the
                 # docs are renamed in lock-step.
@@ -1463,9 +1463,9 @@ def migrate_database(
                 # all stripped in the same commit.
                 _migrate_v56_remove_exclude_entity_outputs(db)
                 # Drop ``model.output_node_balance_t``.  Dead toggle:
-                # nothing in ``engine_polars`` reads its row from the
+                # nothing in ``engine`` reads its row from the
                 # ``optional_outputs.csv`` set, and the ``enable_set``
-                # check in :mod:`flextool.engine_polars._emit_per_solve`
+                # check in :mod:`flextool.engine._emit_per_solve`
                 # only looks for ``output_horizon``.  Schema row, the
                 # SET_LIKE_NAMES bookkeeping entry, the autoscale
                 # quantity-type table row and the export_settings.yaml
@@ -1674,7 +1674,7 @@ def migrate_database(
                 # ``no_method`` list_value, and sets the
                 # parameter_definition default to ``"none"``.  Engine
                 # semantics are unchanged: every consumer in
-                # :mod:`flextool.engine_polars._emit_co2_accumulators`
+                # :mod:`flextool.engine._emit_co2_accumulators`
                 # filters by exact-match on the active method names
                 # (``total`` / ``price_total`` / ``period_total`` /
                 # ``price_period_total``); ``no_method`` and ``none``
@@ -5491,7 +5491,7 @@ def _migrate_v56_remove_model_debug(db) -> None:
 
     The parameter dates back to the legacy flextoolrunner / GAMS path
     that emitted ``input/debug.csv`` for the .mod file to consume.  In
-    the engine_polars rewrite (FlexTool v4) nothing reads it: the
+    the engine rewrite (FlexTool v4) nothing reads it: the
     cl_pars emitter in :mod:`flextool.input_derivation._specs` still
     produced the CSV, but no downstream module touched the file.
 
@@ -5529,7 +5529,7 @@ def _migrate_v56_add_group_cumulative_capacity_descriptions(db) -> None:
     canonical phrasing already lives in
     ``flextool/schemas/spinedb_schema.json`` (and is mirrored in the
     quantity-type comments under
-    ``flextool/engine_polars/autoscale/_quantity_types.py``); this
+    ``flextool/engine/autoscale/_quantity_types.py``); this
     helper brings legacy databases in line.
     """
     db.update_item(
@@ -5575,16 +5575,16 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
 
     * ``model.inflation_offset_investment`` — current default ``1.0``,
       patched to ``0.0`` to match the engine fallback in
-      :func:`flextool.engine_polars._derived_npv._inflation_scalars`
+      :func:`flextool.engine._derived_npv._inflation_scalars`
       (line 355) and the symmetric fallback in ``_emit_period_calc.py``
       (line 295).
 
     * ``commodity.unitsize`` — current default ``1.0``, patched to
       ``None``.  The engine reads via
-      :func:`flextool.engine_polars._direct_params.p_commodity_unitsize_from_source`
+      :func:`flextool.engine._direct_params.p_commodity_unitsize_from_source`
       (``_entity_scalar_explicit``) so the schema default is dropped;
       the price-ladder consumer in
-      :func:`flextool.engine_polars._commodity_ladder._commodity_unitsize_param`
+      :func:`flextool.engine._commodity_ladder._commodity_unitsize_param`
       substitutes ``1.0`` internally when the explicit Param is absent.
       The description is rewritten to name the gating feature
       (``commodity.price_method = price_ladder_*``) and explain the
@@ -5593,7 +5593,7 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
     * ``reserve__upDown__connection__node.large_failure_ratio`` and
       ``reserve__upDown__unit__node.large_failure_ratio`` — currently
       carry an empty-string default (``""``).  The N-1 reserve consumer
-      in :func:`flextool.engine_polars._emit_reserve._compute_reserve_filters`
+      in :func:`flextool.engine._emit_reserve._compute_reserve_filters`
       gates each ``(p, r, ud, n)`` on
       ``p_prn.get((..., "large_failure_ratio"), 0.0) > 0`` — any
       non-zero enables the constraint, so the contract is "absent /
@@ -5603,7 +5603,7 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
       same two classes already carry ``null, null``.
 
     * ``reserve__upDown__group.penalty_reserve`` — currently ``5000.0``.
-      :func:`flextool.engine_polars._direct_params.p_reserve_upDown_group_penalty_reserve_from_source`
+      :func:`flextool.engine._direct_params.p_reserve_upDown_group_penalty_reserve_from_source`
       reads via ``parameter_explicit`` and drops the broadcast default
       on the floor (the function's own docstring claims "None default
       — explicit rows only").  Soft-reserve violations enter the
@@ -5614,12 +5614,12 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
 
     * ``reserve__upDown__connection__node.max_share`` — currently
       ``0.0``.  The consumer
-      :func:`flextool.engine_polars._direct_params._process_reserve_node_param`
+      :func:`flextool.engine._direct_params._process_reserve_node_param`
       also uses ``parameter_explicit``; the sister row on
       ``reserve__upDown__unit__node`` already has ``null, null``.
 
     * ``node.storage_state_start`` — currently ``0.0``.
-      :func:`flextool.engine_polars._direct_params.p_state_start_from_source`
+      :func:`flextool.engine._direct_params.p_state_start_from_source`
       reads explicit rows only; the docstring already claims
       "Default ``None`` (schema).".  If the schema default were
       actually honoured every storage node would be force-pinned to
@@ -5727,7 +5727,7 @@ def _migrate_v56_rename_constraint_coefficient_to_coeff(db) -> None:
     rename automatically because spinedb_api tracks the link by id,
     not by name.
 
-    The engine_polars frame attributes, autoscale quantity-type
+    The engine frame attributes, autoscale quantity-type
     table, input_derivation cl_pars specs, export_to_tabular
     settings, and the docs are renamed in the same commit so the
     pipeline stays internally consistent.
@@ -5810,7 +5810,7 @@ def _migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff(db) -> None:
     keeps the ``conversion_`` prefix that signals the parameter's
     role: it scales the conversion of input → output energy in the
     unit dispatch / node-balance / ``conversion_indirect`` equations
-    (see flextool.mod:2557-2580 and the engine_polars dispatch path
+    (see flextool.mod:2557-2580 and the engine dispatch path
     in ``model.py`` §F.4).
 
     Pure name change: every other column on the
@@ -5820,7 +5820,7 @@ def _migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff(db) -> None:
     old name follow the rename automatically because spinedb_api
     tracks the link by id, not by name.
 
-    The engine_polars frame attributes (``p_process_source_flow_coef``
+    The engine frame attributes (``p_process_source_flow_coef``
     → ``p_process_source_conversion_flow_coeff`` and the sink
     counterpart), autoscale quantity-type table, input_derivation
     cl_pars specs, the CSV filename suffixes
@@ -5881,7 +5881,7 @@ def _migrate_v56_rename_max_capacity_coefficient_to_capacity_max_coeff(db) -> No
     old name follow the rename automatically because spinedb_api
     tracks the link by id, not by name.
 
-    The engine_polars derived-param helpers
+    The engine derived-param helpers
     (``_arc_max_capacity_coef_lf`` / ``_process_source_sink_coeff_zero_lf``),
     autoscale quantity-type table, input_derivation cl_pars specs,
     the CSV filename suffixes
@@ -6005,7 +6005,7 @@ def _migrate_v56_remove_exclude_entity_outputs(db) -> None:
     ``input/exclude_entity_outputs.csv``, the only file the gate read),
     and the bookkeeping rows in
     :data:`flextool.spinedb_backend._backend.SET_LIKE_NAMES`,
-    :mod:`flextool.engine_polars.autoscale._quantity_types`,
+    :mod:`flextool.engine.autoscale._quantity_types`,
     :mod:`flextool.export_to_tabular.export_settings` and the v44
     parameter_group membership map above.
 
@@ -6020,10 +6020,10 @@ def _migrate_v56_remove_exclude_entity_outputs(db) -> None:
 def _migrate_v56_remove_output_node_balance_t(db) -> None:
     """Drop the ``model.output_node_balance_t`` parameter from the schema.
 
-    Dead toggle: no module in :mod:`flextool.engine_polars` reads the
+    Dead toggle: no module in :mod:`flextool.engine` reads the
     ``optional_outputs.csv`` row for this flag and no per-flag branch
     exists in the per-solve emitter
-    (:mod:`flextool.engine_polars._emit_per_solve`).  Only
+    (:mod:`flextool.engine._emit_per_solve`).  Only
     ``output_horizon`` is checked from the ``enable_optional_outputs``
     set.  The remaining cl_pars entry in
     :mod:`flextool.input_derivation._specs` (the ``optional_outputs.csv``
@@ -6048,7 +6048,7 @@ def _migrate_v56_remove_output_ramp_envelope(db) -> None:
     :mod:`flextool.input_derivation._specs`, but nothing on the engine
     side reads its row from the resulting ``enable_optional_outputs``
     set — only ``output_horizon`` is checked in
-    :mod:`flextool.engine_polars._emit_per_solve`.  Any value users set
+    :mod:`flextool.engine._emit_per_solve`.  Any value users set
     has been silently dropped.
 
     This helper removes the schema row; sibling edits in the same
@@ -6184,10 +6184,10 @@ def _migrate_v56_retype_solver_arguments_to_1d_map(db) -> None:
     no-real-data fast path is the only one exercised by the gate.
 
     Engine consumption: the new 1d-map values are read by the resolver
-    in :mod:`flextool.engine_polars._solver_dispatch` and merged with
+    in :mod:`flextool.engine._solver_dispatch` and merged with
     ``solver_config/highs.opt`` (floor) and the CLI flags (top) into
     the final HiGHS options dict.  See
-    :func:`flextool.engine_polars._solver_dispatch._resolve_effective_highs_options`.
+    :func:`flextool.engine._solver_dispatch._resolve_effective_highs_options`.
     """
     parameter_definitions = db.mapped_table("parameter_definition")
     try:
@@ -6301,7 +6301,7 @@ def _migrate_v56_fold_solver_options_into_solver_arguments(db) -> None:
     user databases that authored entries.
 
     Engine consumption: ``_resolve_effective_highs_options`` in
-    :mod:`flextool.engine_polars._solver_dispatch` already reads the
+    :mod:`flextool.engine._solver_dispatch` already reads the
     1d-map ``solver_arguments`` via the resolver; after this commit
     every override the user authored is routed through that single
     path.  ``solver_options`` is no longer read from the DB.
@@ -6654,13 +6654,13 @@ def _migrate_v56_remove_solver_threads(db) -> None:
     break is acceptable.  Equivalent control remains available via
     the existing ``--highs-threads N`` CLI flag (CLI > solver_arguments
     > highs.opt precedence inside
-    :func:`flextool.engine_polars._solver_dispatch._resolve_effective_highs_options`)
+    :func:`flextool.engine._solver_dispatch._resolve_effective_highs_options`)
     and via the GUI's per-job ``max_cores_per_job`` setting which
     plumbs the flag automatically.  GUI controls for this knob's
     DB-stored equivalent are deferred to the v56 follow-up PR
     (task #26).
 
-    The engine read site in :mod:`flextool.engine_polars._solve_config`
+    The engine read site in :mod:`flextool.engine._solve_config`
     (where it fed :class:`SolverConfig.threads` → ``build_solver_options``)
     is dropped in the same commit.  After this commit ``SolverConfig.threads``
     stays as a None-default field — the commercial-solver path still
@@ -6733,13 +6733,13 @@ def _migrate_v56_remove_solver_time_limit(db) -> None:
     control is exposed via the new ``--solver-time-limit SECONDS``
     CLI flag, plumbed via the existing ``FLEXTOOL_HIGHS_TIME_LIMIT``
     env var into the engine-side
-    :func:`flextool.engine_polars._solver_dispatch._resolve_effective_highs_options`
+    :func:`flextool.engine._solver_dispatch._resolve_effective_highs_options`
     resolver as a CLI override on the HiGHS ``time_limit`` key
     (CLI > solver_arguments > highs.opt precedence).  GUI controls
     for the DB-stored equivalent are deferred to the v56 follow-up
     PR (task #26).
 
-    The engine read site in :mod:`flextool.engine_polars._solve_config`
+    The engine read site in :mod:`flextool.engine._solve_config`
     (where it fed :class:`SolverConfig.time_limit` →
     ``build_solver_options``) is dropped in the same commit.
     ``SolverConfig.time_limit`` stays as a None-default field — the
@@ -6760,7 +6760,7 @@ def _migrate_v56_remove_solver_log_level(db) -> None:
     fully dead.  Equivalent control is now exposed via the new
     ``--solver-log-level {silent,normal,verbose}`` CLI flag, plumbed
     via the ``FLEXTOOL_SOLVER_LOG_LEVEL`` env var into the engine-side
-    :func:`flextool.engine_polars._solver_dispatch._resolve_effective_highs_options`
+    :func:`flextool.engine._solver_dispatch._resolve_effective_highs_options`
     resolver (CLI > solver_arguments > highs.opt precedence).
     ``silent`` maps to HiGHS ``output_flag=false``; ``verbose`` maps
     to ``output_flag=true`` plus ``log_dev_level=2``; ``normal`` maps
@@ -7298,7 +7298,7 @@ def _migrate_v56_rename_co2_methods_no_method_to_none(db) -> None:
        off-name.
 
     Engine consumer behaviour is unchanged: the only filter site is
-    :func:`flextool.engine_polars._emit_co2_accumulators._emitting_groups`,
+    :func:`flextool.engine._emit_co2_accumulators._emitting_groups`,
     which keeps groups whose method is in
     ``{"total", "price_total", "period_total", "price_period_total"}``;
     ``no_method`` and ``none`` both fall through identically.
@@ -7452,7 +7452,7 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
     / :meth:`SpineDBBackend.entities` / :meth:`parameter_values`
     post-filter the three classes by ``is_enabled != "no"`` resolved
     against the active scenario.  Likewise
-    :class:`flextool.engine_polars._spinedb_reader.SpineDbReader`
+    :class:`flextool.engine._spinedb_reader.SpineDbReader`
     drops disabled entities from its per-class caches at construction
     time.  Together these replace the entity_alternative-based
     gating spinedb_api's scenario_filter applied pre-v56.

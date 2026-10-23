@@ -15,7 +15,7 @@ builder EXTENDS the proven ``stochastics.json`` shape (the
 ``2_day_stochastic_dispatch`` scenario, which already fires
 ``non_anticipativity_storage_use`` with a populated
 ``dt_non_anticipativity`` — see
-``tests/engine_polars/emission/test_non_anticipativity_storage_use_emits.py``)
+``tests/engine/emission/test_non_anticipativity_storage_use_emits.py``)
 with a new ``recourse_na`` scenario that:
 
   * turns on ``solve.stochastic_invest_method = recourse`` for
@@ -29,7 +29,7 @@ with a new ``recourse_na`` scenario that:
     ``pd_branch_weight[d]``.
 
 Assertions (structural + directional, no second hand-calc) live in
-``tests/engine_polars/test_recourse_invest_na.py``:
+``tests/engine/test_recourse_invest_na.py``:
   * ``dt_non_anticipativity`` non-empty; ``non_anticipativity_storage_use``
     row count > 0 — the coupling is live.
   * branch-leaf ``v_state`` at the NA-tied timesteps equals the realized
