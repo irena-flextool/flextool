@@ -24,7 +24,7 @@ from flextool.engine.preprocess.params._existing import (
     commissioning_year_lf,
     edd_invest_set_lf,
 )
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 PERIODS = ["p1", "p2", "p3", "p4"]
 YEARS = [0.0, 5.0, 8.0, 20.0]

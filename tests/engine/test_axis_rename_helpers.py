@@ -1,7 +1,7 @@
 """Tests for the FlexTool axis rename + literal helpers.
 
 The Phase-4 cluster sweep landed two convention-enforcing helpers on
-``flextool.engine._axis_enums``:
+``flextool.engine.input._axis_enums``:
 
 * :func:`rename_to_axis` — rename + cast in one call, for any
   ``.rename({old: new_axis_column_name})`` site.
@@ -22,7 +22,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     alias_to_axis,
     get_global_axis_enums,
     lit_axis,

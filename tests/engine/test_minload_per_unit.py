@@ -249,7 +249,7 @@ def test_direct_unit_coefficient_no_longer_softens(tmp_path_factory,
 
 
 def test_out_of_range_output_coefficient_is_an_error(tmp_path_factory) -> None:
-    from flextool.engine._solve_state import FlexToolConfigError
+    from flextool.engine.input._solve_state import FlexToolConfigError
 
     url, scen = make_db(tmp_path_factory, alt="ml_cmin_bad",
                         base_chain=CHP_CHAIN,

@@ -19,8 +19,8 @@ from typing import Optional
 
 import polars as pl
 
-from flextool.engine._axis_enums import align_join_dtypes
-from flextool.engine._param_shapes import promote_param_to_dt
+from flextool.engine.input._axis_enums import align_join_dtypes
+from flextool.engine.input._param_shapes import promote_param_to_dt
 
 
 # ---------------------------------------------------------------------------

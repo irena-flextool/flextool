@@ -15,7 +15,7 @@ import pytest
 
 from flextool.engine import _group_slack, _reserve, _commodity_ladder
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine._input_source import seed_provider_from_dir
+from flextool.engine.input._input_source import seed_provider_from_dir
 
 
 def _provider_for_workdir(inp: Path, sd: Path) -> FlexDataProvider:

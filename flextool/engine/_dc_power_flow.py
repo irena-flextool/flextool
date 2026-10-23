@@ -15,7 +15,7 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Var
 
-from flextool.engine._axis_enums import cast_dim
+from flextool.engine.input._axis_enums import cast_dim
 from flextool.engine._model_common import _has_rows
 
 if TYPE_CHECKING:

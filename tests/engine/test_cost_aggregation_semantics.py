@@ -64,7 +64,7 @@ import polars as pl
 
 from polar_high import Problem
 from flextool.engine import build_flextool, load_flextool
-from flextool.engine._param_shapes import promote_param_to_dt
+from flextool.engine.input._param_shapes import promote_param_to_dt
 
 
 # ---------------------------------------------------------------------------

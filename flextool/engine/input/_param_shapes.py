@@ -70,17 +70,17 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     cast_frame_axes,
     get_global_axis_enums,
     rename_to_axis,
 )
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 _LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
 
 
 # ---------------------------------------------------------------------------
@@ -1125,7 +1125,7 @@ def resolve_param_shape(
     index column values against the active solve's known periods /
     timesteps (mirroring the legacy CSV pipeline's value-domain
     discrimination in
-    :func:`flextool.engine._timeline.separate_period_and_timeseries_data`).
+    :func:`flextool.engine.input._timeline.separate_period_and_timeseries_data`).
     This recovers Rivendell-style fixtures where ``group.co2_price`` is
     authored as ``Map(period→value)`` but the author omitted
     ``index_name`` so the DB stores the silent ``"x"`` label.  Without
@@ -1146,7 +1146,7 @@ def resolve_param_shape(
         raise FlexToolConfigError(
             f"resolve_param_shape: parameter {key!r} is not in "
             f"PARAM_ALLOWED_SHAPES.  Add an explicit allow-list entry "
-            f"to flextool/engine/_param_shapes.py.")
+            f"to flextool/engine/input/_param_shapes.py.")
 
     df = _try_parameter_frame(source, entity_class, parameter_name)
     if df is None or df.height == 0:
@@ -1187,7 +1187,7 @@ def resolve_param_shape(
     # the Spine path on parity with the legacy CSV pipeline, which
     # picks index dimensionality from value-domain probing (period
     # tokens vs. timestep tokens) rather than the index_name label —
-    # see :func:`flextool.engine._timeline.separate_period_and_timeseries_data`.
+    # see :func:`flextool.engine.input._timeline.separate_period_and_timeseries_data`.
     resolved_labels = _infer_silent_default_labels(raw_labels, allowed)
     try:
         shape = _shape_from_indices(resolved_labels)

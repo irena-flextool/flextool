@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     alias_to_axis,
     cast_dim,
     cast_frame_axes,
@@ -68,7 +68,7 @@ def _to_e(expr: pl.Expr) -> pl.Expr:
     return cast_dim(expr, get_global_axis_enums(), "e")
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
 
 
 # ---------------------------------------------------------------------------

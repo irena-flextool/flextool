@@ -111,7 +111,7 @@ def _pdtX_per_entity(
     # below requires explicit "d" and "t" columns, so promote via
     # flex_data.dt when needed.
     if "d" not in param.dims or "t" not in param.dims:
-        from flextool.engine._param_shapes import promote_param_to_dt
+        from flextool.engine.input._param_shapes import promote_param_to_dt
         if flex_data is None or flex_data.dt is None:
             return _empty_pdtX_per_entity(
                 flex_data=flex_data,
@@ -289,7 +289,7 @@ def _pdtX_multi_col(
         # when the source was authored as scalar / 1d_map.  Promote via
         # flex_data.dt so the pivot below sees explicit d/t columns.
         if "d" not in param.dims or "t" not in param.dims:
-            from flextool.engine._param_shapes import promote_param_to_dt
+            from flextool.engine.input._param_shapes import promote_param_to_dt
             if flex_data is None or flex_data.dt is None:
                 out = _empty_pdtX_multi_col(col_names=col_names)
                 if densify_col_tuples is None:

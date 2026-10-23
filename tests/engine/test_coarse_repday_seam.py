@@ -29,7 +29,7 @@ from flextool.engine.preprocess.params._derived import (
     _guard_coarse_blocks_within_repday,
     _repday_segment_map,
 )
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 
 def _per_period_two_repdays() -> dict[str, list[tuple[str, int]]]:

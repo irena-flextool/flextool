@@ -264,7 +264,7 @@ class InputSource(Protocol):
           innermost.  Entries are the raw labels exactly as authored
           in the source database (``None`` when unset / empty).
 
-        Used by :func:`flextool.engine._param_shapes.resolve_param_shape`
+        Used by :func:`flextool.engine.input._param_shapes.resolve_param_shape`
         to validate a parameter's actual shape against an explicit
         per-parameter allow-list.  See the Δ.17c dispatch / open-issues
         doc for the user advice that mandated this.

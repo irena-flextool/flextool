@@ -48,11 +48,11 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine._axis_enums import alias_to_axis
-from flextool.engine._constants import HOURS_PER_YEAR
+from flextool.engine.input._axis_enums import alias_to_axis
+from flextool.engine.input._constants import HOURS_PER_YEAR
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
 
 
 __all__ = [
@@ -213,7 +213,7 @@ def _expand_active_steps_lf(
     """Expand (d, ts) → (d, t, step_duration) by walking the timeline
     starting at each block's ``start_step`` for ``count`` steps.
 
-    Mirrors :func:`flextool.engine._timeline.get_active_time`'s
+    Mirrors :func:`flextool.engine.input._timeline.get_active_time`'s
     procedural expansion: for each timeset block, find the rank of
     ``start_step`` within the timeline's lex-ordered timestep list,
     then emit timesteps with ranks in ``[start_rank, start_rank+count)``.

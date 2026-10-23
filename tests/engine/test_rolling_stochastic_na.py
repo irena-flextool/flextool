@@ -67,7 +67,7 @@ import polars as pl
 import pytest
 
 from flextool.engine.solve._orchestration import run_chain_from_db
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 SCENARIO = "1_week_rolling_wind"
 

@@ -59,7 +59,7 @@ def test_commodity_ladder_cumulative_parity(scenario_workdir):
     # Cumulative ladder has no period dimension — the same per-tier price
     # applies across all periods. Catches regressions where v_trade routes
     # correctly but prices fail to flow into the objective.
-    from flextool.engine._axis_enums import cast_dim
+    from flextool.engine.input._axis_enums import cast_dim
     prices = pl.read_csv(work / "input" / "commodity_ladder_cumulative.csv").select(
         cast_dim(pl.col("commodity"), None, "c").alias("c"),
         cast_dim(pl.col("tier").cast(pl.Utf8), None, "i").alias("i"),

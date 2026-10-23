@@ -52,8 +52,8 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine._axis_enums import rename_to_axis, schema_dtype
-from flextool.engine._param_shapes import promote_param_to_dt
+from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
+from flextool.engine.input._param_shapes import promote_param_to_dt
 
 if TYPE_CHECKING:
     from flextool.engine.preprocess.flex_data import FlexData

@@ -8,7 +8,7 @@ from enum import Enum
 
 import spinedb_api as api
 
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 
 class DictMode(Enum):

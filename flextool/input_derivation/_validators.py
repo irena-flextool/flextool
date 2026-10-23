@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 
 __all__ = [

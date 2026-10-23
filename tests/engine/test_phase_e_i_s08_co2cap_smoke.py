@@ -35,7 +35,7 @@ after the fix (returns a populated ``Param``).
 """
 from __future__ import annotations
 
-from flextool.engine._param_shapes import (
+from flextool.engine.input._param_shapes import (
     PARAM_ALLOWED_SHAPES,
     Shape,
     _infer_silent_default_labels,

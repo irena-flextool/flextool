@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from flextool.engine._solve_state import ActiveTimeEntry, FlexToolConfigError
+from flextool.engine.input._solve_state import ActiveTimeEntry, FlexToolConfigError
 from flextool.engine.solve._stochastic import StochasticSolver
 
 

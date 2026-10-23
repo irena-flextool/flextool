@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine._param_shapes import (
+from flextool.engine.input._param_shapes import (
     PARAM_ALLOWED_SHAPES,
     AxisName,
     LeafKind,
@@ -231,7 +231,7 @@ def test_recognise_facet_shape_depth2_tier_facet() -> None:
     facet recognition MUST be label-agnostic — only the SHAPE
     (depth) + LOCATION matters.
     """
-    from flextool.engine._param_shapes import _recognise_facet_shape
+    from flextool.engine.input._param_shapes import _recognise_facet_shape
     allowed = PARAM_ALLOWED_SHAPES[("commodity", "price_ladder_cumulative")]
     # Canonical: outer authored as "tier", inner empty.
     assert _recognise_facet_shape(["tier", None], allowed) is Shape.MAP_TIER_FACET
@@ -248,7 +248,7 @@ def test_recognise_facet_shape_depth3_period_tier_facet() -> None:
     the registry's allow-list contains it as a unique depth-3 facet
     shape.
     """
-    from flextool.engine._param_shapes import _recognise_facet_shape
+    from flextool.engine.input._param_shapes import _recognise_facet_shape
     allowed = PARAM_ALLOWED_SHAPES[("commodity", "price_ladder_annual")]
     assert _recognise_facet_shape(
         ["period", "tier", None], allowed,
@@ -267,7 +267,7 @@ def test_recognise_facet_shape_no_match_outside_facet() -> None:
     """Non-facet allow-lists (e.g. ``MAP_PERIOD``) never produce a facet
     shape, regardless of the depth match.
     """
-    from flextool.engine._param_shapes import _recognise_facet_shape
+    from flextool.engine.input._param_shapes import _recognise_facet_shape
     allowed = PARAM_ALLOWED_SHAPES[("group", "co2_max_period")]  # numeric
     assert _recognise_facet_shape([None], allowed) is None
     assert _recognise_facet_shape([None, None], allowed) is None
@@ -315,7 +315,7 @@ def examples_db_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 def _spine_source(db_path: Path, scenario: str):
     """Build a ``SpineDbReader`` against *db_path* under *scenario*."""
-    from flextool.engine._spinedb_reader import SpineDbReader
+    from flextool.engine.input._spinedb_reader import SpineDbReader
     return SpineDbReader(f"sqlite:///{db_path}", scenario)
 
 

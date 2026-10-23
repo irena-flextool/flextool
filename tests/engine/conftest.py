@@ -57,7 +57,7 @@ def _reset_global_axis_enums():
 
     Resetting before each test guarantees a clean slate.
     """
-    from flextool.engine._axis_enums import set_global_axis_enums
+    from flextool.engine.input._axis_enums import set_global_axis_enums
     set_global_axis_enums(None)
     yield
     set_global_axis_enums(None)

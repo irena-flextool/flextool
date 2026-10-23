@@ -6660,7 +6660,7 @@ def _migrate_v56_remove_solver_threads(db) -> None:
     DB-stored equivalent are deferred to the v56 follow-up PR
     (task #26).
 
-    The engine read site in :mod:`flextool.engine._solve_config`
+    The engine read site in :mod:`flextool.engine.input._solve_config`
     (where it fed :class:`SolverConfig.threads` → ``build_solver_options``)
     is dropped in the same commit.  After this commit ``SolverConfig.threads``
     stays as a None-default field — the commercial-solver path still
@@ -6739,7 +6739,7 @@ def _migrate_v56_remove_solver_time_limit(db) -> None:
     for the DB-stored equivalent are deferred to the v56 follow-up
     PR (task #26).
 
-    The engine read site in :mod:`flextool.engine._solve_config`
+    The engine read site in :mod:`flextool.engine.input._solve_config`
     (where it fed :class:`SolverConfig.time_limit` →
     ``build_solver_options``) is dropped in the same commit.
     ``SolverConfig.time_limit`` stays as a None-default field — the
@@ -7452,7 +7452,7 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
     / :meth:`SpineDBBackend.entities` / :meth:`parameter_values`
     post-filter the three classes by ``is_enabled != "no"`` resolved
     against the active scenario.  Likewise
-    :class:`flextool.engine._spinedb_reader.SpineDbReader`
+    :class:`flextool.engine.input._spinedb_reader.SpineDbReader`
     drops disabled entities from its per-class caches at construction
     time.  Together these replace the entity_alternative-based
     gating spinedb_api's scenario_filter applied pre-v56.

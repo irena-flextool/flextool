@@ -281,8 +281,8 @@ def test_rp_fold_edges_conserve_and_match_tw(tmp_path):
         _rp_fold_edges_and_tw,
         _rp_weight_sum_by_period,
     )
-    from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._timeline import TimelineConfig
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.engine.input._timeline import TimelineConfig
 
     url = json_to_db(RP_FIXTURE_JSON, tmp_path / "c.sqlite")
     sc = SolveConfig.load_from_db_url(url, RP_SCENARIO)
@@ -344,9 +344,9 @@ def test_rp_weight_sum_uses_actual_nonuniform_weights(tmp_path):
     from flextool.engine.preprocess.params._per_solve_sets import (
         derive_per_solve_aggregates,
     )
-    from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._spinedb_reader import SpineDbReader
-    from flextool.engine._timeline import TimelineConfig
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.engine.input._spinedb_reader import SpineDbReader
+    from flextool.engine.input._timeline import TimelineConfig
 
     url = json_to_db(RP_FIXTURE_JSON, tmp_path / "c.sqlite")
     src = SpineDbReader(url, RP_SCENARIO)

@@ -19,7 +19,7 @@ from flextool.engine.solve._realized_overlap import (
     warn_realized_dispatch_overlaps,
     warn_realized_invest_overlaps,
 )
-from flextool.engine._solve_state import ActiveTimeEntry
+from flextool.engine.input._solve_state import ActiveTimeEntry
 
 LOGGER_NAME = "flextool.engine.solve._realized_overlap"
 

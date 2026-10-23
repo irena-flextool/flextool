@@ -4,11 +4,11 @@ import spinedb_api as api
 from spinedb_api import DatabaseMapping
 from pathlib import Path
 
-from flextool.engine._db_reader import check_version
+from flextool.engine.input._db_reader import check_version
 from flextool.input_derivation import run as _input_derivation_run
-from flextool.engine._solve_config import SolveConfig
-from flextool.engine._timeline import TimelineConfig
-from flextool.engine._solve_state import PathConfig, RunnerState, FlexToolError, FlexToolConfigError
+from flextool.engine.input._solve_config import SolveConfig
+from flextool.engine.input._timeline import TimelineConfig
+from flextool.engine.input._solve_state import PathConfig, RunnerState, FlexToolError, FlexToolConfigError
 from flextool.cli._timing import TimingRecorder
 
 

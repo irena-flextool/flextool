@@ -43,7 +43,7 @@ from flextool.engine.preprocess.params._derived import (
     _read_period_with_history,
 )
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine._input_source import seed_provider_from_dir
+from flextool.engine.input._input_source import seed_provider_from_dir
 
 
 def _seed_workdir_provider(work: Path) -> FlexDataProvider:

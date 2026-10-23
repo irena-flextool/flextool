@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine._spinedb_reader import SpineDbReader
+from flextool.engine.input._spinedb_reader import SpineDbReader
 from flextool.engine.preprocess.params import _direct as dp
 from polar_high import Param
 

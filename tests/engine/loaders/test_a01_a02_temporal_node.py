@@ -38,7 +38,7 @@ def test_step_duration_string_cast_and_scattered_periods(tiny_workdir):
     # Hand-calc: dt = exactly the 4 input rows, no cross-product.
     # Phase 4: data.dt's d/t columns are Enum (post-vocab activation);
     # cast the expected frame's columns to match the live cascade dtypes.
-    from flextool.engine._axis_enums import schema_dtype
+    from flextool.engine.input._axis_enums import schema_dtype
     expected_dt = pl.DataFrame({
         "d": ["p2020", "p2020", "p2030", "p2030"],
         "t": ["t0001", "t0003", "t0002", "t0004"],

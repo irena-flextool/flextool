@@ -24,8 +24,8 @@ import shutil
 import polars as pl
 import pytest
 
-from flextool.engine._solve_config import SolveConfig
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_config import SolveConfig
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic,
     synthetic_branch_tokens,

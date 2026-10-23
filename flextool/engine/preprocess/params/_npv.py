@@ -86,7 +86,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     alias_to_axis,
     schema_dtype,
 )
@@ -99,7 +99,7 @@ from flextool.engine._axis_enums import (
 _enums: "dict | None" = None
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
 
 
 # Mirror flextool/flextool_base.dat:211-212 (cf. entity_annual_calc_params.py).

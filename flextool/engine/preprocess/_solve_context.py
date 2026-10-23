@@ -15,7 +15,7 @@ the per-solve preprocessing.  The point of going through this object
 is:
 
 1. **Single funnel** — every workdir CSV read goes through one place,
-   so the gross :func:`flextool.engine._input_source._read_csv_file`
+   so the gross :func:`flextool.engine.input._input_source._read_csv_file`
    call count drops dramatically (helpers consume cached frames instead
    of re-issuing ``pl.read_csv`` every call).
 2. **Typed entry points** — the most-consumed metadata
@@ -27,7 +27,7 @@ is:
    typed fields.
 3. **Future cutover seam** — when Δ.12c lands, the typed-fields
    constructor swaps to populate from
-   :class:`~flextool.engine._solve_state.RunnerState` directly
+   :class:`~flextool.engine.input._solve_state.RunnerState` directly
    (``state.solve.realized_periods[solve_name]``,
    ``state.timeline.dt_for_solve(solve_name)``).  Helpers don't change.
 
@@ -42,8 +42,8 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._axis_enums import schema_dtype
-from flextool.engine._input_source import _install_csv_cache, _read_csv_file
+from flextool.engine.input._axis_enums import schema_dtype
+from flextool.engine.input._input_source import _install_csv_cache, _read_csv_file
 
 
 # ---------------------------------------------------------------------------
@@ -713,7 +713,7 @@ def _load_period_in_use(path: Path,
     Enum when activation is on so downstream joins against cascade
     frames (which are Enum-typed) match dtypes.
     """
-    from flextool.engine._axis_enums import (
+    from flextool.engine.input._axis_enums import (
         get_global_axis_enums,
         cast_frame_axes,
     )
@@ -740,7 +740,7 @@ def _load_period_branch(path: Path,
     Phase 4.6 — under activation cast the dim columns to the canonical
     axis enums so downstream joins see Enum dtypes consistently.
     """
-    from flextool.engine._axis_enums import (
+    from flextool.engine.input._axis_enums import (
         get_global_axis_enums,
         cast_frame_axes,
     )
@@ -789,7 +789,7 @@ def _load_steps_in_use(path: Path,
     activation is on so downstream joins (against cascade frames that
     are Enum-typed) match dtypes.
     """
-    from flextool.engine._axis_enums import (
+    from flextool.engine.input._axis_enums import (
         get_global_axis_enums,
         cast_frame_axes,
     )

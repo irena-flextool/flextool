@@ -71,7 +71,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     alias_to_axis,
     cast_dim,
     rename_to_axis,
@@ -99,7 +99,7 @@ def _provider_get(provider, path: "Path") -> "pl.DataFrame | None":
 _enums: "dict | None" = None
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
 
 
 # ---------------------------------------------------------------------------
@@ -1652,7 +1652,7 @@ def assert_recourse_npv_preconditions(
         workdir, source, active_solve, ctx=ctx, provider=provider,
         weight_tol=weight_tol)
     if violations:
-        from flextool.engine._solve_state import LineageFilterError
+        from flextool.engine.input._solve_state import LineageFilterError
         raise LineageFilterError(
             "recourse NPV preconditions violated:\n  "
             + "\n  ".join(violations)

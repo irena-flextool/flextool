@@ -21,16 +21,16 @@ import polars as pl
 import pytest
 
 from flextool.engine import SpineDbReader
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     reset_global_axis_enums,
     set_global_axis_enums,
 )
-from flextool.engine._param_shapes import (
+from flextool.engine.input._param_shapes import (
     Shape,
     broadcast_to_period_time,
     resolve_param_shape,
 )
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.spinedb_backend._axis_enums import FlexDataIntegrityError
 
 PERIODS = ["p2025", "p2030"]

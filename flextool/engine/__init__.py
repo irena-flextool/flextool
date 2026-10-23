@@ -89,9 +89,9 @@ from flextool.engine.preprocess.flex_data import (  # noqa: E402  # see determin
 )
 from flextool.engine.model import build_flextool  # noqa: E402  # see determinism note above
 from flextool.engine.solve.chain import run_chain, ChainStep  # noqa: E402  # see determinism note above
-from flextool.engine._input_source import FlexInputSource, CsvSource, InputSource  # noqa: E402  # see determinism note above
-from flextool.engine._spinedb_reader import SpineDbReader  # noqa: E402  # see determinism note above
-from flextool.engine._inmemory_reader import InMemoryReader  # noqa: E402  # see determinism note above
+from flextool.engine.input._input_source import FlexInputSource, CsvSource, InputSource  # noqa: E402  # see determinism note above
+from flextool.engine.input._spinedb_reader import SpineDbReader  # noqa: E402  # see determinism note above
+from flextool.engine.input._inmemory_reader import InMemoryReader  # noqa: E402  # see determinism note above
 from flextool.engine.solve._handoff import (  # noqa: E402  # see determinism note above
     SolveHandoff,
 )

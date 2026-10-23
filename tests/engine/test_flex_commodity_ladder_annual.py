@@ -66,7 +66,7 @@ def test_commodity_ladder_annual_parity(scenario_workdir):
     # Catches regressions where v_trade routes correctly (so the per-tier
     # asserts above still pass) but ladder prices fail to flow into the
     # objective — e.g. a tier-index mismatch between writer and reader.
-    from flextool.engine._axis_enums import cast_dim
+    from flextool.engine.input._axis_enums import cast_dim
     # Pre-Tier-4 backfill: pin the CSV header + row-count so the smoke
     # test's TestLadderPerPeriodAnnual assertions can retire.
     _ladder_csv = work / "input" / "commodity_ladder_annual.csv"

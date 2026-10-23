@@ -29,7 +29,7 @@ Handoff-aware preprocessing sub-emitters read the prior carrier via
 """
 from __future__ import annotations
 
-from flextool.engine._solve_state import RunnerState
+from flextool.engine.input._solve_state import RunnerState
 
 
 def run(

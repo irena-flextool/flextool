@@ -741,7 +741,7 @@ from flextool.engine import (
     run_chain_from_db,
     run_orchestration,
 )
-from flextool.engine._db_loader import FlexToolRunner
+from flextool.engine.input._db_loader import FlexToolRunner
 from flextool.spinedb_backend import SpineDBBackend
 from flextool.process_inputs import TabularReader, write_to_flextool_input_db
 from flextool.process_outputs import write_outputs, post_process_results

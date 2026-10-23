@@ -3,7 +3,7 @@
 Phase 2 of the polar-high multi-solver handoff (see
 ``specs/flextool-multi-solver-handoff.md``) wires the seven new
 ``solver_*`` parameters introduced by the v52 schema migration into
-:class:`flextool.engine._solve_config.SolverConfig` and provides
+:class:`flextool.engine.input._solve_config.SolverConfig` and provides
 the per-solver option-translation helper
 :func:`flextool.engine.solve._solver_dispatch.build_solver_options`.
 
@@ -45,7 +45,7 @@ if str(TESTS_DIR) not in sys.path:
 
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.engine._solve_config import (  # noqa: E402
+from flextool.engine.input._solve_config import (  # noqa: E402
     SolveConfig,
     SolverConfig,
 )

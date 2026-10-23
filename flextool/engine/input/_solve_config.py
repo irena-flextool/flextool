@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import spinedb_api as api
 
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
@@ -784,7 +784,7 @@ class SolveConfig:
     ) -> "SolveConfig":
         """Load via the :class:`InputSource` Protocol.
 
-        Currently only :class:`flextool.engine._spinedb_reader.SpineDbReader`
+        Currently only :class:`flextool.engine.input._spinedb_reader.SpineDbReader`
         sources are supported — they expose the underlying ``db_url`` and
         ``scenario`` so the canonical :meth:`load_from_db_url` path can
         be reused.  In-memory and CSV-backed sources for solve-class
@@ -793,7 +793,7 @@ class SolveConfig:
         """
         # Late import: SpineDbReader brings spinedb_api into the import
         # graph, but we only need it for the isinstance check.
-        from flextool.engine._spinedb_reader import SpineDbReader
+        from flextool.engine.input._spinedb_reader import SpineDbReader
 
         if isinstance(source, SpineDbReader):
             return cls.load_from_db_url(

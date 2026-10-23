@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     alias_to_axis,
     lit_axis,
     rename_to_axis,

@@ -11,7 +11,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine._input_source import (
+from flextool.engine.input._input_source import (
     _install_csv_cache,
     _read_csv_file,
     seed_provider_from_dir,

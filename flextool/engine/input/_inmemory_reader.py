@@ -135,7 +135,7 @@ class InMemoryReader:
         non-PERIOD_TIME keys so the resolver falls back to its combined
         allow-list check.
         """
-        from flextool.engine._param_shapes import PERIOD_TIME_PARAMS
+        from flextool.engine.input._param_shapes import PERIOD_TIME_PARAMS
         if (entity_class, parameter_name) not in PERIOD_TIME_PARAMS:
             return set()
         df = self.parameter(entity_class, parameter_name)

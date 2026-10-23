@@ -70,7 +70,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     alias_to_axis,
     rename_to_axis,
     schema_dtype,
@@ -86,7 +86,7 @@ from flextool.engine.preprocess.params._walks import period_walk_iterator, Windo
 _enums: "dict | None" = None
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
     from flextool.engine.preprocess._solve_context import SolveContext
 
 
@@ -414,7 +414,7 @@ def commissioning_year_lf(source: "InputSource",
     pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         if _lag_cfg:
-            from flextool.engine._solve_state import CommissioningLagError
+            from flextool.engine.input._solve_state import CommissioningLagError
             raise CommissioningLagError(
                 "commissioning_year_lf could not resolve a period-year "
                 "calendar (_p_years_d_lf returned None) on a model with a "
@@ -462,7 +462,7 @@ def commissioning_year_lf(source: "InputSource",
     # round-to-zero / immediate model, whose seam set is non-empty (the lag
     # simply snaps back onto the order period).  Surface it loudly.
     if _lag_cfg and seams.select(pl.len()).collect().item() == 0:
-        from flextool.engine._solve_state import CommissioningLagError
+        from flextool.engine.input._solve_state import CommissioningLagError
         raise CommissioningLagError(
             "commissioning_year_lf resolved an EMPTY seam set over "
             "period_in_use on a model with a configured "
@@ -579,7 +579,7 @@ def assert_no_forced_out_of_horizon_commission(
     if bad.height > 0:
         pairs = ", ".join(f"({e}, {d})"
                           for e, d in bad.select("e", "d").rows())
-        from flextool.engine._solve_state import FlexToolConfigError
+        from flextool.engine.input._solve_state import FlexToolConfigError
         raise FlexToolConfigError(
             "construction_lead_time_method=next_seam pins a forced "
             "investment (invest_forced / invest_min_period) whose "
@@ -1097,7 +1097,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
     # the bottom-of-function ``pl.concat``.  ``empty_like`` reads the
     # input frame's schema for the requested columns and uses
     # ``pl.Utf8`` as the fall-back when the column is absent.
-    from flextool.engine._axis_enums import empty_like
+    from flextool.engine.input._axis_enums import empty_like
     bounded_walk = empty_like(anchor_lf,
                                 ["e", "d"],
                                 extra={"d_all": anchor_lf.collect_schema().get("d", pl.Utf8)},
@@ -1256,7 +1256,7 @@ def p_entity_all_existing_from_handoff(
         # later_existing[e, d] = Σ_{d_h: (e, d_h, d) ∈ edd_history ∧
         #                              (e, d_h) ∈ realized} ppec[(e, d_h)].
         # (e, d_h) is "realized" iff ppec carries a row for it.
-        from flextool.engine._axis_enums import align_join_dtypes
+        from flextool.engine.input._axis_enums import align_join_dtypes
         edd_lf, ppec_lf = align_join_dtypes(edd_lf, ppec_lf, ["e", "d_h"])
         later_lf = (edd_lf
                        .join(ppec_lf, on=["e", "d_h"], how="inner")
@@ -1310,7 +1310,7 @@ def p_entity_all_existing_from_handoff(
     # cast).  Two passes — the first lifts grid_lf to the widest dtype
     # available from any input, the second pulls every other input
     # back up to grid_lf's promoted dtype.
-    from flextool.engine._axis_enums import align_join_dtypes
+    from flextool.engine.input._axis_enums import align_join_dtypes
     pre_renamed = pre_existing_lf.rename({"value": "pre"})
     grid_lf, ppic_lf = align_join_dtypes(grid_lf, ppic_lf, ["e", "d"])
     grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e"])

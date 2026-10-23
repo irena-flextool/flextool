@@ -282,7 +282,7 @@ def test_spawn_records_realized_dispatch_parent(tmp_path):
     """``spawn_realized_dispatch_sibling`` records the EXPLICIT sibling ->
     parent mapping consumed by the W4c post-pass (no ``__realized_dispatch``
     name-parse)."""
-    from flextool.engine._solve_config import SolveConfig
+    from flextool.engine.input._solve_config import SolveConfig
 
     url = _build_db(DIVERGENT_FIXTURE, tmp_path)
     sc = SolveConfig.load_from_db_url(url, SCENARIO)

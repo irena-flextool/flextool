@@ -112,7 +112,7 @@ PROVIDER_IMPL_ALLOWLIST: dict[str, str] = {
     "preprocess/_flex_data_provider.py": (
         "Provider implementation: defines snapshot/dump I/O."
     ),
-    "_input_source.py": (
+    "input/_input_source.py": (
         "Defines _read_csv_file itself — the canonical residual reader."
     ),
     "preprocess/_provider_io.py": (

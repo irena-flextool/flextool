@@ -66,10 +66,10 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine._axis_enums import rename_to_axis
+from flextool.engine.input._axis_enums import rename_to_axis
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
 
 
 class WindowMethod(enum.Enum):
@@ -127,7 +127,7 @@ def _assert_lineage_castable(lineage: pl.DataFrame,
         bad.extend(str(v) for v, c in zip(raw.to_list(), cast.to_list())
                    if c is None)
     if bad:
-        from flextool.engine._solve_state import LineageFilterError
+        from flextool.engine.input._solve_state import LineageFilterError
         raise LineageFilterError(
             "period_walk_iterator lineage filter: token(s) "
             f"{sorted(set(bad))} in the lineage frame are not castable "
@@ -273,7 +273,7 @@ def period_walk_iterator(
     * ``factor_side=None`` → ``[e, d, d_all]`` (one row per matching
       triple).
     """
-    from flextool.engine._axis_enums import empty_like
+    from flextool.engine.input._axis_enums import empty_like
     # Slice D α-1: fall back to the boundary-scoped recourse Provider (and
     # its workdir — the canonical year readers key the Provider path off
     # it) so the year/factor arms revive under the flag without threading
@@ -388,7 +388,7 @@ def period_walk_iterator(
                   .join(c_lf, on=["e", "d"], how="left")
                   .with_columns(yr_avail=pl.coalesce("yr_c", "yr_d")))
         if pre_overlap > 0:
-            from flextool.engine._solve_state import (
+            from flextool.engine.input._solve_state import (
                 CommissioningLagError,
             )
             _desync_msg = (

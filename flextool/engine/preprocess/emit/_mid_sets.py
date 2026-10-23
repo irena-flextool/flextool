@@ -30,7 +30,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._axis_enums import rename_to_axis
+from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.preprocess._provider_io import _emit
 
 
@@ -543,7 +543,7 @@ def derive_node_storage_binding_method(input_dir: Path,
     # surfaces as an explicit error.
     unique_node_height = frame.select("node").unique().height
     if frame.height != unique_node_height:
-        from flextool.engine._solve_state import FlexToolConfigError
+        from flextool.engine.input._solve_state import FlexToolConfigError
         dup_nodes = (frame
                      .group_by("node")
                      .agg(pl.len().alias("_count"))

@@ -122,7 +122,7 @@ def test_delayed_unit_shares_hold_at_input_time(tmp_path_factory) -> None:
 ])
 def test_invalid_shares_are_errors(tmp_path_factory, alt, values,
                                    match) -> None:
-    from flextool.engine._solve_state import FlexToolConfigError
+    from flextool.engine.input._solve_state import FlexToolConfigError
 
     url, scen = make_db(tmp_path_factory, alt=alt, base_chain=CHP_CHAIN,
                         entities=GAS_ENTITIES,
@@ -159,7 +159,7 @@ def test_build_guard_rejects_bad_shares(tmp_path_factory) -> None:
 
     from polar_high import Param
 
-    from flextool.engine._solve_state import FlexToolConfigError
+    from flextool.engine.input._solve_state import FlexToolConfigError
 
     step = _solve(tmp_path_factory, "ism_guard", [_share(GAS, 0.3)])
     fd = step.flex_data

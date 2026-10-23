@@ -50,13 +50,13 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 import spinedb_api as api
 
-from flextool.engine._constants import HOURS_PER_YEAR
-from flextool.engine._solve_config import (
+from flextool.engine.input._constants import HOURS_PER_YEAR
+from flextool.engine.input._solve_config import (
     DictMode,
     get_single_entities,
     params_to_dict,
 )
-from flextool.engine._solve_state import (
+from flextool.engine.input._solve_state import (
     ActiveTimeEntry,
     FlexToolConfigError,
 )
@@ -68,7 +68,7 @@ if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
 
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-    from flextool.engine._solve_config import SolveConfig
+    from flextool.engine.input._solve_config import SolveConfig
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +219,7 @@ class TimelineConfig:
     ) -> "TimelineConfig":
         """Convenience factory: open *db_url*, apply *scenario*, load.
 
-        Mirrors :meth:`flextool.engine._solve_config.SolveConfig.load_from_db_url`
+        Mirrors :meth:`flextool.engine.input._solve_config.SolveConfig.load_from_db_url`
         — same pattern.
         """
         from spinedb_api import DatabaseMapping
@@ -249,12 +249,12 @@ class TimelineConfig:
     ) -> "TimelineConfig":
         """Load via the :class:`InputSource` Protocol (Γ.8.D wiring).
 
-        Currently only :class:`flextool.engine._spinedb_reader.SpineDbReader`
+        Currently only :class:`flextool.engine.input._spinedb_reader.SpineDbReader`
         sources are supported — they expose ``db_url`` and ``scenario`` so
         the canonical :meth:`load_from_db_url` path can be reused.
         In-memory and CSV-backed sources are deferred to Γ.8.D.
         """
-        from flextool.engine._spinedb_reader import SpineDbReader
+        from flextool.engine.input._spinedb_reader import SpineDbReader
 
         if isinstance(source, SpineDbReader):
             return cls.load_from_db_url(

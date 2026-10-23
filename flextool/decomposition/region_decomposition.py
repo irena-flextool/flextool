@@ -22,7 +22,7 @@ import logging
 from pathlib import Path
 
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 
 def write_input_for_region(

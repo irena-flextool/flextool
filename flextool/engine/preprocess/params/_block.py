@@ -59,7 +59,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     alias_to_axis,
     cast_dim,
     cast_frame_axes,

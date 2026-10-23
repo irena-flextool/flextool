@@ -27,7 +27,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     cast_dim,
     rename_to_axis,
     schema_dtype,

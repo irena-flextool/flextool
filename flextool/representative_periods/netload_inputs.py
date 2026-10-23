@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 import spinedb_api as api
 from spinedb_api import DatabaseMapping
 
-from flextool.engine._db_reader import DictMode, params_to_dict
+from flextool.engine.input._db_reader import DictMode, params_to_dict
 from flextool.engine.preprocess.params._existing import _INVEST_NOT_ALLOWED
 
 # The schema default of ``unit__node__profile.profile_method``. A unit whose

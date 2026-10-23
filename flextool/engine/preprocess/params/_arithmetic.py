@@ -62,7 +62,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     alias_to_axis,
     cast_frame_axes,
     get_global_axis_enums,
@@ -77,7 +77,7 @@ from flextool.engine.preprocess.params._derived import (
 )
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
 
 logger = logging.getLogger(__name__)
 

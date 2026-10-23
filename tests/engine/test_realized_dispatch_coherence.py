@@ -21,8 +21,8 @@ fails here loudly.
 """
 from __future__ import annotations
 
-from flextool.engine._solve_config import SolveConfig
-from flextool.engine._spinedb_reader import SpineDbReader
+from flextool.engine.input._solve_config import SolveConfig
+from flextool.engine.input._spinedb_reader import SpineDbReader
 
 #: The four defining realized-dispatch facts, RAW Spine param -> DERIVED
 #: SolveConfig dict.  This mapping IS the single declaration of the

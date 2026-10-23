@@ -44,7 +44,7 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     alias_to_axis,
     axis_lazyframe,
     cast_dim,
@@ -54,10 +54,10 @@ from flextool.engine._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine._constants import HOURS_PER_YEAR
+from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine._solve_state import CommissioningLagError, LineageFilterError
-from flextool.engine._param_shapes import (
+from flextool.engine.input._solve_state import CommissioningLagError, LineageFilterError
+from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
     promote_param_to_dt,
     resolve_param_shape,
@@ -415,7 +415,7 @@ _NODE_UNITSIZE_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 if TYPE_CHECKING:
     from flextool.engine.preprocess.params._block_layout import BlockLayout
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
     from flextool.engine.preprocess._solve_context import SolveContext
 
 
@@ -957,7 +957,7 @@ def p_inflation_op_from_source(
                     break
             if yr_lf is not None:
                 d_unique_lf = dt.lazy().select("d").unique()
-                from flextool.engine._axis_enums import align_join_dtypes
+                from flextool.engine.input._axis_enums import align_join_dtypes
                 d_unique_lf, yr_lf = align_join_dtypes(
                     d_unique_lf, yr_lf, ["d"])
                 yr_joined = (d_unique_lf.join(yr_lf, on="d", how="left")
@@ -1116,7 +1116,7 @@ def p_timestep_weight_from_source(
     dt_lf = dt.lazy().select("d", "t")
     # Align the CSV-fresh helper frames to dt's dim dtypes (the loader
     # cast dt to Enum end-of-load).
-    from flextool.engine._axis_enums import align_join_dtypes
+    from flextool.engine.input._axis_enums import align_join_dtypes
     dt_lf, period_timeset_lf = align_join_dtypes(
         dt_lf, period_timeset_lf, ["d"])
     dt_lf, weights_lf = align_join_dtypes(dt_lf, weights_lf, ["t"])
@@ -7751,7 +7751,7 @@ def _guard_coarse_blocks_within_repday(
     configuration problem the user can fix (choose a ``new_stepduration``
     that evenly divides the representative-period length).
     """
-    from flextool.engine._solve_state import FlexToolConfigError
+    from flextool.engine.input._solve_state import FlexToolConfigError
 
     straddlers: list[tuple[str, str]] = []
     for (dval, bfirst), grp in period_block_time.group_by(

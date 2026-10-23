@@ -104,7 +104,7 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
-from flextool.engine._param_shapes import promote_param_to_dt
+from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
 # The pdtNodeInflow frame is all-Utf8: node, period, time, value.

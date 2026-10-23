@@ -18,7 +18,7 @@ from __future__ import annotations
 from flextool.engine.solve._orchestration import (
     _benders_consume_guard_message,
 )
-from flextool.engine._solve_config import SolveConfig
+from flextool.engine.input._solve_config import SolveConfig
 
 
 def _bare_solve_config(**dicts) -> SolveConfig:

@@ -34,7 +34,7 @@ import polars as pl
 import pytest
 
 from flextool.engine import load_flextool
-from flextool.engine._param_shapes import promote_param_to_dt
+from flextool.engine.input._param_shapes import promote_param_to_dt
 
 from tests.engine.perturbation._harness import (
     scale_param,

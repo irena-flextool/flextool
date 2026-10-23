@@ -45,7 +45,7 @@ from flextool.engine.preprocess.emit._blocks import emit_block_data_for_solve
 # solve orchestrator now lives natively at
 # :mod:`flextool.engine.preprocess.emit._solve_time`.
 from flextool.engine.preprocess.emit import _solve_time as preprocessing_solve_time
-from flextool.engine._solve_state import (
+from flextool.engine.input._solve_state import (
     FlexToolConfigError,
     FlexToolSolveError,
 )
@@ -64,7 +64,7 @@ from flextool.engine.solve._realized_overlap import (
     warn_realized_dispatch_overlaps,
     warn_realized_invest_overlaps,
 )
-from flextool.engine._solve_state import compute_level_key
+from flextool.engine.input._solve_state import compute_level_key
 
 # Native solve-tree expansion + stochastic branching + timeline helpers.
 from flextool.engine.solve._recursive_solve import (
@@ -72,7 +72,7 @@ from flextool.engine.solve._recursive_solve import (
     RecursiveSolveBuilder,
 )
 from flextool.engine.solve._stochastic import StochasticSolver
-from flextool.engine._timeline import (
+from flextool.engine.input._timeline import (
     get_active_time,
     make_period_block,
     separate_period_and_timeseries_data,
@@ -220,7 +220,7 @@ def native_run_model(state, solver) -> int:
     Args:
         state: ``RunnerState`` carrier — paths, solve config, timeline,
             handoffs, logger.  Either the flextool ``RunnerState`` or
-            the native :class:`flextool.engine._solve_state.RunnerState`
+            the native :class:`flextool.engine.input._solve_state.RunnerState`
             shape; optional fields (``timing_recorder``, ``auto_scale``)
             are tolerated via ``getattr``.
         solver: A :class:`SolverRunner` subclass.  In the native cascade

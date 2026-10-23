@@ -1,7 +1,7 @@
 """Guards for the centralised ``HOURS_PER_YEAR`` unit constant.
 
 Step 1 of the 8760 cleanup: every hours->years conversion in the engine
-routes through :data:`flextool.engine._constants.HOURS_PER_YEAR`
+routes through :data:`flextool.engine.input._constants.HOURS_PER_YEAR`
 rather than a bare literal, so the serve/report/cost annualisations stay
 mutually consistent and a future per-period override replaces one symbol.
 
@@ -20,12 +20,12 @@ import pathlib
 import pytest
 
 import flextool.engine as ep
-from flextool.engine._constants import HOURS_PER_YEAR
+from flextool.engine.input._constants import HOURS_PER_YEAR
 
 
 # Path (relative to the engine package) of the one module allowed to
 # hold the literal.
-_CONSTANTS_MODULE = "_constants.py"
+_CONSTANTS_MODULE = "input/_constants.py"
 
 # The recursive scan must never silently cover nothing.
 _MIN_SCANNED_FILES = 80
@@ -67,7 +67,7 @@ def test_no_bare_year_constant_in_engine_code() -> None:
     )
     assert not offenders, (
         "bare 8760 literal(s) in engine code — route through "
-        "flextool.engine._constants.HOURS_PER_YEAR: "
+        "flextool.engine.input._constants.HOURS_PER_YEAR: "
         + ", ".join(offenders)
     )
 

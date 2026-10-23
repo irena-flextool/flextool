@@ -43,7 +43,7 @@ from flextool.engine.preprocess.params._block_layout import (
     DEFAULT_BLOCK,
     BlockLayout,
 )
-from flextool.engine._solve_state import ActiveTimeEntry
+from flextool.engine.input._solve_state import ActiveTimeEntry
 
 
 HERE = Path(__file__).resolve().parent
@@ -385,7 +385,7 @@ def test_validate_group_membership_rejects_dual_resolution_membership() -> None:
     from flextool.engine.preprocess.params._block_layout import (
         validate_group_membership,
     )
-    from flextool.engine._solve_state import FlexToolConfigError
+    from flextool.engine.input._solve_state import FlexToolConfigError
 
     with pytest.raises(FlexToolConfigError, match="multiple resolution-groups"):
         validate_group_membership(
@@ -402,7 +402,7 @@ def test_validate_group_membership_rejects_reserve_in_resolution_group() -> None
     from flextool.engine.preprocess.params._block_layout import (
         validate_group_membership,
     )
-    from flextool.engine._solve_state import FlexToolConfigError
+    from flextool.engine.input._solve_state import FlexToolConfigError
 
     with pytest.raises(FlexToolConfigError, match="participates in reserves"):
         validate_group_membership(
@@ -566,8 +566,8 @@ def test_block_layout_from_source_matches_load_from_solve_data_lh2(
     solve-data loader.
     """
     from flextool.engine import SpineDbReader
-    from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._timeline import TimelineConfig
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.engine.input._timeline import TimelineConfig
 
     fixture = scenario_workdir("lh2_three_region", db_fixture="lh2")
     db = fixture / "tests.sqlite"
@@ -626,8 +626,8 @@ def test_block_layout_from_source_single_block_fixture(scenario_workdir):
     should exist.
     """
     from flextool.engine import SpineDbReader
-    from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._timeline import TimelineConfig
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.engine.input._timeline import TimelineConfig
 
     fixture = scenario_workdir("base")
     db = fixture / "tests.sqlite"

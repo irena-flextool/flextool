@@ -19,12 +19,12 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
-from flextool.engine._solve_config import (
+from flextool.engine.input._solve_config import (
     HiGHSConfig,
     SolveConfig,
     SolverSettings,
 )
-from flextool.engine._timeline import TimelineConfig
+from flextool.engine.input._timeline import TimelineConfig
 
 SOLVE = "s2p"
 PERIODS = ["p2035", "p2040", "p2045"]

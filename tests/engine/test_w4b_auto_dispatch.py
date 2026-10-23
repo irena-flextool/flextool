@@ -306,7 +306,7 @@ def test_register_derived_solve_makes_sibling_a_real_spine_solve(tmp_path):
     with a FRESH entity id, so ``_solve_in_spine`` is True and
     ``_solve_periods`` reads the cloned realized window — while NOT cloning
     ``invest_periods`` (the sibling must not invest)."""
-    from flextool.engine._spinedb_reader import SpineDbReader
+    from flextool.engine.input._spinedb_reader import SpineDbReader
     from flextool.engine.preprocess.params._derived import (
         _solve_in_spine,
         _solve_periods,
@@ -341,8 +341,8 @@ def test_register_derived_solve_makes_sibling_a_real_spine_solve(tmp_path):
 
 
 def test_register_derived_solve_missing_parent_raises(tmp_path):
-    from flextool.engine._spinedb_reader import SpineDbReader
-    from flextool.engine._solve_state import FlexToolConfigError
+    from flextool.engine.input._spinedb_reader import SpineDbReader
+    from flextool.engine.input._solve_state import FlexToolConfigError
 
     url = _build_db(AUTO_FIXTURE, tmp_path)
     reader = SpineDbReader(url, scenario=SCENARIO)
@@ -355,7 +355,7 @@ def test_spawn_realized_dispatch_sibling_copies_sets_and_drops(tmp_path):
     the parent in ``model_solve``, COPIES the timeline scaffolding, SETS
     ``single_solve`` + the realized window, and DROPS the invest /
     stochastic / decomposition keys."""
-    from flextool.engine._solve_config import SolveConfig
+    from flextool.engine.input._solve_config import SolveConfig
 
     url = _build_db(AUTO_FIXTURE, tmp_path)
     sc = SolveConfig.load_from_db_url(url, SCENARIO)
@@ -396,8 +396,8 @@ def test_spawn_helper_registers_in_both_reader_and_config(tmp_path):
     """The orchestration helper performs the DUAL registration: the sibling
     lands in the reader's ``solve`` entities (full override path) AND right
     after the parent in the driving config's ``model_solve``."""
-    from flextool.engine._spinedb_reader import SpineDbReader
-    from flextool.engine._solve_config import SolveConfig
+    from flextool.engine.input._spinedb_reader import SpineDbReader
+    from flextool.engine.input._solve_config import SolveConfig
     from flextool.engine.solve._orchestration import (
         _spawn_realized_dispatch_siblings,
     )
@@ -418,12 +418,12 @@ def test_spawn_helper_collision_raises(tmp_path):
     """A pre-existing solve named ``<parent>__realized_dispatch`` (here
     injected into the reader) makes the helper raise, naming the colliding
     owner, rather than silently clobbering it."""
-    from flextool.engine._spinedb_reader import SpineDbReader
-    from flextool.engine._solve_config import SolveConfig
+    from flextool.engine.input._spinedb_reader import SpineDbReader
+    from flextool.engine.input._solve_config import SolveConfig
     from flextool.engine.solve._orchestration import (
         _spawn_realized_dispatch_siblings,
     )
-    from flextool.engine._solve_state import FlexToolConfigError
+    from flextool.engine.input._solve_state import FlexToolConfigError
 
     url = _build_db(AUTO_FIXTURE, tmp_path)
     reader = SpineDbReader(url, scenario=SCENARIO)
@@ -449,11 +449,11 @@ def test_spawn_helper_fix_storage_guard_raises():
     (gating on >1 realized period would UNDER-fire for a single realized
     period with a multi-period fix_storage authored).  Empty / unset
     ``fix_storage_periods`` is NOT rejected."""
-    from flextool.engine._solve_config import SolveConfig
+    from flextool.engine.input._solve_config import SolveConfig
     from flextool.engine.solve._orchestration import (
         _spawn_realized_dispatch_siblings,
     )
-    from flextool.engine._solve_state import FlexToolConfigError
+    from flextool.engine.input._solve_state import FlexToolConfigError
 
     class _FakeReader:
         def __init__(self):

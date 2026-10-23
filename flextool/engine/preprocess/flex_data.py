@@ -27,14 +27,14 @@ import polars as pl
 from polar_high import Param
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import FlexInputSource, InputSource
+    from flextool.engine.input._input_source import FlexInputSource, InputSource
 
 from flextool.engine import _group_slack
 from flextool.engine import _reserve
 from flextool.engine import _delay
 from flextool.engine import _dc_power_flow
 from flextool.engine import _commodity_ladder
-from flextool.engine._axis_enums import (  # substrate retained for Path B — see handoff
+from flextool.engine.input._axis_enums import (  # substrate retained for Path B — see handoff
     alias_to_axis,
     cast_dim,
     cast_flexdata_axes,
@@ -45,7 +45,7 @@ from flextool.engine._axis_enums import (  # substrate retained for Path B — s
 )
 from flextool.engine.preprocess.params._block_layout import BlockLayout
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine._input_source import read_csv_fallback
+from flextool.engine.input._input_source import read_csv_fallback
 
 
 def _loadflex_prof(label: str) -> None:
@@ -132,7 +132,7 @@ def _provider_read(provider: "object | None", name: str,
     chain).  Off-cascade callers (the loader-unit tests in
     ``tests/engine/loaders``) pass ``provider=None``; for those
     the residual disk-read goes through
-    :func:`flextool.engine._input_source.read_csv_fallback` so
+    :func:`flextool.engine.input._input_source.read_csv_fallback` so
     Rule 1 of ``tests/engine/test_meta_provider_invariants.py``
     can confirm flex_data.py never calls ``_read_csv_file`` /
     ``pl.read_csv`` directly.
@@ -1224,7 +1224,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         pss_noe_path = sd / "process_source_sink_noEff.csv"
         if not _provider_has(provider, "solve_data/process_source_sink", pss_path):
             return empty_return
-        from flextool.engine._axis_enums import schema_dtype
+        from flextool.engine.input._axis_enums import schema_dtype
         empty_pss = pl.DataFrame(
             schema={
                 "p": schema_dtype(None, "p"),
@@ -4194,7 +4194,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # Late-import the Protocol + adapters to avoid a circular import
     # against the tests' fixture-loaders (which sometimes import this
     # module before flextool.__init__ finishes).
-    from flextool.engine._input_source import CsvSource, FlexInputSource, InputSource
+    from flextool.engine.input._input_source import CsvSource, FlexInputSource, InputSource
 
     workdir_for_db: Path | None = None
     if isinstance(source, (str, Path)):
@@ -4231,7 +4231,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         from flextool.engine.preprocess._flex_data_provider import (
             FlexDataProvider,
         )
-        from flextool.engine._input_source import (
+        from flextool.engine.input._input_source import (
             seed_provider_from_dir,
         )
         provider = FlexDataProvider()
@@ -4368,7 +4368,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
     if _auto_construct_db_reader:
         scenario = _find_scenario(workdir_for_db)
         if scenario is not None:
-            from flextool.engine._spinedb_reader import SpineDbReader
+            from flextool.engine.input._spinedb_reader import SpineDbReader
             db_workdir = workdir_for_db
             input_link = workdir_for_db / "input"
             if input_link.is_symlink():
@@ -5968,7 +5968,7 @@ def build_handoff_from_solution(
     # Native import — Γ.8.D moved SolveHandoff into engine.
     from flextool.engine.solve._handoff import SolveHandoff
     # Slice C Guard 3 — local imports keep this helper's import surface narrow.
-    from flextool.engine._solve_state import FlexToolConfigError
+    from flextool.engine.input._solve_state import FlexToolConfigError
     from flextool.engine.preprocess._stochastic_detect import (
         synthetic_branch_tokens,
     )

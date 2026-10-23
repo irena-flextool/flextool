@@ -30,18 +30,18 @@ import polars as pl
 
 from polar_high import Param
 
-from flextool.engine._axis_enums import (cast_frame_axes,
+from flextool.engine.input._axis_enums import (cast_frame_axes,
                                                  get_global_axis_enums,
                                                  rename_to_axis)
-from flextool.engine._param_shapes import (
+from flextool.engine.input._param_shapes import (
     broadcast_to_period,
     broadcast_to_period_time,
     resolve_param_shape,
 )
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
 
 
 # ---------------------------------------------------------------------------

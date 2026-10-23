@@ -62,14 +62,14 @@ import logging
 from collections import namedtuple
 from typing import TYPE_CHECKING
 
-from flextool.engine._solve_state import (
+from flextool.engine.input._solve_state import (
     FlexToolConfigError,
     SolveResult,
 )
-from flextool.engine._timeline import get_active_time
+from flextool.engine.input._timeline import get_active_time
 
 if TYPE_CHECKING:
-    from flextool.engine._solve_state import RunnerState
+    from flextool.engine.input._solve_state import RunnerState
 
 
 # Module-level logger for advisories that must survive the cascade's

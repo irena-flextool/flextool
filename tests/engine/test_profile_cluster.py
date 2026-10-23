@@ -35,7 +35,7 @@ import polars as pl
 import pytest
 
 from flextool.engine import SpineDbReader
-from flextool.engine._inmemory_reader import InMemoryReader
+from flextool.engine.input._inmemory_reader import InMemoryReader
 from flextool.engine.preprocess.params._profiles import (
     p_profile_value_lf,
     p_profile_value_from_source_v2,

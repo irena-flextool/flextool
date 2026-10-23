@@ -16,7 +16,7 @@
       "source": "node",
       "filter": "scenario_filter",
       "column_synonyms": ["node"],
-      "note": "Node entities. Cascade column synonym: 'node' (renamed to 'n' in most helpers; see flextool/engine/_axis_enums.py _AXIS_SYNONYMS)."
+      "note": "Node entities. Cascade column synonym: 'node' (renamed to 'n' in most helpers; see flextool/engine/input/_axis_enums.py _AXIS_SYNONYMS)."
     },
     {
       "name": "p",

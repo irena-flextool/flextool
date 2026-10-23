@@ -52,7 +52,7 @@ from flextool.engine.preprocess.params._walks import (
     period_walk_iterator,
 )
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine._input_source import seed_provider_from_dir
+from flextool.engine.input._input_source import seed_provider_from_dir
 
 
 # ---------------------------------------------------------------------------

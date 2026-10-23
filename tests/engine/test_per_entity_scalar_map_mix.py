@@ -35,7 +35,7 @@ from flextool.engine.preprocess.params import _npv as dn
 def _mixed_existing_source():
     """InMemoryReader whose ``unit.existing`` mixes a scalar (null index)
     with a period-Map, mirroring ``SpineDbReader.parameter`` output."""
-    from flextool.engine._inmemory_reader import InMemoryReader
+    from flextool.engine.input._inmemory_reader import InMemoryReader
 
     frame = pl.DataFrame(
         {

@@ -75,7 +75,7 @@ from typing import TYPE_CHECKING, Iterable
 
 import polars as pl
 
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.flex_data import _provider_open
 
@@ -86,8 +86,8 @@ from flextool.engine.preprocess.flex_data import _provider_open
 
 
 if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
-    from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._timeline import TimelineConfig
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.engine.input._timeline import TimelineConfig
 
 
 # ---------------------------------------------------------------------------
@@ -915,7 +915,7 @@ def derive_block_predecessors(
         block_assignments: From :func:`derive_blocks`.
         block_timelines: From :func:`_build_block_timelines`.
         default_jump_list: Iterable of 7-tuples as produced by
-            :func:`flextool.engine._timeline.make_step_jump`.
+            :func:`flextool.engine.input._timeline.make_step_jump`.
             When ``None`` the default-block rows fall back to the
             simple cyclic pattern used for non-default blocks — this
             only matters for unit tests; the orchestration loop always

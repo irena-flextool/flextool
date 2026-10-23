@@ -57,11 +57,11 @@ import logging
 from collections import defaultdict
 from typing import Any, TYPE_CHECKING
 
-from flextool.engine._solve_state import FlexToolConfigError
-from flextool.engine._timeline import make_step_jump
+from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.input._timeline import make_step_jump
 
 if TYPE_CHECKING:
-    from flextool.engine._solve_state import RunnerState
+    from flextool.engine.input._solve_state import RunnerState
 
 
 # ---------------------------------------------------------------------------

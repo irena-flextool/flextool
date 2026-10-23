@@ -73,7 +73,7 @@ import polars as pl
 from polar_high import Param
 
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     alias_to_axis,
     schema_dtype,
 )
@@ -121,7 +121,7 @@ def _provider_read(provider, path: "Path") -> "pl.DataFrame":
     return provider.get(_provider_key(path))
 
 if TYPE_CHECKING:
-    from flextool.engine._input_source import InputSource
+    from flextool.engine.input._input_source import InputSource
 
 
 # ---------------------------------------------------------------------------

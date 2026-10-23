@@ -36,12 +36,12 @@ from flextool.engine import (
     run_chain_from_db,
     run_orchestration,
 )
-from flextool.engine._solve_config import (
+from flextool.engine.input._solve_config import (
     HiGHSConfig,
     SolveConfig,
     SolverSettings,
 )
-from flextool.engine._solve_state import (
+from flextool.engine.input._solve_state import (
     FlexToolConfigError,
     PathConfig,
     RunnerState,

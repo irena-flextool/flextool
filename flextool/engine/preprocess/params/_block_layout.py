@@ -48,11 +48,11 @@ from typing import TYPE_CHECKING, Iterable
 
 import polars as pl
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 
 # Substrate handle for the cascade-wide axis enum vocabulary.
@@ -63,8 +63,8 @@ from flextool.engine._solve_state import FlexToolConfigError
 _enums: "dict | None" = None
 
 if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
-    from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._timeline import TimelineConfig
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.engine.input._timeline import TimelineConfig
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +534,7 @@ class BlockLayout:
         validate: bool = True,
     ) -> "BlockLayout":
         """Construct a :class:`BlockLayout` directly from a Spine
-        :class:`~flextool.engine._input_source.InputSource`.
+        :class:`~flextool.engine.input._input_source.InputSource`.
 
         Source-only counterpart to :meth:`load_from_solve_data`: pulls
         every input that :meth:`build` needs from the source / configs
@@ -734,7 +734,7 @@ class BlockLayout:
                 process_ct_method[row["name"]] = str(row["value"])
 
         # ── 8. active_time_list — derived from timeline + solve configs.
-        from flextool.engine._timeline import get_active_time
+        from flextool.engine.input._timeline import get_active_time
 
         active_time_list = get_active_time(
             current_solve=active_solve,
@@ -1259,7 +1259,7 @@ class BlockLayout:
         live in the Provider after the cascade's preprocessing pass.
         Callers MUST pass *provider*.  When only a workdir is available
         (off-cascade tests, transitional bridges), use
-        :func:`flextool.engine._input_source.seed_provider_from_dir`
+        :func:`flextool.engine.input._input_source.seed_provider_from_dir`
         on ``workdir/"solve_data"`` to construct an ephemeral Provider
         first.
 
@@ -1295,7 +1295,7 @@ class BlockLayout:
             from flextool.engine.preprocess._flex_data_provider import (
                 FlexDataProvider,
             )
-            from flextool.engine._input_source import (
+            from flextool.engine.input._input_source import (
                 seed_provider_from_dir,
             )
             sd_dir = _Path(solve_data_dir)

@@ -15,7 +15,7 @@ session-scoped ``test_db_url`` fixture — never a checked-in ``.sqlite``.
 from __future__ import annotations
 
 from flextool.engine.preprocess.params._projection import groupCapacityMargin
-from flextool.engine._spinedb_reader import SpineDbReader
+from flextool.engine.input._spinedb_reader import SpineDbReader
 
 
 def test_group_capacity_margin_non_empty_for_manual(test_db_url: str) -> None:

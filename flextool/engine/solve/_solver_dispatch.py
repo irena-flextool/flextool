@@ -23,7 +23,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
-from flextool.engine._solve_config import SolverConfig
+from flextool.engine.input._solve_config import SolverConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -237,7 +237,7 @@ def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
     ----------
     solver_config
         Solve-level config built by
-        :meth:`flextool.engine._solve_config.SolveConfig.load_from_db`.
+        :meth:`flextool.engine.input._solve_config.SolveConfig.load_from_db`.
 
     Returns
     -------

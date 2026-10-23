@@ -46,7 +46,7 @@ if str(TESTS_DIR) not in sys.path:
 from db_utils import json_to_db  # noqa: E402
 
 from flextool.engine import run_chain_from_db  # noqa: E402
-from flextool.engine._solve_config import (  # noqa: E402
+from flextool.engine.input._solve_config import (  # noqa: E402
     SolverConfig,
 )
 from flextool.engine.solve._solver_dispatch import (  # noqa: E402

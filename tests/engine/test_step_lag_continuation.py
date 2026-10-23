@@ -20,8 +20,8 @@ import polars as pl
 import pytest
 
 from flextool.engine.preprocess.params._derived import dtttdt_from_source
-from flextool.engine._solve_state import ActiveTimeEntry
-from flextool.engine._timeline import make_step_jump
+from flextool.engine.input._solve_state import ActiveTimeEntry
+from flextool.engine.input._timeline import make_step_jump
 
 
 def _ats(names_and_indices):

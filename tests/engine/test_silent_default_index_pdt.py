@@ -16,8 +16,8 @@ parameters whose Map ``index_name`` carried spinedb_api's silent default
 guard also rejected SCALAR / MAP_PERIOD / MAP_TIME shapes outright.
 
 Δ.17c-Tier3 routes each helper through
-:func:`flextool.engine._param_shapes.resolve_param_shape` +
-:func:`flextool.engine._param_shapes.broadcast_to_period_time`.
+:func:`flextool.engine.input._param_shapes.resolve_param_shape` +
+:func:`flextool.engine.input._param_shapes.broadcast_to_period_time`.
 ``broadcast_to_period_time`` was extended in this commit to accept a
 per-source-column rename dict, since three of the four parameters live
 on relationship classes (``unit__inputNode`` 2-dim, ``unit__outputNode``

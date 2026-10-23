@@ -96,7 +96,7 @@ from polar_high.benders import _cut_separates as _ph_cut_separates
 
 from flextool.engine.solve import _region_filter
 from flextool.engine import build_flextool as _build_flextool
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     get_global_axis_enums,
     reset_global_axis_enums,
     set_global_axis_enums,
@@ -114,7 +114,7 @@ from flextool.engine.autoscale import (
     unscale_solution,
 )
 from flextool.engine.solve._region_filter import HalfFlow, RegionSplit
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.solve._solver_dispatch import apply_data_solver_options
 from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,

@@ -13,11 +13,11 @@ from typing import TYPE_CHECKING
 import polars as pl
 from polar_high import Param, Sum, Where
 
-from flextool.engine._axis_enums import rename_to_axis
+from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine._model_common import _drop_uncapped, _indirect_sum_arcs, _utf8_keys, _var_view
 from flextool.engine._online import uc_classes
-from flextool.engine._param_shapes import promote_param_to_dt
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 if TYPE_CHECKING:
     from flextool.engine.model import _Build

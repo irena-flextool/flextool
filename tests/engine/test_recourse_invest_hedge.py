@@ -34,12 +34,12 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
-from flextool.engine._solve_state import (
+from flextool.engine.input._solve_state import (
     ActiveTimeEntry,
     FlexToolConfigError,
 )
 from flextool.engine.solve._stochastic import StochasticSolver
-from flextool.engine._timeline import make_step_jump
+from flextool.engine.input._timeline import make_step_jump
 
 SOLVE = "stoch_2p_hedge"
 

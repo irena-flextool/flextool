@@ -36,7 +36,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._axis_enums import schema_dtype
+from flextool.engine.input._axis_enums import schema_dtype
 from flextool.engine.preprocess._provider_io import _emit
 
 

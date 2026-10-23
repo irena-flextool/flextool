@@ -68,9 +68,9 @@ from flextool.engine.preprocess.params._derived import (
 )
 from flextool.engine.preprocess.emit._solve_writers import _compute_rp_frames
 from flextool.engine.preprocess.params._per_solve_sets import derive_per_solve_aggregates
-from flextool.engine._solve_config import SolveConfig
-from flextool.engine._spinedb_reader import SpineDbReader
-from flextool.engine._timeline import TimelineConfig
+from flextool.engine.input._solve_config import SolveConfig
+from flextool.engine.input._spinedb_reader import SpineDbReader
+from flextool.engine.input._timeline import TimelineConfig
 
 # Per-node absolute shed tolerance (MWh).  Nodes whose residual unserved
 # energy is at/below this are treated as non-shedding and get NO increment,

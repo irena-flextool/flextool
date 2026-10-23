@@ -70,7 +70,7 @@ from flextool.engine import _non_anticipativity
 from flextool.engine import _online
 from flextool.engine import _reserve
 from flextool.engine import _unit_floors
-from flextool.engine._axis_enums import alias_to_axis, rename_to_axis
+from flextool.engine.input._axis_enums import alias_to_axis, rename_to_axis
 from flextool.engine._model_common import (
     _availability_factor,
     _coef_factor,
@@ -81,7 +81,7 @@ from flextool.engine._model_common import (
     _utf8_keys,
     _var_view,
 )
-from flextool.engine._param_shapes import promote_param_to_dt
+from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine._pdt_join import (
     compute_pss_dt,
     compute_nodeBalance_dt,
@@ -89,7 +89,7 @@ from flextool.engine._pdt_join import (
     compute_nodeState_rp_block_first_dt,
     compute_process_indirect_dt,
 )
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 _LOG = logging.getLogger(__name__)
 

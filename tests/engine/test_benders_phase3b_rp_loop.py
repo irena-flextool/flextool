@@ -61,7 +61,7 @@ from polar_high import Problem, WarmProblem
 
 from flextool.engine import build_flextool, load_flextool
 from flextool.engine.solve import _region_filter
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     get_global_axis_enums,
     set_global_axis_enums,
 )

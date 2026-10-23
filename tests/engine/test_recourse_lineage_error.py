@@ -18,7 +18,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine._solve_state import LineageFilterError
+from flextool.engine.input._solve_state import LineageFilterError
 
 
 def test_lineage_filter_error_is_valueerror():

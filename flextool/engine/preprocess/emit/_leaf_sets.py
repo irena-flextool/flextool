@@ -25,7 +25,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine.preprocess import _provider_keys as K
-from flextool.engine._axis_enums import alias_to_axis
+from flextool.engine.input._axis_enums import alias_to_axis
 from flextool.engine.preprocess._provider_io import _emit
 
 

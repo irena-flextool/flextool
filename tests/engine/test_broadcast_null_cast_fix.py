@@ -24,11 +24,11 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     reset_global_axis_enums,
     set_global_axis_enums,
 )
-from flextool.engine._param_shapes import (
+from flextool.engine.input._param_shapes import (
     ResolvedShape,
     Shape,
     broadcast_to_period_time,

@@ -1688,7 +1688,7 @@ def write_ladder_sheet_v2(
     rows simply leave the period cell empty.
     """
     # Lazy registry import — kept off the hot path.
-    from flextool.engine._param_shapes import (
+    from flextool.engine.input._param_shapes import (
         LeafKind,
         PARAM_ALLOWED_SHAPES,
         facet_keys,

@@ -9,7 +9,7 @@ period/time placement fails loudly.
 """
 from __future__ import annotations
 
-from flextool.engine._param_shapes import (
+from flextool.engine.input._param_shapes import (
     PARAM_ALLOWED_SHAPES,
     PERIOD_TIME_PARAMS,
     Shape,

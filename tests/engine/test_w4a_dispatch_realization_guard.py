@@ -28,8 +28,8 @@ import re
 
 import pytest
 
-from flextool.engine._solve_config import SolveConfig
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_config import SolveConfig
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 
 # ---------------------------------------------------------------------------

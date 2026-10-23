@@ -30,7 +30,7 @@ from flextool.engine.preprocess.params._walks import (
     WindowMethod,
     period_walk_iterator,
 )
-from flextool.engine._solve_state import CommissioningLagError
+from flextool.engine.input._solve_state import CommissioningLagError
 
 # Numeric period labels so an Int64 commission key string-matches the
 # Enum labels while casting to null against the Enum.

@@ -48,14 +48,14 @@ import polars as pl
 from polar_high import Param
 
 from flextool.engine.preprocess.flex_data import FlexData
-from flextool.engine._axis_enums import (
+from flextool.engine.input._axis_enums import (
     cast_dim,
     get_global_axis_enums,
     reset_global_axis_enums,
     schema_dtype,
     set_global_axis_enums,
 )
-from flextool.engine._param_shapes import promote_param_to_dt
+from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine._pdt_join import compute_pss_dt
 
 
@@ -155,7 +155,7 @@ def load_decomposition_method(
         from flextool.engine.preprocess._flex_data_provider import (
             FlexDataProvider,
         )
-        from flextool.engine._input_source import (
+        from flextool.engine.input._input_source import (
             seed_provider_from_dir,
         )
         local = FlexDataProvider()

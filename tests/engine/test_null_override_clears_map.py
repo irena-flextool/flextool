@@ -41,7 +41,7 @@ import pytest
 from tests.db_utils import json_to_db
 
 from flextool.engine.preprocess.params import _direct as dp
-from flextool.engine._spinedb_reader import SpineDbReader
+from flextool.engine.input._spinedb_reader import SpineDbReader
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "null_override_clears_map.json"
 PARAM = "constraint_invested_capacity_coeff"

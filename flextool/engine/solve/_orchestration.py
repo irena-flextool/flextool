@@ -63,7 +63,7 @@ from flextool.engine.solve._handoff import SolveHandoff
 from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
 )
-from flextool.engine._solve_state import (
+from flextool.engine.input._solve_state import (
     FlexToolConfigError,
     PathConfig,
     RunnerState,
@@ -2179,7 +2179,7 @@ def _drive_cascade(
     # ``work_<scenario>`` convention).
     cascade_db_reader = None
     if db_url is not None and scenario_name is not None:
-        from flextool.engine._spinedb_reader import SpineDbReader
+        from flextool.engine.input._spinedb_reader import SpineDbReader
         # Phase 4.6 — thread axis_enums + contract from the cascade
         # provider if available so the reader casts on emit.
         _cip_for_reader = getattr(state, "cascade_input_provider", None)
@@ -2960,7 +2960,7 @@ def _drive_cascade(
             # active solve picks a commercial solver we disable warm
             # reuse for this iteration, log a one-time warning, and
             # cold-rebuild + dispatch through ``run_one_solve``.
-            from flextool.engine._solve_config import (
+            from flextool.engine.input._solve_config import (
                 SolverConfig as _SolverConfig,
             )
             _active_solver_cfg = state.solve.solver_configs.get(
@@ -4438,7 +4438,7 @@ def run_chain_from_db(
         Mapping ``complete_solve_name → OrchestrationStep``.  Iterate
         in insertion order to walk the chain.
     """
-    from flextool.engine._db_loader import FlexToolRunner
+    from flextool.engine.input._db_loader import FlexToolRunner
 
     if logger is None:
         logger = logging.getLogger(
@@ -4596,8 +4596,8 @@ def run_chain_from_db(
     # state.handoffs after the run.  The real per-solve mutation happens
     # on the underlying flextool runner's state (driven inside
     # _drive_cascade); we mirror the handoffs dict back.
-    from flextool.engine._solve_config import SolveConfig
-    from flextool.engine._timeline import TimelineConfig
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.engine.input._timeline import TimelineConfig
 
     sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
     _memrec.checkpoint("solve_config_loaded", logger,

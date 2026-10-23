@@ -15,7 +15,7 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Expr, Var
 
-from flextool.engine._axis_enums import cast_dim
+from flextool.engine.input._axis_enums import cast_dim
 from flextool.engine.preprocess.params._derived import process_delayed__duration_from_weight
 from flextool.engine.preprocess._provider_io import _provider_key
 

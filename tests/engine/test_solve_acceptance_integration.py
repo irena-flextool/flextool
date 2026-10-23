@@ -21,7 +21,7 @@ from flextool.engine.solve._acceptance import (
     Acceptance,
     classify_acceptance as _real_classify,
 )
-from flextool.engine._solve_state import FlexToolSolveError
+from flextool.engine.input._solve_state import FlexToolSolveError
 
 pytestmark = pytest.mark.solver
 

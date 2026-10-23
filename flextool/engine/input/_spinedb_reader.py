@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 
-from flextool.engine._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.spinedb_backend._axis_enums import (
     AxisContract,
     FlexDataIntegrityError,
@@ -489,7 +489,7 @@ class SpineDbReader:
     # ------------------------------------------------------------------
     # Δ.17c — raw per-level index_name labels for a parameter.
     #
-    # Used by :func:`flextool.engine._param_shapes.resolve_param_shape`
+    # Used by :func:`flextool.engine.input._param_shapes.resolve_param_shape`
     # to validate the parameter's shape against an explicit allow-list
     # (per the user's directive "read from database the dimensionality
     # of the parameter" + "read the dimension index label from the
@@ -524,7 +524,7 @@ class SpineDbReader:
         # rather than just the deepest row's raw label.  Falls back to the
         # legacy deepest-wins path when classification is not possible
         # (no enums + silent labels, etc.).
-        from flextool.engine._param_shapes import PERIOD_TIME_PARAMS
+        from flextool.engine.input._param_shapes import PERIOD_TIME_PARAMS
         if (entity_class, parameter_name) in PERIOD_TIME_PARAMS:
             non_null = [(eid, v) for eid, v in rows if v is not None]
             if non_null:
@@ -580,7 +580,7 @@ class SpineDbReader:
             raise KeyError(
                 f"unknown parameter ({entity_class!r}, {parameter_name!r})"
             )
-        from flextool.engine._param_shapes import PERIOD_TIME_PARAMS
+        from flextool.engine.input._param_shapes import PERIOD_TIME_PARAMS
         if (entity_class, parameter_name) not in PERIOD_TIME_PARAMS:
             return set()
         rows = self._param_rows.get((cls_id, pdef["id"]), [])
@@ -1015,7 +1015,7 @@ class SpineDbReader:
         # parameter no longer collide by position.  Returns ``None`` when
         # nothing can be classified (no enums + silent labels, etc.); the
         # legacy positional path below then runs, byte-for-byte as before.
-        from flextool.engine._param_shapes import PERIOD_TIME_PARAMS
+        from flextool.engine.input._param_shapes import PERIOD_TIME_PARAMS
         if (_PERIOD_TIME_PLACEMENT_ENABLED
                 and (entity_class, parameter_name) in PERIOD_TIME_PARAMS):
             pt = self._unroll_period_time_rows(
@@ -1397,7 +1397,7 @@ class SpineDbReader:
         and :class:`FlexToolConfigError` when an explicit label is not a
         valid axis for a period/time parameter.
         """
-        from flextool.engine._param_shapes import _normalise_label
+        from flextool.engine.input._param_shapes import _normalise_label
         norm = _normalise_label(index_name)
         if norm == "period":
             return "period"

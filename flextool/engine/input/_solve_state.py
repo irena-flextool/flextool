@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     import polars as pl
 
     from flextool.cli._timing import TimingRecorder
-    from flextool.engine._solve_config import SolveConfig
+    from flextool.engine.input._solve_config import SolveConfig
     from flextool.engine.solve._handoff import SolveHandoff
 
 

@@ -39,7 +39,7 @@ import pytest
 
 from flextool.engine.preprocess.flex_data import _load_time
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine._input_source import seed_provider_from_dir
+from flextool.engine.input._input_source import seed_provider_from_dir
 
 
 def _provider_for(sd: Path) -> FlexDataProvider:

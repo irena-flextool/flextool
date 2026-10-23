@@ -13,7 +13,7 @@ These tests build an isolated SpineDB at test time via
 :mod:`spinedb_api`, populate it with the minimal shape that reproduces
 the bug (one Map with float leaves + one Map with string leaves of the
 same parameter), and assert that
-:meth:`flextool.engine._spinedb_reader.SpineDbReader.parameter`
+:meth:`flextool.engine.input._spinedb_reader.SpineDbReader.parameter`
 returns a ``Float64`` value column for both rows.
 
 A second test pins the "unparseable string" path: a Map authored with
@@ -98,7 +98,7 @@ def test_value_column_is_float_when_some_cells_are_strings(tmp_path: Path) -> No
     """
     from spinedb_api.parameter_value import Map
 
-    from flextool.engine._spinedb_reader import SpineDbReader
+    from flextool.engine.input._spinedb_reader import SpineDbReader
 
     rows = [
         ("W_str",   Map(indexes=["c1"], values=["1"],  index_name="constraint")),
@@ -129,7 +129,7 @@ def test_unparseable_string_value_raises_with_breadcrumb(tmp_path: Path) -> None
     """
     from spinedb_api.parameter_value import Map
 
-    from flextool.engine._spinedb_reader import SpineDbReader
+    from flextool.engine.input._spinedb_reader import SpineDbReader
     from flextool.spinedb_backend._axis_enums import (
         FlexDataIntegrityError,
     )
@@ -168,7 +168,7 @@ def test_scalar_string_parameter_bypasses_contract_dtype(tmp_path: Path) -> None
     scalars, which broke ``projection_params.nodeBalance`` on the
     first DB that hit it.
     """
-    from flextool.engine._spinedb_reader import SpineDbReader
+    from flextool.engine.input._spinedb_reader import SpineDbReader
 
     rows = [
         ("W1", "commodity"),
@@ -205,7 +205,7 @@ def test_array_string_parameter_bypasses_contract_dtype(tmp_path: Path) -> None:
     """
     from spinedb_api.parameter_value import Array
 
-    from flextool.engine._spinedb_reader import SpineDbReader
+    from flextool.engine.input._spinedb_reader import SpineDbReader
 
     rows = [
         ("W1", Array(["y2020_2day_dispatch", "y2030_2day_dispatch"])),

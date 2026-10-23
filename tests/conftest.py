@@ -930,7 +930,7 @@ def _reset_global_axis_enums() -> None:
     Cheap (a single ContextVar assignment) and harmless to run
     between every test.
     """
-    from flextool.engine._axis_enums import set_global_axis_enums
+    from flextool.engine.input._axis_enums import set_global_axis_enums
     set_global_axis_enums(None)
     yield
     set_global_axis_enums(None)

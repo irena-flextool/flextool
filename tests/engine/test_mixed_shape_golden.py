@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-import flextool.engine._spinedb_reader as sr
+import flextool.engine.input._spinedb_reader as sr
 from flextool.engine import SpineDbReader
 
 # Corpus entries: (db_url fixture name, scenario).  Built from the shared

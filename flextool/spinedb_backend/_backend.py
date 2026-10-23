@@ -2,8 +2,8 @@
 
 The Backend opens a :class:`spinedb_api.DatabaseMapping`, applies a
 scenario filter, eagerly fetches the parameter / entity tables (same
-``fetch_all`` pattern used by :mod:`flextool.engine._db_loader`
-and :mod:`flextool.engine._solve_config`), and exposes per-spec
+``fetch_all`` pattern used by :mod:`flextool.engine.input._db_loader`
+and :mod:`flextool.engine.input._solve_config`), and exposes per-spec
 materialiser methods that each return a canonical
 :class:`polars.DataFrame`.
 
@@ -29,7 +29,7 @@ Hard rules
   polars frame.
 * **No disk read fallbacks.**  The Backend reads SpineDB, full stop.
 
-Note on :class:`flextool.engine._spinedb_reader.SpineDbReader`
+Note on :class:`flextool.engine.input._spinedb_reader.SpineDbReader`
 --------------------------------------------------------------------
 
 The pre-existing ``SpineDbReader`` (used by the native cascade LP
@@ -454,7 +454,7 @@ class SpineDBBackend:
         # FlexDataIntegrityError can name the parameter / class that
         # generated the offending row.
         row_origins: list[dict[str, Any]] = []
-        from flextool.engine._solve_state import FlexToolConfigError
+        from flextool.engine.input._solve_state import FlexToolConfigError
 
         for cl_par in cl_pars:
             for definition in definitions:
@@ -600,7 +600,7 @@ class SpineDBBackend:
         """
         if self._db is None:
             raise RuntimeError("SpineDBBackend is closed")
-        from flextool.engine._solve_state import FlexToolConfigError
+        from flextool.engine.input._solve_state import FlexToolConfigError
 
         cl_pars = list(cl_pars)
         cols = [c.strip() for c in header.split(",")]

@@ -49,7 +49,7 @@ from flextool.engine.preprocess.params._block import (
     nodeState_last_dt_lf,
     period_block_multi_resolution_lf,
 )
-from flextool.engine._input_source import _read_csv_file
+from flextool.engine.input._input_source import _read_csv_file
 
 
 HERE = Path(__file__).resolve().parent
