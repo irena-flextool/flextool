@@ -298,6 +298,14 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("unit",       "cumulative_min_capacity"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("node",       "cumulative_min_capacity"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("connection", "cumulative_min_capacity"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    # Investment cost / salvage value: constant or 1d_map(period) per the docs; read through
+    # _e_period_param_union by the ed_invest/ed_divest predicate (_per_entity_period_cost).
+    ("unit",       "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("node",       "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("connection", "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("unit",       "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("node",       "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("connection", "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # ─── node: (period, time) Params ─────────────────────────────────────
     # NODE_TIME_PARAM ⊇ {availability, storage_state_reference_value}.
     # Cascade: pbt → pt → pd → p (write_pdtNode, time_first_priority=True).
@@ -427,7 +435,7 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
 #
 # Spec ``fix_map_reading.md`` §3.1.  Every ``PARAM_ALLOWED_SHAPES`` key
 # whose allow-list contains at least one of ``MAP_PERIOD`` / ``MAP_TIME``
-# / ``MAP_PERIOD_TIME`` — the 16 dual-axis keys PLUS the ~32 period-only
+# / ``MAP_PERIOD_TIME`` — the 16 dual-axis keys PLUS the 38 period-only
 # keys ({SCALAR, MAP_PERIOD}).  Period-only keys are included on purpose:
 # classifying their rows is what lets the §3.3 per-variant allow-list
 # check catch a stray ``Map(time)`` and raise (today silently dropped).

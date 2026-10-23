@@ -1,5 +1,17 @@
 ## Unreleased
 
+- **Mixed constant / period `invest_cost` and `salvage_value`.** A model
+  with a period map of `invest_cost` or `salvage_value` on some entities and
+  constants on others (in the same or in different entity classes) no longer
+  crashes. Period maps are now applied per period also when the map has no
+  index name, so a zero cost in one period is respected. Multi-solve models
+  whose cost is a period map no longer get investment or retirement
+  variables for periods outside each solve's invest periods (before, every
+  map period got one, including past periods). These two parameters must now
+  be a constant or a map indexed by period: a time-indexed value, or a map
+  with an explicit index name other than `period` (e.g. `year`), raises a
+  configuration error instead of being accepted.
+
 - **Internal:** the engine package is renamed `flextool.engine_polars` →
   `flextool.engine` and split into subpackages (`input`, `preprocess`,
   `model`, `solve`, `output`, `autoscale`); `flextool/engine/README.md`

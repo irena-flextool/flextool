@@ -28,8 +28,8 @@ def test_derivation_rule_matches_registry():
     assert set(PERIOD_TIME_PARAMS) == expected
 
 
-def test_count_is_48_split_16_dual_32_period_only():
-    assert len(PERIOD_TIME_PARAMS) == 48
+def test_count_is_54_split_16_dual_38_period_only():
+    assert len(PERIOD_TIME_PARAMS) == 54
     # 16 dual-axis: 15 with the full 2-D shape + commodity.price (two 1-D).
     dual_2d = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                if Shape.MAP_PERIOD_TIME in v}
@@ -37,10 +37,10 @@ def test_count_is_48_split_16_dual_32_period_only():
     commodity_price = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                        if Shape.MAP_TIME in v and Shape.MAP_PERIOD_TIME not in v}
     assert commodity_price == {("commodity", "price")}
-    # 32 period-only: exactly {SCALAR, MAP_PERIOD}.
+    # 38 period-only: exactly {SCALAR, MAP_PERIOD}.
     period_only = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                    if set(v) == {Shape.SCALAR, Shape.MAP_PERIOD}}
-    assert len(period_only) == 32
+    assert len(period_only) == 38
     assert set(PERIOD_TIME_PARAMS) == dual_2d | commodity_price | period_only
 
 
@@ -87,5 +87,11 @@ def test_known_dual_axis_members_present():
         ("unit", "startup_cost"),
         ("unit", "invest_max_period"),
         ("connection", "cumulative_min_capacity"),
+        ("unit", "invest_cost"),
+        ("node", "invest_cost"),
+        ("connection", "invest_cost"),
+        ("unit", "salvage_value"),
+        ("node", "salvage_value"),
+        ("connection", "salvage_value"),
     ]:
         assert key in PERIOD_TIME_PARAMS

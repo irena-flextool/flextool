@@ -288,9 +288,7 @@ def _patch_stoch_invest_storage(data: dict) -> dict:
                 ["node", "store", "existing", 20.0],
                 ["node", "store", "virtual_unitsize", 1.0],
                 ["node", "store", "invest_method", "invest_retire_total"],
-                # scalar: a period map here next to the fixture's map
-                # without index_name crashes _per_entity_period_cost
-                # (column-name axis detection, schema mismatch in concat)
+                # kept scalar: fixture stability
                 ["node", "store", "invest_cost", 1.0],
                 ["node", "store", "invest_max_total", 50.0],
                 ["node", "store", "retire_max_total", 10.0],

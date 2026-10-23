@@ -56,6 +56,7 @@ from flextool.engine.input._axis_enums import (
 )
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _provider_key
+from flextool.engine.preprocess.params._direct import _e_period_param_union
 from flextool.engine.input._solve_state import CommissioningLagError, LineageFilterError
 from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
@@ -3563,40 +3564,37 @@ def _eea_predicate(source: "InputSource",
 def _per_entity_period_cost(source: "InputSource",
                               parameter_name: str,
                               period_invest: list[str]) -> pl.LazyFrame | None:
-    """Read ``unit/node/connection.<parameter_name>`` and broadcast to
-    (e, d, v) over the supplied period list.  Handles scalar, 1d_map(period)
-    or 2d_map shapes — returns one row per (e, d) at the end.
+    """``unit/node/connection.<parameter_name>`` as ``(e, d, v)`` over the solve's invest periods.
 
-    For the predicate use-case we collapse across periods by taking the
-    per-entity max over d (any non-zero in any period qualifies), but to
-    keep parity with flextool's per-(e, d) test we keep per-(e, d).
+    Read through the shape resolver (:func:`._direct._e_period_param_union` →
+    ``resolve_param_shape`` → ``broadcast_to_period``): scalars are broadcast over the
+    periods, period maps keep their own per-period values (also when authored with the
+    silent ``x`` index), and map keys outside the solve's invest periods are dropped.  Under
+    recourse each anchor period's explicit value is inherited by its branch periods
+    (:func:`_anchor_expand_explicit`) before the final restriction to ``period_invest``.
+
+    Zero values are kept (``filter_zero=False``) so that a branch-native explicit 0 wins over
+    its anchor's non-zero value in the expansion; :func:`_eea_predicate` drops ``v == 0``
+    afterwards.  Anchor periods are added to the period filter so that their explicit rows
+    survive the resolver's inner join until the expansion has used them.
     """
-    parts: list[pl.LazyFrame] = []
-    for ec in ("unit", "node", "connection"):
-        df = _try_param(source, ec, parameter_name)
-        if df is None:
-            continue
-        cols = df.columns
-        # Detect shape: (name, value), (name, period, value), or
-        # (name, ..., value).
-        if "period" in cols:
-            parts.append(df.lazy().select(
-                alias_to_axis("name", "e"),
-                alias_to_axis("period", "d"),
-                pl.col("value").cast(pl.Float64).alias("v"),
-            ))
-        else:
-            # Broadcast scalar across period_invest.
-            pi_lf = axis_lazyframe({"d": period_invest})
-            parts.append(df.lazy().select(
-                alias_to_axis("name", "e"),
-                pl.col("value").cast(pl.Float64).alias("v"),
-            ).join(pi_lf, how="cross"))
-    if not parts:
+    pairs = _RECOURSE_ANCHOR_PAIRS
+    anchors = ([] if pairs is None
+               else [a for a in pairs["anchor"].unique(maintain_order=True).to_list()
+                     if a not in period_invest])
+    period_filter = axis_lazyframe({"d": list(period_invest) + anchors}).collect()
+    param = _e_period_param_union(source, parameter_name, period_filter=period_filter)
+    if param is None:
         return None
-    # Slice D §4 — anchor-map period-Map rows onto branch periods so the
-    # eea predicate keeps branch (e, d) pairs (no-op flag-off).
-    return _anchor_expand_explicit(pl.concat(parts).unique())
+    frame = param.frame if isinstance(param.frame, pl.LazyFrame) else param.frame.lazy()
+    lf = frame.select("e", "d", pl.col("value").cast(pl.Float64).alias("v"))
+    lf = _anchor_expand_explicit(lf)
+    # Restrict to the solve's invest periods: semi-join in the frame's own d dtype.
+    invest_d = axis_lazyframe({"d": list(period_invest)})
+    d_dtype = lf.collect_schema().get("d")
+    if invest_d.collect_schema().get("d") != d_dtype:
+        invest_d = invest_d.with_columns(pl.col("d").cast(d_dtype))
+    return lf.join(invest_d, on="d", how="semi")
 
 
 # ---------------------------------------------------------------------------
@@ -4007,37 +4005,6 @@ def _p_years_d_lf(source: "InputSource",
             pl.col("d").cast(schema_dtype(_enums, "d"), strict=False),
         ).lazy()
     return None
-
-
-def _edEntity_lifetime_lf(source: "InputSource",
-                            ed_invest_lf: pl.LazyFrame) -> pl.LazyFrame:
-    """Build ``edEntity_lifetime[(e, d)]`` from ``unit/node/connection.lifetime``.
-
-    Default lifetime = 0 (no lifetime); we keep the value as-is.  When
-    lifetime is a scalar, broadcast across all (e, d) in ed_invest.
-    """
-    parts: list[pl.LazyFrame] = []
-    for ec in ("unit", "node", "connection"):
-        df = _try_param(source, ec, "lifetime")
-        if df is None:
-            continue
-        cols = df.columns
-        if "period" in cols:
-            parts.append(df.lazy().select(
-                alias_to_axis("name", "e"),
-                alias_to_axis("period", "d"),
-                pl.col("value").cast(pl.Float64).alias("life"),
-            ))
-        else:
-            parts.append(df.lazy().select(
-                alias_to_axis("name", "e"),
-                pl.col("value").cast(pl.Float64).alias("life"),
-            ).join(ed_invest_lf.select("d").unique(), how="cross"))
-    if not parts:
-        return ed_invest_lf.with_columns(life=pl.lit(0.0))
-    return (ed_invest_lf
-              .join(pl.concat(parts).unique(), on=["e", "d"], how="left")
-              .with_columns(life=pl.col("life").fill_null(0.0)))
 
 
 def _period_in_use_set(source: "InputSource",
