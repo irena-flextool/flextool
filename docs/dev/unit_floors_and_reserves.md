@@ -35,6 +35,27 @@ input arc (expressing "the input cut takes the outputs below min load" needs
 the conversion mix), so combined with output-side `down` reserve such a unit
 can end up below `min_load`.
 
+## Upward reserve and online capacity
+
+Upward reserve held at a node a process delivers into (`b.reserve_up_to_sink`,
+`b.reserve_up_sink_parts` from `core._reserve_coupling`) sits on the LHS of
+the capacity rows, with coefficient 1 (`v_flow` and `v_reserve` are both in
+output units of unitsize):
+
+* built capacity, every process: `maxFlow` (per arc) and `maxOutputSum`
+  (sum of an indirect unit's outputs);
+* online capacity, processes with online variables (`_online.py`):
+  `maxFlow_online_<kind>`: `v_flow + Σ_r Rup ≤ v_online·avail·cap_max_coeff`
+  per capped arc, and `maxOutputSum_online_<kind>`:
+  `Σ_k v_flow + Σ_k Σ_r Rup ≤ v_online·avail`.
+
+So an offline unit holds no upward reserve (spinning reserve). The
+built-capacity rows keep their term for online processes too (redundant
+while online ≤ built; they carry the invest/divest terms).
+`reserve_process_upward` (`max_share`) still uses the built capacity.
+Together with the floors the online band is
+`v_online·min_load + Rdn ≤ Σ out ≤ v_online·cap·avail − Rup`.
+
 ## Reserve shortfall multiplier
 
 `vq_reserve ∈ [0, 1]` (bounded for numerics) is multiplied by
@@ -62,19 +83,15 @@ reserve without any `reservation` is therefore inactive.
 
 ## Follow-ups (not implemented)
 
-1. Upward reserve is not online-aware: an online-capable unit that is off
-   can offer upward reserve (`reserve_process_upward` is capacity-based and
-   `maxFlow_online` / `maxOutputSum_online` carry no reserve-up term). This
-   touches existing fixtures (reserves on `coal_plant`).
-2. Increasing reserves on the source side (a consumer offering `down` by
+1. Increasing reserves on the source side (a consumer offering `down` by
    consuming more) are not bounded by input headroom.
-3. Connections: a net-position rule (`down at n ≤ f_into_n + (cap·avail −
+2. Connections: a net-position rule (`down at n ≤ f_into_n + (cap·avail −
    f_out_of_n)`), interacting with `v_flow_back` and the other end.
-4. `reserveBalance` lacks the .mod's slope factor for source-side reserves
+3. `reserveBalance` lacks the .mod's slope factor for source-side reserves
    of direct units; `_unit_floors._inverse_slope` follows the current
    convention and must change with it (tripwire:
    `test_down_reserve_floor.py::test_direct_unit_input_side_up_reserve`).
-5. Connection `delay` is not implemented. Connections are never in
+4. Connection `delay` is not implemented. Connections are never in
    `process_indirect`, and the delayed input term exists only in
    `conversion_indirect`; the .mod had the same gap (its nodeBalance delay
    term is commented out). The `delay` used to mark the connection delayed
@@ -90,14 +107,14 @@ reserve without any `reservation` is therefore inactive.
    (`tests/engine/test_connection_delay_ignored.py`). Applying a
    connection delay needs a delayed term in the node balance; when it is
    added, drop the filters and the warning.
-6. Dynamic and n-1 reserves activate only if some group of the same
+5. Dynamic and n-1 reserves activate only if some group of the same
    (reserve, up/down) has a non-zero `reservation` (`prundt_from_source`,
    `_reserve_sets`; see "Activation" above). A dynamic / n-1-only reserve
    is silently inactive — e.g. `network_coal_wind_reserve_n_1` does not
    test any n-1 requirement. Activation should follow the group's
    `reserve_method` (dynamic: any `increase_reserve_ratio`; n-1: any
    `large_failure_ratio`), not the presence of a timeseries reservation.
-7. The n-1 requirement is one `reserveBalance` row per (r, ud, g, d, t)
+6. The n-1 requirement is one `reserveBalance` row per (r, ud, g, d, t)
    whose RHS sums `large_failure_ratio × flow` over ALL large-failure
    processes of the group; the .mod had one constraint per failing process
    (the largest single failure sets the requirement). The sum over-procures

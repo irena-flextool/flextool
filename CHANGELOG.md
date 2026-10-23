@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **Upward reserve of a unit with online variables comes out of its online
+  capacity.** A unit with a `startup_method` (`linear` or `binary`) can hold
+  upward reserve only from the units it has online: its output plus the
+  upward reserve it holds at that output cannot exceed online capacity ×
+  availability, and for a unit with several outputs the same applies to
+  their sum. Before, only the built capacity limited the reserve, so an
+  offline unit could offer spinning reserve for free. Models with upward
+  reserve on such units will commit more units (more startup and min-load
+  cost) or show a reserve shortfall where they did not before.
+
 - **Input-side operational cost counted as a cost.** `other_operational_cost`
   on a unit--inputNode of a unit with an efficiency now raises the objective,
   as documented and as the cost outputs already reported. Before, the model

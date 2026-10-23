@@ -170,10 +170,13 @@ def add_constraints(b: "_Build") -> None:
 
         # ─── EQ. ─── maxFlow_online_{linear,integer} ─────────────────────────
         # ─────────────────────────────────────────────────────────────────────
-        # v_flow[p,s,k,d,t]  ≤  v_online[p,d,t] · availability[p,d,t] · capacity_max_coeff[p,s,k]
+        # v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t]
+        #   ≤  v_online[p,d,t] · availability[p,d,t] · capacity_max_coeff[p,s,k]
         #   ∀ (p,s,k) capped arc of an online process, (d,t) ∈ dt
-        # A unit's flow is limited by the units online.  Only capped arcs (direct arcs and
-        # indirect output arcs, see _capped_arcs): indirect input arcs are tied to the outputs by
+        # A unit's flow and the upward reserve it holds at the arc's sink are limited by the
+        # units online (spinning reserve: an offline unit holds none).  The reserve term is
+        # maxFlow's; input arcs (sink = p) get none.  Only capped arcs (direct arcs and indirect
+        # output arcs, see _capped_arcs): indirect input arcs are tied to the outputs by
         # conversion_indirect, and conversion_flow_coeff = 0 arcs are uncapped.  Availability and
         # capacity_max_coeff are densified to their 1.0 defaults so an unauthored unit keeps
         # its row.
@@ -186,18 +189,21 @@ def add_constraints(b: "_Build") -> None:
                 online_rhs = v_online
             if d.p_arc_max_cap_coef is not None:
                 online_rhs = online_rhs * _coef_factor(pss_online, d.p_arc_max_cap_coef, ["p", "source", "sink"])
+            online_lhs: dict = {"flow": v_flow}
+            if b.reserve_up_to_sink is not None:
+                online_lhs["reserve_up"] = b.reserve_up_to_sink
             m.add_cstr(f"maxFlow_online{sfx}",
                        over=over_pss_online, sense="<=",
-                       lhs_terms={"flow":   v_flow},
+                       lhs_terms=online_lhs,
                        rhs_terms={"online": online_rhs})
 
         # ─── EQ. ─── maxOutputSum_online_{linear,integer} ────────────────────
         # ─────────────────────────────────────────────────────────────────────
-        # Σ_k v_flow[p,p,k,d,t]  ≤  v_online[p,d,t] · availability[p,d,t]
+        # Σ_k v_flow[p,p,k,d,t] + Σ_k Σ_r v_reserve_up[p,r,k,d,t]  ≤  v_online[p,d,t] · availability[p,d,t]
         #   ∀ p ∈ process_indirect online with an output arc k, (p,d,t) ∈ p_idx
-        # The online analogue of maxOutputSum: the sum of an indirect unit's outputs is limited
-        # by the units online.  No reserve or capacity_max_coeff term; availability defaults
-        # to 1.0.
+        # The online analogue of maxOutputSum: the sum of an indirect unit's outputs and of the
+        # upward reserve it holds at those outputs is limited by the units online.  No
+        # capacity_max_coeff term; availability defaults to 1.0.
         sum_arcs = _indirect_sum_arcs(d)
         if sum_arcs is not None:
             sum_arcs_on = sum_arcs.join(online_set.select("p").unique(), on="p", how="semi")
@@ -210,9 +216,16 @@ def add_constraints(b: "_Build") -> None:
                         sum_online_rhs = v_online * _availability_factor(d, sum_arcs_on)
                     else:
                         sum_online_rhs = v_online
+                    sum_lhs: dict = {"flow": Sum(Where(v_flow, sum_arcs_on), over=("source", "sink"))}
+                    if b.reserve_up_sink_parts is not None:
+                        reserve_at_sink, up_sink = b.reserve_up_sink_parts
+                        up_sink = up_sink.join(sum_arcs_on.select("p", "sink").unique(), on=["p", "sink"],
+                                               how="semi")
+                        if up_sink.height > 0:
+                            sum_lhs["reserve_up"] = Sum(Where(reserve_at_sink, up_sink), over=("r", "ud", "sink"))
                     m.add_cstr(f"maxOutputSum_online{sfx}",
                                over=over_sum_on, sense="<=",
-                               lhs_terms={"flow": Sum(Where(v_flow, sum_arcs_on), over=("source", "sink"))},
+                               lhs_terms=sum_lhs,
                                rhs_terms={"online": sum_online_rhs})
 
         # ─── EQ. ─── minimum_uptime_{linear,integer} ─────────────────────────

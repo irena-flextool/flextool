@@ -5,7 +5,8 @@ shortfall of each reserve requirement), the requirement rows reserveBalance_time
 reserveBalance_dynamic_eq and reserveBalance_{up,down}_n_1_eq, the per-process limits
 reserve_process_{upward,downward}, the storage energy rows reserve_storage_up_floor /
 reserve_storage_down_headroom, and the shortfall penalty in the objective.  The coupling of v_reserve to
-process capacity (maxFlow, maxOutputSum, profile limits, unit floors) lives with those families.
+process capacity (maxFlow, maxOutputSum, maxFlow_online, maxOutputSum_online, profile limits, unit floors) lives
+with those families.
 """
 
 from pathlib import Path

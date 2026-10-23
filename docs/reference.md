@@ -582,6 +582,8 @@ For `reserve__upDown__unit__node` entities:
 
 A unit can only offer reserve that reduces its flow as far as its flow allows: downward reserve at a node the unit feeds, and upward reserve at a node the unit consumes from (a consumption cut), cannot exceed the flow, and for an online unit cannot take the sum of its outputs below `min_load` × online capacity, nor an output with `capacity_min_coeff` below its own floor. The effective limit is the smaller of this and `max_share` × capacity. An upward reserve at the input node of a unit with one input and one output is converted to output flow by the unit's efficiency. A unit with several outputs or inputs that offers upward reserve at an input node is only kept from cutting that input below zero; together with downward reserve on its outputs it can then end up below `min_load`. Connections are not limited this way.
 
+A unit with online variables (`startup_method` `linear` or `binary`) holds upward reserve only from its online capacity: at a node the unit feeds, its output plus the upward reserve it holds there cannot exceed online capacity × availability (× `capacity_max_coeff`), and for a unit with several outputs the sum of its outputs plus the upward reserve held at them cannot exceed online capacity × availability. An offline unit therefore offers no upward reserve, and an upward reserve requirement can make it worth committing a unit. Units without online variables are limited by their built capacity.
+
 ### Reserve transfer by connections
 
 For `reserve__upDown__connection__node` entities:

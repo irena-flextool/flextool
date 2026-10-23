@@ -155,12 +155,15 @@ def test_salvage_value_mixed_shapes(tmp_path_factory):
         ["unit", "coal_plant", "invest_method", "invest_retire_total"],
         ["unit", "coal_plant", "salvage_value",
          _pmap({"p2020": 10.0, "p2025": 0.0, "p2030": 10.0, "p2035": 10.0})],
-        ["connection", "battery_inverter", "salvage_value", 5.0],
+        ["unit", "wind_plant", "invest_method", "invest_retire_total"],
+        ["unit", "wind_plant", "salvage_value", 5.0],
     ]
     step = _single(_solve(tmp_path_factory, "tests.json", _overlay(values)))
     divest = _pairs(step.flex_data.ed_divest_set)
     assert _periods_of(divest, "coal_plant") == {"p2020", "p2030", "p2035"}
-    assert _periods_of(divest, "battery_inverter") == set(PERIODS)
+    # wind_plant has no capacity-constraint coefficient, so its divest periods come from the
+    # constant salvage_value alone (a broken scalar broadcast would leave it with none).
+    assert _periods_of(divest, "wind_plant") == set(PERIODS)
 
 
 # ── multi-solve: map keys outside a solve's invest periods are dropped ──────

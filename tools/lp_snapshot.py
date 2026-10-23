@@ -356,6 +356,25 @@ def _patch_reserve_floors(data: dict) -> dict:
                        ["node", "west", "inflow", -300.0]])
 
 
+def _patch_reserve_up_online(data: dict) -> dict:
+    """Upward reserve from a direct and a two-output unit with linear
+    online variables: the reserve terms of maxFlow_online /
+    maxOutputSum_online."""
+    ents, vals = _reserve("ru", "up", "electricity",
+                          [("unit", "coal_plant", "west"),
+                           ("unit", "coal_chp", "west")])
+    return _overlay(
+        data, name="reserve_up_online",
+        base=["init", "west", "coal", "coal_chp", "heat"], entities=ents,
+        values=vals + [["constraint", "coal_chp_fix", "is_enabled", "no"],
+                       ["node", "west", "inflow", -300.0],
+                       ["node", "heat", "inflow", -500.0],
+                       ["unit", "coal_plant", "startup_method", "linear"],
+                       ["unit", "coal_plant", "min_load", 0.5],
+                       ["unit", "coal_chp", "startup_method", "linear"],
+                       ["unit", "coal_chp", "min_load", 0.4]])
+
+
 def _chp_floor(data: dict, name: str, startup: str) -> dict:
     ents, vals = _reserve("rx", "down", "electricity",
                           [("unit", "coal_chp", "west")])
@@ -609,6 +628,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "chp_floor_linear": _patch_chp_floor_linear,
     "chp_floor_integer": _patch_chp_floor_integer,
     "reserve_dynamic_n1_down": _patch_reserve_dynamic_n1_down,
+    "reserve_up_online": _patch_reserve_up_online,
     "reserve_storage_duration": _patch_reserve_storage_duration,
     "stoch_na_reserve": _patch_stoch_na_reserve,
     "chp_misc": _patch_chp_misc,
@@ -729,6 +749,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("chp_floor_linear", _T),
     ("chp_floor_integer", _T),
     ("reserve_dynamic_n1_down", _T),
+    ("reserve_up_online", _T),
     ("reserve_storage_duration", _T),
     ("stoch_na_reserve", _F + "stochastics.json"),
     ("chp_misc", _T),
