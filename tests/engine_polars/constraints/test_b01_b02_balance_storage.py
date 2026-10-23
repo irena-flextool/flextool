@@ -181,7 +181,7 @@ def test_profile_state_sparse_availability_default(toy_storage_2t):
     must keep its default-1.0 factor, not be inner-join-dropped to RHS=0.
 
     Node-state twin of ``test_profile_upper_sparse_availability_default``
-    (B12.5).  ``p_node_availability`` is SPARSE, and ``_add_node_profile_cstr``
+    (B12.5).  ``p_node_availability`` is SPARSE, and ``_eq_state_profiles``
     folds it into the ``profile_state_*`` RHS via ``Param * Param`` (an inner
     join), so before the densify fix a node absent from the sparse Param had
     its existing-capacity bound collapsed to 0 → forced ``v_state = 0``.  No

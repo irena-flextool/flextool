@@ -15,7 +15,7 @@ Focused constraint tests on the shared minimal fixtures:
   v_flow == 1 even with no demand.
 
 * ``test_profile_lower_and_fixed`` — covers **B12.2** consolidated with
-  **B12.3**.  Both methods share the ``_add_profile_cstr`` shape; in
+  **B12.3**.  Both methods share the ``_eq_profiles`` shape; in
   one fixture (separate processes per profile method) we pin a lower
   floor (0.6) on one process and an exact value (0.7 at t01, 0.4 at
   t02) on the other.
@@ -273,7 +273,7 @@ def test_profile_upper_sparse_availability_default(toy_1n1p_1d2t):
 
     ``p_process_availability`` is SPARSE — ``p_process_availability_from_source``
     emits only DB-authored rows, expecting absent processes to fall back to the
-    schema default 1.0.  But ``_add_profile_cstr`` folds the factor into the
+    schema default 1.0.  But ``_eq_profiles`` folds the factor into the
     RHS via ``Param * Param`` (an inner join), so before the densify fix a
     process absent from the sparse Param had its bound collapsed to 0 → forced
     ``v_flow = 0``.  This is what zeroed every wind/solar unit whose

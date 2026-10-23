@@ -1196,10 +1196,10 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
         # user constraints (process_constraint_*)
         "process_constraint_equal", "process_constraint_less_than",
         "process_constraint_greater_than",
-        # _add_node_profile_cstr(idx, name, sense)
+        # _eq_state_profiles loop table
         "profile_state_upper_limit", "profile_state_lower_limit",
         "profile_state_fixed",
-        # _add_profile_cstr(..., name, ...)
+        # _eq_profiles loop table
         "profile_flow_upper_limit", "profile_flow_lower_limit",
         "profile_flow_fixed",
     ),

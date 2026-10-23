@@ -10,7 +10,7 @@ arc as ``v_flow[unit, input_node, output_node]``.  But the per-roll
 :func:`flextool.engine_polars._projection_params._profile_method_arc`
 hard-coded ``source = unit`` on its output-side branch, so the
 ``process_profile_fixed`` ``(p, source, sink, f)`` tuple came out as
-``(unit, unit, output_node, f)``.  ``_add_profile_cstr`` then filters
+``(unit, unit, output_node, f)``.  ``_eq_profiles`` then filters
 ``v_flow`` on ``(p, source, sink)`` — and there is no
 ``v_flow[unit, unit, output_node]`` for a direct unit — yielding an
 empty LHS ``0 == rhs`` row → HiGHS presolve **Infeasible**.

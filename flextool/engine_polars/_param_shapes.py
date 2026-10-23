@@ -1131,9 +1131,8 @@ def resolve_param_shape(
     ``index_name`` so the DB stores the silent ``"x"`` label.  Without
     this probing the resolver returns ``None`` and ``p_co2_price`` is
     silently dropped while the feature gate (driven by topology, not
-    data) stays active — the LP build then aborts at
-    :func:`flextool.engine_polars.model.build_flextool`'s ``CO2_PRICE``
-    invariant check.
+    data) stays active — :func:`flextool.engine_polars.model.build_flextool`
+    then skips the CO2 cost term with a warning.
 
     Returns ``None`` only when the parameter has no explicit rows AND
     no scalar default to broadcast (the source plugin's None-skip per

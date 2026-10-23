@@ -513,12 +513,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "non_anticipativity_divest_n": CstrFamily(None),
 
     # ── Profile constraints (per timestep).
-    # Node profiles emit at model.py:2879 with names
+    # Node profiles emit in model._eq_state_profiles with names
     # ``profile_state_upper_limit`` / ``_lower_limit`` / ``_fixed``;
-    # process profiles at model.py:3914 with ``profile_flow_*``.  Per
+    # process profiles in model._eq_profiles with ``profile_flow_*``.  Per
     # the autoscaler handoff, profile state is POWER for unit /
     # connection, ENERGY for node.  Node-side rows go through one
-    # call site (``_add_node_profile_cstr``) so we register the names
+    # call site (``_eq_state_profiles``) so we register the names
     # here without a member_class_resolver — they are exclusively
     # ENERGY-typed.  Process-side ``profile_flow_*`` rows are POWER.
     "profile_state_upper_limit": CstrFamily(QuantityType.ENERGY),

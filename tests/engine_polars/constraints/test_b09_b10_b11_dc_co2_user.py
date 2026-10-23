@@ -655,9 +655,9 @@ def _make_dummy() -> FlexData:
 def test_b11_empty_lhs_short_circuit(toy_1n1p_1d2t):
     """Covers B11-6 — when ``cdt_le`` is non-empty but every coefficient
     source (flow / invest / state / prebuilt) is empty, the engine
-    short-circuits the inner ``if lhs_pieces or cstr_const_pieces``
-    block and emits NO constraint row, even though ``has_any_cdt`` is
-    True.  Pins the silent-drop edge case in model.py:1953-1971.
+    short-circuits ``_eq_user_constraints`` (no variable or constant
+    term) and emits NO constraint row, even though ``has_user_cstr`` is
+    True.  Pins the silent-drop edge case.
     """
     d = toy_1n1p_1d2t
     # cdt_le populated, p_constraint_constant populated, but NO contribution
@@ -671,7 +671,7 @@ def test_b11_empty_lhs_short_circuit(toy_1n1p_1d2t):
     )
     pb, sol = _solve(data)
     assert sol.optimal
-    # Hand-calc: even though has_any_cdt is True, no LHS pieces ⇒ NO
+    # Hand-calc: even though has_user_cstr is True, no LHS pieces ⇒ NO
     # process_constraint_* row is registered.
     names = set(pb.cstr_names())
     leaked = [n for n in names if n.startswith("process_constraint_")]
