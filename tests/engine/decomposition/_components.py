@@ -384,10 +384,11 @@ def varcost_noEff_obj(data, sol) -> float:
 
 
 def varcost_eff_source_obj(data, sol) -> float:
-    """§5.2: -Σ pdtProcess_source[...,'other_operational_cost']
+    """§5.2: Σ pdtProcess_source[...,'other_operational_cost']
     * (v_flow * unitsize * slope + section term) * op_factor.
 
-    Mirrors OBJ. variable_cost_eff_source (``model._obj_variable_cost``).  Sign is **negative**.
+    Mirrors OBJ. variable_cost_eff_source (``model._obj_variable_cost``).  Added like the other
+    O&M terms (GMPL subtracted it).
     """
     idx = data.pssdt_varCost_eff_unit_source
     if _is_empty(idx):
@@ -400,7 +401,7 @@ def varcost_eff_source_obj(data, sol) -> float:
         return 0.0
     op = _op_factor_frame(data)
     vc = data.p_pdt_varCost_source.frame.rename({"value": "vc"})
-    # flow piece (-Σ flow * us * slope * vc * op)
+    # flow piece (Σ flow * us * slope * vc * op)
     df = (idx.join(vf.rename({"value": "flow"}),
                    on=["p", "source", "sink", "d", "t"])
              .join(data.p_unitsize.frame.rename({"value": "us"}), on="p")
@@ -408,7 +409,7 @@ def varcost_eff_source_obj(data, sol) -> float:
                    on=["p", "d", "t"])
              .join(vc, on=["p", "source", "d", "t"])
              .join(op, on=["d", "t"]))
-    total = -float(df.select(
+    total = float(df.select(
         (pl.col("flow") * pl.col("us") * pl.col("slope") * pl.col("vc")
          * pl.col("op_factor")).sum()).item())
     # section piece
@@ -428,7 +429,7 @@ def varcost_eff_source_obj(data, sol) -> float:
                        .join(us, on="p")
                        .join(vc, on=["p", "source", "d", "t"])
                        .join(op, on=["d", "t"]))
-                total -= float(sdf.select(
+                total += float(sdf.select(
                     (pl.col("online") * pl.col("section") * pl.col("us")
                      * pl.col("vc") * pl.col("op_factor")
                     ).sum()).item())

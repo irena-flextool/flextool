@@ -631,10 +631,11 @@ class TestDivestSalvageIncludedInObjective:
 # Target: ``coal_min_load_wind`` with a varCost added on the source
 # (coal_plant, coal_market).  The mod objective for pssdt_varCost_eff_unit_source
 # adds both a flow-slope term AND a section term when the process uses
-# ``min_load_efficiency`` (flextool.mod ~line 2352-2367):
+# ``min_load_efficiency`` (flextool.mod ~line 2352-2367; GMPL subtracted the
+# term, the engine adds it like the other O&M terms -- refactor bug 20):
 #
 #     + sum {(p,source,sink,d,t) in pssdt_varCost_eff_unit_source}
-#         ( - pdtProcess_source[p, source, 'other_operational_cost', d, t]
+#         ( + pdtProcess_source[p, source, 'other_operational_cost', d, t]
 #             * ( v_flow * unitsize * slope * (sink_coef / source_coef)
 #                 + online * section * unitsize   (if min_load_efficiency)
 #               )
@@ -832,6 +833,13 @@ class TestMinLoadEfficiencySectionTerm:
             check_names=False,
             rtol=1e-4,
             atol=1e-6,
+        )
+
+    def test_solver_matches_python(self, csv_dir: Path) -> None:
+        """The LP objective counts the input-side O&M as a cost, like the outputs do."""
+        s = _read_summary_solve(csv_dir)
+        assert s["objective"] == pytest.approx(s["total_calc"], rel=1e-4), (
+            f"Objective {s['objective']} != Python total {s['total_calc']}"
         )
 
     def test_section_term_actually_contributes(self, csv_dir: Path) -> None:

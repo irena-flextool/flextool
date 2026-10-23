@@ -2742,30 +2742,30 @@ def _obj_variable_cost(b: _Build) -> Expr | None:
 
     # ─── OBJ. ─── variable_cost_eff_source ───────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # − Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_unit_source}
+    # Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_unit_source}
     #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
     #     · other_operational_cost_source[p,s,d,t] · w_op[d,t]
     # O&M cost on the input side of units with an efficiency, priced on the input energy (flow times
-    # slope, plus the section input of min_load_efficiency units).  The term is subtracted, so a positive
-    # source-side cost lowers the objective (see specs/github_issues.md, refactor bug 20).  The
-    # sink/source coefficient ratio of the input is not applied (refactor bug 10).
+    # slope, plus the section input of min_load_efficiency units).  Added like the other O&M terms
+    # (GMPL subtracted it).  The sink/source coefficient ratio of the input is not applied (refactor
+    # bug 10).
     if (_has_rows(d.pssdt_varCost_eff_unit_source)
             and d.p_pdt_varCost_source is not None):
         flow_term = Where(v_flow * d.p_unitsize * d.p_slope,
                           d.pssdt_varCost_eff_unit_source)
-        terms.append(-Sum(flow_term * d.p_pdt_varCost_source * op_factor))
+        terms.append(Sum(flow_term * d.p_pdt_varCost_source * op_factor))
         if b.has_minload_eff:
             section_idx = (d.pssdt_varCost_eff_unit_source
                            .join(d.process_min_load_eff, on="p", how="inner"))
             if section_idx.height > 0:
                 if b.has_online_lin:
-                    terms.append(-Sum(
+                    terms.append(Sum(
                         Where(Where(v_online_lin, d.process_min_load_eff)
                               * d.p_section * d.p_unitsize,
                               section_idx)
                         * d.p_pdt_varCost_source * op_factor))
                 if b.has_online_int:
-                    terms.append(-Sum(
+                    terms.append(Sum(
                         Where(Where(v_online_int, d.process_min_load_eff)
                               * d.p_section * d.p_unitsize,
                               section_idx)

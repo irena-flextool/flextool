@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Input-side operational cost counted as a cost.** `other_operational_cost`
+  on a unit--inputNode of a unit with an efficiency now raises the objective,
+  as documented and as the cost outputs already reported. Before, the model
+  subtracted it, so a higher input-side cost made the unit run more and the
+  solver objective did not match the reported total cost. Units without an
+  efficiency, output-side costs and connections are unchanged. Models that
+  set this parameter on such units will get different dispatch and costs.
+
 - **Mixed constant / period `invest_cost` and `salvage_value`.** A model
   with a period map of `invest_cost` or `salvage_value` on some entities and
   constants on others (in the same or in different entity classes) no longer
