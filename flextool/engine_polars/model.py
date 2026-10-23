@@ -527,11 +527,8 @@ def _declare_variables(b: _Build) -> None:
     # per-element upper bound (their capacity is a constant); maxFlow caps
     # every other arc.
     if b.has_proc:
-        b.v_flow = m.add_var("v_flow", ("p", "source", "sink", "d", "t"),
-                             b.pss_dt, lower=0.0,
-                             upper=(b.flow_var_upper
-                                    if b.flow_var_upper is not None
-                                    else float("inf")))
+        upper = b.flow_var_upper if b.flow_var_upper is not None else float("inf")
+        b.v_flow = m.add_var("v_flow", ("p", "source", "sink", "d", "t"), b.pss_dt, lower=0.0, upper=upper)
 
     # ─── VAR. ─── vq_state_up / vq_state_down ────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -562,11 +559,9 @@ def _declare_variables(b: _Build) -> None:
     # representative block.  Upper bounds are the rows
     # rp_inter_period_max_state and maxState_rp_start.
     if b.has_rp:
-        b.v_state_inter = m.add_var(
-            "v_state_inter", ("n", "b"),
-            d.nodeState_rp.join(d.rp_base_period_set, how="cross"), lower=0.0)
-        b.v_state_rp_start = m.add_var("v_state_rp_start", ("n", "d", "t"),
-                                       b.rp_start_idx, lower=0.0)
+        b.v_state_inter = m.add_var("v_state_inter", ("n", "b"),
+                                    d.nodeState_rp.join(d.rp_base_period_set, how="cross"), lower=0.0)
+        b.v_state_rp_start = m.add_var("v_state_rp_start", ("n", "d", "t"), b.rp_start_idx, lower=0.0)
 
     # ─── VAR. ─── v_online_linear / v_startup_linear / v_shutdown_linear ─────
     # ─────────────────────────────────────────────────────────────────────────
@@ -586,8 +581,7 @@ def _declare_variables(b: _Build) -> None:
     # As the linear family, but units online are integer; startups and
     # shutdowns stay continuous.
     if b.has_online_int:
-        b.v_online_integer = m.add_var("v_online_integer", ("p", "d", "t"),
-                                       b.p_oint_idx, integer=True)
+        b.v_online_integer = m.add_var("v_online_integer", ("p", "d", "t"), b.p_oint_idx, integer=True)
         b.v_startup_integer = m.add_var("v_startup_integer", ("p", "d", "t"), b.p_oint_idx)
         b.v_shutdown_integer = m.add_var("v_shutdown_integer", ("p", "d", "t"), b.p_oint_idx)
 
@@ -617,12 +611,9 @@ def _declare_variables(b: _Build) -> None:
     # arcs, in units of unitsize; the signed flow is v_flow − v_flow_back.
     # One variable serves both the balance and dc_flow_eq.
     if _has_rows(b.twoway1var_arcs):
-        back_idx = b.twoway1var_arcs.join(d.dt, how="cross").select(
-            "p", "source", "sink", "d", "t")
+        back_idx = b.twoway1var_arcs.join(d.dt, how="cross").select("p", "source", "sink", "d", "t")
         if back_idx.height > 0:
-            b.v_flow_back = m.add_var("v_flow_back",
-                                      ("p", "source", "sink", "d", "t"),
-                                      back_idx, lower=0.0)
+            b.v_flow_back = m.add_var("v_flow_back", ("p", "source", "sink", "d", "t"), back_idx, lower=0.0)
 
     # DC power-flow angles (v_angle) and commodity-ladder trades (v_trade):
     # declared by their feature modules.
@@ -781,9 +772,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
     m, d = b.m, b.d
     v_inter = b.v_state_inter
     b_dtype = v_inter.frame.schema["b"]
-    has_rep_blocks = (d.rp_base__rep is not None
-                      and _has_rows(d.rp_block_first)
-                      and _has_rows(d.p_rp_last_step))
+    has_rep_blocks = d.rp_base__rep is not None and _has_rows(d.rp_block_first) and _has_rows(d.p_rp_last_step)
 
     # ─── EQ. ─── rp_inter_period_balance ─────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -809,8 +798,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
                 "rp_inter_period_balance",
                 over      = over,
                 sense     = "==",
-                lhs_terms = {"d_inter": (Where(v_inter, over)
-                                         - Where(inter_prev, over)),
+                lhs_terms = {"d_inter": Where(v_inter, over) - Where(inter_prev, over),
                              "neg_rp_drift": -Where(drift, over)},
                 rhs_terms = {},
             )
@@ -828,19 +816,14 @@ def _eq_rp_storage_chain(b: _Build) -> None:
     # rp_base_last then carry d and are paired on it).
     # bind_forward_only_blended_weights has no closure.
     cyclic_sets = [f for f in (d.storage_bind_within_solve_blended_weights,
-                               getattr(d, "storage_bind_within_period_blended_weights",
-                                       None))
+                               getattr(d, "storage_bind_within_period_blended_weights", None))
                    if _has_rows(f)]
-    if (has_rep_blocks and cyclic_sets
-            and _has_rows(d.rp_base_first) and _has_rows(d.rp_base_last)):
+    if has_rep_blocks and cyclic_sets and _has_rows(d.rp_base_first) and _has_rows(d.rp_base_last):
         nodes = pl.concat(cyclic_sets, how="vertical").unique()
-        first = (d.rp_base_first.rename({"b": "b_first"})
-                 .with_columns(pl.col("b_first").cast(b_dtype, strict=False)))
-        last = (d.rp_base_last.rename({"b": "b_last"})
-                .with_columns(pl.col("b_last").cast(b_dtype, strict=False)))
+        first = d.rp_base_first.rename({"b": "b_first"}).with_columns(pl.col("b_first").cast(b_dtype, strict=False))
+        last = d.rp_base_last.rename({"b": "b_last"}).with_columns(pl.col("b_last").cast(b_dtype, strict=False))
         if "d" in first.columns and "d" in last.columns:
-            pairs = (first.join(last, on="d", how="inner")
-                     .select("b_first", "b_last"))
+            pairs = first.join(last, on="d", how="inner").select("b_first", "b_last")
         else:
             pairs = first.select("b_first").join(last.select("b_last"), how="cross")
         over = nodes.join(pairs, how="cross").select("n", "b_first", "b_last")
@@ -854,8 +837,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
                 "rp_inter_period_cyclic",
                 over      = over,
                 sense     = "==",
-                lhs_terms = {"d_cyclic": (Where(inter_first, over)
-                                          - Where(inter_last, over)),
+                lhs_terms = {"d_cyclic": Where(inter_first, over) - Where(inter_last, over),
                              "neg_rp_drift_first": -Where(drift, over)},
                 rhs_terms = {},
             )
@@ -877,9 +859,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
         else:
             periods = d.dt.select("d").unique()
         if periods.height > 0:
-            over = (nodes.join(d.rp_base_period_set, how="cross")
-                    .join(periods, how="cross")
-                    .select("n", "b", "d"))
+            over = nodes.join(d.rp_base_period_set, how="cross").join(periods, how="cross").select("n", "b", "d")
             lhs: dict = {"state_inter": Where(v_inter, over)}
             lhs.update(_node_capacity_change_terms(b, nodes, "_rp"))
             m.add_cstr(
@@ -987,8 +967,7 @@ def _eq_node_balance(b: _Build) -> None:
         terms.update(_fix_start_terms(b))
         terms.update(_roll_continue_terms(b))
         if d.p_state_self_discharge is not None:
-            terms["self_discharge"] = (-b.v_state * d.p_state_self_discharge
-                                       * d.p_state_unitsize)
+            terms["self_discharge"] = -b.v_state * d.p_state_self_discharge * d.p_state_unitsize
     over = b.nodeBalance_dt
     if b.has_nsb:
         over = over.join(d.nodeStateBlock, on="n", how="anti")
@@ -1189,763 +1168,306 @@ def _roll_continue_terms(b: _Build) -> dict:
 
 def _eq_node_balance_period(b: _Build) -> None:
     """Period energy balance of balance_within_period nodes."""
-    m, d = b.m, b.d
-    # ─── nodeBalancePeriod_eq ─────────────────────────────────────────────
-    # Energy balance within a period for ``balance_within_period`` nodes —
-    # the polars port of flextool.mod:2056-2082 (``nodeBalancePeriod_eq``).
-    #
-    # This is structurally the SAME equation as ``nodeBalance_eq``'s flow +
-    # slack terms, but:
-    #   (a) summed over every timestep ``t`` in the period — one row per
-    #       (n, d) instead of (n, d, t).  We wrap each captured flow/slack
-    #       term in ``Sum(.. * d.p_timestep_weight, over=("t",))`` to collapse
-    #       ``t`` and leave the open dims (n, d).  Each captured term already
-    #       carries its ``* d.p_step_duration`` weighting (it is the exact
-    #       ``nb_terms`` snapshot taken before the storage machinery), so the
-    #       per-step energy weighting is identical to ``nodeBalance_eq``; the
-    #       extra ``timestep_weight`` factor annualizes the timeslice flows —
-    #       see the WHY note at the emission site below.  (This deliberately
-    #       does NOT mirror ``_emit_cumulative_flow_period``'s step-duration-
-    #       only integration: that is a one-sided CAP and cannot expose a
-    #       two-sided weight mismatch, whereas this two-sided balance does.)
-    #   (b) NO storage state-change / self-discharge / fwd_fix / roll_continue
-    #       terms — period nodes are restricted to ``n not in nodeState``
-    #       (mod:2056), so they are never storage and take only the flow +
-    #       slack terms snapshotted in ``b.node_balance_flow_terms`` at line ~922.
-    #
-    # Inflow: ``Sum(...)`` only accepts an Expr/Var (polar_high engine), not a
-    # Param, so we cannot write ``-Sum(d.p_inflow, over=("t",))``.  Instead we
-    # pre-aggregate the inflow Param ``Σ_t p_inflow`` into a (n, d) Param and
-    # place ``-inflow_period`` on the RHS — algebraically identical to
-    # ``nodeBalance_eq``'s ``rhs_terms = {"neg_inflow": -d.p_inflow}``, just
-    # t-collapsed and rp-weighted.  The final equation is therefore
-    #   Σ_t w·(sink − source + slack_up − slack_down)  ==  Σ_t w·(−inflow)
-    # (w = timestep_weight) — the rp-weighted t-sum of ``nodeBalance_eq``.
-    if (d.nodeBalancePeriod is not None and d.nodeBalancePeriod.height > 0
-            and d.period_in_use_set is not None):
-        # Index frame (n, d): period nodes × periods-in-use, anti-joined
-        # against nodeState on ``n`` to honor the ``n not in nodeState``
-        # guard (mod:2056).
-        nbp_over = (d.nodeBalancePeriod.select("n").lazy()
-                    .join(d.period_in_use_set.select("d").lazy(), how="cross"))
-        if d.nodeState is not None and d.nodeState.height > 0:
-            nbp_over = nbp_over.join(
-                d.nodeState.select("n").lazy(), on="n", how="anti")
-        nbp_over = nbp_over.select("n", "d").collect()
-        if nbp_over.height > 0:
-            # Annualization weight.  Unlike the per-step ``nodeBalance_eq``
-            # (which balances each timestep locally and therefore omits
-            # ``timestep_weight``), a PERIOD balance integrates each
-            # timeslice's flow into its annual contribution and so MUST
-            # weight every ``(d, t)`` term by ``p_timestep_weight`` before
-            # collapsing ``t``.  ``timestep_weight`` is the only per-(d,t)
-            # factor that differs across timeslices in the annualization
-            # (``op_factor`` at ~3624 is
-            # ``step_duration · timestep_weight · inflation_op / period_share``;
-            # ``inflation_op`` and ``period_share`` are per-``d`` and so are
-            # common to every term in a given (n, d) balance row and cancel,
-            # and ``step_duration`` already rides each captured term).  Without
-            # this weight the LP balances UNWEIGHTED timeslice sums: in
-            # Rivendell S16 it imports gas in low-``timestep_weight`` timeslices
-            # while plants draw in high-weight ones, yielding a ~0.838
-            # import/draw ratio with zero slack.  Weighting every term
-            # (sink, source_eff/noEff, section, back-flow, AND the slack
-            # terms) uniformly keeps the row homogeneous in annual-energy
-            # units; the objective already rp-weights the slack penalty, so
-            # this keeps slack consistent.  ``p_timestep_weight`` is in the
-            # ALWAYS field set (line ~72) — always present and non-None here,
-            # so no identity guard is needed.  When it is ≡ 1.0 (every
-            # non-S16 fixture) ``v * 1.0 == v`` and the LP is unchanged.
-            nbp_lhs = {k: Sum(v * d.p_timestep_weight, over=("t",))
-                       for k, v in b.node_balance_flow_terms.items()}
-            # Σ_t (p_inflow · timestep_weight) per (n, d), restricted to the
-            # period nodes.  Inflow is already per-step energy (mirrors
-            # ``nodeBalance_eq``'s bare ``-d.p_inflow`` — NO ``step_duration``);
-            # we only fold in the same annualization weight as the LHS so both
-            # sides of the period balance are in annual-energy units.  The
-            # ``p_inflow * p_timestep_weight`` Param product joins on the shared
-            # ``(d, t)`` axis through the engine's dtype-safe enum-aligned
-            # join, then we aggregate over ``t`` per (n, d).
-            inflow_weighted = d.p_inflow * d.p_timestep_weight
-            inflow_period_frame = (
-                inflow_weighted.frame.lazy()
-                .join(d.nodeBalancePeriod.select("n").lazy(),
-                      on="n", how="inner")
-                .group_by("n", "d")
-                .agg(pl.col("value").sum())
-                .select("n", "d", "value")
-                .collect())
-            inflow_period = Param(("n", "d"), inflow_period_frame)
-            m.add_cstr(
-                "nodeBalancePeriod_eq",
-                over      = nbp_over,
-                sense     = "==",
-                lhs_terms = nbp_lhs,
-                rhs_terms = {"neg_inflow": -inflow_period},
-            )
+    d = b.d
+    if not _has_rows(d.nodeBalancePeriod) or d.period_in_use_set is None:
+        return
+
+    # ─── EQ. ─── nodeBalancePeriod_eq ────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_t w[d,t] · (flow and slack terms of nodeBalance_eq)[n,d,t]  =  −Σ_t w[d,t] · inflow[n,d,t]
+    #   ∀ n ∈ nodeBalancePeriod, n ∉ nodeState, d ∈ period_in_use;   w = timestep_weight
+    # Energy balance over a whole period instead of every step, in MWh.  The
+    # terms are b.node_balance_flow_terms (Δt already applied); period nodes
+    # are never storage, so there are no state terms.
+    # Every term, slacks included, carries the timestep weight: a per-step
+    # balance needs no weight, but a period sum without it would let
+    # low-weight timeslices offset high-weight ones.  The other op_factor
+    # parts (inflation_op, period_share) are per period and cancel in a row.
+    # Inflow is energy per step (no Δt), as in nodeBalance_eq.
+    over = (d.nodeBalancePeriod.select("n").lazy()
+            .join(d.period_in_use_set.select("d").lazy(), how="cross"))
+    if _has_rows(d.nodeState):
+        over = over.join(d.nodeState.select("n").lazy(), on="n", how="anti")
+    over = over.select("n", "d").collect()
+    if over.height == 0:
+        return
+    lhs = {key: Sum(term * d.p_timestep_weight, over=("t",))
+           for key, term in b.node_balance_flow_terms.items()}
+    inflow_period = Param(("n", "d"), ((d.p_inflow * d.p_timestep_weight).frame.lazy()
+                                       .join(d.nodeBalancePeriod.select("n").lazy(), on="n", how="inner")
+                                       .group_by("n", "d")
+                                       .agg(pl.col("value").sum())
+                                       .select("n", "d", "value")
+                                       .collect()))
+    b.m.add_cstr(
+        "nodeBalancePeriod_eq",
+        over      = over,
+        sense     = "==",
+        lhs_terms = lhs,
+        rhs_terms = {"neg_inflow": -inflow_period},
+    )
 
 
 def _eq_node_balance_fix_quantity(b: _Build) -> None:
-    """Final storage quantity fixed by an upper-level solve."""
-    m, d = b.m, b.d
-    v_state = b.v_state
-    # ─── node_balance_fix_quantity_eq_lower (mod:2760) ───────────────────
-    # Pins v_state[n, d_last, t_last] * unitsize == Σ_{(d,t,t2) in
-    # dtt_timeline_matching} p_fix_storage_quantity[n, d2, t2], for nodes
-    # in n_fix_storage_quantity, where (d2, d) ∈ period__branch and d ∈
-    # period_last.  This is the upper-level "anchor" timestep handoff.
-    if (b.has_storage
-            and d.n_fix_storage_quantity is not None
-            and d.n_fix_storage_quantity.height > 0
-            and d.ndt_fix_storage_quantity is not None
-            and d.ndt_fix_storage_quantity.height > 0
-            and d.dtt_timeline_matching is not None
-            and d.dtt_timeline_matching.height > 0
+    """Final storage state fixed by an upper-level solve."""
+    d = b.d
+    if not (b.has_storage
+            and _has_rows(d.n_fix_storage_quantity)
+            and _has_rows(d.ndt_fix_storage_quantity)
+            and _has_rows(d.dtt_timeline_matching)
             and d.period_branch is not None
             and d.period_last is not None
             and d.p_fix_storage_quantity is not None
             and d.p_state_unitsize is not None
             and d.nodeState_last_dt is not None):
-        # Index: (n, d, t) where d ∈ period_last AND there exists a
-        # (d2, d) ∈ period__branch and (n, d2, t2) ∈ ndt_fix_storage_quantity
-        # with (d, t, t2) ∈ dtt_timeline_matching.
-        #
-        # Build RHS rows (n, d, t, value) by joining
-        #   ndt_fix_storage_quantity[n, d2, t2] (with values)
-        #   ⨯ period__branch[d2, d]
-        #   ⨯ dtt_timeline_matching[d, t, t_upper=t2]
-        #   ⨯ period_last[d]
-        #   ⨯ n_fix_storage_quantity[n]
-        #   ⨯ nodeState_last_dt[n, d, t]
-        # then group_by (n, d, t) and sum value (the .mod's sum).
-        fix_q_long = d.p_fix_storage_quantity.frame.pipe(
-            rename_to_axis, {"d": "d_upper", "t": "t_upper"}
-        )
-        rhs_rows = (d.n_fix_storage_quantity
-            .join(fix_q_long, on="n", how="inner")
-            .join(d.period_branch, on="d_upper", how="inner")
-            .join(d.dtt_timeline_matching,
-                  left_on=["d", "t_upper"],
-                  right_on=["d", "t_upper"],
-                  how="inner")
-            .join(d.period_last, on="d", how="inner")
-            .join(d.nodeState_last_dt, on=["n", "d", "t"], how="inner")
-            .group_by(["n", "d", "t"])
-            .agg(pl.col("value").sum())
-            .select("n", "d", "t", "value"))
-        if rhs_rows.height > 0:
-            cstr_over = rhs_rows.select("n", "d", "t").unique()
-            v_state_at_last = Where(v_state, cstr_over)
-            rhs_param = Param(("n", "d", "t"), rhs_rows)
-            m.add_cstr(
-                "node_balance_fix_quantity_eq_lower",
-                over      = cstr_over,
-                sense     = "==",
-                lhs_terms = {"state": v_state_at_last * d.p_state_unitsize},
-                rhs_terms = {"target": rhs_param},
-            )
+        return
+
+    # ─── EQ. ─── node_balance_fix_quantity_eq_lower ──────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t] · state_unitsize[n]
+    #   = Σ_{(d_up,d) ∈ period_branch, (d,t,t_up) ∈ dtt_timeline_matching} fix_storage_quantity[n,d_up,t_up]
+    #   ∀ n ∈ n_fix_storage_quantity, d ∈ period_last, (n,d,t) ∈ nodeState_last_dt
+    # Pins the storage state (MWh) at the last step of each last period to the
+    # state an upper-level (coarser) solve reached at the matching time.
+    # Despite the name, the row is an equality.
+    target = (d.n_fix_storage_quantity
+              .join(d.p_fix_storage_quantity.frame.pipe(rename_to_axis, {"d": "d_upper", "t": "t_upper"}),
+                    on="n", how="inner")
+              .join(d.period_branch, on="d_upper", how="inner")
+              .join(d.dtt_timeline_matching, on=["d", "t_upper"], how="inner")
+              .join(d.period_last, on="d", how="inner")
+              .join(d.nodeState_last_dt, on=["n", "d", "t"], how="inner")
+              .group_by(["n", "d", "t"])
+              .agg(pl.col("value").sum())
+              .select("n", "d", "t", "value"))
+    if target.height == 0:
+        return
+    over = target.select("n", "d", "t").unique()
+    b.m.add_cstr(
+        "node_balance_fix_quantity_eq_lower",
+        over      = over,
+        sense     = "==",
+        lhs_terms = {"state": Where(b.v_state, over) * d.p_state_unitsize},
+        rhs_terms = {"target": Param(("n", "d", "t"), target)},
+    )
 
 
 def _eq_storage_usage_fix(b: _Build) -> None:
     """Storage usage per period capped by an upper-level solve."""
-    m, d = b.m, b.d
-    v_flow = b.v_flow
-    v_online_lin = b.v_online_linear
-    v_online_int = b.v_online_integer
-    # ─── node_storage_usage_fix_le (mod: storage_usage_fix, ~L2354) ──────
-    # Storage-usage fix: the net energy drawn from the storage node n
-    # over a fine PERIOD must not exceed the coarse-solve target usage
-    # summed over every coarse window overlapping that period.  This is a
-    # PER-PERIOD aggregate cap — NOT a per-terminal-window one.
-    #
-    #   - Σ_{(p, source, n) ∈ pss, t3 ∈ period d}
-    #         v_flow[p, source, n, d, t3] * unitsize * step_dur[d, t3]
-    #   + Σ_{(p, n, sink) ∈ pss_eff, t3 ∈ period d}
-    #         (v_flow * unitsize * slope
-    #          + (if min_load_efficiency) v_online * pdtProcess_section
-    #                                       * unitsize) * step_dur
-    #   + Σ_{(p, n, sink) ∈ pss_noEff, t3 ∈ period d}
-    #         v_flow * unitsize * step_dur
-    #   ≤   Σ_{(n, d2, t2) ∈ ndt_fix_storage_usage :
-    #          ∃ t3. (d, t3, t2) ∈ dtt_timeline_matching}
-    #         p_fix_storage_usage[n, d2, t2]
-    #
-    # for nodes n ∈ n_fix_storage_usage, one row per fine period d ∈
-    # period_last, anchored at that period's last (d, t) (nodeState_last_dt).
-    #
-    # SEMANTICS (bug fix — critique BLOCKER).  The reference model
-    # (flextool.mod ``s.t. storage_usage_fix``) sums the LHS flow over the
-    # WHOLE period d (``(d, t3) in dt``) and sums the RHS coarse usage over
-    # EVERY coarse window t2 for which ANY fine step t3 maps into period d
-    # (``exists{(d, t3, t2) in dtt_timeline_matching}``).  The previous
-    # engine port copied the fix_quantity RHS-build pattern verbatim: it
-    # joined ``dtt_timeline_matching`` on ``[d, t_upper]`` (pairing each
-    # coarse window with its specific fine step) and then
-    # ``nodeState_last_dt`` on ``[n, d, t]``, collapsing the RHS to only
-    # the ONE coarse window whose matched fine step is the period's
-    # terminal hour — while the LHS still aggregated flow over the entire
-    # roll.  For any fine roll spanning K>1 coarse windows (the entire
-    # seasonal mt_4h → hourly regime) this made the cap grossly too tight
-    # (whole-period LHS ≤ single-window RHS) → infeasibility/distortion.
-    #
-    # The fix restores the .mod's per-PERIOD aggregate: RHS sums over the
-    # DISTINCT coarse windows overlapping the period (``dtt_windows``
-    # drops the fine ``t`` before the join, so a window counts once no
-    # matter how many fine steps it holds), anchored onto the period's
-    # terminal row via a ``[n, d]`` join (not ``[n, d, t]``); and the LHS
-    # Sum leaves the ``d`` axis open (``over`` excludes ``d``) so each
-    # period is capped independently — matching fix_quantity/fix_price,
-    # which likewise follow the coarse trajectory per fine period.
-    #
-    # The LHS is the FULL legacy formula with efficiency corrections on
-    # sink flows (slope, plus min_load_efficiency section term).  The
-    # per-process sink/source flow-coefficient RATIO from the .mod
-    # (``p_process_sink_coefficient * p_process_source_coefficient``) is
-    # DEFERRED here, matching the engine's existing treatment of the same
-    # ratio in §5.2 var-cost (model.py:2742-2744): every current fixture
-    # has both coefficients = 1, so the ratio collapses to 1 and we follow
-    # the prevailing convention.  When a fixture exercises non-unit
-    # coefficients, both this constraint and §5.2 var-cost need the ratio
-    # wired in tandem.
-    if (b.has_proc
+    d = b.d
+    if not (b.has_proc
             and b.has_storage
-            and d.n_fix_storage_usage is not None
-            and d.n_fix_storage_usage.height > 0
-            and d.ndt_fix_storage_usage is not None
-            and d.ndt_fix_storage_usage.height > 0
-            and d.dtt_timeline_matching is not None
-            and d.dtt_timeline_matching.height > 0
+            and _has_rows(d.n_fix_storage_usage)
+            and _has_rows(d.ndt_fix_storage_usage)
+            and _has_rows(d.dtt_timeline_matching)
             and d.period_branch is not None
             and d.period_last is not None
             and d.p_fix_storage_usage is not None
             and d.nodeState_last_dt is not None):
-        # RHS rows (n, d, t, value): for each fine period d ∈ period_last,
-        # sum p_fix_storage_usage[n, d2, t2] over EVERY coarse window t2
-        # overlapping the period ((d2, d) ∈ period__branch and ∃ fine step
-        # with (d, ·, t2) ∈ dtt_timeline_matching), restricted to
-        # n ∈ n_fix_storage_usage, and pin the aggregate onto the period's
-        # terminal (d, t) anchor.  Unlike node_balance_fix_quantity_eq_lower
-        # (a point valuation that keeps the single terminal window), the
-        # coarse WINDOW dim is summed out here — a per-period throughput cap.
-        fix_u_long = d.p_fix_storage_usage.frame.pipe(
-            rename_to_axis, {"d": "d_upper", "t": "t_upper"}
-        )
-        # Distinct coarse windows per fine period (the .mod's
-        # ``exists{(d, t3, t2) in dtt_timeline_matching}`` — a window
-        # counts once regardless of how many fine steps it holds).
-        dtt_windows = (d.dtt_timeline_matching
-                       .select("d", "t_upper").unique())
-        rhs_rows = (d.n_fix_storage_usage
-            .join(fix_u_long, on="n", how="inner")
-            .join(d.period_branch, on="d_upper", how="inner")
-            .join(dtt_windows, on=["d", "t_upper"], how="inner")
-            .join(d.period_last, on="d", how="inner")
-            # Anchor onto the period's terminal (d, t) WITHOUT filtering
-            # windows by t — join on (n, d) only so every window in the
-            # period sums onto the single anchor row.
-            .join(d.nodeState_last_dt, on=["n", "d"], how="inner")
-            # Fixed summation order: the joins above leave row order
-            # hash-dependent, which changes the float sum in the last bit.
-            .sort(["n", "d", "t", "d_upper", "t_upper"])
-            .group_by(["n", "d", "t"])
-            .agg(pl.col("value").sum())
-            .select("n", "d", "t", "value"))
-        if rhs_rows.height > 0:
-            cstr_over = rhs_rows.select("n", "d", "t").unique()
-            rhs_param = Param(("n", "d", "t"), rhs_rows)
+        return
 
-            # ── Build LHS: composite flow sum, indexed by (n, d) ──
-            # Each piece sums over (p, source, sink, t3) leaving the
-            # (n, d) dims open (the ``d`` axis is NOT summed out — the cap
-            # is per fine period); the constraint's (n, d, t) ``over``
-            # broadcasts the per-(n, d) value onto the period's anchor row.
-            #
-            # n-as-sink: every (p, source, n) row in process_source_sink.
-            n_set = d.n_fix_storage_usage.select("n")
-            sink_idx = (d.process_source_sink
-                .join(n_set.pipe(rename_to_axis, {"n": "sink"}),
-                      on="sink", how="inner")
-                .with_columns(n=pl.col("sink")))
-            # n-as-source (eff partition): process_source_sink_eff.
-            src_eff_idx = None
-            if (d.process_source_sink_eff is not None
-                    and d.process_source_sink_eff.height > 0):
-                src_eff_idx = (d.process_source_sink_eff
-                    .join(n_set.pipe(rename_to_axis, {"n": "source"}),
-                          on="source", how="inner")
-                    .with_columns(n=pl.col("source")))
-            # n-as-source (noEff partition): process_source_sink_noEff.
-            src_noEff_idx = None
-            if (d.process_source_sink_noEff is not None
-                    and d.process_source_sink_noEff.height > 0):
-                src_noEff_idx = (d.process_source_sink_noEff
-                    .join(n_set.pipe(rename_to_axis, {"n": "source"}),
-                          on="source", how="inner")
-                    .with_columns(n=pl.col("source")))
+    # ─── EQ. ─── node_storage_usage_fix_le ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # − Σ_{(p,s,n) ∈ process_source_sink, t} v_flow[p,s,n,d,t]·unitsize[p]·Δt
+    # + Σ_{(p,n,k) ∈ process_source_sink_eff, t}
+    #     (v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])·Δt
+    # + Σ_{(p,n,k) ∈ process_source_sink_noEff, t} v_flow[p,n,k,d,t]·unitsize[p]·Δt
+    #   ≤ Σ_{(d_up,d) ∈ period_branch, t_up : ∃t (d,t,t_up) ∈ dtt_timeline_matching} fix_storage_usage[n,d_up,t_up]
+    #   ∀ n ∈ n_fix_storage_usage, d ∈ period_last, (n,d,t_last) ∈ nodeState_last_dt;   Δt = step_duration[d,t]
+    # Caps the net energy drawn from storage node n over a whole period (MWh)
+    # by the usage an upper-level (coarser) solve planned for the coarse
+    # windows overlapping that period.  One row per period, at its last step;
+    # each coarse window counts once however many fine steps it covers.
+    # The section term exists for min_load_efficiency units only.  The
+    # process sink/source coefficient ratio is not applied (nor in the
+    # source-side variable cost); it is 1 in every current dataset.
+    target = (d.n_fix_storage_usage
+              .join(d.p_fix_storage_usage.frame.pipe(rename_to_axis, {"d": "d_upper", "t": "t_upper"}),
+                    on="n", how="inner")
+              .join(d.period_branch, on="d_upper", how="inner")
+              .join(d.dtt_timeline_matching.select("d", "t_upper").unique(), on=["d", "t_upper"], how="inner")
+              .join(d.period_last, on="d", how="inner")
+              # On (n, d) only: every window of the period sums onto its last step.
+              .join(d.nodeState_last_dt, on=["n", "d"], how="inner")
+              # Fixed summation order: the joins above leave row order
+              # hash-dependent, which changes the float sum in the last bit.
+              .sort(["n", "d", "t", "d_upper", "t_upper"])
+              .group_by(["n", "d", "t"])
+              .agg(pl.col("value").sum())
+              .select("n", "d", "t", "value"))
+    if target.height == 0:
+        return
 
-            lhs_terms: dict = {}
-            # n-as-sink: subtract (flows INTO n).
-            if sink_idx.height > 0:
-                lhs_terms["sink_flow"] = -Sum(
-                    Where(v_flow * d.p_unitsize, sink_idx)
-                    * d.p_step_duration,
-                    over=("p", "source", "sink", "t"))
-            # n-as-source (eff): add v_flow * unitsize * slope * step_dur.
-            if (src_eff_idx is not None and src_eff_idx.height > 0
-                    and d.p_slope is not None):
-                lhs_terms["source_eff"] = Sum(
-                    Where(v_flow * d.p_unitsize * d.p_slope, src_eff_idx)
-                    * d.p_step_duration,
-                    over=("p", "source", "sink", "t"))
-                # min_load_efficiency section term (n-as-source side).
-                if b.has_minload_eff and d.p_section is not None:
-                    section_idx = (src_eff_idx
-                                   .join(d.process_min_load_eff,
-                                         on="p", how="inner"))
-                    if section_idx.height > 0:
-                        if b.has_online_lin:
-                            lhs_terms["source_section_lin"] = Sum(
-                                Where(Where(v_online_lin, d.process_min_load_eff)
-                                      * d.p_section * d.p_unitsize,
-                                      section_idx)
-                                * d.p_step_duration,
-                                over=("p", "source", "sink", "t"))
-                        if b.has_online_int:
-                            lhs_terms["source_section_int"] = Sum(
-                                Where(Where(v_online_int, d.process_min_load_eff)
-                                      * d.p_section * d.p_unitsize,
-                                      section_idx)
-                                * d.p_step_duration,
-                                over=("p", "source", "sink", "t"))
-            # n-as-source (noEff): add v_flow * unitsize * step_dur.
-            if src_noEff_idx is not None and src_noEff_idx.height > 0:
-                lhs_terms["source_noEff"] = Sum(
-                    Where(v_flow * d.p_unitsize, src_noEff_idx)
-                    * d.p_step_duration,
-                    over=("p", "source", "sink", "t"))
+    nodes = d.n_fix_storage_usage.select("n")
 
-            if lhs_terms:
-                m.add_cstr(
-                    "node_storage_usage_fix_le",
-                    over      = cstr_over,
-                    sense     = "<=",
-                    lhs_terms = lhs_terms,
-                    rhs_terms = {"target": rhs_param},
-                )
+    def _arcs_at_node(arcs: pl.DataFrame, side: str) -> pl.DataFrame:
+        """Rows of ``arcs`` whose ``side`` node is in n_fix_storage_usage, with n = that node."""
+        return (arcs.join(nodes.pipe(rename_to_axis, {"n": side}), on=side, how="inner")
+                .with_columns(n=pl.col(side)))
+
+    v_flow = b.v_flow
+    over_arcs_t = ("p", "source", "sink", "t")
+    lhs: dict = {}
+    into_node = _arcs_at_node(d.process_source_sink, "sink")
+    if into_node.height > 0:
+        lhs["sink_flow"] = -Sum(Where(v_flow * d.p_unitsize, into_node) * d.p_step_duration, over=over_arcs_t)
+    from_node_eff = (_arcs_at_node(d.process_source_sink_eff, "source")
+                     if _has_rows(d.process_source_sink_eff) else None)
+    if from_node_eff is not None and from_node_eff.height > 0 and d.p_slope is not None:
+        lhs["source_eff"] = Sum(Where(v_flow * d.p_unitsize * d.p_slope, from_node_eff) * d.p_step_duration,
+                                over=over_arcs_t)
+        if b.has_minload_eff and d.p_section is not None:
+            section_idx = from_node_eff.join(d.process_min_load_eff, on="p", how="inner")
+            if section_idx.height > 0:
+                for key, has_online, v_online in (("source_section_lin", b.has_online_lin, b.v_online_linear),
+                                                  ("source_section_int", b.has_online_int, b.v_online_integer)):
+                    if has_online:
+                        lhs[key] = Sum(Where(Where(v_online, d.process_min_load_eff) * d.p_section * d.p_unitsize,
+                                             section_idx) * d.p_step_duration,
+                                       over=over_arcs_t)
+    from_node_noEff = (_arcs_at_node(d.process_source_sink_noEff, "source")
+                       if _has_rows(d.process_source_sink_noEff) else None)
+    if from_node_noEff is not None and from_node_noEff.height > 0:
+        lhs["source_noEff"] = Sum(Where(v_flow * d.p_unitsize, from_node_noEff) * d.p_step_duration,
+                                  over=over_arcs_t)
+    if not lhs:
+        return
+    b.m.add_cstr(
+        "node_storage_usage_fix_le",
+        over      = target.select("n", "d", "t").unique(),
+        sense     = "<=",
+        lhs_terms = lhs,
+        rhs_terms = {"target": Param(("n", "d", "t"), target)},
+    )
 
 
 def _eq_block_coupling(b: _Build) -> None:
     """Storage nodes balanced per coarse block (nodeStateBlock)."""
+    if not (b.has_nsb and b.has_storage):
+        return
     m, d = b.m, b.d
-    v_flow = b.v_flow
-    vq_up = b.vq_state_up
-    vq_down = b.vq_state_down
+    nsb = d.nodeStateBlock
     v_state = b.v_state
-    v_state_rp_start = b.v_state_rp_start
-    # ─── stateConstantWithinBlock_eq + nodeBalanceBlock_eq ────────────────
-    # For nodes in ``nodeStateBlock`` (binding method
-    # ``bind_intraperiod_blocks``), v_state is constant across the interior
-    # rows of each block and the per-block energy balance pins the
-    # state-transition between blocks (cyclic via period_block_succ).
-    # See flextool.mod:2318-2402.
-    if b.has_nsb and b.has_storage:
-        # 1. stateConstantWithinBlock_eq:
-        #    v_state[n, d, t] - v_state[n, d, t_previous] == 0
-        #    over (n, d, t) where (d, t, t_previous) ∈ dtttdt_block_interior
-        #    (interior-of-block jump=1 rows).  Per-period within-period lag
-        #    is correct here — interior rows always have d_previous == d.
-        if (d.dtttdt_block_interior is not None
-                and d.dtttdt_block_interior.height > 0):
-            interior = d.dtttdt_block_interior  # (d, t, t_previous)
-            block_dt = (d.nodeStateBlock
-                          .join(interior.select("d", "t"), how="cross"))
-            v_state_now_blk = Where(v_state, d.nodeStateBlock)
-            # Lag joins on (d) and matches the var's t against
-            # interior.t_previous via the lag column rename.
-            v_state_lag_blk = Where(
-                Lag(v_state, interior, "t", "t_previous"),
-                d.nodeStateBlock)
-            m.add_cstr(
-                "stateConstantWithinBlock_eq",
-                over      = block_dt,
-                sense     = "==",
-                lhs_terms = {"state":     v_state_now_blk,
-                             "state_lag": -v_state_lag_blk},
-                rhs_terms = {},
-            )
 
-        # 2. nodeBalanceBlock_eq, indexed by (n, d, b_first) for n in
-        #    nodeStateBlock (excluding fix_start_end nodes — none in this
-        #    fixture).
-        if (d.period_block is not None and d.period_block.height > 0
-                and d.period_block_succ is not None
-                and d.period_block_succ.height > 0
-                and d.period_block_time is not None
-                and d.period_block_time.height > 0):
-            # over: (n, d, b_first)
-            nbb_over = (d.nodeStateBlock
-                        .join(d.period_block, how="cross")
-                        .select("n", "d", "b_first"))
-            # Optional fix_start_end exclusion (mod:2346) — excluded if a
-            # nodeStateBlock node is also in storage_start_end fix_start_end.
-            # We don't currently track fix_start_end as a separate set; the
-            # fixture uses fix_start (not fix_start_end) so no exclusion
-            # needed here.
+    # ─── EQ. ─── stateConstantWithinBlock_eq ─────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t] − v_state[n,d,t_previous] = 0
+    #   ∀ n ∈ nodeStateBlock, (d,t,t_previous) ∈ dtttdt_block_interior
+    # Keeps the state of a nodeStateBlock node constant within each coarse
+    # block.  Interior steps never cross a period boundary.
+    if _has_rows(d.dtttdt_block_interior):
+        interior = d.dtttdt_block_interior
+        m.add_cstr(
+            "stateConstantWithinBlock_eq",
+            over      = nsb.join(interior.select("d", "t"), how="cross"),
+            sense     = "==",
+            lhs_terms = {"state":     Where(v_state, nsb),
+                         "state_lag": -Where(Lag(v_state, interior, "t", "t_previous"), nsb)},
+            rhs_terms = {},
+        )
 
-            nbb_terms: dict = {}
+    if not (_has_rows(d.period_block) and _has_rows(d.period_block_succ) and _has_rows(d.period_block_time)):
+        return
 
-            # ── State-transition LHS: Σ_{b_next} (v_state[n,d,b_next]
-            #     - v_state[n,d,b_first]) * unitsize ────────────────────
-            # period_block_succ has (d, b_first, b_next).  We build:
-            #   + v_state[n, d, b_next]  — rename b_next → b_first via Lag-style join
-            #   - v_state[n, d, b_first]
-            # both indexed by (n, d, b_first) and multiplied by unitsize.
-            # v_state itself is over (n, d, t); we route b_first through
-            # period_block_succ's b_next/b_first columns.
-            # First: v_state at b_next, joined by (d, b_next=t)
-            # Build a virtual var v_state_at_block: (n, d, b_next, b_first)
-            # by joining v_state on (d, t=b_next) against period_block_succ.
-            succ = d.period_block_succ.select("d", "b_first", "b_next")
-            # v_state[n, d, b_next] term: lag-style — match var's t to b_next.
-            # We want resulting Expr indexed by (n, d, b_first).
-            # Use a Var rename: v_state__t_as_bnext over (n, d, b_next).
-            v_state_b = Var(
-                name=v_state.name + "__b_next",
-                dims=("n", "d", "b_next"),
-                frame=v_state.frame.rename({"t": "b_next"}),
-                lower=v_state.lower, upper=v_state.upper,
-            )
-            v_state_a = Var(
-                name=v_state.name + "__b_first",
-                dims=("n", "d", "b_first"),
-                frame=v_state.frame.rename({"t": "b_first"}),
-                lower=v_state.lower, upper=v_state.upper,
-            )
-            # nodeStateBlock splits into two families with DIFFERENT state
-            # transitions:
-            #
-            #  * bind_intraperiod_blocks (non-rp) nodes keep the forward
-            #    cyclic transition Σ_{b_next}(v_state[b_next]-v_state[b_first]):
-            #    each representative period's coarse blocks close one cyclic
-            #    loop (period_block_succ is now segmented per representative
-            #    period, so the loop no longer spans months-apart days).
-            #
-            #  * blended-weights (rp) nodes coarsened onto a resolution block
-            #    must retain their representative-period storage semantics:
-            #    a FREE start state per representative day plus a seasonally
-            #    weighted inter-period chain (rp_inter_period_balance /
-            #    _cyclic).  The forward-cyclic transition would (a) close each
-            #    day on itself, forbidding the seasonal storage the fine model
-            #    uses, and (b) leave ``v_state_rp_start`` unbound, making the
-            #    seasonal chain vacuous.  We give these nodes a BACKWARD,
-            #    post-flow block transition (v_state[b] - v_state[b_prev]),
-            #    where the predecessor of each representative day's first
-            #    block is the free ``v_state_rp_start`` instead of the cyclic
-            #    wrap.  This matches the fine ``b.has_rp`` state-change exactly,
-            #    lifted to coarse blocks (v_state is constant within each
-            #    block via stateConstantWithinBlock_eq, so the fine
-            #    rep-day-first/last labels the seasonal chain references carry
-            #    the coarse block value).
-            if b.has_rp and d.nodeState_rp is not None and d.nodeState_rp.height > 0:
-                rp_nodes = d.nodeStateBlock.join(
-                    d.nodeState_rp.select("n"), on="n", how="inner")
-                nonrp_nodes = d.nodeStateBlock.join(
-                    d.nodeState_rp.select("n"), on="n", how="anti")
-            else:
-                rp_nodes = d.nodeStateBlock.clear()
-                nonrp_nodes = d.nodeStateBlock
+    # ─── EQ. ─── nodeBalanceBlock_eq ─────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # state_change[n,d,b]·state_unitsize[n]
+    #   − Σ_{(p,s,n)} v_flow[p,s,n,d,t]·unitsize[p]·w_sink
+    #   + Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff} v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t]·w_source
+    #   + Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·w_source
+    #   + Σ_{t ∈ b} v_state[n,d,t]·self_discharge[n]·state_unitsize[n]·Δt
+    #   − Σ_{t ∈ b} (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
+    #   = Σ_{t ∈ b} inflow[n,d,t]
+    #   ∀ n ∈ nodeStateBlock, (d,b) ∈ period_block;   b is named by its first step b_first, t ∈ b by period_block_time
+    # Energy balance per coarse block (MWh) for the nodes nodeBalance_eq skips.
+    # state_change, non-rp nodes (bind_intraperiod_blocks):
+    #   Σ_{(d,b,b_next) ∈ period_block_succ} v_state[n,d,b_next] − v_state[n,d,b];
+    #   the blocks of each representative period form one cycle.
+    # state_change, blended-weights (rp) nodes: v_state[n,d,b] − v_state[n,d,b_prev], where the first block of a
+    #   representative day starts from v_state_rp_start instead of a cyclic predecessor.  This is the fine rp
+    #   state change lifted to blocks, so the rp inter-period chain keeps binding v_state_rp_start.
+    # Flow weights: with per-arc block data (arc_{sink,source}_block_dt), w = p_arc_{sink,source}_weight, the step
+    #   duration of the arc's block on that side; otherwise w = Δt over the fine steps of the block.
+    # v_flow of an arc with both ends on a coarse block enters only at the coarse step; its values at the other
+    #   fine steps are not tied to it.
+    succ = d.period_block_succ.select("d", "b_first", "b_next")
+    state_at_block = _var_view(v_state, "__b_first", {"t": "b_first"})
+    if b.has_rp:
+        rp_nodes = nsb.join(d.nodeState_rp.select("n"), on="n", how="inner")
+        nonrp_nodes = nsb.join(d.nodeState_rp.select("n"), on="n", how="anti")
+    else:
+        rp_nodes = nsb.clear()
+        nonrp_nodes = nsb
 
-            # ── Non-rp (bind_intraperiod_blocks): forward cyclic ───────────
-            # + Σ_{b_next} v_state[n,d,b_next] - v_state[n,d,b_first], over
-            # period_block_succ, restricted to the non-rp nodeStateBlock set.
-            state_next = Sum(
-                Where(Where(v_state_b, succ), nonrp_nodes),
-                over=("b_next",),
-            )
-            state_curr = Sum(
-                Where(Where(v_state_a, succ), nonrp_nodes),
-                over=("b_next",),
-            )
-            nbb_terms["state_change"] = (state_next - state_curr) * d.p_state_unitsize
+    lhs: dict = {}
+    state_at_next = _var_view(v_state, "__b_next", {"t": "b_next"})
+    lhs["state_change"] = (Sum(Where(Where(state_at_next, succ), nonrp_nodes), over=("b_next",))
+                           - Sum(Where(Where(state_at_block, succ), nonrp_nodes), over=("b_next",))
+                           ) * d.p_state_unitsize
+    if rp_nodes.height > 0:
+        # Predecessor of block b: the b_first whose b_next is b; first blocks
+        # of a representative day take v_state_rp_start instead.
+        rp_first = d.rp_block_first.select("d", pl.col("t").alias("b_first"))
+        pred_interior = (succ.select("d", pl.col("b_next").alias("b_first"), pl.col("b_first").alias("b_prev"))
+                         .join(rp_first, on=["d", "b_first"], how="anti"))
+        state_at_prev = _var_view(v_state, "__b_prev", {"t": "b_prev"})
+        prev = Sum(Where(Where(state_at_prev, pred_interior), rp_nodes), over=("b_prev",))
+        rp_start = _var_view(b.v_state_rp_start, "__b_first", {"t": "b_first"})
+        start = Where(Where(rp_start, rp_first), rp_nodes)
+        now = Where(state_at_block, rp_nodes.join(d.period_block, how="cross").select("n", "d", "b_first"))
+        lhs["state_change_rp"] = (now - prev - start) * d.p_state_unitsize
 
-            # ── rp (blended-weights) coarse nodes: backward, post-flow, with
-            #    a free representative-day start ──────────────────────────────
-            if rp_nodes.height > 0:
-                # Predecessor map from reversing the per-rep-day cyclic succ:
-                # pred(b) = the b_first whose b_next == b.  Blocks that are a
-                # representative day's FIRST block use v_state_rp_start instead
-                # of the wrap predecessor, so drop those from the interior map.
-                pred_full = succ.select(
-                    "d",
-                    pl.col("b_next").alias("b_first"),
-                    pl.col("b_first").alias("b_prev"),
-                )
-                rp_first_lbl = d.rp_block_first.select(
-                    "d", pl.col("t").alias("b_first"))
-                pred_interior = pred_full.join(
-                    rp_first_lbl, on=["d", "b_first"], how="anti")
+    v_flow = b.v_flow
+    block_t = d.period_block_time
+    over_arcs_t = ("p", "source", "sink", "t")
+    if _has_rows(d.arc_sink_block_dt) and d.p_arc_sink_weight is not None:
+        into_node = d.arc_sink_block_dt.drop("weight").pipe(rename_to_axis, {"sink": "n"})
+        lhs["sink_flow_block"] = -Sum(Where(v_flow * d.p_unitsize * d.p_arc_sink_weight, into_node),
+                                      over=over_arcs_t)
+    elif _has_rows(d.flow_to_n):
+        into_node = d.flow_to_n.filter(pl.col("n").is_in(nsb["n"]))
+        if into_node.height > 0:
+            lhs["sink_flow_block"] = -Sum(Where(Where(v_flow * d.p_unitsize, into_node) * d.p_step_duration, block_t),
+                                          over=over_arcs_t)
 
-                # v_state at the interior predecessor block.
-                v_state_bp = Var(
-                    name=v_state.name + "__b_prev",
-                    dims=("n", "d", "b_prev"),
-                    frame=v_state.frame.rename({"t": "b_prev"}),
-                    lower=v_state.lower, upper=v_state.upper,
-                )
-                v_prev_rp = Sum(
-                    Where(Where(v_state_bp, pred_interior), rp_nodes),
-                    over=("b_prev",),
-                )
-                # v_state_rp_start at the representative-day first block.
-                v_rpstart_b = Var(
-                    name=v_state_rp_start.name + "__b_first",
-                    dims=("n", "d", "b_first"),
-                    frame=v_state_rp_start.frame.rename({"t": "b_first"}),
-                    lower=v_state_rp_start.lower, upper=v_state_rp_start.upper,
-                )
-                v_rpstart_rp = Where(
-                    Where(v_rpstart_b, rp_first_lbl), rp_nodes)
-                # v_state at the current block (all coarse blocks of rp nodes).
-                rp_block_over = (rp_nodes
-                                 .join(d.period_block, how="cross")
-                                 .select("n", "d", "b_first"))
-                v_now_rp = Where(v_state_a, rp_block_over)
-                nbb_terms["state_change_rp"] = (
-                    (v_now_rp - v_prev_rp - v_rpstart_rp)
-                    * d.p_state_unitsize)
+    has_source_weights = _has_rows(d.arc_source_block_dt) and d.p_arc_source_weight is not None
+    for key, from_node, with_slope in (("source_eff_block", d.flow_from_nodeBalance_eff, True),
+                                       ("source_noEff_block", d.flow_from_nodeBalance_noEff, False)):
+        if not _has_rows(from_node):
+            continue
+        flow = v_flow * d.p_unitsize * d.p_slope if with_slope else v_flow * d.p_unitsize
+        if has_source_weights:
+            idx = (d.arc_source_block_dt.drop("weight")
+                   .join(from_node.select("p", "source", "sink"), on=["p", "source", "sink"], how="inner")
+                   .pipe(rename_to_axis, {"source": "n"}))
+            if idx.height > 0:
+                lhs[key] = Sum(Where(flow * d.p_arc_source_weight, idx), over=over_arcs_t)
+        else:
+            idx = from_node.filter(pl.col("n").is_in(nsb["n"]))
+            if idx.height > 0:
+                lhs[key] = Sum(Where(Where(flow, idx) * d.p_step_duration, block_t), over=over_arcs_t)
 
-            # The .mod's nodeBalanceBlock_eq is:
-            #   state_change_mod  ==  sink - source_eff - source_noEff
-            #                          + inflow - self_discharge
-            #                          + slack_up - slack_down
-            # where state_change_mod = Σ_{b_next} (v_state[b_next] -
-            #                          v_state[b_first]) * unitsize.
-            # We move every non-state term to the LHS with flipped sign,
-            # leaving inflow on the RHS as a Param:
-            #   LHS = state_change - sink + source_eff + source_noEff
-            #         + self_discharge - slack_up + slack_down
-            #   RHS = inflow_block
+    if d.p_state_self_discharge is not None:
+        lhs["self_discharge_block"] = Sum(
+            Where(Where(v_state * d.p_state_self_discharge * d.p_state_unitsize, nsb) * d.p_step_duration, block_t),
+            over=("t",))
+    lhs["slack_up_block"] = -Sum(Where(Where(b.vq_state_up, nsb) * d.p_step_duration, block_t), over=("t",))
+    lhs["slack_down_block"] = Sum(Where(Where(b.vq_state_down, nsb) * d.p_step_duration, block_t), over=("t",))
 
-            # ── Sink-side flows: - Σ v_flow * unitsize * weight ──
-            # When per-arc weights (block-aware) are available (arc_sink_block_dt
-            # + p_arc_sink_weight), use them directly: each row of
-            # arc_sink_block_dt names a (p, source, sink, d, b_first, t)
-            # tuple with the associated weight = block_step_duration of
-            # the arc's sink-side block.  This matches the .mod's
-            # nodeBalance_eq for daily nodes (mod:2208-2213): for arcs
-            # whose sink-side is on a coarse block, only the coarse step
-            # contributes (×24); for arcs whose sink-side is on a fine
-            # block (e.g. electrolyser reverse: source=h2_A daily,
-            # sink=elec_A hourly contributing to elec_A's hourly balance,
-            # but here we're evaluating from the sink=h2_A side of the
-            # forward arc), the sink is on daily so coarse-only.
-            #
-            # Falls back to the legacy fine-grid sum (period_block_time
-            # × step_duration) for fixtures that don't carry the per-arc
-            # data (e.g., 5weeks bind_intraperiod_blocks where everything
-            # is on the default block — both produce identical sums).
-            if (d.arc_sink_block_dt is not None
-                    and d.arc_sink_block_dt.height > 0
-                    and d.p_arc_sink_weight is not None):
-                sink_idx = (d.arc_sink_block_dt
-                    .drop("weight")
-                    .pipe(rename_to_axis, {"sink": "n"}))
-                nbb_terms["sink_flow_block"] = -Sum(
-                    Where(v_flow * d.p_unitsize * d.p_arc_sink_weight,
-                          sink_idx),
-                    over=("p", "source", "sink", "t"))
-            elif d.flow_to_n is not None and d.flow_to_n.height > 0:
-                flow_to_n_block = (d.flow_to_n
-                    .filter(pl.col("n").is_in(d.nodeStateBlock["n"])))
-                if flow_to_n_block.height > 0:
-                    nbb_terms["sink_flow_block"] = -Sum(
-                        Where(
-                            Where(v_flow * d.p_unitsize, flow_to_n_block)
-                            * d.p_step_duration,
-                            d.period_block_time),
-                        over=("p", "source", "sink", "t"))
-
-            # ── Source-side eff flows: + Σ v_flow * unitsize * slope * weight ──
-            if (d.arc_source_block_dt is not None
-                    and d.arc_source_block_dt.height > 0
-                    and d.p_arc_source_weight is not None
-                    and d.flow_from_nodeBalance_eff is not None
-                    and d.flow_from_nodeBalance_eff.height > 0):
-                # Restrict to eff arcs.
-                src_eff_idx = (d.arc_source_block_dt
-                    .drop("weight")
-                    .join(d.flow_from_nodeBalance_eff
-                            .select("p", "source", "sink"),
-                          on=["p", "source", "sink"], how="inner")
-                    .pipe(rename_to_axis, {"source": "n"}))
-                if src_eff_idx.height > 0:
-                    nbb_terms["source_eff_block"] = Sum(
-                        Where(v_flow * d.p_unitsize * d.p_slope
-                              * d.p_arc_source_weight,
-                              src_eff_idx),
-                        over=("p", "source", "sink", "t"))
-            elif (d.flow_from_nodeBalance_eff is not None
-                    and d.flow_from_nodeBalance_eff.height > 0):
-                ffn_eff_blk = (d.flow_from_nodeBalance_eff
-                    .filter(pl.col("n").is_in(d.nodeStateBlock["n"])))
-                if ffn_eff_blk.height > 0:
-                    nbb_terms["source_eff_block"] = Sum(
-                        Where(
-                            Where(v_flow * d.p_unitsize * d.p_slope, ffn_eff_blk)
-                            * d.p_step_duration,
-                            d.period_block_time),
-                        over=("p", "source", "sink", "t"))
-
-            # ── Source-side noEff flows: + Σ v_flow * unitsize * weight ──
-            if (d.arc_source_block_dt is not None
-                    and d.arc_source_block_dt.height > 0
-                    and d.p_arc_source_weight is not None
-                    and d.flow_from_nodeBalance_noEff is not None
-                    and d.flow_from_nodeBalance_noEff.height > 0):
-                src_noeff_idx = (d.arc_source_block_dt
-                    .drop("weight")
-                    .join(d.flow_from_nodeBalance_noEff
-                            .select("p", "source", "sink"),
-                          on=["p", "source", "sink"], how="inner")
-                    .pipe(rename_to_axis, {"source": "n"}))
-                if src_noeff_idx.height > 0:
-                    nbb_terms["source_noEff_block"] = Sum(
-                        Where(v_flow * d.p_unitsize
-                              * d.p_arc_source_weight,
-                              src_noeff_idx),
-                        over=("p", "source", "sink", "t"))
-            elif (d.flow_from_nodeBalance_noEff is not None
-                    and d.flow_from_nodeBalance_noEff.height > 0):
-                ffn_noEff_blk = (d.flow_from_nodeBalance_noEff
-                    .filter(pl.col("n").is_in(d.nodeStateBlock["n"])))
-                if ffn_noEff_blk.height > 0:
-                    nbb_terms["source_noEff_block"] = Sum(
-                        Where(
-                            Where(v_flow * d.p_unitsize, ffn_noEff_blk)
-                            * d.p_step_duration,
-                            d.period_block_time),
-                        over=("p", "source", "sink", "t"))
-
-            # ── Self-discharge: + Σ v_state * loss * unitsize * step_duration ──
-            # (linear approximation; mod's self-discharge term is on the RHS
-            # with a leading minus, so on LHS it's positive.)
-            if d.p_state_self_discharge is not None:
-                nbb_terms["self_discharge_block"] = Sum(
-                    Where(
-                        Where(v_state * d.p_state_self_discharge
-                              * d.p_state_unitsize, d.nodeStateBlock)
-                        * d.p_step_duration,
-                        d.period_block_time),
-                    over=("t",))
-
-            # ── Slacks: - Σ vq_state_up * step_duration; + Σ vq_state_down * step_duration ──
-            vq_up_blk = Where(vq_up, d.nodeStateBlock)
-            vq_dn_blk = Where(vq_down, d.nodeStateBlock)
-            nbb_terms["slack_up_block"] = -Sum(
-                Where(vq_up_blk * d.p_step_duration, d.period_block_time),
-                over=("t",))
-            nbb_terms["slack_down_block"] = Sum(
-                Where(vq_dn_blk * d.p_step_duration, d.period_block_time),
-                over=("t",))
-
-            # ── RHS: inflow over period_block_time ─────────────────────
-            # mod:2389: + Σ_{(d, b_first, t) ∈ period_block_time} pdtNodeInflow[n, d, t]
-            # On the .mod's RHS; matches our RHS sign directly.
-            inflow_block_frame = (d.p_inflow.frame
-                .filter(pl.col("n").is_in(d.nodeStateBlock["n"]))
-                .join(d.period_block_time, on=["d", "t"], how="inner")
-                .group_by(["n", "d", "b_first"])
-                .agg(pl.col("value").sum())
-                .select("n", "d", "b_first", "value"))
-            rhs_terms_blk: dict = {}
-            if inflow_block_frame.height > 0:
-                rhs_terms_blk["inflow_block"] = Param(
-                    ("n", "d", "b_first"), inflow_block_frame)
-
-            m.add_cstr(
-                "nodeBalanceBlock_eq",
-                over      = nbb_over,
-                sense     = "==",
-                lhs_terms = nbb_terms,
-                rhs_terms = rhs_terms_blk,
-            )
-
-        # ─── v_flow constancy within coarse blocks ─────────────────────
-        # For arcs whose process unified block is coarser than the fine
-        # grid (e.g. liquefier_A on daily_group), flextool's nodeBalance
-        # references v_flow only at the coarse step; the other 23 hourly
-        # v_flow values are LP-degenerate.  Our nodeBalanceBlock_eq
-        # currently sums all 24 hourly values (weight 1 each), which
-        # gives the same daily integral *only if* v_flow is constant
-        # within the day.  Add an explicit equality
-        # ``v_flow[..., d, t] = v_flow[..., d, b_first]`` over the block-
-        # interior (d, t, t_previous) tuples for the relevant arcs.
-        #
-        # Source: process_block.csv (per-process unified block), filtered
-        # to coarse blocks (step_duration > 1).  The native engine
-        # doesn't load
-        # process_block separately yet; derive it from process_side_block
-        # by requiring source-block = sink-block = same coarse block (the
-        # .mod's UC V1 limitation, see flextool.mod:1893-1907).  For
-        # lh2_three_region this picks up liquefier_*, pipe_AB, pipe_BC
-        # (all source=sink=daily_group) but not electrolyser_* (mixed).
-        if (b.has_proc
-                and d.dtttdt_block_interior is not None
-                and d.dtttdt_block_interior.height > 0):
-            # Build (p, source, sink) of arcs whose process is on a
-            # coarse block.  Use the FlexData's pss + process_side_block
-            # via solve_data CSV (read inline; small file).
-            try:
-                # Caller can override; this read is best-effort.
-                # We don't have direct access to ``WORK`` here so we
-                # rely on the synthesised dtttdt_block_interior carrying
-                # only the coarse-block interior rows (exactly what we
-                # built in input.py).
-                pass
-            except Exception:
-                pass
-            interior = d.dtttdt_block_interior  # (d, t, t_previous)
-            # Use process_source_sink for arcs where process appears in
-            # a coarse block on BOTH sides (i.e. process_block is
-            # coarse).  We don't yet load process_block.csv directly;
-            # instead derive: arc qualifies if (p, 'source', b) and
-            # (p, 'sink', b') BOTH have b in coarse_blocks (same block
-            # is implied by the .mod's UC restriction; in this fixture
-            # liquefier and pipes have source==sink=daily_group, while
-            # electrolyser has source=hourly, sink=daily so it's
-            # excluded from constancy).
-            # Pull process_side_block via the existing FlexData if the
-            # loader carries it; otherwise read solve_data.  We choose
-            # the inline read because the loader doesn't currently
-            # expose process_side_block as a top-level field.
-            # NOTE: this is a hack; the proper fix is to surface
-            # process_side_block on FlexData and check it from there.
-            # Fall through: skip if we can't determine the arcs.
-
-            # Simpler path: use d.process_source_sink filtered to arcs
-            # whose source AND sink are both in nodeStateBlock.  In
-            # this fixture nodeStateBlock = {h2_A,h2_B,h2_C,
-            # lh2_A,lh2_B,lh2_C} (the daily-group nodeBalance nodes).
-            # liquefier_A (h2_A→lh2_A) qualifies; pipe_AB (lh2_A→lh2_B)
-            # qualifies; electrolyser_A (elec_A→h2_A and h2_A→elec_A)
-            # has mixed (elec_A is hourly, not in nodeStateBlock) so
-            # only ONE end is daily — these are excluded.  This matches
-            # the "process_block is coarse" criterion exactly for the
-            # current fixture (liquefier and pipes are daily; the
-            # one-sided electrolyser arcs are hourly).
-            # NOTE: ``v_flow_constant_within_block_eq`` is no longer needed
-            # — the arc-side block-aware aggregation in
-            # ``nodeBalanceBlock_eq`` (see arc_sink_block_dt /
-            # arc_source_block_dt + p_arc_*_weight Params) directly
-            # references v_flow at the coarse step weighted by
-            # block_step_duration, matching the .mod's nodeBalance_eq
-            # semantics for daily-block nodes.  v_flow at non-coarse
-            # hours for both-coarse arcs (liquefier, pipe) is now LP-
-            # degenerate — the LP can pick any value but only the coarse-
-            # step value affects the daily nodeBalance.  No constancy
-            # constraint required for parity.
-            if False:
-                pass
+    inflow_block = (d.p_inflow.frame
+                    .filter(pl.col("n").is_in(nsb["n"]))
+                    .join(block_t, on=["d", "t"], how="inner")
+                    .group_by(["n", "d", "b_first"])
+                    .agg(pl.col("value").sum())
+                    .select("n", "d", "b_first", "value"))
+    rhs = {"inflow_block": Param(("n", "d", "b_first"), inflow_block)} if inflow_block.height > 0 else {}
+    m.add_cstr(
+        "nodeBalanceBlock_eq",
+        over      = nsb.join(d.period_block, how="cross").select("n", "d", "b_first"),
+        sense     = "==",
+        lhs_terms = lhs,
+        rhs_terms = rhs,
+    )
 
 
 def _eq_max_flow(b: _Build) -> None:
@@ -2019,8 +1541,7 @@ def _eq_max_flow(b: _Build) -> None:
     # Caps the reverse flow of two-way one-variable arcs by the same built
     # capacity, so |v_flow − v_flow_back| ≤ capacity.  No reserve term.
     if b.v_flow_back is not None and b.twoway1var_arcs is not None:
-        back_over = pss_dt.join(b.twoway1var_arcs, on=("p", "source", "sink"),
-                                how="inner")
+        back_over = pss_dt.join(b.twoway1var_arcs, on=("p", "source", "sink"), how="inner")
         if back_over.height > 0:
             back_lhs: dict = {"flow_back": b.v_flow_back}
             back_lhs.update({k: lhs[k] for k in ("invest_neg", "divest") if k in lhs})
