@@ -82,7 +82,7 @@ def test_offline_unit_holds_no_up_reserve(tmp_path_factory, method, kind) -> Non
     """An offline unit offers no upward reserve; the reserve requirement drives commitment.
 
     Before the fix the linear solve kept the coal plant offline (online 0) while it held the whole 50 MW
-    reserve (review reproduction ``i25_offline``)."""
+    reserve."""
     step = _offline_case(tmp_path_factory, f"uro_{kind}", method)
     out = flow(step, PLANT, COAL, "west")
     up = reserve(step, PLANT, "ru", "west")
@@ -143,7 +143,7 @@ def test_online_connection_up_reserve(tmp_path_factory) -> None:
     source west.
 
     The input path gives connections no online variables today (``process_online_*`` read only
-    ``unit.startup_method``; see specs/github_issues.md), so the unidirectional connection ``west_east``
+    ``unit.startup_method``), so the unidirectional connection ``west_east``
     is added to the online sets of the built FlexData directly.  Only unidirectional connections map to
     an online method, so there is no reverse arc to cover; two-way one-variable arcs keep
     ``maxFlow_back`` without a reserve term, unchanged."""

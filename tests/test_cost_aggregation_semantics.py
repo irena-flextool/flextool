@@ -632,7 +632,7 @@ class TestDivestSalvageIncludedInObjective:
 # (coal_plant, coal_market).  The mod objective for pssdt_varCost_eff_unit_source
 # adds both a flow-slope term AND a section term when the process uses
 # ``min_load_efficiency`` (flextool.mod ~line 2352-2367; GMPL subtracted the
-# term, the engine adds it like the other O&M terms -- refactor bug 20):
+# term, the engine adds it like the other O&M terms):
 #
 #     + sum {(p,source,sink,d,t) in pssdt_varCost_eff_unit_source}
 #         ( + pdtProcess_source[p, source, 'other_operational_cost', d, t]

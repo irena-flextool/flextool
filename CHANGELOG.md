@@ -42,8 +42,9 @@
   different reserve procurement and costs.
 
 - **Upward reserve of a unit with online variables comes out of its online
-  capacity.** A unit with a `startup_method` (`linear` or `binary`) can hold
-  upward reserve only from the units it has online: its output plus the
+  capacity.** A unit with online variables (a `startup_method` `linear` or
+  `binary`, or a `minimum_time_method` other than `none`) can hold upward
+  reserve only from the units it has online: its output plus the
   upward reserve it holds at that output cannot exceed online capacity ×
   availability, and for a unit with several outputs the same applies to
   their sum. Before, only the built capacity limited the reserve, so an
