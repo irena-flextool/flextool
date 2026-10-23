@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **Years represented in rolling solves and stochastic branches.** The
+  outputs that scale annual values by `years_represented` (the model-wide
+  `CO2 [Mt]` and `years_represented__d`) now use each period's years also
+  in rolling-window solves, where every period counted as one year before,
+  and on the forecast branch periods of a stochastic solve, which counted
+  as zero years before (they now get their period's years).
+
 - **CO2 limits count the part-load fuel of min-load units.** The CO2
   limits (`co2_max_period`, `co2_max_total`) now count the extra fuel that
   `min_load_efficiency` units burn at part load, as the CO2 price and the

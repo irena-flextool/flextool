@@ -4886,6 +4886,27 @@ def load_flextool(source: "Path | str | FlexInputSource",
                     and _pss_ok):
                 flex_data.p_flow_constraint_coef = (
                     p_flow_constraint_coef_from_source(db_reader, _pss_inv))
+            # ``p_years_represented_d`` (step 2b of ``apply_derived_a``) is
+            # skipped by the same early return, so a rolling or synthetic
+            # sub-solve would report every period as 1 year.  Build it over
+            # the sub-solve's dt periods; the provider's canonical
+            # ``p_years_represented.csv`` carries the parent solve's years.
+            _dt_inv = getattr(flex_data, "dt", None)
+            if (flex_data.p_years_represented_d is None
+                    and _dt_inv is not None and _dt_inv.height > 0):
+                from flextool.engine.preprocess.params import _derived as _drv_yr
+                _active = None
+                try:  # the workdir as resolved in ``_apply_db_overrides``
+                    _wd_yr = (source.workdir if hasattr(source, "workdir")
+                              else source.input_dir.parent)
+                except Exception:  # pragma: no cover — defensive
+                    _wd_yr = None
+                if provider is not None and _wd_yr is not None:
+                    _active = _drv_yr._read_active_solve(Path(_wd_yr), provider=provider)
+                flex_data.p_years_represented_d = (
+                    _drv_yr.p_years_represented_d_from_source(
+                        db_reader, _active, _drv_yr.periods_of_dt(_dt_inv),
+                        provider=provider))
 
         # Δ.11 — overlay in-memory handoff carriers onto the FlexData
         # built so far.  Replaces the previous post-load ``apply_handoff``

@@ -48,14 +48,15 @@ def time_map(values: dict[str, float], default: float) -> list:
 
 def make_db(tmp_path_factory: pytest.TempPathFactory, *, alt: str,
             values: list, base_chain: list[str],
-            entities: list | None = None) -> tuple[str, str]:
-    """``tests.json`` + override alternative ``alt`` appended to
-    ``base_chain``; returns ``(url, scenario)``.  New ``node`` entities
-    are activated in ``alt``."""
+            entities: list | None = None,
+            fixture_json: Path = BASE_FIXTURE_JSON) -> tuple[str, str]:
+    """``fixture_json`` (default ``tests.json``) + override alternative
+    ``alt`` appended to ``base_chain``; returns ``(url, scenario)``.  New
+    ``node`` entities are activated in ``alt``."""
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = json.loads(BASE_FIXTURE_JSON.read_text())
+    data = json.loads(Path(fixture_json).read_text())
     data["alternatives"].append([alt, ""])
     for ent in entities or []:
         data["entities"].append(ent)

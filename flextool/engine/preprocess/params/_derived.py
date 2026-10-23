@@ -842,32 +842,48 @@ def p_period_share_from_source(
 # ---------------------------------------------------------------------------
 
 
+def periods_of_dt(dt: "pl.DataFrame | None") -> list[str]:
+    """The distinct periods of ``dt`` (column ``d``) as strings, in dt order."""
+    if dt is None or dt.height == 0:
+        return []
+    return [str(x) for x in dt["d"].unique(maintain_order=True).to_list()]
+
+
 def p_years_represented_d_from_source(
     source: "InputSource",
     active_solve: str | None,
     period_set: list[str],
+    *,
+    provider: "object | None" = None,
 ) -> Param | None:
     """Per-period ``years_represented_d``: sum of per-year widths
     bound to each period (the ``R`` value flextool's
     ``solve.years_represented`` Map carries — e.g. 5.0 for a 5-year
     investment period).
 
+    ``period_set`` is the periods of the solve's ``dt``, in dt order.
+    With ``provider``, the widths come from the canonical
+    ``solve_data/p_years_represented.csv``, which gives every stochastic
+    branch period its anchor period's years and, on a rolling or
+    synthetic sub-solve, the parent solve's years; the source arm is the
+    fallback (see ``_years_for_period_from_source``).
+
     Returns ``None`` when no period set is available; otherwise emits
-    one row per period (width-1 default when the source omits the
-    period).
+    one row per period.
     """
     if not period_set:
         return None
-    yfp = _years_for_period_from_source(source, active_solve, period_set)
+    yfp = _years_for_period_from_source(source, active_solve, period_set,
+                                        provider=provider)
     rows = []
     for d in period_set:
         widths = yfp.get(d, [])
         # Empty period — emit 0.0 (matches legacy ``sum(())``); upstream
         # consumers (out_costs) multiply by emissions so a 0 period
-        # contributes nothing.  Periods absent from the source dict
-        # default to a single (label, 1.0) row via
-        # ``_years_for_period_from_source``'s fallback, so this branch
-        # only hits periods explicitly set to R=0.
+        # contributes nothing.  This hits periods explicitly set to R=0
+        # (and periods the canonical CSV omits for that reason); the
+        # source arm gives a period absent from ``years_represented`` a
+        # single (label, 1.0) row.
         s = sum(w for _y, w in widths)
         rows.append({"d": str(d), "value": float(s)})
     out = pl.DataFrame(rows, schema={"d": pl.Utf8, "value": pl.Float64})
@@ -1682,12 +1698,13 @@ def apply_derived_a(
             source, usable_dt, sd_for_share)
 
     # 2b. p_years_represented_d — per-period R width sum (e.g. 5.0 for a
-    # 5-year invest period).  Built directly from the source; consumed
+    # 5-year invest period) over the periods of the solve's dt; consumed
     # by ``process_outputs.read_parameters`` to scale annualised
-    # per-period costs / CO2 to absolute totals.
-    pad = _periodAll_from_source(source, active_solve, workdir=workdir, provider=provider)
+    # per-period costs / CO2 to absolute totals.  The provider arm reads
+    # the canonical CSV, which carries the anchor's years on every
+    # stochastic branch period.
     flex_data.p_years_represented_d = p_years_represented_d_from_source(
-        source, active_solve, pad)
+        source, active_solve, periods_of_dt(usable_dt), provider=provider)
 
     # 3. p_inflation_op — Δ.12b: unconditional.  None == no inflation
     #    declared; the multi-year cascade in apply_derived_c overlays
@@ -9061,21 +9078,24 @@ def _years_for_period_from_source(source: "InputSource",
           emit (period, str(year_count), width)
           year_count += width; remaining -= width
 
-    Note: flextool also expands into stochastic branches
-    (``period__branch``).  We don't model that here — for non-stochastic
-    fixtures the branch loop is a no-op.
+    Two arms.  With ``provider`` (canonical): read
+    ``solve_data/p_years_represented.csv``, which also copies the
+    anchor period's rows to its stochastic branch periods
+    (``period__branch``).  Without it (or when the CSV is absent): the
+    source arm below, which does NOT expand to branch periods (a branch
+    period gets no rows).  ``p_years_represented_d`` and the recourse
+    walker pass ``provider``; the inflation and NPV callers still use the
+    source arm, so a branch period gets no years there.
 
     Returns a dict ``{period: [(year_label, width), ...]}``.  When the
     parameter is absent or active_solve has no rows, default to one row
     per period in the order supplied (width=1, year_label = "0", "1", …).
     """
-    # Slice D α-1 (§5.1): under recourse the emitted
-    # ``p_years_represented.csv`` already byte-copies fan-member year rows
-    # (``derive_years_represented`` branch loop), so read it directly to
-    # give branch periods their anchor's (year_label, width) rows.  The
-    # caller forwards ``provider`` ONLY on the recourse walker arm; every
-    # other caller passes ``provider=None`` so this arm stays dead and the
-    # source path below is byte-identical (flag-off parity).
+    # The emitted ``p_years_represented.csv`` already byte-copies
+    # fan-member year rows (``derive_years_represented`` branch loop), so
+    # read it directly to give branch periods their anchor's
+    # (year_label, width) rows.  Callers that pass ``provider=None`` get
+    # the source path below.
     if provider is not None:
         p = Path("solve_data") / "p_years_represented.csv"
         if _provider_has_key(provider, p):
