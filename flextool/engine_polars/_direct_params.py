@@ -1604,7 +1604,7 @@ def p_reserve_upDown_group_reserve_duration_from_source(source: "InputSource") -
 
     Hours over which committed reserve power must be sustainable from a
     storage-backed provider.  Absent (or 0) rows leave the LP untouched
-    (no storage-energy coupling) — see ``_reserve._add_storage_reserve_constraints``.
+    (no storage-energy coupling) — see ``_reserve._add_storage_energy_constraints``.
     """
     try:
         df = source.parameter_explicit("reserve__upDown__group", "reserve_duration")

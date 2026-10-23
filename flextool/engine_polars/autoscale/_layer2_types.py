@@ -471,7 +471,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "reserve_process_downward": CstrFamily(QuantityType.POWER),
     # Storage energy-adequacy coupling for reserve_duration (#322).  Both
     # framed in MWh: v_state·unitsize (± E) vs a stored-energy bound.
-    # flextool/engine_polars/_reserve.py _add_storage_reserve_constraints
+    # flextool/engine_polars/_reserve.py _add_storage_energy_constraints
     "reserve_storage_up_floor": CstrFamily(QuantityType.ENERGY),
     "reserve_storage_down_headroom": CstrFamily(QuantityType.ENERGY),
 

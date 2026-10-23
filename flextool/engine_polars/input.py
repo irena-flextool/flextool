@@ -5104,8 +5104,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # entirely, but two reserve-feature fields are produced by those
         # passes and are required by ``_reserve.add_variables`` /
         # ``add_constraints`` when ``reserve_upDown_group`` is non-empty
-        # (``has_feature(d)`` activates the subsystem from the CSV-seeded
-        # ``reserve_upDown_group``).  Both producers are solve-agnostic
+        # (the CSV-seeded ``reserve_upDown_group`` activates the reserve
+        # feature).  Both producers are solve-agnostic
         # (no ``active_solve`` filter), so calling them on the synthetic
         # path is safe and mirrors what ``apply_derived_d`` / ``apply_derived_g``
         # do on the non-synthetic path.  See

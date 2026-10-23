@@ -84,7 +84,7 @@ def add_dispatch_constraints(b: "_Build") -> None:
     m = b.m
     v_flow, v_state = b.v_flow, b.v_state
     v_online_integer, v_online_linear = b.v_online_integer, b.v_online_linear
-    v_reserve = b.reserve_vars.get("v_reserve")
+    v_reserve = b.v_reserve
     has_tie_dt = _has_rows(tie_dt)
 
     # Steps of the online ties: the tied steps, or, when there are none, every online step of the anchor

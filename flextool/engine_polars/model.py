@@ -124,7 +124,7 @@ class _Build:
     to its family function.  Fields are filled in step order: flags and
     index sets by ``_prepare``, variables by ``_declare_variables``, shared
     expressions by ``_shared_expressions``.  The objective is not held here:
-    the ``_obj_*`` and ``_feature_*`` steps return their terms to
+    the ``_obj_*``, ``_feature_*`` and ``objective_terms`` steps return their terms to
     :func:`build_flextool`.
     """
 
@@ -159,6 +159,7 @@ class _Build:
     has_invest_n: bool = False
     has_divest_n: bool = False
     has_ladder: bool = False
+    has_reserve: bool = False
     is_solve_first: bool = True          # first solve of a chain, or a single solve
 
     # ── shared index sets ──
@@ -195,7 +196,8 @@ class _Build:
     v_invest_n: Var | None = None
     v_divest_n: Var | None = None
     v_flow_back: Var | None = None
-    reserve_vars: dict = field(default_factory=dict)
+    v_reserve: Var | None = None
+    vq_reserve: Var | None = None
     dc_pf_vars: dict = field(default_factory=dict)
     ladder_vars: dict = field(default_factory=dict)
 
@@ -271,7 +273,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _obj_existing_fixed_cost,
         # ── feature modules: constraints + objective terms ──
         _feature_group_slack,
-        _feature_reserve,
+        _reserve.add_constraints,
+        _reserve.objective_terms,
         _feature_cumulative_invest,
         _feature_delay,
         _feature_commodity_ladder,
@@ -341,6 +344,7 @@ def _prepare(b: _Build) -> None:
     b.has_invest_n = _has_rows(d.nd_invest_set)
     b.has_divest_n = _has_rows(d.nd_divest_set)
     b.has_ladder = _commodity_ladder.has_feature(d)
+    b.has_reserve = _has_rows(getattr(d, "reserve_upDown_group", None))
     # p_nested_solve_first: None for a single solve, else True on the first
     # solve of a chain.
     b.is_solve_first = (d.p_nested_solve_first is None
@@ -574,7 +578,7 @@ def _declare_variables(b: _Build) -> None:
         b.v_divest_n = m.add_var("v_divest_n", ("n", "d"), d.nd_divest_set)
 
     # Reserve variables (v_reserve, vq_reserve): declared by _reserve.
-    b.reserve_vars = _reserve.add_variables(m, d) if _reserve.has_feature(d) else {}
+    _reserve.add_variables(b)
 
     # ─── VAR. ─── v_flow_back ────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -640,7 +644,7 @@ def _shared_expressions(b: _Build) -> None:
 
 def _reserve_coupling(b: _Build) -> None:
     """Σ_r v_reserve aggregates that share process capacity with v_flow."""
-    v_reserve = b.reserve_vars.get("v_reserve")
+    v_reserve = b.v_reserve
     if v_reserve is None:
         return
     pruna = b.d.process_reserve_upDown_node_active          # (p, r, ud, n)
@@ -2938,47 +2942,6 @@ def _feature_group_slack(b: _Build) -> Expr | None:
         vars_["vq_state_down"] = vq_down
         _group_slack.add_constraints(m, d, vars_)
         return _group_slack.add_objective_terms(m, d, vars_, op_factor)
-    return None
-
-
-def _feature_reserve(b: _Build) -> Expr | None:
-    """Reserve constraints and costs (_reserve)."""
-    m, d = b.m, b.d
-    v_flow = b.v_flow
-    v_state = b.v_state
-    v_online_lin = b.v_online_linear
-    v_online_int = b.v_online_integer
-    v_invest_p = b.v_invest_p
-    v_divest_p = b.v_divest_p
-    v_invest_n = b.v_invest_n
-    v_divest_n = b.v_divest_n
-    reserve_vars = b.reserve_vars
-    op_factor = b.op_factor
-    # ─── Reserves (timeseries / dynamic / n_1 / per-process upper) ────────
-    if _reserve.has_feature(d):
-        res_vars: dict = dict(reserve_vars)
-        if b.has_proc:
-            res_vars["v_flow"]       = v_flow
-        if b.has_online_lin:
-            res_vars["v_online_lin"] = v_online_lin
-        if b.has_online_int:
-            res_vars["v_online_int"] = v_online_int
-        if b.has_invest_p:
-            res_vars["v_invest_p"]   = v_invest_p
-        if b.has_divest_p:
-            res_vars["v_divest_p"]   = v_divest_p
-        # Storage energy-adequacy coupling for reserve_duration (#322):
-        # v_state precedes this dispatch site (declared above), so threading
-        # it (+ v_invest_n / v_divest_n for the down-headroom capacity
-        # replication) is order-safe.  Each gated on its own has_* flag.
-        if b.has_storage:
-            res_vars["v_state"]      = v_state
-        if b.has_invest_n:
-            res_vars["v_invest_n"]   = v_invest_n
-        if b.has_divest_n:
-            res_vars["v_divest_n"]   = v_divest_n
-        _reserve.add_constraints(m, d, res_vars)
-        return _reserve.add_objective_terms(m, d, res_vars, op_factor)
     return None
 
 

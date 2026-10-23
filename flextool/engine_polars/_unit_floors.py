@@ -40,7 +40,7 @@ def add_constraints(b: "_Build") -> None:
         return
     m, d = b.m, b.d
     v_flow = b.v_flow
-    v_reserve = b.reserve_vars.get("v_reserve")
+    v_reserve = b.v_reserve
     arcs = unit_measured_arcs(d)
     if arcs is None:
         return

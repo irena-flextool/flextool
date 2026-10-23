@@ -3,7 +3,7 @@
 
 Extends ``flex_toy_reserve.py`` with a storage node ``bat`` (nodeState)
 and a storage-coupled reserve provider, so the two new constraints in
-``_reserve._add_storage_reserve_constraints`` bind:
+``_reserve._add_storage_energy_constraints`` bind:
 
   * ``reserve_storage_up_floor``      — UP  / discharge floor
   * ``reserve_storage_down_headroom`` — DOWN / charge headroom

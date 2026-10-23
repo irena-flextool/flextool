@@ -1,7 +1,7 @@
 """Tier-9 synthetic driver: storage-backed reserve energy adequacy
 (``reserve_duration``, issue #322).
 
-Exercises ``_reserve._add_storage_reserve_constraints`` end to end via
+Exercises ``_reserve._add_storage_energy_constraints`` end to end via
 ``build_flextool``.  Every case runs under ``FLEXTOOL_AUTOSCALE_STRICT=1``
 and additionally re-solves through ``apply_layer2`` so the two new
 constraint families are proven complete in the autoscale registry
@@ -168,7 +168,7 @@ def test_feasibility_with_long_duration():
 
 # ── Case 6: invest/divest DOWN-headroom capacity replication ─────────────
 # These exercise the invest/divest branch of the DOWN-headroom block in
-# ``_reserve._add_storage_reserve_constraints`` — the
+# ``_reserve._add_storage_energy_constraints`` — the
 # ``__at_reserve_down_{invest,divest}`` virtual-var views and the cross-Enum
 # n→e / n→p casts that ride through ``canonicalise()``.  Before this case no
 # synthetic fixture built an invest/divest storage node, so ``v_invest_n`` /
