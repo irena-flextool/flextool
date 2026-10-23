@@ -105,6 +105,14 @@ holds because providers have reliability > 0
 (or without reliability data) has no total: its rows are
 `vq_reserve · scale ≥ failure`.
 
+The `reserveBalance_timeseries_eq` / `reserveBalance_dynamic_eq` rows of a
+group that has a total use `v_reserve_total` in place of `reserve_sum`
+(exact by the same projection; groups without n-1 rows keep `reserve_sum`).
+This roughly halves the reserve block of groups combining n-1 with another
+method. The value function in the timeseries right-hand side is unchanged,
+so the reported reserve price (the timeseries row duals) is the same
+wherever it is unique.
+
 Nonzeros per `(r, ud, g, d, t)`, with P provider pairs `(p, n)`, and per
 failing process f its own provider pairs `own_f` and failing arcs `a_f`:
 `(P + 1) + Σ_f (2 + own_f + a_f)` (the per-provider form had
@@ -115,9 +123,9 @@ Results: the objective and every value that is unique at the optimum are
 those of the per-provider form; `v_reserve` is costless, so its split among
 providers is often not unique and may differ between the two forms. The
 n-1 row duals keep their meaning; when the total is positive, the magnitude
-of the `reserve_total_upper` dual is the sum of the n-1 row duals of the
-group-step (HiGHS reports the `≤` row with the opposite sign to the `≥`
-rows). The total is not written to the outputs.
+of the `reserve_total_upper` dual is the sum of the duals of the group-step's
+rows that use the total (HiGHS reports the `≤` row with the opposite sign to
+the `≥` rows). The total is not written to the outputs.
 
 ## Follow-ups (not implemented)
 

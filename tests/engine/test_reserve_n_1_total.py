@@ -6,7 +6,8 @@ Each ``reserveBalance_{up,down}_n_1_eq[r, ud, g, p_fail, d, t]`` row is
 (``v_reserve_total − reserve_sum ≤ 0``).  ``v_reserve_total`` has no cost and enters only ``≥`` requirement rows,
 so eliminating it gives back the per-provider form (one row per failing process with every other provider's
 reserve): the reformulation is exact and the number of nonzeros grows with providers plus failing processes
-instead of their product.
+instead of their product.  The timeseries and dynamic rows of the same groups use the total in place of
+the providers' reserve (exact by the same argument).
 
 The tests work on the unscaled canonical matrix of ``build(...)`` (no autoscale side vectors), where the
 coefficients are exactly ``unitsize · reliability`` and the failing process's own coefficient cancels to 0.0 in
@@ -34,6 +35,8 @@ REL = "reserve__upDown__unit__node"
 WIND = "wind_plant"
 N1 = ["n_1", "up", "electricity"]
 N1_FAMILIES = ("reserveBalance_up_n_1_eq", "reserveBalance_down_n_1_eq")
+TS_DYN_FAMILIES = ("reserveBalance_timeseries_eq", "reserveBalance_dynamic_eq")
+RESERVE_FAMILIES = N1_FAMILIES + TS_DYN_FAMILIES
 TOTAL_ROW = "reserve_total_upper"
 TOTAL_COL = "v_reserve_total"
 N1_KEY = ("n_1", "up", "electricity")
@@ -269,6 +272,10 @@ def _n_1_data(fd):
     return providers, fails, scale
 
 
+def _cols_with(terms: dict[str, float], prefix: str) -> dict[str, float]:
+    return {c: v for c, v in terms.items() if c.startswith(prefix)}
+
+
 def _expected_row(data, r, ud, g, f, d, t) -> dict[str, float]:
     providers, fails, scale = data
     row = {f"v_reserve[{p},{r},{ud},{n},{d},{t}]": v for (p, n), v in providers[(r, ud, g)].items() if p != f}
@@ -329,7 +336,7 @@ def test_objective_equals_per_provider_form(steps, name) -> None:
     have the same optimum; the new solution restricted to the shared columns is feasible in the
     per-provider LP; and the canonical optimum is the production solve's objective."""
     step = steps[name]
-    lp, pp, new, old = _solve_both(step, N1_FAMILIES)
+    lp, pp, new, old = _solve_both(step, RESERVE_FAMILIES)
     _check_non_vacuous(lp, new)
     assert new.obj == pytest.approx(old.obj, rel=1e-9)
     assert new.obj == pytest.approx(step.solution.obj, rel=1e-9)
@@ -379,8 +386,9 @@ def test_v_reserve_total_registered() -> None:
 
 def test_timeseries_duals_equal_per_provider_form(partitions) -> None:
     """On the combined-method model the reported reserve price (the reserveBalance_timeseries_eq duals)
-    is the same in the canonical LP and in its per-provider form."""
-    lp, pp, new, old = _solve_both(partitions, N1_FAMILIES)
+    is the same in the canonical LP and in its per-provider form (the total substituted out of the n-1,
+    timeseries and dynamic rows)."""
+    lp, pp, new, old = _solve_both(partitions, RESERVE_FAMILIES)
     assert new.obj == pytest.approx(old.obj, rel=1e-9)
     assert new.obj == pytest.approx(partitions.solution.obj, rel=1e-9)
     ts = [k for k, nm in enumerate(pp.row_names) if nm.startswith("reserveBalance_timeseries_eq[")]
@@ -389,3 +397,33 @@ def test_timeseries_duals_equal_per_provider_form(partitions) -> None:
     old_dual = old.dual[ts]
     assert np.abs(old_dual).max() > 0.0
     np.testing.assert_allclose(new_dual, old_dual, rtol=1e-7, atol=1e-9)
+
+
+def test_timeseries_and_dynamic_rows_use_the_total(partitions) -> None:
+    """The timeseries and dynamic rows of the groups that also have n-1 rows (tlf, dl, allm) carry
+    v_reserve_total instead of the providers' reserve; the other groups (ts, comb) keep reserve_sum.
+    Substituting the total gives back reserve_sum: every provider at unitsize · reliability."""
+    lp = _lp(partitions)
+    providers, _fails, _scale = _n_1_data(partitions.flex_data)
+    n_1_groups = {r for (r, _ud, _g) in providers if (r, _ud, _g) in _fails}
+    assert n_1_groups == {"tlf", "dl", "allm"}
+    subst = _eliminate_total(lp, TS_DYN_FAMILIES)
+    seen = collections.Counter()
+    for i, row in subst.items():
+        name = lp.row_names[i]
+        r, ud, g, d, t = _key(name)[1:-1].split(",")
+        cols = {lp.col_names[c]: v for c, v in lp.rows[i].items()}
+        totals = _cols_with(cols, TOTAL_COL + "[")
+        reserves = _cols_with(cols, "v_reserve[")
+        if r in n_1_groups:
+            assert totals == {f"{TOTAL_COL}[{r},{ud},{g},{d},{t}]": 1.0} and not reserves, name
+            seen[name.split("[")[0]] += 1
+        else:
+            assert not totals and reserves, name
+        got = _cols_with({lp.col_names[c]: v for c, v in row.items() if v != 0.0}, "v_reserve[")
+        expected = {f"v_reserve[{p},{r},{ud},{n},{d},{t}]": v for (p, n), v in providers[(r, ud, g)].items()}
+        assert got.keys() == expected.keys(), name
+        for col, v in expected.items():
+            assert got[col] == pytest.approx(v, rel=1e-12, abs=0.0), (name, col)
+    n_dt = partitions.flex_data.dt.height
+    assert seen == {"reserveBalance_timeseries_eq": 2 * n_dt, "reserveBalance_dynamic_eq": 2 * n_dt}

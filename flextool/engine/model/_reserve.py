@@ -391,8 +391,9 @@ def add_variables(b: "_Build") -> None:
     #   rug_total = (r,ud,g) with an n-1 row (in fail_g) and at least one provider in pruna_g
     # Reserve held for group g by all its providers, MW: at most reserve_sum
     # (reserve_total_upper).  Lets each n-1 row subtract the failing
-    # process's own reserve instead of repeating every other provider.
-    # No cost.
+    # process's own reserve instead of repeating every other provider, and
+    # replaces reserve_sum in the timeseries / dynamic rows of the same
+    # group.  No cost.
     if b.v_flow is not None:
         gn = _group_nodes(d)
         rug_total = _reserve_total_rug(d, _providers_by_group(d, gn), _n_1_failing(d, gn))
@@ -442,13 +443,42 @@ def add_constraints(b: "_Build") -> None:
     scale = reserve_shortfall_scale(d)
     lhs_vq = vq_reserve * scale if scale is not None else None
 
+    # Groups with n-1 rows (rug_total) carry their total reserve in v_reserve_total (see the n-1 rows below).
+    n1 = _n_1_failing(d, gn) if v_flow is not None else {}
+    rug_total = _reserve_total_rug(d, pruna_g, n1)
+    total_rugs = _rug_set(rug_total) if rug_total is not None else set()
+    declared = (_rug_set(b.v_reserve_total.frame) if b.v_reserve_total is not None else set())
+    if total_rugs != declared:
+        raise ValueError(
+            f"_reserve: v_reserve_total is declared for groups {sorted(declared)} but the n-1 rows need it "
+            f"for {sorted(total_rugs)}; add_variables and add_constraints must use the same domain.")
+
+    def _reserve_terms(rug_sel: pl.DataFrame) -> dict:
+        """The reserve term of the timeseries / dynamic rows of ``rug_sel``: v_reserve_total for the groups in
+        rug_total, reserve_sum for the others."""
+        if lhs_reserve_core is None:
+            return {}
+        with_total = (rug_sel.join(rug_total, on=["r", "ud", "g"], how="semi")
+                      if rug_total is not None else None)
+        if with_total is None or with_total.height == 0:
+            return {"reserve_sum": Where(lhs_reserve_core, rug_sel)}
+        terms = {"reserve_total": Where(b.v_reserve_total, with_total)}
+        without = rug_sel.join(rug_total, on=["r", "ud", "g"], how="anti")
+        if without.height > 0:
+            terms["reserve_sum"] = Where(lhs_reserve_core, without)
+        return terms
+
     # ─── EQ. ─── reserveBalance_timeseries_eq ────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # reserve_sum[r,ud,g,d,t] + vq_term[r,ud,g,d,t]  ≥ reservation[r,ud,g,d,t]
     #   ∀ (r,ud,g) ∈ reserve_upDown_group_method_timeseries, (d,t) ∈ dt
+    #   reserve_sum is replaced by v_reserve_total for (r,ud,g) ∈ rug_total
     # Reserve held for a group covers its authored reservation timeseries,
     # or the shortfall is penalised.  RHS 0 when no reservation is authored.
     # Reserve of every provider counts at full MW (no efficiency slope).
+    # A group that also has n-1 rows uses its total v_reserve_total: it is
+    # at most reserve_sum, enters only ≥ rows and has no cost, so the rows
+    # are equivalent (same optimal value for every right-hand side).
     method_ts = d.reserve_upDown_group_method_timeseries
     if method_ts is not None and method_ts.height > 0:
         ts_rug = method_ts.select("r", "ud", "g").unique()
@@ -457,8 +487,7 @@ def add_constraints(b: "_Build") -> None:
         lhs_terms = {}
         if lhs_vq is not None:
             lhs_terms["vq_term"] = lhs_vq
-        if lhs_reserve_core is not None:
-            lhs_terms["reserve_sum"] = Where(lhs_reserve_core, ts_rug)
+        lhs_terms |= _reserve_terms(ts_rug)
         m.add_cstr("reserveBalance_timeseries_eq", over=ts_rug.join(d.dt, how="cross"), sense=">=",
                    lhs_terms=lhs_terms, rhs_terms={"demand": rhs})
 
@@ -470,9 +499,11 @@ def add_constraints(b: "_Build") -> None:
     #   ∀ (r,ud,g) ∈ reserve_upDown_group_method_dynamic, (d,t) ∈ dt
     #   irr_g = process_reserve_upDown_node_increase_reserve_ratio with n ∈ group g
     #   ratio = increase_reserve_ratio
+    #   reserve_sum is replaced by v_reserve_total for (r,ud,g) ∈ rug_total
     # The requirement grows with the flows into and out of the group's nodes
     # (e.g. variable generation and demand).  RHS 0 when no flow drives it.
-    # Flows count at unitsize, without the efficiency slope.
+    # Flows count at unitsize, without the efficiency slope.  A group that
+    # also has n-1 rows uses v_reserve_total, as in the timeseries rows.
     method_dyn = d.reserve_upDown_group_method_dynamic
     if method_dyn is not None and method_dyn.height > 0:
         dyn_rug = method_dyn.select("r", "ud", "g").unique()
@@ -500,8 +531,7 @@ def add_constraints(b: "_Build") -> None:
         lhs_terms = {}
         if lhs_vq is not None:
             lhs_terms["vq_term"] = Where(lhs_vq, dyn_rug)
-        if lhs_reserve_core is not None:
-            lhs_terms["reserve_sum"] = Where(lhs_reserve_core, dyn_rug)
+        lhs_terms |= _reserve_terms(dyn_rug)
         m.add_cstr("reserveBalance_dynamic_eq", over=dyn_rug.join(d.dt, how="cross"), sense=">=",
                    lhs_terms=lhs_terms, rhs_terms=rhs_terms)
 
@@ -528,14 +558,6 @@ def add_constraints(b: "_Build") -> None:
     # without a failing process; a group without providers (or without
     # reliability data) has no v_reserve_total term.  Nonzeros grow with
     # providers + failing processes per group.
-    n1 = _n_1_failing(d, gn) if v_flow is not None else {}
-    rug_total = _reserve_total_rug(d, pruna_g, n1)
-    total_rugs = _rug_set(rug_total) if rug_total is not None else set()
-    declared = (_rug_set(b.v_reserve_total.frame) if b.v_reserve_total is not None else set())
-    if total_rugs != declared:
-        raise ValueError(
-            f"_reserve: v_reserve_total is declared for groups {sorted(declared)} but the n-1 rows need it "
-            f"for {sorted(total_rugs)}; add_variables and add_constraints must use the same domain.")
     if n1:
         lfr_param = d.p_process_reserve_upDown_node_large_failure_ratio_value
         # The failing process f is the dim p_fail: unitsize and ratio re-keyed on it.
@@ -570,12 +592,14 @@ def add_constraints(b: "_Build") -> None:
     # v_reserve_total enters only ≥ requirement rows, with a positive sign,
     # and has no cost, so an upper bound is enough: the n-1 rows above are
     # exactly the per-provider form (one row per failing process, its own
-    # reserve not counted) with v_reserve_total = reserve_sum.  This needs
-    # reserve_sum ≥ 0, which holds because providers have reliability > 0
-    # (process_reserve_upDown_node_active) and unitsize > 0; otherwise
-    # v_reserve_total ≥ 0 would add a constraint.  When v_reserve_total > 0,
-    # the magnitude of this row's dual is the sum of the n-1 row duals of the
-    # group-step (opposite sign convention: ≤ row against ≥ rows).
+    # reserve not counted) with v_reserve_total = reserve_sum, and the
+    # timeseries / dynamic rows of the group are those with reserve_sum.
+    # This needs reserve_sum ≥ 0, which holds because providers have
+    # reliability > 0 (process_reserve_upDown_node_active) and unitsize > 0;
+    # otherwise v_reserve_total ≥ 0 would add a constraint.  When
+    # v_reserve_total > 0, the magnitude of this row's dual is the sum of the
+    # duals of the group-step's rows that use v_reserve_total (opposite sign
+    # convention: ≤ row against ≥ rows).
     if rug_total is not None:
         m.add_cstr("reserve_total_upper", over=rug_total.join(d.dt, how="cross"), sense="<=",
                    lhs_terms={"total": b.v_reserve_total, "reserve_neg": -Where(lhs_reserve_core, rug_total)},
