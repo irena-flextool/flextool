@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **Rolling stochastic solves rebuild the LP when branch weights change.**
+  When the forecast branch weights differ from one roll to the next and
+  nothing else forces a rebuild, the next roll now gets its own weights in
+  the objective. Before, the reused LP could keep the previous roll's
+  weights.
+
 - **Forecast branches use their period's annual commodity ladder.** In a
   stochastic solve, the forecast branches of a period now use that period's
   `price_ladder_annual` prices and tier quantities. Before, purchases in the

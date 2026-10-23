@@ -266,6 +266,10 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     "p_co2_max_total", "p_co2_content",
     # Years per period — LHS weight of co2_max_total only.
     "p_years_represented_d",
+    # Stochastic branch weights — composite objective factors (op_factor, startup, storage reference
+    # price, commodity ladder; invest costs under recourse).  Two rolls with different weights have the
+    # same LP shape, so without a cold rebuild the previous roll's weights would stay in the objective.
+    "pdt_branch_weight", "pd_branch_weight",
     # Commodity ladder (cumulative + annual) — RHS / cap terms of
     # ``ladder_tier_cap_cumulative_roll`` / ``ladder_tier_cap_annual_roll``.
     # The rolling cumulative accumulator (``p_ladder_cum_realized_mwh``)
