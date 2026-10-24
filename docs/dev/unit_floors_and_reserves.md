@@ -70,6 +70,14 @@ objective penalty and in `process_outputs` (`calc_slacks`):
   the failing flows of one process f, maximised over the failing processes
   (`_flow_requirement_bound(per_process_max=True)`): the largest single
   n-1 row;
+* source side (a flow out of the group's node, dynamic and n-1 down): the
+  bound of an arc in `process_source_sink_eff` is multiplied by the
+  full-load draw `slope + section` (`_with_full_load_draw`; section only for
+  `min_load_efficiency` units with online variables), because the rows count
+  the flow drawn from the node as `nodeBalance_eq` does
+  (`_reserve._drawn_terms`: `v_flow·unitsize·slope + v_online·section·unitsize`
+  on an efficiency arc, `v_flow·unitsize` elsewhere); `v_online ≤
+  p_flow_upper` makes it a valid bound;
 * authored `reservation` is added for any group; methods add up.
 
 `p_flow_upper` is the structural bound (existing + max invest by that
@@ -77,10 +85,15 @@ period, per unit size); unlimited invest and `conversion_flow_coeff = 0`
 arcs carry `max_flow_for_unconstrained_variables`, so the multiplier stays
 finite. Rows with a zero multiplier are dropped (no coefficient).
 
-Activation (unchanged, .mod parity): a reserve's relationships are active
-only if some group of the same (reserve, up/down) authors a non-zero
-`reservation` (`prundt_from_source`, `_reserve_sets`). A dynamic / n-1-only
-reserve without any `reservation` is therefore inactive.
+Activation (`_reserve_methods.demanded_reserves`, shared by
+`_derived.prundt_from_source` and `emit/_reserve_sets`): a reserve's
+relationships are active when the (reserve, up/down) has a requirement — a
+non-zero `reservation` on some group, a dynamic group driven by an
+`increase_reserve_ratio` at one of its nodes, or an n-1 group with a
+`large_failure_ratio` at one of its nodes (owner Q5, 2026-10-24). A dynamic
+/ n-1 group without a driving ratio stays inactive. An n-1 ratio on a
+process without a flow in the failing direction activates the reserve with
+no n-1 row (inert columns).
 
 ## n-1 rows
 
@@ -154,13 +167,8 @@ the `≥` rows). The total is not written to the outputs.
    (`tests/engine/test_connection_delay_ignored.py`). Applying a
    connection delay needs a delayed term in the node balance; when it is
    added, drop the filters and the warning.
-5. Dynamic and n-1 reserves activate only if some group of the same
-   (reserve, up/down) has a non-zero `reservation` (`prundt_from_source`,
-   `_reserve_sets`; see "Activation" above). A dynamic / n-1-only reserve
-   is silently inactive — e.g. `network_coal_wind_reserve_n_1` does not
-   test any n-1 requirement. Activation should follow the group's
-   `reserve_method` (dynamic: any `increase_reserve_ratio`; n-1: any
-   `large_failure_ratio`), not the presence of a timeseries reservation.
-   Open owner question: the reservation filter was introduced deliberately
-   ("reserve provision is active only when there is demand for the
-   reserve").
+5. The dynamic and n-1 rows ignore `v_flow_back` (2way_1var / DC
+   connections), which `nodeBalance_eq` counts
+   (`nodeBalance_back_flow_terms`): a one-variable connection flowing
+   backwards into the group, or failing while doing so, is not counted.
+   Planned with the connection online/capacity work (c14).

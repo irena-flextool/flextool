@@ -498,9 +498,10 @@ def process_source_sink_canonical(source: "InputSource",
 
 def process_source_sink_eff(source: "InputSource",
                               pss: pl.DataFrame | None = None) -> pl.DataFrame:
-    """``pss`` filtered to processes with an efficiency-based
-    ``conversion_method`` (units only; connections never participate
-    in eff).
+    """``pss`` filtered to the DIRECT-method arcs, whose source draws
+    ``v_flow · slope`` in the node balance: units with an efficiency-based
+    ``conversion_method`` and connections with a DIRECT transfer method
+    (both directions of a 2way_2var connection).
 
     Schema: ``[p, source, sink]``.
 

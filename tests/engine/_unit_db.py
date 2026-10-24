@@ -52,7 +52,7 @@ def make_db(tmp_path_factory: pytest.TempPathFactory, *, alt: str,
             fixture_json: Path = BASE_FIXTURE_JSON) -> tuple[str, str]:
     """``fixture_json`` (default ``tests.json``) + override alternative
     ``alt`` appended to ``base_chain``; returns ``(url, scenario)``.  New
-    ``node`` entities are activated in ``alt``."""
+    ``node`` / ``unit`` / ``connection`` entities are activated in ``alt``."""
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
@@ -60,8 +60,8 @@ def make_db(tmp_path_factory: pytest.TempPathFactory, *, alt: str,
     data["alternatives"].append([alt, ""])
     for ent in entities or []:
         data["entities"].append(ent)
-        if ent[0] == "node":
-            data["entity_alternatives"].append(["node", [ent[1]], alt, True])
+        if ent[0] in ("node", "unit", "connection"):
+            data["entity_alternatives"].append([ent[0], [ent[1]], alt, True])
     for cls, ent, param, val in values:
         data["parameter_values"].append([cls, ent, param, val, alt])
     scenario = f"{alt}_test"

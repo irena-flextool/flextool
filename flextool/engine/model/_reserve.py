@@ -145,7 +145,10 @@ def _flow_requirement_bound(d, ratio_set, ratio_param, rug_sel, side: str, *,
     unitsize; max_flow_for_unconstrained_variables for unlimited invest and conversion_flow_coeff = 0
     arcs).  With ``per_process_max`` the bound is summed over each process's own arcs and the result is
     the max over processes (the n-1 requirement: one row per failing process); otherwise the sum over
-    all arcs (the dynamic requirement).  None when there is nothing to sum.
+    all arcs (the dynamic requirement).  On the source side the bound of an arc in process_source_sink_eff is
+    multiplied by the full-load draw per unit of flow, ``slope + section`` (:func:`_with_full_load_draw`):
+    the requirement counts the flow drawn from the node, ``v_flow · slope + v_online · section``, and
+    ``v_online ≤ p_flow_upper``.  None when there is nothing to sum.
     """
     if (ratio_set is None or ratio_set.height == 0 or ratio_param is None
             or rug_sel is None or rug_sel.height == 0):
@@ -174,10 +177,46 @@ def _flow_requirement_bound(d, ratio_set, ratio_param, rug_sel, side: str, *,
              .join(upper, on=["p", "source", "sink"], how="inner")
              .join(us_lf, on="p", how="inner")
              .with_columns((pl.col("value") * pl.col("__us") * pl.col("__ratio")).abs().alias("value")))
+    if side == "source":
+        bound = _with_full_load_draw(d, bound)
     if per_process_max:
         return (bound.group_by("r", "ud", "g", "p", "d", "t").agg(pl.col("value").sum())
                 .group_by("r", "ud", "g", "d", "t").agg(pl.col("value").max()))
     return bound.group_by("r", "ud", "g", "d", "t").agg(pl.col("value").sum())
+
+
+def _with_full_load_draw(d, bound: "pl.LazyFrame") -> "pl.LazyFrame":
+    """``bound`` (Utf8 keys p, source, sink, d, t; ``value``) with ``value`` × (slope + section) on the arcs of
+    process_source_sink_eff: the input drawn at full load per unit of flow.  slope 1 where p_slope has no row;
+    section only for min_load_efficiency units with online variables (as in nodeBalance_eq).  Unchanged
+    without process_source_sink_eff or p_slope (hand-built data)."""
+    eff = getattr(d, "process_source_sink_eff", None)
+    slope = getattr(d, "p_slope", None)
+    if eff is None or eff.height == 0 or slope is None:
+        return bound
+    keys = ["p", "source", "sink"]
+    eff_lf = _u8(eff.lazy().select(keys), keys).unique().with_columns(pl.lit(True).alias("__eff"))
+    slope_lf = _u8(promote_param_to_dt(slope, d.dt).select("p", "d", "t", pl.col("value").alias("__slope")),
+                   ["p", "d", "t"])
+    out = (bound.join(eff_lf, on=keys, how="left")
+           .join(slope_lf, on=["p", "d", "t"], how="left"))
+    section = getattr(d, "p_section", None)
+    pml = getattr(d, "process_min_load_eff", None)
+    online = [f for f in (getattr(d, "process_online_linear", None), getattr(d, "process_online_integer", None))
+              if f is not None and f.height > 0]
+    if section is not None and pml is not None and pml.height > 0 and online:
+        on_p = pl.concat([_u8(f.lazy().select("p"), ["p"]) for f in online]).unique()
+        sec_lf = (_u8(promote_param_to_dt(section, d.dt).select("p", "d", "t", pl.col("value").alias("__sec")),
+                      ["p", "d", "t"])
+                  .join(_u8(pml.lazy().select("p"), ["p"]).unique(), on="p", how="semi")
+                  .join(on_p, on="p", how="semi"))
+        out = out.join(sec_lf, on=["p", "d", "t"], how="left")
+    else:
+        out = out.with_columns(pl.lit(None, pl.Float64).alias("__sec"))
+    factor = pl.col("__slope").fill_null(1.0) + pl.col("__sec").fill_null(0.0)
+    return (out.with_columns(pl.when(pl.col("__eff").fill_null(False)).then(pl.col("value") * factor)
+                             .otherwise(pl.col("value")).alias("value"))
+            .drop("__eff", "__slope", "__sec"))
 
 
 def reserve_shortfall_scale(d) -> "Param | None":
@@ -190,7 +229,8 @@ def reserve_shortfall_scale(d) -> "Param | None":
 
     * reservation wherever it is authored (a timeseries-only model has scale = reservation);
     * dynamic groups: Σ over the flows that drive the requirement of
-      p_flow_upper · unitsize · increase_reserve_ratio;
+      p_flow_upper · unitsize · increase_reserve_ratio (× slope + section for a flow drawn on an
+      efficiency arc);
     * n-1 groups: the max over failing processes of Σ over that process's large-failure flows of
       p_flow_upper · unitsize · large_failure_ratio — the largest single n-1 row (one row per failing
       process);
@@ -421,6 +461,57 @@ def _flow_node_view(v_flow: Var, side: str, extra: "dict[str, str] | None" = Non
                frame=v_flow.frame.pipe(rename_to_axis, mapping))
 
 
+def _drawn_terms(b: "_Build", flow_view: Var, arcs: pl.DataFrame, us, ratio, *, p_col: str,
+                 over: tuple[str, ...]) -> dict:
+    """Σ over ``arcs`` of the flow a process draws from the arc's source node n, × ``ratio``, MW.
+
+    ``arcs`` holds ``(p_col, n, sink, ...)`` with n the source node; ``flow_view`` is v_flow with its source
+    relabelled n (and p relabelled ``p_col``).  As in nodeBalance_eq, an arc in process_source_sink_eff
+    draws ``v_flow · unitsize · slope`` plus, for a min_load_efficiency unit with online variables,
+    ``v_online · section · unitsize``; any other arc draws ``v_flow · unitsize``.  Keys ``noEff``, ``eff``,
+    ``section_linear`` / ``section_integer``.  Without process_source_sink_eff or p_slope (hand-built data)
+    every arc draws ``v_flow · unitsize``.
+    """
+    d = b.d
+
+    def _flows(frame: pl.DataFrame, slope=None):
+        expr = flow_view * us
+        if slope is not None:
+            expr = expr * slope
+        return Sum(Where(expr * ratio, frame), over=over)
+
+    eff = getattr(d, "process_source_sink_eff", None)
+    slope = getattr(d, "p_slope", None)
+    if eff is None or eff.height == 0 or slope is None:
+        return {"noEff": _flows(arcs)}
+    eff_keys = (eff.pipe(rename_to_axis, {"p": p_col, "source": "n"}).select(p_col, "n", "sink").unique())
+    arcs_eff = arcs.join(eff_keys, on=[p_col, "n", "sink"], how="semi")
+    if arcs_eff.height == 0:
+        return {"noEff": _flows(arcs)}
+    arcs_no = arcs.join(eff_keys, on=[p_col, "n", "sink"], how="anti")
+
+    def _on_p(param: Param) -> Param:
+        if p_col == "p":
+            return param
+        return Param((p_col, *param.dims[1:]), param.frame.pipe(rename_to_axis, {"p": p_col}))
+
+    terms: dict = {}
+    if arcs_no.height > 0:
+        terms["noEff"] = _flows(arcs_no)
+    terms["eff"] = _flows(arcs_eff, _on_p(slope))
+    section = getattr(d, "p_section", None)
+    pml = getattr(d, "process_min_load_eff", None)
+    if b.has_minload_eff and section is not None and pml is not None:
+        pml_p = pml.pipe(rename_to_axis, {"p": p_col}) if p_col != "p" else pml
+        for kind, v_online in (("linear", b.v_online_linear), ("integer", b.v_online_integer)):
+            if v_online is None:
+                continue
+            v_on = v_online if p_col == "p" else _var_view(v_online, "", {"p": p_col}, to_axis=True)
+            terms[f"section_{kind}"] = Sum(Where(Where(v_on, pml_p) * _on_p(section) * us * ratio, arcs_eff),
+                                           over=over)
+    return terms
+
+
 def add_constraints(b: "_Build") -> None:
     """Reserve requirements of the node groups, per-process reserve limits and the storage energy rows."""
     if not b.has_reserve:
@@ -495,15 +586,22 @@ def add_constraints(b: "_Build") -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # reserve_sum[r,ud,g,d,t] + vq_term[r,ud,g,d,t]
     #   ≥ Σ_{(p,s,n) ∈ process_source_sink, (p,r,ud,n) ∈ irr_g} v_flow[p,s,n,d,t] · unitsize[p] · ratio[p,r,ud,n]
-    #   + Σ_{(p,n,k) ∈ process_source_sink, (p,r,ud,n) ∈ irr_g} v_flow[p,n,k,d,t] · unitsize[p] · ratio[p,r,ud,n]
+    #   + Σ_{(p,n,k) ∈ eff_out, (p,r,ud,n) ∈ irr_g}
+    #       (v_flow[p,n,k,d,t] · unitsize[p] · slope[p,d,t] + v_online[p,d,t] · section[p,d,t] · unitsize[p])
+    #       · ratio[p,r,ud,n]
+    #   + Σ_{(p,n,k) ∈ process_source_sink \ eff_out, (p,r,ud,n) ∈ irr_g} v_flow[p,n,k,d,t] · unitsize[p]
+    #       · ratio[p,r,ud,n]
     #   ∀ (r,ud,g) ∈ reserve_upDown_group_method_dynamic, (d,t) ∈ dt
-    #   irr_g = process_reserve_upDown_node_increase_reserve_ratio with n ∈ group g
-    #   ratio = increase_reserve_ratio
+    #   irr_g   = process_reserve_upDown_node_increase_reserve_ratio with n ∈ group g
+    #   ratio   = increase_reserve_ratio;   eff_out = process_source_sink_eff
+    #   section term only for min_load_efficiency units with online variables (v_online_linear / _integer)
     #   reserve_sum is replaced by v_reserve_total for (r,ud,g) ∈ rug_total
     # The requirement grows with the flows into and out of the group's nodes
-    # (e.g. variable generation and demand).  RHS 0 when no flow drives it.
-    # Flows count at unitsize, without the efficiency slope.  A group that
-    # also has n-1 rows uses v_reserve_total, as in the timeseries rows.
+    # (e.g. variable generation and consumption).  A flow out of a node counts
+    # as drawn from it, as in nodeBalance_eq: on an efficiency arc the input is
+    # v_flow · slope plus the min-load section (_drawn_terms).  RHS 0 when
+    # nothing drives it.  A group that also has n-1 rows uses
+    # v_reserve_total, as in the timeseries rows.
     method_dyn = d.reserve_upDown_group_method_dynamic
     if method_dyn is not None and method_dyn.height > 0:
         dyn_rug = method_dyn.select("r", "ud", "g").unique()
@@ -522,10 +620,11 @@ def add_constraints(b: "_Build") -> None:
                                    pss_as_sink.join(irr_g, on=["p", "n"], how="inner")),
                              over=("p", "source", "n"))
                 pss_as_source = pss.pipe(rename_to_axis, {"source": "n"}).select("p", "n", "sink")
-                out_of_n = Sum(Where(_flow_node_view(v_flow, "source") * p_unitsize * irr_param,
-                                     pss_as_source.join(irr_g, on=["p", "n"], how="inner")),
-                               over=("p", "sink", "n"))
-                rhs_terms["dynamic_flow"] = into_n + out_of_n
+                drawn = _drawn_terms(b, _flow_node_view(v_flow, "source"),
+                                     pss_as_source.join(irr_g, on=["p", "n"], how="inner"), p_unitsize, irr_param,
+                                     p_col="p", over=("p", "sink", "n"))
+                rhs_terms["dynamic_flow"] = into_n + drawn.pop("noEff") if "noEff" in drawn else into_n
+                rhs_terms |= {f"dynamic_{k}": v for k, v in drawn.items()}
         if not rhs_terms:
             rhs_terms = {"zero": 0.0}
         lhs_terms = {}
@@ -541,20 +640,25 @@ def add_constraints(b: "_Build") -> None:
     #   − Σ_{n : (f,r,ud,n) ∈ pruna_g} v_reserve[f,r,ud,n,d,t] · unitsize[f] · reliability[f,r,ud,n]
     #   + vq_term[r,ud,g,d,t]
     #   ≥ up:   Σ_{(f,s,n) ∈ process_source_sink, (f,r,ud,n) ∈ lfr_g} v_flow[f,s,n,d,t] · unitsize[f] · ratio[f,r,ud,n]
-    #     down: Σ_{(f,n,k) ∈ process_source_sink, (f,r,ud,n) ∈ lfr_g} v_flow[f,n,k,d,t] · unitsize[f] · ratio[f,r,ud,n]
+    #     down: Σ_{(f,n,k) ∈ eff_out, (f,r,ud,n) ∈ lfr_g} (v_flow[f,n,k,d,t] · unitsize[f] · slope[f,d,t]
+    #                                                    + v_online[f,d,t] · section[f,d,t] · unitsize[f]) · ratio[f,r,ud,n]
+    #           + Σ_{(f,n,k) ∈ process_source_sink \ eff_out, (f,r,ud,n) ∈ lfr_g} v_flow[f,n,k,d,t] · unitsize[f]
+    #               · ratio[f,r,ud,n]
     #   ∀ (r,ud,g,f) ∈ fail_g, (d,t) ∈ dt
     #   pruna_g = the providers of the reserve_sum above, per group
     #   lfr_g   = process_reserve_upDown_node_large_failure_ratio with n ∈ group g,
     #             (r,ud,g) ∈ reserve_upDown_group_method_n_1 with ud = up / down
     #   fail_g  = (r,ud,g,f): f in lfr_g with a flow into (up) / out of (down) a node of g
-    #   ratio   = large_failure_ratio;   f is the row dim p_fail
+    #   ratio   = large_failure_ratio;   f is the row dim p_fail;   eff_out, section as in the dynamic row
     # Reserve covers the loss of each large process f separately (the largest
     # failure binds): upward reserve the loss of its output into the group,
     # downward reserve the loss of its consumption from the group.  The
     # failing process's own reserve, at every node of the group, does not
     # count: it is subtracted from the group total.  All rows of a group
-    # share vq_term, so the priced shortfall is the largest deficit.  Flows
-    # count at unitsize, without the efficiency slope.  No row for a group
+    # share vq_term, so the priced shortfall is the largest deficit.  The
+    # lost consumption is the flow the process draws from the node, as in
+    # nodeBalance_eq (output · slope plus the min-load section on an
+    # efficiency arc); a lost output counts at unitsize.  No row for a group
     # without a failing process; a group without providers (or without
     # reliability data) has no v_reserve_total term.  Nonzeros grow with
     # providers + failing processes per group.
@@ -567,8 +671,14 @@ def add_constraints(b: "_Build") -> None:
             if ud_filter not in n1:
                 continue
             n1_rug, fail_arcs, fail_g = (n1[ud_filter][k] for k in ("n1_rug", "fail_arcs", "fail_g"))
-            failure = Sum(Where(_flow_node_view(v_flow, side, {"p": "p_fail"}) * us_fail * ratio_fail, fail_arcs),
-                          over=(other, "n"))
+            if ud_filter == "down":
+                failure_terms = _drawn_terms(b, _flow_node_view(v_flow, side, {"p": "p_fail"}), fail_arcs, us_fail,
+                                             ratio_fail, p_col="p_fail", over=(other, "n"))
+                failure_terms = {("n_1_failure" if k == "noEff" else f"n_1_failure_{k}"): v
+                                 for k, v in failure_terms.items()}
+            else:
+                failure_terms = {"n_1_failure": Sum(Where(_flow_node_view(v_flow, side, {"p": "p_fail"}) * us_fail
+                                                          * ratio_fail, fail_arcs), over=(other, "n"))}
             lhs_terms = {}
             if lhs_vq is not None:
                 lhs_terms["vq_term"] = Where(lhs_vq, n1_rug)
@@ -584,7 +694,7 @@ def add_constraints(b: "_Build") -> None:
                             Where(v_reserve * p_unitsize * d.p_process_reserve_upDown_node_reliability, pruna_own),
                             over=("p", "n"))
             m.add_cstr(name, over=fail_g.join(d.dt, how="cross"), sense=">=",
-                       lhs_terms=lhs_terms, rhs_terms={"n_1_failure": failure})
+                       lhs_terms=lhs_terms, rhs_terms=failure_terms)
 
     # ─── EQ. ─── reserve_total_upper ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────

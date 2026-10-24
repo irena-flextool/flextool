@@ -9,6 +9,12 @@
   (`reserve_price_t`) is now also reported for groups whose only requirement
   is dynamic.
 
+- **Reserve requirements count what a unit consumes.** The dynamic
+  requirement and the downward large-failure requirement of a unit at a node
+  it consumes from (electrolyser, heat pump, electric boiler) now use the
+  power it draws (output / efficiency, plus the minimum-load input of a
+  `min_load_efficiency` unit), as the node balance does, not its output.
+
 - **`co2_max_period` applies in rolling solves.** Each roll of a
   `rolling_window` solve compared its window's emissions, annualised as if
   they covered the whole solve, with the annual limit, so the limit was too
