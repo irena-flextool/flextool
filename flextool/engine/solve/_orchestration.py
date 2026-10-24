@@ -2255,8 +2255,9 @@ def _drive_cascade(
             # that sub-solve's FlexData, fingerprint and solver
             # configuration, against which the next sub-solve is compared
             # (reuse only when all are identical; :mod:`._warm`).  All stay
-            # None when ``warm=False``; ``_warm_problem`` is dropped before
-            # every new build.
+            # None when ``warm=False``; :meth:`_release_warm_problem` drops
+            # them before every LP that is not a reuse (fresh warm build,
+            # cold / subprocess build, Benders solve).
             self._warm_problem: "WarmProblem | None" = None
             self._prior_data = None
             self._prior_fp: "tuple | None" = None
@@ -2359,6 +2360,21 @@ def _drive_cascade(
             # consume these; the consume-side guard fires only for Benders
             # predecessors NOT in this set.
             self._benders_invest_handoff_names: set[str] = set()
+
+        def _release_warm_problem(self) -> None:
+            """Drop the previous in-process WarmProblem and everything tied
+            to it (Layer-2 plan, cached ranges, the prior sub-solve's data,
+            fingerprint and solver key).  Called before every LP that is not
+            a reuse of it: a fresh warm build, a cold / subprocess build
+            (non-HiGHS solver, save-memory) and a Benders solve.  Its HiGHS
+            instance (``WarmProblem._h``) is not released by the parked
+            ``Solution.highs`` loop, so keeping it would let two LPs coexist."""
+            self._warm_problem = None
+            self._autoscale_warm_layer2_plan = None
+            self._autoscale_warm_ranges_pre = None
+            self._prior_data = None
+            self._prior_fp = None
+            self._prior_solver_key = None
 
         def _run_benders_solve(
             self,
@@ -2820,6 +2836,9 @@ def _drive_cascade(
             # through the Benders region coordinator instead of building
             # and solving a monolithic LP.
             if state.solve.decomposition_for(base_solve_name) == "benders":
+                # The Benders master / regions are their own WarmProblems:
+                # release the previous monolithic LP for the whole loop.
+                self._release_warm_problem()
                 return self._run_benders_solve(
                     complete_solve_name, base_solve_name, data,
                 )
@@ -3111,9 +3130,7 @@ def _drive_cascade(
                     # ``Solution.highs`` loop below, so keeping it would let
                     # two LPs coexist during the build.  The cached Layer 2
                     # plan and ranges die with it.
-                    self._warm_problem = None
-                    self._autoscale_warm_layer2_plan = None
-                    self._autoscale_warm_ranges_pre = None
+                    self._release_warm_problem()
                     # Cross-level eviction — same-level COLD-rebuild case
                     # (e.g. every roll of a rolling solve).  We are about to
                     # build a fresh LP and are NOT warm-reusing, so no parked
@@ -3468,6 +3485,10 @@ def _drive_cascade(
                 self._prior_fp = fp
                 self._prior_solver_key = solver_key
             else:
+                # Not warm-active (non-HiGHS solver, save-memory, warm=False):
+                # this LP is built cold, so the previous WarmProblem is no
+                # reuse source; release it before the build.
+                self._release_warm_problem()
                 pb = Problem()
                 _phase_prof("build_start")
                 build_flextool(pb, data, scale_the_objective=effective_obj_scale)

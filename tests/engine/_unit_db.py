@@ -184,9 +184,9 @@ def output_frames(work_folder: Path, solve_name: str, *, prefixes=("v_", "vq_"))
 
 
 def assert_outputs_equal(wf_a: Path, wf_b: Path, solve_name: str, *,
-                         rtol: float = 1e-9, atol: float = 1e-6) -> None:
+                         rel_tol: float = 1e-9, abs_tol: float = 1e-6) -> None:
     """The written primal outputs of ``solve_name`` agree between two work folders: same files,
-    same labels, values within ``rtol`` / ``atol``."""
+    same labels, values within ``rel_tol`` / ``abs_tol``."""
     from polars.testing import assert_frame_equal
 
     a, b = output_frames(wf_a, solve_name), output_frames(wf_b, solve_name)
@@ -196,7 +196,7 @@ def assert_outputs_equal(wf_a: Path, wf_b: Path, solve_name: str, *,
         fa, fb = a[name], b[name]
         keys = [c for c in fa.columns if not fa.schema[c].is_numeric()]
         try:
-            assert_frame_equal(fa.sort(keys), fb.sort(keys), check_exact=False, rtol=rtol, atol=atol,
+            assert_frame_equal(fa.sort(keys), fb.sort(keys), check_exact=False, rel_tol=rel_tol, abs_tol=abs_tol,
                                check_column_order=False)
         except AssertionError as exc:
             raise AssertionError(f"{solve_name}: output {name} differs: {exc}") from None

@@ -499,8 +499,7 @@ class FlexData:
     # eager-built up-front.  Consumers call the on-demand helpers in
     # :mod:`flextool.engine.model._pdt_join`.  Fields stay declared
     # (defaulting to ``None``) so callers that defensively read them via
-    # ``getattr(d, ..., None)`` continue to work and the warm-update
-    # over_field plumbing can fall through to cold-rebuild cleanly.
+    # ``getattr(d, ..., None)`` continue to work.
     pss_dt: pl.DataFrame | None = None
     nodeBalance_dt: pl.DataFrame | None = None
     # Canonical (p, source) / (p, sink) per process — one row per unit input

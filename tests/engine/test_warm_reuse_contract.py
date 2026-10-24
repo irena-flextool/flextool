@@ -28,7 +28,7 @@ import logging
 import polars as pl
 import pytest
 
-from tests.engine._unit_db import assert_outputs_equal, b64, make_db, utf8
+from tests.engine._unit_db import TIMESTEPS, assert_outputs_equal, b64, make_db, time_map, utf8
 
 pytestmark = pytest.mark.solver
 
@@ -121,7 +121,8 @@ def test_rolling_layer2_warm_equals_cold(tmp_path_factory, layer2_plans) -> None
     url, scen = make_db(tmp_path_factory, alt="reuse_l2roll", values=values,
                         base_chain=["init", "west", "coal", "co2_limit"])
     runs = _warm_and_cold(tmp_path_factory, url, scen, "reuse_l2roll")
-    assert _layer2_active(layer2_plans), "Layer 2 did not scale the LP: the fixture no longer tests G1"
+    assert _layer2_active(layer2_plans), (
+        "Layer 2 did not scale the LP: the fixture no longer tests the Layer-2 RHS scaling")
     hot = runs[True][0]
     assert list(hot) == [_roll(i) for i in range(16)]
     _assert_rolls_equal(runs)
@@ -147,6 +148,35 @@ def test_rolling_outputs_and_storage_carry_match_cold(tmp_path_factory) -> None:
         assert hf["value"].to_list() == pytest.approx(cf["value"].to_list(), rel=1e-9, abs=1e-6), name
         carried += 1
     assert carried >= 6, "the fixture carries no storage state between rolls"
+    _assert_rolls_equal(runs)
+    assert not any(st.warm_used for st in hot.values())
+
+
+def test_rolling_online_carry_matches_cold(tmp_path_factory) -> None:
+    """Unit commitment, rolling 12 h / 6 h: ``coal_plant`` (``startup_method`` linear, ``min_load`` 0.5) serves a
+    demand that is 0 for 9 h and 400 MW for 9 h, so it starts and stops across roll boundaries.  The carried
+    commitment (``p_roll_continue_online``, from the previous roll's ``v_online`` read by label) and every roll's
+    objective and outputs equal cold; the carry takes both an off (0) and a partly-on value."""
+    demand = time_map({t: (0.0 if (i // 9) % 2 == 0 else -400.0) for i, t in enumerate(TIMESTEPS)}, -400.0)
+    url, scen = make_db(tmp_path_factory, alt="reuse_online",
+                        values=_rolling(12.0, 6.0) + [["node", "west", "inflow", demand]],
+                        base_chain=["init", "west", "coal", "coal_min_load"])
+    runs = _warm_and_cold(tmp_path_factory, url, scen, "reuse_online")
+    hot, cold = runs[True][0], runs[False][0]
+    assert len(cold) == 8
+    carried = []
+    for name in cold:
+        h, c = hot[name].flex_data.p_roll_continue_online, cold[name].flex_data.p_roll_continue_online
+        assert (h is None) == (c is None), f"{name}: online carry-in warm {h} vs cold {c}"
+        if c is None:
+            continue
+        hf, cf = utf8(h.frame).sort(h.dims), utf8(c.frame).sort(c.dims)
+        assert hf.drop("value").equals(cf.drop("value")), name
+        assert hf["value"].to_list() == pytest.approx(cf["value"].to_list(), rel=1e-9, abs=1e-9), name
+        carried.extend(cf["value"].to_list())
+    assert len(carried) >= 6, "the fixture carries no commitment between rolls"
+    assert min(carried) == pytest.approx(0.0, abs=1e-9) and max(carried) > 0.5, (
+        f"the carried commitment does not change between rolls: {carried}")
     _assert_rolls_equal(runs)
     assert not any(st.warm_used for st in hot.values())
 
@@ -295,3 +325,48 @@ def test_reuse_blocker_names_each_change(twin_runs) -> None:
         assert _reuse_blocker(data, nxt) == name
         with pytest.raises(_IncompatibleUpdate, match=repr(name)):
             _apply_warm_updates(None, data, nxt)
+
+
+# ---------------------------------------------------------------------------
+# Memory: the previous WarmProblem is released before an LP that is not a reuse of it
+
+
+def test_cold_built_solve_releases_previous_warm_problem(tmp_path_factory, monkeypatch) -> None:
+    """A warm HiGHS solve followed by a save-memory (cold, subprocess) solve: the previous WarmProblem
+    (and its HiGHS instance) must be gone before the cold build, not kept alive for nothing."""
+    import gc
+    import weakref
+
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.model import core
+    from flextool.engine.solve import _warm
+
+    url, scen = make_db(tmp_path_factory, alt="reuse_release", values=_three_solves([]),
+                        base_chain=["init", "west", "coal"], entities=THREE_ENTITIES)
+    built: list = []
+    alive_at_cold_build: list[bool] = []
+    orig_build_warm = _warm._build_warm_problem
+    orig_build = core.build_flextool
+
+    def build_warm(*args, **kwargs):
+        wp = orig_build_warm(*args, **kwargs)
+        built.append(weakref.ref(wp))
+        # Every later sub-solve takes the save-memory (cold) path.
+        monkeypatch.setenv("FLEXTOOL_SAVE_MEMORY", "1")
+        return wp
+
+    def build(pb, data, **kwargs):
+        if built and len(alive_at_cold_build) < 2:
+            gc.collect()
+            alive_at_cold_build.append(built[0]() is not None)
+        return orig_build(pb, data, **kwargs)
+
+    monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
+    monkeypatch.setattr(_warm, "_build_warm_problem", build_warm)
+    monkeypatch.setattr(core, "build_flextool", build)
+    steps = run_chain_from_db(url, scen, warm=True, keep_solutions=False,
+                              work_folder=tmp_path_factory.mktemp("reuse_release_w"))
+    assert list(steps) == [DISPATCH, TWIN, LAST]
+    assert len(built) == 1, "expected one warm build (the first solve) before save-memory took over"
+    assert alive_at_cold_build and not any(alive_at_cold_build), (
+        f"the first solve's WarmProblem was still alive at a cold build: {alive_at_cold_build}")

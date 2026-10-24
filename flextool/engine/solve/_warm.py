@@ -216,10 +216,10 @@ def _time_axis_signature(data: "FlexData") -> tuple:
     * ``dt_period_runs``: the number of steps of each period, in the order
       of ``dt`` sorted by its columns (the order in which every (d, t)
       domain frame is sorted before its columns / rows get ids).  The
-      period labels are left out: a label change with the same run lengths
-      (``{p2020: 30}`` -> ``{p2025: 30}``) is caught by the positional
-      value comparison of the (d,)-keyed Params, and leaving the labels out
-      keeps warm reuse where the LP really is the same.
+      period labels are left out: this is a cheap pre-filter of the shape
+      only.  A label change with the same run lengths (``{p2020: 30}`` ->
+      ``{p2025: 30}``) passes it and is caught by :func:`_reuse_blocker`
+      (``dt`` differs).
     * ``dtttdt_link_offsets``: for each ``dtttdt`` row (sorted by d, t),
       the offset from the row's own position in the sorted ``dt`` to the
       position of each linked step (``t_previous``,

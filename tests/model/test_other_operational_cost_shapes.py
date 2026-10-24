@@ -281,8 +281,9 @@ def test_warm_rolling_period_time_cost_matches_cold(tmp_path_factory) -> None:
         assert _rel(float(hot[name].solution.obj), float(ref[name].solution.obj)) < 1e-9, name
 
 
-# ``y2020_2day_dispatch`` of tests.json rolled 24 h / 12 h (the warm vehicle of the balance-penalty tests): every roll builds its own LP
-# (its dt labels shift).  coal_plant (an efficiency, the eff_unit_* terms) and coal_chp (indirect, noEff).
+# ``y2020_2day_dispatch`` of tests.json rolled 24 h / 12 h (the warm vehicle of the balance-penalty tests):
+# every roll builds its own LP (its dt labels shift).  coal_plant (an efficiency, the eff_unit_* terms) and
+# coal_chp (indirect, noEff).
 WARM_CHAIN = ["init", "west", "coal", "coal_chp", "heat"]
 WARM_VALUES = [
     ["solve", "y2020_2day_dispatch", "solve_mode", b64("rolling_window", "str")],

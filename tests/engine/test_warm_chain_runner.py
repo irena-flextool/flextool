@@ -7,8 +7,8 @@ Three lightweight tests covering ``run_chain(..., warm=True)`` /
 1. **Equivalence** — for every standard chain fixture, ``warm=True``
    must produce the SAME per-sub-solve objective as ``warm=False``
    to machine precision.  This is the regression net for warm
-   correctness; if any LP cell goes stale because a Param outside
-   the clean-mapping set quietly differs, this test catches it.
+   correctness; if a reused LP served a sub-solve whose data or solver
+   configuration differ, this test catches it.
 
 2. **Cold-fallback** — on a chain where the structural fingerprint
    changes between sub-solves (different invest sets per period),
@@ -17,11 +17,10 @@ Three lightweight tests covering ``run_chain(..., warm=True)`` /
 
 3. **Speedup** — on a fixture with many structurally-similar
    rolling-horizon sub-solves (the
-   ``dispatch_fullYear_roll_roll_<i>`` cascade), the warm-update
-   path eliminates per-iteration cold-rebuild overhead.  Even when
-   every transition still cold-rebuilds (e.g. ``p_profile_value``
-   differs between rolls), reusing the WarmProblem skeleton is
-   measurably cheaper than rebuilding from scratch.
+   ``dispatch_fullYear_roll_roll_<i>`` cascade), the in-process warm
+   path is not markedly slower (< 2x) than the cold subprocess path.  Every roll builds
+   its own LP (``dt`` labels shift, and ``p_profile_value`` differs
+   between rolls), so this bounds the cost of the in-process build.
 
 Δ.12d — these tests now exercise the **native cascade**
 (``_orchestration.run_chain_from_db``) by passing ``native=True``.
@@ -163,8 +162,7 @@ def test_warm_native_rolling_speedup(scenario_workdir) -> None:
 
     # Performance ceiling: warm should not be markedly slower than
     # cold.  A 2× slowdown would suggest something has gone wrong
-    # (e.g. the WarmProblem is being rebuilt twice per iteration
-    # rather than reused).
+    # (e.g. the LP being built twice per iteration).
     assert t_warm < 2.0 * t_cold, (
         f"warm slowdown: cold={t_cold:.2f}s, warm={t_warm:.2f}s")
 
@@ -208,11 +206,11 @@ def test_warm_native_reuses_warmproblem_on_identical_data(
     obj1 = sol1.obj
     assert sol1.optimal
 
-    # Apply warm update to second data (which is identical) and re-solve.
+    # Reuse decision on the second (identical) data, then re-solve the same LP.
     n_updates = _apply_warm_updates(warm, data1, data2)
     sol2 = warm.solve()
     assert sol2.optimal
     assert abs(sol2.obj - obj1) < 1e-9 * max(1.0, abs(obj1)), (
         f"reused WarmProblem obj diverged: first={obj1}, second={sol2.obj}")
-    # Identical data → no Param diffs → zero warm-update calls.
+    # Identical data → no blocker → reuse (returns 0, nothing pushed).
     assert n_updates == 0, f"expected 0 updates on identical data, got {n_updates}"
