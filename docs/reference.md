@@ -423,14 +423,14 @@ Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [
 
 ### Limits for nodes
 
-- `has_inertia` - A flag whether the group of nodes has an inertia constraint active.
-- `inertia_limit` - [MWs] Minimum for synchronous inertia in the group of nodes. Constant or period.
+- `has_inertia` - A flag whether the group of nodes has an inertia constraint active. Default *no*. Without *yes* the group has no inertia constraint, even if `inertia_limit` is given.
+- `inertia_limit` - [MWs] Minimum for synchronous inertia in the group of nodes. Used only when `has_inertia` is *yes*; no value (or 0) means no requirement. Constant or period.
 - `penalty_inertia` - [CUR/MWs] Penalty for violating the inertia constraint. The cost scales with the duration of the violation. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.
-- `has_non_synchronous` - A flag whether the group of nodes has the non-synchronous share constraint active.
-- `non_synchronous_limit` - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.
+- `has_non_synchronous` - A flag whether the group of nodes has the non-synchronous share constraint active. Default *no*. Without *yes* the group has no non-synchronous constraint, even if `non_synchronous_limit` is given.
+- `non_synchronous_limit` - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Used only when `has_non_synchronous` is *yes*; with the flag and no value (or 0), no non-synchronous infeed is allowed (violations are penalised). Constant or period.
 - `penalty_non_synchronous` - [CUR/MWh] Penalty for violating the non synchronous constraint. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.
 - `capacity_margin_method` - How the group of nodes enforces a capacity margin constraint in the investment mode. Options: *none* (default, no constraint) and *manual* (require the group to have `capacity_margin` MW of capacity above the peak net load).
-- `capacity_margin` - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode when `capacity_margin_method = manual`. Constant or period.
+- `capacity_margin` - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode when `capacity_margin_method = manual`; without that method the value is ignored. No value (or 0) requires capacity to cover the peak net load. Constant or period.
 - `penalty_capacity_margin` - [CUR/kW] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so a penalty of e.g. 1000 CUR/kW is not comparable to an investment cost of 1000 CUR/kW which would be annualized to a much lower annual cost. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.
 - `share_loss_of_load` - Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted
 

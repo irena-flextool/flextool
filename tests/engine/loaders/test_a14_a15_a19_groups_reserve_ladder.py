@@ -51,51 +51,45 @@ def _write(p: Path, text: str) -> None:
 # A.14 — _group_slack.load_data
 # ====================================================================
 
-def test_pdgroup_topfile_wide_unpivot_and_long_form_path(tmp_path: Path):
-    """Covers A14-pdGroup_topfile_wide_unpivot + A14-pdGroup_long_form_path.
-
-    Wide-per-group ``pdGroup_capacity_margin.csv`` → 2-row unpivot for
-    capacity_margin; ``pdGroup.csv`` long form provides the
-    inertia_limit slice via the fallback path.
+def test_group_sets_come_from_the_flag_files(tmp_path: Path):
+    """The three group sets are the groups in the method / flag files
+    (``input/groupCapacityMargin.csv``, ``groupInertia.csv``,
+    ``groupNonSync.csv``); limit values do not make a group (#69).
     """
     inp, sd = _make_dirs(tmp_path)
-    # Wide-per-group form: header (period, g1, g2) — first col is "period",
-    # not "group", so the unpivot branch fires.
-    _write(sd / "pdGroup_capacity_margin.csv",
-           "period,g1,g2\nd1,0.10,0.20\n")
-    # Long form for inertia_limit; cap_margin still served by the wide file.
+    _write(inp / "groupCapacityMargin.csv", "groupCapacityMargin\ng1\ng2\n")
+    _write(inp / "groupInertia.csv", "groupInertia\ng1\n")
+    _write(inp / "groupNonSync.csv", "groupNonSync\ng_sync_only\n")
+    # Limits of other groups (and a zero limit of a flagged group) do not change the sets.
+    _write(sd / "pdGroup_capacity_margin.csv", "period,g1,g3\nd1,0.0,0.5\n")
     _write(sd / "pdGroup.csv",
            "group,param,period,value\n"
-           "g1,inertia_limit,d1,5.0\n")
+           "g3,inertia_limit,d1,5.0\n"
+           "g_other,non_synchronous_limit,d1,0.3\n")
 
     out = _group_slack.load_data(inp, sd, dt=pl.DataFrame(), provider=_provider_for_workdir(inp, sd),
                                   nb=None, pss_eff=None, pss_noEff=None,
                                   p_unitsize=None)
-    # Hand-calc: wide unpivot yields 2 (g, d) rows; groupCapacityMargin = {g1, g2}.
     assert out["groupCapacityMargin"].sort("g")["g"].to_list() == ["g1", "g2"]
-    # Long-form fallback for inertia: groupInertia = {g1}.
     assert out["groupInertia"]["g"].to_list() == ["g1"]
+    assert out["groupNonSync"]["g"].to_list() == ["g_sync_only"]
 
 
-def test_zero_drop_and_nonsync_override_and_inertia_only_filter(tmp_path: Path):
-    """Covers A14-zero_value_rows_dropped_to_inactive_group +
-    A14-groupNonSync_input_overrides_pdgroup_slice +
-    A14-inertia_constants_inertia_only_filter.
+def test_limits_without_flag_files_give_no_group_sets_and_inertia_only_filter(tmp_path: Path):
+    """Covers #69 (limit values without the method / flag files give None
+    sets) + A14-inertia_constants_inertia_only_filter.
 
-    One frame asserts: zero rows in capacity_margin drop the group;
-    ``input/groupNonSync.csv`` wins over a non_synchronous_limit pdGroup
-    slice; ``p_process_sink.csv`` rows get filtered to ``inertia_constant``
-    (and zero values dropped).
+    ``p_process_sink.csv`` rows get filtered to ``inertia_constant`` (and
+    zero values dropped).
     """
     inp, sd = _make_dirs(tmp_path)
-    # Capacity margin: g1 zero (drop), g2 non-zero (keep).
-    _write(sd / "pdGroup_capacity_margin.csv",
-           "period,g1,g2\nd1,0.0,0.5\n")
-    # nonSync: input file has g_sync_only; pdGroup slice has g_other.
-    _write(inp / "groupNonSync.csv", "group\ng_sync_only\n")
+    _write(sd / "pdGroup_capacity_margin.csv", "period,g1,g2\nd1,0.0,0.5\n")
+    _write(sd / "pdGroup_inertia_limit.csv", "period,g1\nd1,5.0\n")
     _write(sd / "pdGroup.csv",
            "group,param,period,value\n"
            "g_other,non_synchronous_limit,d1,0.3\n")
+    # An empty flag file is the same as no file.
+    _write(inp / "groupInertia.csv", "groupInertia\n")
     # Inertia constants: filter to "inertia_constant" + drop zeros.
     _write(inp / "p_process_sink.csv",
            "process,sink,sourceSinkParam,p_process_sink\n"
@@ -106,10 +100,9 @@ def test_zero_drop_and_nonsync_override_and_inertia_only_filter(tmp_path: Path):
     out = _group_slack.load_data(inp, sd, dt=pl.DataFrame(), provider=_provider_for_workdir(inp, sd),
                                   nb=None, pss_eff=None, pss_noEff=None,
                                   p_unitsize=None)
-    # Hand-calc: zero-row drop ⇒ g1 absent, only g2.
-    assert out["groupCapacityMargin"]["g"].to_list() == ["g2"]
-    # Hand-calc: input override ⇒ groupNonSync = {g_sync_only}.
-    assert out["groupNonSync"]["g"].to_list() == ["g_sync_only"]
+    assert out["groupCapacityMargin"] is None
+    assert out["groupInertia"] is None
+    assert out["groupNonSync"] is None
     # Hand-calc: only inertia_constant rows with value!=0 ⇒ {(p1,n1)}.
     psi = out["process_sink_inertia"].sort(["p", "sink"])
     assert psi.height == 1

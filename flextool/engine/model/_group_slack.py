@@ -64,60 +64,6 @@ def _read_csv_or_none(p: Path, *, provider=None) -> pl.DataFrame | None:
     return df
 
 
-def _slice_pdgroup(sd: Path, param: str, *, provider=None) -> pl.DataFrame | None:
-    """Rows of ``param`` in the long-format ``solve_data/pdGroup.csv`` (group, param, period, value).
-
-    Returns ``(g, d, value)`` without zero rows; None when the file is missing or nothing is left.
-    """
-    df = _provider_get(provider, sd / "pdGroup.csv")
-    if df is None or df.height == 0:
-        return None
-    sliced = (df.filter(pl.col("param") == param)
-              .rename({"group": "g", "period": "d"})
-              .select("g", "d", "value")
-              .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
-    # Zero rows dropped: a group whose value is 0 everywhere does not activate the feature.
-    sliced = sliced.filter(pl.col("value") != 0.0)
-    if sliced.height == 0:
-        return None
-    return sliced
-
-
-def _slice_pdgroup_topfile(sd: Path, fname: str, value_col: str, *, provider=None) -> pl.DataFrame | None:
-    """A standalone ``pdGroup_<param>.csv`` as long ``(g, d, value)`` without zero or null rows.
-
-    The file is either long (group, period, ``value_col`` or value) or wide by group (period, g1, g2, …);
-    a ``solve`` column is ignored.  None when the file is missing or nothing is left.
-    """
-    df = _provider_get(provider, sd / fname)
-    if df is None or df.height == 0:
-        return None
-    if "solve" in df.columns:
-        df = df.drop("solve")
-    if {"period", value_col}.issubset(df.columns) and df.columns[0] == "group":
-        out = (df.rename({"group": "g", "period": "d", value_col: "value"})
-               .select("g", "d", "value")
-               .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
-    elif "period" in df.columns and "group" in df.columns and "value" in df.columns:
-        out = (df.rename({"group": "g", "period": "d"})
-               .select("g", "d", "value")
-               .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
-    elif "period" in df.columns:
-        val_cols = [c for c in df.columns if c != "period"]
-        if not val_cols:
-            return None
-        out = (df.unpivot(on=val_cols, index=["period"], variable_name="g", value_name="value")
-               .rename({"period": "d"})
-               .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-               .select("g", "d", "value"))
-    else:
-        return None
-    out = out.filter(pl.col("value").is_not_null() & (pl.col("value") != 0.0))
-    if out.height == 0:
-        return None
-    return out
-
-
 def _read_inertia_constants(inp: Path, *, provider=None) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
     """``(sink_df, source_df)``: the non-zero ``inertia_constant`` rows of ``p_process_sink.csv`` /
     ``p_process_source.csv`` as ``(p, sink|source, value)``, each None when absent.
@@ -157,25 +103,13 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     """
     out = {f: None for f in _FIELDS}
 
-    # Group sets: the groups with a non-zero capacity_margin / inertia_limit.  groupNonSync comes from
-    # input/groupNonSync.csv, else from the groups with a non_synchronous_limit.
-    cap_pd = _slice_pdgroup_topfile(sd, "pdGroup_capacity_margin.csv", "capacity_margin", provider=provider)
-    if cap_pd is None:
-        cap_pd = _slice_pdgroup(sd, "capacity_margin", provider=provider)
-    iner_pd = _slice_pdgroup_topfile(sd, "pdGroup_inertia_limit.csv", "electricity", provider=provider)
-    if iner_pd is None:
-        iner_pd = _slice_pdgroup(sd, "inertia_limit", provider=provider)
-    nsync_pd = _slice_pdgroup(sd, "non_synchronous_limit", provider=provider)
-    if cap_pd is not None:
-        out["groupCapacityMargin"] = cap_pd.select("g").unique()
-    if iner_pd is not None:
-        out["groupInertia"] = iner_pd.select("g").unique()
-    df = _provider_get(provider, inp / "groupNonSync.csv")
-    if df is not None and df.height > 0:
-        col = df.columns[0]                 # "groupNonSync" or "group"
-        out["groupNonSync"] = df.rename({col: "g"}).select("g").unique()
-    if out["groupNonSync"] is None and nsync_pd is not None:
-        out["groupNonSync"] = nsync_pd.select("g").unique()
+    # Group sets from the method / flag files, which the input derivation fills with the groups whose
+    # capacity_margin_method is manual / has_inertia is yes / has_non_synchronous is yes.  A limit
+    # authored without its method or flag does not make a group.
+    for field in ("groupCapacityMargin", "groupInertia", "groupNonSync"):
+        df = _provider_get(provider, inp / f"{field}.csv")
+        if df is not None and df.height > 0:
+            out[field] = df.rename({df.columns[0]: "g"}).select("g").unique()
 
     # group_node: solve_data/group_node.csv, else the raw input/group__node.csv; the first with rows wins.
     gn = None
@@ -250,22 +184,26 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
 
 
 def has_capacity_margin(d) -> bool:
-    """True when some group has a capacity margin and its limit and scaling are populated."""
-    return (_has_rows(getattr(d, "groupCapacityMargin", None))
-            and d.pdGroup_capacity_margin is not None and d.p_inv_group_cap is not None)
+    """True when some group has capacity_margin_method = manual and the group scaling is populated.
+
+    A group without a capacity_margin value has margin 0 (its capacity must cover the peak net load)."""
+    return _has_rows(getattr(d, "groupCapacityMargin", None)) and d.p_inv_group_cap is not None
 
 
 def has_inertia(d) -> bool:
-    """True when some group has an inertia limit and the data to build its row is populated."""
+    """True when some group has has_inertia = yes, some group has an inertia limit, and the data to build
+    the row is populated.  A flagged group without a limit has no requirement (its row is Σ … ≥ 0)."""
     return (_has_rows(getattr(d, "groupInertia", None))
             and d.pdGroup_inertia_limit is not None and d.group_node is not None
             and d.process_source_sink is not None and d.p_unitsize is not None)
 
 
 def has_non_sync(d) -> bool:
-    """True when some group has a non-synchronous limit and the data to build its row is populated."""
+    """True when some group has has_non_synchronous = yes and the data to build its row is populated.
+
+    A flagged group without a non_synchronous_limit has limit 0."""
     return (_has_rows(getattr(d, "groupNonSync", None))
-            and d.pdGroup_non_synchronous_limit is not None and d.group_node is not None
+            and d.group_node is not None
             and d.process_source_sink is not None and d.p_unitsize is not None
             and d.p_step_duration is not None and d.p_inv_group_cap is not None)
 
@@ -374,6 +312,7 @@ def _eq_capacity_margin(b: _Build) -> None:
     #     − Σ_{prof(g)} existing_count[p,d] · unitsize[p] · profile[f,d,t] · icap[g,d]
     #     − Σ_{cap(g)} existing_count[p,d] · unitsize[p] · icap[g,d]
     #   ∀ g ∈ groupCapacityMargin, (d,t) ∈ dt
+    #   groupCapacityMargin = groups with capacity_margin_method = manual;  capacity_margin[g,d] = 0 where not authored
     #   N(g) = nodes of g without a storage state;  icap = inv_group_cap = 1 / group_capacity_for_scaling
     #   prof(g) = unit arcs into N(g) with an upper_limit or fixed profile f;  cap(g) = the other unit arcs into N(g)
     #   use_*(g) = unit arcs out of N(g);  Σ_{d′} over edd_invest_set / edd_divest_active
@@ -479,7 +418,8 @@ def _eq_capacity_margin(b: _Build) -> None:
               .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
               .with_columns(value=-pl.col("value")))
         rhs["existing_neg"] = Param(("g", "d", "t"), ex.select("g", "d", "t", "value"))
-    rhs["floor"] = d.pdGroup_capacity_margin * invc
+    if d.pdGroup_capacity_margin is not None:
+        rhs["floor"] = d.pdGroup_capacity_margin * invc
     inflow_per = getattr(d, "pdtNodeInflow_per_step", None)
     if inflow_per is not None and gn_no_state is not None and gn_no_state.height > 0:
         rhs_inflow = (gn_no_state.join(inflow_per.frame.rename({"value": "inflow"}), on="n", how="inner")
@@ -507,6 +447,8 @@ def _eq_inertia(b: _Build) -> None:
     #   + vq_inertia[g,d,t] · inertia_limit[g,d]
     #   ≥ inertia_limit[g,d]
     #   ∀ g ∈ groupInertia, (d,t) ∈ dt
+    #   groupInertia = groups with has_inertia = yes;  inertia_limit[g,d] = 0 where not authored (no requirement:
+    #   the row reads Σ … ≥ 0 and its slack is in no row)
     #   arcs_side(g) = arcs whose side node is in g and that carry an inertia constant on that side
     #   x = v_online[p,d,t] for p ∈ process_online (linear or integer), else v_flow[p,s,k,d,t]
     # Synchronous machines connected to the group's nodes supply inertia (MWs)
@@ -570,7 +512,9 @@ def _eq_non_sync(b: _Build) -> None:
     #                                       v_online[p,d,t] · section[p] · unitsize[p] · Δt[d,t]
     #                                 − Σ_{n ∈ N(g)} negative_inflow[n,d,t] )
     #   ∀ g ∈ groupNonSync, (d,t) ∈ dt
-    #   N(g) = nodes of g;  icap = inv_group_cap;  ns_limit = non_synchronous_limit
+    #   groupNonSync = groups with has_non_synchronous = yes
+    #   N(g) = nodes of g;  icap = inv_group_cap;  ns_limit = non_synchronous_limit, 0 where not authored (the
+    #   right-hand side then vanishes: no non-synchronous infeed without the penalised slack)
     #   in_ns(g) = arcs into N(g) with (p,k) ∈ process_sink_nonSync
     #   out_*(g) = arcs out of N(g);  arcs of processes inside the group, (p,g) ∈ process_group_inside_nonSync,
     #   are left out of in_ns and out_*
@@ -601,15 +545,16 @@ def _eq_non_sync(b: _Build) -> None:
             lhs["exo_inflow"] = Param(("g", "d", "t"), exo_in)
 
     rhs: dict = {}
-    out_factor = p_us * d.p_step_duration * pgns * invc
+    # Every right-hand-side term is × ns_limit, so without any limit the right-hand side is 0.
+    out_factor = p_us * d.p_step_duration * pgns * invc if pgns is not None else None
     pss_noEff = d.process_source_sink_noEff
-    if pss_noEff is not None and pss_noEff.height > 0 and b.v_flow is not None:
+    if out_factor is not None and pss_noEff is not None and pss_noEff.height > 0 and b.v_flow is not None:
         out_noEff = _not_inside(pss_noEff.rename({"source": "n"}).join(gn_in_gns, on="n", how="inner")
                                 .rename({"n": "source"}))
         if out_noEff.height > 0:
             rhs["out_noEff"] = Sum(Where(b.v_flow, out_noEff) * out_factor, over=("p", "source", "sink"))
     pss_eff = d.process_source_sink_eff
-    if pss_eff is not None and pss_eff.height > 0 and b.v_flow is not None:
+    if out_factor is not None and pss_eff is not None and pss_eff.height > 0 and b.v_flow is not None:
         out_eff = _not_inside(pss_eff.rename({"source": "n"}).join(gn_in_gns, on="n", how="inner")
                               .rename({"n": "source"}))
         if out_eff.height > 0:
@@ -629,7 +574,7 @@ def _eq_non_sync(b: _Build) -> None:
                         rhs["out_section_int"] = Sum(Where(b.v_online_integer, out_mle) * d.p_section * out_factor,
                                                      over=("p", "source", "sink"))
     p_neg = d.p_negative_inflow
-    if p_neg is not None and gn_in_gns.height > 0:
+    if p_neg is not None and pgns is not None and gn_in_gns.height > 0:
         exo_out = (gn_in_gns.join(p_neg.frame.rename({"value": "v"}), on="n", how="inner")
                    .join(invc.frame.rename({"value": "iv"}), on=["g", "d"], how="inner")
                    .join(pgns.frame.rename({"value": "lim"}), on=["g", "d"], how="inner")

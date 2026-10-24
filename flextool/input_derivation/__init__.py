@@ -125,6 +125,7 @@ def run(
         validate_ladder_methods,
         validate_group_output_memberships,
         validate_capacity_margin_groups,
+        validate_group_limit_flags,
         validate_connection_node_memberships,
         validate_connection_delay,
         validate_unit_input_shares,
@@ -277,6 +278,7 @@ def run(
 
         # Step 4 — validators that need DB access.
         validate_capacity_margin_groups(db, logger)
+        validate_group_limit_flags(db, logger)
         validate_group_output_memberships(db, logger)
         validate_connection_node_memberships(db, logger)
 

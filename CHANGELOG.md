@@ -1,5 +1,17 @@
 ## Unreleased
 
+- **A capacity margin, inertia or non-synchronous limit applies only with its
+  method or flag.** A `capacity_margin`, `inertia_limit` or
+  `non_synchronous_limit` on a group without `capacity_margin_method = manual`
+  / `has_inertia = yes` / `has_non_synchronous = yes` created the constraint
+  anyway when no group had the method or flag (on every solve type for
+  constant values, and for period maps of the inertia and non-synchronous
+  limits). Such a limit is now ignored, and a warning names the group. A group
+  with the method or flag but no limit is treated as limit 0 whether or not
+  another group sets a limit (capacity covers the peak net load; no
+  non-synchronous infeed; no inertia requirement), and a warning says so when
+  no value is given.
+
 - **Stochastic-time values of availability, efficiency, min_load, other
   operational cost, reservation and penalties no longer stop the model.** A
   value given as a three-level map (branch, analysis_time, time) with these

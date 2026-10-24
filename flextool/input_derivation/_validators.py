@@ -35,6 +35,7 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 __all__ = [
     "validate_timeline_timestep_duration",
     "validate_capacity_margin_groups",
+    "validate_group_limit_flags",
     "validate_ladder_methods",
     "validate_group_output_memberships",
     "validate_connection_node_memberships",
@@ -242,6 +243,62 @@ def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
                 "be excluded from the capacity margin constraint.",
                 g, ', '.join(storage_in_group),
             )
+
+
+def _explicit_values(db, entity_class: str, parameter: str) -> dict[str, list[float]]:
+    """``{entity: [numeric elements]}`` of the scenario's explicit values of a one-dimensional class's
+    ``parameter`` (scalars and every value of a period / time / stochastic-time map)."""
+    out: dict[str, list[float]] = {}
+    for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter):
+        if pv["type"] is None:
+            continue
+        out[pv["entity_byname"][0]] = _numeric_values(pv["parsed_value"])
+    return out
+
+
+def _entities_with_value(db, entity_class: str, parameter: str, value: str) -> set[str]:
+    """Entities of ``entity_class`` whose explicit ``parameter`` value is ``value``."""
+    return {pv["entity_byname"][0]
+            for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter)
+            if pv["type"] is not None and pv["parsed_value"] == value}
+
+
+# (limit parameter, method/flag parameter, value that switches the limit on)
+_GROUP_LIMIT_FLAGS: tuple[tuple[str, str, str], ...] = (
+    ("capacity_margin", "capacity_margin_method", "manual"),
+    ("inertia_limit", "has_inertia", "yes"),
+    ("non_synchronous_limit", "has_non_synchronous", "yes"),
+)
+
+# What a flagged group without the limit gets (the model reads the limit as 0).
+_GROUP_LIMIT_ABSENT: dict[str, str] = {
+    "capacity_margin": "its capacity must cover the peak net load (margin 0)",
+    "inertia_limit": "it has no inertia requirement",
+    "non_synchronous_limit": "it reads as 0, so no non-synchronous infeed is allowed (violations are penalised)",
+}
+
+
+def validate_group_limit_flags(db, logger: logging.Logger) -> None:
+    """Warn about group limits and their method / flag that do not go together.
+
+    The capacity margin, inertia and non-synchronous constraints are built for the groups whose
+    ``capacity_margin_method`` is ``manual`` / ``has_inertia`` is ``yes`` / ``has_non_synchronous``
+    is ``yes``, and nowhere else.  Warnings (``db`` is scenario-filtered):
+
+    * a non-zero limit on a group without its method / flag: the limit is ignored;
+    * the method / flag on a group with no limit value at all: the model reads the limit as 0.  An
+      explicit 0 is a deliberate input and is not reported.
+    """
+    for limit, flag, on in _GROUP_LIMIT_FLAGS:
+        flagged = _entities_with_value(db, "group", flag, on)
+        values = _explicit_values(db, "group", limit)
+        for g in sorted(values):
+            if g not in flagged and any(v != 0.0 for v in values[g]):
+                logger.warning(
+                    "Group '%s' has %s but %s is not %s: the limit is ignored.", g, limit, flag, on)
+        for g in sorted(flagged - set(values)):
+            logger.warning(
+                "Group '%s' has %s = %s but no %s: %s.", g, flag, on, limit, _GROUP_LIMIT_ABSENT[limit])
 
 
 def validate_ladder_methods(db, logger: logging.Logger) -> None:

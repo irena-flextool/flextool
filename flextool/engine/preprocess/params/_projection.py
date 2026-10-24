@@ -2007,6 +2007,12 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
 }
 
 
+# Set projections whose empty result means "no member" (field set to None), not "keep the seed".
+_AUTHORITATIVE_SETS: tuple[str, ...] = (
+    "groupCapacityMargin", "groupInertia", "groupNonSync",
+)
+
+
 def apply_projection_params(source: "InputSource",
                               flex_data: object) -> None:
     """Apply the DB-direct construction for Γ.2 Projection Params,
@@ -2022,11 +2028,20 @@ def apply_projection_params(source: "InputSource",
     audits (Δ.12-drop preparation) will fold this into helper-side
     "produce-or-raise" once each helper's empty-vs-None semantics
     are pinned.
+
+    The sets in :data:`_AUTHORITATIVE_SETS` are the exception: an empty
+    projection sets the field to None.  Their seed may mean something else
+    (the group sets were once derived from the limit values, the emit's
+    ``process_minload.csv`` lists the min_load_efficiency units), and a
+    method / flag / value set read from the DB is complete, so "nothing in
+    the DB" must not fall back to the seed.
     """
     # First pass: simple no-deps projections.
     for field_name, fn in SIMPLE_PROJECTIONS.items():
         v = fn(source)
         if v is None or (hasattr(v, "height") and v.height == 0):
+            if field_name in _AUTHORITATIVE_SETS:
+                setattr(flex_data, field_name, None)
             continue
         setattr(flex_data, field_name, v)
 
