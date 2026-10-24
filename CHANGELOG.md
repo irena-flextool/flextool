@@ -15,6 +15,13 @@
   power it draws (output / efficiency, plus the minimum-load input of a
   `min_load_efficiency` unit), as the node balance does, not its output.
 
+- **Group `increase_reserve_ratio`.** It was ignored; it now raises a
+  dynamic reserve requirement by the ratio times the demand of the group's
+  nodes in each time step (in MW; a node with positive inflow does not
+  count). The demand added by an energy margin in investment solves does not
+  count. On a group without a dynamic `reserve_method` the ratio is ignored
+  with a warning.
+
 - **`co2_max_period` applies in rolling solves.** Each roll of a
   `rolling_window` solve compared its window's emissions, annualised as if
   they covered the whole solve, with the annual limit, so the limit was too

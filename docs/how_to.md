@@ -1115,6 +1115,8 @@ For example, to build about 10% more into a demand node, set `energy_margin_meth
 
 Use `inflow_adder` as the additive alternative to the multiplier. Because the multiplier scales the node's *existing* demand, it is a no-op on a node whose native inflow is zero — a common shape for a bare adequacy / slack node that carries no demand series of its own. `inflow_adder` instead adds a fixed block of demand at the node: it deepens the node's demand where it already has inflow and, crucially, **creates** the demand where the node had none, spreading the MWh uniformly across every investment-stage timestep (a constant adder), or placing per-period values if authored as a period map. Set `energy_margin_method = inflow_adder` and `energy_margin_adder = <MWh>` on the node to raise investment-stage adequacy headroom without touching dispatch demand.
 
+The margin is extra demand for the investment decision only, not load: it does not raise reserve requirements (a reserve group's `increase_reserve_ratio` follows the un-margined demand).
+
 The energy margin is a per-node lever for regions whose adequacy gap is driven by VRE optimism and can be closed by building more of an investable response (more VRE, storage, or imports). It cannot help a region whose VRE collapses to near zero during the stress period when the only investable response is more VRE that serves the same demand — those regions need firm capacity or imports instead.
 
 It is complementary to the `capacity_margin_method` (see the [group reference](reference.md#limits-for-nodes)): `capacity_margin_method` targets peak-capacity adequacy (headroom above the peak net load), whereas the energy margin targets sustained-energy adequacy across the year.

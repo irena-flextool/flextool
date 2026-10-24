@@ -564,6 +564,38 @@ def validate_connection_delay(db, logger: logging.Logger) -> None:
         )
 
 
+def validate_group_increase_reserve_ratio(db, logger: logging.Logger) -> None:
+    """Warn once per reserve group with an ``increase_reserve_ratio`` but no dynamic ``reserve_method``.
+
+    The group ratio adds the demand of the group's nodes to the dynamic requirement only
+    (``model._reserve.group_demand_requirement``); with any other method (or none) it is ignored.
+    ``db`` is scenario-filtered; a ratio of 0 changes nothing and is not reported.
+    """
+    from flextool.engine.preprocess._reserve_methods import RESERVE_DYNAMIC_METHODS
+
+    methods = {
+        tuple(pv["entity_byname"]): pv["parsed_value"]
+        for pv in db.find_parameter_values(
+            entity_class_name="reserve__upDown__group", parameter_definition_name="reserve_method",
+        )
+    }
+    for pv in db.find_parameter_values(
+        entity_class_name="reserve__upDown__group", parameter_definition_name="increase_reserve_ratio",
+    ):
+        if pv["type"] is None:
+            continue
+        if not any(v != 0.0 for v in _numeric_values(pv["parsed_value"])):
+            continue
+        key = tuple(pv["entity_byname"])
+        if methods.get(key) in RESERVE_DYNAMIC_METHODS:
+            continue
+        logger.warning(
+            "increase_reserve_ratio of reserve group '%s' is used only with a dynamic reserve_method "
+            "(dynamic_only, timeseries_and_dynamic, dynamic_and_large_failure, all); it is ignored.",
+            "__".join(key),
+        )
+
+
 def _numeric_values(parsed) -> list[float]:
     """Every numeric element of a parsed parameter value (a float, or the
     values of a Map / TimeSeries / array).  Non-numeric values give []."""

@@ -219,6 +219,55 @@ def _with_full_load_draw(d, bound: "pl.LazyFrame") -> "pl.LazyFrame":
             .drop("__eff", "__slope", "__sec"))
 
 
+def group_demand_requirement(d) -> "Param | None":
+    """The demand term of the dynamic requirement, MW per ``(r, ud, g, d, t)``.
+
+    group_demand[r,ud,g,d,t] = ratio_g[r,ud,g] · Σ_{n : (g,n) ∈ group_node} max(−inflow[n,d,t], 0) / Δt[d,t]
+    for the groups of ``reserve_upDown_group_method_dynamic`` with a ``reserve__upDown__group``
+    ``increase_reserve_ratio`` (``p_reserve_upDown_group_increase_reserve_ratio``).  ``inflow`` is MWh per
+    step (``nodeBalance_eq``), so dividing by the step duration gives MW in the step.  The demand of each
+    node is its negative inflow (``p_negative_inflow_unmargined``: without the invest-solve energy margin,
+    which is an adequacy device and not load), clipped per node before the group sum, so a node with
+    positive inflow neither counts nor offsets another node's demand.  Zero rows are dropped.  Shared by
+    the reserveBalance_dynamic_eq row and the shortfall scale.  None when no group has a ratio.
+    """
+    ratio = getattr(d, "p_reserve_upDown_group_increase_reserve_ratio", None)
+    method_dyn = getattr(d, "reserve_upDown_group_method_dynamic", None)
+    gn = getattr(d, "group_node", None)
+    neg = getattr(d, "p_negative_inflow_unmargined", None)
+    if neg is None:
+        neg = getattr(d, "p_negative_inflow", None)
+    step = getattr(d, "p_step_duration", None)
+    if (ratio is None or method_dyn is None or method_dyn.height == 0 or gn is None or gn.height == 0
+            or neg is None or step is None):
+        return None
+    keys = ["r", "ud", "g", "d", "t"]
+    dyn_rug = method_dyn.select("r", "ud", "g").unique()
+    sel = (_u8(ratio.frame.lazy().select("r", "ud", "g", pl.col("value").alias("__ratio")), ["r", "ud", "g"])
+           .join(_u8(dyn_rug.lazy(), ["r", "ud", "g"]), on=["r", "ud", "g"], how="semi")
+           .join(_u8(gn.lazy().select("g", "n"), ["g", "n"]).unique(), on="g", how="inner"))
+    dt_u = _u8(d.dt.lazy().select("d", "t"), ["d", "t"])
+    demand = (_u8(neg.frame.lazy().select("n", "d", "t", "value"), ["n", "d", "t"])
+              .join(dt_u, on=["d", "t"], how="semi")
+              .with_columns((-pl.col("value")).clip(lower_bound=0.0).alias("__dem")))
+    step_lf = _u8(step.frame.lazy().select("d", "t", pl.col("value").alias("__dt")), ["d", "t"])
+    comp = (sel.join(demand, on="n", how="inner")
+            .group_by("r", "ud", "g", "d", "t", "__ratio").agg(pl.col("__dem").sum())
+            .join(step_lf, on=["d", "t"], how="inner")
+            .select("r", "ud", "g", "d", "t", value=pl.col("__ratio") * pl.col("__dem") / pl.col("__dt"))
+            .filter(pl.col("value") != 0.0))
+    base = dyn_rug.join(d.dt.select("d", "t"), how="cross")
+    frame = (base.with_columns([pl.col(k).cast(pl.Utf8).alias(f"__{k}") for k in keys])
+             .lazy()
+             .join(comp.rename({k: f"__{k}" for k in keys}), on=[f"__{k}" for k in keys], how="inner")
+             .select(*keys, "value")
+             .sort(keys)
+             .collect())
+    if frame.height == 0:
+        return None
+    return Param(tuple(keys), frame)
+
+
 def reserve_shortfall_scale(d) -> "Param | None":
     """Per-``(r, ud, g, d, t)`` multiplier of ``vq_reserve``.
 
@@ -230,7 +279,7 @@ def reserve_shortfall_scale(d) -> "Param | None":
     * reservation wherever it is authored (a timeseries-only model has scale = reservation);
     * dynamic groups: Σ over the flows that drive the requirement of
       p_flow_upper · unitsize · increase_reserve_ratio (× slope + section for a flow drawn on an
-      efficiency arc);
+      efficiency arc), plus the group's demand term (:func:`group_demand_requirement`, exact);
     * n-1 groups: the max over failing processes of Σ over that process's large-failure flows of
       p_flow_upper · unitsize · large_failure_ratio — the largest single n-1 row (one row per failing
       process);
@@ -255,6 +304,9 @@ def reserve_shortfall_scale(d) -> "Param | None":
             part = _flow_requirement_bound(d, irr_set, irr_val, dyn_rug, side)
             if part is not None:
                 parts.append(part)
+        demand = group_demand_requirement(d)
+        if demand is not None:
+            parts.append(_u8(demand.frame.lazy(), ["r", "ud", "g", "d", "t"]))
     method_n1 = getattr(d, "reserve_upDown_group_method_n_1", None)
     if method_n1 is not None and method_n1.height > 0:
         for ud, side in (("up", "sink"), ("down", "source")):
@@ -591,7 +643,11 @@ def add_constraints(b: "_Build") -> None:
     #       · ratio[p,r,ud,n]
     #   + Σ_{(p,n,k) ∈ process_source_sink \ eff_out, (p,r,ud,n) ∈ irr_g} v_flow[p,n,k,d,t] · unitsize[p]
     #       · ratio[p,r,ud,n]
+    #   + group_demand[r,ud,g,d,t]
     #   ∀ (r,ud,g) ∈ reserve_upDown_group_method_dynamic, (d,t) ∈ dt
+    #   group_demand = ratio_g[r,ud,g] · Σ_{n : (g,n) ∈ group_node} max(−inflow[n,d,t], 0) / Δt[d,t]
+    #   ratio_g = reserve__upDown__group.increase_reserve_ratio;  inflow in MWh per step without the
+    #             energy margin (p_negative_inflow_unmargined), so group_demand is MW in the step
     #   irr_g   = process_reserve_upDown_node_increase_reserve_ratio with n ∈ group g
     #   ratio   = increase_reserve_ratio;   eff_out = process_source_sink_eff
     #   section term only for min_load_efficiency units with online variables (v_online_linear / _integer)
@@ -599,8 +655,10 @@ def add_constraints(b: "_Build") -> None:
     # The requirement grows with the flows into and out of the group's nodes
     # (e.g. variable generation and consumption).  A flow out of a node counts
     # as drawn from it, as in nodeBalance_eq: on an efficiency arc the input is
-    # v_flow · slope plus the min-load section (_drawn_terms).  RHS 0 when
-    # nothing drives it.  A group that also has n-1 rows uses
+    # v_flow · slope plus the min-load section (_drawn_terms).  The group
+    # term adds the demand of the group's nodes (negative inflow only; a
+    # node with positive inflow does not count) times the group's ratio
+    # (group_demand_requirement).  RHS 0 when nothing drives it.  A group that also has n-1 rows uses
     # v_reserve_total, as in the timeseries rows.
     method_dyn = d.reserve_upDown_group_method_dynamic
     if method_dyn is not None and method_dyn.height > 0:
@@ -625,6 +683,9 @@ def add_constraints(b: "_Build") -> None:
                                      p_col="p", over=("p", "sink", "n"))
                 rhs_terms["dynamic_flow"] = into_n + drawn.pop("noEff") if "noEff" in drawn else into_n
                 rhs_terms |= {f"dynamic_{k}": v for k, v in drawn.items()}
+        demand = group_demand_requirement(d)
+        if demand is not None:
+            rhs_terms["group_demand"] = demand
         if not rhs_terms:
             rhs_terms = {"zero": 0.0}
         lhs_terms = {}

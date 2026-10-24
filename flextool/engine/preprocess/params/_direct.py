@@ -1737,6 +1737,34 @@ def p_reserve_upDown_group_reserve_duration_from_source(source: "InputSource") -
     return Param(("r", "ud", "g"), out.lazy())
 
 
+def p_reserve_upDown_group_increase_reserve_ratio_from_source(source: "InputSource") -> Param | None:
+    """``reserve__upDown__group.increase_reserve_ratio`` scalar → ``Param(("r", "ud", "g"))``.
+
+    Explicit rows with a value > 0 only, sorted; None when there is none.  The ratio of the group's
+    demand added to its dynamic requirement (``_reserve.group_demand_requirement``).  The schema types it
+    ``float`` only, so there is no map shape to resolve over ``(d, t)``.
+    """
+    try:
+        df = source.parameter_explicit("reserve__upDown__group", "increase_reserve_ratio")
+    except (KeyError, AttributeError):
+        try:
+            df = source.parameter("reserve__upDown__group", "increase_reserve_ratio")
+        except KeyError:
+            return None
+    if df is None or df.height == 0 or not {"reserve", "upDown", "group", "value"}.issubset(df.columns):
+        return None
+    out = (df.lazy()
+             .rename({"reserve": "r", "upDown": "ud", "group": "g"})
+             .with_columns(pl.col("value").cast(pl.Float64, strict=False))
+             .filter(pl.col("value") > 0.0)
+             .select("r", "ud", "g", "value")
+             .sort("r", "ud", "g")
+             .collect())
+    if out.height == 0:
+        return None
+    return Param(("r", "ud", "g"), out.lazy())
+
+
 def _process_reserve_node_param(source: "InputSource",
                                   parameter_name: str) -> Param | None:
     """Union ``reserve__upDown__unit__node`` ∪
@@ -2306,6 +2334,8 @@ def apply_direct_params_b(source: "InputSource",
         p_reserve_upDown_group_penalty_reserve_from_source(source))
     flex_data.p_reserve_upDown_group_reserve_duration = (
         p_reserve_upDown_group_reserve_duration_from_source(source))
+    flex_data.p_reserve_upDown_group_increase_reserve_ratio = (
+        p_reserve_upDown_group_increase_reserve_ratio_from_source(source))
     flex_data.p_process_reserve_upDown_node_reliability = (
         p_process_reserve_upDown_node_reliability_from_source(source))
     flex_data.p_process_reserve_upDown_node_max_share = (

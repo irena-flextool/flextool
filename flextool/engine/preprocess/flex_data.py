@@ -860,6 +860,10 @@ class FlexData:
     p_process_source_inertia_constant: Param | None = None  # (p, source)
     p_positive_inflow: Param | None = None               # (n, d, t)
     p_negative_inflow: Param | None = None               # (n, d, t)
+    # Negative inflow without the invest-solve energy margin (= p_negative_inflow without a margin):
+    # the demand the group increase_reserve_ratio scales (_reserve.group_demand_requirement).
+    p_negative_inflow_unmargined: Param | None = None    # (n, d, t)
+    p_inflow_unmargined: Param | None = None             # (n, d, t) — solve_data/pdtNodeInflow_unmargined, if any
     pdtNodeInflow_per_step: Param | None = None          # (n, d, t)
 
     # ─── Reserves (timeseries / dynamic / n-1, plus per-process upper) ────
@@ -875,6 +879,7 @@ class FlexData:
     pdtReserve_upDown_group_reservation: Param | None = None            # (r, ud, g, d, t)
     p_reserve_upDown_group_penalty_reserve: Param | None = None         # (r, ud, g)
     p_reserve_upDown_group_reserve_duration: Param | None = None        # (r, ud, g)
+    p_reserve_upDown_group_increase_reserve_ratio: Param | None = None  # (r, ud, g) — group demand ratio
     p_process_reserve_upDown_node_max_share: Param | None = None        # (p, r, ud, n)
     p_process_reserve_upDown_node_large_failure_ratio_value: Param | None = None     # (p, r, ud, n)
     p_process_reserve_upDown_node_increase_reserve_ratio_value: Param | None = None  # (p, r, ud, n)
@@ -1211,6 +1216,20 @@ def _load_node(sd: Path, dt: pl.DataFrame,
             Param(("n","d","t"), pen_up_df),
             Param(("n","d","t"), pen_dn_df),
             penalty_off)
+
+
+def _load_inflow_unmargined(sd: Path, *, provider=None) -> "Param | None":
+    """``solve_data/pdtNodeInflow_unmargined`` as ``Param((n, d, t))``, or None.
+
+    The energy-margin emitters write it (the inflow before the margin) only when a margin is applied
+    in some solve (``emit/_energy_margin._record_unmargined_inflow``); None otherwise.
+    """
+    path = sd / "pdtNodeInflow_unmargined.csv"
+    present = (provider.has(_provider_key(path)) if provider is not None else path.exists())
+    if not present:
+        return None
+    long = _read_wide_per_entity(path, rename={"entity": "n"}, provider=provider)
+    return Param(("n", "d", "t"), long.select("n", "d", "t", "value"))
 
 
 # ---------------------------------------------------------------------------
@@ -4754,6 +4773,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             nodeBalance_penalty_off = penalty_off,
             nodeBalance_dt = nb_dt,
             p_inflow = inflow,
+            p_inflow_unmargined = _load_inflow_unmargined(sd, provider=provider),
             p_penalty_up = pen_up,
             p_penalty_down = pen_dn,
 
@@ -5367,6 +5387,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 _drv.p_positive_inflow_from_inflow(p_inflow_csv))
             flex_data.p_negative_inflow = (
                 _drv.p_negative_inflow_from_inflow(p_inflow_csv))
+            flex_data.p_negative_inflow_unmargined = (
+                _drv.p_negative_inflow_unmargined_from_inflow(
+                    getattr(flex_data, "p_inflow_unmargined", None), flex_data.p_negative_inflow))
             flex_data.pdtNodeInflow_per_step = (
                 _drv.pdtNodeInflow_per_step_from_inflow(p_inflow_csv, sd_csv))
         _loadflex_prof("apply_db_overrides:pass_synthetic_inflow")

@@ -5854,6 +5854,18 @@ def p_negative_inflow_from_inflow(p_inflow: object | None) -> "Param | None":
     return Param(("n", "d", "t"), out)
 
 
+def p_negative_inflow_unmargined_from_inflow(p_inflow_unmargined: object | None,
+                                            p_negative_inflow: "Param | None") -> "Param | None":
+    """Negative component of the inflow before the invest-solve energy margin.
+
+    ``p_inflow_unmargined`` is ``solve_data/pdtNodeInflow_unmargined`` (written only by the energy-margin
+    emitters); without it the solve has no margin and the result is ``p_negative_inflow`` itself.
+    """
+    if p_inflow_unmargined is None:
+        return p_negative_inflow
+    return p_negative_inflow_from_inflow(p_inflow_unmargined)
+
+
 # ---------------------------------------------------------------------------
 # §3.12.4 — pdtNodeInflow_per_step
 # ---------------------------------------------------------------------------
@@ -5909,7 +5921,7 @@ DERIVED_C_FIELDS = (
     "process_group_inside_nonSync",
     "p_group_capacity_for_scaling", "p_inv_group_cap",
     "p_node_capacity_for_scaling",
-    "p_positive_inflow", "p_negative_inflow",
+    "p_positive_inflow", "p_negative_inflow", "p_negative_inflow_unmargined",
     "pdtNodeInflow_per_step",
     # §3.1.3 multi-year (extends Γ.3.A)
     "p_inflation_op",
@@ -6092,6 +6104,8 @@ def apply_derived_c(
     p_inflow_csv = getattr(flex_data, "p_inflow", None)
     flex_data.p_positive_inflow = p_positive_inflow_from_inflow(p_inflow_csv)
     flex_data.p_negative_inflow = p_negative_inflow_from_inflow(p_inflow_csv)
+    flex_data.p_negative_inflow_unmargined = p_negative_inflow_unmargined_from_inflow(
+        getattr(flex_data, "p_inflow_unmargined", None), flex_data.p_negative_inflow)
     flex_data.pdtNodeInflow_per_step = pdtNodeInflow_per_step_from_inflow(
         p_inflow_csv, sd_csv)
 
@@ -10198,7 +10212,8 @@ def prundt_from_source(
     A relationship ``(p, r, ud, n)`` (``process_reserve_upDown_node_active_from_source``) is kept when its
     ``(r, ud)`` has a requirement (:func:`~flextool.engine.preprocess._reserve_methods.demanded_reserves`):
     a non-zero ``reservation`` on some group of ``(r, ud)``, or a dynamic / n-1 group driven by an
-    ``increase_reserve_ratio`` / ``large_failure_ratio``.  The solve_data producer
+    ``increase_reserve_ratio`` (of a relationship at a node of the group, or of the group itself) /
+    ``large_failure_ratio``.  The solve_data producer
     (``emit/_reserve_sets._compute_process_reserve_active``) applies the same rule, so ``prundt`` and the
     ratio sets the model reads agree.  A reserve without a requirement gets no ``v_reserve`` columns
     (no all-zero columns in ``process__reserve__upDown__node__dt``).
@@ -10256,12 +10271,18 @@ def prundt_from_source(
             for p, r, ud, n, v in rows.iter_rows():
                 if (p, r, ud, n) in rel_keys:
                     ratios.setdefault((p, r, ud, n), {})[name] = float(v)
+    group_ratios: dict[tuple[str, ...], float] = {}
+    gr = _try_param(source, "reserve__upDown__group", "increase_reserve_ratio")
+    if gr is not None:
+        rows = gr.select(*(pl.col(c).cast(pl.Utf8) for c in ("reserve", "upDown", "group")),
+                         pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
+        group_ratios = {(r, ud, g): float(v) for r, ud, g, v in rows.iter_rows()}
     demanded = demanded_reserves(
         reservation_pairs=reservation_pairs,
         group_methods=group_methods,
         group_nodes=group_nodes,
         relationship_ratios=ratios,
-        group_ratios={},
+        group_ratios=group_ratios,
     )
     if not demanded:
         return _empty_prundt()

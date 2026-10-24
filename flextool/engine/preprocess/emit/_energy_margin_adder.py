@@ -105,6 +105,7 @@ from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
 from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.preprocess.emit._energy_margin import _record_unmargined_inflow
 from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
 # The pdtNodeInflow frame is all-Utf8: node, period, time, value.
@@ -241,6 +242,9 @@ def emit_energy_margin_adder(
     adder_dt = pl.concat(parts) if len(parts) > 1 else parts[0]
     if adder_dt.height == 0:
         return
+
+    # 6. Record the un-margined inflow (if the multiplier did not already).
+    _record_unmargined_inflow(provider, solve_data_dir, applying=True, refresh=False)
 
     # 7. Merge into pdtNodeInflow.  Existing rows of an inflow_adder node
     #    are deepened (value - adder); grid cells with no existing row are

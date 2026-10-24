@@ -21,7 +21,11 @@ rows by the factor — but ONLY:
   the demand row MORE negative (larger demand) and must never scale a
   positive/zero (supply / net-zero) row.
 
-The dispatch solves see the true (un-margined) demand.
+The dispatch solves see the true (un-margined) demand.  Before applying a
+margin the emitter records the un-margined frame under
+``solve_data/pdtNodeInflow_unmargined`` (:func:`_record_unmargined_inflow`):
+the reserve requirement of a group ``increase_reserve_ratio`` scales the real
+demand only.
 
 Early-return byte-parity contract
 ----------------------------------
@@ -53,6 +57,35 @@ from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
 from flextool.engine.preprocess.emit._vectorize import _render_value_column
+
+
+UNMARGINED_INFLOW_KEY = "solve_data/pdtNodeInflow_unmargined.csv"
+
+
+def _record_unmargined_inflow(provider, solve_data_dir, *, applying: bool, refresh: bool) -> None:
+    """Keep ``solve_data/pdtNodeInflow_unmargined`` = the inflow before any energy margin of this solve.
+
+    The group ``increase_reserve_ratio`` scales the real demand, not the margin
+    (``_reserve.group_demand_requirement``).  The key is written only once some solve applies a margin, so
+    models without a margin are untouched.  ``pdtNodeInflow`` is copied verbatim (no re-rendering,
+    invariant #5).
+
+    * ``refresh`` (the multiplier, which runs first in every solve): if the key exists — from a previous
+      solve sharing this Provider — or a margin is about to be applied, overwrite it with the current
+      ``pdtNodeInflow`` (still un-margined at this point), so a stale frame never survives;
+    * otherwise (the adder): write it only when applying and the multiplier has not written it already.
+    """
+    key = _provider_key(solve_data_dir / "pdtNodeInflow_unmargined.csv")
+    exists = provider.has(key)
+    if refresh:
+        if not (applying or exists):
+            return
+    elif not applying or exists:
+        return
+    df = provider.get(_provider_key(solve_data_dir / "pdtNodeInflow.csv"))
+    if df is None:
+        return
+    _emit(provider, UNMARGINED_INFLOW_KEY, df)
 
 
 def emit_energy_margin_inflow(
@@ -90,6 +123,7 @@ def emit_energy_margin_inflow(
 
     # 3. Invest-only gate + no-manual-node gate → early return (byte-parity).
     is_invest = bool(state.solve.invest_periods.get(solve_name))
+    _record_unmargined_inflow(provider, solve_data_dir, applying=is_invest and bool(manual), refresh=True)
     if not is_invest or not manual:
         return
 

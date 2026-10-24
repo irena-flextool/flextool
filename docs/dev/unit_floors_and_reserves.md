@@ -78,6 +78,15 @@ objective penalty and in `process_outputs` (`calc_slacks`):
   (`_reserve._drawn_terms`: `v_flow·unitsize·slope + v_online·section·unitsize`
   on an efficiency arc, `v_flow·unitsize` elsewhere); `v_online ≤
   p_flow_upper` makes it a valid bound;
+* dynamic group demand: `group_demand_requirement(d)` = `ratio_g · Σ_{n∈g}
+  max(−inflow, 0) / Δt` (exact, a constant), the same Param as the RHS term
+  of `reserveBalance_dynamic_eq`. The inflow is `p_negative_inflow_unmargined`:
+  the energy-margin emitters write `solve_data/pdtNodeInflow_unmargined`
+  (the inflow before the margin) whenever a solve applies a margin, and keep
+  it equal to `pdtNodeInflow` in later solves sharing the Provider; without
+  the key the field is `p_negative_inflow`. Benders: the field is not
+  region-filtered (like `penalty_reserve`); a subproblem joins it with its
+  filtered `group_node`, so each region gets its own nodes' demand;
 * authored `reservation` is added for any group; methods add up.
 
 `p_flow_upper` is the structural bound (existing + max invest by that
@@ -89,7 +98,7 @@ Activation (`_reserve_methods.demanded_reserves`, shared by
 `_derived.prundt_from_source` and `emit/_reserve_sets`): a reserve's
 relationships are active when the (reserve, up/down) has a requirement — a
 non-zero `reservation` on some group, a dynamic group driven by an
-`increase_reserve_ratio` at one of its nodes, or an n-1 group with a
+`increase_reserve_ratio` at one of its nodes (or by its own group ratio), or an n-1 group with a
 `large_failure_ratio` at one of its nodes (owner Q5, 2026-10-24). A dynamic
 / n-1 group without a driving ratio stays inactive. An n-1 ratio on a
 process without a flow in the failing direction activates the reserve with

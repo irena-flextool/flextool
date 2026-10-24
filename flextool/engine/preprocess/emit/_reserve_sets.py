@@ -12,7 +12,8 @@ Three public entry points:
   (:func:`~flextool.engine.preprocess._reserve_methods.demanded_reserves`:
   a nonzero summed reservation across the matching
   ``reserve__upDown__group`` × ``dt`` cross product, or a dynamic / n-1
-  group driven by a ratio), then emits ``prundt =
+  group driven by a ratio, the group's own ``increase_reserve_ratio``
+  included), then emits ``prundt =
   process_reserve_upDown_node_active × dt``.
 * :func:`emit_process_reserve_filters_and_reliability` — mod L1655 /
   L1660-1668.  Emits the reliability fallback (default 1) and two
@@ -480,7 +481,9 @@ def _compute_process_reserve_active(
         group_methods=group_methods,
         group_nodes=group_nodes,
         relationship_ratios=ratios,
-        group_ratios={},
+        group_ratios={(r, ud, g): v for (r, ud, g, param), v in _read_p_reserve(
+            input_dir / "p_reserve__upDown__group.csv", provider=provider,
+        ).items() if param == "increase_reserve_ratio"},
     )
 
     # ``prun`` order (byte parity of the emitted CSVs).
