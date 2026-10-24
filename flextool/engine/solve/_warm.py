@@ -57,6 +57,14 @@ __all__ = [
 # evidence affect the LP structure in tested scenarios are listed.  When
 # warm=True misclassifies a transition (i.e. the obj diverges from the
 # cold rebuild path), add the offending field here.
+#
+# Heights alone do not capture how the time axis is partitioned: two rolls
+# with the same number of steps can split them differently between the
+# periods (p2020 18 h + p2025 12 h, then 12 h + 18 h) or have a timeblock
+# start at a different step.  Every (d,)-keyed term and every lag link then
+# maps to other steps, while the frame heights and the positional Param
+# values stay the same.  :func:`_fingerprint` therefore also carries the
+# time-axis structure (:func:`_time_axis_signature`).
 
 _STRUCTURAL_FIELDS: tuple[str, ...] = (
     # Time + node sets (the foundation of every LP).
@@ -536,14 +544,18 @@ def _fingerprint(data: "FlexData") -> tuple:
     """Compute a structural fingerprint of a FlexData snapshot.
 
     Returns a tuple of ``(field_name, height_or_None)`` pairs covering
-    every field listed in :data:`_STRUCTURAL_FIELDS`.  Two FlexData
-    snapshots with equal fingerprints emit identically-shaped LPs (set
-    of vars and cstrs match by row count and dim signature) under the
-    current ``build_flextool`` rules.
+    every field listed in :data:`_STRUCTURAL_FIELDS`, plus the time-axis
+    structure of :func:`_time_axis_signature`.  Two FlexData snapshots
+    with equal fingerprints emit identically-shaped LPs (set of vars and
+    cstrs match by row count and dim signature, and the same positions of
+    the time axis belong to the same period and link to the same
+    positions) under the current ``build_flextool`` rules.
 
     ``height_or_None`` is ``None`` when the field is unset and the
     integer ``height`` when it's a polars DataFrame.  Boolean / scalar
-    fields contribute their value directly.
+    fields contribute their value directly.  Heights alone do not see a
+    different split of the same number of steps between the periods,
+    nor a timeblock boundary that moves inside the window.
     """
     out = []
     for name in _STRUCTURAL_FIELDS:
@@ -561,6 +573,69 @@ def _fingerprint(data: "FlexData") -> tuple:
     # constraint family in/out — track it explicitly.
     out.append(("p_nested_solve_first",
                 getattr(data, "p_nested_solve_first", None)))
+    out.extend(_time_axis_signature(data))
+    return tuple(out)
+
+
+def _time_axis_signature(data: "FlexData") -> tuple:
+    """How the sub-solve's time axis is partitioned and linked, without its labels.
+
+    * ``dt_period_runs``: the number of steps of each period, in the order
+      of ``dt`` sorted by its columns (the order in which every (d, t)
+      domain frame is sorted before its columns / rows get ids).  The
+      period labels are left out: a label change with the same run lengths
+      (``{p2020: 30}`` -> ``{p2025: 30}``) is caught by the positional
+      value comparison of the (d,)-keyed Params, and leaving the labels out
+      keeps warm reuse where the LP really is the same.
+    * ``dtttdt_link_offsets``: for each ``dtttdt`` row (sorted by d, t),
+      the offset from the row's own position in the sorted ``dt`` to the
+      position of each linked step (``t_previous``,
+      ``t_previous_within_timeset``, ``(d_previous,
+      t_previous_within_solve)``); -1 inside a block, other values at block
+      and period starts, and a marker when the linked step is not in
+      ``dt``.  Hashed to a short digest.
+    """
+    import hashlib
+
+    dt = getattr(data, "dt", None)
+    if not isinstance(dt, pl.DataFrame) or "d" not in dt.columns or "t" not in dt.columns:
+        return (("dt_period_runs", None), ("dtttdt_link_offsets", None))
+    ordered = dt.select("d", "t").sort("d", "t")
+    runs = (ordered.select(pl.col("d").cast(pl.Utf8))
+            .with_columns(run=pl.col("d").rle_id())
+            .group_by("run", maintain_order=True).len())
+    out: list = [("dt_period_runs", tuple(int(x) for x in runs["len"].to_list()))]
+
+    lk = getattr(data, "dtttdt", None)
+    if not isinstance(lk, pl.DataFrame) or not {"d", "t"} <= set(lk.columns):
+        out.append(("dtttdt_link_offsets", None))
+        return tuple(out)
+    pos = ordered.select(
+        pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
+        pl.int_range(pl.len(), dtype=pl.Int64).alias("_pos"))
+    links = [("t_previous", "d"), ("t_previous_within_timeset", "d"),
+             ("t_previous_within_solve", "d_previous")]
+    links = [(tc, dc) for tc, dc in links if tc in lk.columns and dc in lk.columns]
+    rows = lk.sort("d", "t").select(
+        pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
+        *[pl.col(dc).cast(pl.Utf8).alias(f"_ld{i}") for i, (_, dc) in enumerate(links)],
+        *[pl.col(tc).cast(pl.Utf8).alias(f"_lt{i}") for i, (tc, _) in enumerate(links)])
+    rows = rows.with_row_index("_row").join(pos, on=["_d", "_t"], how="left")
+    for i in range(len(links)):
+        rows = rows.join(
+            pos.rename({"_d": f"_ld{i}", "_t": f"_lt{i}", "_pos": f"_lpos{i}"}),
+            on=[f"_ld{i}", f"_lt{i}"], how="left")
+    rows = rows.sort("_row")
+    # Offsets of linked steps outside dt (or rows outside dt) are null -> a marker value.
+    marker = -(1 << 40)
+    offsets = rows.select(
+        pl.col("_pos").fill_null(marker).alias("_own"),
+        *[(pl.col(f"_lpos{i}") - pl.col("_pos")).fill_null(marker).alias(f"_off{i}")
+          for i in range(len(links))])
+    digest = hashlib.sha1(
+        repr([c for c, _ in links]).encode()
+        + offsets.to_numpy().astype("<i8").tobytes()).hexdigest()
+    out.append(("dtttdt_link_offsets", (rows.height, digest)))
     return tuple(out)
 
 
