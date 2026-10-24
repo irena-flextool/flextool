@@ -274,8 +274,6 @@ def test_min_load_efficiency_without_efficiency_at_min_load_is_flat(tmp_path_fac
     u = UNIT[veh]
     with caplog.at_level(logging.WARNING):
         steps = _run(tmp_path_factory, veh, _online(veh) + _mle(u, min_load=0.3))
-    assert (f"Unit '{u}' uses min_load_efficiency with min_load > 0 but has no efficiency_at_min_load"
-            in caplog.text)
     ref = _run(tmp_path_factory, veh, _online(veh) + _mle(u, min_load=0.3, eta_min=EFF[veh]))
     _assert_same_model(steps, ref)
     for name, st in steps.items():
@@ -291,6 +289,8 @@ def test_min_load_efficiency_without_efficiency_at_min_load_is_flat(tmp_path_fac
         no_floor = _run(tmp_path_factory, veh, _online(veh) + _mle(u))
         assert float(list(steps.values())[-1].solution.obj) != pytest.approx(
             float(list(no_floor.values())[-1].solution.obj), rel=1e-6)
+    assert (f"Unit '{u}' uses min_load_efficiency with min_load > 0 but has no efficiency_at_min_load"
+            in caplog.text)
 
 
 @pytest.mark.parametrize("veh", VEHICLES)

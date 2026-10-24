@@ -205,17 +205,19 @@ def test_nested_chain_margin_in_invest_sub_solves_only(tmp_path_factory) -> None
     invest = {n: st for n, st in steps.items() if n.startswith("invest_")}
     assert sorted(invest) == ["invest_5weeks_p2020", "invest_5weeks_p2025", "invest_5weeks_p2030",
                               "invest_5weeks_p2035"]
+    others = {n: st for n, st in steps.items() if not n.startswith("invest_")}
+    assert others
     for name, st in invest.items():
-        periods = sorted(utf8(st.flex_data.period_invest)["d"].to_list())
-        assert periods == sorted(set(utf8(st.flex_data.dt)["d"].to_list())), name
+        periods = sorted(set(utf8(st.flex_data.dt)["d"].to_list()))
         assert _rows(st) == 20 * len(periods), name
         assert sorted(_slack(st)) == periods, name
-    others = [st for n, st in steps.items() if not n.startswith("invest_")]
-    assert others
-    for st in others:
-        assert st.flex_data.period_invest is not None and st.flex_data.period_invest.height == 0
-        assert _rows(st) == 0
-        assert _slack(st) == {}
+    for name, st in others.items():
+        assert _rows(st) == 0, name
+        assert _slack(st) == {}, name
+    for name, st in invest.items():
+        assert sorted(utf8(st.flex_data.period_invest)["d"].to_list()) == sorted(_slack(st)), name
+    for name, st in others.items():
+        assert st.flex_data.period_invest is not None and st.flex_data.period_invest.height == 0, name
 
 
 def test_rolling_with_investment_builds_margin_in_every_roll(tmp_path_factory) -> None:
