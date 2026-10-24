@@ -303,21 +303,36 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
 
 
 def validate_min_load_efficiency_inputs(db, logger: logging.Logger) -> None:
-    """Warn about ``min_load_efficiency`` units with a minimum load but no ``efficiency_at_min_load``.
+    """Check the conversion curve inputs of ``min_load_efficiency`` units.
 
-    The units: ``conversion_method = min_load_efficiency`` ∩ units with a ``min_load`` value above 0 anywhere
-    (a scalar or any value of a period / time / stochastic-time map, folded as ``process_minload`` does) ∖
-    units with an ``efficiency_at_min_load``.  Such a unit uses its ``efficiency`` at minimum load too (a flat
-    curve: the fuel use is output / efficiency, as with constant_efficiency, while the minimum load still
-    applies); owner decision c11.  Cells that an ``efficiency_at_min_load`` map leaves out get the efficiency
-    in the same way, without a warning.  ``db`` is scenario-filtered.
+    Errors (:class:`FlexToolConfigError`), for units with ``conversion_method = min_load_efficiency``, over every
+    value of a scalar or a period / time / stochastic-time map:
+
+    * ``efficiency_at_min_load`` not above 0 (the fuel use at minimum load would be infinite);
+    * ``min_load`` not below 1 (the curve between minimum and full load would have no length).
+
+    Warning: a unit with a ``min_load`` value above 0 anywhere (folded as ``process_minload`` does) and no
+    ``efficiency_at_min_load``.  Such a unit uses its ``efficiency`` at minimum load too (a flat curve: the fuel
+    use is output / efficiency, as with constant_efficiency, while the minimum load still applies).  Cells that an
+    ``efficiency_at_min_load`` map leaves out get the efficiency in the same way, without a warning.  ``db`` is
+    scenario-filtered.
     """
     mle = _entities_with_value(db, "unit", "conversion_method", "min_load_efficiency")
     if not mle:
         return
-    with_min_load = {u for u, vals in _explicit_values(db, "unit", "min_load").items() if any(v > 0.0 for v in vals)}
-    with_eta_min = set(_explicit_values(db, "unit", "efficiency_at_min_load"))
-    for unit in sorted((mle & with_min_load) - with_eta_min):
+    min_load = _explicit_values(db, "unit", "min_load")
+    eta_min = _explicit_values(db, "unit", "efficiency_at_min_load")
+    errors: list[str] = []
+    for unit in sorted(mle):
+        if any(v <= 0.0 for v in eta_min.get(unit, [])):
+            errors.append(f"unit '{unit}': efficiency_at_min_load {_fmt(eta_min[unit])} must be above 0")
+        if any(v >= 1.0 for v in min_load.get(unit, [])):
+            errors.append(f"unit '{unit}': min_load {_fmt(min_load[unit])} must be below 1 for a "
+                          "min_load_efficiency unit (use constant_efficiency for a unit that only runs at full load)")
+    if errors:
+        raise FlexToolConfigError("min_load_efficiency inputs: " + "; ".join(errors) + ".")
+    with_min_load = {u for u, vals in min_load.items() if any(v > 0.0 for v in vals)}
+    for unit in sorted((mle & with_min_load) - set(eta_min)):
         logger.warning(
             "Unit '%s' uses min_load_efficiency with min_load > 0 but has no efficiency_at_min_load: its "
             "efficiency is used at minimum load too (a flat curve; the minimum load still applies).", unit)

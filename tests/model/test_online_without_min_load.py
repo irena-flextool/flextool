@@ -6,7 +6,7 @@
     slope[p,d,t]   = (1/eta − min_load/eta_min) / (1 − min_load)
     section[p,d,t] = round(1/eta, 6) − round((round(1/eta, 6) − min_load/eta_min) / (1 − min_load), 6)
     eta = efficiency (default 1);  min_load = 0 where not authored;
-    eta_min = efficiency_at_min_load where given, else efficiency (owner decision c11: a flat curve)
+    eta_min = efficiency_at_min_load where given, else efficiency (a flat curve)
 
 ``process_minload`` (the floor's units) = units with ``min_load > 0``.
 
@@ -262,7 +262,7 @@ def test_no_floor_for_min_load_efficiency_unit_without_min_load(tmp_path_factory
 
 
 # ---------------------------------------------------------------------------
-# min_load > 0 without efficiency_at_min_load: efficiency at minimum load too (owner decision c11)
+# min_load > 0 without efficiency_at_min_load: efficiency at minimum load too (a flat curve)
 
 
 @pytest.mark.parametrize("veh", VEHICLES)
@@ -340,3 +340,62 @@ def test_min_load_efficiency_warning_folds_maps(tmp_path_factory, caplog) -> Non
             validate_min_load_efficiency_inputs(db, logger)
     warned = sorted(r.getMessage().split("'")[1] for r in caplog.records if r.name == "c11c_warn")
     assert warned == ["coal_chp", "coal_plant"]
+
+
+# ---------------------------------------------------------------------------
+# Read-time checks of the min_load_efficiency curve inputs
+
+
+def _validate(tmp_path_factory, alt: str, values: list) -> None:
+    from spinedb_api import DatabaseMapping
+    from spinedb_api.filters.scenario_filter import scenario_filter_config, scenario_filter_from_dict
+
+    from flextool.input_derivation._validators import validate_min_load_efficiency_inputs
+
+    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=["init", "west", "coal"])
+    with DatabaseMapping(url) as db:
+        db.fetch_all("entity")
+        db.fetch_all("parameter_value")
+        scenario_filter_from_dict(db, scenario_filter_config(scen))
+        validate_min_load_efficiency_inputs(db, logging.getLogger(alt))
+
+
+@pytest.mark.parametrize("alt, value, match", [
+    ("c11f_em_scalar", scalar(0.0), "efficiency_at_min_load 0 must be above 0"),
+    ("c11f_em_map", tmap({"t0001": 0.3, "t0002": -0.1}), r"efficiency_at_min_load \[0.3, -0.1\] must be above 0"),
+], ids=["scalar_zero", "map_negative"])
+def test_efficiency_at_min_load_must_be_positive(tmp_path_factory, alt, value, match) -> None:
+    """``efficiency_at_min_load`` ≤ 0 on a min_load_efficiency unit is refused at read time (it gave an infinite
+    slope on single / stochastic solves and a flat curve in rolls)."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError, match=f"unit 'coal_plant': {match}"):
+        _validate(tmp_path_factory, alt,
+                  _mle("coal_plant", min_load=0.3) + [["unit", "coal_plant", "efficiency_at_min_load", value]])
+
+
+@pytest.mark.parametrize("alt, value", [("c11f_ml_scalar", scalar(1.0)),
+                                        ("c11f_ml_map", tmap({"t0001": 0.3, "t0002": 1.2}))],
+                         ids=["scalar_one", "map"])
+def test_min_load_must_be_below_one(tmp_path_factory, alt, value) -> None:
+    """``min_load`` ≥ 1 on a min_load_efficiency unit is refused at read time (division by 1 − min_load = 0)."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError, match="unit 'coal_plant': min_load .* must be below 1"):
+        _validate(tmp_path_factory, alt,
+                  _mle("coal_plant", eta_min=0.3) + [["unit", "coal_plant", "min_load", value]])
+
+
+def test_curve_checks_only_for_min_load_efficiency_units(tmp_path_factory) -> None:
+    """A constant_efficiency unit with ``min_load 1`` (full load only) and valid min_load_efficiency inputs pass."""
+    _validate(tmp_path_factory, "c11f_ok", [["unit", "coal_plant", "min_load", scalar(1.0)]])
+    _validate(tmp_path_factory, "c11f_ok2", _mle("coal_plant", eta_min=0.3, min_load=0.99))
+
+
+def test_curve_check_stops_the_run(tmp_path_factory) -> None:
+    """The check runs in the input derivation: a run with ``min_load 1`` on a min_load_efficiency unit stops with
+    the message."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError, match="min_load 1 must be below 1"):
+        _run(tmp_path_factory, "single", _online("single") + _mle("coal_plant", eta_min=0.3, min_load=1.0))

@@ -2688,7 +2688,7 @@ def _eff_param_to_pdt(source: "InputSource",
 
 def _mle_eta_min(eta_min: pl.Expr, eta: pl.Expr) -> pl.Expr:
     """Efficiency at minimum load of a min_load_efficiency cell: ``efficiency_at_min_load`` where given, else
-    ``efficiency`` (a flat curve, owner decision c11), cell by cell.  Shared by ``p_slope_from_source`` and
+    ``efficiency`` (a flat curve), cell by cell.  Shared by ``p_slope_from_source`` and
     ``p_section_from_source`` (the rolling emit seed ``_period_params._derive_conversion_trio`` applies the same
     fallback)."""
     return pl.coalesce(eta_min, eta)

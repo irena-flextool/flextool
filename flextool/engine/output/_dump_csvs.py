@@ -871,8 +871,6 @@ _META_FILES_TO_COPY: tuple[tuple[str, str], ...] = (
     ("input", "node__storage_nested_fix_method.csv"),
     ("input", "p_reserve__upDown__group.csv"),
     ("input", "p_process__reserve__upDown__node.csv"),
-    ("input", "groupCapacityMargin.csv"),
-    ("input", "groupInertia.csv"),
     ("input", "groupNonSync.csv"),
     ("input", "p_process_sink.csv"),
     ("input", "p_process_source.csv"),
