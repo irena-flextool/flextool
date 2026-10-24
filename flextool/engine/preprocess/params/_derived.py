@@ -821,14 +821,22 @@ def p_period_share_from_source(
     dt: pl.DataFrame,
     step_dur: Param,
 ) -> Param | None:
-    """``p_period_share[d] = sum_t step_duration[d,t] / 8760`` — the
+    """``p_period_share[d] = sum_{t in dt[d]} step_duration[d,t] / 8760`` — the
     fraction of a full year covered by this period in the active solve.
 
-    Audit §3.1.4: built from ``dt`` and ``p_step_duration``.
+    Audit §3.1.4: built from ``dt`` and ``p_step_duration``, over the steps of
+    ``dt`` only (``step_dur`` rows outside ``dt`` are ignored; the keys are
+    matched as strings so Enum and Utf8 key columns align).
     """
     if dt is None or step_dur is None:
         return None
-    sd = step_dur.frame
+    keys = dt.select(pl.col("d").cast(pl.Utf8).alias("_d"),
+                     pl.col("t").cast(pl.Utf8).alias("_t")).unique()
+    sd = (step_dur.frame
+          .with_columns(pl.col("d").cast(pl.Utf8).alias("_d"),
+                        pl.col("t").cast(pl.Utf8).alias("_t"))
+          .join(keys, on=["_d", "_t"], how="semi", maintain_order="left")
+          .drop("_d", "_t"))
     out = (sd.lazy()
               .group_by("d")
               .agg((pl.col("value").cast(pl.Float64).sum() / HOURS_PER_YEAR)
@@ -845,9 +853,10 @@ def p_window_fraction_from_shares(
     step_dur: Param,
     period_share: Param,
 ) -> Param | None:
-    """``p_window_fraction[d] = (Σ_t step_duration[d,t] / 8760) / p_period_share[d]``.
+    """``p_window_fraction[d] = (Σ_{t in dt[d]} step_duration[d,t] / 8760) / p_period_share[d]``.
 
-    The share of each period's complete-solve hours that the sub-solve's own ``dt`` covers.  In a
+    The share of each period's complete-solve hours that the sub-solve's own ``dt`` covers (the
+    window sum runs over the steps of ``dt`` only, see :func:`p_period_share_from_source`).  In a
     roll of a rolling solve ``p_period_share`` is the complete (parent) solve's share, so the
     fraction is the roll's window over the complete solve, per period.  A value within 1e-9
     (relative) of 1 is snapped to exactly 1.0, so a sub-solve that covers its periods whole keeps

@@ -107,14 +107,14 @@ def test_rolling_without_lookahead_equals_single_solve(tmp_path_factory) -> None
     its 12 h, so the realized emissions and the CO2 price equal the 48 h single solve's.  Before the fix the
     rolls did not bind (19 924 t instead of 16 438 t, dual 0)."""
     cap = 3.0e6
-    single = list(_run(tmp_path_factory, "c12_single", [_cap({"p2020": cap})]).values())
+    single = list(_run(tmp_path_factory, "co2roll_single", [_cap({"p2020": cap})]).values())
     assert len(single) == 1
     e_single = _tonnes(single[0])["p2020"]
     assert e_single * 8760 / 48 == pytest.approx(cap, rel=1e-6)  # binding in the single solve
     (d_single,) = _dual(single[0])
     assert d_single < 0
 
-    rolls = list(_run(tmp_path_factory, "c12_roll12", [_cap({"p2020": cap})] + _rolling(12.0, 12.0)).values())
+    rolls = list(_run(tmp_path_factory, "co2roll_roll12", [_cap({"p2020": cap})] + _rolling(12.0, 12.0)).values())
     assert len(rolls) == 4
     assert sum(_tonnes(st)["p2020"] for st in rolls) == pytest.approx(e_single, rel=1e-6)
     for st in rolls:
@@ -127,7 +127,7 @@ def test_each_roll_caps_its_window(tmp_path_factory) -> None:
     """Rolling 24 h / 12 h: each roll's window emissions, annualised over the window's hours, equal the cap
     (binding); the window fraction is 24/48 for the first three rolls and 12/48 for the truncated last one."""
     cap = 3.0e6
-    rolls = list(_run(tmp_path_factory, "c12_roll24", [_cap({"p2020": cap})] + _rolling(24.0, 12.0)).values())
+    rolls = list(_run(tmp_path_factory, "co2roll_roll24", [_cap({"p2020": cap})] + _rolling(24.0, 12.0)).values())
     assert [_fraction(st.flex_data) for st in rolls] == [{"p2020": f} for f in (0.5, 0.5, 0.5, 0.25)]
     for st in rolls:
         p = st.flex_data.p_window_fraction
@@ -151,10 +151,10 @@ def boundary_runs(tmp_path_factory) -> dict:
     from flextool.engine import run_chain_from_db
 
     values = [_cap(CAPS)] + TWO_PERIODS + _rolling(30.0, 6.0)
-    url, scen = make_db(tmp_path_factory, alt="c12_boundary", values=values, base_chain=CHAIN)
+    url, scen = make_db(tmp_path_factory, alt="co2roll_boundary", values=values, base_chain=CHAIN)
     out = {}
     for warm in (True, False):
-        wf = tmp_path_factory.mktemp(f"c12_boundary_w{int(warm)}")
+        wf = tmp_path_factory.mktemp(f"co2roll_boundary_w{int(warm)}")
         # The cold run also writes the CSV dump (no effect on the LP), so a roll can be reloaded from disk.
         out[warm] = run_chain_from_db(url, scen, warm=warm, keep_solutions=True, work_folder=wf,
                                       csv_dump=not warm)
@@ -225,10 +225,10 @@ def test_window_fraction_is_one_outside_rolls(tmp_path_factory) -> None:
     """Single solve, multi-period single solve with investments, stochastic single solve (branch periods
     included): exactly 1.0 for every dt period."""
     cases = [
-        ("c12_one_single", [], CHAIN, None),
-        ("c12_one_multi", [], ["init", "west", "coal", "coal_invest", "wind", "wind_invest", "5weeks",
+        ("co2roll_one_single", [], CHAIN, None),
+        ("co2roll_one_multi", [], ["init", "west", "coal", "coal_invest", "wind", "wind_invest", "5weeks",
                                "invest_solveSequence_5weeks", "invest_allYears_5weeks", "co2_limit"], None),
-        ("c12_one_stoch", [], ["init", "base", "stoch"], FIX / "stoch_two_period.json"),
+        ("co2roll_one_stoch", [], ["init", "base", "stoch"], FIX / "stoch_two_period.json"),
     ]
     for alt, values, chain, fixture in cases:
         steps = _run(tmp_path_factory, alt, values, base_chain=chain, fixture_json=fixture)
@@ -238,7 +238,7 @@ def test_window_fraction_is_one_outside_rolls(tmp_path_factory) -> None:
             frac = _fraction(fd)
             assert set(frac) == periods, (alt, st.solve_name)
             assert all(v == 1.0 for v in frac.values()), (alt, st.solve_name, frac)
-        if alt == "c12_one_stoch":
+        if alt == "co2roll_one_stoch":
             assert any("_" in d for d in frac), "no stochastic branch periods in the fixture"
 
 
@@ -292,7 +292,7 @@ def test_nested_sub_solves_fraction(tmp_path_factory, monkeypatch) -> None:
              "invest_solveSequence_5weeks", "invest_allYears_5weeks", "fullYear", "dispatch_fullYear_roll",
              "storage_fullYear_6h", "invest_oneYear4Times_5weeks", "bind_battery_forward",
              "invest_twoYears4Times_5weeks", "unlimited_investment"]
-    _run_until_stop(tmp_path_factory, "c12_nested", [
+    _run_until_stop(tmp_path_factory, "co2roll_nested", [
         ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", b64(36.0, "float")],
         ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", b64(24.0, "float")]], chain)
     kinds = set()
@@ -313,7 +313,7 @@ def test_stochastic_rolls_fraction(tmp_path_factory, monkeypatch) -> None:
     """Stochastic rolling (``1_week_rolling_wind``): every roll's fraction is its window hours over the
     complete 168 h, the same for the anchor period and each forecast branch period."""
     seen = _record_builds(monkeypatch, 6)
-    _run_until_stop(tmp_path_factory, "c12_stoch_roll", [], _stoch_chain(), FIX / "stochastics.json")
+    _run_until_stop(tmp_path_factory, "co2roll_stoch_roll", [], _stoch_chain(), FIX / "stochastics.json")
     assert len(seen) == 6
     for name, hours, share, frac in seen:
         assert len(frac) > 1, (name, frac)  # anchor + branch periods
