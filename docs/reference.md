@@ -31,7 +31,7 @@ FlexTool has two different kinds of time varying parameters. The first one repre
 
 The second time varying dimension is `period`, which is typically used to depict assumptions about the future. One model can include multiple `solves` that the model will solve in sequence (to allow multi-stage modelling). Each solve can include multiple `periods` (so that the user can change parameter values for different parts of the future).
 
-A parameter of particular type can be either constant/time-varying or constant/period-based. For example `inflow` is either a constant or time-varying, but it cannot be period-based.
+A parameter of particular type can be either constant/time-varying or constant/period-based. For example `inflow` is either a constant or time-varying, but it cannot be period-based (a period-keyed `inflow` is rejected; use `annual_flow` for demand that varies by period).
 
 **Recommendation — name the Map index for parameters that accept both `period` and `time`.** A few parameters accept *either* a period map or a time series (for example the flowGroup `min_instant_flow` / `max_instant_flow` limits, which accept "Constant, period, time or period+time"). Period and time Maps look structurally identical in Spine Toolbox — both are 1-dimensional Maps — so FlexTool tells them apart from the Map's `index_name`. Set it explicitly to **`period`** or **`time`** when authoring such a Map. If you leave the default (Spine stores it as `x`), FlexTool falls back to inspecting the Map's index *values* and matching them against the model's period and timestep names to guess the intended axis; this works when the keys clearly belong to one set, but is ambiguous if they don't, and an ambiguous Map is dropped (the limit is silently not applied). Setting `index_name` removes the guesswork. (Parameters that accept only one of the two — e.g. `inflow` is time-only — are never ambiguous and need no `index_name`.)
 
@@ -167,7 +167,7 @@ Input data is set with the following parameters:
 - `penalty_down` - [CUR/MWh] Penalty cost for excess energy (increasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, Period or Time.
 - `virtual_unitsize` - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.
 - `self_discharge_loss` - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
-- `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.
+- `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant, period, time or period+time.
 - `invest_forced` - Used by the investment planner to force a specific investment volume in a given period (overrides `invest_max_period` / `invest_min_period` for that entry).
 - `constraint_state_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the storage state variable on the left side of a user-defined `constraint`.
 - `constraint_invested_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the current period's new-build storage capacity `v_invest[node, d]` on the left side of a user-defined `constraint`. Not multiplied by unitsize.
@@ -241,16 +241,17 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 - Capacity: `existing`, the maximum sum of outputs flows, (and the investment and retirement parameters below). Constant or period.
 - Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `min_uptime`, `min_downtime`
+	- `efficiency` - [factor] Efficiency of the unit. Constant, period or time.
 	- `min_uptime` - [hours] Minimum time the unit must stay online after starting up. Requires `minimum_time_method` set to *min_uptime* or *both*. The constraint uses a backward-looking formulation that accounts for variable timestep durations. In rolling window models, the solve horizon overlap should be at least as long as the longest `min_uptime`. Constant.
 	- `min_downtime` - [hours] Minimum time the unit must stay offline after shutting down. Requires `minimum_time_method` set to *min_downtime* or *both*. Same considerations as `min_uptime`. Constant.
-	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time. Applied once per unit, for all timesteps:
+	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant, period or time. Applied once per unit, for all timesteps:
   
       - the sum of the unit's output flows >= min_load * online capacity
       
       The output flows are the ones that define the unit's capacity: all outputs with a non-zero `conversion_flow_coeff` (for a unit with one input and one output, its single flow; for a unit without outputs, its input). Inputs never have their own minimum: a unit with several inputs can run on any mix of them (use `input_share_min` to require a share of an input). The floor is not scaled by `availability`, so a unit whose availability falls below `min_load` cannot be online. `capacity_min_coeff` on an output does not lower this floor; to lower or switch off the minimum load, lower `min_load` (0 switches it off). Downward reserve (and upward reserve at an input node, i.e. reduced consumption) offered by the unit cannot take its outputs below this floor (see [Reserves](#reserves)).
 
 
-  - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time.
+  - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant, period, time or period+time.
 - Economic: `startup_cost`, `fixed_cost` (fuel cost comes through the use of fuel commodities and other variable costs are defined for flows between unit and node, see below)
 
 ### Investment parameters for capacity expansion
@@ -340,7 +341,7 @@ Note that in the case of unit--outputNode the `conversion_flow_coeff` affects *a
 
 ### Units constrained by profiles
 
-Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` entity with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile` entity is given a `profile` time series (or it can also be a constant). One needs to use `node__profile`, `unit__node__profile` or `connection__profile` to apply the profile to specific energy flow (or storage state in the case of `node__profile`).
+Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` entity with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile` entity is given a `profile` time series (or it can also be a constant, or a map keyed by period, which applies to all timesteps of that period, or by period and time). One needs to use `node__profile`, `unit__node__profile` or `connection__profile` to apply the profile to specific energy flow (or storage state in the case of `node__profile`).
 
 ## Connections
 
@@ -360,7 +361,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 ### Main data items for connections
 
 - `existing` - [MW] Existing capacity. Constant or period.
-- `efficiency` - [factor, typically between 0-1] Efficiency of a connection. Constant or time.
+- `efficiency` - [factor, typically between 0-1] Efficiency of a connection. Constant, period or time.
 - `delay` - [hours] Not yet applied to connections (planned). A connection `delay` is ignored: the connection is modelled exactly as if no delay were set (the flow arrives in the same time step) and the model prints a warning naming the connection. To model a delayed flow between two nodes, use a unit with `delay` instead.
 - `startup_cost` - [CUR/MW] Cost of starting up one MW of virtual capacity (used when `startup_method` activates online variables on the connection).
 - `reactance` - [p.u.] Per-unit reactance of the transmission line. Used for DC power flow when the enclosing `group__node` has `transfer_method = dc_power_flow_with_angles`.
@@ -374,7 +375,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 - other investment parameters: `invest_max_total`, `invest_max_period`, `invest_min_total`, `invest_min_period`, `salvage_value`
 - `is_DC` - A flag whether the connection is DC (the flow will not be counted as synchronous if there is a *non_synchronous_limit*). Default false.
 - `virtual_unitsize` - [MW] Size of single connection - used for integer (lumped) investments.
-- `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time.
+- `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant, period, time or period+time.
 
 ### Investment parameters for connections
 

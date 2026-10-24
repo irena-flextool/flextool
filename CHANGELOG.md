@@ -18,7 +18,9 @@
 
 - **A constant `cumulative_max_capacity` or `invest_max_period` no longer
   blocks investment.** A unit, connection or node with `invest_method`
-  `cumulative_limits` (or `invest_period`) and a single value for
+  `cumulative_limits`, or an `invest_method` with per-period limits
+  (`invest_period`, `invest_period_total`, `invest_retire_period`,
+  `invest_retire_period_total`), and a single value for
   `cumulative_max_capacity` (or `invest_max_period`) now gets that limit in
   every period, the same as the equivalent period map. Before, the single
   value was ignored when the model computed the maximum capacity, so the
