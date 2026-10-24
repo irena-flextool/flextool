@@ -129,6 +129,46 @@ class InMemoryReader:
             return set()
         return {tuple(self.parameter_shape_info(entity_class, parameter_name))}
 
+    def _entity_columns(self, entity_class: str) -> list[str]:
+        try:
+            cols = list(self.entities(entity_class).columns)
+        except KeyError:
+            cols = []
+        return cols or ["name"]
+
+    def parameter_entity_label_paths(self, entity_class: str, parameter_name: str,
+                                     ) -> "dict[tuple[str, ...], tuple[str | None, ...]]":
+        """Mirror of :meth:`SpineDbReader.parameter_entity_label_paths`: per entity, the names of the index
+        columns its rows populate (non-null), in column order; the deepest row's when they differ."""
+        df = self.parameter(entity_class, parameter_name)
+        ent_cols = [c for c in self._entity_columns(entity_class) if c in df.columns]
+        idx_cols = [c for c in df.columns if c not in ent_cols and c != "value"]
+        out: dict[tuple[str, ...], tuple[str | None, ...]] = {}
+        for row in df.select(ent_cols + idx_cols).iter_rows(named=True):
+            ent = tuple(str(row[c]) for c in ent_cols)
+            path = tuple(c for c in idx_cols if row[c] is not None)
+            if len(path) >= len(out.get(ent, ())):
+                out[ent] = path
+        return out
+
+    def without_entities(self, entity_class: str, parameter_name: str,
+                         entities) -> "InMemoryReader":
+        """Mirror of :meth:`SpineDbReader.without_entities`: a copy whose ``(entity_class, parameter_name)``
+        frame lacks the rows of ``entities`` (class-dim value tuples).  Index columns that only those rows
+        populated are dropped, as a database without those values would not have them."""
+        df = self.parameter(entity_class, parameter_name)
+        ent_cols = [c for c in self._entity_columns(entity_class) if c in df.columns]
+        drop = pl.DataFrame([list(e) for e in sorted(entities)], schema=ent_cols, orient="row")
+        kept = (df.with_row_index("__row")
+                .join(df.select(pl.col(c).cast(pl.Utf8) for c in ent_cols).with_row_index("__row")
+                      .join(drop, on=ent_cols, how="semi").select("__row"), on="__row", how="anti")
+                .drop("__row"))
+        empty = [c for c in kept.columns
+                 if c not in ent_cols and c != "value" and kept.get_column(c).null_count() == kept.height]
+        params = dict(self._parameters)
+        params[(entity_class, parameter_name)] = kept.drop(empty)
+        return InMemoryReader(self._entities, params, self._defaults)
+
     def parameter_shape_variants(self, entity_class: str,
                                   parameter_name: str,
                                   ) -> "set[tuple[str, ...]]":

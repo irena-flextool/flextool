@@ -55,6 +55,7 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
+from flextool.engine.input._param_shapes import parameter_entity_values
 from flextool.engine.preprocess._reserve_methods import RESERVE_METHODS_BY_PARTITION
 
 
@@ -1171,17 +1172,20 @@ def process_online_integer(source: "InputSource") -> pl.DataFrame:
 
 
 def process_minload(source: "InputSource") -> pl.DataFrame:
-    """Units with ``min_load > 0``.  Schema: ``[p]``.
+    """Units with ``min_load > 0`` (anywhere in their value).  Schema: ``[p]``, one row per unit.
 
     ``min_load`` defaults to 0.0 (per §5.3) — entities with the default
-    are filtered out.
+    are filtered out.  A period / time map gives one row per index, a
+    stochastic-time value its folded values (``parameter_entity_values``),
+    so the units are de-duplicated.
     """
-    df = _try_param(source, "unit", "min_load")
+    df = parameter_entity_values(source, "unit", "min_load")
     if df is None:
         return _empty({"p": pl.Utf8})
     return (df.lazy()
               .filter(pl.col("value") > 0)
               .select(alias_to_axis("name", "p"))
+              .unique()
               .sort("p")
               .collect())
 

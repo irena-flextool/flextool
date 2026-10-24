@@ -68,9 +68,19 @@ periods (from ``period__branch``, restricted to the solve's in-use periods), unl
 authors a row of its own for that entity: a period map ``{anchor: v}`` then gives the branch periods
 the same rows as the scalar ``v``.  The step is active only inside ``load_flextool`` (which arms the
 pairs when it reads the DB); a direct call outside it returns the authored periods only.
+
+Stochastic time
+---------------
+
+A stochastic-time value is a three-level map ``branch → analysis_time → time`` (labelled, or with Spine's
+silent ``x`` labels).  For the parameters of :data:`STOCHASTIC_TIME_PARAMS` the resolver takes the entities
+authoring one out of its view (the period / time classifier never sees them) and :func:`broadcast_to_period_time`
+gives them the values the solve's emit folded from ``pbt_*`` onto its ``(d, t)``; every other entity is read as
+before.  The emit frames are armed by ``load_flextool`` (:func:`activate_stochastic_time_source`).
 """
 from __future__ import annotations
 
+import contextvars
 import dataclasses
 import logging
 from dataclasses import dataclass
@@ -327,9 +337,8 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
     # Balance slack penalties.  Cascade: pbt → pt → pd → p → class default (write_pdtNode).  Rank 3
-    # (stochastic time: branch, analysis_time, time) is not a resolver shape: the reader
-    # (_arithmetic._penalty_param_from_source) detects it with parameter_map_depth and keeps the emit
-    # seed, whose pbt fold produces it.
+    # (stochastic time: branch, analysis_time, time) is not a resolver shape: an entity authoring it is
+    # read from the solve's emit fold (STOCHASTIC_TIME_PARAMS).
     ("node", "penalty_up"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
@@ -475,6 +484,59 @@ PERIOD_TIME_PARAMS: "frozenset[tuple[str, str]]" = frozenset(
 
 
 # ---------------------------------------------------------------------------
+# STOCHASTIC_TIME_PARAMS — period/time parameters that also take a stochastic-time map
+# ---------------------------------------------------------------------------
+#
+# The PERIOD_TIME_PARAMS keys whose schema type list has map rank 3 (stochastic time: branch,
+# analysis_time, time; ``spinedb_schema.json`` ``parameter_types``, docs/reference.md "stochastic time").
+# An entity authoring such a map gets its values from the per-solve emit, which folds ``pbt_*`` onto the
+# solve's (d, t) (emit ``_pdt_params`` PdtLookup / ``_reserve_sets._resolve_pdtReserve``).  Value: (emit
+# provider key, emit entity columns in class-dim order).  Pinned against the schema and the pbt specs by
+# tests/engine/test_param_shapes_stochastic_time.py.
+#
+# Emit domain vs the DB-direct consumers' domain (an entity outside the emit domain has no folded rows, so
+# the reader warns and the entity gets no value; the domain must cover every entity a consumer reads):
+#   node.availability            pdtNode over node__TimeParam_in_use: nodeState nodes; consumer: the
+#                                storage-state rows of nodeState nodes                      covered
+#   node.penalty_up / _down      pdtNode: balance nodes; consumer: the balance-node grid      covered
+#   unit.availability / efficiency
+#                                pdtProcess over process_TimeParam_in_use: required for every process;
+#                                consumers: all processes                                     covered
+#   unit.min_load                pdtProcess: min_load_efficiency units and every online unit
+#                                (emit ``_arc_unions._derive_process_time_param_in_use``); consumers:
+#                                the minFlow_minload floor and process_minload of online units, the
+#                                min_load_efficiency section                                  covered
+#   unit__inputNode / unit__outputNode.other_operational_cost
+#                                pdtProcess_source / _sink: required on every arc; consumer: every arc
+#                                                                                             covered
+#   reserve__upDown__group.reservation
+#                                pdtReserve_upDown_group: every reserve__upDown__group row; consumer:
+#                                the same rows                                                covered
+# Connection parameters have no rank 3 in the schema and stay out (a labelled rank-3 connection value keeps
+# the classifier's "not a valid axis" error).
+STOCHASTIC_TIME_PARAMS: "dict[tuple[str, str], tuple[str, tuple[str, ...]]]" = {
+    ("node", "availability"): ("solve_data/pdtNode", ("node",)),
+    ("node", "penalty_up"): ("solve_data/pdtNode", ("node",)),
+    ("node", "penalty_down"): ("solve_data/pdtNode", ("node",)),
+    ("unit", "availability"): ("solve_data/pdtProcess", ("process",)),
+    ("unit", "efficiency"): ("solve_data/pdtProcess", ("process",)),
+    ("unit", "min_load"): ("solve_data/pdtProcess", ("process",)),
+    ("unit__inputNode", "other_operational_cost"): ("solve_data/pdtProcess_source", ("process", "source")),
+    ("unit__outputNode", "other_operational_cost"): ("solve_data/pdtProcess_sink", ("process", "sink")),
+    ("reserve__upDown__group", "reservation"): ("solve_data/pdtReserve_upDown_group",
+                                                ("reserve", "upDown", "group")),
+}
+
+# Accepted index_name per level of a stochastic-time map (a silent ``x`` / empty label is accepted at any
+# level); any other label, or a deeper map, is an authoring error.
+_STOCHASTIC_TIME_LABELS: "tuple[frozenset[str], ...]" = (
+    frozenset(("branch",)),
+    frozenset(("analysis_time", "time_start")),
+    frozenset(("time", "t")),
+)
+
+
+# ---------------------------------------------------------------------------
 # ParamAxes — derived (map_levels, leaf) view per :class:`Shape`
 # ---------------------------------------------------------------------------
 
@@ -559,6 +621,12 @@ class ResolvedShape:
       (or ``None`` for scalar / period-only shapes).  Always ``"t"``
       when present (per ``SpineDbReader._discover_index_cols`` which
       maps "time" → "t").
+    * :attr:`stochastic_entities` — the entities (class-dim value tuples)
+      authoring a stochastic-time map; :attr:`frame` and :attr:`shape`
+      describe the other entities only.  Their values come from the
+      solve's emit (:func:`broadcast_to_period_time`).
+    * :attr:`stochastic_key` — the ``(entity_class, parameter_name)`` of
+      those entities (a :data:`STOCHASTIC_TIME_PARAMS` key), or ``None``.
     """
 
     shape: Shape
@@ -566,6 +634,8 @@ class ResolvedShape:
     entity_dim_columns: tuple[str, ...]
     period_index_column: "str | None"
     time_index_column: "str | None"
+    stochastic_entities: "frozenset[tuple[str, ...]]" = frozenset()
+    stochastic_key: "tuple[str, str] | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -924,15 +994,220 @@ def parameter_index_label_paths(
     return {tuple(labels)}
 
 
-def parameter_map_depth(paths: "set[tuple[str | None, ...]]") -> int:
-    """Deepest Map nesting of :func:`parameter_index_label_paths` output (0 = scalars only)."""
-    return max((len(p) for p in paths), default=0)
-
-
 def has_silent_labels(paths: "set[tuple[str | None, ...]]") -> bool:
     """Whether some Map level carries Spine's silent default label (``x`` / empty / None), whose axis the
     resolver may decide by probing the solve's periods and timesteps."""
     return any(_normalise_label(lbl) is None for p in paths for lbl in p)
+
+
+# ---------------------------------------------------------------------------
+# Stochastic-time entities (STOCHASTIC_TIME_PARAMS)
+# ---------------------------------------------------------------------------
+
+
+def _run_memo(source: "InputSource", key: tuple, factory):
+    """``factory()`` memoised on the run's reader when it has ``run_memo`` (data-only values)."""
+    memo = getattr(source, "run_memo", None)
+    return memo(key, factory) if memo is not None else factory()
+
+
+def stochastic_time_entities(
+    source: "InputSource",
+    entity_class: str,
+    parameter_name: str,
+) -> "frozenset[tuple[str, ...]]":
+    """The entities (class-dim value tuples) whose value of a :data:`STOCHASTIC_TIME_PARAMS` parameter is a
+    stochastic-time map, read from the raw index labels (no period / time classifier).
+
+    A depth-3 value must carry the stochastic-time labels ``branch / analysis_time / time`` (``time_start``
+    for the second level, ``t`` for the third, or Spine's silent ``x`` on any level); other labels, or a
+    deeper map, raise :class:`FlexToolConfigError` naming the entity.  Empty for other parameters and for
+    sources without ``parameter_entity_label_paths``.  Memoised on the run's reader.
+    """
+    key = (entity_class, parameter_name)
+    if key not in STOCHASTIC_TIME_PARAMS:
+        return frozenset()
+    fn = getattr(source, "parameter_entity_label_paths", None)
+    if fn is None:
+        return frozenset()
+
+    def compute() -> "frozenset[tuple[str, ...]]":
+        try:
+            paths = fn(entity_class, parameter_name)
+        except (KeyError, AttributeError):
+            return frozenset()
+        found: set[tuple[str, ...]] = set()
+        for ent, path in sorted(paths.items()):
+            if len(path) <= 2:
+                continue
+            labels = [_normalise_label(lbl) for lbl in path]
+            if len(path) > 3 or any(lbl is not None and lbl not in ok
+                                    for lbl, ok in zip(labels, _STOCHASTIC_TIME_LABELS)):
+                raise FlexToolConfigError(
+                    f"Parameter ({entity_class!r}, {parameter_name!r}) of {'/'.join(ent)!r} is a {len(path)}-level "
+                    f"map with index names {list(path)}.  A map deeper than period / time is a stochastic-time "
+                    "value: branch → analysis_time → time (or without index names).  Edit the source database.")
+            found.add(tuple(ent))
+        return frozenset(found)
+
+    return _run_memo(source, ("stochastic_time_entities", entity_class, parameter_name), compute)
+
+
+def _stochastic_view(source: "InputSource", entity_class: str, parameter_name: str,
+                     entities: "frozenset[tuple[str, ...]]") -> "InputSource":
+    """``source`` without the stochastic-time entities' values of that one parameter (memoised on the run's
+    reader: the entity set is solve-agnostic)."""
+    fn = getattr(source, "without_entities", None)
+    if fn is None:
+        raise FlexToolConfigError(
+            f"{entity_class}.{parameter_name}: the input source {type(source).__name__} reports stochastic-time "
+            "values but cannot hide them from the period / time reader (no without_entities).")
+    return _run_memo(source, ("stochastic_time_view", entity_class, parameter_name),
+                     lambda: fn(entity_class, parameter_name, sorted(entities)))
+
+
+class _StochasticTimeSource:
+    """The load's emit frames that fold ``pbt_*`` onto the solve's (d, t); one per ``load_flextool``."""
+
+    def __init__(self, provider: object) -> None:
+        self._provider = provider
+        self._folds: dict[tuple[str, str], pl.DataFrame] = {}
+
+    def fold(self, key: "tuple[str, str]") -> pl.DataFrame:
+        """``[<emit entity columns>, d, t, value]`` of parameter ``key[1]`` in its emit frame (Utf8 keys,
+        Float64 values), memoised for the load."""
+        emit_key, emit_cols = STOCHASTIC_TIME_PARAMS[key]
+        memo_key = (emit_key, key[1])
+        if memo_key not in self._folds:
+            provider = self._provider
+            if provider is None or not provider.has(emit_key):
+                raise FlexToolConfigError(
+                    f"{key[0]}.{key[1]}: stochastic-time values are read from the solve's emit frame "
+                    f"{emit_key!r}, which this load does not have.")
+            frame = provider.get(emit_key)
+            if isinstance(frame, pl.LazyFrame):
+                frame = frame.collect()
+            self._folds[memo_key] = (
+                frame.lazy()
+                .filter(pl.col("param").cast(pl.Utf8) == key[1])
+                .select(*(pl.col(c).cast(pl.Utf8) for c in emit_cols),
+                        pl.col("period").cast(pl.Utf8).alias("d"),
+                        pl.col("time").cast(pl.Utf8).alias("t"),
+                        pl.col("value").cast(pl.Float64))
+                .collect())
+        return self._folds[memo_key]
+
+
+_STOCHASTIC_TIME_SOURCE: "contextvars.ContextVar[_StochasticTimeSource | None]" = contextvars.ContextVar(
+    "flextool_stochastic_time_source", default=None)
+
+
+def activate_stochastic_time_source(provider: object) -> "contextvars.Token":
+    """Make ``provider``'s emit frames the source of stochastic-time values for the load being built; returns
+    the token for :func:`deactivate_stochastic_time_source`.  ``load_flextool`` arms it when it reads the DB
+    (the emit frames are in the provider before any DB-direct reader runs)."""
+    return _STOCHASTIC_TIME_SOURCE.set(_StochasticTimeSource(provider))
+
+
+def deactivate_stochastic_time_source(token: "contextvars.Token") -> None:
+    """Restore the stochastic-time source to what it was before the matching activation."""
+    _STOCHASTIC_TIME_SOURCE.reset(token)
+
+
+_STOCHASTIC_NO_FOLD_WARNED: "set[tuple[str, str, tuple[str, ...]]]" = set()
+
+
+def _warn_entities_without_fold(key: "tuple[str, str]", entities, covered: pl.DataFrame) -> None:
+    """One WARNING per (class, parameter, entity) whose stochastic-time value has no folded row (the entity
+    is outside the emit's domain, so the solve does not use the parameter for it)."""
+    have = {tuple(r) for r in covered.unique().iter_rows()}
+    missing = [e for e in sorted(entities) if tuple(e) not in have
+               and (key[0], key[1], tuple(e)) not in _STOCHASTIC_NO_FOLD_WARNED]
+    if not missing:
+        return
+    for e in missing:
+        _STOCHASTIC_NO_FOLD_WARNED.add((key[0], key[1], tuple(e)))
+    _LOGGER.warning(
+        "%s.%s: the stochastic-time value of %s has no folded value in this solve (outside the solve's use of "
+        "the parameter); it is not applied.", key[0], key[1], ", ".join("/".join(e) for e in missing))
+
+
+def stochastic_time_values(
+    key: "tuple[str, str]",
+    entities: "frozenset[tuple[str, ...]]",
+    entity_dim_columns: "tuple[str, ...] | list[str]",
+) -> pl.DataFrame:
+    """``[*entity_dim_columns, d, t, value]``: the solve's folded stochastic-time values of ``entities``.
+
+        value[e, d, t] = the branch series of e for the solve's analysis time    d a branch period of e's
+                                                                                 include_stochastics group
+                       = the emit's fallback (class default)                     otherwise
+        ∀ (d, t) of the solve's emit (steps_in_use)
+
+    This is what the per-solve emit computes from ``pbt_*`` (and what the CSV seeds carry when the labels are
+    silent).  Raises :class:`FlexToolConfigError` outside ``load_flextool`` (no active emit) and when the emit
+    frame is missing.  Rows sorted by the keys; Utf8 keys, Float64 values.
+    """
+    scope = _STOCHASTIC_TIME_SOURCE.get()
+    if scope is None:
+        raise FlexToolConfigError(
+            f"{key[0]}.{key[1]}: stochastic-time values of "
+            f"{', '.join('/'.join(e) for e in sorted(entities))} are folded per solve; they can only be read "
+            "during load_flextool.")
+    emit_cols = list(STOCHASTIC_TIME_PARAMS[key][1])
+    dim_cols = list(entity_dim_columns)
+    ents = pl.DataFrame([list(e) for e in sorted(entities)], schema={c: pl.Utf8 for c in emit_cols},
+                        orient="row")
+    return (scope.fold(key)
+            .join(ents, on=emit_cols, how="semi")
+            .rename(dict(zip(emit_cols, dim_cols)))
+            .select(*dim_cols, "d", "t", "value")
+            .sort(*dim_cols, "d", "t"))
+
+
+def parameter_has_values(source: "InputSource", entity_class: str, parameter_name: str) -> bool:
+    """Whether ``entity_class.parameter_name`` has any value (explicit, default, or a stochastic-time map):
+    the shape-agnostic presence check for readers that only test for a value."""
+    if stochastic_time_entities(source, entity_class, parameter_name):
+        return True
+    df = _try_parameter_frame(source, entity_class, parameter_name)
+    return df is not None and df.height > 0
+
+
+def parameter_entity_values(source: "InputSource", entity_class: str,
+                            parameter_name: str) -> "pl.DataFrame | None":
+    """The parameter's rows with at least the class-dim columns and ``value``; None when there are none.
+
+    Without stochastic-time entities this is ``source.parameter(...)`` (every authored or default row, as
+    before).  With them: the other entities' rows (``(dim columns, value)``) plus each stochastic entity's
+    folded values on the solve's (d, t) (:func:`stochastic_time_values`).  For readers that test values
+    entity by entity (any ``min_load > 0``, any ``reservation ≠ 0``) and not cell by cell.
+    """
+    ents = stochastic_time_entities(source, entity_class, parameter_name)
+    if not ents:
+        try:
+            df = source.parameter(entity_class, parameter_name)
+        except KeyError:
+            return None
+        return df if df.height > 0 else None
+    key = (entity_class, parameter_name)
+    dim_cols = _entity_dim_columns_for_frame(pl.DataFrame(), source, entity_class)
+    view = _stochastic_view(source, entity_class, parameter_name, ents)
+    parts: list[pl.DataFrame] = []
+    try:
+        direct = view.parameter(entity_class, parameter_name)
+    except KeyError:
+        direct = None
+    if direct is not None and direct.height > 0:
+        drop = pl.DataFrame([list(e) for e in sorted(ents)], schema={c: pl.Utf8 for c in dim_cols}, orient="row")
+        parts.append(direct.select(*(pl.col(c).cast(pl.Utf8) for c in dim_cols),
+                                   pl.col("value").cast(pl.Float64, strict=False))
+                     .join(drop, on=dim_cols, how="anti"))
+    folded = stochastic_time_values(key, ents, dim_cols)
+    _warn_entities_without_fold(key, ents, folded.select(dim_cols))
+    parts.append(folded.select(*dim_cols, "value"))
+    out = pl.concat(parts)
+    return out if out.height > 0 else None
 
 
 def _try_parameter_frame(
@@ -1198,6 +1473,11 @@ def resolve_param_shape(
     data) stays active — :func:`flextool.engine.model.core.build_flextool`
     then skips the CO2 cost term with a warning.
 
+    For a :data:`STOCHASTIC_TIME_PARAMS` parameter, the entities authoring a stochastic-time map
+    (:func:`stochastic_time_entities`) are left out of the classification: the result describes the
+    other entities (an empty ``SCALAR`` frame when there are none) and carries the stochastic ones in
+    :attr:`ResolvedShape.stochastic_entities`.
+
     Returns ``None`` only when the parameter has no explicit rows AND
     no scalar default to broadcast (the source plugin's None-skip per
     §4.5).  Otherwise returns a :class:`ResolvedShape` carrying
@@ -1211,6 +1491,24 @@ def resolve_param_shape(
             f"resolve_param_shape: parameter {key!r} is not in "
             f"PARAM_ALLOWED_SHAPES.  Add an explicit allow-list entry "
             f"to flextool/engine/input/_param_shapes.py.")
+
+    stochastic = stochastic_time_entities(source, entity_class, parameter_name)
+    if stochastic:
+        # Stochastic-time entities come from the solve's emit; the other entities are resolved on a view
+        # without them, so the period / time classifier never sees a depth-3 value.
+        view = _stochastic_view(source, entity_class, parameter_name, stochastic)
+        view_df = _try_parameter_frame(view, entity_class, parameter_name)
+        if view_df is None or view_df.height == 0:
+            ent_cols = _entity_dim_columns_for_frame(pl.DataFrame(), source, entity_class)
+            resolved = ResolvedShape(
+                shape=Shape.SCALAR,
+                frame=pl.DataFrame(schema={**{c: pl.Utf8 for c in ent_cols}, "value": pl.Float64}),
+                entity_dim_columns=tuple(ent_cols), period_index_column=None, time_index_column=None)
+        else:
+            resolved = resolve_param_shape(view, entity_class, parameter_name, period_filter=period_filter)
+            if resolved is None:
+                return None
+        return dataclasses.replace(resolved, stochastic_entities=stochastic, stochastic_key=key)
 
     df = _try_parameter_frame(source, entity_class, parameter_name)
     if df is None or df.height == 0:
@@ -1529,11 +1827,23 @@ def broadcast_to_period_time(
     (preprocessing emits zero-defaults but downstream gates filter
     them out).
 
+    Stochastic-time entities (:attr:`ResolvedShape.stochastic_entities`) take the solve's folded values:
+
+        out[k, d, t] = the result above for the other entities, on the solve's (d, t)   k not stochastic
+                     = stochastic_time_values(...)[k, d, t]                             k stochastic
+        ∀ (d, t) ∈ period_filter pairs;  filter_zero applies to both parts
+
+    and the Param is then always ``(*entity_keys, "d", "t")`` (eager, sorted by its keys).  Without
+    stochastic entities nothing changes.
+
     Returns ``None`` when:
 
-    * *resolved* is ``None`` or its frame is empty,
+    * *resolved* is ``None`` or its frame is empty (and it has no stochastic entities),
     * a required ``period_filter`` is missing or empty.
     """
+    if resolved is not None and resolved.stochastic_entities:
+        return _broadcast_with_stochastic_entities(resolved, entity_dim_aliases, period_filter,
+                                                   filter_zero=filter_zero)
     if resolved is None or resolved.frame is None:
         return None
     resolved = _with_branch_periods(resolved)
@@ -1728,6 +2038,52 @@ def broadcast_to_period_time(
             f"broadcast_to_period_time: unhandled shape {shape!r}")
 
 
+def _broadcast_with_stochastic_entities(
+    resolved: ResolvedShape,
+    entity_dim_aliases: "str | dict[str, str]",
+    period_filter: "pl.DataFrame | None",
+    *,
+    filter_zero: bool,
+) -> "Param | None":
+    """:func:`broadcast_to_period_time` for a resolved shape with stochastic-time entities (see there)."""
+    if period_filter is None or period_filter.height == 0 or not {"d", "t"}.issubset(period_filter.columns):
+        return None
+    key = resolved.stochastic_key
+    dim_cols = list(resolved.entity_dim_columns)
+    _rename, target = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, "broadcast_to_period_time")
+    keys = list(target)
+    pairs = period_filter.select("d", "t").unique(maintain_order=True)
+    pairs_utf8 = pairs.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+    stochastic = pl.DataFrame([list(e) for e in sorted(resolved.stochastic_entities)],
+                              schema={c: pl.Utf8 for c in keys}, orient="row")
+    parts: list[pl.DataFrame] = []
+    direct = broadcast_to_period_time(
+        dataclasses.replace(resolved, stochastic_entities=frozenset(), stochastic_key=None),
+        entity_dim_aliases, period_filter, filter_zero=filter_zero)
+    if direct is not None:
+        parts.append(promote_param_to_dt(direct, pairs)
+                     .select(*(pl.col(c).cast(pl.Utf8) for c in (*keys, "d", "t")),
+                             pl.col("value").cast(pl.Float64))
+                     .join(stochastic.lazy(), on=keys, how="anti")
+                     .collect())
+    folded = (stochastic_time_values(key, resolved.stochastic_entities, dim_cols)
+              .rename(dict(zip(dim_cols, keys)))
+              .join(pairs_utf8, on=["d", "t"], how="semi"))
+    _warn_entities_without_fold(key, resolved.stochastic_entities, folded.select(keys))
+    folded = folded.filter(pl.col("value").is_not_null())
+    if filter_zero:
+        folded = folded.filter(pl.col("value") != 0.0)
+    parts.append(folded)
+    out = pl.concat(parts)
+    enums = get_global_axis_enums()
+    if enums is not None:
+        out = cast_frame_axes(out, enums)
+    out = out.sort(*keys, "d", "t")
+    if out.height == 0:
+        return None
+    return Param((*keys, "d", "t"), out)
+
+
 def broadcast_to_period(
     resolved: "ResolvedShape | None",
     entity_dim_aliases: "str | dict[str, str]",
@@ -1769,8 +2125,13 @@ def broadcast_to_period(
     branch periods (module docstring, "Stochastic branch periods").
 
     Other shapes raise :class:`FlexToolConfigError` (the resolver should
-    have rejected them already; this is a defensive guard).
+    have rejected them already; this is a defensive guard), as do
+    stochastic-time entities (no period-only parameter takes them).
     """
+    if resolved is not None and resolved.stochastic_entities:
+        raise FlexToolConfigError(
+            f"broadcast_to_period: {resolved.stochastic_key} has stochastic-time values, which have a time "
+            "axis; read them with broadcast_to_period_time.")
     if resolved is None or resolved.frame is None:
         return None
     resolved = _with_branch_periods(resolved)

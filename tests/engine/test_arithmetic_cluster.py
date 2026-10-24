@@ -640,31 +640,64 @@ def test_p_penalty_up_mixed_shapes_keep_scalars_and_default():
     assert got == want
 
 
-def test_p_penalty_up_stochastic_time_keeps_seed():
-    """A rank-3 (branch, analysis_time, time) penalty is not a resolver shape: the producer returns None
-    and ``apply_penalty_params`` leaves the emit seed in place."""
-    src = InMemoryReader(
-        entities={"node": pl.DataFrame({"name": ["n_a"]})},
-        parameters={
-            ("node", "penalty_up"): pl.DataFrame({
-                "name": ["n_a"], "branch": ["b1"], "analysis_time": ["t1"], "t": ["t1"], "value": [5.0],
-            }),
-        },
+def _stochastic_penalty_source() -> InMemoryReader:
+    """``n_a`` authors a rank-3 (branch, analysis_time, time) penalty, ``n_b`` a period map, ``n_c`` nothing."""
+    frame = pl.concat([
+        pl.DataFrame({"name": ["n_a"], "branch": ["b1"], "analysis_time": ["t1"], "t": ["t1"], "value": [5.0]}),
+        pl.DataFrame({"name": ["n_b"], "period": ["d1"], "value": [200.0]}),
+    ], how="diagonal_relaxed")
+    return InMemoryReader(
+        entities={"node": pl.DataFrame({"name": ["n_a", "n_b", "n_c"]})},
+        parameters={("node", "penalty_up"): frame},
         defaults={("node", "penalty_up"): 10000.0},
     )
-    nb = pl.DataFrame({"n": ["n_a"]})
-    assert ar.p_penalty_up_from_source(src, nb, _penalty_dt()) is None
 
-    class _Data:
-        nodeBalance = nb
-        nodeBalancePeriod = None
-        p_penalty_up = "seed"
-        p_penalty_down = "seed_down"
 
-    data = _Data()
-    ar.apply_penalty_params(data, src, _penalty_dt())
-    assert data.p_penalty_up == "seed"
-    assert data.p_penalty_down == "seed_down"   # unknown parameter on this source: seed kept
+def test_p_penalty_up_stochastic_time_needs_solve_emit():
+    """A rank-3 penalty is read from the solve's emit fold; outside a load (no emit) that is an error, not a
+    silent fallback."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    nb = pl.DataFrame({"n": ["n_a", "n_b", "n_c"]})
+    with pytest.raises(FlexToolConfigError, match="only be read during load_flextool"):
+        ar.p_penalty_up_from_source(_stochastic_penalty_source(), nb, _penalty_dt())
+
+
+def test_p_penalty_up_stochastic_time_merges_fold():
+    """With the solve's emit active: the rank-3 node gets its folded values, the other nodes their own value or
+    the default (c9 kept the seed for every node, hiding ``n_b``'s map)."""
+    from flextool.engine.input._param_shapes import (
+        activate_stochastic_time_source,
+        deactivate_stochastic_time_source,
+    )
+
+    class _Provider:
+        def __init__(self, frames):
+            self.frames = frames
+
+        def has(self, name):
+            return name in self.frames
+
+        def get(self, name):
+            return self.frames[name]
+
+    folded = {(d, t): 6000.0 + i for i, (d, t) in enumerate(_penalty_dt().iter_rows())}
+    pdt_node = pl.DataFrame([("n_a", "penalty_up", d, t, repr(v)) for (d, t), v in folded.items()],
+                            schema=["node", "param", "period", "time", "value"], orient="row")
+    nb = pl.DataFrame({"n": ["n_a", "n_b", "n_c"]})
+    token = activate_stochastic_time_source(_Provider({"solve_data/pdtNode": pdt_node}))
+    try:
+        p = ar.p_penalty_up_from_source(_stochastic_penalty_source(), nb, _penalty_dt())
+    finally:
+        deactivate_stochastic_time_source(token)
+    got = {(n, d, t): v for n, d, t, v in p.frame.select(
+        [pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t")] + [pl.col("value")]).iter_rows()}
+    want = {}
+    for d, t in _penalty_dt().iter_rows():
+        want[("n_a", d, t)] = folded[(d, t)]
+        want[("n_b", d, t)] = 200.0 if d == "d1" else 10000.0
+        want[("n_c", d, t)] = 10000.0
+    assert got == want
 
 
 _GRID = pl.DataFrame({"n": ["a", "a", "a", "b", "b", "b"],

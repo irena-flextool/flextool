@@ -781,14 +781,23 @@ def _derive_process_period_param_in_use(
 
 def _derive_process_time_param_in_use(
     processes: list[str], p_with_min_load: frozenset[str],
+    process_online: frozenset[str] = frozenset(),
 ) -> list[tuple[str, str]]:
+    """The ``(process, param)`` pairs ``pdtProcess`` resolves on every step.
+
+    ``min_load`` is in use for the ``min_load_efficiency`` units (the conversion curve) and for every online
+    unit (the ``minFlow_minload`` floor applies to any unit with an online variable, docs/reference.md);
+    ``efficiency_at_min_load`` for the ``min_load_efficiency`` units only.  The DB-direct readers take the
+    values of a stochastic-time ``min_load`` from these rows (``_param_shapes.STOCHASTIC_TIME_PARAMS``).
+    """
     rows: list[tuple[str, str]] = []
     for p in processes:
         for param in _PROCESS_TIME_PARAM:
             if param in _PROCESS_TIME_PARAM_REQUIRED:
                 rows.append((p, param))
-            elif (p in p_with_min_load
-                  and param in ("min_load", "efficiency_at_min_load")):
+            elif param == "min_load" and (p in p_with_min_load or p in process_online):
+                rows.append((p, param))
+            elif param == "efficiency_at_min_load" and p in p_with_min_load:
                 rows.append((p, param))
     return list(dict.fromkeys(rows))
 
@@ -882,7 +891,7 @@ def emit_param_in_use_sets(input_dir: Path, solve_data_dir: Path,
           ))
     _emit(provider, "solve_data/process_TimeParam_in_use.csv",
           _rows_to_frame_2(
-              _derive_process_time_param_in_use(processes, p_with_min_load),
+              _derive_process_time_param_in_use(processes, p_with_min_load, process_online),
               ("process", "param"),
           ))
     _emit(provider, "solve_data/process_source_sourceSinkTimeParam_in_use.csv",

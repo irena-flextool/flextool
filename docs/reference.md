@@ -331,7 +331,7 @@ Typical use patterns for the coefficients:
 | an input must supply at least 30 % of the unit's input while it runs | 1 | 1 (default) | input_share_min 0.3 on that input |
 
 Note that in the case of unit--outputNode the `conversion_flow_coeff` affects *after* the capacity and the other unit constraints — it only shows up in the node balance and in the efficiency equation. The capacity caps themselves are set by `capacity_max_coeff`; the floors by the unit's `min_load` (on the sum of outputs) and the optional per-output `capacity_min_coeff`.
-- `other_operational_cost` - [CUR/MWh] Other operational variable costs for energy flows. Constant, period, time or period+time. 
+- `other_operational_cost` - [CUR/MWh] Other operational variable costs for energy flows. Constant, period, time, period+time or stochastic time. 
 - `inertia_constant` - [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
 - `ramp_method` - Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).
 - `ramp_cost` - [CUR/MW] Cost of ramping the unit. Constant.
@@ -531,7 +531,7 @@ Reserve requirement is defined for groups of nodes. This means that multiple nod
 For `reserve__upDown__group` entities:
 
 - `reserve_method` - Choice of reserve method (`no_reserve`, `timeseries_only`, `dynamic_only`, `large_failure_only` or their combinations).
-- `reservation` - [MW] Amount of reserve required. Constant or time.
+- `reservation` - [MW] Amount of reserve required. Constant, period, time, period+time or stochastic time.
 - `penalty_reserve` - [CUR/MW] Penalty cost for not fulfilling the reserve requirement, per MW of shortfall and hour. Constant. Default 5000 (applied to every reserve group without a value of its own, so a reserve requirement is never free to leave unmet). The unmet part (reserve shortfall) can cover the whole requirement of every method and is always priced with this penalty: for a timeseries requirement the shortfall is at most `reservation`; for a dynamic requirement at most the sum of the participating flows' capacities × `increase_reserve_ratio`; for a large_failure requirement at most the largest failing unit's or connection's capacity × `large_failure_ratio` (summed over its flows into the group, or out of it for downward reserve) (capacity = existing plus the most that can be invested by that period; with unlimited investment `max_flow_for_unconstrained_variables` is used). A group combining methods adds these up.
 - `increase_reserve_ratio` - [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.
 - `reserve_duration` - [h] Time span over which committed reserve power must be sustainable from storage. Constant. Absent or 0 means the reserve is instantaneous-power-only (legacy behaviour); no storage-energy coupling is added.

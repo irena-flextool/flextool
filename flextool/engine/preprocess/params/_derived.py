@@ -60,6 +60,8 @@ from flextool.engine.preprocess.params._direct import _e_period_param_union
 from flextool.engine.input._solve_state import CommissioningLagError, FlexToolConfigError, LineageFilterError
 from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
+    parameter_entity_values,
+    parameter_has_values,
     promote_param_to_dt,
     resolve_param_shape,
 )
@@ -2668,6 +2670,9 @@ def _eff_param_to_pdt(source: "InputSource",
     widens it to ``(p, d, t)`` with a *narrowing* inner-join on the axis
     the source carries.
 
+    A unit authoring a stochastic-time value takes the solve's emit-folded values
+    (:func:`._param_shapes.broadcast_to_period_time`); the other units keep their own shapes.
+
     Returns ``None`` when the parameter has no usable rows (mirrors the
     old helper's ``None`` contract so callers' gating is unchanged).
     """
@@ -2711,10 +2716,11 @@ def p_slope_from_source(source: "InputSource",
     # Pull efficiency / efficiency_at_min_load / min_load from units +
     # transfer connections (efficiency lives on both unit and connection
     # though connection.efficiency may be implicit via transfer_method).
-    eff_unit = _try_param(source, "unit", "efficiency")
-    eff_conn = _try_param(source, "connection", "efficiency")
-    eff_at_min = _try_param(source, "unit", "efficiency_at_min_load")
-    minload = _try_param(source, "unit", "min_load")
+    # Presence checks only (shape-agnostic: a stochastic-time unit value is not classified here).
+    eff_unit = parameter_has_values(source, "unit", "efficiency")
+    eff_conn = parameter_has_values(source, "connection", "efficiency")
+    eff_at_min = parameter_has_values(source, "unit", "efficiency_at_min_load")
+    minload = parameter_has_values(source, "unit", "min_load")
 
     # Build a per-(p, d, t) efficiency lazyframe — union unit + connection.
     # Routed through the authoritative shape resolver so time-series
@@ -2723,11 +2729,11 @@ def p_slope_from_source(source: "InputSource",
     # to the active timeline instead of cross-joined; see
     # :func:`_eff_param_to_pdt`.
     eff_lfs: list[pl.LazyFrame] = []
-    if eff_unit is not None:
+    if eff_unit:
         e = _eff_param_to_pdt(source, "unit", "efficiency", dt, "eta")
         if e is not None:
             eff_lfs.append(e)
-    if eff_conn is not None:
+    if eff_conn:
         e = _eff_param_to_pdt(source, "connection", "efficiency", dt, "eta")
         if e is not None:
             eff_lfs.append(e)
@@ -2759,7 +2765,7 @@ def p_slope_from_source(source: "InputSource",
     #   (eta - min_load * eta_min) / ((1 - min_load) * eta * eta_min).
     # Linearisation: between (min_load, eta_min) and (1.0, eta), slope
     # of input/output (Δin/Δout) ≈ as in entity_period_calc_params.
-    if eff_at_min is not None and minload is not None:
+    if eff_at_min and minload:
         eta_min_lf = _eff_param_to_pdt(source, "unit",
                                         "efficiency_at_min_load", dt, "eta_min")
         ml_lf = _eff_param_to_pdt(source, "unit", "min_load", dt, "min_load")
@@ -4490,10 +4496,9 @@ def p_section_from_source(source: "InputSource",
     mle = (classified.lazy()
               .filter(pl.col("ct") == "min_load_efficiency")
               .select("p"))
-    eff_unit = _try_param(source, "unit", "efficiency")
-    eff_at_min = _try_param(source, "unit", "efficiency_at_min_load")
-    minload = _try_param(source, "unit", "min_load")
-    if eff_unit is None or eff_at_min is None or minload is None:
+    if not (parameter_has_values(source, "unit", "efficiency")
+            and parameter_has_values(source, "unit", "efficiency_at_min_load")
+            and parameter_has_values(source, "unit", "min_load")):
         return None
 
     eta_lf = _eff_param_to_pdt(source, "unit", "efficiency", dt, "eta")
@@ -10183,7 +10188,8 @@ def prundt_from_source(
     # full active-relationship set, inflating the v_reserve domain to
     # all (p, r, ud, n) tuples and adding all-zero columns to
     # ``process__reserve__upDown__node__dt.csv``.
-    res = _try_param(source, "reserve__upDown__group", "reservation")
+    # Entity by entity (a stochastic-time reservation contributes its folded values).
+    res = parameter_entity_values(source, "reserve__upDown__group", "reservation")
     if res is None or res.height == 0:
         return _empty_prundt()
     # Take (r, ud) pairs that have any non-zero reservation entry.

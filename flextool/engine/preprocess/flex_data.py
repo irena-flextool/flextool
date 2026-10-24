@@ -43,6 +43,10 @@ from flextool.engine.input._axis_enums import (  # substrate retained for Path B
     lit_axis,
     set_global_axis_enums,
 )
+from flextool.engine.input._param_shapes import (
+    activate_stochastic_time_source,
+    deactivate_stochastic_time_source,
+)
 from flextool.engine.preprocess.params._block_layout import BlockLayout
 from flextool.engine.preprocess.params._branch import (
     activate_branch_anchor_pairs,
@@ -4440,13 +4444,16 @@ def load_flextool(source: "Path | str | FlexInputSource",
         set_global_axis_enums(axis_enums)
 
     _branch_tok = None
+    _stoch_tok = None
     try:
         # Stochastic branch periods inherit the period-keyed input values of their anchor period:
         # arm the solve's (anchor, branch) pairs for the DB-direct readers before any of them runs
         # (_load_online already reads startup_cost), reset in the finally below.  Only DB reads use
-        # them; CSV-only loads have no reader.
+        # them; CSV-only loads have no reader.  Likewise the emit frames from which the readers take the
+        # values of entities authoring a stochastic-time map (the per-solve pbt fold).
         if db_reader is not None:
             _branch_tok = activate_branch_anchor_pairs(solve_branch_anchor_pairs(provider))
+            _stoch_tok = activate_stochastic_time_source(provider)
 
         # Reuse the recorder bound at the function entry above so the
         # sub-checkpoints (axis_enums / SpineDbReader / load_flextool
@@ -4996,6 +5003,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
     finally:
         if ctx is not None:
             ctx.deactivate()
+        if _stoch_tok is not None:
+            deactivate_stochastic_time_source(_stoch_tok)
         if _branch_tok is not None:
             deactivate_branch_anchor_pairs(_branch_tok)
         # On the success path, leave the global ContextVar set to the

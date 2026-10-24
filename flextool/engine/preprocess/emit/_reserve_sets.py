@@ -329,6 +329,10 @@ def derive_pdtReserve_upDown_group(
 
     Value column is pre-rendered with ``repr(float(v))`` for byte
     parity with the legacy emitter.
+
+    Consumer besides the seeds: the DB-direct readers take the values of entities authoring a
+    stochastic-time map from this frame (``_param_shapes.STOCHASTIC_TIME_PARAMS``), so it stays emitted
+    while that registry names it, even once the seeds are retired.
     """
     pbt = _read_pbt_reserve(
         input_dir / "pbt_reserve__upDown__group.csv", provider=provider,

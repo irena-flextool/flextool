@@ -76,7 +76,6 @@ from flextool.engine.input._param_shapes import (
     fill_default_over_grid,
     has_silent_labels,
     parameter_index_label_paths,
-    parameter_map_depth,
     resolve_param_shape,
 )
 from flextool.engine.preprocess.params._derived import (
@@ -228,21 +227,15 @@ def p_state_unitsize_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
-_PENALTY_DEFER = "stochastic time"
-
-
 def _resolved_penalty(source: "InputSource", parameter_name: str,
-                      dt: pl.DataFrame) -> "ResolvedShape | str | None":
+                      dt: pl.DataFrame) -> "ResolvedShape | None":
     """The authored ``node.<parameter_name>`` values, before the solve's ``dt`` filter.
 
-    Returns :data:`_PENALTY_DEFER` for a stochastic-time (rank 3) value, which the emit seed's pbt fold
-    produces; None when the resolver cannot classify the value (or nothing is authored and there is no
-    default).  The depth is read from the raw labels, without the period / time classifier, which raises
-    on the ``branch`` label of a stochastic-time map.  ``dt`` only serves the resolver's value-domain probe
-    of a silent-label map.
+    None when the resolver cannot classify the value (or nothing is authored and there is no default).  A
+    node authoring a stochastic-time (rank 3) value is carried in ``stochastic_entities``; its values come
+    from the solve's emit fold in :func:`broadcast_to_period_time`.  ``dt`` only serves the resolver's
+    value-domain probe of a silent-label map.
     """
-    if parameter_map_depth(parameter_index_label_paths(source, "node", parameter_name)) > 2:
-        return _PENALTY_DEFER
     return resolve_param_shape(source, "node", parameter_name, period_filter=dt)
 
 
@@ -255,6 +248,8 @@ def _penalty_param_from_source(source: "InputSource",
 
         p_penalty[n, d, t] = authored value of n at (d, t)     scalar, period, time or period × time map
                            = authored[n, anchor(d), t]         d a stochastic branch period without own row
+                           = folded value of n at (d, t)       n authors a stochastic-time map (the emit's
+                                                               pbt fold of the solve)
                            = schema default                    n has no value, or its map leaves out d / t
         ∀ n ∈ nodeBalance_df, (d, t) ∈ dt
 
@@ -264,10 +259,10 @@ def _penalty_param_from_source(source: "InputSource",
     ``pdtNode``.  A node without a penalty row would have a free balance slack, because the objective
     term is an inner-join product.
 
-    Returns None (the caller keeps the emit seed ``pdtNode``) for a stochastic-time value, for a value
-    the resolver cannot classify, and when the node set or ``dt`` is empty.  Unless a Map level carries a
-    silent label, the resolved frame is memoised on the run's reader (``run_memo``), so a roll only pays
-    the ``dt`` joins.
+    Returns None (the caller keeps the emit seed ``pdtNode``) for a value the resolver cannot classify,
+    and when the node set or ``dt`` is empty.  Unless a period / time Map level (depth ≤ 2) carries a
+    silent label, the resolved shape is memoised on the run's reader (``run_memo``), so a roll only pays
+    the ``dt`` joins (and the fold of its stochastic-time nodes, which is per solve).
     """
     if (nodeBalance_df is None or nodeBalance_df.height == 0
             or dt is None or dt.height == 0):
@@ -276,15 +271,17 @@ def _penalty_param_from_source(source: "InputSource",
     if _enums is not None:
         nodeBalance_df = cast_frame_axes(nodeBalance_df, _enums)
         dt = cast_frame_axes(dt, _enums)
-    # Without a silent label the resolved values do not depend on the solve (the labels decide every
-    # axis; only a silent-label map is probed against the solve's dt), so the run's reader memoises them.
+    # Without a silent period / time label the resolved values do not depend on the solve (the labels decide
+    # every axis; only a silent-label map of depth ≤ 2 is probed against the solve's dt), so the run's reader
+    # memoises them.  A stochastic-time map (depth 3) is not classified; its fold runs per solve.
     memo = getattr(source, "run_memo", None)
-    if memo is not None and not has_silent_labels(parameter_index_label_paths(source, "node", parameter_name)):
+    paths = parameter_index_label_paths(source, "node", parameter_name)
+    if memo is not None and not has_silent_labels({p for p in paths if len(p) <= 2}):
         resolved = memo(("node_penalty", parameter_name),
                         lambda: _resolved_penalty(source, parameter_name, dt))
     else:
         resolved = _resolved_penalty(source, parameter_name, dt)
-    if resolved is None or resolved is _PENALTY_DEFER:
+    if resolved is None:
         return None
     authored = broadcast_to_period_time(resolved, "n", dt)
     grid = (nodeBalance_df.select("n").unique()
@@ -320,7 +317,7 @@ def apply_penalty_params(flex_data: object, source: "InputSource",
     """Set ``p_penalty_up`` / ``p_penalty_down`` over ``nodeBalance ∪ nodeBalancePeriod`` × ``dt``.
 
     Both node sets carry ``vq_state_up`` / ``vq_state_down``, so the penalty covers their union.  A None
-    result (stochastic-time value, unclassifiable map, empty node set or ``dt``) keeps the field as it is:
+    result (unclassifiable map, empty node set or dt) keeps the field as it is:
     the emit seed ``pdtNode``.  Called by ``apply_derived_a`` and, on synthetic sub-solves (rolls, nested
     sub-solves) that skip it, by ``_apply_db_overrides`` (PENALTY-1).
     """

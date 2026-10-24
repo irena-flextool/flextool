@@ -630,6 +630,44 @@ class SpineDbReader:
             values = [pdef["default_value"]]
         return {tuple(self._index_name_path(v)) for v in values}
 
+    def parameter_entity_label_paths(self, entity_class: str, parameter_name: str,
+                                     ) -> "dict[tuple[str, ...], tuple[str | None, ...]]":
+        """The raw ``index_name`` path of each entity's explicit value (entity = its class-dim value tuple,
+        ``(name,)`` for a 0-dim class); ``()`` for a scalar.  Like :meth:`parameter_index_label_paths` it walks
+        the raw labels only, so it never raises on a label the period / time classifier rejects; it tells the
+        resolver which entities author a stochastic-time (depth 3) value."""
+        cls_id, pdef = self._class_and_pdef(entity_class, parameter_name)
+        dims_of = {eid: tuple(elements) if elements else (name,)
+                   for eid, name, elements in self._entities_by_class.get(cls_id, [])}
+        out: dict[tuple[str, ...], tuple[str | None, ...]] = {}
+        for eid, v in self._param_rows.get((cls_id, pdef["id"]), []):
+            if v is None or eid not in dims_of:
+                continue
+            out[dims_of[eid]] = tuple(self._index_name_path(v))
+        return out
+
+    def without_entities(self, entity_class: str, parameter_name: str,
+                         entities: "Iterable[tuple[str, ...]]") -> "SpineDbReader":
+        """A view of this reader in which ``entities`` (class-dim value tuples) have no value of
+        ``entity_class.parameter_name``: a shallow copy whose value rows lack theirs for that one parameter.
+
+        Every other cache is shared (they are not keyed on parameter rows); the two memos are fresh, as their
+        frames were built from the full rows.  The resolver reads a parameter whose stochastic-time entities
+        come from the solve's emit through such a view (:func:`._param_shapes.resolve_param_shape`).
+        """
+        cls_id, pdef = self._class_and_pdef(entity_class, parameter_name)
+        drop = {tuple(e) for e in entities}
+        dims_of = {eid: tuple(elements) if elements else (name,)
+                   for eid, name, elements in self._entities_by_class.get(cls_id, [])}
+        key = (cls_id, pdef["id"])
+        view = copy.copy(self)
+        view._param_rows = defaultdict(list, self._param_rows)
+        view._param_rows[key] = [(eid, v) for eid, v in self._param_rows.get(key, [])
+                                 if dims_of.get(eid) not in drop]
+        view._run_memo = {}
+        view._entity_subset_memo = {}
+        return view
+
     def run_memo(self, key: tuple, factory: Callable[[], Any]) -> Any:
         """``factory()``, memoised on the reader for its lifetime under ``key``.
 

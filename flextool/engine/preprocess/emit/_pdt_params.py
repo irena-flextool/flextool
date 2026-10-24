@@ -128,6 +128,10 @@ def derive_pdtProcess(input_dir: Path, solve_data_dir: Path,
     ``specs/sparse_writer_lessons_for_engine_polars.md`` §1 is NOT
     applied — preserving byte-parity with the legacy writer is the
     Phase E-b gate).
+
+    Consumer besides the seeds: the DB-direct readers take the values of entities authoring a
+    stochastic-time map from this frame (``_param_shapes.STOCHASTIC_TIME_PARAMS``), so it stays emitted
+    while that registry names it, even once the seeds are retired.
     """
     lookup = PdtLookup(
         pbt_csv=input_dir / "pbt_process.csv",
@@ -288,6 +292,10 @@ def derive_pdtNode(input_dir: Path, solve_data_dir: Path,
 
     Columns: ``node, param, period, time, value`` — all ``Utf8``.
     Domain: ``node__TimeParam_in_use × steps_in_use``.
+
+    Consumer besides the seeds: the DB-direct readers take the values of entities authoring a
+    stochastic-time map from this frame (``_param_shapes.STOCHASTIC_TIME_PARAMS``), so it stays emitted
+    while that registry names it, even once the seeds are retired.
     """
     lookup = PdtLookup(
         pbt_csv=input_dir / "pbt_node.csv",
@@ -664,6 +672,10 @@ def derive_pdtProcess_source(
 
     Columns: ``process, source, param, period, time, value`` (all Utf8).
     Domain: ``process_source_sourceSinkTimeParam_in_use × steps_in_use``.
+
+    Consumer besides the seeds: the DB-direct readers take the values of entities authoring a
+    stochastic-time map from this frame (``_param_shapes.STOCHASTIC_TIME_PARAMS``), so it stays emitted
+    while that registry names it, even once the seeds are retired.
     """
     return _derive_pdtProcess_side(
         pbt_csv=input_dir / "pbt_process_source.csv",
@@ -716,6 +728,10 @@ def derive_pdtProcess_sink(
 
     Columns: ``process, sink, param, period, time, value`` (all Utf8).
     Domain: ``process_sink_sourceSinkTimeParam_in_use × steps_in_use``.
+
+    Consumer besides the seeds: the DB-direct readers take the values of entities authoring a
+    stochastic-time map from this frame (``_param_shapes.STOCHASTIC_TIME_PARAMS``), so it stays emitted
+    while that registry names it, even once the seeds are retired.
     """
     return _derive_pdtProcess_side(
         pbt_csv=input_dir / "pbt_process_sink.csv",

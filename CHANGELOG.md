@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **Stochastic-time values of availability, efficiency, min_load, other
+  operational cost, reservation and penalties no longer stop the model.** A
+  value given as a three-level map (branch, analysis_time, time) with these
+  index names stopped the model with an "index_name 'branch'" error. Without
+  index names a stochastic efficiency set every unit's efficiency to 1, a
+  stochastic node availability or min_load was lost or stopped the model, and
+  a period-and-time map of the same parameter on another unit, node or
+  reserve was ignored. For the units, nodes and reserves in an
+  `include_stochastics` group, each entity's stochastic series now applies to
+  its forecast branches, and the other entities keep their own values.
+
 - **A period-and-time `other_operational_cost` is charged in the objective.**
   An `other_operational_cost` of a unit input, a unit output or a connection
   given as a map keyed by period and time was left out of the objective on
