@@ -421,6 +421,7 @@ def test_warm_rolling_time_varying_penalty_matches_cold(tmp_path_factory, caplog
         assert _rel(float(hot[k].solution.obj), float(cold[k].solution.obj)) < 1e-9, k
     penalty_fallbacks = [r.getMessage() for r in caplog.records
                          if "COLD REBUILD" in r.getMessage() and "p_penalty" in r.getMessage()]
+    assert penalty_fallbacks, "expected the documented cold rebuild on a penalty change (#80)"
     assert all("zero tracked cells" in m for m in penalty_fallbacks), penalty_fallbacks
     const = _warm_run(tmp_path_factory, {t: 5.0 for t in TIMESTEPS}, warm=True)
     assert any(const[k].warm_used for k in const if "_roll_" in k), "constant penalty: no roll stayed warm"
@@ -446,6 +447,59 @@ def test_rolling_reads_penalty_values_once_per_run(tmp_path_factory, monkeypatch
     steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("c9_memo_w"), keep_solutions=True)
     assert len(_rolls(steps)) == 7
     assert sorted(calls) == ["penalty_down", "penalty_up"], calls
+
+
+NESTED_PENALTIES = {"p2020": 1000.0, "p2025": 2000.0, "p2030": 3000.0, "p2035": 4000.0}
+
+
+@pytest.mark.parametrize("label", ["period", None], ids=["labelled_memo", "silent_nomemo"])
+def test_nested_period_values_per_subsolve(tmp_path_factory, monkeypatch, label) -> None:
+    """``west.penalty_up`` as a period map on the nested ``invest_5weeks`` sub-solves: every sub-solve has exactly
+    its period's value on all its (d, t) and a row for every balance node.  With labels the resolved values are
+    memoised on the run's reader (one resolve of ``penalty_up`` for the 4 sub-solves); a silent label is probed
+    against each sub-solve's periods, so it is resolved per sub-solve (and still right)."""
+    from flextool.engine.preprocess.params import _arithmetic
+    from tests.engine._unit_db import run
+    from tests.model.test_rolling_period_maps import NESTED_CHAIN, NESTED_PERIODS
+
+    calls: list[str] = []
+    original = _arithmetic._resolved_penalty
+
+    def counting(source, parameter_name, dt):
+        calls.append(parameter_name)
+        return original(source, parameter_name, dt)
+
+    monkeypatch.setattr(_arithmetic, "_resolved_penalty", counting)
+    values = [["node", "west", "penalty_up", pmap(NESTED_PENALTIES, index_name=label)],
+              ["solve", "invest_5weeks", "contains_solves",
+               b64({"type": "array", "value_type": "str", "data": []}, "array")]]
+    url, scen = make_db(tmp_path_factory, alt=f"c9_nested_{label}", values=values, base_chain=NESTED_CHAIN,
+                        fixture_json=TESTS_JSON)
+    steps = run(tmp_path_factory, url, scen)
+    assert list(steps) == [f"invest_5weeks_{p}" for p in NESTED_PERIODS]
+    seen = set()
+    for step in steps.values():
+        cells = _cells(step, "p_penalty_up")
+        dt = _dt(step)
+        west = {(d, t): v for (n, d, t), v in cells.items() if n == "west"}
+        assert set(west) == set(dt)
+        for (d, _t), v in west.items():
+            assert v == NESTED_PENALTIES[d]
+            seen.add(d)
+        assert {n for n, _d, _t in cells} >= set(utf8(step.flex_data.nodeBalance)["n"])
+    assert seen == set(NESTED_PERIODS)
+    assert calls.count("penalty_up") == (1 if label else len(NESTED_PERIODS)), calls
+
+
+def test_rolling_silent_time_map(tmp_path_factory) -> None:
+    """A silent-label time map of ``demand_node.penalty_up`` (probed per roll, not memoised) reaches all 7 rolls
+    densely: the curve for demand_node, the default for the other balance nodes."""
+    curve = {t: (6000.0 if i % 2 else 6500.0) for i, t in enumerate(T168)}
+    rolls = _rolls(_roll(tmp_path_factory, pmap(curve, index_name=None)))
+    assert len(rolls) == 7
+    for step in rolls:
+        _assert_dense(step, "p_penalty_up", STOCH_NODES,
+                      lambda n, d, t: curve[t] if n == "demand_node" else DEFAULT)
 
 
 # ---------------------------------------------------------------------------

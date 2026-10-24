@@ -23,9 +23,9 @@
   default lost their penalty, so their unserved or excess energy cost
   nothing. This happened on every solve type. Every node now keeps its own
   value or the default, and periods or timesteps that a map leaves out get
-  the default. A time, period-and-time or stochastic `penalty_up` now also
-  applies in rolling solves, and a stochastic penalty no longer stops the
-  model.
+  the default. A time or stochastic `penalty_up`, and a period-and-time
+  `penalty_up` or `penalty_down`, now also apply in rolling solves, and a
+  stochastic penalty no longer stops the model.
 
 - **A group with an inertia, non-synchronous or capacity margin limit but no
   penalty of its own now gets the default penalty (5000) when another group

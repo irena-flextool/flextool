@@ -862,9 +862,9 @@ def _group_penalty_from_source(source: "InputSource", parameter_name: str,
     if period_filter is None or period_filter.height == 0:
         return broadcast_to_period(resolved, "g", period_filter, filter_zero=True)
     authored = broadcast_to_period(resolved, "g", period_filter)
-    grid = (source.entities("group").lazy().pipe(rename_to_axis, {"name": "g"}).select("g")
-            .join(period_filter.lazy().select("d").unique(), how="cross").collect())
-    filled = fill_default_over_grid(authored, grid, source.parameter_default("group", parameter_name),
+    groups = source.entities("group").lazy().pipe(rename_to_axis, {"name": "g"}).select("g").collect()
+    filled = fill_default_over_grid(authored, groups, period_filter.select("d"),
+                                    source.parameter_default("group", parameter_name),
                                     name=f"group.{parameter_name}")
     if filled is None:
         return None

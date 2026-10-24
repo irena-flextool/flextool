@@ -284,10 +284,8 @@ def _penalty_param_from_source(source: "InputSource",
     if resolved is None:
         return None
     authored = broadcast_to_period_time(resolved, "n", dt)
-    grid = (nodeBalance_df.select("n").unique()
-            .join(dt.select("d", "t").unique(), how="cross"))
-    return fill_default_over_grid(authored, grid, source.parameter_default("node", parameter_name),
-                                  name=f"node.{parameter_name}")
+    return fill_default_over_grid(authored, nodeBalance_df.select("n"), dt.select("d", "t"),
+                                  source.parameter_default("node", parameter_name), name=f"node.{parameter_name}")
 
 
 def p_penalty_up_from_source(source: "InputSource",

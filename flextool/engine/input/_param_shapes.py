@@ -2261,19 +2261,23 @@ def promote_param_to_dt(
 
 def fill_default_over_grid(
     param: "Param | None",
-    grid: pl.DataFrame,
+    entities: pl.DataFrame,
+    steps: pl.DataFrame,
     default: object,
     *,
     name: str,
 ) -> "Param | None":
-    """``param`` over every row of ``grid``: the authored value where ``param`` has one, else ``default``.
+    """``param`` over every cell of ``entities × steps``: the authored value where ``param`` has one, else
+    ``default``.
 
         value[k] = param[k restricted to param.dims]    where param has a row
-                 = default                              otherwise                ∀ k ∈ grid
+                 = default                              otherwise                ∀ k ∈ entities × steps
 
-    ``grid`` holds the entity key and ``d`` (and ``t``) of the cells that must carry a value.  Build it
-    from the solve's ``dt`` **pairs** (``dt.select("d", "t")``), never as ``d.unique() × t.unique()``:
-    that product is not the timeline and explodes on long runs (CLAUDE.md invariant #2).
+    ``entities`` holds the entity key column(s), ``steps`` the solve's ``(d, t)`` **pairs**
+    (``dt.select("d", "t")``) or periods (``.select("d")``) — never ``d.unique() × t.unique()``: that product
+    is not the timeline and explodes on long runs (CLAUDE.md invariant #2).  The grid is the unique sorted
+    entities × the unique sorted steps (after the axis-enum cast; an entity-major cross join that keeps
+    order), so the result is already in key order and needs no dedupe or sort of the product.
     ``param.dims`` must be a subset of the grid columns (any shape from :func:`broadcast_to_period` /
     :func:`broadcast_to_period_time`), so one left join on ``param.dims`` broadcasts the narrower shapes.
     ``param=None`` means nothing is authored.  A non-numeric or None ``default`` (no schema default)
@@ -2282,17 +2286,20 @@ def fill_default_over_grid(
     The authored rows must be unique on ``param.dims``: a duplicate would duplicate grid rows and every
     term built on them would count twice, so it raises :class:`FlexDataIntegrityError` naming ``name``.
 
-    Returns an eager Param (dims = the grid columns, rows sorted by them; consumers such as the Benders
-    hosted-node checks and the warm-start compare read ``.frame`` as a DataFrame), or None when the
-    result is empty.
+    Returns an eager Param (dims = the entity columns then the step columns, rows sorted by them;
+    consumers such as the Benders hosted-node checks and the warm-start compare read ``.frame`` as a
+    DataFrame), or None when the result is empty.
     """
     from flextool.spinedb_backend._axis_enums import FlexDataIntegrityError
 
-    keys = list(grid.columns)
     enums = get_global_axis_enums()
     if enums is not None:
-        grid = cast_frame_axes(grid, enums)
-    grid = grid.select(keys).unique(maintain_order=True)
+        entities = cast_frame_axes(entities, enums)
+        steps = cast_frame_axes(steps, enums)
+    entity_keys, step_keys = list(entities.columns), list(steps.columns)
+    keys = entity_keys + step_keys
+    grid = (entities.unique().sort(entity_keys)
+            .join(steps.unique().sort(step_keys), how="cross", maintain_order="left_right"))
     numeric = isinstance(default, (int, float)) and not isinstance(default, bool)
     if param is None:
         if not numeric:
@@ -2317,10 +2324,10 @@ def fill_default_over_grid(
             # Cross-vocabulary dtypes on a key: compare on the grid's dtype; values outside it join nothing.
             authored = authored.with_columns(
                 pl.col(c).cast(pl.Utf8).cast(grid.schema[c], strict=False) for c in mismatched)
-        out = grid.join(authored, on=dims, how="left" if numeric else "inner")
+        out = grid.join(authored, on=dims, how="left" if numeric else "inner", maintain_order="left")
         if numeric:
             out = out.with_columns(pl.col("value").fill_null(float(default)))
-    out = out.select(*keys, "value").sort(keys)
+    out = out.select(*keys, "value")
     if out.height == 0:
         return None
     return Param(tuple(keys), out)

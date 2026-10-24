@@ -703,6 +703,8 @@ def test_p_penalty_up_stochastic_time_merges_fold():
 _GRID = pl.DataFrame({"n": ["a", "a", "a", "b", "b", "b"],
                       "d": ["d1", "d1", "d2", "d1", "d1", "d2"],
                       "t": ["t1", "t2", "t3", "t1", "t2", "t3"]})
+_ENTITIES = _GRID.select("n")
+_STEPS = _GRID.select("d", "t")
 
 
 @pytest.mark.parametrize("dims, rows, want_a", [
@@ -716,7 +718,7 @@ def test_fill_default_over_grid_shapes(dims, rows, want_a):
 
     from flextool.engine.input._param_shapes import fill_default_over_grid
 
-    out = fill_default_over_grid(Param(dims, pl.DataFrame(rows)), _GRID, 9.0, name="x")
+    out = fill_default_over_grid(Param(dims, pl.DataFrame(rows)), _ENTITIES, _STEPS, 9.0, name="x")
     assert out.dims == ("n", "d", "t")
     assert isinstance(out.frame, pl.DataFrame)
     f = out.frame
@@ -731,11 +733,32 @@ def test_fill_default_over_grid_without_default_or_values():
     from flextool.engine.input._param_shapes import fill_default_over_grid
 
     authored = Param(("n", "d"), pl.DataFrame({"n": ["a"], "d": ["d2"], "value": [2.0]}))
-    inner = fill_default_over_grid(authored, _GRID, None, name="x")
+    inner = fill_default_over_grid(authored, _ENTITIES, _STEPS, None, name="x")
     assert inner.frame.rows() == [("a", "d2", "t3", 2.0)]
-    assert fill_default_over_grid(None, _GRID, None, name="x") is None
-    everywhere = fill_default_over_grid(None, _GRID, 7.0, name="x")
+    assert fill_default_over_grid(None, _ENTITIES, _STEPS, None, name="x") is None
+    everywhere = fill_default_over_grid(None, _ENTITIES, _STEPS, 7.0, name="x")
     assert everywhere.frame.height == _GRID.height and set(everywhere.frame["value"]) == {7.0}
+
+
+def test_fill_default_over_grid_order():
+    """Unsorted factors with repeated rows: the grid is unique sorted entities × unique sorted steps (the
+    solve's pairs, not d × t), already in key order, with no duplicate cells."""
+    from polar_high import Param
+
+    from flextool.engine.input._param_shapes import fill_default_over_grid
+
+    entities = pl.DataFrame({"n": ["b", "a", "b", "a"]})
+    steps = pl.DataFrame({"d": ["d2", "d1", "d1", "d2", "d1"], "t": ["t3", "t2", "t1", "t3", "t2"]})
+    authored = Param(("n", "t"), pl.DataFrame({"n": ["b"], "t": ["t2"], "value": [5.0]}))
+    out = fill_default_over_grid(authored, entities, steps, 9.0, name="x").frame
+    assert out.rows() == [
+        ("a", "d1", "t1", 9.0), ("a", "d1", "t2", 9.0), ("a", "d2", "t3", 9.0),
+        ("b", "d1", "t1", 9.0), ("b", "d1", "t2", 5.0), ("b", "d2", "t3", 9.0)]
+    assert out.equals(out.sort("n", "d", "t"))
+    group = fill_default_over_grid(None, entities.rename({"n": "g"}), steps.select("d"), 5000.0, name="g")
+    assert group.dims == ("g", "d")
+    assert group.frame.rows() == [("a", "d1", 5000.0), ("a", "d2", 5000.0), ("b", "d1", 5000.0),
+                                  ("b", "d2", 5000.0)]
 
 
 def test_fill_default_over_grid_rejects_duplicate_keys():
@@ -747,7 +770,7 @@ def test_fill_default_over_grid_rejects_duplicate_keys():
 
     dup = Param(("n", "d"), pl.DataFrame({"n": ["a", "a"], "d": ["d1", "d1"], "value": [1.0, 2.0]}))
     with pytest.raises(FlexDataIntegrityError, match="node.penalty_up.*share their key"):
-        fill_default_over_grid(dup, _GRID, 9.0, name="node.penalty_up")
+        fill_default_over_grid(dup, _ENTITIES, _STEPS, 9.0, name="node.penalty_up")
 
 
 def test_p_process_source_conversion_flow_coeff_inmemory_zero_drop():
