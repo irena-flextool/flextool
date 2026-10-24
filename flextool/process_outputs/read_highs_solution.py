@@ -480,8 +480,8 @@ VARIABLE_SPECS: list[VariableSpec] = [
     # Not in VARIABLE_SPECS (handled by dedicated writers below):
     # * v_dual_node_balance — per-period inflation scaling needs a
     #   custom writer (see write_v_dual_node_balance below).
-    # * v_dual_reserve__upDown__group__period__t — max() across up to 3
-    #   constraint duals per (r,ud,g,d,t).
+    # * v_dual_reserve__upDown__group__period__t — the dual of the group's
+    #   requirement row per (r,ud,g,d,t) (see write_v_dual_reserve_balance).
     # * v_dual_invest_{unit,connection,node} — v_invest.dual split by
     #   entity class (see write_v_dual_invest_by_class below).
     # * v_obj — scalar, see write_v_obj below.
@@ -2036,6 +2036,29 @@ def write_v_dual_node_balance(
     return path
 
 
+def _dynamic_only_reserve_groups(work_folder: Path, flex_data: "FlexData | None" = None,
+                                 ) -> set[tuple[str, str, str]]:
+    """``(r, ud, g)`` of the reserve groups whose ``reserve_method`` is ``dynamic_only``.
+
+    Read from ``flex_data.reserve_upDown_group_method_dynamic`` when supplied, else from
+    ``solve_data/reserve__upDown__group__method_dynamic.csv``.
+    """
+    if flex_data is not None:
+        frame = getattr(flex_data, "reserve_upDown_group_method_dynamic", None)
+        if frame is None or frame.height == 0:
+            return set()
+        rows = frame.select(pl.col(c).cast(pl.Utf8) for c in ("r", "ud", "g", "method")).iter_rows()
+        return {(r, ud, g) for r, ud, g, m in rows if m == "dynamic_only"}
+    path = work_folder / "solve_data" / "reserve__upDown__group__method_dynamic.csv"
+    if not path.exists():
+        return set()
+    df = pd.read_csv(path, dtype=str)
+    if df.shape[1] < 4:
+        return set()
+    return {(r, ud, g) for r, ud, g, m in df.iloc[:, :4].itertuples(index=False, name=None)
+            if m == "dynamic_only"}
+
+
 def write_v_dual_reserve_balance(
     h: "highspy.Highs",
     *,
@@ -2045,24 +2068,19 @@ def write_v_dual_reserve_balance(
     work_folder: Path | str | None = None,
     flex_data: "FlexData | None" = None,
 ) -> Path:
-    """Write ``v_dual_reserve__upDown__group__period__t__{solve}.parquet``.
+    """Write ``v_dual_reserve__upDown__group__period__t__{solve}.parquet`` (``reserve_price_t``).
 
-    Model formula takes ``max()`` over up to three constraint duals per
-    ``(r, ud, g, r_m, d, t)``:
+    The price of a group is the dual of its requirement row, after period scaling
+    ``× complete_period_share_of_year[d] / p_inflation_factor_operations_yearly[d]``:
 
-        * ``reserveBalance_timeseries_eq`` (most common method)
-        * ``reserveBalance_dynamic_eq``
-        * ``reserveBalance_up_n_1_eq`` / ``reserveBalance_down_n_1_eq``
-          (N-1 security)
+    * groups with a timeseries requirement: ``reserveBalance_timeseries_eq``;
+    * groups whose only requirement is dynamic (``reserve_method = dynamic_only``):
+      ``reserveBalance_dynamic_eq`` — one row per ``(r, ud, g, d, t)``, so its dual is the price.
 
-    applied after period scaling
-    ``× complete_period_share_of_year[d] / p_inflation_factor_operations_yearly[d]``.
-
-    SIMPLIFIED HERE: currently extracts only the timeseries-equation
-    duals.  For ``(r, ud, g)`` that use the ``timeseries_only`` method
-    (the common case covered by all the test scenarios) this is exact.
-    Groups using ``dynamic`` or ``n_1`` methods will be under-reported
-    until the full ``max()`` logic is ported.
+    Groups that combine a dynamic and a large-failure requirement, or have only a large-failure
+    requirement, have several requirement rows per step (one per failing process) and no single dual:
+    they are not reported yet (an open choice between the largest and the sum of the duals).  A group
+    that combines the timeseries requirement with another one reports the timeseries dual.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2081,9 +2099,8 @@ def write_v_dual_reserve_balance(
     # magnitude of the sum of the duals of the rows using the total when it
     # is positive: the n-1 rows and, for the same group, the timeseries /
     # dynamic rows, which use the total in place of the providers' sum).
-    # The ``max() over methods`` combine documented above (a future
-    # extension) must take the max over the n-1 rows' p_fail, not read the
-    # ``reserve_total_upper`` row.
+    # Combining the n-1 rows (not reported yet, see the docstring) must work
+    # over the n-1 rows' p_fail, not read the ``reserve_total_upper`` row.
     df = extract_variable(
         h, "reserveBalance_timeseries_eq",
         ("reserve", "updown", "node_group"),
@@ -2091,6 +2108,20 @@ def write_v_dual_reserve_balance(
         realized_dispatch_csv=realized_dispatch_csv,
         flex_data=flex_data,
     )
+    dyn_only = _dynamic_only_reserve_groups(wf, flex_data)
+    if dyn_only:
+        dyn = extract_variable(
+            h, "reserveBalance_dynamic_eq",
+            ("reserve", "updown", "node_group"),
+            solve_name=solve_name, has_time=True, source="row_dual",
+            realized_dispatch_csv=realized_dispatch_csv,
+            flex_data=flex_data,
+        )
+        if not dyn.empty:
+            keep = [c for c in dyn.columns if tuple(str(x) for x in c) in dyn_only]
+            if keep:
+                dyn = dyn.loc[:, keep]
+                df = dyn if df.empty else df.join(dyn, how="outer").fillna(0.0)
 
     if df.empty:
         write_lean_parquet(df, out_path)

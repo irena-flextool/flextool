@@ -500,3 +500,51 @@ period cap of p2035 (1.2e6 t/a) binds.  The companion change to
   unchanged.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate test_a_lot`.
+
+## network_coal_wind_reserve_n_1, all — 2026-10-24 — dynamic / n-1 reserves need no reservation
+
+**Files.** `network_coal_wind_reserve_n_1/` — `unit__outputNode__dt.csv`,
+`connection__dt.csv`, `process__reserve__upDown__node__dt.csv`, `costs__dt.csv`;
+`all/` — `unit__outputNode__dt.csv`, `node__dt.csv`, `costs__dt.csv`.
+
+**Cause.** Fix "dynamic and n-1 requirements activate their providers" (#40, owner
+answer Q5 2026-10-24; reverses the reservation filter of 30e0c5a8): a reserve is active
+when it has a requirement — a non-zero `reservation`, or a dynamic / large_failure
+group driven by an `increase_reserve_ratio` / `large_failure_ratio` at one of its nodes
+(`_reserve_methods.demanded_reserves`).  Both scenarios use the `reserve_n_1`
+alternative: an `n_1` up reserve on `electricity` with method `large_failure_only`,
+`coal_plant` failing with `large_failure_ratio` 0.1 and `wind_plant` (reliability 0.6,
+`max_share` 1) and `coal_plant` (`max_share` 0.01) as providers, and no `reservation`.
+Before the fix the reserve was inert (no `v_reserve`, no n-1 row); now coal's failure
+(10 % of its output) must be covered, and wind holds the n-1 reserve of coal.
+
+**Evidence** (LP of `tools/lp_snapshot.py`, solved with HiGHS):
+- LP diff (both): + `v_reserve` (coal, wind), + `v_reserve_total[n_1]`, +
+  `reserveBalance_up_n_1_eq[n_1,up,electricity,coal_plant,…]`, + `reserve_process_upward`,
+  + `reserve_total_upper`, `v_reserve` terms in `maxFlow` and `profile_flow_upper_limit`
+  (and in `maxFlow_online_linear` for `all`, where coal is linear UC), cost on
+  `vq_reserve[n_1,…]` (scale now 50 MW).  Nothing else changes.
+- `network_coal_wind_reserve_n_1`: objective 585.712458 → 833.076608 M CUR (+42.23 %).
+  Holding the reserve on wind (1/0.6 MW of curtailment per MW of requirement) beats a
+  shortfall at `penalty_reserve` 20 000, so the reserve slack stays 0 and the cost appears
+  as east's unserved energy (`penalty_up` 500): wind output Σ 29 830 → 25 877 MWh (the
+  3.953 unit-steps of wind `n_1` reserve × 1000 MW), coal output Σ 22 658.7 → 23 717.1
+  (commodity cost +52 920 = +1 058 MWh × 50 CUR/MWh), `west_east` flow Σ 16 247 → 13 642,
+  upward slack penalty Σ 2.076 M → 3.379 M (+2 605 MWh × 500).  Per-step cost change
+  1.355 M × 182.5 (2 days → year) = 247.36 M CUR = the objective change.  The reserve
+  CSV gets `coal_plant` / `wind_plant` `n_1` columns (wind Σ 3.953, coal 0).
+- `all`: objective 10 585.024237 → 12 140.489869 M CUR (+14.70 %).  Coal commits more
+  (output Σ 18 724 → 22 397 MWh; commodity, CO2 and start costs up), wind output
+  Σ 11 940 → 8 207, the battery cycles more (west from/to connections 50 / −11 167 →
+  260 / −11 399), `water_pump` runs 1 917 instead of 2 000 MWh and `water_source` gets a
+  downward slack (83.4 MWh).  Upward reserve slack penalty stays 0.
+- Coal's own `n_1` reserve is degenerate: it helps no row (it is excluded from its own
+  failure row and coal is the only failing process), so its column is 0 at this solver
+  but not unique.
+- No other golden scenario has a dynamic or n-1 group (scan of every JSON under `tests/`:
+  dynamic / n-1 data only in `tests.json:reserve_n_1`, used by these two scenarios, and in
+  `scaling_stress/input.json`, which has no golden); the full `tests/test_scenarios.py` run
+  passes with only these two regenerated.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate network_coal_wind_reserve_n_1`
+and `--regenerate all`.

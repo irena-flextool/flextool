@@ -7,11 +7,13 @@ Three public entry points:
 * :func:`emit_pdtReserve_upDown_group` — mod L1319.  4-branch hourly
   resolution for reserve groups, emitting ``pdtReserve_upDown_group.csv``
   ``(reserve, upDown, group, param, period, time, value)``.
-* :func:`emit_process_reserve_upDown_node_active_and_prundt` — mod
-  L1321-1322.  Filters ``process_reserve_upDown_node`` by nonzero summed
-  reservation across the matching ``reserve__upDown__group`` × ``dt``
-  cross product, then emits ``prundt = process_reserve_upDown_node_active
-  × dt``.
+* :func:`emit_process_reserve_upDown_node_active_and_prundt` — keeps the
+  ``process_reserve_upDown_node`` rows of the reserves with a requirement
+  (:func:`~flextool.engine.preprocess._reserve_methods.demanded_reserves`:
+  a nonzero summed reservation across the matching
+  ``reserve__upDown__group`` × ``dt`` cross product, or a dynamic / n-1
+  group driven by a ratio), then emits ``prundt =
+  process_reserve_upDown_node_active × dt``.
 * :func:`emit_process_reserve_filters_and_reliability` — mod L1655 /
   L1660-1668.  Emits the reliability fallback (default 1) and two
   ``> 0`` filter sets (``increase_reserve_ratio`` /
@@ -50,6 +52,7 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
+from flextool.engine.preprocess._reserve_methods import demanded_reserves
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +410,12 @@ def _compute_process_reserve_active(
     *, provider: "object | None" = None,
 ) -> tuple[list[tuple[str, str, str, str]], list[tuple[str, str]]]:
     """Shared computation for the active/prundt pair — returns the
-    active ``(p, r, ud, n)`` list and the ``dt`` pair list."""
+    active ``(p, r, ud, n)`` list and the ``dt`` pair list.
+
+    A relationship is active when its ``(r, ud)`` has a requirement
+    (:func:`~flextool.engine.preprocess._reserve_methods.demanded_reserves`);
+    ``params/_derived.prundt_from_source`` applies the same rule to the DB.
+    """
     pdt_reserve: dict[tuple[str, str, str, str, str, str], float] = {}
     pdt_path = solve_data_dir / "pdtReserve_upDown_group.csv"
     pdt_df = provider.get(_provider_key(pdt_path))
@@ -433,7 +441,7 @@ def _compute_process_reserve_active(
         input_dir / "process__reserve__upDown__node.csv", 4, provider=provider,
     )
 
-    active_rows: list[tuple[str, str, str, str]] = []
+    reservation_pairs: set[tuple[str, str]] = set()
     for (p, r, ud, n) in prun:
         groups = rug_by_ru.get((r, ud), ())
         total = 0.0
@@ -443,7 +451,41 @@ def _compute_process_reserve_active(
                     (r, ud, g, "reservation", d, t), 0.0,
                 )
         if total != 0.0:
-            active_rows.append((p, r, ud, n))
+            reservation_pairs.add((r, ud))
+
+    # Dynamic / n-1 requirements are reserve demand by themselves
+    # (``demanded_reserves``).
+    group_methods: list[tuple[str, ...]] = []
+    for method in ("dynamic", "n_1"):
+        group_methods += _read_n_col(
+            solve_data_dir / f"reserve__upDown__group__method_{method}.csv", 4,
+            provider=provider,
+        )
+    # solve_data/group_node.csv, else input/group__node.csv (as
+    # ``model._reserve.load_data``).
+    group_nodes = (
+        _read_n_col(solve_data_dir / "group_node.csv", 2, provider=provider)
+        or _read_n_col(input_dir / "group__node.csv", 2, provider=provider)
+    )
+    prun_set = set(prun)
+    ratios: dict[tuple[str, str, str, str], dict[str, float]] = {}
+    for (p, r, ud, n, param), v in _read_p_process_reserve(
+        input_dir / "p_process__reserve__upDown__node.csv", provider=provider,
+    ).items():
+        if param in ("increase_reserve_ratio", "large_failure_ratio") \
+                and (p, r, ud, n) in prun_set:
+            ratios.setdefault((p, r, ud, n), {})[param] = v
+    demanded = demanded_reserves(
+        reservation_pairs=reservation_pairs,
+        group_methods=group_methods,
+        group_nodes=group_nodes,
+        relationship_ratios=ratios,
+        group_ratios={},
+    )
+
+    # ``prun`` order (byte parity of the emitted CSVs).
+    active_rows = [(p, r, ud, n) for (p, r, ud, n) in prun
+                   if (r, ud) in demanded]
     return active_rows, dt
 
 

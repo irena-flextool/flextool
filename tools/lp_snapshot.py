@@ -438,8 +438,9 @@ def _patch_reserve_dynamic_n1_down(data: dict) -> dict:
         ["unit", "dr_increase_demand", "min_load", 0.8],
         ["unit", "dr_increase_demand", "startup_method", "linear"],
     ]
-    # timeseries "activator" requirements on west_north (activate the
-    # reserves' relationships, as in tests/engine)
+    # timeseries "activator" requirements on west_north: dynamic and n-1
+    # reserves no longer need them to be active (demanded_reserves); kept
+    # so the fixture's LP stays the same
     for r, ud in (("dyn", "up"), ("n1d", "down")):
         grp = [r, ud, "west_north"]
         ents.append(["reserve__upDown__group", grp])
@@ -451,6 +452,86 @@ def _patch_reserve_dynamic_n1_down(data: dict) -> dict:
         data, name="reserve_dynamic_n1_down",
         base=["init", "west", "coal", "wind", "dr_increase_demand"],
         entities=ents, values=vals)
+
+
+_REL_UNIT = "reserve__upDown__unit__node"
+# e_boiler: a direct unit west -> heat (efficiency 0.5, 100 MW)
+_E_BOILER = [["unit", "e_boiler"],
+             ["unit__inputNode", ["e_boiler", "west"]],
+             ["unit__outputNode", ["e_boiler", "heat"]]]
+_E_BOILER_VALUES = [["unit", "e_boiler", "efficiency", 0.5],
+                    ["unit", "e_boiler", "existing", 100.0],
+                    ["node", "heat", "penalty_up", 1000.0]]
+
+
+def _with_max_share(vals: list, rel: list, share: float) -> list:
+    return [v for v in vals if not (v[1] == rel and v[2] == "max_share")] + [
+        [_REL_UNIT, rel, "max_share", share]]
+
+
+def _patch_reserve_input_side(data: dict) -> dict:
+    """Downward reserve at the input node of a direct unit (e_boiler, linear
+    online) and of an indirect unit (coal_chp fuel at coal_market, linear
+    online): the source-side reserve in the arc capacity rows and
+    max_share of the input capacity."""
+    e1, v1 = _reserve("rd", "down", "electricity",
+                      [("unit", "e_boiler", "west")], penalty=20000.0)
+    e2, v2 = _reserve("rf", "down", "fuel",
+                      [("unit", "coal_chp", "coal_market")],
+                      reservation=300.0, penalty=20000.0)
+    v1 = _with_max_share(v1, ["rd", "down", "e_boiler", "west"], 0.2)
+    v2 = _with_max_share(v2, ["rf", "down", "coal_chp", "coal_market"], 0.5)
+    return _overlay(
+        data, name="reserve_input_side",
+        base=["init", "west", "coal", "coal_chp", "heat"],
+        entities=_E_BOILER + e1 + e2,
+        values=_E_BOILER_VALUES + v1 + v2 + [
+            ["unit", "e_boiler", "conversion_method", "constant_efficiency"],
+            ["constraint", "coal_chp_fix", "is_enabled", "no"],
+            ["node", "west", "inflow", -250.0],
+            ["unit", "e_boiler", "startup_method", "linear"],
+            ["unit", "e_boiler", "min_load", 0.2],
+            ["unit", "coal_chp", "startup_method", "linear"],
+            ["unit", "coal_chp", "min_load", 0.4]])
+
+
+def _patch_reserve_dynamic_demand(data: dict) -> dict:
+    """Dynamic and n-1 requirements without any reservation: dz (up,
+    dynamic_only, group increase_reserve_ratio 0.1 and e_boiler's
+    consumption ratio 1 at west) and nz (down, large_failure_only,
+    e_boiler's consumption fails); e_boiler is a min_load_efficiency unit
+    with linear online variables."""
+    grp_z = ["dz", "up", "electricity"]
+    grp_n = ["nz", "down", "electricity"]
+    ents = [["upDown", "up"], ["upDown", "down"], ["reserve", "dz"],
+            ["reserve", "nz"], ["reserve__upDown__group", grp_z],
+            ["reserve__upDown__group", grp_n]]
+    vals = [["reserve__upDown__group", grp_z, "reserve_method", "dynamic_only"],
+            ["reserve__upDown__group", grp_z, "penalty_reserve", 1000.0],
+            ["reserve__upDown__group", grp_z, "increase_reserve_ratio", 0.1],
+            ["reserve__upDown__group", grp_n, "reserve_method",
+             "large_failure_only"],
+            ["reserve__upDown__group", grp_n, "penalty_reserve", 1000.0]]
+    for rel, extra in (
+            (["dz", "up", "coal_plant", "west"], [("max_share", 0.1)]),
+            (["dz", "up", "e_boiler", "west"],
+             [("max_share", 0.0), ("increase_reserve_ratio", 1.0)]),
+            (["nz", "down", "coal_plant", "west"], [("max_share", 1.0)]),
+            (["nz", "down", "e_boiler", "west"],
+             [("max_share", 0.0), ("large_failure_ratio", 1.0)])):
+        ents.append([_REL_UNIT, rel])
+        vals += [[_REL_UNIT, rel, "is_enabled", "yes"],
+                 [_REL_UNIT, rel, "reliability", 1.0]]
+        vals += [[_REL_UNIT, rel, k, v] for k, v in extra]
+    return _overlay(
+        data, name="reserve_dynamic_demand",
+        base=["init", "west", "coal", "heat"], entities=_E_BOILER + ents,
+        values=_E_BOILER_VALUES + vals + [
+            ["unit", "e_boiler", "conversion_method", "min_load_efficiency"],
+            ["unit", "e_boiler", "efficiency_at_min_load", 0.4],
+            ["unit", "e_boiler", "min_load", 0.3],
+            ["unit", "e_boiler", "startup_method", "linear"],
+            ["node", "west", "inflow", -250.0]])
 
 
 def _patch_reserve_storage_duration(data: dict) -> dict:
@@ -661,6 +742,8 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "reserve_dynamic_n1_down": _patch_reserve_dynamic_n1_down,
     "reserve_up_online": _patch_reserve_up_online,
     "reserve_storage_duration": _patch_reserve_storage_duration,
+    "reserve_input_side": _patch_reserve_input_side,
+    "reserve_dynamic_demand": _patch_reserve_dynamic_demand,
     "stoch_na_reserve": _patch_stoch_na_reserve,
     "chp_misc": _patch_chp_misc,
     "profiles": _patch_profiles,
@@ -784,6 +867,8 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("reserve_dynamic_n1_down", _T),
     ("reserve_up_online", _T),
     ("reserve_storage_duration", _T),
+    ("reserve_input_side", _T),
+    ("reserve_dynamic_demand", _T),
     ("stoch_na_reserve", _F + "stochastics.json"),
     ("chp_misc", _T),
     ("profiles", _T),

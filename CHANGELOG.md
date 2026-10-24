@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Dynamic and large-failure reserves without a timeseries reservation.**
+  A reserve with only a `dynamic` or `large_failure` requirement did nothing
+  unless some group of the same reserve also had a `reservation`. It now
+  applies whenever a unit or connection at a node of the group has an
+  `increase_reserve_ratio` or a `large_failure_ratio`. Models with such
+  reserves get the reserve they asked for and higher costs. The reserve price
+  (`reserve_price_t`) is now also reported for groups whose only requirement
+  is dynamic.
+
 - **`co2_max_period` applies in rolling solves.** Each roll of a
   `rolling_window` solve compared its window's emissions, annualised as if
   they covered the whole solve, with the annual limit, so the limit was too

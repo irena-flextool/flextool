@@ -60,8 +60,11 @@ def test_timeseries_scale_is_the_reservation(tmp_path_factory) -> None:
 
 
 def _activator(r: str, ud: str) -> tuple[list, list]:
-    """A 1 MW timeseries requirement of reserve ``r`` on ``west_north`` —
-    it activates the reserve's relationships."""
+    """A 1 MW timeseries requirement of reserve ``r`` on ``west_north``.
+
+    Dynamic and n-1 requirements no longer need it to be active
+    (``_reserve_methods.demanded_reserves``); it is kept so the fixtures
+    and their expected values stay the same."""
     grp = [r, ud, "west_north"]
     return ([["reserve__upDown__group", grp, None]],
             [["reserve__upDown__group", grp, "reserve_method",

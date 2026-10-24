@@ -35,6 +35,8 @@ WIND = "wind_plant"
 
 
 def _activator(r: str, ud: str) -> tuple[list, list]:
+    """A 1 MW timeseries requirement of reserve ``r`` on ``west_north``: no longer needed to activate an n-1
+    reserve (``_reserve_methods.demanded_reserves``), kept so the fixtures stay the same."""
     grp = [r, ud, "west_north"]
     return ([["reserve__upDown__group", grp, None]],
             [["reserve__upDown__group", grp, "reserve_method", b64("timeseries_only", "str")],

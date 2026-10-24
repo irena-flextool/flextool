@@ -463,6 +463,37 @@ def test_write_v_dual_node_balance_applies_per_period_inflation(tmp_path: Path) 
     assert df.loc[("s1", "p2025", "t0001"), "nA"] == pytest.approx(2.0)
 
 
+def test_write_v_dual_reserve_balance_reports_dynamic_only_groups(tmp_path: Path) -> None:
+    """reserve_price_t: the timeseries dual for timeseries groups, the dynamic dual for dynamic_only groups
+    (one row per group and step); a group combining dynamic and large_failure is not reported (several
+    requirement rows per step)."""
+    from flextool.process_outputs.read_highs_solution import write_v_dual_reserve_balance
+
+    (tmp_path / "output_raw").mkdir()
+    (tmp_path / "solve_data").mkdir()
+    (tmp_path / "solve_data" / "reserve__upDown__group__method_dynamic.csv").write_text(
+        "reserve,upDown,group,method\n"
+        "dz,up,g2,dynamic_only\n"
+        "mix,up,g3,dynamic_and_large_failure\n"
+        "both,up,g1,timeseries_and_dynamic\n")
+    h = _fake_highs(
+        variable_names=[], col_values=[],
+        row_names=[
+            "reserveBalance_timeseries_eq[both,up,g1,p2020,t0001]",
+            "reserveBalance_dynamic_eq[both,up,g1,p2020,t0001]",
+            "reserveBalance_dynamic_eq[dz,up,g2,p2020,t0001]",
+            "reserveBalance_dynamic_eq[mix,up,g3,p2020,t0001]",
+        ],
+        row_duals=[1.5, 7.0, 2.5, 3.5],
+    )
+    write_v_dual_reserve_balance(h, solve_name="s1", output_dir=tmp_path / "output_raw", work_folder=tmp_path)
+    df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_reserve__upDown__group__period__t__s1.parquet")
+    cols = {tuple(str(x) for x in c): c for c in df.columns}
+    assert set(cols) == {("both", "up", "g1"), ("dz", "up", "g2")}
+    assert df.loc[("s1", "p2020", "t0001"), cols[("both", "up", "g1")]] == pytest.approx(1.5)
+    assert df.loc[("s1", "p2020", "t0001"), cols[("dz", "up", "g2")]] == pytest.approx(2.5)
+
+
 def test_write_all_variables_isolates_failures(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:

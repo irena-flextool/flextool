@@ -10193,31 +10193,24 @@ def prundt_from_source(
     active_solve: str | None,
     dt: pl.DataFrame | None,
 ) -> pl.DataFrame | None:
-    """Cross-product of active reserve relationships × dt
-    (audit §3.13.1, mirror of
-    ``reserve_calc_params.py:write_process_reserve_upDown_node_active_and_prundt:279-336``).
+    """``prundt`` (p, r, ud, n, d, t): the reserve relationships of the reserves with a requirement × dt.
 
-    flextool's algorithm:
+    A relationship ``(p, r, ud, n)`` (``process_reserve_upDown_node_active_from_source``) is kept when its
+    ``(r, ud)`` has a requirement (:func:`~flextool.engine.preprocess._reserve_methods.demanded_reserves`):
+    a non-zero ``reservation`` on some group of ``(r, ud)``, or a dynamic / n-1 group driven by an
+    ``increase_reserve_ratio`` / ``large_failure_ratio``.  The solve_data producer
+    (``emit/_reserve_sets._compute_process_reserve_active``) applies the same rule, so ``prundt`` and the
+    ratio sets the model reads agree.  A reserve without a requirement gets no ``v_reserve`` columns
+    (no all-zero columns in ``process__reserve__upDown__node__dt``).
 
-    * Build ``process_reserve_upDown_node_active`` = (p, r, ud, n) tuples
-      where ``sum_{(r,ud,g) ∈ reserve__upDown__group, (d,t) ∈ dt}
-      pdtReserve_upDown_group[r, ud, g, 'reservation', d, t] != 0``.
-    * ``prundt`` = ``process_reserve_upDown_node_active × dt``.
-
-    For the simple non-stochastic case where the
-    ``reserve__upDown__group.reservation`` is a scalar/Map: any non-zero
-    reservation (anywhere on the (r, ud) cohort) makes every (p, r, ud, n)
-    tuple in the matching reserve relationship active — so we can use
-    the active-relationship cross-product directly.
-
-    Returns the (p, r, ud, n, d, t) frame.  When dt or active relationships
-    are absent, returns None.
+    Returns an empty typed frame when dt, the relationships or every requirement are absent.
     """
-    # Build an empty typed prundt frame for the "feature active but no
-    # scheduled reservation" fall-through — keeping the contract from
-    # ``_reserve._check`` (which expects a DataFrame, not None, when the
-    # reserve feature is active).  Dtypes are best-effort (Utf8 for axis
-    # cols) — downstream guards on ``height == 0`` before touching values.
+    from flextool.engine.preprocess._reserve_methods import demanded_reserves
+    from flextool.engine.preprocess.params import _projection as _proj
+
+    # Empty typed prundt for the "feature active but no requirement" fall-through: ``_reserve._check``
+    # expects a DataFrame (not None) when the reserve feature is active.  Downstream guards on
+    # ``height == 0`` before touching values.
     def _empty_prundt() -> pl.DataFrame:
         return pl.DataFrame(schema={
             "p": pl.Utf8,
@@ -10233,40 +10226,51 @@ def prundt_from_source(
     pruna = process_reserve_upDown_node_active_from_source(source)
     if pruna is None or pruna.height == 0:
         return _empty_prundt()
-    # Filter to active reserves: groups whose reservation > 0 anywhere.
-    # Mirrors flextool.mod L1321-1322 / write_process_reserve_upDown_node_active:
-    # ``(p, r, ud, n)`` is active iff ``Σ_{g,d,t} reservation[r,ud,g,d,t] ≠ 0``.
-    # When no scenario authors a ``reservation`` for (r, ud), there is no
-    # scheduled reserve obligation — every (p, r, ud, n) in the bilateral
-    # relationship is INACTIVE (mod behaviour: empty
-    # ``process_reserve_upDown_node_active``).  Returning an empty frame
-    # here ensures we do NOT emit v_reserve columns / constraints for
-    # those reserves (e.g. the ``n_1`` contingency reserve, which sources
-    # its RHS from a different LHS pathway and has no scheduled
-    # ``reservation``).  Previously this branch fell through with the
-    # full active-relationship set, inflating the v_reserve domain to
-    # all (p, r, ud, n) tuples and adding all-zero columns to
-    # ``process__reserve__upDown__node__dt.csv``.
-    # Entity by entity (a stochastic-time reservation contributes its folded values).
+
+    def _labels(df: pl.DataFrame, cols: tuple[str, ...]) -> list[tuple[str, ...]]:
+        return [tuple(str(x) for x in row)
+                for row in df.select(pl.col(c).cast(pl.Utf8) for c in cols).iter_rows()]
+
+    # 1. Reservation: (r, ud) with a non-zero reservation entry anywhere (entity by entity; a
+    #    stochastic-time reservation contributes its folded values).
+    reservation_pairs: set[tuple[str, str]] = set()
     res = parameter_entity_values(source, "reserve__upDown__group", "reservation")
-    if res is None or res.height == 0:
+    if res is not None and res.height > 0:
+        res = res.with_columns(pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
+        reservation_pairs = set(_labels(res.filter(pl.col("value") != 0.0), ("reserve", "upDown")))
+    # 2./3. Dynamic and n-1 groups and the ratios that drive them.
+    group_methods: list[tuple[str, ...]] = []
+    for part in ("dynamic", "n_1"):
+        group_methods += _labels(_proj.reserve_upDown_group_method(source, part), ("r", "ud", "g", "method"))
+    group_nodes = _labels(_proj.group_node(source), ("g", "n"))
+    rel = _reserve_active_relationships(source)
+    rel_keys = set(_labels(rel, ("p", "r", "ud", "n"))) if rel is not None else set()
+    ratios: dict[tuple[str, ...], dict[str, float]] = {}
+    for ec, ent in (("reserve__upDown__unit__node", "unit"), ("reserve__upDown__connection__node", "connection")):
+        for name in ("increase_reserve_ratio", "large_failure_ratio"):
+            df = _try_param(source, ec, name)
+            if df is None:
+                continue
+            rows = df.select(*(pl.col(c).cast(pl.Utf8) for c in (ent, "reserve", "upDown", "node")),
+                             pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
+            for p, r, ud, n, v in rows.iter_rows():
+                if (p, r, ud, n) in rel_keys:
+                    ratios.setdefault((p, r, ud, n), {})[name] = float(v)
+    demanded = demanded_reserves(
+        reservation_pairs=reservation_pairs,
+        group_methods=group_methods,
+        group_nodes=group_nodes,
+        relationship_ratios=ratios,
+        group_ratios={},
+    )
+    if not demanded:
         return _empty_prundt()
-    # Take (r, ud) pairs that have any non-zero reservation entry.
-    rename: dict[str, str] = {}
-    for c in res.columns:
-        if c == "reserve":
-            rename[c] = "r"
-        elif c == "upDown":
-            rename[c] = "ud"
-    res_lf = (res.lazy().pipe(rename_to_axis, rename)
-                 .with_columns(pl.col("value")
-                                 .cast(pl.Float64, strict=False)))
-    # Sum over the value column per (r, ud) — non-zero ⇒ active.
-    active_ru = (res_lf
-                   .filter(pl.col("value").fill_null(0.0) != 0.0)
-                   .select("r", "ud").unique())
-    # Restrict pruna to active (r, ud) pairs.
-    pruna_lf = pruna.lazy().join(active_ru, on=["r", "ud"], how="inner")
+    active_ru = pl.DataFrame({"__r": [r for r, _ in sorted(demanded)], "__ud": [u for _, u in sorted(demanded)]},
+                             schema={"__r": pl.Utf8, "__ud": pl.Utf8})
+    pruna_lf = (pruna.lazy()
+                .with_columns(pl.col("r").cast(pl.Utf8).alias("__r"), pl.col("ud").cast(pl.Utf8).alias("__ud"))
+                .join(active_ru.lazy(), on=["__r", "__ud"], how="semi")
+                .drop("__r", "__ud"))
     # Defensive re-cast: ensure d/t are canonical Enum on the cross-join
     # output (pruna_lf carries Enum p / r / ud / n).
     out = (pruna_lf
