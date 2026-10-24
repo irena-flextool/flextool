@@ -23,7 +23,7 @@ stochastic), builds each LP with polar_high, solves it and passes results
 5. Per sub-solve:
    - `preprocess/emit/` writes the sub-solve's sets and parameters into the Provider.
    - `preprocess/flex_data.load_flextool` assembles `FlexData` and runs the parameter cascade (`preprocess/params/`).
-   - `model/core.build_flextool` builds the LP (or `solve/_warm` updates the previous one).
+   - `model/core.build_flextool` builds the LP (or, when `solve/_warm` finds the sub-solve identical to the previous one, the previous LP is re-solved).
    - The LP is solved (`solve/_solver_dispatch`), with `autoscale/` scaling around it.
    - `output/_writer` writes outputs; `flex_data.build_handoff_from_solution` builds the handoff for the next sub-solve.
    - A solve with `decomposition = benders` goes to `solve/_benders` instead of a single LP.

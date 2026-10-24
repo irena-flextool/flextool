@@ -20,7 +20,26 @@
   terms such as a per-period CO2 price, CO2 limit or inflation were applied
   to the wrong timesteps. Such rolls are now rebuilt. Results of rolling
   solves over several periods can change in the rolls that cross a period
-  boundary; rolls inside one period are not affected.
+  boundary; for the rolls inside one period see the next item (every roll is
+  now rebuilt).
+
+- **Rolling solves: results of reused rolls.** When consecutive rolls
+  differed only in demand (no changing profiles), the solver reused the
+  previous roll's model. The reported results of such rolls came from other
+  hours of the window, or were zero, and the storage state was not carried
+  to the next roll. With a large spread of input magnitudes the reused roll
+  could also use a wrongly scaled demand, and a rolling solve with timestep
+  durations that vary between steps could stop as infeasible. A second solve
+  with other solver settings (for example `scaling`) could also run with the
+  previous solve's settings. Every roll is now built for its own window; a
+  built model is reused only for an identical next solve with the same
+  solver settings. Rolling models without changing profiles get correct
+  results; they can run up to about 5 % slower. Models with time-varying
+  profiles are unaffected (their rolls were already rebuilt). A rebuilt roll
+  starts the solver without a basis, as every roll of a model with profiles
+  already did; the warm-start basis cache (`FLEXTOOL_WARM_START`) still
+  starts a roll from the basis of the same roll in an earlier run of the
+  same model, and never transferred a basis from the previous roll.
 
 - **Units with an online variable no longer need a `min_load`, and
   `min_load_efficiency` units get defaults instead of losing their fuel use.**

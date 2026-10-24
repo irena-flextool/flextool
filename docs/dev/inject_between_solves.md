@@ -120,21 +120,22 @@ with the sorted key list at DEBUG.
 
 ## Warm-path interaction
 
-Under `--warm`, the warm `Problem` for iteration N is built from the
-previous iteration's LP coefficients and is reused *before* the
-override callable fires for iteration N. Concretely:
+Under `warm=True` (the default) an LP is reused for iteration N only when
+iteration N's `FlexData` — computed after the override callable has fired
+and preprocessing has read the overridden handoff — is identical to
+iteration N-1's in every field, labels included, and the solver
+configuration is the same (`_reuse_blocker` in `solve/_warm.py`).
+Concretely:
 
-- Overrides at iteration N **do not** retroactively mutate the warm LP
-  matrix entering iteration N. They affect only what preprocessing
-  computes downstream of `read_handoff_frame`.
-- For example, overriding `K.HANDOFF_REALIZED_INVEST` at iteration N
-  changes `p_entity_previously_invested_capacity` (and anything
-  computed from it) for iteration N's preprocessing, but the warm LP
-  coefficients still reflect iteration N-1's value of
-  `realized_invest`.
+- An override that changes anything preprocessing computes (for example
+  `K.HANDOFF_REALIZED_INVEST` at iteration N changes
+  `p_entity_previously_invested_capacity`) makes iteration N's `FlexData`
+  differ, so iteration N builds its own LP: the override always reaches
+  the LP matrix, the objective and the right-hand sides.
+- An override that changes nothing in `FlexData` leaves the LP identical,
+  and reusing it is equivalent to rebuilding it.
 
-If the wrapper needs the override to influence the LP matrix itself,
-run the cascade cold (omit `warm=True`).
+No `warm=False` run is needed for overrides to take effect.
 
 ## Audit
 

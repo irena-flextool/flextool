@@ -11,9 +11,11 @@ the `solver` parameter runs on HiGHS.
 
 Internally FlexTool runs HiGHS via one of two paths:
 
-- **Warm-active path** — the default for cascade runs. Keeps a single live
-  `highspy.Highs` instance across structurally-compatible sub-solves so each
-  iteration's right-hand-side updates flow into the same in-memory model.
+- **Warm-active path** — the default for cascade runs. Builds and solves each
+  sub-solve in-process with `highspy.Highs`; the built model is re-solved for
+  the next sub-solve only when that sub-solve is identical (same data, same
+  labels, same solver settings). Rolls of a rolling solve are always built
+  anew.
 - **Subprocess path** — for cold solves, `--save-memory`, and single-solve
   invocations. FlexTool writes the LP to a temporary MPS via the polar-high
   polars→MPS writer, then runs `python -m flextool.cli.cmd_solve_mps` in a

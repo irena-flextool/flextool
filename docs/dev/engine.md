@@ -520,24 +520,46 @@ the parquet writer (see the docstring on `build_flextool`).
 
 ### Warm-start cascade — `polar_high.WarmProblem`
 
-Rolling-horizon and nested solves rebuild the same LP shell once and
-then mutate marked Params between iterations. `_warm.py` carries the
-machinery:
+With `warm=True` (the default of the CLI, the GUI and `run_chain_from_db`)
+each sub-solve is solved in-process through a `WarmProblem`. The built LP
+is reused for the next sub-solve only when that sub-solve would build
+exactly the same LP with the same labels; the warm path pushes no
+updates. `_warm.py` carries the decision:
 
-- `_STRUCTURAL_FIELDS` — the tuple of `FlexData` fields whose shape
-  defines the LP structure. Two consecutive solves are "warm-
-  compatible" iff `_fingerprint(d_prev) == _fingerprint(d_next)`.
-- `_WARM_PARAMS` — Params that the warm path knows how to push into
-  the live HiGHS instance via `changeRowsBounds` /
-  `changeColsCost` / per-cell coefficient writes.
-- `_MUTABLE_PARAMS` — Params declared mutable on the WarmProblem
-  itself; the WarmProblem rebuilds the affected rows on its own.
-- `_apply_warm_updates(prev, next, wp)` — the actual update routine.
-  Raises `_IncompatibleUpdate` when a Param outside the warm set
-  changed, which the cascade catches and falls back to a cold rebuild.
+- `_fingerprint(data)` — a cheap pre-filter: the heights of the
+  `_STRUCTURAL_FIELDS` sets plus the time-axis structure
+  (`_time_axis_signature`). A mismatch means "build a new LP".
+- `_reuse_blocker(prior, next)` — the decision. Every `FlexData` field is
+  compared by content (`_values_equal`: frames by schema and rows,
+  `Param`s by dims and frame, containers element by element), `dt`
+  first; it returns the first differing field or `None`.
+- `_apply_warm_updates(warm, prior, next)` — raises `_IncompatibleUpdate`
+  naming that field, or returns 0.
+
+The orchestrator (`_drive_cascade`) additionally requires the same solver
+configuration: HiGHS options, autoscale mode, `user_bound_scale` and the
+objective scale (`solver_key`). A reused LP keeps the options and the
+Layer-2 plan of its build, which is exact because the LP is identical.
+
+Why labels: a reused `WarmProblem` keeps the `Var` frames and the HiGHS
+column / row names of the sub-solve it was built for. The output writer
+(`write_all_variables`) and `build_handoff_from_solution` select the
+realized `(d, t)` of the current sub-solve by those labels, so an LP built
+for another window reports other hours (or zeros) and loses the storage /
+online / invest carry-over. Rolls shift `dt` on every roll and are
+therefore always rebuilt; the per-shape autoscale cache still skips the
+range walks. Reuse happens between consecutive identical non-last solves
+(only the last solve of a model that realizes a period gets
+`realized_dispatch` / `dt_non_anticipativity`).
+
+The in-process basis cache (`FLEXTOOL_WARM_START`, `NamedBasis`, policy
+`"exact"`) is keyed on the exact column / row name set, so a roll is
+warm-started only from the same roll of an earlier run, never from the
+previous roll. Roll-to-roll LP reuse (adopting the new labels on the live
+LP) and roll-to-roll basis transfer are a logged feature item ("rebind").
 
 The `OrchestrationStep.warm_used` boolean reports whether each
-sub-solve actually warm-updated or cold-rebuilt.
+sub-solve re-solved the previous LP or was built cold.
 
 ### Spatial Benders — master + multi-cut loop
 
@@ -863,7 +885,7 @@ small. Repeating the table from
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. Cross-link: [slack_convention.md](slack_convention.md). |
 | Add a new decomposition mode | `_benders.py` (+ `_region_filter.py`) for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
 | Trace a wrong-period bug in rolling horizon | `_apply_db_overrides` in `flex_data.py` | The handoff translation site. Cross-check against the `SolveHandoff` fields populated by `capture_post_solve`. |
-| Trace a warm-LP divergence | `_warm._STRUCTURAL_FIELDS`, `_warm._WARM_PARAMS` | A divergence usually means a structural field changed (add it to `_STRUCTURAL_FIELDS`) or a Param outside the warm set was mutated (add it to `_WARM_PARAMS` and write the `_apply_warm_updates` clause). |
+| Trace a warm-LP divergence | `_warm._reuse_blocker`, `_orchestration` `solver_key` | A reuse requires every `FlexData` field and the solver configuration to be identical; the INFO line "warm reuse fell back to COLD REBUILD" names the blocker. A warm/cold divergence on a reused sub-solve means something that shapes the LP lives outside `FlexData` and the solver key: add it to the comparison. |
 | Add a new variable / dual to the parquet output | `flextool/process_outputs/read_highs_solution.VARIABLE_SPECS` | Append one `VariableSpec`. No engine-side change required. |
 
 ## Conventions worth knowing

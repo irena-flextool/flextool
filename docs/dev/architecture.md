@@ -249,10 +249,13 @@ Exported from `flextool.engine` (`__init__.py`):
 Same `build_flextool` body, three wrappers from `polar_high`:
 
 - **Monolithic** — `polar_high.Problem`. One LP per call.
-- **Warm-start cascade** — `polar_high.WarmProblem`. Rebuilds the LP shell
-  once, then mutates marked Params (`_apply_warm_updates` in
-  `solve/_warm.py`) between rolls. The optimisation room for the future
-  rolling-overlap work (only update changing coefficients) lives here.
+- **Warm-start cascade** — `polar_high.WarmProblem`. Reuses the built LP
+  when the next sub-solve is identical (every `FlexData` field, labels
+  included, and the solver configuration; `_reuse_blocker` in
+  `solve/_warm.py`); rolls are rebuilt, because the output writer and the
+  handoff read the LP by its labels. The future rolling-overlap work (adopt
+  the new labels on the live LP and update only changing coefficients, the
+  "rebind" feature item) would live here.
 - **Benders (regional)** — `engine.solve._benders.solve_benders` driven by
   the orchestrator. Slices `FlexData` by region via `_region_filter`, then
   runs a **Benders decomposition**: a coordinating *master* (a persistent

@@ -157,9 +157,11 @@ environment variable when running outside the standard project layout
 The cross-solver dispatch always builds a fresh solver instance per call.
 HiGHS retains its existing warm-start fast path because FlexTool uses HiGHS
 directly (not via the cross-solver `solve()` entry point) when no `solver`
-parameter is set. **Picking any non-HiGHS solver disables warm-start for that
-solve.** In a rolling-horizon scenario this means each sub-solve is built
-cold; expect a slower per-iteration build, but the result is fully correct.
+parameter is set. **Picking any non-HiGHS solver disables the in-process
+warm path for that solve**: each sub-solve is built and solved through the
+cross-solver dispatch. Rolls of a rolling-horizon scenario are built anew on
+every solver (HiGHS reuses a built model only for an identical sub-solve), so
+the solver choice itself does not change how often the LP is built.
 
 ## Benders-decomposition caveat
 

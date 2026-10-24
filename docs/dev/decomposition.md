@@ -463,9 +463,10 @@ Engine wiring:
   realized-time lists.
 - Per-roll storage carry-over rides
   `SolveHandoff.roll_end_state` (`solve/_handoff.py`).
-- The cascade reuses the same LP shell via `polar_high.WarmProblem`
-  when consecutive rolls' `FlexData` fingerprints match; otherwise
-  cold-rebuild. See
+- Every roll builds its own LP: the in-process `polar_high.WarmProblem`
+  is reused only for an identical sub-solve (every `FlexData` field,
+  labels included, and the solver configuration), and a roll's `dt`
+  labels always shift. See
   [engine.md § Warm-start cascade](engine.md#warm-start-cascade-polar_highwarmproblem).
 
 ### 4.2 Nested
