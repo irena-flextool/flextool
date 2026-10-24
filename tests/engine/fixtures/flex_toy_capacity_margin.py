@@ -113,6 +113,8 @@ def data() -> FlexData:
         p_penalty_down=p_penalty_down,
         # group-slack capacity_margin
         groupCapacityMargin=groupCapacityMargin,
+        # The capacity margin applies in the solve's investment periods.
+        period_invest=pl.DataFrame({"d": ["p2020"]}),
         group_node=group_node,
         pdGroup_capacity_margin=pdGroup_capacity_margin,
         pdGroup_penalty_capacity_margin=pdGroup_penalty_capacity_margin,

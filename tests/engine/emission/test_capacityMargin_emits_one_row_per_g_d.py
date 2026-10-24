@@ -36,10 +36,12 @@ def test_capacityMargin_emits_one_row_per_g_d(scenario_workdir)-> None:
     )
     assert data.dt is not None and data.dt.height > 0
 
-    # Constraint domain = groupCapacityMargin × dt.  The parameter
-    # `pdGroup_capacity_margin` lives on (g, d) but the constraint
+    # Constraint domain = groupCapacityMargin × {(d, t) ∈ dt : d ∈ period_invest}.
+    # Here the solve's invest period is its only dt period, so every dt row counts.
+    # The parameter `pdGroup_capacity_margin` lives on (g, d) but the constraint
     # itself is bound per (g, d, t) so the per-step margin floor can
     # vary with inflow / step duration.
+    assert set(data.period_invest["d"].cast(str).to_list()) == set(data.dt["d"].cast(str).to_list())
     expected = data.groupCapacityMargin.height * data.dt.height
     assert_cstr_row_count(pb, "capacityMargin", expected)
     assert_cstr_present(pb, "capacityMargin")

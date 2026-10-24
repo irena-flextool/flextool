@@ -973,6 +973,9 @@ class FlexData:
     dt_non_anticipativity: pl.DataFrame | None = None  # (d, t) — realised dispatch + fix-storage timesteps
     groupStochastic: pl.DataFrame | None = None   # (g,) — groups enabling storage non-anticipativity
     period_in_use_set: pl.DataFrame | None = None  # (d,) — periods active this solve (filters branches)
+    # (d,) — investment periods of the active solve and their stochastic branch periods: the capacity-margin
+    # domain.  Empty frame = the solve has no investment periods; None = not loaded.
+    period_invest: pl.DataFrame | None = None
     # Scenario-lineage frames (recourse plan §6b Slice A).  Built by
     # apply_branch_cluster for every solve; None only when the derived
     # cascade never ran (hand-built FlexData).  dd_same_scenario:
@@ -4025,6 +4028,38 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
     )
 
 
+def _load_period_invest(sd: Path, *, provider: "object | None" = None) -> pl.DataFrame | None:
+    """``period_invest`` (d,): the active solve's investment periods and the branch periods of those anchors.
+
+        period_invest = { d : d ∈ invest_periods_of_current_solve }
+                      ∪ { b : (d, b) ∈ period__branch, d ∈ invest_periods_of_current_solve }
+
+    ``solve_data/invest_periods_of_current_solve.csv`` is GMPL's ``period_invest``; the branch periods are
+    added as today's model has them (the capacity margin in branch periods is pending the stochastics
+    re-grounding).  ``period__branch.csv`` also has identity rows ``(d, d)``, which add nothing.  The model
+    intersects the set with the periods of dt.  Sorted and de-duplicated; an empty frame when the solve has
+    no investment periods; None when the invest-period file is not there at all.
+    """
+    from flextool.engine.preprocess.params._branch import period_branch_full_lf
+
+    path = sd / "invest_periods_of_current_solve.csv"
+    key = "solve_data/invest_periods_of_current_solve"
+    if not _provider_has(provider, key, path):
+        return None
+    df = _provider_read(provider, key, path)
+    anchors: set[str] = set()
+    if df.height > 0:
+        anchors = {str(v) for v in df.get_column(df.columns[0]).to_list() if v is not None and str(v) != ""}
+    periods = set(anchors)
+    if anchors:
+        pbf = period_branch_full_lf(sd.parent, provider=provider).collect()
+        for a, b in pbf.select(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8)).iter_rows():
+            if a in anchors and b is not None:
+                periods.add(b)
+    return (pl.DataFrame({"period": sorted(periods)}, schema={"period": pl.Utf8})
+              .pipe(rename_to_axis, {"period": "d"}).select("d"))
+
+
 def _assign_param_names(data: "FlexData") -> "FlexData":
     """Stamp the FlexData attribute name onto every :class:`Param` field.
 
@@ -4791,6 +4826,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             **dc_pf_data,
             **ladder_data,
             **stoch_data,
+            period_invest=_load_period_invest(sd, provider=provider),
             p_arc_step_duration_sink = p_arc_step_duration_sink,
             p_arc_step_duration_source = p_arc_step_duration_source,
             arc_sink_block_dt = arc_sink_block_dt,

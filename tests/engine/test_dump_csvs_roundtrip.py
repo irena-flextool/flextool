@@ -29,6 +29,7 @@ DATA = Path(__file__).resolve().parent / "data"
 SCENARIO_VIA_FIXTURE: list[tuple[str, str]] = [
     ("coal", "main"),
     ("lh2_three_region", "lh2"),
+    ("capacity_margin", "main"),
 ]
 
 
@@ -99,6 +100,34 @@ def test_dump_csvs_roundtrip(tmp_path, scenario, db_fixture, scenario_workdir):
     assert not mismatches, (
         f"dump_csvs round-trip failed on {len(mismatches)} field(s) "
         f"for {scenario or db_fixture}:\n" + "\n\n".join(mismatches))
+
+
+def test_dump_csvs_keeps_capacity_margin(tmp_path, scenario_workdir):
+    """A CSV-only reload keeps the capacity-margin groups (flag file) and the
+    investment periods, so the reloaded model builds the same capacityMargin rows (#69)."""
+    from polar_high import Problem
+
+    from flextool.engine import build_flextool
+
+    fixture = scenario_workdir("capacity_margin")
+    original = load_flextool(fixture)
+    assert original.groupCapacityMargin is not None and original.groupCapacityMargin.height > 0
+    assert original.period_invest is not None and original.period_invest.height > 0
+    out_dir = tmp_path / "dumped_cm"
+    original.dump_csvs(out_dir, copy_meta_from=fixture)
+    redo = load_flextool(out_dir)
+    for field in ("groupCapacityMargin", "period_invest"):
+        a, b = getattr(original, field), getattr(redo, field)
+        assert b is not None, field
+        assert _frames_equal_after_sort(a.with_columns(pl.all().cast(pl.Utf8)),
+                                        b.with_columns(pl.all().cast(pl.Utf8))), field
+
+    def _rows(fd):
+        pb = Problem()
+        build_flextool(pb, fd)
+        recs = [r for r in pb.cstrs_named("capacityMargin") if r.name == "capacityMargin"]
+        return recs[0].over.height if recs else 0
+    assert _rows(redo) == _rows(original) > 0
 
 
 def test_dump_csvs_creates_expected_layout(tmp_path, scenario_workdir):

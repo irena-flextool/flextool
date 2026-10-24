@@ -130,6 +130,8 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "pssdt_varCost_eff_unit_sink", "pssdt_varCost_eff_connection",
     # Group slack.
     "groupCapacityMargin", "groupInertia", "groupNonSync",
+    # Capacity-margin periods: constant within one solve's rolls; a height change forces a cold rebuild.
+    "period_invest",
     "group_node", "process_unit",
     "process_sink_inertia", "process_source_inertia",
     "process_sink_nonSync", "process_group_inside_nonSync",

@@ -202,7 +202,13 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
                           {"d": "period", "value": "value"}),
     "period_in_use_set": ("solve_data", "period_in_use_set.csv",
                            {"d": "period"}),
+    # Written even when empty (header only): empty = the solve has no investment periods, absent = not loaded.
+    "period_invest": ("solve_data", "invest_periods_of_current_solve.csv",
+                      {"d": "period"}),
 }
+
+# DIRECT_WRITES fields whose empty frame is written as a header-only CSV (empty and absent mean different things).
+_WRITE_WHEN_EMPTY: frozenset[str] = frozenset({"period_invest"})
 
 
 def _frame_of(value: Any) -> pl.DataFrame | None:
@@ -324,7 +330,10 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
         value = getattr(data, field)
         f = _frame_of(value)
         if f is None:
-            continue
+            if field in _WRITE_WHEN_EMPTY and isinstance(value, pl.DataFrame):
+                f = value
+            else:
+                continue
         target_dir = sd_dir if kind == "solve_data" else inp_dir
         _write_frame(f, target_dir / csv_name, rename)
 

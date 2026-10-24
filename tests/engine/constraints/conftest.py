@@ -787,6 +787,8 @@ def toy_group_reserve() -> FlexData:
         p_process_existing_count=p_process_existing_count,
         # group / capacity margin
         groupCapacityMargin=groupCapacityMargin,
+        # The capacity margin applies in the solve's investment periods.
+        period_invest=pl.DataFrame({"d": ["d1"]}),
         group_node=group_node,
         pdGroup_capacity_margin=pdGroup_capacity_margin,
         pdGroup_penalty_capacity_margin=pdGroup_penalty_capacity_margin,

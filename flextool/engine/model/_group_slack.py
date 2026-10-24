@@ -183,11 +183,26 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
 # Feature flags (set on the build context by model._prepare)
 
 
-def has_capacity_margin(d) -> bool:
-    """True when some group has capacity_margin_method = manual and the group scaling is populated.
+def _capacity_margin_periods(d) -> pl.DataFrame | None:
+    """``(d,)`` periods of dt that are in ``period_invest`` (the capacity-margin domain); None when there are none.
 
-    A group without a capacity_margin value has margin 0 (its capacity must cover the peak net load)."""
-    return _has_rows(getattr(d, "groupCapacityMargin", None)) and d.p_inv_group_cap is not None
+    ``period_invest`` = the solve's investment periods and their stochastic branch periods."""
+    pinv = getattr(d, "period_invest", None)
+    if pinv is None or pinv.height == 0 or d.dt is None:
+        return None
+    keep = pinv.get_column("d").cast(pl.Utf8).implode()
+    out = d.dt.select("d").unique(maintain_order=True).filter(pl.col("d").cast(pl.Utf8).is_in(keep))
+    return out if out.height > 0 else None
+
+
+def has_capacity_margin(d) -> bool:
+    """True when some group has capacity_margin_method = manual, the group scaling is populated and the solve has
+    an investment period in dt.
+
+    A group without a capacity_margin value has margin 0 (its capacity must cover the peak net load).  A solve
+    without investment periods (dispatch, rolling dispatch) has no capacity margin."""
+    return (_has_rows(getattr(d, "groupCapacityMargin", None)) and d.p_inv_group_cap is not None
+            and _capacity_margin_periods(d) is not None)
 
 
 def has_inertia(d) -> bool:
@@ -220,12 +235,14 @@ def add_variables(b: _Build) -> None:
 
     # ─── VAR. ─── vq_capacity_margin ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # vq_capacity_margin[g,d] ≥ 0   ∀ g ∈ groupCapacityMargin, d ∈ periods of dt
+    # vq_capacity_margin[g,d] ≥ 0   ∀ g ∈ groupCapacityMargin, d ∈ D_inv
+    #   D_inv = period_invest ∩ periods of dt: the solve's investment periods and the branch periods of those
+    #   anchors (branch periods kept as before, pending the stochastics re-grounding)
     # Capacity margin shortfall of group g in period d, as a fraction of
     # group_capacity_for_scaling: MW = vq_capacity_margin · group_capacity_for_scaling[g,d].
     if b.has_capacity_margin:
         b.vq_capacity_margin = m.add_var("vq_capacity_margin", ("g", "d"),
-                                         d.groupCapacityMargin.join(d.dt.select("d").unique(), how="cross"),
+                                         d.groupCapacityMargin.join(_capacity_margin_periods(d), how="cross"),
                                          lower=0.0)
 
     # ─── VAR. ─── vq_inertia ─────────────────────────────────────────────────
@@ -311,8 +328,11 @@ def _eq_capacity_margin(b: _Build) -> None:
     #   ≥ capacity_margin[g,d] · icap[g,d] − Σ_{n ∈ N(g)} inflow_per_step[n,d,t] · icap[g,d]
     #     − Σ_{prof(g)} existing_count[p,d] · unitsize[p] · profile[f,d,t] · icap[g,d]
     #     − Σ_{cap(g)} existing_count[p,d] · unitsize[p] · icap[g,d]
-    #   ∀ g ∈ groupCapacityMargin, (d,t) ∈ dt
+    #   ∀ g ∈ groupCapacityMargin, (d,t) ∈ dt : d ∈ D_inv
     #   groupCapacityMargin = groups with capacity_margin_method = manual;  capacity_margin[g,d] = 0 where not authored
+    #   D_inv = period_invest ∩ periods of dt (investment periods of the solve and the branch periods of those
+    #   anchors, the latter kept pending the stochastics re-grounding); a solve without investment periods has
+    #   no capacity margin
     #   N(g) = nodes of g without a storage state;  icap = inv_group_cap = 1 / group_capacity_for_scaling
     #   prof(g) = unit arcs into N(g) with an upper_limit or fixed profile f;  cap(g) = the other unit arcs into N(g)
     #   use_*(g) = unit arcs out of N(g);  Σ_{d′} over edd_invest_set / edd_divest_active
@@ -430,7 +450,8 @@ def _eq_capacity_margin(b: _Build) -> None:
         if rhs_inflow.height > 0:
             rhs["inflow_neg"] = Param(("g", "d", "t"), rhs_inflow)
 
-    m.add_cstr("capacityMargin", over=gcm.join(d.dt, how="cross"), sense=">=", lhs_terms=lhs, rhs_terms=rhs)
+    dt_inv = d.dt.join(_capacity_margin_periods(d), on="d", how="semi")
+    m.add_cstr("capacityMargin", over=gcm.join(dt_inv, how="cross"), sense=">=", lhs_terms=lhs, rhs_terms=rhs)
 
 
 def _eq_inertia(b: _Build) -> None:
@@ -602,7 +623,8 @@ def objective_terms(b: _Build) -> Expr | None:
     # ─────────────────────────────────────────────────────────────────────────
     # + Σ_{(g,d,t)} vq_inertia[g,d,t] · inertia_limit[g,d] · penalty_inertia[g,d] · w_op[d,t]
     # + Σ_{(g,d,t)} vq_non_synchronous[g,d,t] · gcs[g,d] · penalty_non_synchronous[g,d] · w_op[d,t]
-    # + Σ_{(g,d)} vq_capacity_margin[g,d] · gcs[g,d] · penalty_capacity_margin[g,d] · inflation_op[d] · 1000
+    # + Σ_{g ∈ groupCapacityMargin, d ∈ D_inv} vq_capacity_margin[g,d] · gcs[g,d] · penalty_capacity_margin[g,d]
+    #                                                                     · inflation_op[d] · 1000
     #   gcs = group_capacity_for_scaling;  w_op = b.op_factor
     # Each slack is scaled back to physical units (MWs, MW) and priced per hour
     # of operation.  The capacity margin is a planning quantity: it is priced

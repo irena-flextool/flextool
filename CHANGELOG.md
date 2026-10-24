@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **The capacity margin applies only in investment periods.** A manual
+  capacity margin was enforced in every period of every solve, so dispatch
+  solves, rolling dispatch, stochastic dispatch and look-ahead periods
+  without investment paid capacity margin penalties. It now applies in the
+  periods listed in the solve's `invest_periods` (and their stochastic branch
+  periods), as the documentation says.
+
 - **A capacity margin, inertia or non-synchronous limit applies only with its
   method or flag.** A `capacity_margin`, `inertia_limit` or
   `non_synchronous_limit` on a group without `capacity_margin_method = manual`

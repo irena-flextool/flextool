@@ -146,6 +146,9 @@ MINLOAD_EFF: tuple[str, ...] = ("process_min_load_eff", "p_section")
 STARTUP_COST_LINEAR: tuple[str, ...] = ("p_startup_cost", "pdt_online_linear")
 STARTUP_COST_INTEGER: tuple[str, ...] = ("p_startup_cost", "pdt_online_integer")
 RAMP: tuple[str, ...] = ("dtttdt", "p_step_duration", "p_process_existing_count")
+# Checked whenever a group has capacity_margin_method = manual: without period_invest or the group scaling the
+# capacity margin would be skipped without a word.
+CAPACITY_MARGIN: tuple[str, ...] = ("period_invest", "p_inv_group_cap")
 INVEST: tuple[str, ...] = ("p_entity_max_units",)
 DIVEST: tuple[str, ...] = ("p_entity_max_units", "edd_divest_active",
                             "pd_divest_set")
@@ -475,6 +478,8 @@ def _prepare(b: _Build) -> None:
         _check(d, STARTUP_COST_LINEAR, "startup_cost_linear")
     if b.has_startup_cost_int:
         _check(d, STARTUP_COST_INTEGER, "startup_cost_integer")
+    if _has_rows(getattr(d, "groupCapacityMargin", None)):
+        _check(d, CAPACITY_MARGIN, "capacity_margin")
 
     # ── shared index sets ──
     b.pss_dt = compute_pss_dt(d) if b.has_proc else None
