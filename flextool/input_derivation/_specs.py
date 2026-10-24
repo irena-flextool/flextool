@@ -57,6 +57,13 @@ _ENTITY_SPECS: list[EntitySpec] = [
 ]
 
 
+# ``processParam`` values the ``pd_process`` spec carries only as the period twins of ``pt_process`` parameters.
+# A silent-``x`` time map of one of these passes both the ``pt`` and the ``pd`` filter; its timestep-keyed rows
+# are dropped from ``pd_process`` in ``input_derivation.run`` (a timestep is never a period).
+PD_PROCESS_TIME_TWINS: frozenset[str] = frozenset(
+    {"efficiency", "efficiency_at_min_load", "min_load", "availability", "startup_cost"})
+
+
 _PARAMETER_SPECS: list[dict] = [
     # --- commodity ---
     {
@@ -843,6 +850,11 @@ _PARAMETER_SPECS: list[dict] = [
         "param_print": True,
     },
     # --- pd_process (period maps) ---
+    # Also carries the period twin of every ``pt_process`` parameter (and ``startup_cost``): ``pt_process`` drops
+    # period-labelled maps (``filter_out_index: "period"``), so without the twin a 1-D period map of efficiency /
+    # min_load / availability never reached the emit ``pdtProcess`` cascade that rolling and nested sub-solves read
+    # (same pairing as ``pd_node`` / ``pt_node``).  Timestep-keyed rows of the twins (silent-``x`` time maps) are
+    # dropped in ``input_derivation.run`` (``PD_PROCESS_TIME_TWINS``).
     {
         "cl_pars": [("unit", "invest_forced"),
                     ("unit", "invest_max_period"),
@@ -872,7 +884,17 @@ _PARAMETER_SPECS: list[dict] = [
                     ("connection", "other_operational_cost"),
                     ("connection", "existing"),
                     ("connection", "cumulative_max_capacity"),
-                    ("connection", "cumulative_min_capacity")],
+                    ("connection", "cumulative_min_capacity"),
+                    ("unit", "efficiency"),
+                    ("unit", "efficiency_at_min_load"),
+                    ("unit", "min_load"),
+                    ("unit", "availability"),
+                    ("unit", "startup_cost"),
+                    ("connection", "efficiency"),
+                    ("connection", "efficiency_at_min_load"),
+                    ("connection", "min_load"),
+                    ("connection", "availability"),
+                    ("connection", "startup_cost")],
         "header": "process,processParam,period,pd_process",
         "filename": "input/pd_process.csv",
         "filter_in_type": ["1d_map"],

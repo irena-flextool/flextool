@@ -5120,7 +5120,10 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # otherwise overlaid.  For these synthetic-solve workdirs, the
     # snapshot CSV is the canonical and the per-solve overrides must be
     # skipped entirely.  Direct + Projection Params (passes 1-2) are
-    # solve-agnostic and remain authoritative.
+    # solve-agnostic and remain authoritative, and the solve-agnostic
+    # producers re-wired below (RESERVE-1, SECTION-1, MINLOAD-1, PROFILE-1 —
+    # profiles are read DB-direct —, DELAY-1, CAPCOEF-1, INFLOW-1, NA-1,
+    # MINTIME-1) replace their CSV seeds.
     #
     # Δ.19 — for the synthetic ``<base>_<anchor>`` shape we additionally
     # produce the 8 invest-set frames from ``<base>``'s Spine entries
@@ -5215,6 +5218,20 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 db_reader, dt)
         _loadflex_prof("apply_db_overrides:pass_synthetic_min_load")
         _timed("c.synth min_load", _wire_min_load_for_synthetic_solve)
+
+        # PROFILE-1 — same class of gap as SECTION-1 / MINLOAD-1.  The
+        # synthetic-solve early-return skips ``apply_derived_a``, whose
+        # ``apply_profile_cascade`` is the DB-direct producer of
+        # ``p_profile_value``; the CSV seed (emit ``pdtProfile``) has no period
+        # tier, so a period-keyed profile (1-D period or 2-D period x time map)
+        # was read as 0 in every roll / nested sub-solve.  The cascade is
+        # solve-agnostic (``source`` + the CSV-loaded ``dt`` + the per-solve
+        # workdir CSVs for the stochastic and time-averaged tiers), so this
+        # mirrors ``apply_derived_a`` exactly.
+        from flextool.engine.preprocess.params._profiles import apply_profile_cascade
+        _loadflex_prof("apply_db_overrides:pass_synthetic_profile")
+        _timed("c.synth profile", apply_profile_cascade, flex_data, db_reader,
+               workdir_path, provider=provider)
 
         # DELAY-1 — same class of gap: ``apply_derived_g`` produces
         # ``dtt__delay_duration``, ``p_process_delay_weight`` and

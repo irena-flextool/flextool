@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **Rolling solves and the sub-solves of a nested investment use period-map
+  values of efficiency, minimum load and profiles.** A unit or connection
+  `efficiency` or a unit `min_load` given as a map keyed by period, and a
+  `profile` keyed by period (or by period and time), now apply in every roll
+  of a `rolling_window` solve and in the per-period sub-solves of a nested
+  investment, as they already did in a single solve. Before, these solves
+  used efficiency 1 (wrong fuel use, fuel cost, CO2 and input-flow limits),
+  dropped the minimum-load part of the conversion curve and read the profile
+  as 0. Stochastic rolling solves are fixed too.
+
 - **A constant `cumulative_max_capacity` or `invest_max_period` no longer
   blocks investment.** A unit, connection or node with `invest_method`
   `cumulative_limits` (or `invest_period`) and a single value for

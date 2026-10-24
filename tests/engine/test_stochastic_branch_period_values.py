@@ -358,9 +358,8 @@ def test_branch_native_value_wins(two_p_native) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rolling (synthetic sub-solves; p_penalty_up and the variable-cost seeds come from the emit layer).
-# efficiency is left out: rolling sub-solves ignore a period-map efficiency even in deterministic runs
-# (a separate issue, see specs/github_issues.md), so it cannot be compared to the scalar here.
+# Rolling (synthetic sub-solves; p_penalty_up, the conversion slope and the variable-cost seeds come from the emit
+# layer; the profile is read DB-direct).
 
 CHAIN_ROLL_SCENARIO = "1_week_rolling_wind"
 
@@ -378,12 +377,27 @@ def _values_roll(as_map: bool) -> list:
         ["unit__inputNode", ["gas_plant", "gas_market"], "other_operational_cost", v(2.0)],
         ["node", "demand_node", "penalty_up", v(4000.0)],
         ["unit", "coal_plant", "availability", v(0.8)],
+        ["unit", "coal_plant", "efficiency", v(0.5)],
+        ["unit", "hydro_plant", "efficiency", v(1.5)],
     ]
 
 
 def test_rolling_period_maps_equal_scalars(tmp_path_factory) -> None:
     maps = _steps(tmp_path_factory, "c6_roll_maps", _values_roll(True), scenario=CHAIN_ROLL_SCENARIO)
     scalars = _steps(tmp_path_factory, "c6_roll_scalars", _values_roll(False), scenario=CHAIN_ROLL_SCENARIO)
+    assert len(maps) == len(scalars) > 1
+    for (name, s_map), s_scalar in zip(maps.items(), scalars.values()):
+        slope = _by_period(s_map.flex_data.p_slope, p="coal_plant")
+        assert slope and all(v == {2.0} for v in slope.values()), (name, slope)
+        assert s_map.solution.obj == pytest.approx(s_scalar.solution.obj, rel=1e-9), name
+
+
+def test_rolling_profile_period_map_equals_scalar(tmp_path_factory) -> None:
+    def values(as_map: bool) -> list:
+        return [["profile", "wind", "profile", pmap({ANCHOR: 0.35}) if as_map else scalar(0.35)]]
+
+    maps = _steps(tmp_path_factory, "c8_roll_profile_map", values(True), scenario=CHAIN_ROLL_SCENARIO)
+    scalars = _steps(tmp_path_factory, "c8_roll_profile_scalar", values(False), scenario=CHAIN_ROLL_SCENARIO)
     assert len(maps) == len(scalars) > 1
     for (name, s_map), s_scalar in zip(maps.items(), scalars.values()):
         assert s_map.solution.obj == pytest.approx(s_scalar.solution.obj, rel=1e-9), name
