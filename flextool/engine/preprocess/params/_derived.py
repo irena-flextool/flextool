@@ -57,7 +57,7 @@ from flextool.engine.input._axis_enums import (
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.preprocess.params._direct import _e_period_param_union
-from flextool.engine.input._solve_state import CommissioningLagError, LineageFilterError
+from flextool.engine.input._solve_state import CommissioningLagError, FlexToolConfigError, LineageFilterError
 from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
     promote_param_to_dt,
@@ -161,8 +161,9 @@ def _recourse_invest_active(
 # ACTIVE solve.  Set fresh at the top of every Layer-4 apply boundary
 # (``apply_derived_c`` / ``apply_npv`` / ``apply_synthetic_invest_sets``)
 # to the recourse pairs, or ``None`` when the flag is off / deterministic.
-# Read by the three explicit-per-period producers (_resolve_per_period_lf,
-# _per_entity_period_cost, _ed_explicit_period_param) to inherit each
+# Read by the explicit-per-period producers (_resolve_per_period_lf and
+# _ed_period_param_lf, which serves _per_entity_period_cost and
+# p_entity_max_units_from_source) to inherit each
 # anchor's per-(e,d) value onto its branch periods (§4.1).  ``None`` ==
 # no-op == flag-off byte-parity.  The set-at-boundary-top invariant means
 # a stale value can never reach a producer: every boundary overwrites it
@@ -3578,40 +3579,53 @@ def _eea_predicate(source: "InputSource",
                        .select("e", "d").unique())
 
 
+def _ed_period_param_lf(source: "InputSource",
+                        parameter_name: str,
+                        periods: list[str]) -> pl.LazyFrame | None:
+    """``unit/node/connection.<parameter_name>`` as ``(e, d, value)`` over ``periods``.
+
+    Read through the shape resolver (:func:`._direct._e_period_param_union` →
+    ``resolve_param_shape`` → ``broadcast_to_period``): a constant is broadcast over the
+    periods, a period map keeps its own per-period values (also when authored with the
+    silent ``x`` index, and also next to a constant on another entity of the same class),
+    and map keys outside ``periods`` are dropped.  Under recourse each anchor period's
+    explicit value is inherited by its branch periods (:func:`_anchor_expand_explicit`)
+    before the final restriction to ``periods``.
+
+    Zero values are kept (``filter_zero=False``) so that a branch-native explicit 0 wins over
+    its anchor's non-zero value in the expansion.  Anchor periods are added to the period
+    filter so that their explicit rows survive the resolver's inner join until the expansion
+    has used them.  ``None`` when no entity authors the parameter.
+    """
+    pairs = _RECOURSE_ANCHOR_PAIRS
+    anchors = ([] if pairs is None
+               else [a for a in pairs["anchor"].unique(maintain_order=True).to_list()
+                     if a not in periods])
+    period_filter = axis_lazyframe({"d": list(periods) + anchors}).collect()
+    param = _e_period_param_union(source, parameter_name, period_filter=period_filter)
+    if param is None:
+        return None
+    frame = param.frame if isinstance(param.frame, pl.LazyFrame) else param.frame.lazy()
+    lf = frame.select("e", "d", pl.col("value").cast(pl.Float64))
+    lf = _anchor_expand_explicit(lf)
+    # Restrict to ``periods``: semi-join in the frame's own d dtype.
+    periods_d = axis_lazyframe({"d": list(periods)})
+    d_dtype = lf.collect_schema().get("d")
+    if periods_d.collect_schema().get("d") != d_dtype:
+        periods_d = periods_d.with_columns(pl.col("d").cast(d_dtype))
+    return lf.join(periods_d, on="d", how="semi")
+
+
 def _per_entity_period_cost(source: "InputSource",
                               parameter_name: str,
                               period_invest: list[str]) -> pl.LazyFrame | None:
     """``unit/node/connection.<parameter_name>`` as ``(e, d, v)`` over the solve's invest periods.
 
-    Read through the shape resolver (:func:`._direct._e_period_param_union` →
-    ``resolve_param_shape`` → ``broadcast_to_period``): scalars are broadcast over the
-    periods, period maps keep their own per-period values (also when authored with the
-    silent ``x`` index), and map keys outside the solve's invest periods are dropped.  Under
-    recourse each anchor period's explicit value is inherited by its branch periods
-    (:func:`_anchor_expand_explicit`) before the final restriction to ``period_invest``.
-
-    Zero values are kept (``filter_zero=False``) so that a branch-native explicit 0 wins over
-    its anchor's non-zero value in the expansion; :func:`_eea_predicate` drops ``v == 0``
-    afterwards.  Anchor periods are added to the period filter so that their explicit rows
-    survive the resolver's inner join until the expansion has used them.
+    :func:`_ed_period_param_lf` restricted to ``period_invest``, value column named ``v``.
+    :func:`_eea_predicate` drops ``v == 0`` afterwards.
     """
-    pairs = _RECOURSE_ANCHOR_PAIRS
-    anchors = ([] if pairs is None
-               else [a for a in pairs["anchor"].unique(maintain_order=True).to_list()
-                     if a not in period_invest])
-    period_filter = axis_lazyframe({"d": list(period_invest) + anchors}).collect()
-    param = _e_period_param_union(source, parameter_name, period_filter=period_filter)
-    if param is None:
-        return None
-    frame = param.frame if isinstance(param.frame, pl.LazyFrame) else param.frame.lazy()
-    lf = frame.select("e", "d", pl.col("value").cast(pl.Float64).alias("v"))
-    lf = _anchor_expand_explicit(lf)
-    # Restrict to the solve's invest periods: semi-join in the frame's own d dtype.
-    invest_d = axis_lazyframe({"d": list(period_invest)})
-    d_dtype = lf.collect_schema().get("d")
-    if invest_d.collect_schema().get("d") != d_dtype:
-        invest_d = invest_d.with_columns(pl.col("d").cast(d_dtype))
-    return lf.join(invest_d, on="d", how="semi")
+    lf = _ed_period_param_lf(source, parameter_name, period_invest)
+    return None if lf is None else lf.rename({"value": "v"})
 
 
 # ---------------------------------------------------------------------------
@@ -4338,41 +4352,13 @@ def _e_explicit_param(source: "InputSource", parameter_name: str
     return pl.concat(parts).unique(subset=["e"], keep="last")
 
 
-def _ed_explicit_period_param(source: "InputSource", parameter_name: str
-                               ) -> pl.LazyFrame:
-    """Per-(e, d) 1d_map(period) explicit values across unit + node +
-    connection.  Returns ``[e, d, value]`` lazy frame.
-
-    Handles both canonical (``period`` named index) and fallback (``x``
-    generic index) Map shapes — SpineDbReader uses ``x`` when
-    Map.index_name is empty / generic and the period interpretation is
-    inferred from value content.
-    """
-    parts: list[pl.LazyFrame] = []
-    for ec in ("unit", "node", "connection"):
-        df = _try_param_explicit(source, ec, parameter_name)
-        if df is None or df.height == 0:
-            continue
-        period_col: str | None = None
-        for cand in ("period", "x"):
-            if cand in df.columns:
-                period_col = cand
-                break
-        if period_col is None:
-            continue
-        parts.append(df.lazy().select(
-            alias_to_axis("name", "e"),
-            alias_to_axis(period_col, "d"),
-            pl.col("value").cast(pl.Float64),
-        ))
-    if not parts:
-        return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
-                                       "d": schema_dtype(_enums, "d"),
-                                       "value": pl.Float64})
-    # Slice D §4 — anchor-map explicit per-period cap rows onto branch
-    # periods (invest_max_period / cumulative_max_capacity); no-op flag-off.
-    return _anchor_expand_explicit(
-        pl.concat(parts).unique(subset=["e", "d"], keep="last"))
+def _ed_period_value_map(source: "InputSource", parameter_name: str,
+                         periods: list[str]) -> dict[tuple[str, str], float]:
+    """:func:`_ed_period_param_lf` as a ``{(e, d): value}`` dict (``{}`` when not authored)."""
+    lf = _ed_period_param_lf(source, parameter_name, periods)
+    if lf is None:
+        return {}
+    return {(e, d): v for e, d, v in lf.collect().iter_rows()}
 
 
 def p_entity_max_units_from_source(source: "InputSource",
@@ -4460,10 +4446,21 @@ def p_entity_max_units_from_source(source: "InputSource",
             existing_map = {(e, d): v
                             for e, d, v in pae_param.frame.iter_rows()}
 
-    # invest_max_period[e, d]: explicit per-period values, default 0.
-    imp_df = _ed_explicit_period_param(source, "invest_max_period").collect()
-    imp_map: dict[tuple[str, str], float] = {(e, d): v
-        for e, d, v in imp_df.iter_rows()}
+    # ─── PARAM ─── p_entity_max_units ───────────────────────────────────────────
+    # p_entity_max_units[e,d] = max_capacity[e,d] / unitsize[e]       ∀ d ∈ period_in_use, kept where > 0
+    # max_capacity[e,d] = cmc[e,d]                                      if (e,d) ∈ ed_invest_cumulative
+    #                   = existing[e,d] + imp[e,d]                      if (e,d) ∈ ed_invest_period, e ∉ e_invest_total
+    #                                   + eim[e]                        if e ∈ e_invest_total, (e,d) ∉ ed_invest_period
+    #                                   + max(imp[e,d], eim[e])         if both
+    #                                   + max_flow_for_unconstrained    if invest_method ∈ *_no_limit
+    # imp[e,d] / cmc[e,d] = authored[e,d]  (period map)
+    #                     | authored[e]    (constant)
+    #                     | authored[e, anchor(d)]  (recourse branch period without its own value)
+    #                     | 0
+    # imp / cmc are resolved for every d ∈ period_in_use (not only invest periods).
+    #
+    # invest_max_period[e, d]: constant or period map via the shape resolver, default 0.
+    imp_map = _ed_period_value_map(source, "invest_max_period", piu)
     # ed_invest_period: rows in ed_invest_pairs whose method ∈ INVEST_PERIOD.
     ed_invest_period = {(e, d) for (e, d) in ed_invest.iter_rows()
                          if methods_by_e.get(e, set()) & _INVEST_METHODS_INVEST_PERIOD}
@@ -4472,10 +4469,8 @@ def p_entity_max_units_from_source(source: "InputSource",
     eim_df = _e_explicit_param(source, "invest_max_total").collect()
     eim_map: dict[str, float] = dict(eim_df.iter_rows())
 
-    # cumulative_max_capacity per (e, d): explicit ed map, broadcast-able.
-    cmc_df = _ed_explicit_period_param(source, "cumulative_max_capacity").collect()
-    cmc_map: dict[tuple[str, str], float] = {(e, d): v
-        for e, d, v in cmc_df.iter_rows()}
+    # cumulative_max_capacity[e, d]: constant or period map via the shape resolver, default 0.
+    cmc_map = _ed_period_value_map(source, "cumulative_max_capacity", piu)
     # ed_invest_cumulative: ed_invest pairs with cumulative_limits method.
     ed_invest_cumulative = {(e, d) for (e, d) in ed_invest.iter_rows()
                              if "cumulative_limits" in methods_by_e.get(e, set())}
@@ -6377,6 +6372,10 @@ def apply_derived_c(
         pemu_db = p_entity_max_units_from_source(
             source, ed_inv_used, active_solve, workdir=workdir,
             p_entity_all_existing=pae_for_max_units, ctx=ctx)
+    except FlexToolConfigError:
+        # A shape error from the resolver: keeping the legacy CSV seed would hide it
+        # behind a wrong p_entity_max_units (the seed misses recourse branch periods).
+        raise
     except Exception:
         pemu_db = None
     if pemu_db is not None:
@@ -7735,8 +7734,6 @@ def _guard_coarse_blocks_within_repday(
     configuration problem the user can fix (choose a ``new_stepduration``
     that evenly divides the representative-period length).
     """
-    from flextool.engine.input._solve_state import FlexToolConfigError
-
     straddlers: list[tuple[str, str]] = []
     for (dval, bfirst), grp in period_block_time.group_by(
             ["d", "b_first"], maintain_order=True):

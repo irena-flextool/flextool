@@ -1,5 +1,19 @@
 ## Unreleased
 
+- **A constant `cumulative_max_capacity` or `invest_max_period` no longer
+  blocks investment.** A unit, connection or node with `invest_method`
+  `cumulative_limits` (or `invest_period`) and a single value for
+  `cumulative_max_capacity` (or `invest_max_period`) now gets that limit in
+  every period, the same as the equivalent period map. Before, the single
+  value was ignored when the model computed the maximum capacity, so the
+  entity could not use new capacity (with `cumulative_limits` not even its
+  existing capacity), and the model fell back to slack or other
+  technologies. This also
+  holds for the sub-solves of a nested multi-period investment and for
+  rolling solves. The parameter definitions in the database still list the
+  `*_period` limits as period maps only, so Toolbox may flag a single value
+  until the schema is updated.
+
 - **Forecast branches use their period's per-period input values.** In a
   stochastic solve, a value given as a map keyed by period (for example
   `efficiency`, `startup_cost`, `min_load`, commodity `price`, `availability`,
