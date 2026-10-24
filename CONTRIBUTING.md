@@ -57,6 +57,10 @@ python tools/lp_snapshot.py snapshot -j 8 _audit_reports/lp_new    # after
 python tools/lp_snapshot.py compare _audit_reports/lp_base _audit_reports/lp_new
 ```
 
+### Shape-equivalence tests for parameters
+
+A parameter that accepts more than one shape (constant, period map, time map, period×time, stochastic) must have a test that a constant and the equivalent map produce the same model — in a single solve, a rolling solve and a stochastic solve. Most shape bugs found so far (a constant silently dropped, a map on one entity wiping another entity's value, period values lost in rolls or branch periods) would have been caught by this one test type.
+
 ### Golden File Tests
 
 Scenario tests compare solver outputs against golden files in `tests/expected/<scenario>/`. To regenerate golden files after intentional changes to the model or output processing:

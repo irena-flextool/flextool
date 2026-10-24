@@ -59,6 +59,19 @@ the authoritative sources before non-trivial work:
    `.equals` / Tier B `rtol≈1e-12`).
    → docs/dev/engine.md "Vectorized per-roll emit".
 
+## Working on the model (`flextool/engine/model/`)
+- Every new equation / objective term / variable gets the `EQ.` / `OBJ.` /
+  `VAR.` header (formula, what it does, notes) — format in
+  `docs/dev/engine.md`. Writing the formula is a review: if it doesn't match
+  the code or the docs, stop.
+- Prove what a change does to the LP with `tools/lp_snapshot.py` (byte-
+  identical for refactors; every diff explained for fixes).
+- Parity with the old GMPL model is not correctness — several GMPL bugs were
+  ported faithfully. Check copied logic against the user docs.
+- A parameter that accepts several shapes (constant / period / time / maps)
+  needs a constant-vs-equivalent-map test: same LP in single, rolling and
+  stochastic solves.
+
 ## Running / testing
 See `CONTRIBUTING.md` "Running Tests". Inner loop is the area-specific
 suite (`tests/engine/<area>/`); the full `tests/` integration
