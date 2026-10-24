@@ -1034,7 +1034,7 @@ def stochastic_time_entities(
     def compute() -> "frozenset[tuple[str, ...]]":
         try:
             paths = fn(entity_class, parameter_name)
-        except (KeyError, AttributeError):
+        except KeyError:  # unknown class or parameter
             return frozenset()
         found: set[tuple[str, ...]] = set()
         for ent, path in sorted(paths.items()):
@@ -1067,11 +1067,16 @@ def _stochastic_view(source: "InputSource", entity_class: str, parameter_name: s
 
 
 class _StochasticTimeSource:
-    """The load's emit frames that fold ``pbt_*`` onto the solve's (d, t); one per ``load_flextool``."""
+    """The load's emit frames that fold ``pbt_*`` onto the solve's (d, t); one per ``load_flextool``.
 
-    def __init__(self, provider: object) -> None:
+    ``warned`` is the run's set of (kind, class, parameter, entity) warnings already logged; ``load_flextool``
+    passes one kept on the run's reader, so the rolls of one run warn once and a later run warns again.
+    """
+
+    def __init__(self, provider: object, warned: "set | None" = None) -> None:
         self._provider = provider
         self._folds: dict[tuple[str, str], pl.DataFrame] = {}
+        self.warned: set = warned if warned is not None else set()
 
     def fold(self, key: "tuple[str, str]") -> pl.DataFrame:
         """``[<emit entity columns>, d, t, value]`` of parameter ``key[1]`` in its emit frame (Utf8 keys,
@@ -1085,8 +1090,6 @@ class _StochasticTimeSource:
                     f"{key[0]}.{key[1]}: stochastic-time values are read from the solve's emit frame "
                     f"{emit_key!r}, which this load does not have.")
             frame = provider.get(emit_key)
-            if isinstance(frame, pl.LazyFrame):
-                frame = frame.collect()
             self._folds[memo_key] = (
                 frame.lazy()
                 .filter(pl.col("param").cast(pl.Utf8) == key[1])
@@ -1102,11 +1105,12 @@ _STOCHASTIC_TIME_SOURCE: "contextvars.ContextVar[_StochasticTimeSource | None]" 
     "flextool_stochastic_time_source", default=None)
 
 
-def activate_stochastic_time_source(provider: object) -> "contextvars.Token":
+def activate_stochastic_time_source(provider: object, warned: "set | None" = None) -> "contextvars.Token":
     """Make ``provider``'s emit frames the source of stochastic-time values for the load being built; returns
     the token for :func:`deactivate_stochastic_time_source`.  ``load_flextool`` arms it when it reads the DB
-    (the emit frames are in the provider before any DB-direct reader runs)."""
-    return _STOCHASTIC_TIME_SOURCE.set(_StochasticTimeSource(provider))
+    (the emit frames are in the provider before any DB-direct reader runs).  ``warned``: the run's
+    warning-dedupe set (a fresh one when omitted)."""
+    return _STOCHASTIC_TIME_SOURCE.set(_StochasticTimeSource(provider, warned))
 
 
 def deactivate_stochastic_time_source(token: "contextvars.Token") -> None:
@@ -1114,22 +1118,24 @@ def deactivate_stochastic_time_source(token: "contextvars.Token") -> None:
     _STOCHASTIC_TIME_SOURCE.reset(token)
 
 
-_STOCHASTIC_NO_FOLD_WARNED: "set[tuple[str, str, tuple[str, ...]]]" = set()
+def _warn_once(kind: str, key: "tuple[str, str]", entities, message: str) -> None:
+    """One WARNING per (kind, class, parameter, entity) and run, naming the not yet warned entities sorted."""
+    scope = _STOCHASTIC_TIME_SOURCE.get()
+    warned = scope.warned if scope is not None else set()
+    new = [tuple(e) for e in sorted(entities) if (kind, key[0], key[1], tuple(e)) not in warned]
+    if not new:
+        return
+    warned.update((kind, key[0], key[1], e) for e in new)
+    _LOGGER.warning("%s.%s: the stochastic-time value of %s %s", key[0], key[1],
+                    ", ".join("/".join(e) for e in new), message)
 
 
 def _warn_entities_without_fold(key: "tuple[str, str]", entities, covered: pl.DataFrame) -> None:
-    """One WARNING per (class, parameter, entity) whose stochastic-time value has no folded row (the entity
-    is outside the emit's domain, so the solve does not use the parameter for it)."""
+    """Warn (once per run) for the stochastic-time entities with no folded row: the entity is outside the emit's
+    domain, so the solve does not use the parameter for it."""
     have = {tuple(r) for r in covered.unique().iter_rows()}
-    missing = [e for e in sorted(entities) if tuple(e) not in have
-               and (key[0], key[1], tuple(e)) not in _STOCHASTIC_NO_FOLD_WARNED]
-    if not missing:
-        return
-    for e in missing:
-        _STOCHASTIC_NO_FOLD_WARNED.add((key[0], key[1], tuple(e)))
-    _LOGGER.warning(
-        "%s.%s: the stochastic-time value of %s has no folded value in this solve (outside the solve's use of "
-        "the parameter); it is not applied.", key[0], key[1], ", ".join("/".join(e) for e in missing))
+    _warn_once("no_fold", key, [e for e in entities if tuple(e) not in have],
+               "has no folded value in this solve (outside the solve's use of the parameter); it is not applied.")
 
 
 def stochastic_time_values(
@@ -1145,7 +1151,8 @@ def stochastic_time_values(
         ∀ (d, t) of the solve's emit (steps_in_use)
 
     This is what the per-solve emit computes from ``pbt_*`` (and what the CSV seeds carry when the labels are
-    silent).  Raises :class:`FlexToolConfigError` outside ``load_flextool`` (no active emit) and when the emit
+    silent).  A solve without stochastic branch periods (no active branch-anchor pairs) gets the fallback on
+    every cell; that is warned once per run and entity.  Raises :class:`FlexToolConfigError` outside ``load_flextool`` (no active emit) and when the emit
     frame is missing.  Rows sorted by the keys; Utf8 keys, Float64 values.
     """
     scope = _STOCHASTIC_TIME_SOURCE.get()
@@ -1154,6 +1161,12 @@ def stochastic_time_values(
             f"{key[0]}.{key[1]}: stochastic-time values of "
             f"{', '.join('/'.join(e) for e in sorted(entities))} are folded per solve; they can only be read "
             "during load_flextool.")
+    # Function-local import: input -> preprocess, kept out of the module import order.
+    from flextool.engine.preprocess.params._branch import active_branch_anchor_pairs
+
+    if active_branch_anchor_pairs() is None:
+        _warn_once("no_branches", key, entities,
+                   "is used only in solves with stochastic branches; this solve uses the class default.")
     emit_cols = list(STOCHASTIC_TIME_PARAMS[key][1])
     dim_cols = list(entity_dim_columns)
     ents = pl.DataFrame([list(e) for e in sorted(entities)], schema={c: pl.Utf8 for c in emit_cols},

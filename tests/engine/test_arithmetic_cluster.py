@@ -665,7 +665,7 @@ def test_p_penalty_up_stochastic_time_needs_solve_emit():
 
 def test_p_penalty_up_stochastic_time_merges_fold():
     """With the solve's emit active: the rank-3 node gets its folded values, the other nodes their own value or
-    the default (c9 kept the seed for every node, hiding ``n_b``'s map)."""
+    the default (before the fix the seed was kept for every node, hiding ``n_b``'s map)."""
     from flextool.engine.input._param_shapes import (
         activate_stochastic_time_source,
         deactivate_stochastic_time_source,

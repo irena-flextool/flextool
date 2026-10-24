@@ -3,7 +3,7 @@
 ``_warm._WARM_PARAM_GATES[param]`` lists the index sets whose rows decide whether ``param`` reaches the LP; a
 Param whose gates are all empty is "dormant" and its change is ignored.  ``model/core._obj_variable_cost`` gates
 each term as ``_has_rows(d.<index set>) and d.<param> is not None``, so the gate of each variable-cost Param is
-exactly the index set of its term.  Before c10 ``p_pdt_varCost_process`` was gated on ``pssdt_varCost_noEff``
+exactly the index set of its term.  Before the fix ``p_pdt_varCost_process`` was gated on ``pssdt_varCost_noEff``
 (it multiplies ``pssdt_varCost_eff_connection``), so a changing connection cost with no noEff rows could skip a
 needed rebuild.
 """

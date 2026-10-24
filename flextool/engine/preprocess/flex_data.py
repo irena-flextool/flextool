@@ -4453,7 +4453,10 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # values of entities authoring a stochastic-time map (the per-solve pbt fold).
         if db_reader is not None:
             _branch_tok = activate_branch_anchor_pairs(solve_branch_anchor_pairs(provider))
-            _stoch_tok = activate_stochastic_time_source(provider)
+            # Warning dedupe kept on the run's reader: one reader serves every roll of a run.
+            _memo = getattr(db_reader, "run_memo", None)
+            _stoch_tok = activate_stochastic_time_source(
+                provider, _memo(("stochastic_time_warnings",), set) if _memo is not None else None)
 
         # Reuse the recorder bound at the function entry above so the
         # sub-checkpoints (axis_enums / SpineDbReader / load_flextool

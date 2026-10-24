@@ -314,3 +314,23 @@ def test_registry_keys_have_a_pbt_spec() -> None:
            for cp in spec["cl_pars"]}
     missing = sorted(set(STOCHASTIC_TIME_PARAMS) - pbt)
     assert not missing, missing
+
+
+def test_warnings_dedupe_per_run(caplog) -> None:
+    """The warnings are deduplicated with the run's set passed to the scope: a second run (a fresh set) warns
+    again, a second load of the same run (the same set) does not."""
+    src = _reader(_rank3("u2_dedupe"))
+    run_set: set = set()
+    counts = []
+    for warned in (run_set, run_set, set()):
+        token = activate_stochastic_time_source(_Provider({"solve_data/pdtProcess": FOLD}), warned)
+        try:
+            caplog.clear()
+            with caplog.at_level(logging.WARNING):
+                broadcast_to_period_time(resolve_param_shape(src, "unit", "availability", period_filter=DT), "p",
+                                         DT)
+        finally:
+            deactivate_stochastic_time_source(token)
+        counts.append(sum("u2_dedupe" in r.getMessage() for r in caplog.records))
+    # each fresh set: the "no stochastic branches" and the "no folded value" warning (2); the same run again: 0
+    assert counts == [2, 0, 2], counts

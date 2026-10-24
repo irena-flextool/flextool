@@ -181,12 +181,12 @@ def _write_outputs(steps: dict, monkeypatch) -> Path:
     if provider is not None:
         provider.snapshot_processed_inputs(workdir)
     write_outputs(
-        scenario_name="c10", output_location=str(workdir), subdir="c10", output_config_path=OUTPUT_CONFIG,
+        scenario_name="om_cost", output_location=str(workdir), subdir="om_cost", output_config_path=OUTPUT_CONFIG,
         write_methods=["csv"], fallback_output_location=str(workdir), raw_output_dir=str(workdir / "output_raw"),
         solution=last.solution, solve_name=last.solve_name,
         solve_steps=[(s.solve_name, s.flex_data, s.effective_solution) for s in steps.values()],
         flex_data_provider=FlexDataProvider())
-    return workdir / "output_csv" / "c10"
+    return workdir / "output_csv" / "om_cost"
 
 
 def _summary(csv_dir: Path) -> tuple[float, float]:
@@ -286,7 +286,7 @@ def test_warm_rolling_period_time_cost_matches_cold(tmp_path_factory) -> None:
         assert _rel(float(hot[name].solution.obj), float(ref[name].solution.obj)) < 1e-9, name
 
 
-# ``y2020_2day_dispatch`` of tests.json rolled 24 h / 12 h (the c9 warm vehicle): its rolls stay warm while their
+# ``y2020_2day_dispatch`` of tests.json rolled 24 h / 12 h (the warm vehicle of the balance-penalty tests): its rolls stay warm while their
 # parameters do not change.  coal_plant (an efficiency, the eff_unit_* terms) and coal_chp (indirect, noEff).
 WARM_CHAIN = ["init", "west", "coal", "coal_chp", "heat"]
 WARM_VALUES = [

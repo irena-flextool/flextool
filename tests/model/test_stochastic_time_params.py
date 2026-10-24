@@ -234,8 +234,8 @@ def test_labelled_equals_silent_single(tmp_path_factory) -> None:
 
 
 def test_penalty_stochastic_node_does_not_hide_other_maps(tmp_path_factory) -> None:
-    """c9 kept the emit seed for every node as soon as one node authored rank 3: downriver lost its period × time
-    map (default 10 000).  Now it keeps 7000 / 7700, and the third balance node keeps the default."""
+    """Before the fix the emit seed was kept for every node as soon as one node authored rank 3: downriver lost its
+    period × time map (default 10 000).  Now it keeps 7000 / 7700, and the third balance node keeps the default."""
     step = _first(_single(tmp_path_factory, True))
     cells = _cells(step, "p_penalty_up", ["n"])
     for d, t in _dt(step):
@@ -456,3 +456,34 @@ def test_rank3_outside_stochastic_group(tmp_path_factory, scenario: str) -> None
         cells = {k: v for k, v in _cells(step, "p_process_availability", ["p"]).items() if k[0] == "gas_plant"}
         assert len(cells) == len(_dt(step))
         assert set(cells.values()) == {want}
+
+
+# ---------------------------------------------------------------------------
+# A solve without stochastic branches
+
+
+@pytest.mark.parametrize("single", [True, False], ids=["single", "rolls"])
+def test_rank3_in_deterministic_solve_warns_once(tmp_path_factory, caplog, single: bool) -> None:
+    """``1_week_rolling_wind`` without its stochastic data: no branch periods, so the emit's fold gives the class
+    default (availability 1.0) on every cell of every solve.  The run says so with one WARNING naming the entity
+    (once per run, not per roll); which value a deterministic solve should take is logged with #82."""
+    import logging
+
+    from flextool.engine import run_chain_from_db
+    from tests.model.test_rolling_period_maps import ROLL_CHAIN, _deterministic_rolling_json
+
+    values = [["unit", "coal_plant", "availability", _r3(1.0, AT_ROLL, True)]]
+    if single:
+        values.append(["solve", "1week_rolling", "solve_mode", b64("single_solve", "str")])
+    alt = f"det_r3_{single}"
+    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=ROLL_CHAIN,
+                        fixture_json=_deterministic_rolling_json(tmp_path_factory, alt))
+    with caplog.at_level(logging.WARNING):
+        steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"), keep_solutions=True)
+    assert len(steps) == (1 if single else 7), list(steps)
+    for step in steps.values():
+        assert {d for d, _t in _dt(step)} == {ANCHOR}
+        cells = {k: v for k, v in _cells(step, "p_process_availability", ["p"]).items() if k[0] == "coal_plant"}
+        assert len(cells) == len(_dt(step)) and set(cells.values()) == {1.0}
+    msgs = [r.getMessage() for r in caplog.records if "only in solves with stochastic branches" in r.getMessage()]
+    assert len(msgs) == 1 and "unit.availability" in msgs[0] and "coal_plant" in msgs[0], msgs
