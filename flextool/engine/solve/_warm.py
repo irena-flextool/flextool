@@ -274,6 +274,10 @@ _WARM_PARAMS_DEFERRED: tuple[str, ...] = (
     # Commodity / CO2 — composite obj.
     "p_commodity_price", "p_co2_price", "p_co2_max_period",
     "p_co2_max_total", "p_co2_content",
+    # Window fraction — RHS factor of co2_max_period (cap · fraction).  Changes between rolls of
+    # different length (truncated last roll, rolls across a period boundary) and between same-shape
+    # solves with a different p_period_share.
+    "p_window_fraction",
     # Years per period — LHS weight of co2_max_total only.
     "p_years_represented_d",
     # Stochastic branch weights — composite objective factors (op_factor, startup, storage reference
@@ -466,6 +470,7 @@ _WARM_PARAM_GATES: dict[str, tuple[str, ...]] = {
     # CO2.
     "p_co2_price":      ("flow_from_co2_priced",),
     "p_co2_max_period": ("group_co2_max_period",),
+    "p_window_fraction": ("group_co2_max_period",),
     "p_co2_max_total":  ("group_co2_max_total",),
     "p_years_represented_d": ("group_co2_max_total",),
     "p_co2_content":    ("flow_from_co2_priced", "flow_from_co2_capped",

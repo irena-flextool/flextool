@@ -483,6 +483,13 @@ class FlexData:
     # default each period to width 1).
     p_years_represented_d: Param | None = None  # (d,)
 
+    # Share of each period's complete-solve hours that this (sub-)solve's own dt covers:
+    # (Σ_t step_duration[d,t] / 8760) / p_period_share[d], snapped to exactly 1.0 when the two
+    # agree within 1e-9 relative.  1.0 except in the rolls of a rolling solve, where p_period_share
+    # is the complete (parent) solve's share.  Scales the co2_max_period cap to the roll's window.
+    # Set by ``apply_derived_a`` (exactly 1.0) or at the load boundary of ``load_flextool``.
+    p_window_fraction: Param | None = None  # (d,)
+
     # ─── Process topology  ───────────────────────────────────────────────
     process_source_sink: pl.DataFrame | None = None
     process_source_sink_eff: pl.DataFrame | None = None
@@ -5006,6 +5013,16 @@ def load_flextool(source: "Path | str | FlexInputSource",
                 _ex.apply_existing_chain(flex_data, db_reader, workdir_for_db,
                                               handoff=handoff, ctx=ctx,
                                               provider=provider)
+
+        # ``p_window_fraction``: the share of each period's complete-solve hours that this sub-solve's
+        # dt covers.  ``apply_derived_a`` sets it to 1.0 next to ``p_period_share``; the sub-solves that
+        # skip it (rolls, synthetic nested sub-solves) and the reader-less loads (a dumped workdir) get
+        # it here from their own step durations and the (parent) period share.
+        if (flex_data.p_window_fraction is None and getattr(flex_data, "dt", None) is not None
+                and flex_data.p_step_duration is not None and flex_data.p_period_share is not None):
+            from flextool.engine.preprocess.params._derived import p_window_fraction_from_shares
+            flex_data.p_window_fraction = p_window_fraction_from_shares(
+                flex_data.dt, flex_data.p_step_duration, flex_data.p_period_share)
 
         # Annual commodity ladder: the forecast branch periods of a stochastic solve get their anchor
         # period's tier curve.  Runs after every producer of the ladder Params (load_data and the

@@ -231,11 +231,15 @@ def _toy_2node_chp_with_co2(d: FlexData, *, two_periods: bool = False,
         pl.DataFrame({"g": [k[0] for k in caps],
                       "d": [k[1] for k in caps],
                       "value": list(caps.values())}))
+    # The whole toy solve is one window: every dt period gets window fraction 1.
+    p_frac = Param(("d",), d.dt.select(pl.col("d").unique(maintain_order=True))
+                   .with_columns(value=pl.lit(1.0)))
     return dataclasses.replace(d,
         p_co2_content=p_co2_content,
         flow_from_co2_capped=flow_from_co2_capped,
         group_d_co2_capped=g_d,
         p_co2_max_period=p_cap,
+        p_window_fraction=p_frac,
     )
 
 

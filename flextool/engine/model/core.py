@@ -131,7 +131,7 @@ INDIRECT: tuple[str, ...] = (
     "process_indirect", "process_input_flows", "process_output_flows",
 )
 CO2_CAP:   tuple[str, ...]   = ("p_co2_content", "p_co2_max_period",
-                                "group_d_co2_capped")
+                                "group_d_co2_capped", "p_window_fraction")
 CO2_CAP_TOTAL: tuple[str, ...] = ("p_co2_content", "p_co2_max_total",
                                    "group_co2_max_total", "p_years_represented_d")
 USER_CSTR: tuple[str, ...]   = ("p_constraint_constant",)
@@ -157,17 +157,29 @@ DIVEST: tuple[str, ...] = ("p_entity_max_units", "edd_divest_active",
                             "pd_divest_set")
 
 
-def _check_years_cover_dt(d) -> None:
-    """Raise if ``p_years_represented_d`` lacks a period of ``dt``.
+def _check_covers_dt(d, field: str, feature: str, *, positive: bool = False) -> None:
+    """Raise if the (d,)-keyed Param ``field`` lacks a period of ``dt`` (or, with ``positive``, has a
+    value that is not finite and above 0).
 
-    co2_max_total multiplies each period's emissions by its years; a period without a row would silently
-    drop out of the cap.  The loader builds the Param over the dt periods, so a gap is a loader bug."""
-    have = set(d.p_years_represented_d.frame["d"].cast(pl.Utf8).to_list())
+    co2_max_total multiplies each period's emissions by its years (``p_years_represented_d``) and
+    co2_max_period scales each period's cap by its window fraction (``p_window_fraction``); a period
+    without a row would silently drop out of the cap, and a zero fraction would set the cap to 0.  The
+    loader builds both Params over the dt periods, so a gap is a loader bug."""
+    frame = getattr(d, field).frame
+    have = set(frame["d"].cast(pl.Utf8).to_list())
     missing = [p for p in d.dt["d"].cast(pl.Utf8).unique(maintain_order=True).to_list() if p not in have]
     if missing:
         raise ValueError(
-            f"build_flextool: p_years_represented_d lacks periods {missing} of dt, so co2_max_total would "
-            f"drop their emissions; this is a loader bug (the Param must cover every dt period).")
+            f"build_flextool: {field} lacks periods {missing} of dt, so {feature} would drop them; this is "
+            f"a loader bug (the Param must cover every dt period).")
+    if positive:
+        v = frame["value"].cast(pl.Float64)
+        bad = frame.filter(~(v.is_finite() & (v > 0)).fill_null(True))
+        if bad.height:
+            raise ValueError(
+                f"build_flextool: {field} must be finite and above 0 for every period, got "
+                f"{dict(zip(bad['d'].cast(pl.Utf8).to_list(), bad['value'].to_list()))}; {feature} would "
+                f"get a wrong cap.  This is a loader bug.")
 
 
 def _check(d, fields: tuple[str, ...], feature: str) -> None:
@@ -458,9 +470,10 @@ def _prepare(b: _Build) -> None:
         b.has_co2_price = False
     if b.has_co2_cap:
         _check(d, CO2_CAP, "co2_max_period")
+        _check_covers_dt(d, "p_window_fraction", "co2_max_period", positive=True)
     if b.has_co2_cap_total:
         _check(d, CO2_CAP_TOTAL, "co2_max_total")
-        _check_years_cover_dt(d)
+        _check_covers_dt(d, "p_years_represented_d", "co2_max_total")
     if b.has_user_cstr:
         _check(d, USER_CSTR, "user_constraints")
     if b.has_profile:
@@ -2138,9 +2151,14 @@ def _eq_co2_max_period(b: _Build) -> None:
     #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
     #     · co2_content[c]·w[d,t]
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_noEff, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
-    #   ≤ co2_max_period[g,d]
+    #   ≤ co2_max_period[g,d] · window_fraction[d]
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
-    # Caps the annualised CO2 emissions of a group in each period (tonnes per year).  Emissions come from
+    #   window_fraction[d] = (Σ_t step_duration[d,t] / 8760) / period_share[d]  (1 outside rolling solves)
+    # Caps the annualised CO2 emissions of a group in each period (tonnes per year): dividing by
+    # window_fraction, the LHS is the emissions of the solve's own steps of d annualised over their hours.
+    # In a rolling solve period_share is the complete solve's share, so the cap is scaled to the roll's
+    # window (realized part and look-ahead, per period); the dual keeps the objective's weighting.  Each
+    # roll caps the rate of its window, not the realized total of the period.  Emissions come from
     # the fuel that processes draw from the group's nodes when it carries a CO2-emitting commodity c,
     # measured as in co2_price_eff (_eff_fuel_input): on eff processes the output flow times slope plus,
     # for min_load_efficiency units (linear and integer v_online), the section fuel of the units online.
@@ -2166,7 +2184,7 @@ def _eq_co2_max_period(b: _Build) -> None:
         over      = d.group_d_co2_capped,
         sense     = "<=",
         lhs_terms = lhs,
-        rhs_terms = {"cap": d.p_co2_max_period},
+        rhs_terms = {"cap": d.p_co2_max_period * d.p_window_fraction},
     )
 
 

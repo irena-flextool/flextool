@@ -548,6 +548,25 @@ def _patch_co2_cap_minload(data: dict) -> dict:
                 ["group", "co2_limit", "co2_max_total", 2.5e6]])
 
 
+def _patch_co2_period_rolling(data: dict) -> dict:
+    """co2_max_period in a rolling solve over two periods (p2020 and
+    p2025, 2 days each, horizon 30 h / jump 6 h): rolls inside one
+    period, rolls across the period boundary and the truncated tail."""
+    s = "y2020_2day_dispatch"
+    return _overlay(
+        data, name="co2_period_rolling", base="coal_co2_limit",
+        values=[["group", "co2_limit", "co2_max_period",
+                 _pmap({"p2020": 1.0e6, "p2025": 0.5e6})],
+                ["solve", s, "period_timeset",
+                 _pmap({"p2020": "2day", "p2025": "2day"})],
+                ["solve", s, "realized_periods",
+                 {"type": "array", "value_type": "str",
+                  "index_name": "period", "data": ["p2020", "p2025"]}],
+                ["solve", s, "solve_mode", "rolling_window"],
+                ["solve", s, "rolling_solve_horizon", 30.0],
+                ["solve", s, "rolling_solve_jump", 6.0]])
+
+
 def _patch_negcap_indirect(data: dict) -> dict:
     """Negative-capacity unit made indirect (second output):
     maxOutputSum_negCap."""
@@ -647,6 +666,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "profiles": _patch_profiles,
     "co2_period_total": _patch_co2_period_total,
     "co2_cap_minload": _patch_co2_cap_minload,
+    "co2_period_rolling": _patch_co2_period_rolling,
     "negcap_indirect": _patch_negcap_indirect,
     "nested_fix_quantity": _patch_nested_fix_quantity,
     "nested_fix_usage": _patch_nested_fix_usage,
@@ -769,6 +789,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("profiles", _T),
     ("co2_period_total", _T),
     ("co2_cap_minload", _T),
+    ("co2_period_rolling", _T),
     ("negcap_indirect", _T),
     ("nested_fix_quantity", _T),
     ("nested_fix_usage", _T),

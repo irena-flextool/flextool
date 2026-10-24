@@ -1,5 +1,17 @@
 ## Unreleased
 
+- **`co2_max_period` applies in rolling solves.** Each roll of a
+  `rolling_window` solve compared its window's emissions, annualised as if
+  they covered the whole solve, with the annual limit, so the limit was too
+  loose by the solve length over the roll length (for example ×52 for a year
+  rolled in weekly windows) and usually did not bind. Each roll now
+  annualises its emissions over its own hours. Rolling models with a CO2
+  period limit get a tighter limit and higher costs. A roll limits its whole
+  window, look-ahead included, so the realized emissions of a period can
+  still differ somewhat from the limit. In a rolling solve the reported CO2
+  price of a period is the shadow price of the last roll that covers the
+  period.
+
 - **Units with an online variable no longer need a `min_load`, and
   `min_load_efficiency` units get defaults instead of losing their fuel use.**
   An online unit stopped the model when no unit in the model had a

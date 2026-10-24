@@ -840,6 +840,39 @@ def p_period_share_from_source(
     return Param(("d",), out)
 
 
+def p_window_fraction_from_shares(
+    dt: pl.DataFrame,
+    step_dur: Param,
+    period_share: Param,
+) -> Param | None:
+    """``p_window_fraction[d] = (Σ_t step_duration[d,t] / 8760) / p_period_share[d]``.
+
+    The share of each period's complete-solve hours that the sub-solve's own ``dt`` covers.  In a
+    roll of a rolling solve ``p_period_share`` is the complete (parent) solve's share, so the
+    fraction is the roll's window over the complete solve, per period.  A value within 1e-9
+    (relative) of 1 is snapped to exactly 1.0, so a sub-solve that covers its periods whole keeps
+    the ``co2_max_period`` RHS bit for bit.  A dt period without a ``p_period_share`` row raises
+    (loader bug: the cap's RHS would lose that period).
+    """
+    window = p_period_share_from_source(None, dt, step_dur)
+    if window is None:
+        return None
+    share = period_share.frame.select(
+        pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("value").cast(pl.Float64).alias("_share"))
+    out = (window.frame.with_columns(pl.col("d").cast(pl.Utf8).alias("_d"))
+           .join(share, on="_d", how="left"))
+    missing = out.filter(pl.col("_share").is_null())["_d"].to_list()
+    if missing:
+        raise ValueError(
+            f"p_window_fraction: p_period_share has no row for dt periods {missing}; this is a loader bug "
+            f"(the share must cover every dt period).")
+    out = out.with_columns(
+        value=pl.when((pl.col("value") - pl.col("_share")).abs() <= 1e-9 * pl.col("value").abs())
+        .then(pl.lit(1.0, dtype=pl.Float64))
+        .otherwise(pl.col("value") / pl.col("_share")))
+    return Param(("d",), out.select("d", "value").sort("d"))
+
+
 # ---------------------------------------------------------------------------
 # p_years_represented_d — per-period R width sum
 # ---------------------------------------------------------------------------
@@ -1699,6 +1732,10 @@ def apply_derived_a(
     if sd_for_share is not None:
         flex_data.p_period_share = p_period_share_from_source(
             source, usable_dt, sd_for_share)
+        # The share was just built from this solve's own dt, so the solve covers all of it.
+        if flex_data.p_period_share is not None:
+            flex_data.p_window_fraction = Param(
+                ("d",), flex_data.p_period_share.frame.with_columns(value=pl.lit(1.0, dtype=pl.Float64)))
 
     # 2b. p_years_represented_d — per-period R width sum (e.g. 5.0 for a
     # 5-year invest period) over the periods of the solve's dt; consumed
