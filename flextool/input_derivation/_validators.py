@@ -91,10 +91,10 @@ def validate_timeline_timestep_duration(db) -> None:
 
 
 def _pv_rows(src, entity_class: str, parameter: str) -> Iterable:
-    """Parameter-value rows of ``(entity_class, parameter)``.  ``src`` is a ``SpineDBBackend`` (its bulk
-    ``(class, param)`` index is reused, built once per backend) or a ``DatabaseMapping``."""
-    if hasattr(src, "_get_parameter_value_index"):
-        return src._get_parameter_value_index().get((entity_class, parameter), ())
+    """Parameter-value items of ``(entity_class, parameter)``.  ``src`` is a ``SpineDBBackend`` (its bulk
+    ``(class, param)`` index, built once per backend, through ``parameter_value_items``) or a ``DatabaseMapping``."""
+    if hasattr(src, "parameter_value_items"):
+        return src.parameter_value_items(entity_class, parameter)
     return src.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter)
 
 
@@ -120,43 +120,8 @@ def _map_keys_all_levels(value, out: set[str]) -> None:
 _SOLVE_PERIOD_PARAMS = ("realized_periods", "invest_periods", "realized_invest_periods", "fix_storage_periods")
 
 
-def validate_node_inflow_not_period(src) -> None:
-    """Raise FlexToolConfigError when a node's ``inflow`` is keyed by period.
-
-    ``inflow`` is a constant, a time series (1-D map over time) or a stochastic 3-D map (branch, analysis time,
-    time); it cannot be period-based (docs/reference.md, 'Timesteps and periods').  A period-keyed value is not
-    read by any path: before this check it silently became inflow 0.  Flagged:
-      * a 1-D map with index_name 'period';
-      * any 2-D map (the schema has no rank-2 inflow; a period x time map is the usual intent);
-      * a 1-D map with another index_name whose keys are all period names and none a timestep name.
-
-    Period names: the keys of every ``solve.period_timeset``, the entries of the 1-D period arrays of a solve
-    (``realized_periods``, ``invest_periods``, ``realized_invest_periods``, ``fix_storage_periods``) and the index
-    keys at every level of their Map variants (never Map values: nested-investment variants map period to a Map).
-    Timestep names: the keys of every ``timeline.timestep_duration``.  The rank is read without parsing; only
-    rank-1 maps are parsed, and each parse is evicted at once.
-
-    ``src`` is the ``SpineDBBackend`` of ``input_derivation.run`` (or a scenario-filtered ``DatabaseMapping``).
-    """
-    to_rank = api.parameter_value.from_database_to_dimension_count
-    candidates = []  # (node, alternative, reason or None, keys)
-    for pv in _pv_rows(src, "node", "inflow"):
-        if pv["type"] != "map":
-            continue
-        rank = to_rank(pv["value"], pv["type"])
-        node, alt = pv["entity_byname"][0], pv["alternative_name"]
-        if rank == 2:
-            candidates.append((node, alt, "a 2-D map", [str(k) for k in _parsed_then_evict(pv).indexes]))
-        elif rank == 1:
-            value = _parsed_then_evict(pv)
-            keys = [str(k) for k in value.indexes]
-            if value.index_name == "period":
-                candidates.append((node, alt, "index_name 'period'", keys))
-            elif keys:
-                candidates.append((node, alt, None, keys))
-    if not candidates:
-        return
-
+def _period_and_timestep_names(src) -> tuple[set[str], set[str]]:
+    """``(periods, timesteps)`` of the scenario: see ``validate_node_inflow_not_period``."""
     periods: set[str] = set()
     for pv in _pv_rows(src, "solve", "period_timeset"):
         if pv["type"] == "map":
@@ -171,18 +136,66 @@ def validate_node_inflow_not_period(src) -> None:
     for pv in _pv_rows(src, "timeline", "timestep_duration"):
         if pv["type"] in ("map", "time_series"):
             timesteps.update(str(k) for k in _parsed_then_evict(pv).indexes)
+    return periods, timesteps
+
+
+def _keys_all_periods(indexes, periods: set[str], timesteps: set[str]) -> bool:
+    """True when ``indexes`` is non-empty, every key is a period name and none is a timestep name.  Stops at the
+    first key that is not a period or is a timestep, so a time series exits at its first key."""
+    if len(indexes) == 0:
+        return False
+    for key in indexes:
+        name = str(key)
+        if name not in periods or name in timesteps:
+            return False
+    return True
+
+
+def validate_node_inflow_not_period(src) -> None:
+    """Raise FlexToolConfigError when a node's ``inflow`` is keyed by period.
+
+    ``inflow`` is a constant, a time series (1-D map over time) or a stochastic 3-D map (branch, analysis time,
+    time); it cannot be period-based (docs/reference.md, 'Timesteps and periods').  A period-keyed value is not
+    read by any path: before this check it silently became inflow 0.  Flagged:
+      * a 1-D map with index_name 'period';
+      * any 2-D map (the schema has no rank-2 inflow; a period x time map is the usual intent);
+      * a 1-D map with another index_name whose keys are all period names and none a timestep name.
+
+    Period names: the keys of every ``solve.period_timeset``, the entries of the 1-D period arrays of a solve
+    (``realized_periods``, ``invest_periods``, ``realized_invest_periods``, ``fix_storage_periods``) and the index
+    keys at every level of their Map variants (never Map values: nested-investment variants map period to a Map).
+    Timestep names: the keys of every ``timeline.timestep_duration``.  Both sets are built first (only when some
+    inflow is a map), then each map is classified right after its parse, which is evicted at once: the rank is
+    read without parsing, rank-1 and rank-2 maps are parsed (rank 2 for its first-level keys only), and only the
+    first 3 keys of an offending map are kept.
+
+    ``src`` is the ``SpineDBBackend`` of ``input_derivation.run`` (or a scenario-filtered ``DatabaseMapping``).
+    """
+    to_rank = api.parameter_value.from_database_to_dimension_count
+    inflow_maps = [pv for pv in _pv_rows(src, "node", "inflow") if pv["type"] == "map"]
+    if not inflow_maps:
+        return
+    periods, timesteps = _period_and_timestep_names(src)
 
     problems: list[str] = []
-    for node, alt, reason, keys in candidates:
-        if reason is None:
-            key_set = set(keys)
-            if not key_set <= periods or key_set & timesteps:
-                continue
+    for pv in inflow_maps:
+        rank = to_rank(pv["value"], pv["type"])
+        if rank not in (1, 2):
+            continue
+        value = _parsed_then_evict(pv)
+        indexes = value.indexes
+        if rank == 2:
+            reason = "a 2-D map"
+        elif value.index_name == "period":
+            reason = "index_name 'period'"
+        elif _keys_all_periods(indexes, periods, timesteps):
             reason = "all map keys are period names"
-        shown = ", ".join(keys[:3]) + (", ..." if len(keys) > 3 else "")
+        else:
+            continue
+        shown = ", ".join(str(k) for k in indexes[:3]) + (", ..." if len(indexes) > 3 else "")
         problems.append(
-            f"node '{node}' inflow (alternative '{alt}') is keyed by period ({reason}"
-            + (f"; first-level keys: {shown}" if keys else "") + ")")
+            f"node '{pv['entity_byname'][0]}' inflow (alternative '{pv['alternative_name']}') is keyed by period "
+            f"({reason}" + (f"; first-level keys: {shown}" if len(indexes) else "") + ")")
     if problems:
         raise FlexToolConfigError(
             "\n".join(problems)

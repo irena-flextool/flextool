@@ -64,7 +64,7 @@ def _validate(url: str, scenario: str) -> None:
     with SpineDBBackend(url, scenario) as backend:
         validate_node_inflow_not_period(backend)
         # the validator evicts every parse it makes (Track A memory contract)
-        for pv in backend._get_parameter_value_index().get(("node", "inflow"), ()):
+        for pv in backend.parameter_value_items("node", "inflow"):
             assert pv.mapped_item._parsed_value is None
 
 

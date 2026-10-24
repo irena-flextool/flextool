@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections import defaultdict
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -151,6 +152,15 @@ class SpineDbReader:
         # Dedupe the "keys hit neither vocabulary" classification WARNING
         # to one per (entity_class, parameter_name) (spec §3.1).
         self._pt_classify_warned: set[tuple[str, str]] = set()
+        # Memo of :meth:`parameter_for_entities` frames requested with
+        # ``cache=True``, keyed by (class, parameter, entity names).  The
+        # caches below are immutable after construction for every class
+        # but ``solve`` (``register_derived_solve``), which never asks for
+        # a cached frame, so a memoised frame stays valid for the reader's
+        # lifetime (one reader serves every roll of a run).
+        self._entity_subset_memo: dict[
+            tuple[str, str, frozenset[str]], pl.DataFrame
+        ] = {}
 
         # Build caches once.
         from spinedb_api import DatabaseMapping, from_database
@@ -688,6 +698,43 @@ class SpineDbReader:
         )
 
     def parameter(self, entity_class: str, parameter_name: str) -> pl.DataFrame:
+        cls_id, pdef = self._class_and_pdef(entity_class, parameter_name)
+        rows = self._param_rows.get((cls_id, pdef["id"]), [])
+        return self._parameter_frame(cls_id, pdef, rows, entity_class,
+                                     parameter_name)
+
+    def parameter_for_entities(self, entity_class: str, parameter_name: str,
+                               entity_names: Iterable[str], *,
+                               cache: bool = False) -> pl.DataFrame:
+        """:meth:`parameter` restricted to the entities named in
+        *entity_names*: only their values are unrolled, so a few small
+        values of a parameter whose other entities hold long time series
+        cost a few small unrolls, not the whole table.
+
+        The frame is built from the named entities' rows alone, so its
+        index columns are discovered from those rows only (the same frame
+        :meth:`parameter` returns when no other entity has a value).  With
+        ``cache=True`` the frame is memoised on the reader for its
+        lifetime: callers that ask for the same subset in every roll of a
+        run (the profile cascade on the synthetic path) unroll it once.
+        """
+        names = frozenset(entity_names)
+        key = (entity_class, parameter_name, names)
+        if cache:
+            hit = self._entity_subset_memo.get(key)
+            if hit is not None:
+                return hit
+        cls_id, pdef = self._class_and_pdef(entity_class, parameter_name)
+        rows = [r for r in self._param_rows.get((cls_id, pdef["id"]), [])
+                if self._entity_by_id[r[0]][1] in names]
+        frame = self._parameter_frame(cls_id, pdef, rows, entity_class,
+                                      parameter_name, entity_names=names)
+        if cache:
+            self._entity_subset_memo[key] = frame
+        return frame
+
+    def _class_and_pdef(self, entity_class: str,
+                        parameter_name: str) -> tuple[int, dict]:
         cls_id = self._class_name_to_id.get(entity_class)
         if cls_id is None:
             raise KeyError(f"unknown entity_class {entity_class!r}")
@@ -696,9 +743,17 @@ class SpineDbReader:
             raise KeyError(
                 f"unknown parameter ({entity_class!r}, {parameter_name!r})"
             )
+        return cls_id, pdef
 
+    def _parameter_frame(self, cls_id: int, pdef: dict,
+                         rows: list[tuple[int, Any]], entity_class: str,
+                         parameter_name: str, *,
+                         entity_names: "frozenset[str] | None" = None,
+                         ) -> pl.DataFrame:
+        """Assemble the :meth:`parameter` frame from *rows*; a scalar
+        default is broadcast over the class's entities, or over
+        *entity_names* only when given."""
         ent_cols = self._entity_columns(cls_id)
-        rows = self._param_rows.get((cls_id, pdef["id"]), [])
         default = pdef["default_value"]
 
         # Step 1 — unroll each row into per-column lists.  The shape
@@ -740,7 +795,8 @@ class SpineDbReader:
             # entities frame from the raw cache (not via self.entities())
             # so the join keys stay Utf8 — casting happens once at the
             # end against the joined frame.
-            E = self._entities_frame_raw(cls_id, ent_cols).lazy()
+            E = self._entities_frame_raw(cls_id, ent_cols,
+                                         names=entity_names).lazy()
             joined = (E.join(v_lf, on=ent_cols, how="left")
                        .with_columns(pl.col("value").fill_null(default)))
             frame = self._finalize(joined, ent_cols)
@@ -761,6 +817,7 @@ class SpineDbReader:
 
     def _entities_frame_raw(
         self, cls_id: int, cols: list[str],
+        names: "frozenset[str] | None" = None,
     ) -> pl.DataFrame:
         """Internal — build the raw Utf8 entities frame for *cls_id*
         without going through :meth:`entities` (which would cast).
@@ -771,6 +828,8 @@ class SpineDbReader:
         return.
         """
         rows = self._entities_by_class.get(cls_id, [])
+        if names is not None:
+            rows = [row for row in rows if row[1] in names]
         if not rows:
             return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
         if len(cols) == 1:

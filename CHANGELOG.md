@@ -3,12 +3,18 @@
 - **Rolling solves and the sub-solves of a nested investment use period-map
   values of efficiency, minimum load and profiles.** A unit or connection
   `efficiency` or a unit `min_load` given as a map keyed by period, and a
-  `profile` keyed by period (or by period and time), now apply in every roll
+  `profile` keyed by period, now apply in every roll
   of a `rolling_window` solve and in the per-period sub-solves of a nested
   investment, as they already did in a single solve. Before, these solves
   used efficiency 1 (wrong fuel use, fuel cost, CO2 and input-flow limits),
   dropped the minimum-load part of the conversion curve and read the profile
   as 0. Stochastic rolling solves are fixed too.
+
+- **A `profile` keyed by period is no longer read as 0 when the model also
+  has time-series profiles.** A profile given as a map keyed by period,
+  next to profiles given as time series (and no profile keyed by period and
+  time), could be read as 0 on every solve type, depending on the order of
+  the profiles in the database.
 
 - **A period-keyed `inflow` is now an error.** `inflow` is a constant or a
   time series. A map keyed by period (or by period and time) was silently

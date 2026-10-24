@@ -370,6 +370,24 @@ class SpineDBBackend:
             parameter_definition_name=parameter_definition_name,
         )
 
+    def parameter_value_items(
+        self,
+        entity_class_name: str,
+        parameter_definition_name: str,
+    ) -> list:
+        """Scenario-filtered parameter-value items of *(entity_class_name,
+        parameter_definition_name)* from the bulk per-backend index (built
+        once, see :meth:`_get_parameter_value_index`); empty when absent.
+
+        Unlike :meth:`find_parameter_values` this does not issue a filtered
+        query per call.  The items are spinedb-api's own: a caller that
+        reads ``item["parsed_value"]`` owns evicting the cached parse
+        (Track A, see :meth:`parameter_values`).
+        """
+        return self._get_parameter_value_index().get(
+            (entity_class_name, parameter_definition_name), [],
+        )
+
     @property
     def api(self):
         """Expose the underlying :mod:`spinedb_api` module.

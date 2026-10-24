@@ -5227,7 +5227,10 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # was read as 0 in every roll / nested sub-solve.  The cascade is
         # solve-agnostic (``source`` + the CSV-loaded ``dt`` + the per-solve
         # workdir CSVs for the stochastic and time-averaged tiers), so this
-        # mirrors ``apply_derived_a`` exactly.
+        # mirrors ``apply_derived_a`` exactly.  Per roll it costs only the
+        # ``dt`` joins: the time tier reads the per-roll ``pt_profile.csv``,
+        # and the scalar / period / period x time tiers unroll just their
+        # own profiles once per run (memoised on the run's ``db_reader``).
         from flextool.engine.preprocess.params._profiles import apply_profile_cascade
         _loadflex_prof("apply_db_overrides:pass_synthetic_profile")
         _timed("c.synth profile", apply_profile_cascade, flex_data, db_reader,

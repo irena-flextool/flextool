@@ -117,7 +117,7 @@ def run(
         _ENTITY_SPECS,
         _PARAMETER_SPECS,
         _DEFAULT_VALUES_SPECS,
-        PD_PROCESS_TIME_TWINS,
+        PD_PROCESS_DROP_TIMESTEP_KEYS,
     )
     from flextool.input_derivation._validators import (
         validate_timeline_timestep_duration,
@@ -197,11 +197,11 @@ def run(
             elif spec["filename"] == "input/pd_process.csv":
                 if timesteps is None:
                     raise RuntimeError("_PARAMETER_SPECS: input/timeline.csv must precede input/pd_process.csv")
-                # The period twins of the ``pt_process`` parameters also catch silent-``x`` time maps; drop their
-                # timestep-keyed rows (a timestep is never a period) so they neither pollute ``periodAll`` nor
-                # get copied into the per-roll ``pd_process`` lookups.
+                # The period twins of the ``pt_process`` parameters (and ``startup_cost``) also catch silent-``x``
+                # time maps; drop their timestep-keyed rows (a timestep is never a period) so they neither pollute
+                # ``periodAll`` nor get copied into the per-roll ``pd_process`` lookups.
                 frame = frame.filter(
-                    ~(pl.col("processParam").is_in(list(PD_PROCESS_TIME_TWINS))
+                    ~(pl.col("processParam").is_in(list(PD_PROCESS_DROP_TIMESTEP_KEYS))
                       & pl.col("period").is_in(timesteps)))
             provider.put(_provider_key(spec["filename"]), frame)
         _mem("spine_db_read_end", "Spine DB loaded")

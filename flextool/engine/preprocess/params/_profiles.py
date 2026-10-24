@@ -234,6 +234,29 @@ def _tier_for_value(v: object) -> str:
     return "time"
 
 
+def _profile_rows(source: "InputSource", names: list[str], *,
+                  cache: bool) -> pl.DataFrame:
+    """``profile.profile`` rows of the profiles in *names*.
+
+    A :class:`SpineDbReader` unrolls only those profiles'
+    values (``parameter_for_entities``), so a scalar / period /
+    period x time tier never unrolls the time-series profiles that the
+    time tier takes from the per-solve ``pt_profile.csv``.  ``cache=True``
+    memoises the frame on the reader: the synthetic path runs this cascade
+    in every roll / nested sub-solve of a run with the same reader, and
+    the non-time tiers do not depend on the roll (the per-roll ``dt``
+    join happens afterwards).  Other sources (``InMemoryReader``) return
+    the full frame filtered to *names*.
+    """
+    by_entities = getattr(source, "parameter_for_entities", None)
+    if by_entities is not None:
+        return by_entities("profile", "profile", names, cache=cache)
+    raw = source.parameter("profile", "profile")
+    if raw.height == 0:
+        return raw
+    return raw.filter(pl.col("name").is_in(names))
+
+
 # ---------------------------------------------------------------------------
 # Tier-3 / tier-4 / tier-5 builders (deterministic)
 # ---------------------------------------------------------------------------
@@ -293,7 +316,9 @@ def _profile_time_lf(source: "InputSource",
                 pass
 
     try:
-        raw = source.parameter("profile", "profile")
+        # Only reached without a per-solve pt_profile.csv: not memoised (a
+        # time-series frame is large and this is not the per-roll path).
+        raw = _profile_rows(source, time_profiles, cache=False)
     except KeyError:
         return pl.LazyFrame(schema=empty_schema)
     if raw.height == 0:
@@ -333,7 +358,7 @@ def _profile_period_time_lf(source: "InputSource",
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     try:
-        raw = source.parameter("profile", "profile")
+        raw = _profile_rows(source, pt_profiles, cache=True)
     except KeyError:
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
@@ -385,7 +410,7 @@ def _profile_period_only_lf(source: "InputSource",
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     try:
-        raw = source.parameter("profile", "profile")
+        raw = _profile_rows(source, period_profiles, cache=True)
     except KeyError:
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
@@ -424,7 +449,7 @@ def _profile_scalar_lf(source: "InputSource",
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     try:
-        raw = source.parameter("profile", "profile")
+        raw = _profile_rows(source, scalar_profiles, cache=True)
     except KeyError:
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
