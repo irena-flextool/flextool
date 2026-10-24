@@ -2748,8 +2748,10 @@ def _obj_variable_cost(b: _Build) -> Expr | None:
     # ─── OBJ. ─── variable_cost_noEff ────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,s,k,d,t) ∈ pssdt_varCost_noEff} v_flow[p,s,k,d,t]·unitsize[p] · varCost[p,s,k,d,t] · w_op[d,t]
+    # pssdt_varCost_noEff = {(p,s,k,d,t) : (p,s,k) ∈ process_source_sink_noEff, varCost[p,s,k,d,t] ≠ 0}
     # O&M cost of the flows of processes without an efficiency; varCost (currency/MWh) is the arc's
-    # combined process, source-side and sink-side other_operational_cost.
+    # combined process, source-side and sink-side other_operational_cost (every authored shape: constant,
+    # period, time, period × time, stochastic time).
     if (_has_rows(d.pssdt_varCost_noEff)
             and d.p_pssdt_varCost is not None):
         terms.append(Sum(
@@ -2761,6 +2763,9 @@ def _obj_variable_cost(b: _Build) -> Expr | None:
     # Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_unit_source}
     #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
     #     · other_operational_cost_source[p,s,d,t] · w_op[d,t]
+    # pssdt_varCost_eff_unit_source = {(p,s,k) ∈ process_source_sink_eff} × dt where
+    #     other_operational_cost_source[p,s,d,t] ≠ 0 (every authored shape: constant, period, time,
+    #     period × time, stochastic time).
     # O&M cost on the input side of units with an efficiency, priced on the input energy (flow times
     # slope, plus the section input of min_load_efficiency units).  Added like the other O&M terms
     # (GMPL subtracted it).  The sink/source coefficient ratio of the input is not applied (refactor
@@ -2790,6 +2795,8 @@ def _obj_variable_cost(b: _Build) -> Expr | None:
     # ─── OBJ. ─── variable_cost_eff_sink ─────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_unit_sink} v_flow[p,s,k,d,t]·unitsize[p] · other_operational_cost_sink[p,k,d,t] · w_op[d,t]
+    # pssdt_varCost_eff_unit_sink = {(p,s,k) ∈ process_source_sink_eff} × dt where
+    #     other_operational_cost_sink[p,k,d,t] ≠ 0 (every authored shape, as above).
     # O&M cost on the output side of units with an efficiency, priced on the output flow.
     if (_has_rows(d.pssdt_varCost_eff_unit_sink)
             and d.p_pdt_varCost_sink is not None):
@@ -2800,6 +2807,8 @@ def _obj_variable_cost(b: _Build) -> Expr | None:
     # ─── OBJ. ─── variable_cost_eff_connection ───────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_connection} v_flow[p,s,k,d,t]·unitsize[p] · other_operational_cost[p,d,t] · w_op[d,t]
+    # pssdt_varCost_eff_connection = {(p,s,k) ∈ process_source_sink_eff} × dt where
+    #     other_operational_cost[p,d,t] ≠ 0 (constant, period, time or period × time).
     # O&M cost of connections with an efficiency, priced on the flow of each direction.
     if (_has_rows(d.pssdt_varCost_eff_connection)
             and d.p_pdt_varCost_process is not None):

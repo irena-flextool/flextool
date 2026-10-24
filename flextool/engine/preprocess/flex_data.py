@@ -3475,7 +3475,11 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
 def _load_varcost(sd: Path, pss: pl.DataFrame | None,
                    *,
                    provider: "object | None" = None) -> dict:
-    """Load process variable-cost (other_operational_cost) sets and Params.
+    """Load process variable-cost (other_operational_cost) sets and Params: the emit seeds.
+
+    On every DB path ``_direct.apply_direct_params_b`` replaces all eight fields with the DB-direct
+    per-side Params and the index sets ``_direct.apply_varcost_params`` builds from them (the emit has no
+    period × time tier, #74); a CSV-only load without a DB reader keeps these seeds.
 
     The .mod has 4 disjoint sets:
       pssdt_varCost_noEff       — uses pdtProcess__source__sink__dt_varCost
@@ -3511,10 +3515,10 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None,
     pssdt_ek = _read_pssdt_set("pssdt_varCost_eff_unit_sink")
     pssdt_ec = _read_pssdt_set("pssdt_varCost_eff_connection")
 
-    # Δ.18 — CSV-fallback seed for ``p_pssdt_varCost``.  Override chain
-    # (``apply_derived_b.p_pssdt_varCost_from_source``) overlays this
-    # when active; for synthetic per-sub-solve fixtures the snapshot CSV
-    # is the only source.  Reads ``pdtProcess__source__sink__dt_varCost.csv``
+    # Δ.18 — CSV-fallback seed for ``p_pssdt_varCost``.  On every DB path (registered solves,
+    # synthetic sub-solves, the no-workdir return) ``_direct.apply_varcost_params`` overlays it and
+    # the four index sets above from the DB-direct per-side Params; the seeds serve CSV-only loads
+    # without a DB reader.  Reads ``pdtProcess__source__sink__dt_varCost.csv``
     # (long: process, source, sink, period, time, value).  Filtering
     # zero-value rows mirrors the override's "drop zero coefficients" pass.
     p_pssdt_var = None

@@ -37,6 +37,7 @@ from flextool.engine.input._param_shapes import (
     broadcast_to_period,
     broadcast_to_period_time,
     fill_default_over_grid,
+    promote_param_to_dt,
     resolve_param_shape,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
@@ -1518,6 +1519,115 @@ def p_pdt_varCost_process_from_source(
     return Param(("p", "d", "t"), out.lazy().sort("p", "d", "t"))
 
 
+_PSS_KEYS = ("p", "source", "sink")
+_PSSDT_KEYS = (*_PSS_KEYS, "d", "t")
+
+
+def _varcost_side(param: "Param | None", keys: tuple[str, ...], pss: pl.DataFrame,
+                  dt: pl.DataFrame) -> "pl.DataFrame | None":
+    """``param`` on the solve's ``(d, t)`` pairs as ``[*keys, d, t, value]``, rows with a non-zero value only.
+
+    The key columns are cast to the dtypes of ``pss`` (``p`` / ``source`` / ``sink``) and ``dt`` (``d`` / ``t``)
+    so the joins below compare like with like: the per-side Params carry the cast of their own read (a Utf8
+    seed, an Enum of the read's axis), ``process_source_sink`` the entity-union axis.
+    """
+    if param is None:
+        return None
+    target = {**{c: pss.schema[c] for c in keys}, "d": dt.schema["d"], "t": dt.schema["t"]}
+    df = (promote_param_to_dt(param, dt)
+          .select(*keys, "d", "t", pl.col("value").cast(pl.Float64))
+          .filter(pl.col("value") != 0.0)
+          .collect())
+    mismatched = [c for c, dtype in target.items() if df.schema[c] != dtype]
+    if mismatched:
+        # A value outside the target vocabulary becomes null and joins nothing (it has no arc / step).
+        df = df.with_columns(pl.col(c).cast(pl.Utf8).cast(target[c], strict=False) for c in mismatched)
+    # A period × time Param passes promote_param_to_dt unchanged: keep the solve's (d, t) pairs only.
+    return df.join(dt, on=["d", "t"], how="semi")
+
+
+def apply_varcost_params(flex_data: object) -> None:
+    """The variable-cost index sets and ``p_pssdt_varCost`` from the three per-side cost Params.
+
+        src[p, s, d, t]  = p_pdt_varCost_source  on the solve's (d, t)     unit__inputNode.other_operational_cost
+        snk[p, k, d, t]  = p_pdt_varCost_sink    on the solve's (d, t)     unit__outputNode.other_operational_cost
+        proc[p, d, t]    = p_pdt_varCost_process on the solve's (d, t)     connection.other_operational_cost
+                           (each: rows with value ≠ 0; every authored shape, broadcast by promote_param_to_dt)
+
+        pssdt_varCost_eff_unit_source = {(p,s,k,d,t) : (p,s,k) ∈ process_source_sink_eff, src[p,s,d,t] exists}
+        pssdt_varCost_eff_unit_sink   = {(p,s,k,d,t) : (p,s,k) ∈ process_source_sink_eff, snk[p,k,d,t] exists}
+        pssdt_varCost_eff_connection  = {(p,s,k,d,t) : (p,s,k) ∈ process_source_sink_eff, proc[p,d,t] exists}
+        p_pssdt_varCost[p,s,k,d,t]    = src[p,s,d,t] + snk[p,k,d,t] + proc[p,d,t]     (a missing side adds 0)
+                                        ∀ (p,s,k) ∈ process_source_sink; rows with value ≠ 0
+        pssdt_varCost_noEff           = {(p,s,k,d,t) ∈ keys(p_pssdt_varCost) : (p,s,k) ∈ process_source_sink_noEff}
+
+    The emit's rule (``emit/_period_params._derive_varCost_pair`` / ``_derive_pssdt_varCost_filters``) on the
+    DB-direct Params: the per-side Params read every shape (scalar, period, time, period × time, stochastic
+    time) on every solve type, while the emit seeds have no period × time tier.  The ``(p, s) ∈
+    process__source`` / ``(p, k) ∈ process__sink`` gates of the emit follow from the joins (the per-side
+    Params are keyed by the unit's own arcs).  Runs at the end of :func:`apply_direct_params_b`, so on
+    registered solves, synthetic sub-solves and the no-workdir return alike.  Every set is an eager frame
+    ``[p, source, sink, d, t]`` sorted by its columns, ``p_pssdt_varCost`` an eager Param sorted the same way;
+    an empty result is None (the objective term is skipped).
+    """
+    for field in ("pssdt_varCost_noEff", "pssdt_varCost_eff_unit_source", "pssdt_varCost_eff_unit_sink",
+                  "pssdt_varCost_eff_connection", "p_pssdt_varCost"):
+        setattr(flex_data, field, None)
+    dt = getattr(flex_data, "dt", None)
+    pss = getattr(flex_data, "process_source_sink", None)
+    if dt is None or dt.height == 0 or pss is None or pss.height == 0:
+        return
+    pss = pss.select(_PSS_KEYS)
+    dt = dt.select("d", "t").unique(maintain_order=True)
+    sides = (
+        (_varcost_side(getattr(flex_data, "p_pdt_varCost_source", None), ("p", "source"), pss, dt),
+         ("p", "source"), "pssdt_varCost_eff_unit_source"),
+        (_varcost_side(getattr(flex_data, "p_pdt_varCost_sink", None), ("p", "sink"), pss, dt),
+         ("p", "sink"), "pssdt_varCost_eff_unit_sink"),
+        (_varcost_side(getattr(flex_data, "p_pdt_varCost_process", None), ("p",), pss, dt),
+         ("p",), "pssdt_varCost_eff_connection"),
+    )
+
+    def _keys(frame: "pl.DataFrame | None") -> "pl.DataFrame | None":
+        # The arc sets on pss's key dtypes (they come from the same producer; a seed may differ).
+        if frame is None or frame.height == 0:
+            return None
+        frame = frame.select(_PSS_KEYS)
+        mismatched = [c for c in _PSS_KEYS if frame.schema[c] != pss.schema[c]]
+        if mismatched:
+            frame = frame.with_columns(pl.col(c).cast(pl.Utf8).cast(pss.schema[c], strict=False)
+                                       for c in mismatched)
+        return frame
+
+    def _on(base: pl.DataFrame, part: pl.DataFrame, on: tuple[str, ...]) -> pl.DataFrame:
+        return base.join(part, on=list(on), how="inner").select(*_PSSDT_KEYS, "value")
+
+    eff = _keys(getattr(flex_data, "process_source_sink_eff", None))
+    summed_parts: list[pl.DataFrame] = []
+    for part, on, field in sides:
+        if part is None or part.height == 0:
+            continue
+        summed_parts.append(_on(pss, part, on))
+        if eff is not None:
+            idx = _on(eff, part, on).select(_PSSDT_KEYS).sort(_PSSDT_KEYS)
+            setattr(flex_data, field, idx if idx.height > 0 else None)
+    if not summed_parts:
+        return
+    summed = (pl.concat(summed_parts)
+              .group_by(_PSSDT_KEYS).agg(pl.col("value").sum())
+              .filter(pl.col("value") != 0.0)
+              .sort(_PSSDT_KEYS))
+    if summed.height == 0:
+        return
+    flex_data.p_pssdt_varCost = Param(_PSSDT_KEYS, summed)
+    noeff = _keys(getattr(flex_data, "process_source_sink_noEff", None))
+    if noeff is not None:
+        idx = (summed.select(_PSSDT_KEYS)
+               .join(noeff, on=list(_PSS_KEYS), how="semi")
+               .sort(_PSSDT_KEYS))
+        flex_data.pssdt_varCost_noEff = idx if idx.height > 0 else None
+
+
 # ---------------------------------------------------------------------------
 # §1.15 — Reserves
 
@@ -2160,7 +2270,7 @@ def apply_direct_params_b(source: "InputSource",
         flex_data.p_co2_max_period = v
 
     # ─── Δ.4b — variable cost (Map period→time) ──────────────────────────
-    # Δ.17c-Tier3 — the four helpers below route through the resolver
+    # Δ.17c-Tier3 — the three per-side helpers below route through the resolver
     # cascade (resolve_param_shape + broadcast_to_period_time).  Each
     # accepts the active solve's (d, t) frame as ``period_filter`` so
     # SCALAR / MAP_PERIOD / MAP_TIME shapes broadcast up to (p, d, t).
@@ -2176,6 +2286,8 @@ def apply_direct_params_b(source: "InputSource",
         p_pdt_varCost_process_from_source(source, period_filter=dt), dt)
     if v is not None:
         flex_data.p_pdt_varCost_process = v
+    # The four index sets and p_pssdt_varCost the objective's variable-cost terms join on (#74).
+    apply_varcost_params(flex_data)
 
     # ─── Δ.4b — reserves ─────────────────────────────────────────────────
     # Δ.17c-Tier3 — pdtReserve_upDown_group_reservation routes through

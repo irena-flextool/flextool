@@ -331,7 +331,7 @@ Typical use patterns for the coefficients:
 | an input must supply at least 30 % of the unit's input while it runs | 1 | 1 (default) | input_share_min 0.3 on that input |
 
 Note that in the case of unit--outputNode the `conversion_flow_coeff` affects *after* the capacity and the other unit constraints — it only shows up in the node balance and in the efficiency equation. The capacity caps themselves are set by `capacity_max_coeff`; the floors by the unit's `min_load` (on the sum of outputs) and the optional per-output `capacity_min_coeff`.
-- `other_operational_cost` - [CUR/MWh] Other operational variable costs for energy flows. Constant, period or time. 
+- `other_operational_cost` - [CUR/MWh] Other operational variable costs for energy flows. Constant, period, time or period+time. 
 - `inertia_constant` - [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
 - `ramp_method` - Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).
 - `ramp_cost` - [CUR/MW] Cost of ramping the unit. Constant.
@@ -367,7 +367,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 - `reactance` - [p.u.] Per-unit reactance of the transmission line. Used for DC power flow when the enclosing `group__node` has `transfer_method = dc_power_flow_with_angles`.
 - `constraint_invested_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the current period's new-build capacity `v_invest[e, d]` on the left side of the user-defined constraint. Not multiplied by unitsize. Renamed from `constraint_capacity_coefficient`; the old expression summed `v_invest` once per active investment period, giving incorrect results in multi-period models — this one emits just `v_invest[e, d]`.
 - `constraint_cumulative_pre_built_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the cumulative pre-built capacity at period d — data baseline plus every `v_invest` made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits (pair with `constraint_invested_capacity_coeff` on the same constraint). Not multiplied by unitsize.
-- `other_operational_cost` - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period or time.
+- `other_operational_cost` - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period, time or period+time.
 - `fixed_cost` - [CUR/kW] Annual fixed cost. Constant or period.
 - `invest_cost` - [CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.
 - `discount_rate` - [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk for this technology. Should be nominal when model `inflation_rate` > 0, real when `inflation_rate` = 0. Constant or period.

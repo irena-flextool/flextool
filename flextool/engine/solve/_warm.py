@@ -495,16 +495,12 @@ _WARM_PARAM_GATES: dict[str, tuple[str, ...]] = {
     "pd_min_cumulative_flow":         ("group_process_node",),
     "pdt_max_instant_flow":           ("group_process_node",),
     "pdt_min_instant_flow":           ("group_process_node",),
-    # Variable-cost partitions.
-    "p_pssdt_varCost":      ("pssdt_varCost_noEff",
-                              "pssdt_varCost_eff_unit_source",
-                              "pssdt_varCost_eff_unit_sink",
-                              "pssdt_varCost_eff_connection"),
-    "p_pdt_varCost_source": ("pssdt_varCost_eff_unit_source",
-                              "pssdt_varCost_eff_connection"),
-    "p_pdt_varCost_sink":   ("pssdt_varCost_eff_unit_sink",
-                              "pssdt_varCost_eff_connection"),
-    "p_pdt_varCost_process": ("pssdt_varCost_noEff",),
+    # Variable-cost partitions: each Param is gated on the index set it multiplies in
+    # ``model/core._obj_variable_cost`` (pinned by tests/engine/test_warm_varcost_gates.py).
+    "p_pssdt_varCost":       ("pssdt_varCost_noEff",),
+    "p_pdt_varCost_source":  ("pssdt_varCost_eff_unit_source",),
+    "p_pdt_varCost_sink":    ("pssdt_varCost_eff_unit_sink",),
+    "p_pdt_varCost_process": ("pssdt_varCost_eff_connection",),
     # Block / per-arc step durations.
     "p_arc_step_duration_sink":   ("arc_sink_block_dt",),
     "p_arc_step_duration_source": ("arc_source_block_dt",),

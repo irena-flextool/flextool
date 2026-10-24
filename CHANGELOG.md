@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **A period-and-time `other_operational_cost` is charged in the objective.**
+  An `other_operational_cost` of a unit input, a unit output or a connection
+  given as a map keyed by period and time was left out of the objective on
+  every solve type (the cost results still showed it). It is now charged
+  like the other shapes.
+
 - **A map of `penalty_up` / `penalty_down` on one node no longer makes the
   other nodes' balance free.** When one node gave its penalty as a map (by
   period, time or period and time), nodes with a constant penalty or the

@@ -2637,119 +2637,6 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# §3.10.1 — p_pssdt_varCost
-# ---------------------------------------------------------------------------
-
-
-def p_pssdt_varCost_from_source(source: "InputSource",
-                                   pss: pl.DataFrame,
-                                   dt: pl.DataFrame,
-                                   ) -> "Param | None":
-    """Long-format (p, source, sink, d, t, value) other_operational_cost
-    aggregate.  Mirrors flextool's
-    ``write_pdtProcess__source__sink__dt_varCost_pair`` (audit §3.10.1).
-
-    The CSV path collects three separate cost streams:
-      1. ``unit__inputNode.other_operational_cost`` per arc-side source.
-      2. ``unit__outputNode.other_operational_cost`` per arc-side sink.
-      3. ``unit/connection.other_operational_cost`` per process.
-
-    flextool's preprocessor sums them per (p, source, sink, d, t).  Each
-    Map dimension can be: scalar, 1d_map(period), time_series(t),
-    or 2d_map(period × t).  Filtering out value=0 keeps the row count
-    aligned with the CSV's "drop zero coefficients" pass.
-
-    Returns ``None`` when no varCost rows are non-zero on any side.
-    """
-    if pss is None or pss.height == 0 or dt is None or dt.height == 0:
-        return None
-
-    # Phase 4.8f: defend axis-aware join keys on incoming frame params.
-    _enums = get_global_axis_enums()
-    if _enums is not None:
-        pss = cast_frame_axes(pss, _enums)
-        dt = cast_frame_axes(dt, _enums)
-
-    contributions: list[pl.LazyFrame] = []
-
-    def _resolved_psd_contribution(
-        entity_class: str,
-        alias: "str | dict[str, str]",
-        match_on: list[str],
-    ) -> "pl.LazyFrame | None":
-        """Resolve one ``other_operational_cost`` stream through the
-        authoritative shape resolver and expand it onto the
-        (p, source, sink, d, t) grid by matching ``pss``.
-
-        Replaces the column-name-based broadcaster: the Spine Map index
-        label is user-set (spinedb_api's silent default ``"x"``), so
-        name-based axis detection misread time-series O&M as a scalar and
-        ``how="cross"``-joined it against the full (d, t) grid — the
-        cross-join blow-up / silent-flatten pattern fixed for ``p_slope``.
-        ``resolve_param_shape`` + ``broadcast_to_period_time`` keep the
-        Param at its authored shape (no cross-product);
-        ``promote_param_to_dt`` widens to ``(…, d, t)`` with a narrowing
-        inner-join; then ``pss`` matches the entity onto the
-        (p, source, sink) tuples via ``match_on``.
-
-        The node axis is aliased to the entity-union ``e`` so the join
-        against ``pss.source`` / ``pss.sink`` (also ``e``-typed) composes
-        without an Enum-vs-Utf8 mismatch.
-        """
-        resolved = resolve_param_shape(
-            source, entity_class, "other_operational_cost", period_filter=dt)
-        param = broadcast_to_period_time(
-            resolved, alias, dt, filter_zero=True)
-        if param is None:
-            return None
-        pdt = promote_param_to_dt(param, dt)
-        if "e" in match_on or "e" in param.dims:
-            # Relationship-class side: pss.<source|sink> binds the union
-            # ``e`` column on the broadcast frame.
-            pss_key = "source" if match_on == ["p", "source"] else "sink"
-            psk = pss.lazy().join(
-                pdt, left_on=["p", pss_key], right_on=["p", "e"], how="inner")
-        else:
-            psk = pss.lazy().join(pdt, on=match_on, how="inner")
-        return psk.select("p", "source", "sink", "d", "t",
-                          pl.col("value").alias("v"))
-
-    # 1) unit__inputNode.other_operational_cost — source-side
-    c = _resolved_psd_contribution(
-        "unit__inputNode", {"unit": "p", "node": "e"}, ["p", "source"])
-    if c is not None:
-        contributions.append(c)
-
-    # 2) unit__outputNode.other_operational_cost — sink-side
-    c = _resolved_psd_contribution(
-        "unit__outputNode", {"unit": "p", "node": "e"}, ["p", "sink"])
-    if c is not None:
-        contributions.append(c)
-
-    # 3) connection.other_operational_cost — process-level.
-    #    ``unit.other_operational_cost`` is NOT a schema parameter; the old
-    #    loop over ("unit", "connection") read a non-existent param that
-    #    ``_try_param`` silently returned None for (a harmless ghost).
-    #    Only ``connection`` carries process-level O&M.
-    c = _resolved_psd_contribution("connection", {"name": "p"}, ["p"])
-    if c is not None:
-        contributions.append(c)
-
-    if not contributions:
-        return None
-
-    summed = (pl.concat(contributions, how="vertical")
-                .group_by(["p", "source", "sink", "d", "t"])
-                .agg(pl.col("v").sum().alias("value"))
-                .filter(pl.col("value") != 0.0)
-                .sort("p", "source", "sink", "d", "t")
-                .collect())
-    if summed.height == 0:
-        return None
-    return Param(("p", "source", "sink", "d", "t"), summed)
-
-
-# ---------------------------------------------------------------------------
 # §3.3.4 — p_slope (efficiency-curve slope)
 # ---------------------------------------------------------------------------
 
@@ -2970,7 +2857,6 @@ def p_min_load_pdt_from_source(source: "InputSource",
 DERIVED_B_FIELDS = (
     "p_flow_upper_existing",
     "p_flow_constraint_coef",
-    "p_pssdt_varCost",
     "p_slope",
     "p_min_load",
 )
@@ -3145,13 +3031,6 @@ def apply_derived_b(
     if pss_frame is not None and pss_frame.height > 0:
         flex_data.p_flow_constraint_coef = p_flow_constraint_coef_from_source(
             source, pss_frame)
-
-    # ─── §3.10.1 p_pssdt_varCost ───────────────────────────────────────
-    # Δ.12b: unconditional when (pss, dt) are non-empty.
-    if (pss_frame is not None and pss_frame.height > 0
-            and dt_csv is not None and dt_csv.height > 0):
-        flex_data.p_pssdt_varCost = p_pssdt_varCost_from_source(
-            source, pss_frame, dt_csv)
 
     # ─── §3.3.4 p_slope ────────────────────────────────────────────────
     # Δ.12b: unconditional when (dt, classified) are non-empty.
