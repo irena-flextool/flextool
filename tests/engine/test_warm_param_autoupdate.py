@@ -264,14 +264,28 @@ def test_declare_mutable_after_build_raises() -> None:
         wp.declare_mutable("p_price")
 
 
+# The Params flextool's warm path once declared mutable (it no longer declares any: an LP is reused only
+# for an identical sub-solve).  Kept as a realistic workload for polar-high's per-cell tracker.
+_TRACKED_PARAMS = (
+    "p_inflow",
+    "p_penalty_up", "p_penalty_down",
+    "p_state_start", "p_roll_continue_state",
+    "p_fix_storage_quantity",
+    "p_commodity_price",
+    "p_step_duration", "p_timestep_weight",
+    "p_inflation_op", "p_period_share",
+    "p_node_capacity_for_scaling",
+    "p_state_existing_capacity",
+)
+
+
 def test_param_cells_size_bound_on_real_fixture(scenario_workdir) -> None:
-    """Sanity check that the side-table for the standard mutable-Param
-    set on a feature-heavy fixture stays under a generous size budget.
-    Acts as an early-warning for accidentally tracking a Param family
-    that explodes the per-cell map."""
+    """Sanity check that polar-high's side-table for a realistic set of
+    tracked Params on a feature-heavy fixture stays under a generous size
+    budget.  Acts as an early-warning for a tracker change that explodes
+    the per-cell map."""
     from flextool.engine.preprocess.flex_data import load_flextool
     from flextool.engine.model.core import build_flextool
-    from flextool.engine.solve.chain import _MUTABLE_PARAMS
 
     data_dir = scenario_workdir("test_a_lot")
 
@@ -279,7 +293,7 @@ def test_param_cells_size_bound_on_real_fixture(scenario_workdir) -> None:
     pb = Problem()
     build_flextool(pb, data)
     wp = WarmProblem(pb)
-    wp.declare_mutable(*_MUTABLE_PARAMS)
+    wp.declare_mutable(*_TRACKED_PARAMS)
     wp.solve()
 
     total_cells = sum(c["rows"].size for c in wp._param_cells.values())

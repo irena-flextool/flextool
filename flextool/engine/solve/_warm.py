@@ -1,26 +1,39 @@
-"""Warm-LP primitives — structural fingerprint, Param classification, and
-WarmProblem update routine for the native cascade in ``_orchestration``.
+"""Warm-LP primitives for the native cascade in ``_orchestration``.
 
-Two consecutive sub-solves of a chain are "warm-compatible" iff they emit
-an LP of identical shape (same set of vars and cstrs by row count and
-dim signature).  When that holds AND every changed Param either belongs
-to the clean-mapping set (:data:`_WARM_PARAMS`) or is declared mutable
-on the :class:`polar_high.WarmProblem` (:data:`_MUTABLE_PARAMS`), the
-warm-update routine pushes the deltas into the live HiGHS instance via
-``changeRowsBounds`` / ``changeColsCost`` / per-cell coefficient writes
-instead of cold-rebuilding the model.
+Contract: a built LP is reused only when the next sub-solve's FlexData and
+solver configuration are identical (labels included), so the solution, the
+handoff and the output writer, which all read the LP's labels, see the right
+rows and columns; the warm path pushes no updates.
 
-Consumed by ``_orchestration.py::_drive_cascade`` (native polar_high
-cascade — Δ.12d).  Re-exported as module attributes on ``chain.py`` for
-backward-compat with callers like ``test_warm_param_autoupdate``.
+* :func:`_fingerprint` is a cheap pre-filter (set heights and the time-axis
+  structure).  A mismatch means "build a new LP" without a closer look.
+* :func:`_reuse_blocker` is the decision: it compares every field of the two
+  FlexData objects by content and names the first one that differs.
+* :func:`_apply_warm_updates` keeps the historical entry point: it raises
+  :class:`_IncompatibleUpdate` naming the blocker, or returns 0.
+
+Why labels matter: a reused :class:`polar_high.WarmProblem` keeps the ``Var``
+frames and the HiGHS column / row names of the sub-solve it was built for.
+The output writer and ``build_handoff_from_solution`` select the realized
+``(d, t)`` of the current sub-solve by those labels, so a reused LP whose
+labels belong to another window reports the wrong hours and loses the
+storage / online / invest carry-over.  Rolls shift ``dt`` on every roll, so
+they are always rebuilt.  The solver configuration (HiGHS options, autoscale
+mode, ``user_bound_scale``, objective scale) is compared by the orchestrator,
+which owns it.
+
+Consumed by ``_orchestration.py::_drive_cascade``.  Re-exported as module
+attributes on ``chain.py`` for backward compatibility.
 """
 from __future__ import annotations
 
+import dataclasses
+import math
 from typing import TYPE_CHECKING
 
 import polars as pl
 
-from polar_high import Problem, WarmProblem
+from polar_high import Param, Problem, WarmProblem
 
 if TYPE_CHECKING:
     from flextool.engine.preprocess.flex_data import FlexData
@@ -28,42 +41,31 @@ if TYPE_CHECKING:
 
 __all__ = [
     "_STRUCTURAL_FIELDS",
-    "_WARM_PARAMS",
-    "_MUTABLE_PARAMS",
-    "_WARM_PARAMS_DEFERRED",
-    "_WARM_PARAMS_NO_OP",
-    "_WARM_PARAM_GATES",
     "_IncompatibleUpdate",
     "_fingerprint",
     "_param_frame_equal",
     "_param_values_position_equal",
-    "_gate_active",
+    "_reuse_blocker",
+    "_values_equal",
     "_apply_warm_updates",
     "_build_warm_problem",
 ]
 
 
 # ---------------------------------------------------------------------------
-# Structural-fingerprint fields.
+# Structural-fingerprint fields (the cheap pre-filter).
 #
-# Two consecutive sub-solves are "warm-compatible" iff they emit an LP of
-# identical shape — same set of variables (same dims, same row counts) and
-# same set of constraints (same row counts).  In flextool the LP shape is
-# determined by which "set"-typed FlexData fields are populated and how
-# many rows they hold.  We capture that with a tuple of (field_name,
-# height) pairs.
-#
-# The list is intentionally NOT exhaustive — only fields that we have
-# evidence affect the LP structure in tested scenarios are listed.  When
-# warm=True misclassifies a transition (i.e. the obj diverges from the
-# cold rebuild path), add the offending field here.
+# The fingerprint is a tuple of (field_name, height) pairs over the set
+# fields that shape the LP, plus the time-axis structure.  Two sub-solves
+# whose fingerprints differ cannot build the same LP, so the orchestrator
+# skips the full comparison and builds a new one.  The list does not need to
+# be complete: a field missing here is still compared by content in
+# :func:`_reuse_blocker`, which decides.
 #
 # Heights alone do not capture how the time axis is partitioned: two rolls
 # with the same number of steps can split them differently between the
 # periods (p2020 18 h + p2025 12 h, then 12 h + 18 h) or have a timeblock
-# start at a different step.  Every (d,)-keyed term and every lag link then
-# maps to other steps, while the frame heights and the positional Param
-# values stay the same.  :func:`_fingerprint` therefore also carries the
+# start at a different step.  :func:`_fingerprint` therefore also carries the
 # time-axis structure (:func:`_time_axis_signature`).
 
 _STRUCTURAL_FIELDS: tuple[str, ...] = (
@@ -164,385 +166,11 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Clean-mapping Params for warm updates.
-#
-# Only Params whose contribution to the LP is exactly "RHS of constraint X"
-# OR "objective coefficient of variable Y" via a single-Param algebraic
-# pathway can be warm-updated cleanly.  Multi-Param composite expressions
-# (e.g. ``vq_up * p_penalty_up * p_node_capacity_for_scaling * op_factor``)
-# would require the engine to track which Params feed which LP cells —
-# that's WarmProblem's deferred Phase 2.
-#
-# Each entry is (flexdata_field, kind, target, transform, over_field).
-# ``kind`` is either "rhs" (constraint RHS) or "obj" (variable objective
-# coefficient).  ``target`` is the constraint or variable name in the
-# built Problem.  ``transform`` is None (push the Param as-is) or "neg"
-# (push -Param).  ``over_field`` names the FlexData index frame that the
-# constraint was built ``over=`` (used to position-align values when the
-# new sub-solve has different dim labels but same row counts — the
-# rolling-horizon case).  None means push the Param's value column
-# directly (used when the constraint axis dim values are stable across
-# rolls, e.g. (n,) for storage-anchor handoff).
-#
-# Adding entries here only widens the set of transitions for which warm
-# update is attempted; if a transition's diff falls entirely inside this
-# set it stays warm, otherwise it falls back to cold rebuild.
-
-_WARM_PARAMS: tuple[tuple[str, str, str, str | None, str | None], ...] = (
-    ("p_inflow", "rhs", "nodeBalance_eq", "neg", "nodeBalance_dt"),
-)
-
-# Params that participate in composite LP cells (multi-Param products).
-# When ``run_chain_from_db(..., warm=True)`` is invoked, the WarmProblem is told to
-# track these via :meth:`polar_high.WarmProblem.declare_mutable` so per-cell
-# auto-update can fire on transitions where any of them differs between
-# sub-solves.  This widens the warm-compatible regime BEYOND the clean-RHS
-# subset above to cover:
-#   * slack penalties scaled by op-factor and capacity_for_scaling,
-#   * commodity-price terms multiplied by step_duration / inflation /
-#     period_share / cost_weight,
-#   * storage-anchor RHS terms ``p_state_start * p_state_existing_capacity``
-#     and ``p_roll_continue_state``,
-#   * per-(d,t) fix-storage RHS / inflow time-series.
-# The list is kept narrow; additions are cheap (~tens of MB of side-table
-# storage in the worst case) but each new entry has to be vetted against
-# the auto-update math (numerator vs denominator direction recovery).
-_MUTABLE_PARAMS: tuple[str, ...] = (
-    "p_inflow",
-    "p_penalty_up", "p_penalty_down",
-    "p_state_start", "p_roll_continue_state",
-    "p_fix_storage_quantity",
-    "p_commodity_price",
-    "p_step_duration", "p_timestep_weight",
-    "p_inflation_op", "p_period_share",
-    "p_node_capacity_for_scaling",
-    "p_state_existing_capacity",
-)
-
-# Param fields that we know change between sub-solves but cannot warm-update
-# (touched by composite expressions, multi-constraint patterns, or matrix
-# coefficients that would require :meth:`WarmProblem.update_coef`).  When
-# any of these differ between consecutive sub-solves and the structural
-# fingerprint matches, we still cold-rebuild — they're listed here purely
-# for clarity / future Phase-2 work.
-#
-# D1 audit (2026-05-03; see ``audit/handoff_full_parity_gaps.md`` §D1)
-# categorised every entry on the
-# ``work_multi_fullYear_battery_nested_multi_invest`` 80-roll chain:
-#
-#   * **No-op-on-tested-fixtures** entries (``presence_count == 0`` AND
-#     ``diff_count == 0`` across every observed transition) are split
-#     into :data:`_WARM_PARAMS_NO_OP` for documentation — they remain
-#     here too so a regression on a fixture that DOES populate them is
-#     still caught.
-#   * **Gated-by-dormant-feature** entries are listed in
-#     :data:`_WARM_PARAM_GATES`; on transitions where every gate field
-#     is None the diff is "phantom" (the consuming constraint family
-#     was never emitted) and we short-circuit the cold-rebuild fallback.
-#   * **Sum-collapse RHS-side** entries (Params reaching the LP only via
-#     constraint RHS as composite anonymous Params — e.g.
-#     ``p_profile_value`` going through ``p_profile_value
-#     · p_process_existing_count [· p_process_availability]`` into the
-#     RHS of ``profile_flow_*``, or ``p_roll_continue_state`` rebuilt
-#     into a sparse ``(n, d, t)`` Param dropped into nodeBalance LHS
-#     constants) remain genuine cold-rebuild triggers.  Hand-coded
-#     warm-update exception paths for these are blocked on engine-side
-#     RHS source-tracking AND on rolling-horizon t-label-shift handling
-#     for ``nodeState_first_dt`` / ``dtt_timeline_matching`` — both
-#     explicitly out of scope for D1 (engine refactor; see follow-ups
-#     in ``audit/handoff_param_tracked_autoupdate.md``).
-_WARM_PARAMS_DEFERRED: tuple[str, ...] = (
-    # Slack-penalty composites: vq * p_penalty_* * op_factor * scaling.
-    "p_penalty_up", "p_penalty_down",
-    # Time-weight composites that touch every (d,t)-keyed obj/lhs term.
-    "p_step_duration", "p_inflation_op",
-    "p_period_share", "p_timestep_weight",
-    # Storage handoff / anchor — multi-cstr.
-    "p_state_start", "p_roll_continue_state",
-    "p_fix_storage_quantity", "p_state_existing_capacity",
-    "p_state_unitsize", "p_state_self_discharge", "p_state_upper",
-    "p_storage_state_reference_price",
-    # Invest handoff — RHS of multiple invest/divest cstrs.
-    "p_entity_previously_invested_capacity",
-    "p_entity_invested", "p_entity_divested",
-    "p_entity_max_units", "p_entity_all_existing",
-    "ed_lifetime_fixed_cost", "ed_lifetime_fixed_cost_divest",
-    "ed_entity_annual_discounted", "ed_entity_annual_divest_discounted",
-    "e_invest_max_total", "e_divest_max_total",
-    "ed_invest_max_period", "ed_divest_max_period",
-    # Commodity / CO2 — composite obj.
-    "p_commodity_price", "p_co2_price", "p_co2_max_period",
-    "p_co2_max_total", "p_co2_content",
-    # Window fraction — RHS factor of co2_max_period (cap · fraction).  Changes between rolls of
-    # different length (truncated last roll, rolls across a period boundary) and between same-shape
-    # solves with a different p_period_share.
-    "p_window_fraction",
-    # Years per period — LHS weight of co2_max_total only.
-    "p_years_represented_d",
-    # Stochastic branch weights — composite objective factors (op_factor, startup, storage reference
-    # price, commodity ladder; invest costs under recourse).  Two rolls with different weights have the
-    # same LP shape, so without a cold rebuild the previous roll's weights would stay in the objective.
-    "pdt_branch_weight", "pd_branch_weight",
-    # Commodity ladder (cumulative + annual) — RHS / cap terms of
-    # ``ladder_tier_cap_cumulative_roll`` / ``ladder_tier_cap_annual_roll``.
-    # The rolling cumulative accumulator (``p_ladder_cum_realized_mwh``)
-    # AND the per-roll period-fill fraction (``p_f_d_k``) BOTH change
-    # between rolls of a rolling-window solve — they encode the cross-
-    # solve carry of realised MWh and the current roll's share of each
-    # period, respectively.  Without listing them here, ``_apply_warm_updates``
-    # silently kept roll N+1's LP at roll N's RHS, so the tier-cap
-    # constraint never tightened and roll N+1's v_trade collapsed to
-    # roll N's solution.  Symptom: tests/test_commodity_ladder_rolling.py
-    # ``TestWithinPeriodCumulativeRolling::test_within_period_cumulative_completes``
-    # (only p2020 in the final accumulator) and
-    # ``TestCumulativeLadderBindingCap::test_roll2_uses_tier2_only_after_roll1_saturates_cap``
-    # (roll-2 v_trade zero across all tiers).  Listing them as deferred
-    # forces a cold rebuild on any per-roll diff — the ladder constraints
-    # touch composite LP cells with no warm-update side-table entry, so
-    # cold rebuild is the only correct option here.
-    "p_ladder_cum_realized_mwh", "p_f_d_k",
-    "p_ladder_cum_price", "p_ladder_cum_quantity",
-    "p_ladder_ann_price", "p_ladder_ann_quantity",
-    # Process topology Params used in many cstrs / objs.
-    "p_unitsize", "p_flow_upper", "p_flow_upper_existing",
-    # Per-arc capacity factors.  ``p_indirect_input_cap`` also sets the
-    # per-element ``v_flow`` UPPER BOUND of constant-capacity indirect
-    # input arcs (``_max_flow_rhs``): WarmProblem's update paths do not
-    # touch column bounds, so any diff must force a cold rebuild.
-    "p_arc_max_cap_coef", "p_indirect_input_cap",
-    "p_process_sink_max_capacity_coef", "p_process_source_input_share_max",
-    # Floors: diffs force a cold rebuild (an unlisted Param that differs
-    # between rolls would silently keep the previous roll's value).
-    "p_process_source_input_share_min", "p_process_sink_min_capacity_coef",
-    "p_slope", "p_process_existing_count", "p_process_availability",
-    "p_node_availability",
-    # Profile Params — drive process_profile_* cstrs.
-    "p_profile_value",
-    # User constraints.
-    "p_flow_constraint_coef", "p_constraint_constant",
-    "p_node_constraint_invested_capacity_coeff",
-    "p_process_constraint_invested_capacity_coeff",
-    "p_node_constraint_state_coeff",
-    "p_node_constraint_prebuilt_capacity_coeff",
-    "p_process_constraint_prebuilt_capacity_coeff",
-    # Variable cost partitions.
-    "p_pssdt_varCost", "p_pdt_varCost_source",
-    "p_pdt_varCost_sink", "p_pdt_varCost_process",
-    # Online / UC.
-    "p_startup_cost", "p_section", "p_min_load",
-    # Ramp speeds.
-    "p_ramp_speed_up_sink", "p_ramp_speed_down_sink",
-    "p_ramp_speed_up_source", "p_ramp_speed_down_source",
-    # Capacity scaling.
-    "p_node_capacity_for_scaling", "p_group_capacity_for_scaling",
-    # Inflow (split into positive / negative for slack scaling — feeds
-    # nodeBalance terms beyond just RHS).
-    "p_positive_inflow", "p_negative_inflow", "pdtNodeInflow_per_step",
-    # Existing-fixed cost on entities.
-    "p_ed_fixed_cost",
-    # Group reserves / capacity-margin / inertia.
-    "pdGroup_capacity_margin", "pdGroup_penalty_capacity_margin",
-    "pdGroup_inertia_limit", "pdGroup_penalty_inertia",
-    "pdGroup_non_synchronous_limit", "pdGroup_penalty_non_synchronous",
-    "p_inv_group_cap",
-    "p_process_sink_inertia_constant", "p_process_source_inertia_constant",
-    # Reserves.
-    "pdtReserve_upDown_group_reservation",
-    "p_reserve_upDown_group_penalty_reserve",
-    "p_reserve_upDown_group_reserve_duration",
-    "p_process_reserve_upDown_node_reliability",
-    "p_process_reserve_upDown_node_max_share",
-    "p_process_reserve_upDown_node_large_failure_ratio_value",
-    "p_process_reserve_upDown_node_increase_reserve_ratio_value",
-    # Cumulative invest / group invest Params.
-    "ed_invest_min_period", "ed_divest_min_period",
-    "e_invest_min_total", "e_divest_min_total",
-    "ed_cumulative_max_capacity", "ed_cumulative_min_capacity",
-    "p_group_invest_max_period", "p_group_invest_min_period",
-    "p_group_retire_max_period", "p_group_retire_min_period",
-    "p_group_invest_max_total", "p_group_invest_min_total",
-    "p_group_retire_max_total", "p_group_retire_min_total",
-    "p_group_invest_max_cumulative", "p_group_invest_min_cumulative",
-    "p_group_max_cumulative_flow", "p_group_min_cumulative_flow",
-    "pd_max_cumulative_flow", "pd_min_cumulative_flow",
-    "pdt_max_instant_flow", "pdt_min_instant_flow",
-    # Block / per-arc step durations.
-    "p_arc_step_duration_sink", "p_arc_step_duration_source",
-    "p_arc_sink_weight", "p_arc_source_weight",
-    # Delays.
-    "p_process_delay_weight",
-)
-
-
-# Subset of :data:`_WARM_PARAMS_DEFERRED` that the D1 audit observed to
-# never differ in any tested chain transition (presence_count == 0 OR
-# diff_count == 0 across every observed transition).  Kept as a tuple
-# rather than removed so a future fixture that DOES populate one of
-# these still gets caught by :data:`_WARM_PARAMS_DEFERRED`'s diff scan.
-# This list is documentation only — :func:`_apply_warm_updates` does
-# not consult it.
-_WARM_PARAMS_NO_OP: tuple[str, ...] = (
-    # Reserves — none of the in-tree fixtures exercise reserve scenarios.
-    "pdtReserve_upDown_group_reservation",
-    "p_reserve_upDown_group_penalty_reserve",
-    "p_process_reserve_upDown_node_reliability",
-    "p_process_reserve_upDown_node_max_share",
-    "p_process_reserve_upDown_node_large_failure_ratio_value",
-    "p_process_reserve_upDown_node_increase_reserve_ratio_value",
-    # Cumulative invest / group invest — not active on the multi-invest
-    # nested fixture.
-    "ed_invest_min_period", "ed_divest_min_period",
-    "e_invest_min_total", "e_divest_min_total",
-    "ed_cumulative_max_capacity", "ed_cumulative_min_capacity",
-    "p_group_invest_max_period", "p_group_invest_min_period",
-    "p_group_retire_max_period", "p_group_retire_min_period",
-    "p_group_invest_max_total", "p_group_invest_min_total",
-    "p_group_retire_max_total", "p_group_retire_min_total",
-    "p_group_invest_max_cumulative", "p_group_invest_min_cumulative",
-    "p_group_max_cumulative_flow", "p_group_min_cumulative_flow",
-    "pd_max_cumulative_flow", "pd_min_cumulative_flow",
-    "pdt_max_instant_flow", "pdt_min_instant_flow",
-    # Block / per-arc step durations — only used in multi-block fixtures.
-    "p_arc_step_duration_sink", "p_arc_step_duration_source",
-    "p_arc_sink_weight", "p_arc_source_weight",
-    # Delays.
-    "p_process_delay_weight",
-    # Variable-cost partitions — none of the tested fixtures exercise
-    # priced flows yet.
-    "p_pssdt_varCost", "p_pdt_varCost_source",
-    "p_pdt_varCost_sink", "p_pdt_varCost_process",
-    # CO2 (not active on this fixture).
-    "p_co2_price", "p_co2_max_period", "p_co2_max_total", "p_co2_content",
-    # Online / UC.
-    "p_startup_cost", "p_section", "p_min_load",
-    # Ramp speeds.
-    "p_ramp_speed_up_sink", "p_ramp_speed_down_sink",
-    "p_ramp_speed_up_source", "p_ramp_speed_down_source",
-    # Per-process inertia constants.
-    "p_process_sink_inertia_constant", "p_process_source_inertia_constant",
-    # Divest siblings (only present when divest is active).
-    "p_entity_invested", "p_entity_divested",
-    "ed_lifetime_fixed_cost_divest", "ed_entity_annual_divest_discounted",
-    "e_divest_max_total", "ed_divest_max_period",
-)
-
-
-# Per-Param "structural gates": tuples of FlexData field names whose
-# non-None state determines whether the Param can possibly contribute to
-# any LP cell on the new sub-solve.  When ALL gates are None on
-# ``nxt`` (and, by fingerprint match, also on ``prior``), the consuming
-# constraint family was never emitted and the Param's diff is a phantom
-# — :func:`_apply_warm_updates` skips the cold-rebuild check.
-#
-# Conservative by design: only Params whose consuming pathways are
-# fully gated by tracked structural fields appear here.  Params with
-# unconditional consumers (e.g. ``p_inflow`` always reaches
-# ``nodeBalance_eq``) are absent and treated as always-active.
-_WARM_PARAM_GATES: dict[str, tuple[str, ...]] = {
-    # Group-slack inflow consumers (capacityMargin / inertia /
-    # non_sync_constraint).
-    "p_positive_inflow":              ("groupNonSync",),
-    "p_negative_inflow":              ("groupNonSync",),
-    "pdtNodeInflow_per_step":         ("groupCapacityMargin",),
-    "pdGroup_capacity_margin":        ("groupCapacityMargin",),
-    "pdGroup_penalty_capacity_margin": ("groupCapacityMargin",),
-    "pdGroup_inertia_limit":          ("groupInertia",),
-    "pdGroup_penalty_inertia":        ("groupInertia",),
-    "pdGroup_non_synchronous_limit":  ("groupNonSync",),
-    "pdGroup_penalty_non_synchronous": ("groupNonSync",),
-    "p_inv_group_cap":                ("groupCapacityMargin", "groupInertia",
-                                        "groupNonSync"),
-    "p_process_sink_inertia_constant":   ("groupInertia",),
-    "p_process_source_inertia_constant": ("groupInertia",),
-    "p_group_capacity_for_scaling":   ("groupCapacityMargin", "groupInertia",
-                                        "groupNonSync"),
-    # Reserves.
-    "pdtReserve_upDown_group_reservation":     ("reserve_upDown_group",),
-    "p_reserve_upDown_group_penalty_reserve":  ("reserve_upDown_group",),
-    "p_reserve_upDown_group_reserve_duration": ("reserve_upDown_group",),
-    "p_process_reserve_upDown_node_reliability": ("prundt",),
-    "p_process_reserve_upDown_node_max_share":   ("prundt",),
-    "p_process_reserve_upDown_node_large_failure_ratio_value":
-        ("process_reserve_upDown_node_large_failure_ratio",),
-    "p_process_reserve_upDown_node_increase_reserve_ratio_value":
-        ("process_reserve_upDown_node_increase_reserve_ratio",),
-    # CO2.
-    "p_co2_price":      ("flow_from_co2_priced",),
-    "p_co2_max_period": ("group_co2_max_period",),
-    "p_window_fraction": ("group_co2_max_period",),
-    "p_co2_max_total":  ("group_co2_max_total",),
-    "p_years_represented_d": ("group_co2_max_total",),
-    "p_co2_content":    ("flow_from_co2_priced", "flow_from_co2_capped",
-                          "group_co2_max_period",
-                          "flow_from_co2_capped_total",
-                          "group_co2_max_total"),
-    # Online / UC — only emitted when online sets are populated.
-    "p_startup_cost": ("process_online",),
-    "p_section":      ("process_min_load_eff",),
-    "p_min_load":     ("process_minload",),
-    # Ramps.
-    "p_ramp_speed_up_sink":    ("process_source_sink_ramp_limit_sink_up",),
-    "p_ramp_speed_down_sink":  ("process_source_sink_ramp_limit_sink_down",),
-    "p_ramp_speed_up_source":  ("process_source_sink_ramp_limit_source_up",),
-    "p_ramp_speed_down_source":
-        ("process_source_sink_ramp_limit_source_down",),
-    # Cumulative invest / group invest — gated by their respective sets.
-    "ed_invest_min_period":           ("ed_invest_period_set",),
-    "ed_divest_min_period":           ("ed_divest_period_set",),
-    "e_invest_min_total":             ("e_invest_total",),
-    "e_divest_min_total":             ("e_divest_total",),
-    "ed_cumulative_max_capacity":     ("ed_invest_cumulative",),
-    "ed_cumulative_min_capacity":     ("ed_invest_cumulative",),
-    "p_group_invest_max_period":      ("gd_invest_period",),
-    "p_group_invest_min_period":      ("gd_invest_period",),
-    "p_group_retire_max_period":      ("gd_divest_period",),
-    "p_group_retire_min_period":      ("gd_divest_period",),
-    "p_group_invest_max_total":       ("g_invest_total",),
-    "p_group_invest_min_total":       ("g_invest_total",),
-    "p_group_retire_max_total":       ("g_divest_total",),
-    "p_group_retire_min_total":       ("g_divest_total",),
-    "p_group_invest_max_cumulative":  ("g_invest_cumulative",),
-    "p_group_invest_min_cumulative":  ("g_invest_cumulative",),
-    "p_group_max_cumulative_flow":    ("group_process_node",),
-    "p_group_min_cumulative_flow":    ("group_process_node",),
-    "pd_max_cumulative_flow":         ("group_process_node",),
-    "pd_min_cumulative_flow":         ("group_process_node",),
-    "pdt_max_instant_flow":           ("group_process_node",),
-    "pdt_min_instant_flow":           ("group_process_node",),
-    # Variable-cost partitions: each Param is gated on the index set it multiplies in
-    # ``model/core._obj_variable_cost`` (pinned by tests/engine/test_warm_varcost_gates.py).
-    "p_pssdt_varCost":       ("pssdt_varCost_noEff",),
-    "p_pdt_varCost_source":  ("pssdt_varCost_eff_unit_source",),
-    "p_pdt_varCost_sink":    ("pssdt_varCost_eff_unit_sink",),
-    "p_pdt_varCost_process": ("pssdt_varCost_eff_connection",),
-    # Block / per-arc step durations.
-    "p_arc_step_duration_sink":   ("arc_sink_block_dt",),
-    "p_arc_step_duration_source": ("arc_source_block_dt",),
-    "p_arc_sink_weight":          ("arc_sink_block_dt",),
-    "p_arc_source_weight":        ("arc_source_block_dt",),
-    # Delays.
-    "p_process_delay_weight": ("process_delayed",),
-    # User constraints.
-    "p_flow_constraint_coef":         ("flow_constraint_idx",),
-    "p_constraint_constant":          ("cdt_eq", "cdt_le", "cdt_ge"),
-    "p_node_constraint_invested_capacity_coeff":
-        ("flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge"),
-    "p_process_constraint_invested_capacity_coeff":
-        ("flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge"),
-    "p_node_constraint_state_coeff":
-        ("flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge"),
-    "p_node_constraint_prebuilt_capacity_coeff":
-        ("flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge"),
-    "p_process_constraint_prebuilt_capacity_coeff":
-        ("flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge"),
-}
-
 
 class _IncompatibleUpdate(Exception):
-    """Raised by :func:`_apply_warm_updates` when the difference between
-    two consecutive sub-solves' FlexData includes Params outside the
-    clean-mapping set, forcing a cold rebuild for the next sub-solve."""
+    """Raised by :func:`_apply_warm_updates` when the next sub-solve would
+    not build the live LP; the message names the first differing field.
+    The orchestrator then builds a new LP for the next sub-solve."""
 
 
 def _fingerprint(data: "FlexData") -> tuple:
@@ -713,221 +341,132 @@ def _param_values_position_equal(a, b) -> bool:
     return bool(np.array_equal(av, bv))
 
 
-def _gate_active(d: "FlexData", fld: str) -> bool:
-    """Return True if Param ``fld`` can possibly contribute to an LP
-    cell on FlexData ``d`` based on its consuming-feature gates.
 
-    Defaults to True (assume active) for Params absent from
-    :data:`_WARM_PARAM_GATES` — gating is opt-in and conservative.
-    Returns False ONLY when every gate field is None or an empty
-    polars frame on ``d``; that means the consuming constraint family
-    was never emitted, so the Param is dormant on this LP and a diff
-    in its values can be safely ignored.
+
+# ---------------------------------------------------------------------------
+# Reuse decision: every field identical, by content.
+
+_MISSING = object()
+
+
+def _field_names(obj) -> list[str]:
+    """Field names of a FlexData-like object in a deterministic order:
+    dataclass field order, else the sorted attribute names (the
+    ``SimpleNamespace`` stand-ins of the unit tests)."""
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return [f.name for f in dataclasses.fields(obj)]
+    return sorted(vars(obj))
+
+
+def _frames_equal(a: pl.DataFrame, b: pl.DataFrame) -> bool:
+    """Same columns with the same dtypes and the same rows, in any row and
+    column order.
+
+    Fast path: identical schemas (column order and dtypes) and ``.equals``
+    as the frames are; a producer that is deterministic gives this for
+    identical sub-solves.  Otherwise the columns are selected in sorted name
+    order and both frames are sorted by all columns before ``.equals``.  A
+    dtype difference (Enum categories included) counts as unequal: the LP's
+    column / row order follows the Enum order, so the safe answer is a new
+    build.
     """
-    gates = _WARM_PARAM_GATES.get(fld)
-    if not gates:
+    if a.height != b.height or a.width != b.width:
+        return False
+    if a.schema == b.schema and a.equals(b):
         return True
-    for g in gates:
-        v = getattr(d, g, None)
-        if v is None:
+    sa, sb = a.schema, b.schema
+    if set(sa) != set(sb) or any(sa[c] != sb[c] for c in sa):
+        return False
+    if a.height == 0:
+        return True
+    cols = sorted(sa)
+    return a.select(cols).sort(cols).equals(b.select(cols).sort(cols))
+
+
+def _values_equal(a, b) -> bool:
+    """Generic content equality of two FlexData field values.
+
+    ``None`` equals only ``None``; frames by :func:`_frames_equal`;
+    :class:`polar_high.Param` by dims and frame; dicts, lists, tuples and
+    dataclass instances element by element; floats by ``==`` or both NaN;
+    anything else by identity or ``==``.  A comparison that raises counts as
+    unequal (the safe answer: build a new LP).
+    """
+    if a is b:
+        return True
+    if a is None or b is None:
+        return False
+    try:
+        if isinstance(a, pl.DataFrame) or isinstance(b, pl.DataFrame):
+            return (isinstance(a, pl.DataFrame) and isinstance(b, pl.DataFrame)
+                    and _frames_equal(a, b))
+        if isinstance(a, Param) or isinstance(b, Param):
+            return (isinstance(a, Param) and isinstance(b, Param)
+                    and tuple(a.dims) == tuple(b.dims)
+                    and _frames_equal(a.frame, b.frame))
+        if isinstance(a, pl.Series) or isinstance(b, pl.Series):
+            return (isinstance(a, pl.Series) and isinstance(b, pl.Series)
+                    and a.dtype == b.dtype and a.equals(b))
+        if isinstance(a, dict) or isinstance(b, dict):
+            return (isinstance(a, dict) and isinstance(b, dict)
+                    and a.keys() == b.keys()
+                    and all(_values_equal(a[k], b[k]) for k in a))
+        if isinstance(a, (list, tuple)) or isinstance(b, (list, tuple)):
+            return (type(a) is type(b) and len(a) == len(b)
+                    and all(_values_equal(x, y) for x, y in zip(a, b)))
+        if dataclasses.is_dataclass(a) and not isinstance(a, type):
+            return (type(a) is type(b)
+                    and all(_values_equal(getattr(a, f.name), getattr(b, f.name))
+                            for f in dataclasses.fields(a)))
+        if isinstance(a, float) and isinstance(b, float):
+            return a == b or (math.isnan(a) and math.isnan(b))
+        if type(a) is not type(b):
+            return False
+        return bool(a == b)
+    except Exception:  # noqa: BLE001 — unequal is the safe answer
+        return False
+
+
+def _reuse_blocker(prior, nxt) -> str | None:
+    """Name of the first field in which ``nxt`` differs from ``prior``, or
+    ``None`` when every field is identical (labels included).
+
+    Every field is compared, with no exceptions: ``dt`` first (cheap, and the
+    field that differs on every roll), then the dataclass fields in
+    declaration order, then any extra attribute names in sorted order.  The
+    order only affects which name is reported, never the outcome.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for name in ["dt", *_field_names(prior), *_field_names(nxt)]:
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    for name in names:
+        a = getattr(prior, name, _MISSING)
+        b = getattr(nxt, name, _MISSING)
+        if a is _MISSING and b is _MISSING:
             continue
-        # Empty polars frame counts as "gate inactive" — the constraint
-        # iterator yields zero rows.
-        try:
-            if hasattr(v, "height") and v.height == 0:
-                continue
-        except Exception:
-            pass
-        return True
-    return False
+        if a is _MISSING or b is _MISSING or not _values_equal(a, b):
+            return name
+    return None
 
 
 def _apply_warm_updates(warm: WarmProblem,
                         prior: "FlexData", nxt: "FlexData") -> int:
-    """Push every changed clean-mapping Param from ``prior`` → ``nxt``
-    into ``warm``.
+    """Decide whether the live LP in ``warm`` can serve ``nxt``.
 
-    Returns the count of warm-update calls executed.
-
-    Raises :class:`_IncompatibleUpdate` if any Param in
-    :data:`_WARM_PARAMS_DEFERRED` differs between ``prior`` and ``nxt``
-    AND that Param is NOT in :data:`_MUTABLE_PARAMS`.  Mutable Params
-    are auto-updated via :meth:`polar_high.WarmProblem.update_param`.
-    Phantom diffs (Params whose consuming feature is dormant per
-    :data:`_WARM_PARAM_GATES`) are skipped — those are the audit-proven
-    no-effect cases on this LP.  Mutable Params with zero tracked cells
-    (Sum-collapse on the build-side composite Param construction) also
-    raise :class:`_IncompatibleUpdate` rather than silently no-op'ing
-    via ``update_param`` — the silent-corruption guard.
+    Returns 0 (nothing to push: the LP is the one ``nxt`` would build).
+    Raises :class:`_IncompatibleUpdate` naming the first differing field
+    (:func:`_reuse_blocker`) otherwise.  ``warm`` is not touched; the
+    argument is kept for the call contract of the orchestrator and tests.
     """
-    # First, scan the deferred (force-cold) list — any difference there
-    # is a hard "cold rebuild" signal UNLESS the field is in
-    # _MUTABLE_PARAMS, in which case auto-update will handle it below.
-    mutable_set = set(_MUTABLE_PARAMS)
-    deferred_diffs: dict[str, "object"] = {}
-    for fld in _WARM_PARAMS_DEFERRED:
-        prior_p = getattr(prior, fld, None)
-        next_p = getattr(nxt, fld, None)
-        if not _param_values_position_equal(prior_p, next_p):
-            if fld in mutable_set:
-                deferred_diffs[fld] = next_p
-                continue
-            if not _gate_active(nxt, fld):
-                # Phantom diff — the consuming feature is dormant on
-                # this sub-solve (e.g. p_negative_inflow when
-                # groupNonSync is None), so the Param can't reach any
-                # LP cell.  Safe to skip; ignoring this diff is
-                # equivalent to cold-rebuilding and re-evaluating an
-                # unused Param.
-                continue
-            raise _IncompatibleUpdate(
-                f"Param {fld!r} differs between sub-solves and is not in "
-                f"the clean-mapping set — falling back to cold rebuild.")
-
-    import numpy as np
-
-    n_updates = 0
-    for fld, kind, target, transform, over_field in _WARM_PARAMS:
-        prior_p = getattr(prior, fld, None)
-        next_p = getattr(nxt, fld, None)
-        if _param_frame_equal(prior_p, next_p):
-            continue
-        if next_p is None:
-            # Going from "param present" to "param absent" effectively
-            # changes the LP shape — treat as cold.
-            raise _IncompatibleUpdate(
-                f"Param {fld!r} disappeared between sub-solves; "
-                f"falling back to cold rebuild.")
-        if kind == "rhs":
-            # Resolve the new RHS values positionally aligned to the
-            # ORIGINAL over frame's row order.  The original over
-            # frame's dim labels (e.g. ``t``) differ from ``next_p``'s
-            # labels in rolling-horizon scenarios, so we can't rely on
-            # WarmProblem.update_rhs's label-based join — it would
-            # produce zeros for every row.  Instead we resolve the new
-            # value vector against the NEW over frame (which has the
-            # new t-labels) and push as a positional ndarray of length
-            # row_count.
-            if over_field is None:
-                push = next_p
-                if transform == "neg":
-                    push = -next_p
-                warm.update_rhs(target, push)
-            else:
-                new_over = getattr(nxt, over_field, None)
-                if new_over is None:
-                    # Phase E.3: ``pss_dt`` / ``nodeBalance_dt`` /
-                    # ``nodeState_dt`` / ``process_indirect_dt`` are no
-                    # longer materialised on FlexData; build the cross-
-                    # join on demand from the constituents so warm RHS
-                    # alignment still works.
-                    from flextool.engine.model._pdt_join import (
-                        compute_pss_dt,
-                        compute_nodeBalance_dt,
-                        compute_nodeState_dt,
-                        compute_process_indirect_dt,
-                    )
-                    _compute = {
-                        "pss_dt": compute_pss_dt,
-                        "nodeBalance_dt": compute_nodeBalance_dt,
-                        "nodeState_dt": compute_nodeState_dt,
-                        "process_indirect_dt": compute_process_indirect_dt,
-                    }.get(over_field)
-                    if _compute is not None:
-                        new_over = _compute(nxt)
-                if new_over is None:
-                    raise _IncompatibleUpdate(
-                        f"warm-update needs FlexData.{over_field}, but it "
-                        f"is None on the new sub-solve")
-                # The cstr's rows are in ``over`` sorted by its columns
-                # (the add_cstr determinism wrapper,
-                # ``engine/__init__.py``), so sort ``new_over``
-                # the same way: position i then names the same row in
-                # both sub-solves (labels shift, order does not).  Do
-                # not trust the producer's row order — a polars 2 lazy
-                # cross join emits right-major order unless told
-                # otherwise, which pushed every other (n, t) inflow onto
-                # the wrong row.
-                new_over = new_over.sort(new_over.columns)
-                # Left-join new_over with next_p on shared dims; values
-                # come out aligned to new_over's row order (kept by
-                # ``maintain_order="left"``), which by fingerprint match
-                # has the same row count as the original LP cstr over.
-                shared = [c for c in next_p.dims if c in new_over.columns]
-                if not shared:
-                    rhs_vec = np.full(new_over.height,
-                                      float(next_p.frame["value"][0]),
-                                      dtype=np.float64)
-                else:
-                    j = new_over.join(next_p.frame, on=shared, how="left",
-                                      maintain_order="left")
-                    rhs_vec = (j["value"].fill_null(0.0)
-                                         .to_numpy()
-                                         .astype(np.float64, copy=False))
-                if transform == "neg":
-                    rhs_vec = -rhs_vec
-                warm.update_rhs(target, rhs_vec)
-        elif kind == "obj":
-            push = next_p
-            if transform == "neg":
-                push = -next_p
-            warm.update_obj_coef(target, push)
-        else:
-            raise _IncompatibleUpdate(
-                f"unknown warm-update kind {kind!r} for {fld!r}")
-        n_updates += 1
-
-    # Auto-update for declared-mutable Params via the Param-tracked
-    # cell map.  This handles every composite-Param diff that the
-    # clean-RHS / clean-obj path can't represent.
-    for fld, next_p in deferred_diffs.items():
-        if next_p is None:
-            # Param disappeared — can't auto-update (no values to push).
-            raise _IncompatibleUpdate(
-                f"mutable Param {fld!r} went None between sub-solves; "
-                f"falling back to cold rebuild.")
-        if fld not in warm._mutable_params:
-            # Param was tracked-mutable but the LP didn't actually
-            # carry it (build skipped its branch).  Different LP — treat
-            # as cold.
-            raise _IncompatibleUpdate(
-                f"mutable Param {fld!r} differs but isn't tracked on "
-                f"the warm problem; falling back to cold rebuild.")
-        # CRITICAL silent-corruption guard (D1 audit, 2026-05-03).
-        # ``WarmProblem.update_param`` silently returns when the Param
-        # has no tracked cells — that's correct behaviour for Params
-        # whose only effect is on a code path that the engine's
-        # source-tracker walks (e.g. p_step_duration on dispatch
-        # rolls).  But many "mutable" Params reach the LP through
-        # composite-anonymous-Param construction in flextool/model/core.py
-        # (Sum-collapse: the new Param is built fresh without a
-        # ``name=`` or ``_sources=`` link to the origin Param), and
-        # for those the side-table is empty even though the LP DOES
-        # depend on the values.  Pushing a no-op there leaves stale
-        # coefficients in the live LP and silently corrupts the
-        # objective.
-        #
-        # Fall back to cold rebuild whenever a mutable Param differs
-        # but has zero tracked cells.  Loses warm-mode benefit on
-        # those transitions but preserves correctness — the only
-        # acceptable trade-off given task constraints.
-        cells = warm._param_cells.get(fld)
-        has_cells = cells is not None and int(cells["rows"].size) > 0
-        if not has_cells and not _gate_active(nxt, fld):
-            # Param's gates are dormant — diff is phantom, no-op is
-            # genuinely safe (the consuming feature was never built).
-            continue
-        if not has_cells:
-            raise _IncompatibleUpdate(
-                f"mutable Param {fld!r} differs but the WarmProblem "
-                f"recorded zero tracked cells for it (Sum-collapse on "
-                f"the build-side composite-Param construction); "
-                f"falling back to cold rebuild to avoid silent stale "
-                f"LP coefficients.")
-        warm.update_param(fld, next_p)
-        n_updates += 1
-
-    return n_updates
+    blocker = _reuse_blocker(prior, nxt)
+    if blocker is not None:
+        raise _IncompatibleUpdate(
+            f"FlexData field {blocker!r} differs between sub-solves; the "
+            f"live LP is reused only for an identical sub-solve")
+    return 0
 
 
 def _build_warm_problem(
@@ -937,8 +476,7 @@ def _build_warm_problem(
     solver_options: dict | None = None,
 ) -> WarmProblem:
     """Build a fresh :class:`polar_high.WarmProblem` from a FlexData
-    snapshot, with all :data:`_MUTABLE_PARAMS` declared mutable so the
-    per-cell tracking side-table is populated during the build.
+    snapshot.
 
     Parameters
     ----------
@@ -951,6 +489,9 @@ def _build_warm_problem(
         wrapping in :class:`WarmProblem`.  Typically the dict returned
         by :func:`flextool.engine.scaling.recommended_highs_options`.
 
+    No Param is declared mutable: the warm path pushes no updates, so the
+    build skips polar-high's per-cell tracking pass.
+
     Late-imports ``build_flextool`` to avoid a build-time cycle between
     this module and ``model/core.py``.
     """
@@ -962,6 +503,4 @@ def _build_warm_problem(
     apply_data_solver_options(pb, data)
     if solver_options:
         pb.set_solver_options(solver_options)
-    warm = WarmProblem(pb)
-    warm.declare_mutable(*_MUTABLE_PARAMS)
-    return warm
+    return WarmProblem(pb)

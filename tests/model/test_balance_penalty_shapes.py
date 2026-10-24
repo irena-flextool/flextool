@@ -32,7 +32,6 @@ Vehicles (databases built from JSON, never a checked-in ``.sqlite``):
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 
 import polars as pl
@@ -402,29 +401,22 @@ def _warm_run(tmp_path_factory, curve: dict, warm: bool) -> dict:
     return _RUNS[key]
 
 
-def test_warm_rolling_time_varying_penalty_matches_cold(tmp_path_factory, caplog) -> None:
+def test_warm_rolling_time_varying_penalty_matches_cold(tmp_path_factory) -> None:
     """A time-varying ``penalty_up`` that prices real slack (cheap on odd hours) differs between rolls: every warm
-    roll's objective equals the cold one.  The warm path cannot push changed penalty cells (the objective's
-    composite ``vq · penalty · op_factor`` records no tracked cells), so a penalty-changing transition falls back
-    to a cold rebuild through that guard, never a stale warm update; a constant penalty stays warm."""
+    roll's objective equals the cold one.  No roll reuses the previous roll's LP (its ``dt`` labels shift), so the
+    changed penalty cells are always built, never pushed into a stale LP."""
     varying = {t: (5.0 + 0.1 * i) if i % 2 else 5000.0 for i, t in enumerate(TIMESTEPS)}
-    with caplog.at_level(logging.WARNING):
-        cold = _warm_run(tmp_path_factory, varying, warm=False)
-        hot = _warm_run(tmp_path_factory, varying, warm=True)
+    cold = _warm_run(tmp_path_factory, varying, warm=False)
+    hot = _warm_run(tmp_path_factory, varying, warm=True)
     rolls = [k for k in cold if "_roll_" in k]
     assert len(rolls) >= 3 and list(cold) == list(hot)
     assert any(float(utf8(cold[k].solution.value("vq_state_up"))["value"].sum()) > 0 for k in rolls), (
         "no roll uses the up slack: the penalty would not reach the objective")
+    assert not any(hot[k].warm_used for k in rolls), "a roll reused an LP built for another window"
     for k in rolls:
         for run in (cold, hot):
             _assert_dense(run[k], "p_penalty_up", ("west",), lambda n, d, t: varying[t])
         assert _rel(float(hot[k].solution.obj), float(cold[k].solution.obj)) < 1e-9, k
-    penalty_fallbacks = [r.getMessage() for r in caplog.records
-                         if "COLD REBUILD" in r.getMessage() and "p_penalty" in r.getMessage()]
-    assert penalty_fallbacks, "expected the documented cold rebuild on a penalty change (#80)"
-    assert all("zero tracked cells" in m for m in penalty_fallbacks), penalty_fallbacks
-    const = _warm_run(tmp_path_factory, {t: 5.0 for t in TIMESTEPS}, warm=True)
-    assert any(const[k].warm_used for k in const if "_roll_" in k), "constant penalty: no roll stayed warm"
 
 
 def test_rolling_reads_penalty_values_once_per_run(tmp_path_factory, monkeypatch) -> None:

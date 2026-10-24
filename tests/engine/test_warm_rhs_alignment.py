@@ -1,21 +1,17 @@
-"""Warm rolling reuse: the positional RHS push must land on the right rows.
+"""Rolling rows: the ``(n, d, t)`` cross-join helpers are left-major, and a roll never reuses an LP.
 
-A rolled sub-solve with the same LP shape reuses the previous roll's
-:class:`polar_high.WarmProblem` and pushes the new ``p_inflow`` into
-``nodeBalance_eq`` as a positional vector.  The constraint's rows are in
-``over`` sorted by its columns (the add_cstr determinism wrapper), so the
-vector must follow that order whatever order ``nodeBalance × dt`` comes
-out in.  Under polars 2 a lazy cross join with a small left side emits
-right-major order unless ``maintain_order`` is given: every other
-``(n, t)`` inflow went onto the wrong node (west demand 0 in every other
-hour of roll 1 of ``test_delayed_input_share_rolling_csv_chain``).
+``compute_nodeBalance_dt`` & co. build the ``over`` frames of ``model/core.py``; their row order must
+follow the sorted inputs.  Under polars 2 a lazy cross join with a small left side emitted right-major
+order unless ``maintain_order`` was given.  That once misplaced the positional ``p_inflow`` push of the
+warm path onto the wrong node.  The warm path no longer pushes anything: a rolled sub-solve (shifted
+``t`` labels) always builds its own LP, which the second test pins at the unit level.
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-import numpy as np
 import polars as pl
+import pytest
 from polar_high import Param
 
 from flextool.engine.model._pdt_join import (
@@ -24,7 +20,7 @@ from flextool.engine.model._pdt_join import (
     compute_process_indirect_dt,
     compute_pss_dt,
 )
-from flextool.engine.solve._warm import _apply_warm_updates
+from flextool.engine.solve._warm import _apply_warm_updates, _IncompatibleUpdate
 
 NODES = ["heat", "west"]
 
@@ -61,26 +57,15 @@ def test_cross_join_helpers_are_left_major() -> None:
         assert out.equals(out.sort(out.columns)), fn.__name__
 
 
-class _RecordingWarm:
-    """Captures the vector ``_apply_warm_updates`` pushes."""
-
-    def __init__(self) -> None:
-        self.pushed: dict[str, np.ndarray] = {}
-
-    def update_rhs(self, name: str, vec) -> None:
-        self.pushed[name] = np.asarray(vec)
-
-
-def test_warm_inflow_push_follows_sorted_over_rows() -> None:
-    """The pushed vector is ``−p_inflow`` in ``(n, d, t)``-sorted order,
-    even when ``nodeBalance`` itself is not sorted."""
+def test_rolled_transition_is_not_reused() -> None:
+    """A roll shifts the ``t`` labels of ``dt``: the reuse decision names ``dt`` and the LP is rebuilt."""
     prior = SimpleNamespace(dt=_dt(1), nodeBalance=pl.DataFrame({"n": NODES}),
                             p_inflow=_inflow(_dt(1)))
     nxt_dt = _dt(13)
-    nxt = SimpleNamespace(dt=nxt_dt,
-                          nodeBalance=pl.DataFrame({"n": NODES[::-1]}),
+    nxt = SimpleNamespace(dt=nxt_dt, nodeBalance=pl.DataFrame({"n": NODES}),
                           p_inflow=_inflow(nxt_dt))
-    warm = _RecordingWarm()
-    assert _apply_warm_updates(warm, prior, nxt) == 1
-    expected = -(nxt.p_inflow.frame.sort("n", "d", "t")["value"].to_numpy())
-    np.testing.assert_array_equal(warm.pushed["nodeBalance_eq"], expected)
+    with pytest.raises(_IncompatibleUpdate, match="'dt'"):
+        _apply_warm_updates(object(), prior, nxt)
+    same = SimpleNamespace(dt=_dt(1), nodeBalance=pl.DataFrame({"n": NODES}),
+                           p_inflow=_inflow(_dt(1)))
+    assert _apply_warm_updates(object(), prior, same) == 0

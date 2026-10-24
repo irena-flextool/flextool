@@ -1324,17 +1324,22 @@ def _audit_prior_level_release(*, steps, step_level_keys, all_level_keys,
     })
 
 
-def _audit_cold_rebuild_release(*, steps, complete_solve_name):
+def _audit_cold_rebuild_release(*, steps, complete_solve_name, warm_problem_live=False):
     """At a COLD rebuild (warm_used False), no parked step's HiGHS is the
     reuse source, so any prior step still holding a live ``solution.highs``
     is a same-level stacking risk.  Record them (post-release should be
-    empty).  No-op unless ``FLEXTOOL_LEVEL_RELEASE_AUDIT=1``."""
+    empty).  ``warm_problem_live`` flags a previous ``WarmProblem`` still
+    referenced by the cascade solver (its HiGHS instance would coexist with
+    the new build); it is recorded as the violator ``"<warm_problem>"``.
+    No-op unless ``FLEXTOOL_LEVEL_RELEASE_AUDIT=1``."""
     if os.environ.get("FLEXTOOL_LEVEL_RELEASE_AUDIT") != "1":
         return
     violators = [
         _k for _k, _step in (steps or {}).items()
         if getattr(getattr(_step, "solution", None), "highs", None) is not None
     ]
+    if warm_problem_live:
+        violators.append("<warm_problem>")
     _LEVEL_RELEASE_AUDIT.append({
         "kind": "cold_rebuild",
         "solve": complete_solve_name,
@@ -1431,8 +1436,8 @@ class OrchestrationStep:
         ``False`` for the Benders path (its acceptance is governed by
         ``is_benders`` + gap/tol) and for the failed-solve path.
     warm_used : bool
-        Δ.12d — True if this solve was produced by warm-updating the
-        prior solve's :class:`polar_high.WarmProblem` instance; False
+        True if this solve re-solved the prior solve's
+        :class:`polar_high.WarmProblem` (an identical sub-solve); False
         if it was a cold rebuild.  Always False for the first solve
         and for ``warm=False`` runs.  Always populated (slim summary).
     flex_data : FlexData | None
@@ -1973,16 +1978,14 @@ def run_orchestration(
         :class:`FlexToolRunner` — used by tests that want to short-
         circuit flextool's preprocessing.  Default uses the canonical
         constructor.
-    warm : bool, default False
-        Δ.12d — when True, attempt warm LP updates between consecutive
-        structurally-compatible per-solve iterations using
-        :class:`polar_high.WarmProblem`.  Reuses one WarmProblem across
-        the cascade, applying ``_apply_warm_updates`` between solves
-        and falling back to a cold rebuild whenever the structural
-        fingerprint changes or any unmapped Param differs.  Decisions
-        are recorded per-step on :attr:`OrchestrationStep.warm_used`.
-        Default ``False`` preserves the original cold-rebuild
-        behaviour.
+    warm : bool, default True
+        When True, solve in-process through :class:`polar_high.WarmProblem`
+        and reuse the built LP for the next sub-solve only when that
+        sub-solve's FlexData and solver configuration are identical
+        (labels included; see :mod:`flextool.engine.solve._warm`).  Every
+        other sub-solve, including every roll of a rolling solve, builds a
+        new LP.  Decisions are recorded per-step on
+        :attr:`OrchestrationStep.warm_used`.
 
     Returns
     -------
@@ -2071,20 +2074,20 @@ def _drive_cascade(
     For every per-solve iteration:
 
     1. Read the snapshot via ``load_flextool``.
-    2. Build the LP via ``build_flextool`` (cold rebuild) OR warm-update
-       the prior iteration's :class:`polar_high.WarmProblem`.
+    2. Build the LP via ``build_flextool`` (cold rebuild) OR reuse the
+       prior iteration's :class:`polar_high.WarmProblem` when the
+       sub-solve is identical.
     3. Solve via HiGHS.
     4. Build the handoff via ``build_handoff_from_solution``.
     5. Deposit it into ``state.handoffs`` so the next iteration's
        preprocessing picks it up.
 
-    Parameter ``warm`` toggles per-iteration warm-LP updates: when True,
-    the cascade reuses one ``WarmProblem`` across consecutive
-    structurally-compatible iterations.  See
-    :mod:`flextool.engine.solve._warm` for the structural-fingerprint
-    + Param-classification machinery.  Cold rebuild (``warm=False``)
-    remains the default for backward compatibility with every existing
-    caller.
+    Parameter ``warm`` toggles the in-process WarmProblem path: when True,
+    the cascade reuses the built ``WarmProblem`` for the next iteration
+    only when its FlexData and solver configuration are identical (the
+    reuse contract in :mod:`flextool.engine.solve._warm`); the warm path
+    pushes no updates.  ``warm=False`` builds every sub-solve cold and
+    routes HiGHS through the ``cmd_solve_mps`` subprocess.
 
     Emits an :class:`OrchestrationStep` per solve and runs the LAST
     solve too (the polar_high-side bookkeeping is the deliverable,
@@ -2246,17 +2249,18 @@ def _drive_cascade(
         def __init__(self, runner_state):
             super().__init__(runner_state)
             self._all_steps: dict[str, OrchestrationStep] = results
-            # Δ.12d — warm-LP carry-over state.  ``_warm_problem`` holds
-            # the live :class:`polar_high.WarmProblem` reused across
-            # consecutive structurally-compatible iterations; ``_prior_data``
-            # / ``_prior_fp`` snapshot the previous iteration's FlexData +
-            # fingerprint for the diff scan in
-            # :func:`_apply_warm_updates`.  All three stay None when
-            # ``warm=False`` (the existing cold-cascade behaviour) AND
-            # are reset to None on every cold rebuild.
+            # Warm-LP carry-over state.  ``_warm_problem`` holds the live
+            # :class:`polar_high.WarmProblem` of the last in-process build;
+            # ``_prior_data`` / ``_prior_fp`` / ``_prior_solver_key`` hold
+            # that sub-solve's FlexData, fingerprint and solver
+            # configuration, against which the next sub-solve is compared
+            # (reuse only when all are identical; :mod:`._warm`).  All stay
+            # None when ``warm=False``; ``_warm_problem`` is dropped before
+            # every new build.
             self._warm_problem: "WarmProblem | None" = None
             self._prior_data = None
             self._prior_fp: "tuple | None" = None
+            self._prior_solver_key: "tuple | None" = None
             # Per-iter slim of the PRIOR step's parked Solution — see the
             # block just before ``self._all_steps[step_key] = ...`` in
             # :meth:`run`.  Tracks the step_key parked on the previous
@@ -2290,12 +2294,9 @@ def _drive_cascade(
             self._autoscale_summary_emitted: set[str] = set()
             # Warm-path autoscale plan cache: Layer 2 writes side
             # vectors on the Problem at first-build; the WarmProblem's
-            # canonical matrix bakes them in (and ``_param_cells``
-            # caches the scaled factors for tracked Params).  The plan
-            # stays valid across subsequent ``_apply_warm_updates``
-            # reuses because ``WarmProblem.update_param`` updates HiGHS
-            # cells via the cached factors — no re-scaling, no plan
-            # re-evaluation.  The plan is needed on every warm solve so
+            # canonical matrix bakes them in.  A reuse solves exactly the
+            # LP it was built for (identical sub-solve, nothing pushed), so
+            # the plan stays exact.  It is needed on every warm solve so
             # :func:`_autoscale_unscale_post_solve` can restore the
             # solution to physical coordinates.  Cleared whenever
             # ``self._warm_problem`` is dropped.
@@ -2947,13 +2948,15 @@ def _drive_cascade(
             )
 
             # --- LP build & solve ------------------------------------------
-            # Δ.12d — warm-LP per-iteration decision.  When ``warm`` is
-            # True AND the prior iteration left a live WarmProblem whose
-            # fingerprint matches this iteration's data, we push the
-            # Param diff into the live LP.  Any ``_IncompatibleUpdate``
-            # (unmapped Param differs, gate transitions, …) drops back
-            # to a cold rebuild.  Cold rebuild also fires on the first
-            # iteration and on any structural fingerprint mismatch.
+            # Warm-LP per-iteration decision.  When ``warm`` is True AND the
+            # prior iteration left a live WarmProblem, it is reused only when
+            # this sub-solve would build exactly the same LP: equal
+            # fingerprint (cheap pre-filter), the same solver configuration
+            # and every FlexData field identical, labels included
+            # (``_apply_warm_updates`` raises ``_IncompatibleUpdate`` naming
+            # the first differing field).  Nothing is pushed into the live
+            # LP.  Every other iteration — the first, any rolling roll
+            # (``dt`` shifts), any changed field — builds a new LP.
             #
             # Phase 3 — warm-LP is a HiGHS-only design (polar-high's
             # WarmProblem wraps a single live HiGHS instance).  When the
@@ -3041,11 +3044,33 @@ def _drive_cascade(
             )
             if warm_active:
                 fp = _fingerprint(data)
+                from flextool.engine.solve._solver_dispatch import (
+                    _resolve_effective_highs_options,
+                )
+                # Solver configuration of this sub-solve, resolved BEFORE the
+                # reuse decision: a reused LP keeps the options, autoscale
+                # mode and objective scale of its build, so a sub-solve with
+                # other settings must build a new LP.  ``highs_options`` is
+                # also what the fresh-build branch below applies.
+                highs_options = _resolve_effective_highs_options(
+                    solver_arguments_map=_solver_args_map,
+                    highs_opt_path=_highs_opt_path,
+                    cli_overrides=_build_cli_overrides(),
+                    baseline=_baseline_highs_options(
+                        user_bound_scale_override=user_bound_scale_override,
+                        scaling_mode=_scaling_mode,
+                    ),
+                )
+                solver_key = (
+                    repr(effective_obj_scale),
+                    repr(_scaling_mode),
+                    repr(user_bound_scale_override),
+                    tuple(sorted((str(k), repr(v)) for k, v in highs_options.items())),
+                )
                 # Phase 4 Step 4b bookkeeping — ``did_fresh_build`` gates
                 # the post-solve basis CAPTURE to fresh builds only (a warm
-                # reuse re-run is already optimally warm and its inner-
-                # problem names are stale for rolling, so capturing there
-                # would be wrong-keyed); ``fresh_fp`` carries the name-set
+                # reuse re-solves the identical LP, whose basis was already
+                # captured at its build); ``fresh_fp`` carries the name-set
                 # cache key from the inject block to the capture block.
                 # Both are inert unless the basis-cache gate is active.
                 did_fresh_build = False
@@ -3055,36 +3080,42 @@ def _drive_cascade(
                     and self._prior_data is not None
                     and self._prior_fp == fp
                 )
+                if tried_warm and self._prior_solver_key != solver_key:
+                    tried_warm = False
+                    state.logger.info(
+                        "warm reuse fell back to COLD REBUILD for %s: the "
+                        "solver configuration differs from the previous "
+                        "sub-solve (solver options / scaling / "
+                        "user_bound_scale / objective scale)",
+                        complete_solve_name,
+                    )
                 if tried_warm:
                     try:
                         _apply_warm_updates(self._warm_problem,
                                             self._prior_data, data)
                         warm_used = True
                     except _IncompatibleUpdate as _warm_exc:
-                        # Drop the stale warm problem so the next
-                        # branch builds a fresh one.  The cached Layer 2
-                        # plan dies with it — the next first-build will
-                        # regenerate it from the fresh LP.
-                        #
-                        # Diagnostic: surface WHICH condition forced the
-                        # cold rebuild.  On rolling cascades the ladder
-                        # Params (commit 7b5ccb3e) trip this every roll,
-                        # which re-runs the full pre-solve autoscale
-                        # traversal (the between-solves memory pyramid).
-                        # The exception message names the offending
-                        # Param / reason; log it at WARNING so a single
-                        # run pins the cause without tracemalloc.
-                        state.logger.warning(
+                        # The normal outcome for every roll (``dt`` shifts),
+                        # so INFO, not WARNING.  The message names the first
+                        # differing FlexData field.
+                        state.logger.info(
                             "warm reuse fell back to COLD REBUILD for %s "
                             "(re-runs pre-solve autoscale traversal): %s",
                             complete_solve_name, _warm_exc,
                         )
-                        self._warm_problem = None
-                        self._autoscale_warm_layer2_plan = None
-                        self._autoscale_warm_ranges_pre = None
                 if not warm_used:
+                    # Drop the previous WarmProblem BEFORE the new build on
+                    # every non-reuse path (fingerprint mismatch, solver
+                    # configuration change, differing field): its HiGHS
+                    # instance (``WarmProblem._h``) is not released by the
+                    # ``Solution.highs`` loop below, so keeping it would let
+                    # two LPs coexist during the build.  The cached Layer 2
+                    # plan and ranges die with it.
+                    self._warm_problem = None
+                    self._autoscale_warm_layer2_plan = None
+                    self._autoscale_warm_ranges_pre = None
                     # Cross-level eviction — same-level COLD-rebuild case
-                    # (e.g. ladder period switch, 7b5ccb3e).  We are about to
+                    # (e.g. every roll of a rolling solve).  We are about to
                     # build a fresh LP and are NOT warm-reusing, so no parked
                     # step's HiGHS is a reuse source and ``self._warm_problem``
                     # was just nulled above.  Any prior step still holding a
@@ -3114,6 +3145,7 @@ def _drive_cascade(
                         _audit_cold_rebuild_release(
                             steps=getattr(self, "_all_steps", None),
                             complete_solve_name=complete_solve_name,
+                            warm_problem_live=self._warm_problem is not None,
                         )
                     # Build the warm problem first WITHOUT solver
                     # options so we can inspect LP ranges, then push the
@@ -3132,18 +3164,8 @@ def _drive_cascade(
                             user_label="Matrix built by polar-high",
                         )
                     inner_pb = self._warm_problem.problem
-                    from flextool.engine.solve._solver_dispatch import (
-                        _resolve_effective_highs_options,
-                    )
-                    highs_options = _resolve_effective_highs_options(
-                        solver_arguments_map=_solver_args_map,
-                        highs_opt_path=_highs_opt_path,
-                        cli_overrides=_build_cli_overrides(),
-                        baseline=_baseline_highs_options(
-                            user_bound_scale_override=user_bound_scale_override,
-                            scaling_mode=_scaling_mode,
-                        ),
-                    )
+                    # ``highs_options`` was resolved above, before the reuse
+                    # decision (it is part of ``solver_key``).
                     inner_pb.set_solver_options(highs_options)
                     # Autoscale Layer 2 + Layer 3 on the warm-active
                     # first-build branch.  Same call sequence as the
@@ -3156,14 +3178,10 @@ def _drive_cascade(
                     #
                     # First-build only: Layer 2 writes side vectors on
                     # the Problem and ``WarmProblem._initial_build``
-                    # bakes them into the canonical matrix (with
-                    # ``_param_cells`` caching the scaled factors for
-                    # tracked Params).  Subsequent
-                    # ``_apply_warm_updates`` Param mutations update
-                    # HiGHS coefficients via those cached factors — no
-                    # re-canonicalisation, no Layer 2 re-apply.
-                    # ``self._autoscale_warm_layer2_plan`` caches the
-                    # plan for use by
+                    # bakes them into the canonical matrix.  A reuse
+                    # solves the identical LP, so no Layer 2 re-apply is
+                    # needed; ``self._autoscale_warm_layer2_plan`` caches
+                    # the plan for use by
                     # :func:`_autoscale_unscale_post_solve` after every
                     # warm solve (first build AND reuses).
                     #
@@ -3176,9 +3194,8 @@ def _drive_cascade(
                     # we replay the cached Layer-2 exponents + Layer-3 plan
                     # WITHOUT any ``detect_ranges`` / ``bucket_coefficients``
                     # walk (the per-roll multi-GB spike).  A cold rebuild of
-                    # an already-seen shape (the ladder-Param
-                    # ``_IncompatibleUpdate`` path) therefore skips the
-                    # traversals entirely.
+                    # an already-seen shape (every roll after the first)
+                    # therefore skips the traversals entirely.
                     _shape_key = _autoscale_lp_shape_signature(
                         inner_pb, base_solve_name,
                     )
@@ -3406,8 +3423,11 @@ def _drive_cascade(
                 # the shared cache dir so a later cross-run solve of the
                 # same structural model can inject it (UC2 sweep / UC3
                 # resume).  Never capture on the warm-reuse branch
-                # (``did_fresh_build`` stays False there) — those inner
-                # names are stale and the LP is already optimally warm.
+                # (``did_fresh_build`` stays False there) — the LP is the
+                # one captured at its build and is already optimally warm.
+                # The cache is keyed on the exact name set, so a roll is
+                # warm-started only from the same roll of an earlier run,
+                # never from the previous roll (whose labels differ).
                 # Capture failure is non-fatal (log + continue).
                 if (
                     did_fresh_build
@@ -3446,6 +3466,7 @@ def _drive_cascade(
                         )
                 self._prior_data = data
                 self._prior_fp = fp
+                self._prior_solver_key = solver_key
             else:
                 pb = Problem()
                 _phase_prof("build_start")
@@ -4414,11 +4435,10 @@ def run_chain_from_db(
         ``/home/jkiviluo/sources/flextool/{flextool,bin}``.
     logger : logging.Logger, optional
         Logger to use.  ``None`` constructs one named after the scenario.
-    warm : bool, default False
-        Δ.12d — when True, reuse one :class:`polar_high.WarmProblem`
-        across consecutive structurally-compatible per-solve iterations
-        in the cascade, applying ``_apply_warm_updates`` between solves
-        rather than cold-rebuilding.  See
+    warm : bool, default True
+        When True, solve in-process through :class:`polar_high.WarmProblem`
+        and reuse the built LP only for an identical next sub-solve (same
+        FlexData, labels included, and same solver configuration).  See
         :func:`run_orchestration` for full semantics.
     keep_solutions : bool, default False
         Phase C.5 — when False (default), only the LAST step in the

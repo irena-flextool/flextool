@@ -169,3 +169,34 @@ def cstr_over(pb, name: str) -> pl.DataFrame | None:
     if not recs:
         return None
     return utf8(recs[0].over)
+
+
+def output_frames(work_folder: Path, solve_name: str, *, prefixes=("v_", "vq_")) -> dict[str, pl.DataFrame]:
+    """The ``output_raw/<name>__<solve_name>.parquet`` frames whose name starts with one of
+    ``prefixes`` (default: the primal variable outputs), keyed by ``<name>``.  Duals
+    (``v_dual_*``) are left out: they are not unique at a degenerate optimum."""
+    out = {}
+    for f in sorted((Path(work_folder) / "output_raw").glob(f"*__{solve_name}.parquet")):
+        name = f.name[: -len(f"__{solve_name}.parquet")]
+        if name.startswith(tuple(prefixes)) and not name.startswith("v_dual_"):
+            out[name] = pl.read_parquet(f)
+    return out
+
+
+def assert_outputs_equal(wf_a: Path, wf_b: Path, solve_name: str, *,
+                         rtol: float = 1e-9, atol: float = 1e-6) -> None:
+    """The written primal outputs of ``solve_name`` agree between two work folders: same files,
+    same labels, values within ``rtol`` / ``atol``."""
+    from polars.testing import assert_frame_equal
+
+    a, b = output_frames(wf_a, solve_name), output_frames(wf_b, solve_name)
+    assert a, f"{solve_name}: no primal outputs written in {wf_a}"
+    assert sorted(a) == sorted(b), f"{solve_name}: output files differ: {sorted(a)} vs {sorted(b)}"
+    for name in a:
+        fa, fb = a[name], b[name]
+        keys = [c for c in fa.columns if not fa.schema[c].is_numeric()]
+        try:
+            assert_frame_equal(fa.sort(keys), fb.sort(keys), check_exact=False, rtol=rtol, atol=atol,
+                               check_column_order=False)
+        except AssertionError as exc:
+            raise AssertionError(f"{solve_name}: output {name} differs: {exc}") from None

@@ -1,16 +1,12 @@
-"""Warm rolling reuse on a two-node model: warm == cold, roll by roll.
+"""Warm rolling on a two-node model: warm == cold, roll by roll, objectives and written outputs.
 
-A rolled sub-solve whose LP has the same shape as the previous roll's
-reuses the built :class:`polar_high.WarmProblem` and only pushes the new
-``p_inflow`` into ``nodeBalance_eq`` — positionally.  With two balance
-nodes carrying different demands, any misalignment between that vector
-and the constraint's rows moves demand from one node to the other and
-changes the roll objective.  Under polars 2.0 the lazy
-``nodeBalance × dt`` cross join came out right-major, so every other
-``(n, t)`` demand landed on the wrong node (west demand 0 every other
-hour) — no existing warm/cold equivalence fixture has two nodes with
-different time-series demand in a warm-reused rolling cascade, so none
-caught it.  The unit-level guard is ``test_warm_rhs_alignment.py``.
+Two balance nodes carry different demands, so any misalignment between the demand and the rows of
+``nodeBalance_eq`` moves demand from one node to the other.  The warm path once reused the previous
+roll's LP and pushed the new ``p_inflow`` positionally; under polars 2.0 the lazy ``nodeBalance × dt``
+cross join came out right-major and every other ``(n, t)`` demand landed on the wrong node.  Since the
+reuse contract of ``solve/_warm`` every roll builds its own LP (``dt`` labels shift); this stays a
+two-node warm == cold regression for that rebuild path, including the outputs read by label.  The
+unit-level guard of the cross-join order is ``test_warm_rhs_alignment.py``.
 
 Fixture: ``tests.json`` + an override alternative (built from JSON,
 never a checked-in DB): ``coal_chp`` (1000 MW) serving ``west`` and
@@ -76,21 +72,24 @@ def test_warm_rolling_two_nodes_matches_cold(
         rolling_db_url: str, tmp_path_factory) -> None:
     from flextool.engine import run_chain_from_db
 
-    runs = {}
+    from tests.engine._unit_db import assert_outputs_equal
+
+    runs, wfs = {}, {}
     for warm in (False, True):
+        wfs[warm] = tmp_path_factory.mktemp(f"w{int(warm)}")
         runs[warm] = run_chain_from_db(
             rolling_db_url, SCENARIO, warm=warm, keep_solutions=True,
-            work_folder=tmp_path_factory.mktemp(f"w{int(warm)}"))
+            work_folder=wfs[warm])
     cold, hot = runs[False], runs[True]
     rolls = [k for k in cold if "_roll_" in k]
     assert len(rolls) >= 3, f"expected roll sub-solves, got {list(cold)}"
     assert list(cold) == list(hot)
-    # The positional p_inflow push is only exercised on warm-reused rolls.
-    assert any(hot[k].warm_used for k in rolls), (
-        "no roll reused the warm problem — the test no longer exercises "
-        "the positional RHS push")
     for k in rolls:
         c = cold[k].solution.obj
         w = hot[k].solution.obj
         assert abs(c - w) / max(1.0, abs(c)) < 1e-9, (
             f"{k}: warm={w}, cold={c}, warm_used={hot[k].warm_used}")
+        assert_outputs_equal(wfs[True], wfs[False], k)
+    # No roll reuses the previous roll's LP (its dt labels shift).
+    assert not any(hot[k].warm_used for k in rolls), (
+        "a roll reused an LP built for another window")

@@ -1,12 +1,12 @@
-"""Warm reuse across a period boundary: warm == cold, roll by roll.
+"""Rolls across a period boundary: warm == cold, roll by roll, objectives and written outputs.
 
-A rolled sub-solve reuses the previous roll's LP when the structural fingerprint and the deferred
-Params agree.  The fingerprint used to hold frame heights only, so two rolls with the same number of
-steps and periods but a different split between the periods (p2020 18 h + p2025 12 h, then 12 h + 18 h)
-looked identical: the warm path kept the previous roll's (d, t) -> period membership, and every term
-keyed by period (here the per-period CO2 price) was applied to the wrong steps.  The fingerprint now
-carries the per-period run lengths of the sorted ``dt`` and the positional offsets of the ``dtttdt``
-links.
+The fingerprint once held frame heights only, so two rolls with the same number of steps and periods
+but a different split between the periods (p2020 18 h + p2025 12 h, then 12 h + 18 h) looked
+identical and the previous roll's LP was reused with the wrong (d, t) -> period membership.  The
+fingerprint carries the per-period run lengths of the sorted ``dt`` and the positional offsets of the
+``dtttdt`` links (the cheap pre-filter; two tests below pin it).  Since the reuse contract of
+``solve/_warm`` no roll is reused at all (``dt`` labels shift): a reused LP kept the labels of the
+roll it was built for, so the outputs of the within-period rolls 1-3 and 9-11 came from other hours.
 
 Fixture: ``tests.json`` ``init/west/coal/co2_price`` plus an override alternative (built from JSON,
 never a checked-in DB): CO2 price 10 / 100 per tonne in p2020 / p2025, ``y2020_2day_dispatch`` over
@@ -22,7 +22,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from tests.engine._unit_db import b64, make_db, utf8
+from tests.engine._unit_db import assert_outputs_equal, b64, make_db, utf8
 
 pytestmark = pytest.mark.solver
 
@@ -52,8 +52,9 @@ def runs(tmp_path_factory) -> dict:
                         base_chain=["init", "west", "coal", "co2_price"])
     out = {}
     for warm in (True, False):
-        out[warm] = run_chain_from_db(url, scen, warm=warm, keep_solutions=True,
-                                      work_folder=tmp_path_factory.mktemp(f"wpb_{int(warm)}"))
+        wf = tmp_path_factory.mktemp(f"wpb_{int(warm)}")
+        out[warm] = run_chain_from_db(url, scen, warm=warm, keep_solutions=True, work_folder=wf)
+        out[("wf", warm)] = wf
     assert list(out[True]) == list(out[False])
     assert list(out[False]) == [_roll(i) for i in range(16)], list(out[False])
     return out
@@ -74,17 +75,12 @@ def test_fixture_straddles_the_boundary(runs) -> None:
 
 def test_warm_equals_cold_across_period_boundary(runs) -> None:
     hot, cold = runs[True], runs[False]
-    # Non-vacuity: the within-period rolls reuse the warm LP, the straddling ones with a new split
-    # are rebuilt.  If every roll were cold the equalities below would hold trivially.
-    for i in (1, 2, 3, 9, 10, 11):
-        assert hot[_roll(i)].warm_used, f"roll {i} did not reuse the warm problem"
-    for i in (5, 6, 7):
-        assert not hot[_roll(i)].warm_used, f"roll {i} reused the previous roll's LP across a new period split"
     for i in range(16):
         h, c = hot[_roll(i)].solution, cold[_roll(i)].solution
         assert h.obj == pytest.approx(c.obj, rel=1e-9), f"roll {i}: warm {h.obj} vs cold {c.obj}"
-        # Positional comparison in LP column / row order: a warm-reused Solution keeps the first
-        # roll's labels.
+        # The written outputs (read by label) agree, not only the objective.
+        assert_outputs_equal(runs[("wf", True)], runs[("wf", False)], _roll(i))
+        # Positional comparison in LP column / row order.
         hv, cv = h.value("v_flow")["value"].to_numpy(), c.value("v_flow")["value"].to_numpy()
         assert hv.shape == cv.shape, f"roll {i}: v_flow sizes differ"
         np.testing.assert_allclose(hv, cv, rtol=0, atol=1e-6, err_msg=f"roll {i}: v_flow")
@@ -92,6 +88,9 @@ def test_warm_equals_cold_across_period_boundary(runs) -> None:
         cd = c.constraint_dual("nodeBalance_eq")["dual"].to_numpy()
         assert hd.shape == cd.shape, f"roll {i}: nodeBalance_eq sizes differ"
         np.testing.assert_allclose(hd, cd, rtol=1e-7, atol=1e-9, err_msg=f"roll {i}: nodeBalance_eq duals")
+    # No roll reuses the previous roll's LP: its dt labels shift.
+    for i in range(16):
+        assert not hot[_roll(i)].warm_used, f"roll {i} reused an LP built for another window"
 
 
 def test_fingerprint_sees_period_split(runs) -> None:
@@ -104,7 +103,8 @@ def test_fingerprint_sees_period_split(runs) -> None:
     # The plain heights are the same in rolls 5 and 6: only the split of dt between the periods differs.
     assert fd[5].dt.height == fd[6].dt.height
     assert _fingerprint(fd[5]) != _fingerprint(fd[6])
-    # Two consecutive rolls inside p2020 keep the same fingerprint (warm reuse stays possible).
+    # Two consecutive rolls inside p2020 keep the same fingerprint (the pre-filter passes; the
+    # full comparison then rejects the shifted dt).
     assert _fingerprint(fd[1]) == _fingerprint(fd[2])
 
 

@@ -12,7 +12,7 @@ outputs, which multiply the flows by the per-side cost Params, still reported it
 
 The criterion (CLAUDE.md "constant-vs-equivalent-map"): a period × time map equal everywhere to ``v`` gives the
 scalar-``v`` LP, and a time-varying curve as period × time equals the same curve as a time map, in single,
-rolling, nested and stochastic solves; warm = cold in rolls, with the warm path still in use.
+rolling, nested and stochastic solves; warm = cold in rolls (every roll builds its own LP).
 
 Vehicles (databases built from JSON, never a checked-in ``.sqlite``):
 - ``1_week_rolling_wind`` of ``stochastics.json`` without its stochastic data, plus the connection ``link``
@@ -24,7 +24,6 @@ Vehicles (databases built from JSON, never a checked-in ``.sqlite``):
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 
 import polars as pl
@@ -271,10 +270,6 @@ def test_period_time_curve_equals_time_curve(tmp_path_factory, single: bool) -> 
         assert _rel(float(pt[name].solution.obj), float(tm[name].solution.obj)) < 1e-9, name
 
 
-def _cold_rebuilds(records) -> list[str]:
-    return [r.getMessage() for r in records if "COLD REBUILD" in r.getMessage()]
-
-
 def test_warm_rolling_period_time_cost_matches_cold(tmp_path_factory) -> None:
     """Warm = cold in every roll with a time-varying period × time cost on the unit arcs and the connection, and
     both equal the warm run of the same curve as a time map (before the fix both lost the cost)."""
@@ -286,8 +281,8 @@ def test_warm_rolling_period_time_cost_matches_cold(tmp_path_factory) -> None:
         assert _rel(float(hot[name].solution.obj), float(ref[name].solution.obj)) < 1e-9, name
 
 
-# ``y2020_2day_dispatch`` of tests.json rolled 24 h / 12 h (the warm vehicle of the balance-penalty tests): its rolls stay warm while their
-# parameters do not change.  coal_plant (an efficiency, the eff_unit_* terms) and coal_chp (indirect, noEff).
+# ``y2020_2day_dispatch`` of tests.json rolled 24 h / 12 h (the warm vehicle of the balance-penalty tests): every roll builds its own LP
+# (its dt labels shift).  coal_plant (an efficiency, the eff_unit_* terms) and coal_chp (indirect, noEff).
 WARM_CHAIN = ["init", "west", "coal", "coal_chp", "heat"]
 WARM_VALUES = [
     ["solve", "y2020_2day_dispatch", "solve_mode", b64("rolling_window", "str")],
@@ -316,32 +311,25 @@ def _rising(base: float) -> dict:
     return {t: round(base + 0.01 * i, 6) for i, t in enumerate(TIMESTEPS)}
 
 
-def test_warm_start_stays_in_use(tmp_path_factory, caplog) -> None:
-    """The DB-direct index sets keep the warm path as it was (measured before the fix on this vehicle):
+def test_rolling_cost_shapes_rebuild_every_roll(tmp_path_factory) -> None:
+    """The DB-direct index sets on the warm path:
 
-    - constant costs: the rolls whose parameters do not change stay warm (``warm_used`` False, True, True, False),
-      every set non-empty (eff_unit_source / _sink 24 rows, noEff 48);
-    - a rising cost as a period × time map: warm = cold per roll, and the warm run falls back to a cold rebuild
-      exactly as the equivalent time map does (the noEff cost ``p_pssdt_varCost`` has no tracked warm update)."""
+    - constant costs: no roll reuses the previous roll's LP (``dt`` labels shift), and every set is non-empty
+      (eff_unit_source / _sink 24 rows, noEff 48);
+    - a rising cost as a period × time map: warm = cold per roll, and equal to the same curve as a time map."""
     const = _warm_run(tmp_path_factory, scalar, warm=True)
-    assert [s.warm_used for s in const.values()] == [False, True, True, False]
+    assert [s.warm_used for s in const.values()] == [False] * len(const)
     d = next(iter(const.values())).flex_data
     assert (_rows(d.pssdt_varCost_eff_unit_source), _rows(d.pssdt_varCost_eff_unit_sink),
             _rows(d.pssdt_varCost_noEff)) == (24, 24, 48)
-    with caplog.at_level(logging.WARNING):
-        caplog.clear()
-        hot = _warm_run(tmp_path_factory, lambda v: ptmap({"p2020": _rising(v)}), warm=True)
-        hot_fallbacks = _cold_rebuilds(caplog.records)
-        caplog.clear()
-        hot_tmap = _warm_run(tmp_path_factory, lambda v: tmap(_rising(v)), warm=True)
-        tmap_fallbacks = _cold_rebuilds(caplog.records)
+    hot = _warm_run(tmp_path_factory, lambda v: ptmap({"p2020": _rising(v)}), warm=True)
+    hot_tmap = _warm_run(tmp_path_factory, lambda v: tmap(_rising(v)), warm=True)
     cold = _warm_run(tmp_path_factory, lambda v: ptmap({"p2020": _rising(v)}), warm=False)
     assert list(hot) == list(cold) == list(hot_tmap)
     for name in hot:
         assert _rel(float(hot[name].solution.obj), float(cold[name].solution.obj)) < 1e-9, name
         assert _rel(float(hot[name].solution.obj), float(hot_tmap[name].solution.obj)) < 1e-9, name
-    assert [s.warm_used for s in hot.values()] == [s.warm_used for s in hot_tmap.values()]
-    assert len(hot_fallbacks) == len(tmap_fallbacks) == 2, (hot_fallbacks, tmap_fallbacks)
+    assert not any(s.warm_used for run in (hot, hot_tmap) for s in run.values())
 
 
 # ---------------------------------------------------------------------------

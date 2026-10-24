@@ -2,9 +2,9 @@
 
 ``pdt_branch_weight`` / ``pd_branch_weight`` enter the objective only through composite factors
 (``op_factor``, the startup and storage reference-price terms, the commodity ladder, and the invest
-costs under recourse), which the warm path cannot update in place.  Two rolls with different weights
-have the same LP shape, so both Params are in ``_WARM_PARAMS_DEFERRED``: a difference raises
-``_IncompatibleUpdate`` (cold rebuild), while the same values on shifted ``t`` labels do not.
+costs under recourse).  Two sub-solves with different weights have the same LP shape, so the reuse
+decision must see the values: any difference raises ``_IncompatibleUpdate`` naming the field (cold
+rebuild), while the same weights on the same labels keep the LP.
 """
 from __future__ import annotations
 
@@ -30,9 +30,9 @@ def _pd(weights: list[float]) -> Param:
 @pytest.mark.parametrize("field", ["pdt_branch_weight", "pd_branch_weight"])
 def test_branch_weight_change_forces_cold_rebuild(field) -> None:
     prior = SimpleNamespace(pdt_branch_weight=_pdt(1, [0.4, 0.6]), pd_branch_weight=_pd([0.4, 0.6]))
-    nxt = SimpleNamespace(pdt_branch_weight=_pdt(25, [0.4, 0.6]), pd_branch_weight=_pd([0.4, 0.6]))
-    # Same weights, t labels shifted by the roll: warm reuse stays possible.
+    nxt = SimpleNamespace(pdt_branch_weight=_pdt(1, [0.4, 0.6]), pd_branch_weight=_pd([0.4, 0.6]))
+    # Same weights on the same labels: the LP is reused.
     assert _apply_warm_updates(object(), prior, nxt) == 0
-    setattr(nxt, field, _pdt(25, [0.7, 0.3]) if field == "pdt_branch_weight" else _pd([0.7, 0.3]))
+    setattr(nxt, field, _pdt(1, [0.7, 0.3]) if field == "pdt_branch_weight" else _pd([0.7, 0.3]))
     with pytest.raises(_IncompatibleUpdate, match=field):
         _apply_warm_updates(object(), prior, nxt)

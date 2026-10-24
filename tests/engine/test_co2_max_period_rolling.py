@@ -179,11 +179,9 @@ def test_rolls_across_a_period_boundary(boundary_runs) -> None:
         hours = _hours(st.flex_data)
         for d, e in _tonnes(st).items():
             assert e * 8760 / hours[d] <= CAPS[d] * (1 + 1e-9), (i, d)
-    # (c) warm == cold, with warm reuse where the window does not change shape
-    for i in (1, 2, 3, 9, 10, 11):
-        assert hot[_roll(i)].warm_used, f"roll {i} did not reuse the warm problem"
-    for i in (5, 6, 7, 12, 13, 14, 15):
-        assert not hot[_roll(i)].warm_used, f"roll {i} reused an LP with another window fraction"
+    # (c) warm == cold; no roll reuses the previous roll's LP (its ``dt`` labels shift)
+    for i in range(16):
+        assert not hot[_roll(i)].warm_used, f"roll {i} reused an LP built for another window"
     for i in range(16):
         assert hot[_roll(i)].solution.obj == pytest.approx(cold[_roll(i)].solution.obj, rel=1e-9), i
 

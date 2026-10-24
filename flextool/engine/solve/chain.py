@@ -4,7 +4,7 @@ The legacy file-symlink driver (loading per-sub-solve
 ``solve_data_<sub>/`` snapshots directly from a work folder) retired
 in Δ.12e once the native cascade in
 :mod:`flextool.engine.solve._orchestration` reached feature parity:
-warm-LP across structurally-compatible iterations (Δ.12d), in-memory
+warm-LP reuse for identical iterations (Δ.12d), in-memory
 handoff carriers between sub-solves (Δ.11/Δ.12), full output writer
 coverage (Δ.1, Δ.12c-fix), and override-chain authority for Direct /
 Derived / Projection params (Δ.12-drop, Δ.12c, Δ.12c-fix2).
@@ -17,11 +17,12 @@ adapts the result to :class:`ChainStep` shape for backwards
 compatibility with the few external callers that still import
 ``run_chain`` directly.
 
-The warm-update primitives (structural fingerprint, Param classification,
-:func:`_apply_warm_updates`) live in :mod:`flextool.engine.solve._warm`
-and are re-exported here as module-level names for backwards
-compatibility (e.g. ``from flextool.engine.solve.chain import
-_MUTABLE_PARAMS`` in ``test_warm_param_autoupdate``).
+The warm-LP primitives (structural fingerprint, the reuse decision
+:func:`_reuse_blocker` / :func:`_apply_warm_updates`) live in
+:mod:`flextool.engine.solve._warm` and are re-exported here as
+module-level names for backwards compatibility (e.g. ``from
+flextool.engine.solve.chain import _apply_warm_updates`` in
+``test_warm_chain_runner``).
 """
 from __future__ import annotations
 
@@ -29,24 +30,17 @@ from pathlib import Path
 
 from polar_high import Solution
 
-# Backwards-compat re-exports of warm-update primitives that now live in
+# Backwards-compat re-exports of the warm-LP primitives that live in
 # :mod:`flextool.engine.solve._warm`.  Documented in the module
-# docstring above; consumed by ``tests/engine/test_warm_param_autoupdate.py``
-# (and any external caller that still does ``from
-# flextool.engine.solve.chain import _MUTABLE_PARAMS``).  Listed in
-# ``__all__`` so ruff F401 does not strip them as unused.
+# docstring above.  Listed in ``__all__`` so ruff F401 does not strip
+# them as unused.
 from flextool.engine.solve._warm import (  # noqa: F401
     _STRUCTURAL_FIELDS,
-    _WARM_PARAMS,
-    _MUTABLE_PARAMS,
-    _WARM_PARAMS_DEFERRED,
-    _WARM_PARAMS_NO_OP,
-    _WARM_PARAM_GATES,
     _IncompatibleUpdate,
     _fingerprint,
     _param_frame_equal,
     _param_values_position_equal,
-    _gate_active,
+    _reuse_blocker,
     _apply_warm_updates,
     _build_warm_problem,
 )
@@ -57,16 +51,11 @@ __all__ = [
     "ChainStep",
     # Re-exported warm-update primitives (see docstring).
     "_STRUCTURAL_FIELDS",
-    "_WARM_PARAMS",
-    "_MUTABLE_PARAMS",
-    "_WARM_PARAMS_DEFERRED",
-    "_WARM_PARAMS_NO_OP",
-    "_WARM_PARAM_GATES",
     "_IncompatibleUpdate",
     "_fingerprint",
     "_param_frame_equal",
     "_param_values_position_equal",
-    "_gate_active",
+    "_reuse_blocker",
     "_apply_warm_updates",
     "_build_warm_problem",
 ]
@@ -85,8 +74,8 @@ class ChainStep:
         The handoff carriers derived from the polar_high solution
         (see :func:`flextool.engine.preprocess.flex_data.build_handoff_from_solution`).
     warm_used : bool
-        True if this sub-solve was solved by warm-updating the prior
-        sub-solve's :class:`WarmProblem` instance; False if it was a
+        True if this sub-solve re-solved the prior sub-solve's
+        :class:`WarmProblem` (an identical sub-solve); False if it was a
         cold rebuild.  Always False for the first sub-solve and for
         ``warm=False`` runs.
     """
@@ -190,10 +179,9 @@ def run_chain(
         ``input.sqlite``).  The native cascade re-runs flextool's
         preprocessing into a private tempdir; the work folder is
         consulted only for the DB.
-    warm : bool, default False
-        When True, attempt warm LP updates between consecutive
-        structurally-compatible sub-solves using
-        :class:`polar_high.WarmProblem`.  See
+    warm : bool, default True
+        When True, solve in-process through :class:`polar_high.WarmProblem`
+        and reuse the built LP only for an identical next sub-solve.  See
         :func:`flextool.engine.solve._orchestration.run_orchestration`
         for the per-iteration semantics.
     scenario : str | None, default None
