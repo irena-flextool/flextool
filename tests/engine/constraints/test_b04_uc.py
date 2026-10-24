@@ -111,8 +111,8 @@ def _make_two_kind_uc_data() -> FlexData:
     p_process_existing_count = Param(("p", "d"),
         pl.DataFrame({"p": ["u_lin", "u_int"], "d": ["d1", "d1"],
                       "value": [1.0, 1.0]}))
-    # ``p_min_load`` is required by the ONLINE feature gate (model.ONLINE,
-    # checked by ``_check``) even when ``process_minload`` is empty — populate as 0.
+    # ``p_min_load`` is not needed by the online feature (``process_minload`` is
+    # empty here); it is kept as 0 (no floor).
     p_min_load = Param(("p",),
         pl.DataFrame({"p": ["u_lin", "u_int"], "value": [0.0, 0.0]}))
     p_startup_cost = Param(("p", "d"),

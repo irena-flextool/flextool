@@ -139,9 +139,12 @@ PROFILES:  tuple[str, ...]   = ("p_profile_value", "p_process_existing_count")
 STORAGE:   tuple[str, ...]   = ("nodeState", "dtttdt",
                                 "p_state_upper", "p_state_unitsize")
 ONLINE: tuple[str, ...] = (
-    "process_online", "p_online_dt", "p_min_load",
+    "process_online", "p_online_dt",
     "dtttdt", "p_process_existing_count",
 )
+# The minFlow_minload floor's field: checked when some unit has min_load > 0 (process_minload), so a loader gap
+# does not drop the floor silently.  An online unit without min_load has none (min_load 0).
+MIN_LOAD: tuple[str, ...] = ("p_min_load",)
 MINLOAD_EFF: tuple[str, ...] = ("process_min_load_eff", "p_section")
 STARTUP_COST_LINEAR: tuple[str, ...] = ("p_startup_cost", "pdt_online_linear")
 STARTUP_COST_INTEGER: tuple[str, ...] = ("p_startup_cost", "pdt_online_integer")
@@ -472,6 +475,8 @@ def _prepare(b: _Build) -> None:
         _check(d, DIVEST, "divest")
     if b.has_online:
         _check(d, ONLINE, "online")
+        if _has_rows(getattr(d, "process_minload", None)):
+            _check(d, MIN_LOAD, "min_load")
     if b.has_minload_eff:
         _check(d, MINLOAD_EFF, "min_load_efficiency")
     if b.has_startup_cost_lin:
@@ -992,6 +997,10 @@ def _eq_node_balance(b: _Build) -> None:
     #   + first-step start terms
     #   = −inflow[n,d,t]
     #   ∀ (n,d,t) ∈ nodeBalance_dt, n ∉ nodeStateBlock;   Δt = step_duration[d,t]
+    #   slope[p,d,t] = (1/eta − min_load/eta_min) / (1 − min_load)
+    #   section[p,d,t] ≈ min_load·(1/eta_min − 1/eta) / (1 − min_load)
+    #     for min_load_efficiency units (eta = efficiency, default 1; min_load = 0 where not authored;
+    #     eta_min = efficiency_at_min_load, else efficiency); slope = 1/eta and no section for the other units
     # Energy conservation per node and time step, in MWh.  Storage nodes add
     # the state change; the previous step t⁻ depends on storage_binding_method.
     # nodeStateBlock nodes are balanced per coarse block (nodeBalanceBlock_eq).
@@ -1969,6 +1978,10 @@ def _eq_conversion(b: _Build) -> None:
     #   = Σ_{k ∈ out(p)} v_flow[p,p,k,d,t] · unitsize[p] · slope[p,d,t] · conv_out[p,k]
     #     + v_online[p,d,t] · section[p,d,t] · unitsize[p]
     #   ∀ (p,d,t) ∈ process_indirect_dt
+    #   slope[p,d,t] = (1/eta − min_load/eta_min) / (1 − min_load)
+    #   section[p,d,t] ≈ min_load·(1/eta_min − 1/eta) / (1 − min_load)
+    #     for min_load_efficiency units (eta = efficiency, default 1; min_load = 0 where not authored;
+    #     eta_min = efficiency_at_min_load, else efficiency); slope = 1/eta and no section for the other units
     # Energy balance of an indirect (multi-flow) unit: weighted input equals weighted output times the slope.
     # conv_in / conv_out = source / sink conversion_flow_coeff (default 1); unequal sink coefficients express
     # e.g. the heat/electricity trade-off of an extraction CHP.  The first input sum covers undelayed units;

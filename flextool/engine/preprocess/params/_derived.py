@@ -2686,6 +2686,44 @@ def _eff_param_to_pdt(source: "InputSource",
                         pl.col("value").cast(pl.Float64).alias(value_col_alias)))
 
 
+def _mle_eta_min(eta_min: pl.Expr, eta: pl.Expr) -> pl.Expr:
+    """Efficiency at minimum load of a min_load_efficiency cell: ``efficiency_at_min_load`` where given, else
+    ``efficiency`` (a flat curve, owner decision c11), cell by cell.  Shared by ``p_slope_from_source`` and
+    ``p_section_from_source`` (the rolling emit seed ``_period_params._derive_conversion_trio`` applies the same
+    fallback)."""
+    return pl.coalesce(eta_min, eta)
+
+
+def _mle_curve_inputs(source: "InputSource", dt: pl.DataFrame, base: pl.LazyFrame) -> pl.LazyFrame:
+    """``base`` (p, d, t, …, eta) with ``eta_min`` and ``min_load`` added for the min_load_efficiency curve.
+
+        min_load[p,d,t] = authored value, 0 where not authored (no minimum load)
+        eta_min[p,d,t]  = efficiency_at_min_load where authored, else efficiency  (_mle_eta_min)
+    """
+    if parameter_has_values(source, "unit", "efficiency_at_min_load"):
+        eta_min_lf = _eff_param_to_pdt(source, "unit", "efficiency_at_min_load", dt, "eta_min")
+    else:
+        eta_min_lf = None
+    ml_lf = (_eff_param_to_pdt(source, "unit", "min_load", dt, "min_load")
+             if parameter_has_values(source, "unit", "min_load") else None)
+    base = (base.join(eta_min_lf, on=["p", "d", "t"], how="left") if eta_min_lf is not None
+            else base.with_columns(eta_min=pl.lit(None).cast(pl.Float64)))
+    base = (base.join(ml_lf, on=["p", "d", "t"], how="left") if ml_lf is not None
+            else base.with_columns(min_load=pl.lit(None).cast(pl.Float64)))
+    return base.with_columns(min_load=pl.col("min_load").fill_null(0.0),
+                             eta_min=_mle_eta_min(pl.col("eta_min"), pl.col("eta")))
+
+
+def _raise_on_null_mle_cells(df: pl.DataFrame, what: str) -> None:
+    """A min_load_efficiency cell without a value would be a unit without fuel use there: refuse it."""
+    if df.height:
+        cells = ", ".join(f"({p}, {d}, {t})" for p, d, t in df.select(
+            pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).head(5).iter_rows())
+        raise ValueError(
+            f"{what}: min_load_efficiency cells without a value (the unit would use no fuel there): {cells}; "
+            f"this is a loader bug (min_load, efficiency_at_min_load and efficiency all have defaults).")
+
+
 def p_slope_from_source(source: "InputSource",
                           dt: pl.DataFrame,
                           classified: pl.DataFrame | None = None,
@@ -2719,8 +2757,6 @@ def p_slope_from_source(source: "InputSource",
     # Presence checks only (shape-agnostic: a stochastic-time unit value is not classified here).
     eff_unit = parameter_has_values(source, "unit", "efficiency")
     eff_conn = parameter_has_values(source, "connection", "efficiency")
-    eff_at_min = parameter_has_values(source, "unit", "efficiency_at_min_load")
-    minload = parameter_has_values(source, "unit", "min_load")
 
     # Build a per-(p, d, t) efficiency lazyframe — union unit + connection.
     # Routed through the authoritative shape resolver so time-series
@@ -2761,49 +2797,32 @@ def p_slope_from_source(source: "InputSource",
     # constant_efficiency branch: slope = 1 / eta.
     base = eff_lf  # already has p, d, t, ct, klass, eta
 
-    # min_load_efficiency branch (when applicable): slope =
-    #   (eta - min_load * eta_min) / ((1 - min_load) * eta * eta_min).
-    # Linearisation: between (min_load, eta_min) and (1.0, eta), slope
-    # of input/output (Δin/Δout) ≈ as in entity_period_calc_params.
-    if eff_at_min and minload:
-        eta_min_lf = _eff_param_to_pdt(source, "unit",
-                                        "efficiency_at_min_load", dt, "eta_min")
-        ml_lf = _eff_param_to_pdt(source, "unit", "min_load", dt, "min_load")
-        if ml_lf is not None and eta_min_lf is not None:
-            base = (base.join(eta_min_lf, on=["p", "d", "t"], how="left")
-                         .join(ml_lf, on=["p", "d", "t"], how="left"))
-        elif ml_lf is not None:
-            base = (base
-                .with_columns(eta_min=pl.lit(None).cast(pl.Float64))
-                .join(ml_lf, on=["p", "d", "t"], how="left"))
-        else:
-            base = (base
-                .with_columns(eta_min=pl.lit(None).cast(pl.Float64),
-                                min_load=pl.lit(None).cast(pl.Float64)))
+    # min_load_efficiency rows: the slope of input over output between (min_load, eta_min) and (1, eta):
+    #   slope[p,d,t] = (1/eta − min_load/eta_min) / (1 − min_load)
+    #   eta = efficiency (default 1.0);  min_load = 0 where not authored;
+    #   eta_min = efficiency_at_min_load, else efficiency (_mle_eta_min: a flat curve, slope = 1/eta)
+    # A min_load of 0 gives the constant-efficiency slope 1/eta whatever eta_min is.
+    if classified.filter(pl.col("ct") == "min_load_efficiency").height > 0:
+        base = _mle_curve_inputs(source, dt, base)
     else:
-        base = (base
-            .with_columns(eta_min=pl.lit(None).cast(pl.Float64),
-                            min_load=pl.lit(None).cast(pl.Float64)))
+        base = base.with_columns(eta_min=pl.lit(None).cast(pl.Float64),
+                                 min_load=pl.lit(0.0))
 
     # slope expression: branch on ct.
     base = base.with_columns(
         slope=pl.when(pl.col("ct") == "min_load_efficiency")
                 .then(
-                    # Δinput / Δoutput between the two anchor points.
-                    # input(min_load) = min_load / eta_min,
-                    # input(1.0)      = 1.0 / eta.
-                    # slope = (1/eta - min_load/eta_min) / (1.0 - min_load).
                     (1.0 / pl.col("eta")
-                       - pl.col("min_load") / pl.col("eta_min"))
+                       - pl.when(pl.col("min_load") == 0.0).then(0.0)
+                           .otherwise(pl.col("min_load") / pl.col("eta_min")))
                     / (1.0 - pl.col("min_load"))
                 )
               .otherwise(1.0 / pl.col("eta"))
     )
-    out = (base.filter(pl.col("slope").is_not_null())
-                .select("p", "d", "t",
-                         pl.col("slope").alias("value"))
+    out = (base.select("p", "d", "t", pl.col("slope").alias("value"))
                 .sort("p", "d", "t")
                 .collect())
+    _raise_on_null_mle_cells(out.filter(pl.col("value").is_null()), "p_slope")
     if out.height == 0:
         return None
     return Param(("p", "d", "t"), out)
@@ -2835,9 +2854,10 @@ def p_min_load_pdt_from_source(source: "InputSource",
     constraint RHS (``v_online · min_load``) is byte-identical to the old
     ``(p,)`` broadcast — only Map authoring changes behaviour.
 
-    Returns ``None`` when the parameter has no usable rows (mirrors the old
-    helper's ``None`` contract so the ONLINE feature-gate check and the
-    constraint's ``process_minload`` inner-join are unchanged).
+    Returns ``None`` when no unit authors ``min_load`` (no value = 0, no
+    floor).  The online feature does not need this field; ``model/core.py``
+    checks it (``MIN_LOAD``) only when some unit has ``min_load > 0``
+    (``process_minload``).
     """
     if dt is None or dt.height == 0:
         return None
@@ -4472,14 +4492,17 @@ def p_section_from_source(source: "InputSource",
                             dt: pl.DataFrame,
                             classified: pl.DataFrame | None = None,
                             ) -> "Param | None":
-    """Section term (y-intercept) for ``min_load_efficiency`` linearisation.
+    """Section term (y-intercept) of the ``min_load_efficiency`` linearisation, one row per
+    min_load_efficiency unit × (d, t):
 
-    For ``min_load_efficiency``:
-        section = (input(min_load) - input(1.0) * min_load) / (1 - min_load)
-                = (min_load / eta_min - min_load * (1.0 / eta)) / (1 - min_load)
-                = min_load * (1/eta_min - 1/eta) / (1 - min_load)
+        cr      = round(1/eta, 6)
+        section = cr − round((cr − min_load / eta_min) / (1 − min_load), 6)
+        eta = efficiency (default 1.0);  min_load = 0 where not authored (section 0);
+        eta_min = efficiency_at_min_load, else efficiency (_mle_eta_min: a flat curve, section 0)
 
-    Other ct_methods → no section row.
+    i.e. ≈ min_load · (1/eta_min − 1/eta) / (1 − min_load), with flextool's rounding
+    (entity_period_calc_params.py:1283-1291).  Other ct_methods → no section row; None when there is no
+    min_load_efficiency unit.
     """
     if dt is None or dt.height == 0:
         return None
@@ -4492,28 +4515,18 @@ def p_section_from_source(source: "InputSource",
     if _enums is not None:
         dt = cast_frame_axes(dt, _enums)
         classified = cast_frame_axes(classified, _enums)
-    # Only min_load_efficiency rows get a section.
-    mle = (classified.lazy()
-              .filter(pl.col("ct") == "min_load_efficiency")
-              .select("p"))
-    if not (parameter_has_values(source, "unit", "efficiency")
-            and parameter_has_values(source, "unit", "efficiency_at_min_load")
-            and parameter_has_values(source, "unit", "min_load")):
+    mle = classified.filter(pl.col("ct") == "min_load_efficiency").select("p").unique()
+    if mle.height == 0:
         return None
-
-    eta_lf = _eff_param_to_pdt(source, "unit", "efficiency", dt, "eta")
-    eta_min_lf = _eff_param_to_pdt(source, "unit",
-                                    "efficiency_at_min_load", dt, "eta_min")
-    ml_lf = _eff_param_to_pdt(source, "unit", "min_load", dt, "min_load")
-    if eta_lf is None or eta_min_lf is None or ml_lf is None:
-        return None
-
-    # Mirror flextool's rounding (entity_period_calc_params.py:1283-1291):
-    #   cr = round(1/eta, 6)
-    #   sec = cr - round((cr - ml * (1/eta_min)) / (1 - ml), 6)
-    out = (mle.join(eta_lf, on="p", how="inner")
-                .join(eta_min_lf, on=["p", "d", "t"], how="inner")
-                .join(ml_lf, on=["p", "d", "t"], how="inner")
+    base = mle.lazy().join(dt.lazy().with_columns(alias_to_axis(pl.col("d"), "d"),
+                                                  alias_to_axis(pl.col("t"), "t")).select("d", "t"),
+                           how="cross")
+    eta_lf = (_eff_param_to_pdt(source, "unit", "efficiency", dt, "eta")
+              if parameter_has_values(source, "unit", "efficiency") else None)
+    base = (base.join(eta_lf, on=["p", "d", "t"], how="left") if eta_lf is not None
+            else base.with_columns(eta=pl.lit(None).cast(pl.Float64)))
+    base = _mle_curve_inputs(source, dt, base.with_columns(eta=pl.col("eta").fill_null(1.0)))
+    out = (base
                 .with_columns(
                     cr=(1.0 / pl.col("eta")).round(6),
                     inv_em=1.0 / pl.col("eta_min"),
@@ -4525,10 +4538,10 @@ def p_section_from_source(source: "InputSource",
                               / pl.col("denom")).round(6)
                 )
                 .with_columns(section=pl.col("cr") - pl.col("rounded"))
-                .filter(pl.col("section").is_not_null())
                 .select("p", "d", "t", pl.col("section").alias("value"))
                 .sort("p", "d", "t")
                 .collect())
+    _raise_on_null_mle_cells(out.filter(pl.col("value").is_null()), "p_section")
     if out.height == 0:
         return None
     return Param(("p", "d", "t"), out)

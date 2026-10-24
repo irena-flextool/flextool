@@ -1,5 +1,19 @@
 ## Unreleased
 
+- **Units with an online variable no longer need a `min_load`, and
+  `min_load_efficiency` units get defaults instead of losing their fuel use.**
+  An online unit stopped the model when no unit in the model had a
+  `min_load`. A `min_load_efficiency` unit without `min_load` (or without
+  `efficiency`) could stop the model, or, next to other `min_load_efficiency`
+  units, use no fuel at all; it now uses `min_load` 0 (and `efficiency` 1,
+  the default), and no longer gets a minimum-load floor. A
+  `min_load_efficiency` unit with a `min_load` above 0 but no
+  `efficiency_at_min_load` used no fuel on single and stochastic solves and
+  a wrong curve in rolling solves; it now uses its `efficiency` at minimum
+  load too (a flat curve, as with `constant_efficiency`) while the minimum
+  load still applies, and a warning names it. Periods or timesteps that an
+  `efficiency_at_min_load` map leaves out use `efficiency` in the same way.
+
 - **The capacity margin applies only in investment periods.** A manual
   capacity margin was enforced in every period of every solve, so dispatch
   solves, rolling dispatch, stochastic dispatch and look-ahead periods

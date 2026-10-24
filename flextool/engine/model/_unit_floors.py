@@ -99,6 +99,7 @@ def add_constraints(b: "_Build") -> None:
             # ─────────────────────────────────────────────────────────────────
             # Σ_{(p,s,k) ∈ A_p} v_flow[p,s,k,d,t]  ≥  v_online[p,d,t] · min_load[p] + Rdn_p[p,d,t]
             #   ∀ p online with min_load, (p,d,t) ∈ p_idx
+            #   process_minload = units with min_load > 0; min_load not authored = 0 (no floor)
             # Minimum load, once per unit on the sum of its output measure.  Rdn_p sums the
             # reducing reserves over A_p, so downward reserve cannot take the unit below it.
             # The floor is not scaled by availability.

@@ -1083,7 +1083,9 @@ def _derive_conversion_trio(
         for (d, t) in dt:
             cr = conv_rate.get((p, d, t), 0.0)
             ml = min_load.get((p, d, t), 0.0)
-            em = eff_min.get((p, d, t), 0.0)
+            # No efficiency_at_min_load in this cell (pdtProcess resolves an unauthored one to 0, and 0 is
+            # no usable efficiency): the efficiency (a flat curve, section 0), as ``_derived._mle_eta_min``.
+            em = eff_min.get((p, d, t)) or eff.get((p, d, t), 0.0)
             inv_em = (1.0 / em) if em else 0.0
             denom = 1.0 - ml
             rounded = round((cr - ml * inv_em) / denom, 6) if denom else 0.0

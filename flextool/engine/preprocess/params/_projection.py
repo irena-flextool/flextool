@@ -2009,7 +2009,7 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
 
 # Set projections whose empty result means "no member" (field set to None), not "keep the seed".
 _AUTHORITATIVE_SETS: tuple[str, ...] = (
-    "groupCapacityMargin", "groupInertia", "groupNonSync",
+    "groupCapacityMargin", "groupInertia", "groupNonSync", "process_minload",
 )
 
 

@@ -36,6 +36,7 @@ __all__ = [
     "validate_timeline_timestep_duration",
     "validate_capacity_margin_groups",
     "validate_group_limit_flags",
+    "validate_min_load_efficiency_inputs",
     "validate_ladder_methods",
     "validate_group_output_memberships",
     "validate_connection_node_memberships",
@@ -299,6 +300,27 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
         for g in sorted(flagged - set(values)):
             logger.warning(
                 "Group '%s' has %s = %s but no %s: %s.", g, flag, on, limit, _GROUP_LIMIT_ABSENT[limit])
+
+
+def validate_min_load_efficiency_inputs(db, logger: logging.Logger) -> None:
+    """Warn about ``min_load_efficiency`` units with a minimum load but no ``efficiency_at_min_load``.
+
+    The units: ``conversion_method = min_load_efficiency`` ∩ units with a ``min_load`` value above 0 anywhere
+    (a scalar or any value of a period / time / stochastic-time map, folded as ``process_minload`` does) ∖
+    units with an ``efficiency_at_min_load``.  Such a unit uses its ``efficiency`` at minimum load too (a flat
+    curve: the fuel use is output / efficiency, as with constant_efficiency, while the minimum load still
+    applies); owner decision c11.  Cells that an ``efficiency_at_min_load`` map leaves out get the efficiency
+    in the same way, without a warning.  ``db`` is scenario-filtered.
+    """
+    mle = _entities_with_value(db, "unit", "conversion_method", "min_load_efficiency")
+    if not mle:
+        return
+    with_min_load = {u for u, vals in _explicit_values(db, "unit", "min_load").items() if any(v > 0.0 for v in vals)}
+    with_eta_min = set(_explicit_values(db, "unit", "efficiency_at_min_load"))
+    for unit in sorted((mle & with_min_load) - with_eta_min):
+        logger.warning(
+            "Unit '%s' uses min_load_efficiency with min_load > 0 but has no efficiency_at_min_load: its "
+            "efficiency is used at minimum load too (a flat curve; the minimum load still applies).", unit)
 
 
 def validate_ladder_methods(db, logger: logging.Logger) -> None:

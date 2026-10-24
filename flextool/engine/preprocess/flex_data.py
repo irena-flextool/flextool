@@ -5151,9 +5151,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         _loadflex_prof("apply_db_overrides:pass_direct_params_b")
         _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
         # MINLOAD-1 (no-workdir early-return): ``apply_derived_b`` won't run
-        # on this path either, so re-wire the (p, d, t) ``p_min_load`` ONLINE
-        # gate field from the CSV-loaded ``flex_data.dt`` (see the synthetic
-        # MINLOAD-1 patch below and ``specs/fix_map_reading.md`` §5).
+        # on this path either, so re-wire the (p, d, t) ``p_min_load`` (the
+        # minFlow_minload floor) from the CSV-loaded ``flex_data.dt`` (see the
+        # synthetic MINLOAD-1 patch below and ``specs/fix_map_reading.md`` §5).
         _dt_noworkdir = getattr(flex_data, "dt", None)
         if _dt_noworkdir is not None and _dt_noworkdir.height > 0:
             flex_data.p_min_load = _drv.p_min_load_pdt_from_source(
@@ -5260,9 +5260,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # into ``apply_derived_b`` (so a Map min_load becomes a shape-correct
         # (p, d, t) Param instead of a summed (p,) scalar — see
         # ``specs/fix_map_reading.md`` §5), a rolling / synthetic sub-solve
-        # would leave ``p_min_load`` ``None``.  ``p_min_load`` is an ONLINE
-        # feature-gate field (``model/core.py`` ``_check(ONLINE)``), so every online
-        # unit on the synthetic path would fail the check.
+        # would leave ``p_min_load`` ``None``, and the minFlow_minload floor of
+        # every unit with min_load > 0 would fail ``model/core.py``'s
+        # ``_check(MIN_LOAD)`` on the synthetic path.
         # ``p_min_load_pdt_from_source`` is solve-agnostic (no ``active_solve``
         # filter) and reads the CSV-loaded ``flex_data.dt``, so calling it here
         # mirrors ``apply_derived_b`` exactly.

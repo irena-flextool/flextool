@@ -504,8 +504,8 @@ PERIOD_TIME_PARAMS: "frozenset[tuple[str, str]]" = frozenset(
 #                                consumers: all processes                                     covered
 #   unit.min_load                pdtProcess: min_load_efficiency units and every online unit
 #                                (emit ``_arc_unions._derive_process_time_param_in_use``); consumers:
-#                                the minFlow_minload floor and process_minload of online units, the
-#                                min_load_efficiency section                                  covered
+#                                the minFlow_minload floor of the units with min_load > 0 (no value
+#                                = 0), the min_load_efficiency section                       covered
 #   unit__inputNode / unit__outputNode.other_operational_cost
 #                                pdtProcess_source / _sink: required on every arc; consumer: every arc
 #                                                                                             covered
