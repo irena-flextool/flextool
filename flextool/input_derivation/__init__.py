@@ -121,6 +121,7 @@ def run(
     )
     from flextool.input_derivation._validators import (
         validate_timeline_timestep_duration,
+        validate_node_inflow_not_period,
         validate_ladder_methods,
         validate_group_output_memberships,
         validate_capacity_margin_groups,
@@ -185,6 +186,7 @@ def run(
             provider.put(_provider_key(spec.filename), frame)
 
         validate_timeline_timestep_duration(db)
+        validate_node_inflow_not_period(backend)
 
         timesteps: list[str] | None = None
         for spec in _PARAMETER_SPECS:

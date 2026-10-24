@@ -10,6 +10,12 @@
   dropped the minimum-load part of the conversion curve and read the profile
   as 0. Stochastic rolling solves are fixed too.
 
+- **A period-keyed `inflow` is now an error.** `inflow` is a constant or a
+  time series. A map keyed by period (or by period and time) was silently
+  read as no inflow on every solve type, so the demand disappeared. The
+  model now stops with a message that names the node and points to
+  `annual_flow` for demand that varies by period.
+
 - **A constant `cumulative_max_capacity` or `invest_max_period` no longer
   blocks investment.** A unit, connection or node with `invest_method`
   `cumulative_limits` (or `invest_period`) and a single value for

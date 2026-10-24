@@ -25,6 +25,9 @@ monolith; Step 2.5 item 6 extracted them here.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
+
+import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
 
@@ -38,6 +41,7 @@ __all__ = [
     "validate_connection_delay",
     "validate_unit_input_shares",
     "validate_output_min_coeff",
+    "validate_node_inflow_not_period",
 ]
 
 
@@ -84,6 +88,107 @@ def validate_timeline_timestep_duration(db) -> None:
             + ".  Every timeline needs a Map(timestep -> duration_in_hours); "
               "without it all time-weighted quantities collapse to zero."
         )
+
+
+def _pv_rows(src, entity_class: str, parameter: str) -> Iterable:
+    """Parameter-value rows of ``(entity_class, parameter)``.  ``src`` is a ``SpineDBBackend`` (its bulk
+    ``(class, param)`` index is reused, built once per backend) or a ``DatabaseMapping``."""
+    if hasattr(src, "_get_parameter_value_index"):
+        return src._get_parameter_value_index().get((entity_class, parameter), ())
+    return src.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter)
+
+
+def _parsed_then_evict(pv):
+    """Parse ``pv``'s value and drop spinedb-api's cached parse right away (Track A eviction contract, see
+    ``SpineDBBackend.parameter_values``), so a validator never keeps every series of a class parsed at once."""
+    value = pv["parsed_value"]
+    item = getattr(pv, "mapped_item", None)
+    if item is not None:
+        item._parsed_value = None
+    return value
+
+
+def _map_keys_all_levels(value, out: set[str]) -> None:
+    """Add every index key of a (nested) Map to ``out``; Map values that are not Maps are not collected."""
+    if not isinstance(value, api.Map):
+        return
+    for key, sub in zip(value.indexes, value.values):
+        out.add(str(key))
+        _map_keys_all_levels(sub, out)
+
+
+_SOLVE_PERIOD_PARAMS = ("realized_periods", "invest_periods", "realized_invest_periods", "fix_storage_periods")
+
+
+def validate_node_inflow_not_period(src) -> None:
+    """Raise FlexToolConfigError when a node's ``inflow`` is keyed by period.
+
+    ``inflow`` is a constant, a time series (1-D map over time) or a stochastic 3-D map (branch, analysis time,
+    time); it cannot be period-based (docs/reference.md, 'Timesteps and periods').  A period-keyed value is not
+    read by any path: before this check it silently became inflow 0.  Flagged:
+      * a 1-D map with index_name 'period';
+      * any 2-D map (the schema has no rank-2 inflow; a period x time map is the usual intent);
+      * a 1-D map with another index_name whose keys are all period names and none a timestep name.
+
+    Period names: the keys of every ``solve.period_timeset``, the entries of the 1-D period arrays of a solve
+    (``realized_periods``, ``invest_periods``, ``realized_invest_periods``, ``fix_storage_periods``) and the index
+    keys at every level of their Map variants (never Map values: nested-investment variants map period to a Map).
+    Timestep names: the keys of every ``timeline.timestep_duration``.  The rank is read without parsing; only
+    rank-1 maps are parsed, and each parse is evicted at once.
+
+    ``src`` is the ``SpineDBBackend`` of ``input_derivation.run`` (or a scenario-filtered ``DatabaseMapping``).
+    """
+    to_rank = api.parameter_value.from_database_to_dimension_count
+    candidates = []  # (node, alternative, reason or None, keys)
+    for pv in _pv_rows(src, "node", "inflow"):
+        if pv["type"] != "map":
+            continue
+        rank = to_rank(pv["value"], pv["type"])
+        node, alt = pv["entity_byname"][0], pv["alternative_name"]
+        if rank == 2:
+            candidates.append((node, alt, "a 2-D map", [str(k) for k in _parsed_then_evict(pv).indexes]))
+        elif rank == 1:
+            value = _parsed_then_evict(pv)
+            keys = [str(k) for k in value.indexes]
+            if value.index_name == "period":
+                candidates.append((node, alt, "index_name 'period'", keys))
+            elif keys:
+                candidates.append((node, alt, None, keys))
+    if not candidates:
+        return
+
+    periods: set[str] = set()
+    for pv in _pv_rows(src, "solve", "period_timeset"):
+        if pv["type"] == "map":
+            _map_keys_all_levels(_parsed_then_evict(pv), periods)
+    for par in _SOLVE_PERIOD_PARAMS:
+        for pv in _pv_rows(src, "solve", par):
+            if pv["type"] == "array":
+                periods.update(str(v) for v in _parsed_then_evict(pv).values)
+            elif pv["type"] == "map":
+                _map_keys_all_levels(_parsed_then_evict(pv), periods)
+    timesteps: set[str] = set()
+    for pv in _pv_rows(src, "timeline", "timestep_duration"):
+        if pv["type"] in ("map", "time_series"):
+            timesteps.update(str(k) for k in _parsed_then_evict(pv).indexes)
+
+    problems: list[str] = []
+    for node, alt, reason, keys in candidates:
+        if reason is None:
+            key_set = set(keys)
+            if not key_set <= periods or key_set & timesteps:
+                continue
+            reason = "all map keys are period names"
+        shown = ", ".join(keys[:3]) + (", ..." if len(keys) > 3 else "")
+        problems.append(
+            f"node '{node}' inflow (alternative '{alt}') is keyed by period ({reason}"
+            + (f"; first-level keys: {shown}" if keys else "") + ")")
+    if problems:
+        raise FlexToolConfigError(
+            "\n".join(problems)
+            + "\ninflow is a constant or a time series and cannot be period-based; to vary demand by period use "
+              "annual_flow (constant or period) with an inflow_method that scales to it (scale_to_annual_flow, "
+              "scale_in_proportion, scale_to_annual_and_peak_flow).")
 
 
 def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
