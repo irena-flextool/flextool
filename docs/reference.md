@@ -167,7 +167,7 @@ Input data is set with the following parameters:
 - `penalty_down` - [CUR/MWh] Penalty cost for excess energy (increasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, Period or Time.
 - `virtual_unitsize` - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.
 - `self_discharge_loss` - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
-- `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant, period, time or period+time.
+- `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant, period, time, period+time or stochastic time.
 - `invest_forced` - Used by the investment planner to force a specific investment volume in a given period (overrides `invest_max_period` / `invest_min_period` for that entry).
 - `constraint_state_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the storage state variable on the left side of a user-defined `constraint`.
 - `constraint_invested_capacity_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing the current period's new-build storage capacity `v_invest[node, d]` on the left side of a user-defined `constraint`. Not multiplied by unitsize.
@@ -241,17 +241,17 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 - Capacity: `existing`, the maximum sum of outputs flows, (and the investment and retirement parameters below). Constant or period.
 - Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `min_uptime`, `min_downtime`
-	- `efficiency` - [factor] Efficiency of the unit. Constant, period or time.
+	- `efficiency` - [factor] Efficiency of the unit. Constant, period, time or stochastic time.
 	- `min_uptime` - [hours] Minimum time the unit must stay online after starting up. Requires `minimum_time_method` set to *min_uptime* or *both*. The constraint uses a backward-looking formulation that accounts for variable timestep durations. In rolling window models, the solve horizon overlap should be at least as long as the longest `min_uptime`. Constant.
 	- `min_downtime` - [hours] Minimum time the unit must stay offline after shutting down. Requires `minimum_time_method` set to *min_downtime* or *both*. Same considerations as `min_uptime`. Constant.
-	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant, period or time. Applied once per unit, for all timesteps:
+	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant, period, time or stochastic time. Applied once per unit, for all timesteps:
   
       - the sum of the unit's output flows >= min_load * online capacity
       
       The output flows are the ones that define the unit's capacity: all outputs with a non-zero `conversion_flow_coeff` (for a unit with one input and one output, its single flow; for a unit without outputs, its input). Inputs never have their own minimum: a unit with several inputs can run on any mix of them (use `input_share_min` to require a share of an input). The floor is not scaled by `availability`, so a unit whose availability falls below `min_load` cannot be online. `capacity_min_coeff` on an output does not lower this floor; to lower or switch off the minimum load, lower `min_load` (0 switches it off). Downward reserve (and upward reserve at an input node, i.e. reduced consumption) offered by the unit cannot take its outputs below this floor (see [Reserves](#reserves)).
 
 
-  - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant, period, time or period+time.
+  - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant, period, time, period+time or stochastic time.
 - Economic: `startup_cost`, `fixed_cost` (fuel cost comes through the use of fuel commodities and other variable costs are defined for flows between unit and node, see below)
 
 ### Investment parameters for capacity expansion
@@ -341,7 +341,7 @@ Note that in the case of unit--outputNode the `conversion_flow_coeff` affects *a
 
 ### Units constrained by profiles
 
-Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` entity with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile` entity is given a `profile` time series (or it can also be a constant, or a map keyed by period, which applies to all timesteps of that period, or by period and time). One needs to use `node__profile`, `unit__node__profile` or `connection__profile` to apply the profile to specific energy flow (or storage state in the case of `node__profile`).
+Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` entity with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile` entity is given a `profile` time series (or it can also be a constant, or a map keyed by period, which applies to all timesteps of that period). One needs to use `node__profile`, `unit__node__profile` or `connection__profile` to apply the profile to specific energy flow (or storage state in the case of `node__profile`).
 
 ## Connections
 
