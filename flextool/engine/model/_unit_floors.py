@@ -38,19 +38,14 @@ def add_constraints(b: "_Build") -> None:
     multi_arcs = arcs.join(a_count.filter(pl.col("__n") >= 2).select("p"), on="p", how="semi")
 
     # Reducing-reserve selectors over all unit arcs (sel_all) and over A_p (sel_meas).
-    all_unit_arcs = None
+    unit_arcs_all = None
     sel_meas = (None, None, None)
     sel_all = (None, None, None)
     views = None
     if v_reserve is not None:
-        units = getattr(d, "process_unit", None)
-        pss = d.process_source_sink
-        if units is not None and units.height > 0:
-            all_unit_arcs = (_utf8_keys(pss.lazy().select(keys), ["p"])
-                             .join(_utf8_keys(units.lazy().select("p"), ["p"]).select("_p").unique(),
-                                   on="_p", how="semi")
-                             .select(keys).collect())
-            sel_all = _reducing_reserve_selectors(d, all_unit_arcs)
+        unit_arcs_all = all_unit_arcs(d)
+        if unit_arcs_all is not None:
+            sel_all = _reducing_reserve_selectors(d, unit_arcs_all)
             if any(s is not None for s in sel_all):
                 sel_meas = _restrict_selectors(sel_all, arcs)
                 # v_reserve with its node axis relabelled sink / source (same columns and name).
@@ -170,7 +165,7 @@ def add_constraints(b: "_Build") -> None:
     #   ∀ unit arc (p,s,k) with a reducing reserve, outside A_p or one of several arcs in A_p,
     #     (p,d,t) ∈ prundt, without a minFlow_output_floor row
     # Per-arc zero floor where the per-unit rows cannot see the arc.
-    all_hit = _selector_arcs(sel_all, all_unit_arcs)
+    all_hit = _selector_arcs(sel_all, unit_arcs_all)
     if all_hit.height == 0:
         return
     outside = (_utf8_keys(all_hit.lazy(), keys)
@@ -246,27 +241,31 @@ def unit_measured_arcs(d) -> "pl.DataFrame | None":
     return out if out.height > 0 else None
 
 
-def _reducing_reserve_selectors(d, arcs: "pl.DataFrame"):
-    """Selectors of the reserves that reduce the unit arcs ``arcs``.
+def all_unit_arcs(d) -> "pl.DataFrame | None":
+    """Every ``process_source_sink`` arc ``(p, source, sink)`` of a unit (``process_unit``); None when there is
+    none or ``process_unit`` is not populated (hand-built FlexData: no unit-only reserve coupling)."""
+    units = getattr(d, "process_unit", None)
+    pss = getattr(d, "process_source_sink", None)
+    if units is None or units.height == 0 or pss is None or pss.height == 0:
+        return None
+    keys = ["p", "source", "sink"]
+    out = (_utf8_keys(pss.lazy().select(keys), ["p"])
+           .join(_utf8_keys(units.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi")
+           .select(keys).collect())
+    return out if out.height > 0 else None
 
-    Returns ``(down_sink, up_src_flow, up_src_eff)`` — frames keyed
-    ``(p, r, ud, sink)`` / ``(p, r, ud, source)`` / ``(p, r, ud, source)``
-    (``None`` when empty):
 
-    * ``down_sink``: ``down`` reserve at the arc's sink node;
-    * ``up_src_flow``: ``up`` reserve at the source node of an arc whose
-      ``v_flow`` is the input itself (``sink == p``) — factor 1;
-    * ``up_src_eff``: ``up`` reserve at the source node of a direct
-      input→output arc (``source ≠ p ≠ sink``) — factor ``1 / slope``.
-
-    Only ``process_reserve_upDown_node_active`` rows that also index the
-    ``v_reserve`` domain (``prundt``) are kept.
-    """
+def _reserve_selectors(d, arcs: "pl.DataFrame", specs) -> tuple:
+    """One selector per ``(ud, side, arc_filter)`` of ``specs``: the active reserve rows ``(p, r, ud, n)``
+    with direction ``ud`` held at the ``side`` node of an arc of ``arcs`` that passes ``arc_filter``
+    (Polars expression on the Utf8 ``_p`` / ``_source`` / ``_sink``), with ``n`` renamed ``side``; None
+    when empty.  Only ``process_reserve_upDown_node_active`` rows that also index the ``v_reserve`` domain
+    (``prundt``) are kept."""
     pruna = getattr(d, "process_reserve_upDown_node_active", None)
     prundt = getattr(d, "prundt", None)
     if (pruna is None or pruna.height == 0 or prundt is None
             or prundt.height == 0 or arcs is None or arcs.height == 0):
-        return None, None, None
+        return tuple(None for _ in specs)
     rk = ["p", "r", "ud", "n"]
     act = (_utf8_keys(pruna.lazy().select(rk), rk)
            .join(_utf8_keys(prundt.lazy().select(rk), rk)
@@ -287,14 +286,51 @@ def _reducing_reserve_selectors(d, arcs: "pl.DataFrame"):
             return None
         return cand.pipe(rename_to_axis, {"n": side}).unique(maintain_order=True)
 
-    down_sink = _sel("down", "sink", pl.col("_sink") != pl.col("_p"))
-    up_src_flow = _sel("up", "source",
-                       (pl.col("_source") != pl.col("_p"))
-                       & (pl.col("_sink") == pl.col("_p")))
-    up_src_eff = _sel("up", "source",
-                      (pl.col("_source") != pl.col("_p"))
-                      & (pl.col("_sink") != pl.col("_p")))
-    return down_sink, up_src_flow, up_src_eff
+    return tuple(_sel(*spec) for spec in specs)
+
+
+# Arc filters: the arc's v_flow is the input itself (an indirect unit's input, a sink-less unit), or the arc
+# is a direct input→output arc (its v_flow is the output).
+_INPUT_ARC = (pl.col("_source") != pl.col("_p")) & (pl.col("_sink") == pl.col("_p"))
+_DIRECT_ARC = (pl.col("_source") != pl.col("_p")) & (pl.col("_sink") != pl.col("_p"))
+
+
+def _reducing_reserve_selectors(d, arcs: "pl.DataFrame"):
+    """Selectors of the reserves that reduce the unit arcs ``arcs``.
+
+    Returns ``(down_sink, up_src_flow, up_src_eff)`` — frames keyed
+    ``(p, r, ud, sink)`` / ``(p, r, ud, source)`` / ``(p, r, ud, source)``
+    (``None`` when empty):
+
+    * ``down_sink``: ``down`` reserve at the arc's sink node;
+    * ``up_src_flow``: ``up`` reserve at the source node of an arc whose
+      ``v_flow`` is the input itself (``sink == p``) — factor 1;
+    * ``up_src_eff``: ``up`` reserve at the source node of a direct
+      input→output arc (``source ≠ p ≠ sink``) — factor ``1 / slope``.
+
+    Only ``process_reserve_upDown_node_active`` rows that also index the
+    ``v_reserve`` domain (``prundt``) are kept.
+    """
+    return _reserve_selectors(d, arcs, (("down", "sink", pl.col("_sink") != pl.col("_p")),
+                                        ("up", "source", _INPUT_ARC),
+                                        ("up", "source", _DIRECT_ARC)))
+
+
+def increasing_source_selectors(d, arcs: "pl.DataFrame"):
+    """Selectors of the source-side reserves that raise the unit arcs ``arcs`` (consume more).
+
+    Returns ``(down_src_flow, down_src_eff)`` keyed ``(p, r, ud, source)`` (``None`` when empty):
+
+    * ``down_src_flow``: ``down`` reserve at the source node of an arc whose ``v_flow`` is the input
+      itself (``sink == p``: an indirect unit's input, a sink-less unit) — factor 1;
+    * ``down_src_eff``: ``down`` reserve at the source node of a direct input→output arc
+      (``source ≠ p ≠ sink``) — factor ``1 / slope`` (:func:`_inverse_slope`).
+
+    The mirror of :func:`_reducing_reserve_selectors` (``up_src_flow`` / ``up_src_eff``).  The reverse
+    arc of a two-way unit (2way_2var) is a direct arc, so downward reserve at a node of such a unit is
+    headroom on the arc that draws from the node and a floor on the arc that feeds it.
+    """
+    return _reserve_selectors(d, arcs, (("down", "source", _INPUT_ARC), ("down", "source", _DIRECT_ARC)))
 
 
 def _inverse_slope(d, procs: "pl.DataFrame") -> "Param":

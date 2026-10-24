@@ -428,6 +428,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # flextool/engine/model/_online.py
     # (maxOutputSum_online_<sfx>)
     "maxOutputSum_online": CstrFamily(QuantityType.DIMENSIONLESS),
+    # flextool/engine/model/_online.py (maxInputFlow_online_<sfx>: an indirect
+    # unit's input arc carrying downward reserve at its source, unit-count flow)
+    "maxInputFlow_online": CstrFamily(QuantityType.DIMENSIONLESS),
     # _unit_floors.py (minFlow_minload_<sfx>: per-unit floor)
     "minFlow_minload": CstrFamily(QuantityType.DIMENSIONLESS),
     # _unit_floors.py (minFlow_output_floor_<sfx>: per-output

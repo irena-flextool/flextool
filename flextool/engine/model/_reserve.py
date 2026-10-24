@@ -6,8 +6,8 @@ requirement rows reserveBalance_timeseries_eq, reserveBalance_dynamic_eq and res
 the bound reserve_total_upper, the per-process limits
 reserve_process_{upward,downward}, the storage energy rows reserve_storage_up_floor /
 reserve_storage_down_headroom, and the shortfall penalty in the objective.  The coupling of v_reserve to
-process capacity (maxFlow, maxOutputSum, maxFlow_online, maxOutputSum_online, profile limits, unit floors) lives
-with those families.
+process capacity (maxFlow, maxOutputSum, maxFlow_online, maxOutputSum_online, maxInputFlow_online, profile limits,
+unit floors) lives with those families.
 """
 
 from pathlib import Path
@@ -200,19 +200,7 @@ def _with_full_load_draw(d, bound: "pl.LazyFrame") -> "pl.LazyFrame":
                    ["p", "d", "t"])
     out = (bound.join(eff_lf, on=keys, how="left")
            .join(slope_lf, on=["p", "d", "t"], how="left"))
-    section = getattr(d, "p_section", None)
-    pml = getattr(d, "process_min_load_eff", None)
-    online = [f for f in (getattr(d, "process_online_linear", None), getattr(d, "process_online_integer", None))
-              if f is not None and f.height > 0]
-    if section is not None and pml is not None and pml.height > 0 and online:
-        on_p = pl.concat([_u8(f.lazy().select("p"), ["p"]) for f in online]).unique()
-        sec_lf = (_u8(promote_param_to_dt(section, d.dt).select("p", "d", "t", pl.col("value").alias("__sec")),
-                      ["p", "d", "t"])
-                  .join(_u8(pml.lazy().select("p"), ["p"]).unique(), on="p", how="semi")
-                  .join(on_p, on="p", how="semi"))
-        out = out.join(sec_lf, on=["p", "d", "t"], how="left")
-    else:
-        out = out.with_columns(pl.lit(None, pl.Float64).alias("__sec"))
+    out = _with_section(d, out.rename({"p": "__p"})).rename({"__p": "p"})
     factor = pl.col("__slope").fill_null(1.0) + pl.col("__sec").fill_null(0.0)
     return (out.with_columns(pl.when(pl.col("__eff").fill_null(False)).then(pl.col("value") * factor)
                              .otherwise(pl.col("value")).alias("value"))
@@ -778,13 +766,23 @@ def add_constraints(b: "_Build") -> None:
 
     # ─── EQ. ─── reserve_process_upward / reserve_process_downward ───────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_reserve[p,r,ud,n,d,t] − max_share[p,r,ud,n] · Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
-    #   + max_share[p,r,ud,n] · Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
-    #   ≤ max_share[p,r,ud,n] · existing_count[p,d]
+    # v_reserve[p,r,ud,n,d,t] − max_share[p,r,ud,n] · c[p,n,d,t] · Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
+    #   + max_share[p,r,ud,n] · c[p,n,d,t] · Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
+    #   ≤ max_share[p,r,ud,n] · c[p,n,d,t] · existing_count[p,d]
     #   ∀ (p,r,ud,n,d,t) ∈ prundt with ud = up / down
-    # A process holds at most max_share of its built units as reserve, in
-    # units of unitsize.  The limit uses the built capacity, also for units
-    # with online variables.
+    #   c = 1 at a node the process feeds, and for connections;
+    #   at an input node n of a unit (n the source of one of its arcs and not a sink):
+    #     c = input_cap[p,n,p,d,t]           indirect unit (input_share_max × full-load input per unit)
+    #     c = slope[p,d,t] + section[p,d,t]  direct unit's input→output arc (full-load input = capacity /
+    #                                        efficiency; section only for min_load_efficiency units with
+    #                                        online variables)
+    #     c = 1                              sink-less unit (its capacity is the input), and
+    #                                        conversion_flow_coeff = 0 inputs
+    # A process holds at most max_share of the built capacity of its flow at
+    # that node as reserve (units of unitsize; built = existing + invested −
+    # retired, also for units with online variables).  At an input node the
+    # capacity is the input's (_input_capacity_factor).  max_share not
+    # authored → no reserve (RHS 0).
     max_share = getattr(d, "p_process_reserve_upDown_node_max_share", None)
     existing = getattr(d, "p_process_existing_count", None)
     if max_share is not None and d.prundt.height > 0 and existing is not None:
@@ -795,21 +793,118 @@ def add_constraints(b: "_Build") -> None:
             if idx.height == 0:
                 continue
             rhs_param = max_share * existing
+            c = _input_capacity_factor(d, idx)
+            share = max_share if c is None else max_share * c
+            if c is not None:
+                rhs_param = share * existing
             lhs: dict = {"reserve": v_reserve}
             p_in_idx = idx.select("p").unique()
             if b.v_invest_p is not None and edd_inv_set is not None and edd_inv_set.height > 0:
                 edd_p = edd_inv_set.pipe(rename_to_axis, {"e": "p"}).join(p_in_idx, on="p", how="inner")
                 if edd_p.height > 0:
                     v_inv_at = _var_view(b.v_invest_p, f"__at_{name}", {"d": "d_invest"}, to_axis=True)
-                    lhs["invest_neg"] = -(Sum(Where(v_inv_at, edd_p), over=("d_invest",)) * max_share)
+                    lhs["invest_neg"] = -(Sum(Where(v_inv_at, edd_p), over=("d_invest",)) * share)
             if b.v_divest_p is not None and edd_div_act is not None and edd_div_act.height > 0:
                 edd_p_div = edd_div_act.join(p_in_idx, on="p", how="inner")
                 if edd_p_div.height > 0:
                     v_div_at = _var_view(b.v_divest_p, f"__at_{name}", {"d": "d_divest"}, to_axis=True)
-                    lhs["divest"] = Sum(Where(v_div_at, edd_p_div), over=("d_divest",)) * max_share
+                    lhs["divest"] = Sum(Where(v_div_at, edd_p_div), over=("d_divest",)) * share
             m.add_cstr(name, over=idx, sense="<=", lhs_terms=lhs, rhs_terms={"max": rhs_param})
 
     _add_storage_energy_constraints(b)
+
+
+def _input_capacity_factor(d, idx: pl.DataFrame) -> "Param | None":
+    """``c[p, n, d, t]`` of reserve_process_*: the capacity of the unit's flow at node n per unit of capacity,
+    dense over the ``(p, n)`` of ``idx`` × dt with the dtypes of ``idx``.
+
+    1 at a node the process feeds and for connections.  At an input node of a unit (n the source of one of
+    its arcs and not the sink of any): ``p_indirect_input_cap[p, n, p]`` for an indirect unit, ``slope +
+    section`` (section only for min_load_efficiency units with online variables) for a direct unit's
+    input→output arc, 1 for a sink-less unit and conversion_flow_coeff = 0 inputs.  A node that is both an
+    input and an output of the same unit keeps the output rule.  A direct unit with several outputs has one
+    arc per output from the same input; ``(p, n)`` is de-duplicated so each row gets one factor.  None when no
+    row is at an input node (the rows keep the plain ``max_share`` form) or the data to tell is missing
+    (hand-built FlexData).
+    """
+    from flextool.engine.model._unit_floors import all_unit_arcs
+
+    arcs = all_unit_arcs(d)
+    if arcs is None:
+        return None
+    keys = ["p", "source", "sink"]
+    a = _u8(arcs.lazy(), keys)
+    sinks = a.select("p", pl.col("sink").alias("n")).unique()
+    inputs = (a.filter(pl.col("source") != pl.col("p"))
+              .select("p", pl.col("source").alias("n"), "sink")
+              .join(sinks, on=["p", "n"], how="anti"))
+    rows = (idx.select("p", "n").unique(maintain_order=True)
+            .with_columns(pl.col("p").cast(pl.Utf8).alias("__p"), pl.col("n").cast(pl.Utf8).alias("__n")))
+    in_rows = rows.lazy().join(inputs.select(pl.col("p").alias("__p"), pl.col("n").alias("__n")).unique(),
+                               on=["__p", "__n"], how="semi").collect()
+    if in_rows.height == 0:
+        return None
+    dt_u = _u8(d.dt.lazy().select("d", "t"), ["d", "t"])
+    # (p, n) → arc class: an input arc (sink == p: indirect / sink-less) or a direct arc; one per (p, n).
+    kind = (inputs.with_columns((pl.col("sink") == pl.col("p")).alias("__in_arc"))
+            .group_by("p", "n").agg(pl.col("__in_arc").all())
+            .rename({"p": "__p", "n": "__n"}))
+    indirect = getattr(d, "process_indirect", None)
+    ind_p = (_u8(indirect.lazy().select("p"), ["p"]).unique().rename({"p": "__p"})
+             .with_columns(pl.lit(True).alias("__ind"))
+             if indirect is not None and indirect.height > 0 else None)
+    grid = (in_rows.lazy().select("__p", "__n").join(dt_u, how="cross")
+            .join(kind, on=["__p", "__n"], how="left"))
+    grid = (grid.join(ind_p, on="__p", how="left") if ind_p is not None
+            else grid.with_columns(pl.lit(None, pl.Boolean).alias("__ind")))
+    in_cap = getattr(d, "p_indirect_input_cap", None)
+    if in_cap is not None:
+        cap = (_u8(in_cap.frame.lazy().select(*keys, "d", "t", "value"), [*keys, "d", "t"])
+               .filter(pl.col("sink") == pl.col("p"))
+               .select(pl.col("p").alias("__p"), pl.col("source").alias("__n"), "d", "t",
+                       pl.col("value").alias("__cap")))
+        grid = grid.join(cap, on=["__p", "__n", "d", "t"], how="left")
+    else:
+        grid = grid.with_columns(pl.lit(None, pl.Float64).alias("__cap"))
+    slope = getattr(d, "p_slope", None)
+    if slope is not None:
+        grid = grid.join(_u8(promote_param_to_dt(slope, d.dt).select(pl.col("p").alias("__p"), "d", "t",
+                                                                      pl.col("value").alias("__slope")),
+                             ["__p", "d", "t"]), on=["__p", "d", "t"], how="left")
+    else:
+        grid = grid.with_columns(pl.lit(None, pl.Float64).alias("__slope"))
+    grid = _with_section(d, grid)
+    direct_c = pl.col("__slope").fill_null(1.0) + pl.col("__sec").fill_null(0.0)
+    value = (pl.when(pl.col("__in_arc") & pl.col("__ind").fill_null(False)).then(pl.col("__cap").fill_null(1.0))
+             .when(pl.col("__in_arc")).then(pl.lit(1.0))
+             .otherwise(direct_c))
+    c_in = grid.select("__p", "__n", "d", "t", value.alias("value"))
+    base = rows.join(d.dt.select("d", "t"), how="cross")
+    frame = (base.with_columns(pl.col("d").cast(pl.Utf8).alias("__d"), pl.col("t").cast(pl.Utf8).alias("__t"))
+             .lazy()
+             .join(c_in.rename({"d": "__d", "t": "__t"}), on=["__p", "__n", "__d", "__t"], how="left")
+             .with_columns(pl.col("value").fill_null(1.0))
+             .select("p", "n", "d", "t", "value")
+             .collect())
+    return Param(("p", "n", "d", "t"), frame)
+
+
+def _with_section(d, grid: "pl.LazyFrame") -> "pl.LazyFrame":
+    """``grid`` (Utf8 ``__p``, ``d``, ``t``) with ``__sec``: p_section of min_load_efficiency units with online
+    variables, null elsewhere."""
+    section = getattr(d, "p_section", None)
+    pml = getattr(d, "process_min_load_eff", None)
+    online = [f for f in (getattr(d, "process_online_linear", None), getattr(d, "process_online_integer", None))
+              if f is not None and f.height > 0]
+    if section is None or pml is None or pml.height == 0 or not online:
+        return grid.with_columns(pl.lit(None, pl.Float64).alias("__sec"))
+    on_p = pl.concat([_u8(f.lazy().select("p"), ["p"]) for f in online]).unique()
+    sec = (_u8(promote_param_to_dt(section, d.dt).select("p", "d", "t", pl.col("value").alias("__sec")),
+               ["p", "d", "t"])
+           .join(_u8(pml.lazy().select("p"), ["p"]).unique(), on="p", how="semi")
+           .join(on_p, on="p", how="semi")
+           .rename({"p": "__p"}))
+    return grid.join(sec, on=["__p", "d", "t"], how="left")
 
 
 def _add_storage_energy_constraints(b: "_Build") -> None:

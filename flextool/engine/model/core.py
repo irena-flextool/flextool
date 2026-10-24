@@ -36,7 +36,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Flows & capacity    maxFlow, maxFlow_negCap, maxFlow_back; maxOutputSum(_negCap);
                       dc_reference_angle_eq, dc_flow_eq [_dc_power_flow]
   Units               max{Online,Startup,Shutdown}, online__{startup,shutdown}, maxFlow_online,
-                      maxOutputSum_online, minimum_{uptime,downtime}, online_fix_eq [_online];
+                      maxOutputSum_online, maxInputFlow_online, minimum_{uptime,downtime}, online_fix_eq
+                      [_online];
                       minFlow_{minload,output_floor,reserve,reserve_arc} [_unit_floors];
                       ramp_{sink,source}_{up,down}_constraint
   Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n]
@@ -300,6 +301,10 @@ class _Build:
     reserve_up_to_sink: Any = None          # Σ_r v_reserve up,   (p, sink, d, t)
     reserve_down_to_sink: Any = None        # Σ_r v_reserve down, (p, sink, d, t)
     reserve_up_sink_parts: Any = None       # (v_reserve at sink, up selector)
+    # Source-side reserves of units, per arc (p, source, sink, d, t), converted to the arc's flow:
+    reserve_down_at_source: dict = field(default_factory=dict)  # down at the source: raises the flow
+    reserve_up_at_source: dict = field(default_factory=dict)    # up at the source: lowers the flow
+    reserve_down_input_arcs: pl.DataFrame | None = None  # (p, source, sink) carrying reserve_down_at_source
     invest_in_dispatch_p: Any = None        # Σ v_invest_p alive in d, (p, d)
     divest_in_dispatch_p: Any = None        # Σ v_divest_p active in d, (p, d)
     op_factor: Any = None                   # weight of operational cost terms, (d, t)
@@ -778,6 +783,56 @@ def _reserve_coupling(b: _Build) -> None:
                                to_axis=True)
         b.reserve_down_to_sink = Sum(Where(at_sink_dn, down_sink),
                                      over=("r", "ud"))
+
+    # Source-side reserve of units (consume more / consume less), per arc and converted to the arc's
+    # v_flow: factor 1 where v_flow is the input (an indirect unit's input arc, a sink-less unit), 1/slope
+    # on a direct input→output arc.  Down at the source raises the flow (maxFlow, maxFlow_online,
+    # maxInputFlow_online, profile_flow_upper_limit); up at the source lowers it
+    # (profile_flow_lower_limit; the floors in _unit_floors).  Connections are not coupled.
+    unit_arcs = _unit_floors.all_unit_arcs(b.d)
+    if unit_arcs is None:
+        return
+    at_source = _var_view(v_reserve, "__at_source", {"n": "source"}, to_axis=True)
+    down_flow, down_eff = _unit_floors.increasing_source_selectors(b.d, unit_arcs)
+    _, up_flow, up_eff = _unit_floors._reducing_reserve_selectors(b.d, unit_arcs)
+    down_arcs = []
+    for target, sel, direct, key in ((b.reserve_down_at_source, down_flow, False, "reserve_down_source"),
+                                     (b.reserve_down_at_source, down_eff, True, "reserve_down_source_eff"),
+                                     (b.reserve_up_at_source, up_flow, False, "reserve_up_source"),
+                                     (b.reserve_up_at_source, up_eff, True, "reserve_up_source_eff")):
+        if sel is None:
+            continue
+        arcs = _source_reserve_arcs(unit_arcs, sel, direct=direct)
+        if arcs.height == 0:
+            continue
+        term = Where(at_source, sel)
+        if direct:
+            term = term * _unit_floors._inverse_slope(b.d, sel)
+        target[key] = Where(Sum(term, over=("r", "ud")), arcs)
+        if target is b.reserve_down_at_source:
+            down_arcs.append(arcs)
+    if down_arcs:
+        b.reserve_down_input_arcs = pl.concat(down_arcs).unique(maintain_order=True)
+
+
+def _arcs_semi(frame: pl.DataFrame, arcs: pl.DataFrame) -> pl.DataFrame:
+    """Rows of ``frame`` whose ``(p, source, sink)`` is in ``arcs`` (Utf8 keys; ``frame``'s columns kept)."""
+    keys = ["p", "source", "sink"]
+    return (_utf8_keys(frame.lazy(), keys)
+            .join(_utf8_keys(arcs.lazy().select(keys), keys).select([f"_{k}" for k in keys]).unique(),
+                  on=[f"_{k}" for k in keys], how="semi")
+            .select(frame.columns).collect())
+
+
+def _source_reserve_arcs(unit_arcs: pl.DataFrame, sel: pl.DataFrame, *, direct: bool) -> pl.DataFrame:
+    """The unit arcs ``(p, source, sink)`` of the class of ``sel`` (direct input→output arcs, or arcs whose
+    v_flow is the input) whose ``(p, source)`` carries a reserve of ``sel``."""
+    keys = ["p", "source", "sink"]
+    a = _utf8_keys(unit_arcs.lazy(), keys)
+    a = a.filter(pl.col("_source") != pl.col("_p"))
+    a = a.filter((pl.col("_sink") != pl.col("_p")) if direct else (pl.col("_sink") == pl.col("_p")))
+    hit = _utf8_keys(sel.lazy().select("p", "source"), ["p", "source"]).select("_p", "_source").unique()
+    return a.join(hit, on=["_p", "_source"], how="semi").select(keys).collect()
 
 
 def _invest_in_dispatch(b: _Build) -> None:
@@ -1543,27 +1598,37 @@ def _eq_max_flow(b: _Build) -> None:
 
     # ─── EQ. ─── maxFlow ─────────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t]
+    # v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t] + Σ_r v_reserve_down[p,r,s,d,t] · φ[p,s,k,d,t]
     #   − M·Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
     #   + M·Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
     #   ≤ M · existing[p,d] / unitsize[p]
-    #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∉ flow_bound_arcs
+    #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∉ flow_bound_arcs or (p,s,k) ∈ reserve_down_input_arcs
     #   M = capacity_max_coeff[p,s,k] · availability[p,d,t]
+    #   φ = 1 where v_flow is the input (k = p), 1/slope[p,d,t] on a direct unit's input→output arc
+    #       (s ≠ p ≠ k); the down-reserve term only for units
     # Caps every flow by the built capacity of its process (units of unitsize).
     # On indirect-unit input arcs M = input_share_max · full-load input ·
     # availability; uncapped arcs (conversion_flow_coeff = 0) have M = 1 and
     # RHS = p_flow_upper.  Input arcs of units without invest/divest are
-    # bounded on v_flow instead (flow_bound_arcs).  The reserve term covers
-    # upward reserve held at the sink.
+    # bounded on v_flow instead (flow_bound_arcs).  The reserve terms are the
+    # reserve that raises the flow: upward reserve held at the sink, and
+    # downward reserve held at the source of a unit (it consumes more),
+    # converted to the arc's flow.  A bound input arc gets this row as well
+    # when it carries such a reserve (its v_flow bound stays, redundant).
     lhs: dict = {"flow": b.v_flow}
     if b.reserve_up_to_sink is not None:
         lhs["reserve_up"] = b.reserve_up_to_sink
+    lhs.update(b.reserve_down_at_source)
     if b.divest_in_dispatch_p is not None:
         lhs["divest"] = _scaled(b.divest_in_dispatch_p)
     if b.invest_in_dispatch_p is not None:
         lhs["invest_neg"] = -_scaled(b.invest_in_dispatch_p)
     over = (pss_dt.join(b.flow_bound_arcs, on=["p", "source", "sink"], how="anti")
             if b.flow_bound_arcs is not None else pss_dt)
+    if b.flow_bound_arcs is not None and b.reserve_down_input_arcs is not None:
+        bound_with_reserve = _arcs_semi(b.flow_bound_arcs, b.reserve_down_input_arcs)
+        if bound_with_reserve.height > 0:
+            over = pl.concat([over, _arcs_semi(pss_dt, bound_with_reserve)])
     if over.height > 0:
         m.add_cstr(
             "maxFlow",
@@ -2570,15 +2635,17 @@ def _eq_profiles(b: _Build) -> None:
 
     # ─── EQ. ─── profile_flow_{upper_limit,lower_limit,fixed} ────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_flow[p,s,k,d,t] ± Σ_r v_reserve[p,r,k,d,t]
+    # v_flow[p,s,k,d,t] ± (Σ_r v_reserve[p,r,k,d,t] + Σ_r v_reserve[p,r,s,d,t] · φ[p,s,k,d,t])
     #   − profile[f,d,t]·av[p,d,t]·Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
     #   + profile[f,d,t]·av[p,d,t]·Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
     #   ≤ / ≥ / =  profile[f,d,t] · av[p,d,t] · existing_count[p,d]
     #   ∀ (p,s,k,f) ∈ process_profile_{upper,lower,fixed}, (d,t) ∈ dt
     # Bounds a flow by a profile times the built capacity, in units of unitsize.  av = availability, 1 for
-    # processes without availability data.  The upper limit adds the upward reserve held at the sink, the
-    # lower limit subtracts the downward reserve; the fixed profile has no reserve term.  The invest/divest
-    # terms are restricted to the (p,f) pairs of the method's set.
+    # processes without availability data.  The upper limit adds the reserve that raises the arc's flow
+    # (up at the sink; down at a unit's source), the lower limit subtracts the reserve that lowers it (down
+    # at the sink; up at a unit's source); a source-side reserve is converted to the arc's flow by φ (1
+    # where v_flow is the input, 1/slope on a direct unit's input→output arc).  The fixed profile has no
+    # reserve term.  The invest/divest terms are restricted to the (p,f) pairs of the method's set.
     invested = divested = None
     if b.has_invest_p and d.edd_invest_set is not None:
         alive = _entity_rows(d.edd_invest_set, "e", d.process_source_sink, "p")
@@ -2593,6 +2660,10 @@ def _eq_profiles(b: _Build) -> None:
             divest_view = _var_view(b.v_divest_p, "__at_divest_prof", {"d": "d_divest"}, to_axis=True)
             divested = Sum(Where(divest_view, active), over=("d_divest",))
     reserve_down = -b.reserve_down_to_sink if b.reserve_down_to_sink is not None else None
+    source_terms = {
+        "profile_flow_upper_limit": dict(b.reserve_down_at_source),
+        "profile_flow_lower_limit": {f"{k}_neg": -v for k, v in b.reserve_up_at_source.items()},
+    }
     for idx, name, sense, reserve_label, reserve in (
         (d.process_profile_upper, "profile_flow_upper_limit", "<=", "reserve",     b.reserve_up_to_sink),
         (d.process_profile_lower, "profile_flow_lower_limit", ">=", "reserve_neg", reserve_down),
@@ -2623,6 +2694,7 @@ def _eq_profiles(b: _Build) -> None:
             lhs["divest"] = Where(term, process_profile_pairs)
         if reserve is not None:
             lhs[reserve_label] = reserve
+        lhs.update(source_terms.get(name, {}))
         m.add_cstr(
             name,
             over      = over,

@@ -22,6 +22,11 @@
   count. On a group without a dynamic `reserve_method` the ratio is ignored
   with a warning.
 
+- **Reserve at a unit's input.** A unit consuming at full capacity, or
+  offline, can no longer offer "consume more" downward reserve at its input
+  node (electric boiler, heat pump, fuel draw of a CHP unit); `max_share` at
+  an input node is a share of the unit's input capacity there.
+
 - **`co2_max_period` applies in rolling solves.** Each roll of a
   `rolling_window` solve compared its window's emissions, annualised as if
   they covered the whole solve, with the annual limit, so the limit was too

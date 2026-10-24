@@ -1,8 +1,8 @@
 """Unit commitment: units online, startups, shutdowns and minimum up/down times.
 
 Owns the variables v_online_*, v_startup_*, v_shutdown_* and the equations maxOnline, maxStartup,
-maxShutdown, online__startup, online__shutdown, maxFlow_online, maxOutputSum_online, minimum_uptime,
-minimum_downtime and online_fix_eq.  Each exists once per UC class present: ``linear`` (continuous
+maxShutdown, online__startup, online__shutdown, maxFlow_online, maxOutputSum_online, maxInputFlow_online,
+minimum_uptime, minimum_downtime and online_fix_eq.  Each exists once per UC class present: ``linear`` (continuous
 v_online) and ``integer`` (integer v_online), suffixed ``_linear`` / ``_integer``.
 """
 
@@ -12,7 +12,9 @@ import polars as pl
 from polar_high import Lag, Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
-from flextool.engine.model._common import _availability_factor, _capped_arcs, _coef_factor, _entity_rows, _indirect_sum_arcs, _var_view
+from flextool.engine.model._common import (
+    _availability_factor, _capped_arcs, _coef_factor, _entity_rows, _indirect_sum_arcs, _utf8_keys, _var_view,
+)
 
 if TYPE_CHECKING:
     from flextool.engine.model.core import _Build
@@ -170,12 +172,13 @@ def add_constraints(b: "_Build") -> None:
 
         # ─── EQ. ─── maxFlow_online_{linear,integer} ─────────────────────────
         # ─────────────────────────────────────────────────────────────────────
-        # v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t]
+        # v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t] + Σ_r v_reserve_down[p,r,s,d,t] · φ[p,s,k,d,t]
         #   ≤  v_online[p,d,t] · availability[p,d,t] · capacity_max_coeff[p,s,k]
-        #   ∀ (p,s,k) capped arc of an online process, (d,t) ∈ dt
-        # A unit's flow and the upward reserve it holds at the arc's sink are limited by the
-        # units online (spinning reserve: an offline unit holds none).  The reserve term is
-        # maxFlow's; input arcs (sink = p) get none.  Only capped arcs (direct arcs and indirect
+        #   ∀ (p,s,k) capped arc of an online process, (d,t) ∈ dt;   φ as in maxFlow, units only
+        # A unit's flow and the reserve that raises it — upward reserve at the arc's sink and
+        # "consume more" downward reserve at its source — are limited by the units online
+        # (spinning reserve: an offline unit holds neither).  The reserve terms are maxFlow's.
+        # Only capped arcs (direct arcs and indirect
         # output arcs, see _capped_arcs): indirect input arcs are tied to the outputs by
         # conversion_indirect, and conversion_flow_coeff = 0 arcs are uncapped.  Availability and
         # capacity_max_coeff are densified to their 1.0 defaults so an unauthored unit keeps
@@ -192,10 +195,23 @@ def add_constraints(b: "_Build") -> None:
             online_lhs: dict = {"flow": v_flow}
             if b.reserve_up_to_sink is not None:
                 online_lhs["reserve_up"] = b.reserve_up_to_sink
+            online_lhs.update(b.reserve_down_at_source)
             m.add_cstr(f"maxFlow_online{sfx}",
                        over=over_pss_online, sense="<=",
                        lhs_terms=online_lhs,
                        rhs_terms={"online": online_rhs})
+
+        # ─── EQ. ─── maxInputFlow_online_{linear,integer} ────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # v_flow[p,s,p,d,t] + Σ_r v_reserve_down[p,r,s,d,t]
+        #   ≤ v_online[p,d,t] · availability[p,d,t] · input_cap[p,s,p,d,t]
+        #   ∀ (p,s,p) ∈ reserve_down_input_arcs, an input arc of an online indirect unit, (d,t) ∈ dt
+        #   input_cap = p_indirect_input_cap (input_share_max × full-load input per unit of capacity)
+        # The online analogue of maxFlow on an indirect unit's input arc, built only where the arc
+        # carries downward reserve at its source: consuming more needs online capacity.  The other
+        # inputs and the outputs are not adjusted (the per-arc simplification of the input-side
+        # floors).
+        _add_max_input_flow_online(b, sfx, online_set, v_online)
 
         # ─── EQ. ─── maxOutputSum_online_{linear,integer} ────────────────────
         # ─────────────────────────────────────────────────────────────────────
@@ -319,6 +335,46 @@ def add_constraints(b: "_Build") -> None:
                 lhs_terms={"online": Where(v_online, over)},
                 rhs_terms={"target": Param(("p", "d", "t"), pin)},
             )
+
+
+def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame", v_online) -> None:
+    """maxInputFlow_online rows of one UC class (see the EQ. header in :func:`add_constraints`)."""
+    d = b.d
+    arcs = b.reserve_down_input_arcs
+    in_cap = getattr(d, "p_indirect_input_cap", None)
+    indirect = getattr(d, "process_indirect", None)
+    if (arcs is None or not b.reserve_down_at_source or in_cap is None
+            or indirect is None or indirect.height == 0):
+        return
+    keys = ["p", "source", "sink"]
+    sel = (_utf8_keys(arcs.lazy(), keys)
+           .filter(pl.col("_sink") == pl.col("_p"))
+           .join(_utf8_keys(indirect.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi")
+           .join(_utf8_keys(online_set.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi"))
+    # the arc rows of v_flow (process_source_sink dtypes), restricted to sel
+    pss = d.process_source_sink.select(keys).unique()
+    in_arcs = (_utf8_keys(pss.lazy(), keys)
+               .join(sel.select("_p", "_source", "_sink"), on=["_p", "_source", "_sink"], how="semi")
+               .select(keys).collect())
+    if in_arcs.height == 0:
+        return
+    over = in_arcs.join(d.dt, how="cross")
+    cap = (_utf8_keys(over.lazy(), keys + ["d", "t"])
+           .join(_utf8_keys(in_cap.frame.lazy(), keys + ["d", "t"])
+                 .select("_p", "_source", "_sink", "_d", "_t", "value"),
+                 on=["_p", "_source", "_sink", "_d", "_t"], how="left")
+           .select(*keys, "d", "t", "value").collect())
+    missing = cap.filter(pl.col("value").is_null())
+    if missing.height > 0:
+        raise ValueError(
+            "p_indirect_input_cap has no value for indirect input arc(s) "
+            f"{missing.select(keys).unique().head(10).to_dicts()} — maxInputFlow_online would be dropped.")
+    rhs = v_online * Param(("p", "source", "sink", "d", "t"), cap)
+    if d.p_process_availability is not None:
+        rhs = rhs * _availability_factor(d, in_arcs)
+    lhs: dict = {"flow": b.v_flow}
+    lhs.update(b.reserve_down_at_source)
+    b.m.add_cstr(f"maxInputFlow_online{sfx}", over=over, sense="<=", lhs_terms=lhs, rhs_terms={"online": rhs})
 
 
 def _online_mintime_carry_term(carry: "pl.DataFrame | None", idx: "pl.DataFrame") -> "Param | None":

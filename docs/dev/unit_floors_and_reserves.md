@@ -56,6 +56,40 @@ while online ≤ built; they carry the invest/divest terms).
 Together with the floors the online band is
 `v_online·min_load + Rdn ≤ Σ out ≤ v_online·cap·avail − Rup`.
 
+## Source-side reserve and capacity
+
+The mirror of the floors: reserve that raises a unit arc's flow.
+`_unit_floors.increasing_source_selectors(d, arcs)` gives `(down_src_flow,
+down_src_eff)` keyed `(p, r, ud, source)` over all unit arcs
+(`all_unit_arcs`): `down` reserve at the source node of an arc whose
+`v_flow` is the input (`sink == p`: an indirect unit's input, a sink-less
+unit; φ = 1) or of a direct input→output arc (`source ≠ p ≠ sink`; φ =
+`1/slope`, `_inverse_slope`). `core._reserve_coupling` turns them into
+`b.reserve_down_at_source` (per arc `(p, source, sink, d, t)`, converted
+by φ) and `b.reserve_down_input_arcs`; the reducing `up` source selectors
+give `b.reserve_up_at_source` for `profile_flow_lower_limit`.
+
+| row | term |
+|---|---|
+| `maxFlow` | `+ Σ_r v_reserve_down[p,r,s]·φ`; a bound input arc carrying the reserve gets a row too (the v_flow bound stays, redundant) |
+| `maxFlow_online_<kind>` | same term against online capacity |
+| `maxInputFlow_online_<kind>` (new) | an online indirect unit's input arc with the reserve: `v_flow + Σ_r v_reserve_down ≤ v_online·avail·p_indirect_input_cap` |
+| `profile_flow_upper_limit` / `_lower_limit` | `+ down at the source` / `− up at the source`, × φ |
+| `reserve_process_{upward,downward}` | `max_share · c`, c = input capacity per unit at an input node (`_reserve._input_capacity_factor`: `p_indirect_input_cap`, `slope + section`, 1) |
+
+Per-arc simplifications (as the floors): a direct unit with several outputs
+has one arc per output from the same input, and the reserve term joins each
+of them on `(p, source)`, so the reserve needs headroom on every output arc
+(conservative; `_input_capacity_factor` de-duplicates `(p, n)`). An indirect
+unit's up reserve at an output (`maxOutputSum`) and down reserve at an input
+(`maxFlow` on the input arc) are the same "burn more" action but are
+checked in separate rows, so the headroom can be counted twice; a
+multi-input indirect unit is only kept within each input's own capacity.
+The reverse arc of a two-way unit (2way_2var) is a direct arc in
+`process_source_sink_eff`: down reserve at its node is headroom on the arc
+that draws from the node and a floor on the arc that feeds it. Connections
+are not coupled (Follow-up 2).
+
 ## Reserve shortfall multiplier
 
 `vq_reserve ∈ [0, 1]` (bounded for numerics) is multiplied by
@@ -152,9 +186,9 @@ the `≥` rows). The total is not written to the outputs.
 
 ## Follow-ups (not implemented)
 
-1. Increasing reserves on the source side (a consumer offering `down` by
-   consuming more) are not bounded by input headroom.
-2. Connections: a net-position rule (`down at n ≤ f_into_n + (cap·avail −
+1. (Done: "Source-side reserve and capacity" above.)
+2. Connections (owner question Q-c13-A, planned with the connection
+   online/capacity work, c14): a net-position rule (`down at n ≤ f_into_n + (cap·avail −
    f_out_of_n)`), interacting with `v_flow_back` and the other end.
 3. `reserveBalance` lacks the .mod's slope factor for source-side reserves
    of direct units; `_unit_floors._inverse_slope` follows the current
