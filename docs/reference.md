@@ -163,8 +163,8 @@ Input data is set with the following parameters:
 - `cumulative_max_capacity` - [MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
 - `cumulative_min_capacity` - [MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.
 - `fixed_cost` - [CUR/kWh] Annual fixed cost for storage. Constant or period.
-- `penalty_up` - [CUR/MWh] Penalty cost for energy not served (decreasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, Period or Time.
-- `penalty_down` - [CUR/MWh] Penalty cost for excess energy (increasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, Period or Time.
+- `penalty_up` - [CUR/MWh] Penalty cost for energy not served (decreasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, period, time, period+time or stochastic time. The default applies to every node without a value of its own, and to the periods and timesteps that a map leaves out.
+- `penalty_down` - [CUR/MWh] Penalty cost for excess energy (increasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, period, time, period+time or stochastic time. The default applies to every node without a value of its own, and to the periods and timesteps that a map leaves out.
 - `virtual_unitsize` - [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.
 - `self_discharge_loss` - [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
 - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant, period, time, period+time or stochastic time.

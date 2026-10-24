@@ -17,8 +17,9 @@ unitsize cascade.
 * :func:`p_state_unitsize_from_source`      — ``(n,)`` per-node
   unitsize; same cascade filtered to nodes in ``nodeState``.
 * :func:`p_penalty_up_from_source` /
-  :func:`p_penalty_down_from_source`        — ``(n, d, t)`` sentinel-
-  default scalar broadcast over the node × dt grid.
+  :func:`p_penalty_down_from_source`        — ``(n, d, t)`` over the
+  balance-node × dt grid: the authored value (any shape), else the
+  schema default.
 * :func:`p_process_source_conversion_flow_coeff_from_source` /
   :func:`p_process_sink_conversion_flow_coeff_from_source` —
   ``(p, source)`` / ``(p, sink)`` conversion-flow coefficients with
@@ -69,7 +70,15 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
 )
 
-from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
+from flextool.engine.input._param_shapes import (
+    ResolvedShape,
+    broadcast_to_period_time,
+    fill_default_over_grid,
+    has_silent_labels,
+    parameter_index_label_paths,
+    parameter_map_depth,
+    resolve_param_shape,
+)
 from flextool.engine.preprocess.params._derived import (
     UNITSIZE_DEFAULT,
     _entity_unitsize_lf,
@@ -215,91 +224,81 @@ def p_state_unitsize_from_source(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# §F.3 — p_penalty_up / p_penalty_down  (sentinel-default scalar broadcast)
+# §F.3 — p_penalty_up / p_penalty_down  (dense over the balance-node × dt grid, schema default where unset)
 # ---------------------------------------------------------------------------
 
 
+_PENALTY_DEFER = "stochastic time"
+
+
+def _resolved_penalty(source: "InputSource", parameter_name: str,
+                      dt: pl.DataFrame) -> "ResolvedShape | str | None":
+    """The authored ``node.<parameter_name>`` values, before the solve's ``dt`` filter.
+
+    Returns :data:`_PENALTY_DEFER` for a stochastic-time (rank 3) value, which the emit seed's pbt fold
+    produces; None when the resolver cannot classify the value (or nothing is authored and there is no
+    default).  The depth is read from the raw labels, without the period / time classifier, which raises
+    on the ``branch`` label of a stochastic-time map.  ``dt`` only serves the resolver's value-domain probe
+    of a silent-label map.
+    """
+    if parameter_map_depth(parameter_index_label_paths(source, "node", parameter_name)) > 2:
+        return _PENALTY_DEFER
+    return resolve_param_shape(source, "node", parameter_name, period_filter=dt)
+
+
 def _penalty_param_from_source(source: "InputSource",
-                                  parameter_name: str,
-                                  nodeBalance_df: pl.DataFrame | None,
-                                  dt: pl.DataFrame | None,
-                                  ) -> Param | None:
-    """Build ``p_penalty_<dir>[n, d, t]`` by broadcasting the per-node
-    scalar / Map (period→time) over the (n, d, t) grid restricted to
-    nodes in *nodeBalance_df*.
+                               parameter_name: str,
+                               nodeBalance_df: pl.DataFrame | None,
+                               dt: pl.DataFrame | None,
+                               ) -> Param | None:
+    """``p_penalty_<dir>[n, d, t]`` on every balance node and every ``(d, t)`` of the solve.
 
-    ``node.penalty_up`` / ``node.penalty_down`` carry a sentinel
-    default (e.g. 10000.0) on the schema; the source plugin returns one
-    row per node with the scalar (default-broadcast).  The CSV path
-    slices ``pdtNode.csv`` already broadcast to (n, d, t); we mirror by
-    cross-joining the per-node value against the active-solve dt grid.
+        p_penalty[n, d, t] = authored value of n at (d, t)     scalar, period, time or period × time map
+                           = authored[n, anchor(d), t]         d a stochastic branch period without own row
+                           = schema default                    n has no value, or its map leaves out d / t
+        ∀ n ∈ nodeBalance_df, (d, t) ∈ dt
 
-    Map-shaped inputs (per-period or per-(period, time) overrides) are
-    passed through their own indices and joined on the matching subset
-    of (d, t).  Scalar inputs broadcast to every (d, t).
+    The authored values go through ``resolve_param_shape`` → ``broadcast_to_period_time`` (mixed shapes
+    across nodes, branch-period inheritance), then :func:`fill_default_over_grid` gives every other cell
+    the default (``node.penalty_up`` / ``penalty_down`` default 10000), the same cascade as the emit
+    ``pdtNode``.  A node without a penalty row would have a free balance slack, because the objective
+    term is an inner-join product.
+
+    Returns None (the caller keeps the emit seed ``pdtNode``) for a stochastic-time value, for a value
+    the resolver cannot classify, and when the node set or ``dt`` is empty.  Unless a Map level carries a
+    silent label, the resolved frame is memoised on the run's reader (``run_memo``), so a roll only pays
+    the ``dt`` joins.
     """
     if (nodeBalance_df is None or nodeBalance_df.height == 0
             or dt is None or dt.height == 0):
         return None
-    # Phase 4.8f: defend axis-aware join keys on incoming frame params.
     _enums = get_global_axis_enums()
     if _enums is not None:
         nodeBalance_df = cast_frame_axes(nodeBalance_df, _enums)
         dt = cast_frame_axes(dt, _enums)
-    df = _try_param(source, "node", parameter_name)
-    if df is None or df.height == 0:
-        return None
-    nb_lf = nodeBalance_df.lazy().select(pl.col("n")).unique()
-    # Defensive re-cast: re-cast d/t to canonical Enum so joins below
-    # against ``base`` (which alias_to_axis-casts already) match dtype
-    # even when ``dt`` arrives with Utf8 d/t.
-    dt_lf = (dt.lazy()
-                .select(alias_to_axis("d", "d"), alias_to_axis("t", "t"))
-                .unique())
-    cols = df.columns
-    period_col = next((c for c in ("period", "d", "x") if c in cols), None)
-    time_col = next((c for c in ("t", "time", "step") if c in cols), None)
-    if period_col:
-        # Branch periods get their anchor period's rows.  This reader bypasses _param_shapes (axis by
-        # column name), so it applies the step itself; a silent "x" holding time labels matches no anchor.
-        df = inherit_active_branch_periods(df, group_keys=("name",), period_col=period_col)
-    base = df.lazy().select(
-        alias_to_axis("name", "n"),
-        *([alias_to_axis(period_col, "d")] if period_col else []),
-        *([alias_to_axis(time_col, "t")] if time_col else []),
-        pl.col("value").cast(pl.Float64),
-    )
-    if period_col and time_col:
-        out_lf = (nb_lf
-                    .join(base, on="n", how="inner")
-                    .join(dt_lf, on=["d", "t"], how="inner"))
-    elif period_col:
-        out_lf = (nb_lf
-                    .join(base, on="n", how="inner")
-                    .join(dt_lf, on="d", how="inner"))
-    elif time_col:
-        out_lf = (nb_lf
-                    .join(base, on="n", how="inner")
-                    .join(dt_lf, on="t", how="inner"))
+    # Without a silent label the resolved values do not depend on the solve (the labels decide every
+    # axis; only a silent-label map is probed against the solve's dt), so the run's reader memoises them.
+    memo = getattr(source, "run_memo", None)
+    if memo is not None and not has_silent_labels(parameter_index_label_paths(source, "node", parameter_name)):
+        resolved = memo(("node_penalty", parameter_name),
+                        lambda: _resolved_penalty(source, parameter_name, dt))
     else:
-        out_lf = (nb_lf
-                    .join(base, on="n", how="inner")
-                    .join(dt_lf, how="cross"))
-    out = (out_lf
-              .select("n", "d", "t", "value")
-              .sort("n", "d", "t")
-              .collect())
-    if out.height == 0:
+        resolved = _resolved_penalty(source, parameter_name, dt)
+    if resolved is None or resolved is _PENALTY_DEFER:
         return None
-    return Param(("n", "d", "t"), out)
+    authored = broadcast_to_period_time(resolved, "n", dt)
+    grid = (nodeBalance_df.select("n").unique()
+            .join(dt.select("d", "t").unique(), how="cross"))
+    return fill_default_over_grid(authored, grid, source.parameter_default("node", parameter_name),
+                                  name=f"node.{parameter_name}")
 
 
 def p_penalty_up_from_source(source: "InputSource",
                                 nodeBalance_df: pl.DataFrame | None,
                                 dt: pl.DataFrame | None,
                                 ) -> Param | None:
-    """``p_penalty_up[n, d, t]`` — broadcast ``node.penalty_up`` over
-    nodeBalance × dt.  See :func:`_penalty_param_from_source`.
+    """``p_penalty_up[n, d, t]`` — ``node.penalty_up`` over nodeBalance × dt.  See
+    :func:`_penalty_param_from_source`.
     """
     return _penalty_param_from_source(source, "penalty_up",
                                           nodeBalance_df, dt)
@@ -309,11 +308,32 @@ def p_penalty_down_from_source(source: "InputSource",
                                   nodeBalance_df: pl.DataFrame | None,
                                   dt: pl.DataFrame | None,
                                   ) -> Param | None:
-    """``p_penalty_down[n, d, t]`` — broadcast ``node.penalty_down`` over
-    nodeBalance × dt.  See :func:`_penalty_param_from_source`.
+    """``p_penalty_down[n, d, t]`` — ``node.penalty_down`` over nodeBalance × dt.  See
+    :func:`_penalty_param_from_source`.
     """
     return _penalty_param_from_source(source, "penalty_down",
                                           nodeBalance_df, dt)
+
+
+def apply_penalty_params(flex_data: object, source: "InputSource",
+                         dt: pl.DataFrame | None) -> None:
+    """Set ``p_penalty_up`` / ``p_penalty_down`` over ``nodeBalance ∪ nodeBalancePeriod`` × ``dt``.
+
+    Both node sets carry ``vq_state_up`` / ``vq_state_down``, so the penalty covers their union.  A None
+    result (stochastic-time value, unclassifiable map, empty node set or ``dt``) keeps the field as it is:
+    the emit seed ``pdtNode``.  Called by ``apply_derived_a`` and, on synthetic sub-solves (rolls, nested
+    sub-solves) that skip it, by ``_apply_db_overrides`` (PENALTY-1).
+    """
+    nb_df = getattr(flex_data, "nodeBalance", None)
+    nbp_df = getattr(flex_data, "nodeBalancePeriod", None)
+    penalty_nodes = nb_df
+    if nb_df is not None and nbp_df is not None and nbp_df.height > 0:
+        penalty_nodes = pl.concat([nb_df.select("n"), nbp_df.select("n")]).unique().select("n")
+    for field, producer in (("p_penalty_up", p_penalty_up_from_source),
+                            ("p_penalty_down", p_penalty_down_from_source)):
+        value = producer(source, penalty_nodes, dt)
+        if value is not None:
+            setattr(flex_data, field, value)
 
 
 # ---------------------------------------------------------------------------

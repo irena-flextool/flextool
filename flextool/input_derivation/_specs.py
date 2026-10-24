@@ -285,8 +285,8 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/node__penalty_method.csv",
     },
     {
-        "cl_pars": [("node", "penalty_down"), ("node", "self_discharge_loss"), ("node", "availability"),
-                    ("node", "storage_state_reference_value")],
+        "cl_pars": [("node", "penalty_down"), ("node", "penalty_up"), ("node", "self_discharge_loss"),
+                    ("node", "availability"), ("node", "storage_state_reference_value")],
         "header": "node,nodeParam,time,pt_node",
         "filename": "input/pt_node.csv",
         "filter_in_type": ["1d_map", "array", "time_series"],
@@ -294,8 +294,8 @@ _PARAMETER_SPECS: list[dict] = [
         "param_print": True,
     },
     {
-        "cl_pars": [("node", "penalty_down"), ("node", "self_discharge_loss"), ("node", "availability"),
-                    ("node", "storage_state_reference_value")],
+        "cl_pars": [("node", "penalty_down"), ("node", "penalty_up"), ("node", "self_discharge_loss"),
+                    ("node", "availability"), ("node", "storage_state_reference_value")],
         "header": "node,nodeParam,branch,time_start,time,pt_node",
         "filename": "input/pbt_node.csv",
         "filter_in_type": ["3d_map"],

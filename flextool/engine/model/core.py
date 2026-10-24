@@ -2630,6 +2630,7 @@ def _obj_balance_slack(b: _Build) -> Expr:
     # Σ_{(n,d,t)} vq_state_up[n,d,t] · penalty_up[n,d,t] · ncs[n,d] · w_op[d,t]
     #   + Σ_{(n,d,t)} vq_state_down[n,d,t] · penalty_down[n,d,t] · ncs[n,d] · w_op[d,t]
     #   ∀ (n,d,t) with balance slacks (nodeBalance ∪ nodeBalancePeriod, penalty_method ≠ off)
+    #   penalty is defined on every slack cell: the node's authored value, else the schema default
     #   ncs = node_capacity_for_scaling, factor 1 when the parameter is absent;   currency
     # Prices the energy a node balance cannot supply (up) or absorb (down); penalty in currency/MWh.
     # The slacks enter the balance without ncs, so with node_capacity_for_scaling ≠ 1 the effective

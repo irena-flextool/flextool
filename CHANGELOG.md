@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **A map of `penalty_up` / `penalty_down` on one node no longer makes the
+  other nodes' balance free.** When one node gave its penalty as a map (by
+  period, time or period and time), nodes with a constant penalty or the
+  default lost their penalty, so their unserved or excess energy cost
+  nothing. This happened on every solve type. Every node now keeps its own
+  value or the default, and periods or timesteps that a map leaves out get
+  the default. A time, period-and-time or stochastic `penalty_up` now also
+  applies in rolling solves, and a stochastic penalty no longer stops the
+  model.
+
 - **Rolling solves and the sub-solves of a nested investment use period-map
   values of efficiency, minimum load and profiles.** A unit or connection
   `efficiency` or a unit `min_load` given as a map keyed by period, and a

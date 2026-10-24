@@ -21,7 +21,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import numpy as np
@@ -161,6 +161,8 @@ class SpineDbReader:
         self._entity_subset_memo: dict[
             tuple[str, str, frozenset[str]], pl.DataFrame
         ] = {}
+        # Memo of :meth:`run_memo` (solve-agnostic derived values, same lifetime argument).
+        self._run_memo: dict[tuple, Any] = {}
 
         # Build caches once.
         from spinedb_api import DatabaseMapping, from_database
@@ -615,6 +617,30 @@ class SpineDbReader:
         if rows_axes is None:
             return set()
         return set(rows_axes)
+
+    def parameter_index_label_paths(self, entity_class: str,
+                                    parameter_name: str) -> "set[tuple[str | None, ...]]":
+        """The distinct raw ``index_name`` paths of the parameter's explicit values (the default's when it
+        has none); ``()`` for a scalar.  Walks the raw labels only, so it never raises on a label the
+        period / time classifier rejects (e.g. ``branch`` of a stochastic-time map)."""
+        cls_id, pdef = self._class_and_pdef(entity_class, parameter_name)
+        rows = self._param_rows.get((cls_id, pdef["id"]), [])
+        values = [v for _eid, v in rows if v is not None]
+        if not values and pdef["default_value"] is not None:
+            values = [pdef["default_value"]]
+        return {tuple(self._index_name_path(v)) for v in values}
+
+    def run_memo(self, key: tuple, factory: Callable[[], Any]) -> Any:
+        """``factory()``, memoised on the reader for its lifetime under ``key``.
+
+        For values derived from this reader's parameter data that do not depend on the solve, so that
+        callers running in every roll of a run (one reader serves every roll) compute them once.  The
+        caller guarantees that the value is solve-agnostic (e.g. it classifies silent Map labels against
+        the cascade-wide axis vocabulary, not a solve's ``dt``).
+        """
+        if key not in self._run_memo:
+            self._run_memo[key] = factory()
+        return self._run_memo[key]
 
     @staticmethod
     def _index_name_path(v: Any) -> "list[str | None]":

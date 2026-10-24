@@ -326,6 +326,16 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("node", "storage_state_reference_value"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
+    # Balance slack penalties.  Cascade: pbt → pt → pd → p → class default (write_pdtNode).  Rank 3
+    # (stochastic time: branch, analysis_time, time) is not a resolver shape: the reader
+    # (_arithmetic._penalty_param_from_source) detects it with parameter_map_depth and keeps the emit
+    # seed, whose pbt fold produces it.
+    ("node", "penalty_up"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
+    ("node", "penalty_down"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
     # ─── unit / connection: (period, time) Params ────────────────────────
     # PROCESS_TIME_PARAM ⊇ {availability}.
     # Cascade: pbt → pd → pt → p (write_pdtProcess).  ``processes`` in
@@ -888,6 +898,41 @@ def _read_index_names_from_source(
         else:
             out.append(c)
     return out
+
+
+def parameter_index_label_paths(
+    source: "InputSource",
+    entity_class: str,
+    parameter_name: str,
+) -> "set[tuple[str | None, ...]]":
+    """The distinct raw ``index_name`` paths of the parameter's values (``()`` = scalar), read without
+    classifying any level.
+
+    The period / time classifier (``parameter_shape_info`` on a ``PERIOD_TIME_PARAMS`` key) raises on an
+    explicit label that is not ``period`` / ``time`` (e.g. ``branch`` of a stochastic-time map), so a
+    caller that must recognise rank 3 before resolving asks this first.  Uses the source's own
+    ``parameter_index_label_paths`` when it has one (``SpineDbReader``, ``InMemoryReader``); other
+    sources fall back to the raw label list.  An unknown parameter has no paths.
+    """
+    fn = getattr(source, "parameter_index_label_paths", None)
+    try:
+        if fn is not None:
+            return set(fn(entity_class, parameter_name))
+        labels = _read_index_names_from_source(source, entity_class, parameter_name)
+    except (KeyError, AttributeError):
+        return set()
+    return {tuple(labels)}
+
+
+def parameter_map_depth(paths: "set[tuple[str | None, ...]]") -> int:
+    """Deepest Map nesting of :func:`parameter_index_label_paths` output (0 = scalars only)."""
+    return max((len(p) for p in paths), default=0)
+
+
+def has_silent_labels(paths: "set[tuple[str | None, ...]]") -> bool:
+    """Whether some Map level carries Spine's silent default label (``x`` / empty / None), whose axis the
+    resolver may decide by probing the solve's periods and timesteps."""
+    return any(_normalise_label(lbl) is None for p in paths for lbl in p)
 
 
 def _try_parameter_frame(
@@ -1851,3 +1896,70 @@ def promote_param_to_dt(
         return lf.join(dt_sel, on="t", how="inner")
     # missing both — scalar-per-entity broadcast over (d, t).
     return lf.join(dt_sel, how="cross")
+
+
+def fill_default_over_grid(
+    param: "Param | None",
+    grid: pl.DataFrame,
+    default: object,
+    *,
+    name: str,
+) -> "Param | None":
+    """``param`` over every row of ``grid``: the authored value where ``param`` has one, else ``default``.
+
+        value[k] = param[k restricted to param.dims]    where param has a row
+                 = default                              otherwise                ∀ k ∈ grid
+
+    ``grid`` holds the entity key and ``d`` (and ``t``) of the cells that must carry a value.  Build it
+    from the solve's ``dt`` **pairs** (``dt.select("d", "t")``), never as ``d.unique() × t.unique()``:
+    that product is not the timeline and explodes on long runs (CLAUDE.md invariant #2).
+    ``param.dims`` must be a subset of the grid columns (any shape from :func:`broadcast_to_period` /
+    :func:`broadcast_to_period_time`), so one left join on ``param.dims`` broadcasts the narrower shapes.
+    ``param=None`` means nothing is authored.  A non-numeric or None ``default`` (no schema default)
+    keeps only the grid cells that have an authored value (inner join).
+
+    The authored rows must be unique on ``param.dims``: a duplicate would duplicate grid rows and every
+    term built on them would count twice, so it raises :class:`FlexDataIntegrityError` naming ``name``.
+
+    Returns an eager Param (dims = the grid columns, rows sorted by them; consumers such as the Benders
+    hosted-node checks and the warm-start compare read ``.frame`` as a DataFrame), or None when the
+    result is empty.
+    """
+    from flextool.spinedb_backend._axis_enums import FlexDataIntegrityError
+
+    keys = list(grid.columns)
+    enums = get_global_axis_enums()
+    if enums is not None:
+        grid = cast_frame_axes(grid, enums)
+    grid = grid.select(keys).unique(maintain_order=True)
+    numeric = isinstance(default, (int, float)) and not isinstance(default, bool)
+    if param is None:
+        if not numeric:
+            return None
+        out = grid.with_columns(pl.lit(float(default), dtype=pl.Float64).alias("value"))
+    else:
+        dims = list(param.dims)
+        missing = [c for c in dims if c not in keys]
+        if missing:
+            raise ValueError(f"fill_default_over_grid({name}): Param dims {dims} are not all grid columns {keys}")
+        authored = param.lazy.select(*dims, pl.col("value").cast(pl.Float64)).collect()
+        dup = authored.select(dims).is_duplicated()
+        if dup.any():
+            first = authored.filter(dup).row(0, named=True)
+            raise FlexDataIntegrityError(
+                f"{name}: {int(dup.sum())} authored rows share their key on {dims} (e.g. {first}); each "
+                "cell may carry one value.")
+        if enums is not None:
+            authored = cast_frame_axes(authored, enums)
+        mismatched = [c for c in dims if authored.schema[c] != grid.schema[c]]
+        if mismatched:
+            # Cross-vocabulary dtypes on a key: compare on the grid's dtype; values outside it join nothing.
+            authored = authored.with_columns(
+                pl.col(c).cast(pl.Utf8).cast(grid.schema[c], strict=False) for c in mismatched)
+        out = grid.join(authored, on=dims, how="left" if numeric else "inner")
+        if numeric:
+            out = out.with_columns(pl.col("value").fill_null(float(default)))
+    out = out.select(*keys, "value").sort(keys)
+    if out.height == 0:
+        return None
+    return Param(tuple(keys), out)

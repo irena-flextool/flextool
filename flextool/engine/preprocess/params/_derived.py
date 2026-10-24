@@ -1777,34 +1777,12 @@ def apply_derived_a(
     apply_profile_cascade(flex_data, source, workdir, provider=provider)
 
     # 9. p_penalty_up / p_penalty_down (Δ.10 cluster F) ----------------
-    # Sentinel-default scalar broadcast over (n, d, t) restricted to
-    # nodeBalance nodes.  Mirrors ``flex_data.py:_load_node`` lines 695-700
-    # (the slice from ``pdtNode.csv``).
-    # Δ.12b: unconditional — penalty helpers always produce a Param
-    # when nodeBalance is non-empty (sentinel default applied inside).
-    from flextool.engine.preprocess.params._arithmetic import (
-        p_penalty_up_from_source,
-        p_penalty_down_from_source,
-    )
-    # The penalty callee broadcasts penalties over the node set it's GIVEN
-    # and filters to it.  Slack vars span ``nodeBalance ∪
-    # nodeBalancePeriod`` (period nodes also carry ``vq_state_up/down``),
-    # so pass the dtype-safe union — otherwise period-node slack is dropped
-    # from the objective penalty term.  Both frames come from the same
-    # ``rename_to_axis({"node":"n"})`` in ``flex_data.py:_load_node`` so dtypes
-    # align.  When the period set is empty/None the union collapses to
-    # exactly ``nb_df`` → byte-identical legacy behavior.
-    nb_df = getattr(flex_data, "nodeBalance", None)
-    nbp_df = getattr(flex_data, "nodeBalancePeriod", None)
-    penalty_nodes = nb_df
-    if (nb_df is not None and nbp_df is not None and nbp_df.height > 0):
-        penalty_nodes = (pl.concat([nb_df.select("n"), nbp_df.select("n")])
-                           .unique()
-                           .select("n"))
-    flex_data.p_penalty_up = p_penalty_up_from_source(
-        source, penalty_nodes, usable_dt)
-    flex_data.p_penalty_down = p_penalty_down_from_source(
-        source, penalty_nodes, usable_dt)
+    # Dense over (nodeBalance ∪ nodeBalancePeriod) × usable_dt: the authored value (scalar, period,
+    # time or period × time map, mixed across nodes), else the schema default.  A None result
+    # (stochastic-time value, unclassifiable map) keeps the seed (emit pdtNode, whose pbt fold carries a
+    # stochastic-time penalty).
+    from flextool.engine.preprocess.params._arithmetic import apply_penalty_params
+    apply_penalty_params(flex_data, source, usable_dt)
 
 
 # ---------------------------------------------------------------------------

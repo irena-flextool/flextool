@@ -128,26 +128,6 @@ def connection_transfer_method_from_source(source: "InputSource") -> pl.DataFram
 
 
 # ---------------------------------------------------------------------------
-# §5.2.1 — penalty (sentinel default ⇒ broadcast)
-
-
-def penalty_up_scalar_from_source(source: "InputSource") -> pl.DataFrame:
-    """``node.penalty_up`` per-node scalar (pre-broadcast over (d, t)).
-
-    The sentinel default (large positive value, e.g. 10000.0) is
-    applied at the source level (§4.6).  The downstream Derived helper
-    cross-joins this against ``(d, t)`` to produce ``p_penalty_up``.
-    """
-    df = source.parameter("node", "penalty_up")
-    return df.lazy().rename({"name": "n"}).select("n", "value").collect()
-
-
-def penalty_down_scalar_from_source(source: "InputSource") -> pl.DataFrame:
-    df = source.parameter("node", "penalty_down")
-    return df.lazy().rename({"name": "n"}).select("n", "value").collect()
-
-
-# ---------------------------------------------------------------------------
 # Existing capacity (object-class scalars, per-class then unioned for `e`)
 
 

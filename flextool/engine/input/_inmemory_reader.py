@@ -121,6 +121,14 @@ class InMemoryReader:
                 out.append(c)
         return out
 
+    def parameter_index_label_paths(self, entity_class: str,
+                                    parameter_name: str) -> "set[tuple[str | None, ...]]":
+        """Mirror of :meth:`SpineDbReader.parameter_index_label_paths`: the
+        frame's index columns (non-entity, non-value) as one label path."""
+        if self.parameter(entity_class, parameter_name).height == 0:
+            return set()
+        return {tuple(self.parameter_shape_info(entity_class, parameter_name))}
+
     def parameter_shape_variants(self, entity_class: str,
                                   parameter_name: str,
                                   ) -> "set[tuple[str, ...]]":

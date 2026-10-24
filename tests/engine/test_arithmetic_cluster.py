@@ -610,6 +610,113 @@ def test_p_penalty_up_inmemory_no_param_returns_none():
     assert ar.p_penalty_up_from_source(src, nb, dt) is None
 
 
+def _penalty_dt() -> pl.DataFrame:
+    return pl.DataFrame({"d": ["d1", "d1", "d2", "d2"], "t": ["t1", "t2", "t3", "t4"]})
+
+
+def test_p_penalty_up_mixed_shapes_keep_scalars_and_default():
+    """A period map on one node next to a scalar on another and no value on a third (#62): the scalar
+    stays on every (d, t), the map's node gets the default in the period its map leaves out, and the
+    node without a value gets the schema default."""
+    src = InMemoryReader(
+        entities={"node": pl.DataFrame({"name": ["n_a", "n_b", "n_c"]})},
+        parameters={
+            ("node", "penalty_up"): pl.DataFrame({
+                "name": ["n_a", "n_b"], "period": [None, "d1"], "value": [100.0, 200.0],
+            }),
+        },
+        defaults={("node", "penalty_up"): 10000.0},
+    )
+    nb = pl.DataFrame({"n": ["n_a", "n_b", "n_c"]})
+    p = ar.p_penalty_up_from_source(src, nb, _penalty_dt())
+    assert p is not None and p.dims == ("n", "d", "t")
+    got = {(n, d, t): v for n, d, t, v in p.frame.select(
+        [pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t")] + [pl.col("value")]).iter_rows()}
+    want = {}
+    for d, t in _penalty_dt().iter_rows():
+        want[("n_a", d, t)] = 100.0
+        want[("n_b", d, t)] = 200.0 if d == "d1" else 10000.0
+        want[("n_c", d, t)] = 10000.0
+    assert got == want
+
+
+def test_p_penalty_up_stochastic_time_keeps_seed():
+    """A rank-3 (branch, analysis_time, time) penalty is not a resolver shape: the producer returns None
+    and ``apply_penalty_params`` leaves the emit seed in place."""
+    src = InMemoryReader(
+        entities={"node": pl.DataFrame({"name": ["n_a"]})},
+        parameters={
+            ("node", "penalty_up"): pl.DataFrame({
+                "name": ["n_a"], "branch": ["b1"], "analysis_time": ["t1"], "t": ["t1"], "value": [5.0],
+            }),
+        },
+        defaults={("node", "penalty_up"): 10000.0},
+    )
+    nb = pl.DataFrame({"n": ["n_a"]})
+    assert ar.p_penalty_up_from_source(src, nb, _penalty_dt()) is None
+
+    class _Data:
+        nodeBalance = nb
+        nodeBalancePeriod = None
+        p_penalty_up = "seed"
+        p_penalty_down = "seed_down"
+
+    data = _Data()
+    ar.apply_penalty_params(data, src, _penalty_dt())
+    assert data.p_penalty_up == "seed"
+    assert data.p_penalty_down == "seed_down"   # unknown parameter on this source: seed kept
+
+
+_GRID = pl.DataFrame({"n": ["a", "a", "a", "b", "b", "b"],
+                      "d": ["d1", "d1", "d2", "d1", "d1", "d2"],
+                      "t": ["t1", "t2", "t3", "t1", "t2", "t3"]})
+
+
+@pytest.mark.parametrize("dims, rows, want_a", [
+    (("n",), {"n": ["a"], "value": [1.0]}, [1.0, 1.0, 1.0]),
+    (("n", "d"), {"n": ["a"], "d": ["d2"], "value": [2.0]}, [9.0, 9.0, 2.0]),
+    (("n", "t"), {"n": ["a"], "t": ["t2"], "value": [3.0]}, [9.0, 3.0, 9.0]),
+    (("n", "d", "t"), {"n": ["a"], "d": ["d1"], "t": ["t1"], "value": [4.0]}, [4.0, 9.0, 9.0]),
+], ids=["scalar", "period", "time", "period_time"])
+def test_fill_default_over_grid_shapes(dims, rows, want_a):
+    from polar_high import Param
+
+    from flextool.engine.input._param_shapes import fill_default_over_grid
+
+    out = fill_default_over_grid(Param(dims, pl.DataFrame(rows)), _GRID, 9.0, name="x")
+    assert out.dims == ("n", "d", "t")
+    assert isinstance(out.frame, pl.DataFrame)
+    f = out.frame
+    assert f.select("n", "d", "t").equals(_GRID.sort("n", "d", "t"))
+    assert f.filter(pl.col("n") == "a")["value"].to_list() == want_a
+    assert f.filter(pl.col("n") == "b")["value"].to_list() == [9.0, 9.0, 9.0]
+
+
+def test_fill_default_over_grid_without_default_or_values():
+    from polar_high import Param
+
+    from flextool.engine.input._param_shapes import fill_default_over_grid
+
+    authored = Param(("n", "d"), pl.DataFrame({"n": ["a"], "d": ["d2"], "value": [2.0]}))
+    inner = fill_default_over_grid(authored, _GRID, None, name="x")
+    assert inner.frame.rows() == [("a", "d2", "t3", 2.0)]
+    assert fill_default_over_grid(None, _GRID, None, name="x") is None
+    everywhere = fill_default_over_grid(None, _GRID, 7.0, name="x")
+    assert everywhere.frame.height == _GRID.height and set(everywhere.frame["value"]) == {7.0}
+
+
+def test_fill_default_over_grid_rejects_duplicate_keys():
+    """Duplicate authored keys would duplicate grid rows (terms counted twice): raise instead."""
+    from polar_high import Param
+
+    from flextool.engine.input._param_shapes import fill_default_over_grid
+    from flextool.spinedb_backend._axis_enums import FlexDataIntegrityError
+
+    dup = Param(("n", "d"), pl.DataFrame({"n": ["a", "a"], "d": ["d1", "d1"], "value": [1.0, 2.0]}))
+    with pytest.raises(FlexDataIntegrityError, match="node.penalty_up.*share their key"):
+        fill_default_over_grid(dup, _GRID, 9.0, name="node.penalty_up")
+
+
 def test_p_process_source_conversion_flow_coeff_inmemory_zero_drop():
     """Zero-coef row is reported in zero_pairs; non-default non-zero
     triggers a Param keyed on the surviving (p, source) set.

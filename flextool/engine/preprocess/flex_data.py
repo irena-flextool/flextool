@@ -5106,6 +5106,10 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         if _dt_noworkdir is not None and _dt_noworkdir.height > 0:
             flex_data.p_min_load = _drv.p_min_load_pdt_from_source(
                 db_reader, _dt_noworkdir)
+        # PENALTY-1 (no-workdir early-return): ``apply_derived_a`` won't run either; same producer as
+        # the synthetic PENALTY-1 below, over the CSV-loaded ``dt`` (None keeps the seed).
+        from flextool.engine.preprocess.params._arithmetic import apply_penalty_params
+        apply_penalty_params(flex_data, db_reader, _dt_noworkdir)
         return
     workdir_path = Path(workdir)
 
@@ -5122,8 +5126,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # skipped entirely.  Direct + Projection Params (passes 1-2) are
     # solve-agnostic and remain authoritative, and the solve-agnostic
     # producers re-wired below (RESERVE-1, SECTION-1, MINLOAD-1, PROFILE-1 —
-    # profiles are read DB-direct —, DELAY-1, CAPCOEF-1, INFLOW-1, NA-1,
-    # MINTIME-1) replace their CSV seeds.
+    # profiles are read DB-direct —, PENALTY-1, DELAY-1, CAPCOEF-1, INFLOW-1,
+    # NA-1, MINTIME-1) replace their CSV seeds.
     #
     # Δ.19 — for the synthetic ``<base>_<anchor>`` shape we additionally
     # produce the 8 invest-set frames from ``<base>``'s Spine entries
@@ -5235,6 +5239,19 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         _loadflex_prof("apply_db_overrides:pass_synthetic_profile")
         _timed("c.synth profile", apply_profile_cascade, flex_data, db_reader,
                workdir_path, provider=provider)
+
+        # PENALTY-1 — same class of gap as PROFILE-1.  The synthetic-solve
+        # early-return skips ``apply_derived_a``, whose step 9 is the
+        # DB-direct producer of ``p_penalty_up`` / ``p_penalty_down``; the
+        # seed (emit ``pdtNode``) has no period x time tier.  The producer is
+        # solve-agnostic (``source`` + the CSV-loaded ``nodeBalance`` / ``dt``)
+        # and memoises the authored values on the run's ``db_reader``, so a
+        # roll pays only the ``dt`` joins.  A stochastic-time value keeps the
+        # seed, whose pbt fold carries it.
+        from flextool.engine.preprocess.params._arithmetic import apply_penalty_params
+        _loadflex_prof("apply_db_overrides:pass_synthetic_penalty")
+        _timed("c.synth penalty", apply_penalty_params, flex_data, db_reader,
+               getattr(flex_data, "dt", None))
 
         # DELAY-1 — same class of gap: ``apply_derived_g`` produces
         # ``dtt__delay_duration``, ``p_process_delay_weight`` and
