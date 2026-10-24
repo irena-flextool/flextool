@@ -446,3 +446,53 @@ def test_rolling_reads_penalty_values_once_per_run(tmp_path_factory, monkeypatch
     steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("c9_memo_w"), keep_solutions=True)
     assert len(_rolls(steps)) == 7
     assert sorted(calls) == ["penalty_down", "penalty_up"], calls
+
+
+# ---------------------------------------------------------------------------
+# Group penalties (inertia; capacity margin and non-synchronous share the producer)
+
+
+def _inertia(tmp_path_factory, g2_penalty, *, g2_limit: bool = True):
+    """``coal_wind_inertia`` with ``electricity.penalty_inertia = 3000`` and a second inertia group ``g2``
+    (west) whose limit cannot be met, so its slack is used."""
+    values = [["group", "electricity", "penalty_inertia", scalar(3000.0)]]
+    if g2_limit:
+        values += [["group", "g2", "has_inertia", b64("yes", "str")],
+                   ["group", "g2", "inertia_limit", scalar(1.0e5)]]
+    if g2_penalty is not None:
+        values.append(["group", "g2", "penalty_inertia", g2_penalty])
+    return _run(tmp_path_factory, TESTS_JSON, "coal_wind_inertia", values,
+                entities=[["group", "g2", None], ["group__node", ["g2", "west"], None]])
+
+
+def _group_rows(step, field: str) -> dict[tuple[str, str], float]:
+    """Rows of ``electricity`` and ``g2`` (every other group gets the default too; they have no limit)."""
+    f = _frame(getattr(step.flex_data, field)).select("g", "d", "value")
+    assert not f.select("g", "d").is_duplicated().any()
+    return {(g, d): float(v) for g, d, v in f.iter_rows() if g in ("electricity", "g2")}
+
+
+def test_group_penalty_default_next_to_authored(tmp_path_factory) -> None:
+    """``g2`` has an inertia limit and no penalty of its own while ``electricity`` authors one: ``g2`` gets the
+    default 5000, so its slack is priced as with an explicit 5000.  Before the fix ``g2`` had no row and its
+    inertia slack was free."""
+    steps = _inertia(tmp_path_factory, None)
+    ref = _inertia(tmp_path_factory, scalar(5000.0))
+    rows = _group_rows(_last(steps), "pdGroup_penalty_inertia")
+    assert rows == {("electricity", "p2020"): 3000.0, ("g2", "p2020"): 5000.0}
+    assert rows == _group_rows(_last(ref), "pdGroup_penalty_inertia")
+    slack = utf8(_last(steps).solution.value("vq_inertia"))
+    assert float(slack.filter(pl.col("g") == "g2")["value"].sum()) > 0
+    assert _rel(_obj(steps), _obj(ref)) < 1e-9
+    free = _inertia(tmp_path_factory, None, g2_limit=False)
+    assert _obj(steps) > _obj(free) * (1 + 1e-6)
+
+
+def test_group_explicit_zero_penalty_stays_free(tmp_path_factory) -> None:
+    """An explicit ``penalty_inertia = 0`` keeps meaning "violation is free": ``g2`` has no penalty row and the
+    objective equals the run without ``g2``'s limit (guard: the default fill must not turn 0 into 5000)."""
+    steps = _inertia(tmp_path_factory, scalar(0.0))
+    rows = _group_rows(_last(steps), "pdGroup_penalty_inertia")
+    assert rows == {("electricity", "p2020"): 3000.0}
+    free = _inertia(tmp_path_factory, None, g2_limit=False)
+    assert _rel(_obj(steps), _obj(free)) < 1e-9

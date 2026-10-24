@@ -1382,19 +1382,14 @@ def read_parameters(
     # group_penalty_inertia / group_penalty_non_synchronous /
     # group_penalty_capacity_margin / group_inertia_limit / group_capacity_margin.
     #
-    # SCEN-6: ``pdGroup_penalty_capacity_margin`` is derived via
-    # ``_entity_period_scalar`` which drops null rows.  When a group has
-    # ``capacity_margin > 0`` but ``penalty_capacity_margin`` left blank
-    # (a common template pattern — e.g. xlsx ``Commodity_nodes``), the
-    # group lands in ``groupCapacityMargin`` (built from non-empty
-    # ``capacity_margin`` rows) but is absent from the penalty frame.
-    # ``calc_slacks.py`` indexes ``par.group_penalty_capacity_margin
-    # [s.groupCapacityMargin]`` and raises ``KeyError`` on the gap.
-    # Densify here with the same zero-fill convention used elsewhere for
-    # parity emitters: missing penalty ⇒ 0 (no slack-cost contribution,
-    # matching the LP: the slack term in
-    # ``_group_slack.compute_slack_costs`` is itself gated on a
-    # non-null ``pdGroup_penalty_capacity_margin``).
+    # SCEN-6: ``calc_slacks.py`` indexes ``par.group_penalty_capacity_margin
+    # [s.groupCapacityMargin]`` and raises ``KeyError`` on a group of
+    # ``groupCapacityMargin`` without a penalty column.  The penalty frame
+    # is dense over every group with the schema default (5000) since #62,
+    # but an explicit ``penalty_capacity_margin = 0`` drops the group's
+    # rows (no slack term in ``_group_slack``: the violation is free).
+    # Densify here with the matching zero-fill: missing penalty ⇒ 0 (no
+    # slack-cost contribution, as in the LP).
     if (flex_data.groupCapacityMargin is not None
             and flex_data.groupCapacityMargin.height > 0):
         _group_cap_margin_universe = (

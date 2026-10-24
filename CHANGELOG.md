@@ -10,6 +10,12 @@
   applies in rolling solves, and a stochastic penalty no longer stops the
   model.
 
+- **A group with an inertia, non-synchronous or capacity margin limit but no
+  penalty of its own now gets the default penalty (5000) when another group
+  sets one.** Before, such a group had no penalty at all, so violating its
+  limit cost nothing and the limit had no effect. A penalty of 0 still makes
+  the violation free.
+
 - **Rolling solves and the sub-solves of a nested investment use period-map
   values of efficiency, minimum load and profiles.** A unit or connection
   `efficiency` or a unit `min_load` given as a map keyed by period, and a

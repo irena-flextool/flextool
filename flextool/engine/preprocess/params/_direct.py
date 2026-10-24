@@ -36,6 +36,7 @@ from flextool.engine.input._axis_enums import (cast_frame_axes,
 from flextool.engine.input._param_shapes import (
     broadcast_to_period,
     broadcast_to_period_time,
+    fill_default_over_grid,
     resolve_param_shape,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
@@ -842,17 +843,43 @@ def pdGroup_capacity_margin_from_source(source: "InputSource",
         resolved, "g", period_filter, filter_zero=True)
 
 
+def _group_penalty_from_source(source: "InputSource", parameter_name: str,
+                               period_filter: pl.DataFrame | None) -> Param | None:
+    """``group.<parameter_name>`` → ``Param(("g", "d"))`` on every group and active period.
+
+        penalty[g, d] = authored value of g at d         scalar or period map
+                      = schema default (5000)            g has no value, or its map leaves out d
+        ∀ g ∈ group, d ∈ period_filter;  rows with penalty 0 are dropped (no slack term)
+
+    ``_try_parameter_frame`` returns the explicit rows only once any group authors a value, so without the
+    fill a group with a limit but no penalty of its own had a free slack (the objective term is an
+    inner-join product).  The zero filter runs after the fill: an explicit 0 stays "no term" (free
+    slack, the authored meaning) instead of becoming the default.  Without a period filter the authored
+    rows are returned as before (no grid to fill).
+    """
+    resolved = resolve_param_shape(source, "group", parameter_name, period_filter=period_filter)
+    if period_filter is None or period_filter.height == 0:
+        return broadcast_to_period(resolved, "g", period_filter, filter_zero=True)
+    authored = broadcast_to_period(resolved, "g", period_filter)
+    grid = (source.entities("group").lazy().pipe(rename_to_axis, {"name": "g"}).select("g")
+            .join(period_filter.lazy().select("d").unique(), how="cross").collect())
+    filled = fill_default_over_grid(authored, grid, source.parameter_default("group", parameter_name),
+                                    name=f"group.{parameter_name}")
+    if filled is None:
+        return None
+    out = filled.frame.filter(pl.col("value") != 0.0)
+    if out.height == 0:
+        return None
+    return Param(("g", "d"), out)
+
+
 def pdGroup_penalty_capacity_margin_from_source(source: "InputSource",
                                                  period_filter: pl.DataFrame | None = None,
                                                  ) -> Param | None:
-    """``group.penalty_capacity_margin`` → ``Param(("g","d"))``.
-    Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
+    """``group.penalty_capacity_margin`` → ``Param(("g","d"))``: authored value, else the schema default; zero rows
+    dropped.  See :func:`_group_penalty_from_source`.
     """
-    resolved = resolve_param_shape(
-        source, "group", "penalty_capacity_margin",
-        period_filter=period_filter)
-    return broadcast_to_period(
-        resolved, "g", period_filter, filter_zero=True)
+    return _group_penalty_from_source(source, "penalty_capacity_margin", period_filter)
 
 
 def pdGroup_inertia_limit_from_source(source: "InputSource",
@@ -870,13 +897,10 @@ def pdGroup_inertia_limit_from_source(source: "InputSource",
 def pdGroup_penalty_inertia_from_source(source: "InputSource",
                                          period_filter: pl.DataFrame | None = None,
                                          ) -> Param | None:
-    """``group.penalty_inertia`` → ``Param(("g","d"))``.
-    Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
+    """``group.penalty_inertia`` → ``Param(("g","d"))``: authored value, else the schema default; zero rows
+    dropped.  See :func:`_group_penalty_from_source`.
     """
-    resolved = resolve_param_shape(
-        source, "group", "penalty_inertia", period_filter=period_filter)
-    return broadcast_to_period(
-        resolved, "g", period_filter, filter_zero=True)
+    return _group_penalty_from_source(source, "penalty_inertia", period_filter)
 
 
 def pdGroup_non_synchronous_limit_from_source(source: "InputSource",
@@ -895,14 +919,10 @@ def pdGroup_non_synchronous_limit_from_source(source: "InputSource",
 def pdGroup_penalty_non_synchronous_from_source(source: "InputSource",
                                                  period_filter: pl.DataFrame | None = None,
                                                  ) -> Param | None:
-    """``group.penalty_non_synchronous`` → ``Param(("g","d"))``.
-    Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
+    """``group.penalty_non_synchronous`` → ``Param(("g","d"))``: authored value, else the schema default; zero rows
+    dropped.  See :func:`_group_penalty_from_source`.
     """
-    resolved = resolve_param_shape(
-        source, "group", "penalty_non_synchronous",
-        period_filter=period_filter)
-    return broadcast_to_period(
-        resolved, "g", period_filter, filter_zero=True)
+    return _group_penalty_from_source(source, "penalty_non_synchronous", period_filter)
 
 
 # §1.16 — group invest/divest 1d_map(period) — drop zeros to match CSV
