@@ -12,6 +12,16 @@
   price of a period is the shadow price of the last roll that covers the
   period.
 
+- **Warm-started rolling solves across period boundaries.** When two
+  consecutive rolls had the same number of timesteps and periods but split
+  them differently between the periods (a window moving across a period
+  boundary), or a timeblock started at a different step inside the window,
+  the warm start reused the previous roll's model unchanged: per-period
+  terms such as a per-period CO2 price, CO2 limit or inflation were applied
+  to the wrong timesteps. Such rolls are now rebuilt. Results of rolling
+  solves over several periods can change in the rolls that cross a period
+  boundary; rolls inside one period are not affected.
+
 - **Units with an online variable no longer need a `min_load`, and
   `min_load_efficiency` units get defaults instead of losing their fuel use.**
   An online unit stopped the model when no unit in the model had a
