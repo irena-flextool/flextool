@@ -19,7 +19,7 @@ from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.model._common import _entity_rows, _has_rows, _var_view
+from flextool.engine.model._common import _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap, _var_view
 from flextool.engine.input._param_shapes import promote_param_to_dt
 
 if TYPE_CHECKING:
@@ -690,7 +690,8 @@ def add_constraints(b: "_Build") -> None:
     #   + vq_term[r,ud,g,d,t]
     #   ≥ up:   Σ_{(f,s,n) ∈ process_source_sink, (f,r,ud,n) ∈ lfr_g} v_flow[f,s,n,d,t] · unitsize[f] · ratio[f,r,ud,n]
     #     down: Σ_{(f,n,k) ∈ eff_out, (f,r,ud,n) ∈ lfr_g} (v_flow[f,n,k,d,t] · unitsize[f] · slope[f,d,t]
-    #                                                    + v_online[f,d,t] · section[f,d,t] · unitsize[f]) · ratio[f,r,ud,n]
+    #                                                    + v_online[f,d,t] · section[f,d,t] · unitsize[f])
+    #                                                   · ratio[f,r,ud,n]
     #           + Σ_{(f,n,k) ∈ process_source_sink \ eff_out, (f,r,ud,n) ∈ lfr_g} v_flow[f,n,k,d,t] · unitsize[f]
     #               · ratio[f,r,ud,n]
     #   ∀ (r,ud,g,f) ∈ fail_g, (d,t) ∈ dt
@@ -821,7 +822,8 @@ def _input_capacity_factor(d, idx: pl.DataFrame) -> "Param | None":
     1 at a node the process feeds and for connections.  At an input node of a unit (n the source of one of
     its arcs and not the sink of any): ``p_indirect_input_cap[p, n, p]`` for an indirect unit, ``slope +
     section`` (section only for min_load_efficiency units with online variables) for a direct unit's
-    input→output arc, 1 for a sink-less unit and conversion_flow_coeff = 0 inputs.  A node that is both an
+    input→output arc, 1 for a sink-less unit and conversion_flow_coeff = 0 inputs (they have no capacity).  A
+    missing input cap of a capped indirect input raises (``_common._indirect_input_cap``).  A node that is both an
     input and an output of the same unit keeps the output rule.  A direct unit with several outputs has one
     arc per output from the same input; ``(p, n)`` is de-duplicated so each row gets one factor.  None when no
     row is at an input node (the rows keep the plain ``max_share`` form) or the data to tell is missing
@@ -857,15 +859,30 @@ def _input_capacity_factor(d, idx: pl.DataFrame) -> "Param | None":
             .join(kind, on=["__p", "__n"], how="left"))
     grid = (grid.join(ind_p, on="__p", how="left") if ind_p is not None
             else grid.with_columns(pl.lit(None, pl.Boolean).alias("__ind")))
-    in_cap = getattr(d, "p_indirect_input_cap", None)
-    if in_cap is not None:
-        cap = (_u8(in_cap.frame.lazy().select(*keys, "d", "t", "value"), [*keys, "d", "t"])
-               .filter(pl.col("sink") == pl.col("p"))
+    # Capped input arcs of indirect units in the rows: their p_indirect_input_cap (raises when missing, as
+    # maxInputFlow_online does).  conversion_flow_coeff = 0 inputs have no cap: factor 1 (__unc).
+    ind_in = (inputs.filter(pl.col("sink") == pl.col("p"))
+              .join(in_rows.lazy().select(pl.col("__p").alias("p"), pl.col("__n").alias("n")), on=["p", "n"],
+                    how="semi"))
+    if ind_p is not None:
+        ind_in = ind_in.join(ind_p.select(pl.col("__p").alias("p")), on="p", how="semi")
+    else:
+        ind_in = ind_in.head(0)
+    ind_in = ind_in.select("p", pl.col("n").alias("source"), "sink").collect()
+    unc = getattr(d, "process_source_sink_uncapped", None)
+    unc_keys = (_u8(unc.lazy().select(keys), keys).select(pl.col("p").alias("__p"), pl.col("source").alias("__n"))
+                .unique().with_columns(pl.lit(True).alias("__unc"))
+                if unc is not None and unc.height > 0 else None)
+    capped_in = _drop_uncapped(d, ind_in)
+    if capped_in.height > 0:
+        cap = (_u8(_indirect_input_cap(d, capped_in).lazy(), [*keys, "d", "t"])
                .select(pl.col("p").alias("__p"), pl.col("source").alias("__n"), "d", "t",
                        pl.col("value").alias("__cap")))
         grid = grid.join(cap, on=["__p", "__n", "d", "t"], how="left")
     else:
         grid = grid.with_columns(pl.lit(None, pl.Float64).alias("__cap"))
+    grid = (grid.join(unc_keys, on=["__p", "__n"], how="left") if unc_keys is not None
+            else grid.with_columns(pl.lit(None, pl.Boolean).alias("__unc")))
     slope = getattr(d, "p_slope", None)
     if slope is not None:
         grid = grid.join(_u8(promote_param_to_dt(slope, d.dt).select(pl.col("p").alias("__p"), "d", "t",
@@ -875,7 +892,8 @@ def _input_capacity_factor(d, idx: pl.DataFrame) -> "Param | None":
         grid = grid.with_columns(pl.lit(None, pl.Float64).alias("__slope"))
     grid = _with_section(d, grid)
     direct_c = pl.col("__slope").fill_null(1.0) + pl.col("__sec").fill_null(0.0)
-    value = (pl.when(pl.col("__in_arc") & pl.col("__ind").fill_null(False)).then(pl.col("__cap").fill_null(1.0))
+    value = (pl.when(pl.col("__in_arc") & pl.col("__ind").fill_null(False) & ~pl.col("__unc").fill_null(False))
+             .then(pl.col("__cap"))
              .when(pl.col("__in_arc")).then(pl.lit(1.0))
              .otherwise(direct_c))
     c_in = grid.select("__p", "__n", "d", "t", value.alias("value"))

@@ -74,6 +74,8 @@ def _record_unmargined_inflow(provider, solve_data_dir, *, applying: bool, refre
       solve sharing this Provider — or a margin is about to be applied, overwrite it with the current
       ``pdtNodeInflow`` (still un-margined at this point), so a stale frame never survives;
     * otherwise (the adder): write it only when applying and the multiplier has not written it already.
+
+    Raises ``RuntimeError`` when the frame must be written but ``pdtNodeInflow`` is missing.
     """
     key = _provider_key(solve_data_dir / "pdtNodeInflow_unmargined.csv")
     exists = provider.has(key)
@@ -84,7 +86,11 @@ def _record_unmargined_inflow(provider, solve_data_dir, *, applying: bool, refre
         return
     df = provider.get(_provider_key(solve_data_dir / "pdtNodeInflow.csv"))
     if df is None:
-        return
+        # emit_pdtNodeInflow emits every solve; without it the recorded frame would be stale (an
+        # earlier solve's demand) or missing while a margin is applied.
+        raise RuntimeError(
+            "energy margin: solve_data/pdtNodeInflow is missing, so the un-margined inflow "
+            "(solve_data/pdtNodeInflow_unmargined) cannot be recorded for this solve.")
     _emit(provider, UNMARGINED_INFLOW_KEY, df)
 
 

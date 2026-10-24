@@ -133,7 +133,7 @@ Activation (`_reserve_methods.demanded_reserves`, shared by
 relationships are active when the (reserve, up/down) has a requirement — a
 non-zero `reservation` on some group, a dynamic group driven by an
 `increase_reserve_ratio` at one of its nodes (or by its own group ratio), or an n-1 group with a
-`large_failure_ratio` at one of its nodes (owner Q5, 2026-10-24). A dynamic
+`large_failure_ratio` at one of its nodes: dynamic and n-1 requirements are reserve demand by themselves. A dynamic
 / n-1 group without a driving ratio stays inactive. An n-1 ratio on a
 process without a flow in the failing direction activates the reserve with
 no n-1 row (inert columns).
@@ -187,8 +187,8 @@ the `≥` rows). The total is not written to the outputs.
 ## Follow-ups (not implemented)
 
 1. (Done: "Source-side reserve and capacity" above.)
-2. Connections (owner question Q-c13-A, planned with the connection
-   online/capacity work, c14): a net-position rule (`down at n ≤ f_into_n + (cap·avail −
+2. Connections (not coupled yet; planned with the rewrite of the connection
+   capacity and online rows): a net-position rule (`down at n ≤ f_into_n + (cap·avail −
    f_out_of_n)`), interacting with `v_flow_back` and the other end.
 3. `reserveBalance` lacks the .mod's slope factor for source-side reserves
    of direct units; `_unit_floors._inverse_slope` follows the current
@@ -214,4 +214,4 @@ the `≥` rows). The total is not written to the outputs.
    connections), which `nodeBalance_eq` counts
    (`nodeBalance_back_flow_terms`): a one-variable connection flowing
    backwards into the group, or failing while doing so, is not counted.
-   Planned with the connection online/capacity work (c14).
+   Planned with the rewrite of the connection capacity and online rows.

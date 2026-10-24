@@ -1,8 +1,8 @@
-"""The group ``increase_reserve_ratio`` adds demand to the dynamic requirement (#23(c), owner Q4 2026-10-24).
+"""The group ``increase_reserve_ratio`` adds demand to the dynamic requirement (#23(c)): ratio × demand, per step.
 
 ``reserveBalance_dynamic_eq[r, ud, g, d, t]`` gets ``+ ratio_g · Σ_{n ∈ g} max(−inflow[n,d,t], 0) / Δt[d,t]``
 (``_reserve.group_demand_requirement``): the demand of the group's nodes in MW in each step, each node's
-negative inflow clipped before the group sum, without the invest-solve energy margin (Q-c13-C default: the
+negative inflow clipped before the group sum, without the invest-solve energy margin (the
 margin is an adequacy device, not load).  The parameter alone activates the reserve, the shortfall scale
 covers the term, and a ratio on a group without a dynamic method is ignored with a warning.  Before, the
 parameter was exported but never read.

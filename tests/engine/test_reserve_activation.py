@@ -1,4 +1,4 @@
-"""Dynamic and n-1 reserve requirements are reserve demand by themselves (#40, owner Q5 2026-10-24).
+"""Dynamic and n-1 reserve requirements are reserve demand by themselves (#40).
 
 A reserve's relationships ``(p, r, ud, n)`` get ``v_reserve`` (``prundt``) when ``(r, ud)`` has a requirement
 (``_reserve_methods.demanded_reserves``): a non-zero ``reservation`` on some group, a dynamic group driven by an

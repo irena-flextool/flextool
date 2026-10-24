@@ -538,6 +538,20 @@ Before the fix the reserve was inert (no `v_reserve`, no n-1 row); now coal's fa
   Σ 11 940 → 8 207, the battery cycles more (west from/to connections 50 / −11 167 →
   260 / −11 399), `water_pump` runs 1 917 instead of 2 000 MWh and `water_source` gets a
   downward slack (83.4 MWh).  Upward reserve slack penalty stays 0.
+  Reconciliation (objective terms of the solved LP, M CUR): `v_flow` costs (fuel, CO2,
+  variable) 6 678.08 → 7 669.90 (+991.82), `v_online_linear` 2 675.83 → 3 069.99
+  (+394.16), `v_startup_linear` 136.12 → 160.37 (+24.25), new battery storage investment
+  `v_invest_n[battery,p2020]` 278.5 MWh (+72.14; `battery_inverter` 34.8 MW, no cost
+  term), `vq_state_down` (the `water_source` slack) +73.10, `vq_state_up` unchanged
+  1 095.00: Σ +1 555.47 = the objective change.  In the realized `costs__dt.csv` (p2020)
+  the per-step sums move by +338 660 CUR: commodity +171 046, CO2 +145 389, starts
+  +5 536, downward slack +16 689 (= 83.44 MWh × `penalty_down` 200 at `water_source`).
+  Why the pump runs less: `water_pump` must draw 1 MWh of west electricity per MWh of
+  water (`water_pump_fix`), and in t0001, t0012 and t0025 (25.3, 4.7 and 53.5 MWh) the
+  marginal west electricity — coal now committed and dispatched with its n-1 reserve
+  held on curtailed wind — costs more than leaving the water at the source at
+  200 CUR/MWh.  The new battery capacity is what carries the extra battery cycling
+  listed above.
 - Coal's own `n_1` reserve is degenerate: it helps no row (it is excluded from its own
   failure row and coal is the only failing process), so its column is 0 at this solver
   but not unique.

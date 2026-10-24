@@ -1,13 +1,14 @@
 """Reserve at a unit's input node: headroom for "consume more", ``max_share`` of the input capacity (#42, #23(a)).
 
-Owner Q3 (2026-10-24): ``max_share`` is set on the unit–node relationship, so it is a share of THAT arc's
+``max_share`` is set on the unit–node relationship, so it is a share of THAT arc's
 capacity (input arc → input capacity), and a unit consuming at full capacity cannot offer more "consume more"
 (downward) reserve at its input.  Downward reserve at a unit's source node now sits on the LHS of the arc's
 capacity rows (``maxFlow``, ``maxFlow_online_*``, the new ``maxInputFlow_online_*`` of an indirect unit's input
 arc, ``profile_flow_upper_limit``), converted to the arc's flow (factor 1 where v_flow is the input, 1/slope on a
 direct input→output arc).  ``reserve_process_*`` at an input node caps the reserve at ``max_share`` × the input
 capacity (``_reserve._input_capacity_factor``).  Output-side ``max_share`` stays ``max_share`` × built capacity
-(Q6).  Connections are unchanged (Q-c13-A, planned with the connection work).
+(about how far the asset can be trusted).  Connections are not coupled yet (planned with the rewrite of the
+connection capacity rows).
 
 Fixtures: ``tests.json`` (``coal`` 500 MW at west, ``coal_chp`` indirect coal_market → west + heat, ``heat``
 node) plus ``e_boiler``: west → heat, efficiency 0.5, 100 MW; heat −300 MW with ``penalty_up`` 1000, west
@@ -223,7 +224,7 @@ def test_profile_rows_carry_source_reserve(tmp_path_factory) -> None:
 
 
 def test_output_side_max_share_unchanged(tmp_path_factory) -> None:
-    """Q6 guard: coal_plant (linear UC) offering up reserve at its output west with max_share 0.2 keeps
+    """Guard: coal_plant (linear UC) offering up reserve at its output west with max_share 0.2 keeps
     reserve_process_upward ≤ 0.2 · existing_count (built capacity, not online capacity)."""
     ents, vals = _reserve("ru", "up", "electricity", [(PLANT, "west", 0.2)], 50.0)
     step = solve(tmp_path_factory, alt="in_out", base_chain=["init", "west", "coal"], entities=ents,
@@ -238,7 +239,7 @@ def test_output_side_max_share_unchanged(tmp_path_factory) -> None:
 
 
 def test_connection_source_reserve_unchanged(tmp_path_factory) -> None:
-    """Q-c13-A default: west_east offering down reserve at its source west gets no reserve term in its
+    """Connections are not coupled yet: west_east offering down reserve at its source west gets no reserve term in its
     maxFlow rows (connections are coupled in the connection work, not here)."""
     ents, vals = _reserve("rd", "down", "electricity", [("west_east", "west", 1.0)], 50.0, cls="connection")
     step = solve(tmp_path_factory, alt="in_conn", base_chain=["init", "west", "coal", "network"], entities=ents,
@@ -247,3 +248,67 @@ def test_connection_source_reserve_unchanged(tmp_path_factory) -> None:
     assert rows
     for row, terms in rows.items():
         assert not [c for c in terms if c.startswith("v_reserve[")], row
+
+
+def test_profile_lower_limit_subtracts_source_up_reserve(tmp_path_factory) -> None:
+    """A profile lower limit on e_boiler's arc with an upward ("consume less") reserve at its input west:
+    profile_flow_lower_limit carries the reserve with factor −1/slope = −0.5 (the reserve lowers the flow)."""
+    ents, vals = _reserve("ru", "up", "electricity", [(EB, "west", 1.0)], 20.0)
+    ents.append(["unit__node__profile", [EB, "heat", "wind_profile"], None])
+    vals.append(["unit__node__profile", [EB, "heat", "wind_profile"], "profile_method", b64("lower_limit", "str")])
+    step = solve(tmp_path_factory, alt="in_prof_lo", base_chain=BASE + ["wind"], entities=EB_ENTS + ents,
+                 values=EB_VALS + vals)
+    rows = _row_terms(build(step.flex_data), "profile_flow_lower_limit", f"{EB},west,heat,")
+    assert len(rows) == step.flex_data.dt.height
+    for row, terms in rows.items():
+        assert _coef(terms, f"v_reserve[{EB},ru,up,west,") == pytest.approx(-0.5), row
+
+
+def test_indirect_input_arc_headroom_integer(tmp_path_factory) -> None:
+    """As test_indirect_input_arc_headroom with binary online variables on coal_chp: the
+    maxInputFlow_online_integer rows carry the fuel flow, the reserve (1) and −input_cap on v_online_integer,
+    and fuel + reserve ≤ input_cap × online capacity at every step."""
+    e2, v2 = _reserve("rf", "down", "fuel", [(CHP, COAL, 0.5)], 300.0)
+    step = solve(tmp_path_factory, alt="in_side_int", base_chain=BASE[:3] + ["coal_chp", "heat"], entities=e2,
+                 values=v2 + [["constraint", "coal_chp_fix", "is_enabled", b64("no", "str")],
+                              ["node", "west", "inflow", b64(-250.0, "float")],
+                              ["unit", CHP, "startup_method", b64("binary", "str")],
+                              ["unit", CHP, "min_load", b64(0.4, "float")]])
+    rows = _row_terms(build(step.flex_data), "maxInputFlow_online_integer", f"{CHP},{COAL},{CHP},")
+    assert len(rows) == step.flex_data.dt.height
+    cap = float(utf8(step.flex_data.p_indirect_input_cap.frame).filter(
+        (pl.col("p") == CHP) & (pl.col("source") == COAL))["value"][0])
+    for row, terms in rows.items():
+        assert _coef(terms, f"v_reserve[{CHP},rf,down,{COAL},") == pytest.approx(1.0), row
+        assert _coef(terms, f"v_flow[{CHP},{COAL},{CHP},") == pytest.approx(1.0), row
+        assert _coef(terms, f"v_online_integer[{CHP},") == pytest.approx(-cap), row
+    fuel = flow(step, CHP, COAL, CHP)
+    res = reserve(step, CHP, "rf", COAL)
+    assert ((fuel + res - cap * online(step, CHP, "integer")) <= 1e-5).all()
+
+
+def test_source_side_rows_in_rolls(tmp_path_factory) -> None:
+    """Rolling solve (12 h horizon, 6 h jump): in every roll e_boiler's arc rows carry the input-side down
+    reserve with 1/efficiency⁻¹ = 0.5 and reserve_process_downward caps it at max_share 0.2 × the input
+    capacity (100 MW / 0.5) — the numbers of the JSON input."""
+    from tests.engine._unit_db import make_db, run
+
+    ents, vals = _rd(0.2)
+    url, scen = make_db(tmp_path_factory, alt="in_roll", base_chain=BASE, entities=EB_ENTS + ents,
+                        values=EB_VALS + vals + [
+                            ["solve", "y2020_2day_dispatch", "solve_mode", b64("rolling_window", "str")],
+                            ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", b64(12.0, "float")],
+                            ["solve", "y2020_2day_dispatch", "rolling_solve_jump", b64(6.0, "float")]])
+    steps = run(tmp_path_factory, url, scen)
+    assert len(steps) > 2
+    for name, step in steps.items():
+        fd = step.flex_data
+        us = unitsize(step, EB)
+        pb = build(fd)
+        rows = _row_terms(pb, "maxFlow", f"{EB},west,heat,")
+        assert len(rows) == fd.dt.height, name
+        for row, terms in rows.items():
+            assert _coef(terms, f"v_reserve[{EB},rd,down,west,") == pytest.approx(0.5), (name, row)
+        rhs = _row_rhs(pb, "reserve_process_downward", f"{EB},rd,down,west,")
+        assert len(rhs) == fd.dt.height, name
+        assert all(v == pytest.approx(0.2 * (1 / 0.5) * 100.0 / us) for v in rhs.values()), name

@@ -13,7 +13,8 @@ from polar_high import Lag, Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.model._common import (
-    _availability_factor, _capped_arcs, _coef_factor, _entity_rows, _indirect_sum_arcs, _utf8_keys, _var_view,
+    _availability_factor, _capped_arcs, _coef_factor, _drop_uncapped, _entity_rows, _indirect_input_cap,
+    _indirect_sum_arcs, _utf8_keys, _var_view,
 )
 
 if TYPE_CHECKING:
@@ -341,34 +342,24 @@ def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame"
     """maxInputFlow_online rows of one UC class (see the EQ. header in :func:`add_constraints`)."""
     d = b.d
     arcs = b.reserve_down_input_arcs
-    in_cap = getattr(d, "p_indirect_input_cap", None)
     indirect = getattr(d, "process_indirect", None)
-    if (arcs is None or not b.reserve_down_at_source or in_cap is None
-            or indirect is None or indirect.height == 0):
+    if arcs is None or not b.reserve_down_at_source or indirect is None or indirect.height == 0:
         return
     keys = ["p", "source", "sink"]
     sel = (_utf8_keys(arcs.lazy(), keys)
            .filter(pl.col("_sink") == pl.col("_p"))
            .join(_utf8_keys(indirect.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi")
            .join(_utf8_keys(online_set.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi"))
-    # the arc rows of v_flow (process_source_sink dtypes), restricted to sel
+    # the arc rows of v_flow (process_source_sink dtypes), restricted to sel; conversion_flow_coeff = 0 inputs
+    # are uncapped (no capacity row, as in maxFlow_online)
     pss = d.process_source_sink.select(keys).unique()
-    in_arcs = (_utf8_keys(pss.lazy(), keys)
-               .join(sel.select("_p", "_source", "_sink"), on=["_p", "_source", "_sink"], how="semi")
-               .select(keys).collect())
+    in_arcs = _drop_uncapped(d, _utf8_keys(pss.lazy(), keys)
+                             .join(sel.select("_p", "_source", "_sink"), on=["_p", "_source", "_sink"], how="semi")
+                             .select(keys).collect())
     if in_arcs.height == 0:
         return
     over = in_arcs.join(d.dt, how="cross")
-    cap = (_utf8_keys(over.lazy(), keys + ["d", "t"])
-           .join(_utf8_keys(in_cap.frame.lazy(), keys + ["d", "t"])
-                 .select("_p", "_source", "_sink", "_d", "_t", "value"),
-                 on=["_p", "_source", "_sink", "_d", "_t"], how="left")
-           .select(*keys, "d", "t", "value").collect())
-    missing = cap.filter(pl.col("value").is_null())
-    if missing.height > 0:
-        raise ValueError(
-            "p_indirect_input_cap has no value for indirect input arc(s) "
-            f"{missing.select(keys).unique().head(10).to_dicts()} — maxInputFlow_online would be dropped.")
+    cap = _indirect_input_cap(d, in_arcs)
     rhs = v_online * Param(("p", "source", "sink", "d", "t"), cap)
     if d.p_process_availability is not None:
         rhs = rhs * _availability_factor(d, in_arcs)

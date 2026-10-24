@@ -163,3 +163,33 @@ def test_section_counts_in_requirement(tmp_path_factory) -> None:
     n1d = sc.filter(pl.col("r") == "n1d")["value"]
     assert full > us * 2.0  # section adds to the full-load input
     assert n1d.to_list() == pytest.approx([full] * len(n1d), rel=1e-9)
+
+
+def test_input_drawn_in_rolls(tmp_path_factory) -> None:
+    """Rolling solve (12 h horizon, 6 h jump): in every roll e_boiler's coefficient in the dynamic and n-1-down
+    rows is −unitsize / efficiency (efficiency 0.5 in the JSON input), and the scales are wind 1000 MW × 0.5 +
+    e_boiler 100 MW / 0.5 = 700 MW and max(dr 50, 100 / 0.5) = 200 MW."""
+    from tests.engine._unit_db import make_db, run
+    from flextool.engine.model._reserve import reserve_shortfall_scale
+
+    ents, vals = _reserves()
+    url, scen = make_db(tmp_path_factory, alt="drawn_roll", base_chain=BASE, entities=EB_ENTS + ents,
+                        values=_eb_values() + vals + [
+                            ["solve", "y2020_2day_dispatch", "solve_mode", b64("rolling_window", "str")],
+                            ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", b64(12.0, "float")],
+                            ["solve", "y2020_2day_dispatch", "rolling_solve_jump", b64(6.0, "float")]])
+    steps = run(tmp_path_factory, url, scen)
+    assert len(steps) > 2
+    for name, step in steps.items():
+        fd = step.flex_data
+        pb = build(fd)
+        expected = -unitsize(step, EB) / 0.5
+        dyn = _row_terms(pb, "reserveBalance_dynamic_eq")
+        n1 = {r: t for r, t in _row_terms(pb, "reserveBalance_down_n_1_eq").items() if f",{EB}," in r}
+        assert len(dyn) == len(n1) == fd.dt.height, name
+        for rows in (dyn, n1):
+            for row, terms in rows.items():
+                assert _coef(terms, f"v_flow[{EB},west,heat,") == pytest.approx(expected, rel=1e-12), (name, row)
+        sc = utf8(reserve_shortfall_scale(fd).frame)
+        assert sc.filter(pl.col("r") == "dyn")["value"].to_list() == pytest.approx([700.0] * fd.dt.height), name
+        assert sc.filter(pl.col("r") == "n1d")["value"].to_list() == pytest.approx([200.0] * fd.dt.height), name

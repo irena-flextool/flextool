@@ -117,6 +117,38 @@ def _drop_uncapped(d, arcs: "pl.DataFrame") -> "pl.DataFrame":
             .select(arcs.columns).collect())
 
 
+def _indirect_input_cap(d, arcs: "pl.DataFrame") -> "pl.DataFrame":
+    """``p_indirect_input_cap`` over ``arcs`` (indirect units' input arcs ``p, source, sink``) × dt, as a
+    frame ``(p, source, sink, d, t, value)`` with the dtypes of ``arcs`` / ``d.dt``.
+
+    The cap exists for every capped input arc (``model._max_flow_rhs`` raises without it).  The
+    ``conversion_flow_coeff = 0`` inputs (``process_source_sink_uncapped``) have no cap and are outside every
+    per-arc capacity row; callers drop them (``_drop_uncapped``) or treat them explicitly before calling.
+    Raises when a cap cell is missing (the limit would be silently dropped or replaced by a guess).
+    """
+    keys = ["p", "source", "sink"]
+    over = arcs.select(keys).unique(maintain_order=True).join(d.dt.select("d", "t"), how="cross")
+    in_cap = getattr(d, "p_indirect_input_cap", None)
+    if in_cap is None:
+        if over.height == 0:
+            return over.with_columns(pl.lit(None, pl.Float64).alias("value"))
+        raise ValueError(
+            "FlexData.p_indirect_input_cap is missing but indirect input arcs need it: "
+            f"{arcs.select(keys).unique().head(10).to_dicts()}.")
+    all_keys = keys + ["d", "t"]
+    out = (_utf8_keys(over.lazy(), all_keys)
+           .join(_utf8_keys(in_cap.frame.lazy(), all_keys)
+                 .select([f"_{k}" for k in all_keys] + ["value"]),
+                 on=[f"_{k}" for k in all_keys], how="left")
+           .select(*all_keys, "value").collect())
+    missing = out.filter(pl.col("value").is_null())
+    if missing.height > 0:
+        raise ValueError(
+            "p_indirect_input_cap has no value for indirect input arc(s) "
+            f"{missing.select(keys).unique().head(10).to_dicts()} — the input-arc limit would be dropped.")
+    return out
+
+
 def _coef_factor(pairs: "pl.DataFrame", coef: "Param", keys: list,
                  *, default: float = 1.0) -> "Param":
     """Densify a sparse per-``keys`` coefficient ``coef`` over the key-tuples
