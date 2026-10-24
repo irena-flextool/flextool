@@ -578,7 +578,7 @@ FlexTool's own intra-period capacity approximation.
 
 For `reserve__upDown__unit__node` entities:
 
-- `max_share` - [factor] Maximum share of the unit's capacity at this node that can be held as this reserve. At a node the unit consumes from, the capacity is the unit's full-load input there (for a unit with one input and one output: capacity / efficiency; for a unit with several inputs: `input_share_max` × full-load input). Without a value the unit offers no reserve. Constant.
+- `max_share` - [factor] Maximum share of the unit's capacity at this node that can be held as this reserve: `max_share` × built capacity (existing + invested − retired), also for units with online variables (their online capacity limits the reserve separately, see below). At a node the unit consumes from, the capacity is the unit's full-load input there (for a unit with one input and one output: capacity / efficiency; for a unit with several inputs: `input_share_max` × full-load input). Without a value the unit offers no reserve. Constant.
 - `reliability` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
 - `increase_reserve_ratio` - [factor] The reserve requirement is increased by the flow between the unit and the node multiplied by this ratio. At a node the unit consumes from, the flow is what the unit draws there (output / efficiency, as in the node balance). Constant.
 - `large_failure_ratio` - [factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio); for downward reserve, the loss of the consumption the unit draws from the group's nodes (output / efficiency). The failing unit's own reserve does not count towards covering its own failure. Constant.
@@ -594,7 +594,7 @@ A unit with online variables (`startup_method` `linear` or `binary`, or a `minim
 
 For `reserve__upDown__connection__node` entities:
 
-- `max_share` - [factor] Maximum ratio for the transfer of reserve to this node. Constant.
+- `max_share` - [factor] Maximum share of the connection's built capacity (existing + invested − retired) that can be held as this reserve at this node. Constant.
 - `reliability` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
 - `increase_reserve_ratio` - [factor] The reserve requirement is increased by the flow between the connection and the node multiplied by this ratio (at the node the connection takes from: the flow it draws there, including its losses). Constant.
 - `large_failure_ratio` - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio): for upward reserve the loss of its flow into the group's nodes, for downward reserve the loss of the flow it draws from them. The failing connection's own reserve does not count towards covering its own failure. Constant.
