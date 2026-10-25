@@ -286,3 +286,43 @@ def test_benders_master_receives_user_options(monkeypatch) -> None:
     with pytest.raises(_Stop):
         master._build_flextool_master(toy_data())
     assert built["m"]._solver_options == {"threads": 2, "parallel": "on", "mip_rel_gap": 0.05}
+
+
+# ---------------------------------------------------------------------------
+# Benders with a thread count and the parallel region pass (c22 review 1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("how", ["cli", "highs_opt"])
+def test_benders_converges_with_threads_and_parallel_regions(tmp_path, monkeypatch, how) -> None:
+    """``--highs-threads 2`` (FLEXTOOL_HIGHS_THREADS) or ``threads=2`` in highs.opt, default region workers: the
+    master (threads 2) and the single-threaded parallel region pass share HiGHS' global scheduler.  Before, the
+    master's warm re-solve after the region pass was rejected by HiGHS and Benders crashed."""
+    from flextool.engine import run_chain_from_db
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    monkeypatch.delenv("FLEXTOOL_BENDERS_WORKERS", raising=False)
+    cfg = tmp_path / "solver_config"
+    cfg.mkdir()
+    if how == "cli":
+        monkeypatch.setenv("FLEXTOOL_HIGHS_THREADS", "2")
+        (cfg / "highs.opt").write_text("parallel=off\n")
+    else:
+        (cfg / "highs.opt").write_text("threads=2\nparallel=on\n")
+    url = json_to_db(FIXTURES / "lh2_three_region_trade_invest.json", tmp_path / "f.sqlite")
+    migrate_database(url)
+    seen: list[dict] = []
+    real = _benders.WarmProblem
+
+    def record(problem):
+        seen.append(dict(problem._solver_options or {}))
+        return real(problem)
+
+    monkeypatch.setattr(_benders, "WarmProblem", record)
+    steps = run_chain_from_db(input_db_url=url, scenario_name="lh2_three_region_trade_invest",
+                              work_folder=tmp_path / "w", solver_config_dir=cfg, keep_solutions=True)
+    step = next(reversed(list(steps.values())))
+    assert step.is_benders and step.optimal is True and step.obj is not None
+    if _benders._WARM_REPINS_SCHEDULER:
+        assert any(_norm(o.get("threads")) == 2.0 for o in seen), "the master did not get the thread count"

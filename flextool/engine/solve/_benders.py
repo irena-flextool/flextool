@@ -94,6 +94,7 @@ from polar_high.benders import (
 from polar_high.benders import _check_cuts_satisfied as _ph_check_cuts_satisfied
 from polar_high.benders import _cut_separates as _ph_cut_separates
 import polar_high.benders as _ph_benders
+import polar_high.decomposition as _ph_decomposition
 
 from flextool.engine.solve import _region_filter
 from flextool.engine import build_flextool as _build_flextool
@@ -124,9 +125,15 @@ from flextool.engine.preprocess.flex_data import FlexData
 _logger = logging.getLogger(__name__)
 
 # The in-out upper bound skips an iteration whose separation point the pinned master cannot reach when
-# native_cost_at raises polar-high's PinnedMasterNotOptimal (polar-high >= 3.9.1); with an older polar-high the
+# native_cost_at raises polar-high's PinnedMasterNotOptimal (polar-high >= 3.10.0); with an older polar-high the
 # plain RuntimeError keeps the previous behaviour (the error propagates).
 _PinnedMasterNotOptimal = getattr(_ph_benders, "PinnedMasterNotOptimal", RuntimeError)
+# polar-high >= 3.10.0 re-pins HiGHS' process-global scheduler before a warm re-solve with a thread count, so
+# the Benders master can keep the user's threads while the region pass runs single-threaded in parallel.
+_WARM_REPINS_SCHEDULER = hasattr(WarmProblem, "_repin_scheduler")
+# polar-high >= 3.10.0 scores the in-out upper bound at one consistent point; older versions can report an
+# upper bound below the optimum with in-out stabilisation (FlexTool item 114).
+_IN_OUT_UB_FIXED = hasattr(_ph_decomposition, "consistent_separation_points")
 
 
 def _benders_quiet() -> bool:
@@ -1368,13 +1375,7 @@ class _BendersMaster:
             vals = sol.col_value[a.f_col_ids]
             for cid, v in zip(a.f_col_ids, vals):
                 f_by_col[int(cid)] = float(v)
-        # ``_C_cols`` carries a single col id per connection on the hand
-        # path and a LIST (one per invest period) on the flextool path;
-        # sum over the period columns either way.
-        C_by_conn: dict[str, float] = {}
-        for c, col in self._C_cols.items():
-            cols = col if isinstance(col, (list, tuple, np.ndarray)) else [col]
-            C_by_conn[c] = float(sum(sol.col_value[int(ci)] for ci in cols))
+        C_by_conn = self.C_by_conn_at(sol)
         eta_by_region = {r: float(sol.col_value[col]) for r, col in self._eta_col.items()}
         # Stash the master NATIVE cost at this solution.  On the flextool
         # path it is FlexTool's own objective MINUS Σ η_r (each η enters obj
@@ -1385,6 +1386,16 @@ class _BendersMaster:
             eta_sum = sum(eta_by_region.values())
             self._last_master_native_cost = float(sol.obj) - eta_sum
         return f_by_col, C_by_conn, eta_by_region
+
+    def C_by_conn_at(self, sol) -> dict[str, float]:
+        """Built coupling-connection capacity per connection at ``sol`` (no side effects).  ``_C_cols``
+        carries a single col id per connection on the hand path and a LIST (one per invest period) on the
+        flextool path; sum over the period columns either way."""
+        C_by_conn: dict[str, float] = {}
+        for c, col in self._C_cols.items():
+            cols = col if isinstance(col, (list, tuple, np.ndarray)) else [col]
+            C_by_conn[c] = float(sum(sol.col_value[int(ci)] for ci in cols))
+        return C_by_conn
 
     def master_invest_frames(self, sol) -> dict[str, pl.DataFrame]:
         """Return every invest/divest decision var PRESENT in the master
@@ -1459,20 +1470,31 @@ class _BendersMaster:
     def native_cost_at(self, point: dict[int, float]) -> float:
         """OPTIONAL coordinator protocol member (:meth:`polar_high.benders.
         BendersMaster.native_cost_at`): the master's NATIVE cost with every
-        coupling flow PINNED at ``point`` (``{master f col-id -> value}``).
+        coupling flow PINNED at ``point`` — :meth:`pinned_solve_at`'s cost."""
+        return self.pinned_solve_at(point)[0]
+
+    def pinned_solve_at(self, point: dict[int, float]) -> tuple[float, object]:
+        """OPTIONAL coordinator protocol member (:meth:`polar_high.benders.
+        BendersMaster.pinned_solve_at`): the master's NATIVE cost with every
+        coupling flow PINNED at ``point`` (``{master f col-id -> value}``), and
+        that pinned solution.
 
         The exact machinery of :func:`_master_autarky_cost` (save the
         coupling-column bounds, pin, solve once, read ``obj − Σ η``, restore
         the bounds in a ``finally``), but pinned to ``point`` values instead
         of 0 — so it evaluates the master's own cost at an ARBITRARY feasible
         coupling point.  Used by the in-out upper bound (with polar-high >=
-        3.9.1 every in-out iteration scores the master's cost at the
+        3.10.0 every in-out iteration scores the master's cost at the
         consistent overlay point: it depends on the coupling flows through a
         connection's flow / online / startup cost or hosted nodes) and by the
         off-loop single-point pin diagnostic (:func:`polar_high.benders.
         evaluate_at_point`).  ``point`` must carry a value for every coupling
-        f col-id.  A pinned master that is not optimal raises polar-high's
-        ``PinnedMasterNotOptimal`` (a ``RuntimeError``); the in-out loop then
+        f col-id.  Returns ``(native cost, the pinned Solution)``: with in-out
+        ON polar-high (>= 3.10.0) hands that Solution to the incumbent capture,
+        so the handed investments are the plan the upper bound priced (they
+        re-optimise for the pinned flows).  The Solution's arrays are fresh
+        copies, not overwritten by later solves.  A pinned master that is not
+        optimal raises polar-high's ``PinnedMasterNotOptimal`` (a ``RuntimeError``); the in-out loop then
         does not use that iteration's upper bound.
         """
         wp = self._wp
@@ -1496,7 +1518,7 @@ class _BendersMaster:
             eta_sum = sum(
                 float(sol.col_value[col]) for col in self._eta_col.values()
             )
-            return float(sol.obj) - eta_sum
+            return float(sol.obj) - eta_sum, sol
         finally:
             wp.set_col_bounds(col_ids, lo, hi)
 
@@ -1514,7 +1536,7 @@ class _BendersMaster:
         (their penalty slack + storage terms) is a genuine function of the
         coupling flow.  The flag does not cover a coupling connection's own
         flow / online / startup cost, which also depends on the flows; with
-        polar-high >= 3.9.1 that does not matter, because the in-out upper
+        polar-high >= 3.10.0 that does not matter, because the in-out upper
         bound then always reads the cost at the overlay point via
         :meth:`native_cost_at` (this master implements it)."""
         return bool(self._master_hosted_nodes)
@@ -2344,7 +2366,20 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # HiGHS single-threaded (no user ``threads`` / ``parallel``) so the parallel pass stays deterministic.
     eff_workers = _resolve_benders_workers(len(splits), workers)
     region_options = dict(solver_options) if solver_options else {}
-    if eff_workers > 1 and ({"threads", "parallel"} & set(region_options)):
+    master_options = dict(solver_options) if solver_options else {}
+    thread_keys = {"threads", "parallel"} & set(region_options)
+    if eff_workers > 1 and thread_keys and not _WARM_REPINS_SCHEDULER:
+        # The region pass re-pins HiGHS' process-global scheduler to one thread; a polar-high without the
+        # warm re-solve re-pin (< 3.10.0) then rejects the master's thread count on its next solve.
+        _logger.info(
+            "Benders: the region subproblems run on %d workers; this polar-high cannot re-pin HiGHS' thread "
+            "scheduler between solves, so the HiGHS threads / parallel options (%s) are not used (polar-high "
+            ">= 3.10.0 applies them to the master)",
+            eff_workers, ", ".join(f"{k}={region_options[k]}" for k in sorted(thread_keys)),
+        )
+        master_options.pop("threads", None)
+        master_options.pop("parallel", None)
+    if eff_workers > 1 and thread_keys:
         _logger.info(
             "Benders: the region subproblems run on %d workers and stay single-threaded; the HiGHS threads / "
             "parallel options (%s) apply to the master only",
@@ -2586,7 +2621,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         master=master_kind, obj_scale=obj_scale,
         master_hosted_nodes=master_hosted,
         region_membership=region_membership,
-        solver_options=solver_options,
+        solver_options=master_options,
     )
     # Re-bind the region-meta forward tuples to the master-rewritten f col-ids.
     for rm in regions_meta:
@@ -2639,7 +2674,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # at the SAME overlay point the subproblems used
         # (:meth:`_BendersMaster.native_cost_at`), so the UB is scored at one
         # consistent feasible primal — a valid L-shaped feasible-point bound.
-        # With polar-high >= 3.9.1 every in-out UB is scored this way (a
+        # With polar-high >= 3.10.0 every in-out UB is scored this way (a
         # coupling connection's flow / online / startup cost also makes the
         # master's cost flow-dependent), and a coupling column shared by an
         # exporter and an importer region is pinned at one value in both.
@@ -2654,6 +2689,15 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             "Benders: in-out separation ON (weight λ=%.3f) over %d region(s)",
             in_out_weight, len(regions_meta),
         )
+        if not _IN_OUT_UB_FIXED:
+            msg = (
+                f"Benders: in-out separation (benders_in_out_weight={in_out_weight:g}) with this polar-high "
+                "version can report an upper bound below the optimum (the run may stop early on it); use "
+                "polar-high >= 3.10.0, or benders_in_out_weight 0."
+            )
+            _logger.warning(msg)
+            # Per-solve loggers are pinned to ERROR inside the cascade: also print the warning.
+            print(f"WARNING: {msg}", flush=True)
 
     # --- Trust-region stabilization (machine-local env; RANK 3, theory §C).
     # ``trust_region_radius`` is an ABSOLUTE box half-width: Δ₀ = radius·1.0 =
@@ -2778,8 +2822,11 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # region Solutions' buffers are likewise reused by later warm
         # re-solves).  ``sub_results`` is regions_meta/splits-index aligned
         # (the coordinator returns subproblem results in adapter order).
+        # ``msol`` is the solution whose plan the upper bound priced: the
+        # master vertex, or with in-out ON the pinned master solution
+        # (``pinned_solve_at``: investments re-optimised for the pinned flows).
         return {
-            "C": dict(master._last_C_by_conn),
+            "C": master.C_by_conn_at(msol),
             "master_invest_frames": master.master_invest_frames(msol),
             "region_col_values": [
                 np.asarray(r.payload.col_value).copy() for r in sub_results

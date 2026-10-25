@@ -47,8 +47,12 @@
   below the true optimum (by up to 3e-4 on the three-region hydrogen test
   model): the two regions at the ends of a pipe could be solved with
   different flows on it. Both ends now always get the same flow, and the
-  upper bound is the cost of that one point. Needs polar-high 3.9.1; such
-  runs can take a few more iterations.
+  upper bound is the cost of that one point, and the investments handed to
+  a following dispatch solve are the plan that bound priced. Needs
+  polar-high 3.10.0; this costs one extra master solve per iteration
+  (iteration counts are unchanged on the test models). With an older
+  polar-high a run with in-out weight > 0 prints a warning that its upper
+  bound may be invalid.
 
 - **Solver options reach every solve.** `solver_mip_gap` was ignored on the
   default (warm) HiGHS path; it is now honoured. A solve with
@@ -57,7 +61,10 @@
   (`--highs-threads`, `--solver-time-limit`, …), the determinism defaults and
   the automatic scaling options; every HiGHS solve now gets the same layered
   set. Benders decomposition now uses these options too (master and region
-  subproblems; see the solver docs for the details).
+  subproblems; see the solver docs for the details); with a thread count
+  (`--highs-threads`, or `threads` in `highs.opt`) and parallel regions this
+  needs polar-high 3.10.0, otherwise the thread count is not used for
+  Benders.
 
 - **Stochastic storage tie counts every flow into the node.** The tie that
   keeps the net flow into a stochastic storage node equal in all forecasts

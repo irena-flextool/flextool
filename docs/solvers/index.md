@@ -186,7 +186,10 @@ subproblems always run crossover (or the interior-point settings of the
 experimental interior-dual mode), and the per-solve HiGHS log is silenced.
 While the regions are solved in parallel (more than one worker), `threads`
 and `parallel` (`--highs-threads`) apply to the master only; the regions stay
-single-threaded so that the result does not depend on the worker count. A
+single-threaded so that the result does not depend on the worker count. HiGHS
+has one thread scheduler per process, so the master re-initialises it before
+each of its solves (polar-high 3.10.0 or later; with an older polar-high the
+thread count is not used while the regions run in parallel). A
 time limit (`--solver-time-limit`, or `time_limit` in `solver_arguments`)
 applies to each master and region solve separately, not to the whole
 decomposition.

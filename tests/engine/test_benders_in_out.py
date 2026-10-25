@@ -20,7 +20,9 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+import polar_high.benders
 import polar_high.decomposition
+import polars as pl
 import pytest
 
 from polar_high import Problem
@@ -41,7 +43,7 @@ _REGIONS = ["region_A", "region_B", "region_C"]
 # the old version metadata until it is reinstalled.
 _needs_in_out_ub_fix = pytest.mark.skipif(
     not hasattr(polar_high.decomposition, "consistent_separation_points"),
-    reason="needs polar-high >= 3.9.1 (#114)",
+    reason="needs polar-high >= 3.10.0 (#114)",
 )
 
 
@@ -311,3 +313,76 @@ def test_in_out_upper_bound_is_valid(retuned_data, retuned_monolith, monkeypatch
         f"λ={weight}: UB {res.upper_bound:.10e} below the monolith {m:.10e} (rel {(res.upper_bound - m) / m:+.2e})"
     )
     assert res.upper_bound - m <= 1e-6 * m
+
+
+@_needs_in_out_ub_fix
+@pytest.mark.skipif(not hasattr(polar_high.benders.BendersMaster, "pinned_solve_at"),
+                    reason="needs polar-high >= 3.10.0 (#114)")
+def test_in_out_handed_plan_costs_the_best_upper_bound(retuned_data, monkeypatch):
+    """Every incumbent the dispatch hand-off would receive is the plan its upper bound priced: the master's own
+    cost with the handed coupling investments fixed and the flows at the incumbent point, plus the region costs,
+    is that iteration's upper bound.  Before, the plan came from the master's outer vertex (more capacity than
+    the interior flows need), so it could cost more than the bound."""
+    from flextool.engine.solve import _benders
+
+    monkeypatch.delenv(_BENDERS_IN_OUT_WEIGHT_ENV, raising=False)
+    masters: list = []
+    captured: list[tuple[dict, dict]] = []
+    real_init, real_loop = _benders._BendersMaster.__init__, _benders.solve_benders_loop
+
+    def init(self, *a, **k):
+        real_init(self, *a, **k)
+        masters.append(self)
+
+    def loop(*a, on_incumbent=None, **k):
+        def record(msol, results, info):
+            payload = on_incumbent(msol, results, info)
+            captured.append((payload, {"point": dict(info["point"]), "upper_bound": info["upper_bound"],
+                                       "sub_costs": dict(info["sub_costs"])}))
+            return payload
+        return real_loop(*a, on_incumbent=record, **k)
+
+    monkeypatch.setattr(_benders._BendersMaster, "__init__", init)
+    monkeypatch.setattr(_benders, "solve_benders_loop", loop)
+    res = solve_benders(retuned_data, _REGIONS, max_iters=60, tol=1e-6, scale_the_objective=1e-6,
+                        in_out_weight=0.5)
+    assert res.converged and captured
+    master = masters[-1]
+    wp = master._wp
+    trade = sorted({a.conn for a in master.arcs})
+    frame = wp._p._vars["v_invest_p"].frame.with_columns(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8))
+    for payload, info in captured:
+        plan = payload["master_invest_frames"]["v_invest_p"].with_columns(
+            pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8))
+        fixed = frame.join(plan.filter(pl.col("p").is_in(trade)), on=["p", "d"], how="inner")
+        assert fixed.height > 0
+        cols = fixed["col_id"].to_numpy().astype(np.int64)
+        lo, hi = wp.get_col_bounds(cols)
+        wp.set_col_bounds(cols, fixed["value"].to_numpy(), fixed["value"].to_numpy())
+        try:
+            plan_native = master.native_cost_at(info["point"])
+        finally:
+            wp.set_col_bounds(cols, lo, hi)
+        plan_cost = plan_native + sum(info["sub_costs"].values())
+        assert plan_cost == pytest.approx(info["upper_bound"], rel=1e-7)
+
+
+def test_in_out_warns_when_polar_high_lacks_the_upper_bound_fix(ti_data, monkeypatch, capsys):
+    """With a polar-high older than 3.10.0 (feature detection) an in-out run warns that its UB may be invalid;
+    with the fix, or with λ = 0, it does not."""
+    from flextool.engine.solve import _benders
+
+    class _Stop(Exception):
+        pass
+
+    def stop(*a, **k):
+        raise _Stop
+
+    monkeypatch.delenv(_BENDERS_IN_OUT_WEIGHT_ENV, raising=False)
+    monkeypatch.setattr(_benders, "solve_benders_loop", stop)
+    for fixed, weight, expect in ((False, 0.5, True), (True, 0.5, False), (False, 0.0, False)):
+        monkeypatch.setattr(_benders, "_IN_OUT_UB_FIXED", fixed)
+        with pytest.raises(_Stop):
+            solve_benders(ti_data, _REGIONS, in_out_weight=weight)
+        out = capsys.readouterr().out
+        assert ("upper bound below the optimum" in out) is expect, (fixed, weight, out[-500:])
