@@ -1,5 +1,10 @@
 ## Unreleased
 
+- **`fix_start_end` fixes the start state.** A storage node with
+  `storage_start_end_method` *fix_start_end* got no start condition at all
+  (it could start with free energy); its start is now fixed like
+  *fix_start*. Its end condition is not implemented yet.
+
 - **`fix_start` of a *bind_within_solve* storage in a solve with several
   periods.** The start state was pinned at the last step of the first
   period, i.e. in the middle of the solve. It is now pinned at the step the

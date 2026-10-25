@@ -2963,7 +2963,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             sse = sse.pipe(rename_to_axis, {"node":"n","storage_start_end_method":"method"})
         elif "method" in sse.columns:
             sse = sse.pipe(rename_to_axis, {"node":"n"})
-        fix_start = (sse.filter(pl.col("method")=="fix_start").select("n").unique())
+        # fix_start_end fixes the start too (its end half: item 133).
+        fix_start = (sse.filter(pl.col("method").is_in(["fix_start", "fix_start_end"])).select("n").unique())
         fix_end = (sse.filter(pl.col("method")=="fix_end").select("n").unique())
         fix_start_end = (sse.filter(pl.col("method")=="fix_start_end").select("n").unique())
 

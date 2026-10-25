@@ -1239,12 +1239,13 @@ def storage_bind_within_solve_blended_weights(source: "InputSource") -> pl.DataF
 
 
 def storage_fix_start(source: "InputSource") -> pl.DataFrame:
-    """Nodes with ``storage_start_end_method='fix_start'``.  Schema: ``[n]``."""
+    """Nodes whose start state is fixed: ``storage_start_end_method`` ``fix_start`` or ``fix_start_end``.
+    Schema: ``[n]``."""
     df = _try_param(source, "node", "storage_start_end_method")
     if df is None:
         return _empty({"n": pl.Utf8})
     return (df.lazy()
-              .filter(pl.col("value") == "fix_start")
+              .filter(pl.col("value").is_in(["fix_start", "fix_start_end"]))
               .pipe(rename_to_axis, {"name": "n"})
               .select("n")
               .sort("n")

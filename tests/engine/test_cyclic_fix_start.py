@@ -98,3 +98,32 @@ def test_stochastic_within_solve_pins_the_wrap_of_the_first_step(tmp_path_factor
     # pinned there, not at the end of the trunk period (the old location).
     periods = utf8(fd.dt)["d"].unique(maintain_order=True).to_list()
     assert all(f",{periods[0]}," not in name for name in got), (sorted(got), periods)
+
+
+@pytest.mark.parametrize("method,family", [("bind_forward_only", None),
+                                            ("bind_within_solve", PIN),
+                                            ("bind_within_timeblock", "storage_state_start_binding")])
+def test_fix_start_end_pins_the_start(tmp_path_factory, method, family):
+    """``storage_start_end_method`` *fix_start_end* fixes the start like *fix_start* (the schema: "fix start and
+    end"; the end half is item 133): the node is in storage_fix_start and gets its start term / pin.  Before it was
+    in neither, so the storage started from free energy."""
+    url, scen = make_db(tmp_path_factory, alt=f"cfse_{method[5:12]}", base_chain=CHAIN, values=[
+        ["node", "battery", "storage_binding_method", b64(method, "str")],
+        ["node", "battery", "storage_start_end_method", b64("fix_start_end", "str")]])
+    fd = list(run(tmp_path_factory, url, scen).values())[-1].flex_data
+    assert "battery" in utf8(fd.storage_fix_start)["n"].to_list()
+    pb = build(fd)
+    if family is not None:
+        assert row_terms(pb, family, "battery,"), family
+        return
+    d0, t0 = utf8(fd.dt).sort("d", "t").row(0)
+    name = f"nodeBalance_eq[battery,{d0},{t0}]"
+    lo, _hi = row_bounds(pb, "nodeBalance_eq", "battery,")[name]
+    start = float(utf8((fd.p_state_start * fd.p_state_existing_capacity).frame)
+                  .filter((pl.col("n") == "battery") & (pl.col("d") == d0))["value"][0])
+    assert start > 0
+    inflow = 0.0 if fd.p_inflow is None else float(
+        utf8(fd.p_inflow.frame).filter((pl.col("n") == "battery") & (pl.col("d") == d0) & (pl.col("t") == t0))
+        ["value"].sum())
+    # the start energy (weighted by the step's self-discharge 1 − β) is in the bound
+    assert lo < -inflow - 0.99 * start
