@@ -702,12 +702,20 @@ def _rp_weights(bases: list[str], reps: tuple[str, str]) -> dict:
 def _rp_multi_base(data: dict, name: str, methods: dict) -> dict:
     """Representative periods with seven base periods (an inter-period
     storage chain, rp_inter_period_balance) and the given blended-weights
-    storage binding method per LH2 storage node."""
+    storage binding method per LH2 storage node.
+
+    The base periods are the seven days of the week the timeline
+    ``y2030_168h`` is named after (t0001, t0025, ..., t0145).  The fixture
+    JSON keeps only the first 96 hours (the four representative days), so
+    the overlay extends the timeline to 168 hours: a base period must start
+    at a step of the timeline."""
     bases = [f"t{1 + 24 * k:04d}" for k in range(7)]
     sfx = "__lh2_three_region_rp_invest"
+    week = _pmap({f"t{i:04d}": 1.0 for i in range(1, 169)}, "time")
     return _overlay(
         data, name=name, base="lh2_three_region_rp_invest",
         values=[
+            ["timeline", "y2030_168h", "timestep_duration", week],
             ["timeset", "rp_y2030" + sfx, "representative_period_weights",
              _rp_weights(bases, ("t0001", "t0025"))],
             ["timeset", "rp_y2040" + sfx, "representative_period_weights",
@@ -936,6 +944,130 @@ def _patch_agg_rp(data: dict) -> dict:
     new_stepduration = 2: the rep blocks keep their first / last steps and the base periods their order."""
     return _overlay(data, name="agg_rp", base=_BATTERY + ["coal"], entities=[["timeset", "rpg"]],
                     values=_agg_rp_values() + [["solve", "y2020_2day_dispatch", "new_stepduration", 2.0]])
+
+
+# ---- coarse new_stepduration groups (c15b: Q1 #11, #12, #33, #36, #8) ----
+
+_ELZ_U = [["unit", "elz_u"], ["unit__inputNode", ["elz_u", "elec_A"]], ["unit__outputNode", ["elz_u", "h2_A"]],
+          ["group__unit", ["daily_group", "elz_u"]]]
+
+
+def _patch_coarse_explicit_unit(data: dict) -> dict:
+    """lh2: unit elz_u (elec_A hourly -> h2_A daily) listed in daily_group: it still enters elec_A's hourly
+    balance at every step (#36)."""
+    return _overlay(data, name="coarse_explicit_unit", base="lh2_three_region", entities=_ELZ_U,
+                    values=[["unit", "elz_u", "efficiency", 0.7], ["unit", "elz_u", "existing", 300.0],
+                            ["unit", "elz_u", "conversion_method", "constant_efficiency"]])
+
+
+def _patch_coarse_two_sink(data: dict) -> dict:
+    """lh2: liquefier_A gets a second output lh2_B; both outputs are daily storage nodes and each node's coarse
+    row holds only its own arcs (#8)."""
+    return _overlay(data, name="coarse_two_sink", base="lh2_three_region",
+                    entities=[["unit__outputNode", ["liquefier_A", "lh2_B"]]],
+                    values=[["unit__outputNode", ["liquefier_A", "lh2_B"], "capacity_max_coeff", 0.5],
+                            ["unit__outputNode", ["liquefier_A", "lh2_A"], "capacity_max_coeff", 0.5]])
+
+
+def _coarse_dc_values(storage: bool) -> tuple[list, list]:
+    four = _pmap({f"t000{i}": 1.0 for i in range(1, 5)}, "time")
+    ents = [["timeline", "tl_dispatch"], ["group", "blk"], ["group__node", ["blk", "bus_14"]]]
+    vals = [["timeline", "tl_dispatch", "timestep_duration", four],
+            ["timeset", "ts_dispatch", "timeset_duration", _pmap({"t0001": 4.0}, "time")],
+            ["node", "bus_14", "inflow", _tmap([-14.9, -40.0, -14.9, -40.0])],
+            ["group", "blk", "new_stepduration", 2.0]]
+    if storage:
+        vals += [["node", "bus_14", "node_type", "storage"], ["node", "bus_14", "existing", 100.0],
+                 ["node", "bus_14", "storage_state_start", 0.5]]
+    return ents, vals
+
+
+def _patch_coarse_dc_storage(data: dict) -> dict:
+    """case14 DC power flow on 4 hourly steps, bus_14 a storage node in a 2-h group: its coarse rows hold
+    v_flow and v_flow_back of both lines at every hour (#33)."""
+    ents, vals = _coarse_dc_values(True)
+    return _overlay(data, name="coarse_dc_storage", base="dc_opf_test", entities=ents, values=vals)
+
+
+def _patch_coarse_dc_nostorage(data: dict) -> dict:
+    """as coarse_dc_storage with bus_14 a balance node: a coarse group works without a storage node."""
+    ents, vals = _coarse_dc_values(False)
+    return _overlay(data, name="coarse_dc_nostorage", base="dc_opf_test", entities=ents, values=vals)
+
+
+def _patch_coarse_uc(data: dict) -> dict:
+    """lh2: liquefier_A (h2_A daily -> lh2_A daily) with linear online: online variables on every hour (#12)."""
+    return _overlay(data, name="coarse_uc", base="lh2_three_region",
+                    values=[["unit", "liquefier_A", "startup_method", "linear"],
+                            ["unit", "liquefier_A", "min_load", 0.3],
+                            ["unit", "liquefier_A", "virtual_unitsize", 50.0]])
+
+
+_DAILY_BATTERY = [["group", "daily"], ["group__node", ["daily", "battery"]]]
+_COARSE_BASE = ["init", "west", "wind", "coal", "battery"]
+
+
+def _coarse_roll_values(jump: float) -> list:
+    return [["group", "daily", "new_stepduration", 24.0],
+            ["solve", "dispatch_fullYear_roll", "period_timeset", _pmap({"p2020": "fullYear"})],
+            ["solve", "dispatch_fullYear_roll", "realized_periods",
+             {"type": "array", "value_type": "str", "data": ["p2020"]}],
+            ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", 48.0],
+            ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", jump]]
+
+
+def _patch_coarse_roll(data: dict) -> dict:
+    """battery in a 24-h group, rolling dispatch over fullYear (horizon 48 h, jump 24 h): every roll has
+    coarse rows and carries the battery state."""
+    return _overlay(data, name="coarse_roll", base=_COARSE_BASE + ["fullYear", "dispatch_fullYear_roll"],
+                    entities=_DAILY_BATTERY, values=_coarse_roll_values(24.0))
+
+
+def _patch_coarse_roll_jump12(data: dict) -> dict:
+    """as coarse_roll with jump 12 h: a coarse step ends at each roll's last realized step."""
+    return _overlay(data, name="coarse_roll_jump12", base=_COARSE_BASE + ["fullYear", "dispatch_fullYear_roll"],
+                    entities=_DAILY_BATTERY, values=_coarse_roll_values(12.0))
+
+
+def _patch_coarse_two_groups(data: dict) -> dict:
+    """battery in a 24-h group and ev_battery in a 48-h group on the 2-day dispatch: each node has its own
+    coarse steps."""
+    return _overlay(data, name="coarse_two_groups", base=_COARSE_BASE + ["ev"],
+                    entities=_DAILY_BATTERY + [["group", "twoday"], ["group__node", ["twoday", "ev_battery"]]],
+                    values=[["group", "daily", "new_stepduration", 24.0],
+                            ["group", "twoday", "new_stepduration", 48.0]])
+
+
+def _patch_coarse_solve_step(data: dict) -> dict:
+    """battery in a 24-h group with the solve's new_stepduration = 2: only the battery is coarse (coarse is
+    relative to the solve's step)."""
+    return _overlay(data, name="coarse_solve_step", base=_COARSE_BASE, entities=_DAILY_BATTERY,
+                    values=[["group", "daily", "new_stepduration", 24.0],
+                            ["solve", "y2020_2day_dispatch", "new_stepduration", 2.0]])
+
+
+def _patch_coarse_not_coarse(data: dict) -> dict:
+    """battery in a group whose step equals the solve's step (1 h): not coarse, LP as without the group."""
+    return _overlay(data, name="coarse_not_coarse", base=_COARSE_BASE, entities=_DAILY_BATTERY,
+                    values=[["group", "daily", "new_stepduration", 1.0]])
+
+
+def _patch_coarse_nested_fix_price(data: dict) -> dict:
+    """nested invest (24 h) -> storage (6 h) -> rolling dispatch with battery fix_price and the battery in a
+    12-h group: not coarse in the 24-h invest solve, coarse in the storage and dispatch solves; the dispatch
+    reads the storage solve's coarse price."""
+    data = _nested(data, "coarse_nested_fix_price_base", "fix_price")
+    return _overlay(data, name="coarse_nested_fix_price", base="coarse_nested_fix_price_base",
+                    entities=[["group", "half_day"], ["group__node", ["half_day", "battery"]]],
+                    values=[["group", "half_day", "new_stepduration", 12.0]])
+
+
+def _patch_coarse_stoch(data: dict) -> dict:
+    """stochastic 2-day dispatch with hydro_reservoir in a 24-h group: coarse rows in every period incl.
+    the forecast branches."""
+    return _overlay(data, name="coarse_stoch", base="2_day_stochastic_dispatch",
+                    entities=[["group", "daily"], ["group__node", ["daily", "hydro_reservoir"]]],
+                    values=[["group", "daily", "new_stepduration", 24.0]])
 
 
 _MLE_CHP = [["unit", "coal_chp", "startup_method", "linear"],
@@ -1233,6 +1365,18 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "agg_stoch_trunk": _patch_agg_stoch_trunk,
     "agg_roll_blocks": _patch_agg_roll_blocks,
     "agg_rp": _patch_agg_rp,
+    "coarse_explicit_unit": _patch_coarse_explicit_unit,
+    "coarse_two_sink": _patch_coarse_two_sink,
+    "coarse_dc_storage": _patch_coarse_dc_storage,
+    "coarse_dc_nostorage": _patch_coarse_dc_nostorage,
+    "coarse_uc": _patch_coarse_uc,
+    "coarse_roll": _patch_coarse_roll,
+    "coarse_roll_jump12": _patch_coarse_roll_jump12,
+    "coarse_two_groups": _patch_coarse_two_groups,
+    "coarse_solve_step": _patch_coarse_solve_step,
+    "coarse_not_coarse": _patch_coarse_not_coarse,
+    "coarse_nested_fix_price": _patch_coarse_nested_fix_price,
+    "coarse_stoch": _patch_coarse_stoch,
 }
 
 
@@ -1396,6 +1540,18 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("agg_stoch_trunk", _F + "stoch_two_period_midhorizon_nreal0.json"),
     ("agg_roll_blocks", _T),
     ("agg_rp", _T),
+    ("coarse_explicit_unit", _F + "lh2_three_region.json"),
+    ("coarse_two_sink", _F + "lh2_three_region.json"),
+    ("coarse_dc_storage", _F + "case14_dc_power_flow.json"),
+    ("coarse_dc_nostorage", _F + "case14_dc_power_flow.json"),
+    ("coarse_uc", _F + "lh2_three_region.json"),
+    ("coarse_roll", _T),
+    ("coarse_roll_jump12", _T),
+    ("coarse_two_groups", _T),
+    ("coarse_solve_step", _T),
+    ("coarse_not_coarse", _T),
+    ("coarse_nested_fix_price", _T),
+    ("coarse_stoch", _F + "stochastics.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

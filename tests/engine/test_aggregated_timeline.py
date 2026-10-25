@@ -181,6 +181,21 @@ def test_rp_base_starts_on_the_timeline(step) -> None:
         ("t0025", "t0001"), ("t0049", "t0025"), ("t0073", "t0049")]
 
 
+def test_rp_base_start_off_the_timeline_raises() -> None:
+    """Item 112: a base period that does not start at a step of the timeline (t0097 on a 96-step timeline) is a
+    configuration error.  Before: it was sorted after every other base period and the inter-period storage chain
+    linked it out of time order, silently."""
+    from flextool.engine.preprocess.emit._solve_writers import _compute_rp_frames
+
+    steps = [f"t{i:04d}" for i in range(1, 97)]
+    weights = {b: {"t0001": 0.5, "t0025": 0.5} for b in ("t0001", "t0025", "t0097")}
+    with pytest.raises(FlexToolConfigError, match="t0097"):
+        _compute_rp_frames(weights, [("t0001", 24), ("t0025", 24)], "p", steps)
+    frames = _compute_rp_frames({b: weights[b] for b in ("t0025", "t0001")}, [("t0001", 24), ("t0025", 24)],
+                                "p", steps)
+    assert frames["rp_base_chain.csv"].rows() == [("t0025", "t0001")]
+
+
 def test_rp_base_start_guard(monkeypatch) -> None:
     """If a base start on the original timeline were still not a step of the aggregated timeline, the build raises
     instead of letting the rp chain sort it last (guard; forced here by dropping the base-start cuts)."""

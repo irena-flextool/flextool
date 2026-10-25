@@ -48,6 +48,7 @@ from typing import Any
 
 import polars as pl
 
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
 
@@ -1114,10 +1115,19 @@ def _compute_rp_frames(
         rp_lasts.append(timeline_steps[last_idx])
         rp_ranges.append((start_idx, last_idx))
 
-    base_starts = sorted(
-        rp_weights.keys(),
-        key=lambda s: step_to_idx.get(s, len(timeline_steps)),
-    )
+    # A base period is ordered by its start step on the timeline (the inter-period storage chain links the
+    # base periods in that order), so every base start must be a step of the timeline.
+    off_timeline = sorted(str(s) for s in rp_weights if s not in step_to_idx)
+    if off_timeline:
+        span = f", {timeline_steps[0]!r} .. {timeline_steps[-1]!r}" if timeline_steps else ""
+        raise FlexToolConfigError(
+            f"representative_period_weights of period {period_name!r}: the base period(s) "
+            f"{off_timeline} do not start at a time step of the period's timeline "
+            f"({len(timeline_steps)} steps{span}).  Each base "
+            "period (the first index of representative_period_weights) must be the first step of a "
+            "period of the timeline; extend the timeline or correct the base period names."
+        )
+    base_starts = sorted(rp_weights.keys(), key=lambda s: step_to_idx[s])
     n_base = len(base_starts)
     n_rp = len(rp_starts)
 
