@@ -344,16 +344,45 @@ def test_coarse_rolling(tmp_path_factory) -> None:
         assert carried == pytest.approx(state * su, rel=1e-9, abs=1e-9)
 
 
+def _roll_cut_checks(steps) -> None:
+    first = _steps_of(steps[0].flex_data, "battery")
+    assert {b: len(ts) for b, ts in first.items()} == {"t0001": 12, "t0013": 24, "t0037": 12}
+    second = _steps_of(steps[1].flex_data, "battery")
+    assert {b: len(ts) for b, ts in second.items()} == {"t0013": 12, "t0025": 24, "t0049": 12}
+    # The state handed over is the state after the realized hours only: roll 1's state at t0012 (end of its first,
+    # 12-h coarse step) equals the start state plus the net energy of t0001-t0012.
+    fd, sol = steps[0].flex_data, steps[0].solution
+    su = float(utf8(fd.p_state_unitsize.frame).filter(pl.col("n") == "battery")["value"][0])
+    state = utf8(sol.value("v_state")).filter(pl.col("n") == "battery").sort("t")
+    carried = float(utf8(steps[1].flex_data.p_roll_continue_state.frame).filter(pl.col("n") == "battery")["value"][0])
+    assert carried == pytest.approx(float(state.filter(pl.col("t") == "t0012")["value"][0]) * su, rel=1e-9)
+    assert state.filter(pl.col("t") <= "t0012")["value"].n_unique() == 1
+
+
 def test_coarse_rolling_cut_at_realized_end(tmp_path_factory) -> None:
     """Rolling 48 h / 12 h with a 24-h group: each roll's coarse steps end at its last realized step (t0012 in
     roll 1: t0001-12, t0013-36, t0037-48), so the state a roll hands over is the state after the realized hours
     only, never one that already includes look-ahead flows (critique 6)."""
     steps = list(_run(tmp_path_factory, "c_roll12", _roll(12.0), BATTERY + ["fullYear", "dispatch_fullYear_roll"],
                       DAILY).values())
-    first = _steps_of(steps[0].flex_data, "battery")
-    assert {b: len(ts) for b, ts in first.items()} == {"t0001": 12, "t0013": 24, "t0037": 12}
-    second = _steps_of(steps[1].flex_data, "battery")
-    assert {b: len(ts) for b, ts in second.items()} == {"t0013": 12, "t0025": 24, "t0049": 12}
+    _roll_cut_checks(steps)
+
+
+def test_coarse_rolling_cut_ignores_output_horizon(tmp_path_factory) -> None:
+    """``model.output_horizon`` (write the whole horizon) changes only the output rows: the coarse steps still
+    end at each roll's realized end and every roll's LP is the one without the flag (review F1).  Before the
+    fix the cut read the output row set, so roll 1 got coarse steps t0001-24 / t0025-48 and handed over a state
+    that already included look-ahead hours t0013-t0024."""
+    chain = BATTERY + ["fullYear", "dispatch_fullYear_roll"]
+    with_flag = list(_run(tmp_path_factory, "c_roll12oh", _roll(12.0) + [
+        ["model", "flexTool", "output_horizon", _s("yes")]], chain, DAILY).values())
+    _roll_cut_checks(with_flag)
+    without = list(_run(tmp_path_factory, "c_roll12no", _roll(12.0), chain, DAILY).values())
+    assert len(with_flag) == len(without)
+    for a, b in zip(with_flag, without):
+        ma, mb = build(a.flex_data).canonicalise(), build(b.flex_data).canonicalise()
+        assert list(ma.row_names) == list(mb.row_names) and list(ma.col_names) == list(mb.col_names)
+        assert list(ma.val) == list(mb.val)
 
 
 def test_coarse_storage_binding(tmp_path_factory) -> None:
@@ -371,14 +400,26 @@ def test_coarse_storage_binding(tmp_path_factory) -> None:
                       DAILY + [["timeset", "ta", None], ["timeset", "tb", None]]))
     pb = build(step.flex_data)
     rows = row_terms(pb, "nodeBalanceCoarse_eq", "battery,")
+    fd = step.flex_data
+    su = float(utf8(fd.p_state_unitsize.frame).filter(pl.col("n") == "battery")["value"][0])
     first = rows["nodeBalanceCoarse_eq[battery,p2020,t0001]"]
-    assert not any(c.startswith("v_state[battery,p2025,") for c in first)
-    lo, _ = row_bounds(pb, "nodeBalanceCoarse_eq", "battery,p2020,t0001")["nodeBalanceCoarse_eq[battery,p2020,t0001]"]
-    inflow = float(utf8(step.flex_data.p_inflow.frame).filter((pl.col("n") == "battery") & (pl.col("d") == "p2020"))
-                   ["value"].sum()) if step.flex_data.p_inflow is not None else 0.0
-    assert lo != pytest.approx(-inflow)                # the fixed start energy moved to the bound
+    states = {c: v for c, v in first.items() if c.startswith("v_state[")}
+    # No wrap: only p2020 states; telescoped they leave −state_unitsize on the day (start − end of the day), plus
+    # the self-discharge of the 24 hours.
+    assert all(c.startswith("v_state[battery,p2020,") for c in states)
+    sd = float(utf8(fd.p_state_self_discharge.frame).filter(pl.col("n") == "battery")["value"][0])
+    assert sum(states.values()) == pytest.approx(-su - 24 * sd * su, rel=1e-9)
+    # fix_start: the start energy state_start × existing is in the bound (the summed −inflow minus it).
+    lo, hi = row_bounds(pb, "nodeBalanceCoarse_eq", "battery,p2020,t0001")["nodeBalanceCoarse_eq[battery,p2020,t0001]"]
+    inflow = (float(utf8(fd.p_inflow.frame).filter((pl.col("n") == "battery") & (pl.col("d") == "p2020"))
+                    ["value"].sum()) if fd.p_inflow is not None else 0.0)
+    start = float(utf8((fd.p_state_start * fd.p_state_existing_capacity).frame)
+                  .filter((pl.col("n") == "battery") & (pl.col("d") == "p2020"))["value"][0])
+    assert start > 0
+    assert lo == pytest.approx(-inflow - start, rel=1e-9) and hi == pytest.approx(lo)
+    # p2025 starts from p2020's last state (forward chain), +state_unitsize.
     second = rows["nodeBalanceCoarse_eq[battery,p2025,t0025]"]
-    assert second["v_state[battery,p2020,t0024]"] > 0
+    assert second["v_state[battery,p2020,t0024]"] == pytest.approx(su)
 
 
 def test_two_coarse_groups(tmp_path_factory) -> None:

@@ -8351,29 +8351,18 @@ def dtttdt_block_interior_from_dtttdt(dtttdt: pl.DataFrame | None,
                                           period_block_time: pl.DataFrame
                                               | None = None,
                                           ) -> pl.DataFrame | None:
-    """Interior-of-block dtttdt rows.
+    """Interior-of-block dtttdt rows of the ``bind_intraperiod_blocks`` timeset blocks.
 
-    Two paths matching flex_data.py's branching:
-
-      1. **Default** (timeset-block decomposition only): keep dtttdt
-         rows where ``t_previous_within_timeset == t_previous``
-         (jump=1 interior, not a boundary).  Mirrors flex_data.py:1959-1968.
-
-      2. **Synthesised (multi-resolution)**: when *period_block_time*
-         is the synthesised daily-block table (multiple b_first per
-         period), rebuild block_interior from it: for each (d, b_first),
-         consecutive sorted t's give (d, t, t_previous=t_prev) — i.e.
-         intra-day predecessor pairs.  Mirrors flex_data.py:2076-2092.
-
-    The caller distinguishes by passing the (possibly synthesised)
-    ``period_block_time`` frame.  When it has multiple b_first values
-    per period, branch 2 fires.
+      1. **One block per period** (or no *period_block_time*): keep dtttdt rows where
+         ``t_previous_within_timeset == t_previous`` (jump=1 interior, not a boundary).
+      2. **Several timeset blocks per period**: for each (d, b_first) of *period_block_time*, consecutive
+         sorted t's give (d, t, t_previous) — the same set as branch 1, built from the blocks.
     """
     if dtttdt is None or dtttdt.height == 0:
         return None
     multi_res = False
     if period_block_time is not None and period_block_time.height > 0:
-        # Detect multi-resolution: more than one distinct b_first per d.
+        # Several timeset blocks in a period: more than one distinct b_first per d.
         nb = (period_block_time
               .group_by("d")
               .agg(pl.col("b_first").n_unique().alias("nb"))

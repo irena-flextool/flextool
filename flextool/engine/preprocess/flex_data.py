@@ -396,7 +396,27 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
     return out.select(cols)
 
 
-def _apply_coarse_frames(flex_data: "FlexData") -> None:
+def _realized_steps(sd: Path, flex_data: "FlexData", *, provider: "object | None" = None) -> "pl.DataFrame | None":
+    """``(d, t)`` the solve realizes: ``solve_data/realized_dispatch`` — the same source as
+    ``_last_realized_step`` (the roll carriers), never the output row set ``flex_data.realized_dispatch`` (which
+    ``model.output_horizon`` widens to the whole horizon).  Without that key (unit-test synthesis) the latter."""
+    frame = None
+    rd_path = sd / "realized_dispatch.csv"
+    if _provider_has(provider, "solve_data/realized_dispatch", rd_path):
+        try:
+            frame = _provider_read(provider, "solve_data/realized_dispatch", rd_path)
+        except pl.exceptions.NoDataError:
+            frame = None
+    if frame is None:
+        frame = flex_data.realized_dispatch
+    if frame is None or frame.height == 0:
+        return None
+    d_col = "period" if "period" in frame.columns else "d"
+    t_col = "step" if "step" in frame.columns else "t"
+    return frame.select(pl.col(d_col).cast(pl.Utf8).alias("d"), pl.col(t_col).cast(pl.Utf8).alias("t"))
+
+
+def _apply_coarse_frames(flex_data: "FlexData", sd: Path, *, provider: "object | None" = None) -> None:
     """Set ``nodeCoarse`` / ``node_coarse_step`` / ``node_coarse_interior`` from the solve's block layout
     (node -> group, group steps) and its steps (``params._coarse.coarse_node_frames``)."""
     from flextool.engine.preprocess.params._coarse import coarse_node_frames
@@ -404,9 +424,7 @@ def _apply_coarse_frames(flex_data: "FlexData") -> None:
     layout = flex_data.block_layout
     if layout is None or "default" not in layout.block_step_duration or len(layout.block_step_duration) < 2:
         return
-    realized = flex_data.realized_dispatch
-    if realized is not None and {"period", "step"} <= set(realized.columns):
-        realized = realized.rename({"period": "d", "step": "t"})
+    realized = _realized_steps(sd, flex_data, provider=provider)
     psd = flex_data.p_step_duration
     frames = coarse_node_frames(
         node_group=layout.node_block, group_step=layout.block_step_duration,
@@ -784,7 +802,7 @@ class FlexData:
     # (nodeBalanceCoarse_eq); a coarse storage node keeps one state per coarse step (stateConstantCoarse_eq).
     nodeCoarse: pl.DataFrame | None = None                 # set: (n,)
     node_coarse_step: pl.DataFrame | None = None           # set: (n, d, b_first, t) — fine t in coarse step b_first
-    node_coarse_interior: pl.DataFrame | None = None       # set: (n, d, t, t_previous) — consecutive steps of one coarse step
+    node_coarse_interior: pl.DataFrame | None = None       # set: (n, d, t, t_previous) — steps of one coarse step
     # ─── RP-blended-weights storage (bind_within_solve_blended_weights) ─────────
     # Eight per-solve sets / params that drive the intra-period state-change
     # branch for ``nodeState_rp`` plus the three ``rp_inter_period_*``
@@ -5014,7 +5032,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         # Coarse new_stepduration groups: the coarse steps of their nodes, from this solve's own steps (every
         # solve, roll, nested and stochastic sub-solve).
-        _apply_coarse_frames(flex_data)
+        _apply_coarse_frames(flex_data, sd, provider=provider)
 
         # Annual commodity ladder: the forecast branch periods of a stochastic solve get their anchor
         # period's tier curve.  Runs after every producer of the ladder Params (load_data and the

@@ -30,8 +30,14 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 
 _LOG = logging.getLogger(__name__)
 _EPS = 1e-9
-# Warnings already given in this process (one per message, not one per roll).
+# Warnings already given in this run (one per message, not one per roll); cleared at the start of every run
+# (``reset_warnings``, called by ``run_orchestration``).
 _WARNED: set[str] = set()
+
+
+def reset_warnings() -> None:
+    """Forget the warnings given so far, so a new run in the same process shows them again."""
+    _WARNED.clear()
 
 
 def _warn_once(msg: str) -> None:

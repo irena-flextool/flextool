@@ -134,6 +134,7 @@ _DOCUMENTED_OUT_OF_SCOPE_SOLVE_DATA: frozenset[str] = frozenset({
     # carrier — none of them are seed-fed.
     "block_period_time_first.csv",
     "block_period_time_last.csv",
+    "block_duration.csv",
     "block_step_duration.csv",
     "block_step_previous.csv",
     "commodity_with_ladder.csv",

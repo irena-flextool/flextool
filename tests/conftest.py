@@ -282,6 +282,46 @@ def lh2_trade_invest_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 
 @pytest.fixture(scope="session")
+def lh2_trade_invest_retuned_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Re-tuned sibling of the trade-invest LH2 fixture (cycle c15b review F3).
+
+    Derived IN-MEMORY from ``lh2_three_region_trade_invest.json`` (same
+    single-source-of-truth rationale as :func:`lh2_master_build_db_url`).
+    Since every electrolyser hour consumes electricity (c15b, coarse
+    groups sum their hourly flows), region A's base 800 MW wind / 250 MW
+    electrolyser / 200 MW liquefier cannot ship LH2 on to C, so the base
+    fixture builds pipe_AB only and Benders converges in 2 iterations.
+    Here region A's chain is enlarged (wind_A 1 500 MW, electrolyser_A
+    1 000 MW, liquefier_A 800 MW), in the scenario's own alternative:
+    the monolith builds BOTH pipes, ships A→B→C (C's LH2 demand served,
+    no lh2_C slack) and λ = 0 Benders needs several iterations.
+    """
+    import base64
+
+    from flextool.update_flextool.db_migration import migrate_database
+
+    spec = json.loads(
+        (FIXTURES_DIR / "lh2_three_region_trade_invest.json").read_text()
+    )
+    alt = "lh2_three_region_trade_invest"
+
+    def _val(v: float) -> list:
+        return [base64.b64encode(json.dumps(v).encode()).decode(), "float"]
+
+    spec["parameter_values"] += [
+        ["unit", "wind_A", "existing", _val(1500.0), alt],
+        ["connection", "electrolyser_A", "existing", _val(1000.0), alt],
+        ["unit", "liquefier_A", "existing", _val(800.0), alt],
+    ]
+    root = tmp_path_factory.mktemp("db_lh2tir")
+    json_path = root / "lh2_trade_invest_retuned.json"
+    json_path.write_text(json.dumps(spec))
+    url = json_to_db(json_path, root / "lh2_trade_invest_retuned.sqlite")
+    migrate_database(url)
+    return url
+
+
+@pytest.fixture(scope="session")
 def lh2_master_build_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     """Master-hosted build-through sibling of the trade-invest LH2
     fixture (Benders C7).
@@ -769,6 +809,7 @@ def scenario_workdir(
     stochastic_db_url,
     lh2_db_url,
     lh2_trade_invest_db_url,
+    lh2_trade_invest_retuned_db_url,
     lh2_master_build_db_url,
     lh2_master_hourly_db_url,
     lh2_rp_invest_db_url,
@@ -830,6 +871,7 @@ def scenario_workdir(
         "stochastic": stochastic_db_url,
         "lh2": lh2_db_url,
         "lh2_trade_invest": lh2_trade_invest_db_url,
+        "lh2_trade_invest_retuned": lh2_trade_invest_retuned_db_url,
         "lh2_master_build": lh2_master_build_db_url,
         "lh2_master_hourly": lh2_master_hourly_db_url,
         "lh2_rp_invest": lh2_rp_invest_db_url,

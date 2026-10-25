@@ -264,19 +264,15 @@ def dtttdt_block_interior_lf(
     dtttdt: pl.DataFrame | None,
     period_block_time: pl.DataFrame | None,
 ) -> pl.LazyFrame:
-    """Interior-of-block dtttdt rows.
+    """Interior-of-block dtttdt rows of the ``bind_intraperiod_blocks`` timeset blocks.
 
-    Two paths matching ``flex_data.py``'s branching:
+    1. **One block per period** (or no *period_block_time*): keep dtttdt rows
+       where ``t_previous_within_timeset == t_previous`` (jump=1 interior).
+    2. **Several timeset blocks per period**: per (d, b_first) of
+       *period_block_time*, consecutive sorted steps give the interior
+       predecessor pairs (the same set as branch 1, built from the blocks).
 
-    1. **Default** (timeset-block decomposition): keep dtttdt rows where
-       ``t_previous_within_timeset == t_previous`` (jump=1 interior).
-    2. **Synthesised (multi-resolution)**: when *period_block_time* has
-       multiple ``b_first`` per period, rebuild interior pairs from the
-       coarse block decomposition: per (d, b_first), consecutive sorted
-       fine t's give intra-day predecessor pairs.
-
-    The caller distinguishes via *period_block_time*'s shape; this
-    helper detects automatically.
+    The caller passes *period_block_time*; this helper picks the branch.
     """
     empty = pl.LazyFrame(schema={
         "d": schema_dtype(_enums, "d"),

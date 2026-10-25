@@ -609,7 +609,7 @@ def test_straddling_unit_raises_through_driver(mh_data) -> None:
         solve_benders(data, REGIONS_ABC, max_iters=5, tol=1e-4)
 
 
-def test_mixed_resolution_coupling_brackets_monolith(_workdirs) -> None:
+def test_mixed_resolution_coupling_brackets_monolith(_workdirs, tmp_path, monkeypatch) -> None:
     """On the DAILY-group sibling (``lh2_master_build``), hosting the A/B
     carrier chains makes every electrolyser coupling arc join an hourly
     node (elec) to a daily node (h2).  Every flow lives on the hourly
@@ -622,9 +622,13 @@ def test_mixed_resolution_coupling_brackets_monolith(_workdirs) -> None:
     side read the flow only at the day's first hour), the split was a
     relaxation, and the driver rejected the configuration.
 
-    The 2 × 48 hourly electrolyser coupling columns make plain Benders
-    slow here (gap 1.2e-2 after 300 iterations); in-out stabilization
-    (λ = 0.7) closes it to ~1e-2 in 80 iterations."""
+    Exactness check: with every coupling flow pinned at the monolith's
+    optimum (the pin diagnostic, ``FLEXTOOL_BENDERS_PIN_DIAGNOSTIC``) the
+    region costs plus the master's native cost equal M to ~1e-12 relative —
+    a relaxation would come out below M (review F4).  The loop part is a
+    convergence smoke test: the 2 × 48 hourly electrolyser coupling columns
+    make plain Benders slow here (gap 1.2e-2 after 300 iterations); in-out
+    stabilization (λ = 0.7) closes it to ~1e-2 in 80 iterations."""
     mb_data = load_flextool(_workdirs[2])
     data = _host_nodes(
         mb_data, frozenset({"h2_A", "lh2_A", "h2_B", "lh2_B"}), REGIONS_ABC
@@ -634,6 +638,20 @@ def test_mixed_resolution_coupling_brackets_monolith(_workdirs) -> None:
     mono = pb.solve()
     assert mono.optimal
     M = mono.obj
+
+    flows = mono.value("v_flow").select(
+        [pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink", "d", "t")] + [pl.col("value")])
+    point = tmp_path / "monolith_flows.parquet"
+    flows.write_parquet(point)
+    monkeypatch.setenv("FLEXTOOL_BENDERS_PIN_DIAGNOSTIC", str(point))
+    pinned = solve_benders(data, REGIONS_ABC, max_iters=5, tol=1e-4, monolith_objective=M,
+                           scale_the_objective=OBJ_SCALE)
+    monkeypatch.delenv("FLEXTOOL_BENDERS_PIN_DIAGNOSTIC")
+    assert pinned.converged, "a region hit its penalty with the monolith's coupling flows pinned"
+    assert abs(pinned.total_objective - M) <= 1e-12 * abs(M), (
+        f"decomposed total at the monolith's coupling flows {pinned.total_objective!r} != M {M!r}"
+    )
+
     res = solve_benders(
         data, REGIONS_ABC, max_iters=80, tol=1e-4,
         monolith_objective=M, scale_the_objective=OBJ_SCALE, in_out_weight=0.7,

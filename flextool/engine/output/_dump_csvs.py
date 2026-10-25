@@ -832,6 +832,7 @@ _META_FILES_TO_COPY: tuple[tuple[str, str], ...] = (
     ("solve_data", "entity.csv"),
     ("solve_data", "entityDivest.csv"),
     ("solve_data", "entity_block.csv"),
+    ("solve_data", "block_duration.csv"),
     ("solve_data", "overlap_set.csv"),
     ("solve_data", "block_step_duration.csv"),
     ("solve_data", "period_block_set.csv"),

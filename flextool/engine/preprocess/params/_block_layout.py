@@ -50,7 +50,7 @@ if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
 DEFAULT_BLOCK = "default"
 
 
-# Six per-solve block CSV stems written by
+# Seven per-solve block CSV stems written by
 # ``flextool.engine.preprocess.emit._blocks.write_block_data`` and consumed by
 # :meth:`BlockLayout.load_from_solve_data`.  Defined as a module
 # constant so the off-cascade workdir bridge can seed only these files
@@ -59,6 +59,7 @@ DEFAULT_BLOCK = "default"
 # the strict CSV reader).
 _BLOCK_CSV_STEMS: tuple[str, ...] = (
     "entity_block",
+    "block_duration",
     "block_step_duration",
     "overlap_set",
     "block_step_previous",
@@ -348,6 +349,7 @@ class BlockLayout:
 
     # --- Output frames ----------------------------------------------------
     entity_block_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
+    block_duration_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
     block_step_duration_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
     overlap_set_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
     block_step_previous_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
@@ -926,6 +928,13 @@ class BlockLayout:
                     "block": pl.Utf8},
         )
 
+        # block_duration.csv — each block's nominal step (default = the solve's step).
+        bd_rows = list(self.block_step_duration.items())
+        self.block_duration_frame = pl.DataFrame(
+            {"block": [r[0] for r in bd_rows], "step_duration": [float(r[1]) for r in bd_rows]},
+            schema={"block": pl.Utf8, "step_duration": pl.Float64},
+        )
+
         # block_step_duration.csv — full per-block timeline.
         bsd_rows: list[tuple[str, str, str, float]] = []
         for block, period_rows in self.per_block_timeline.items():
@@ -1024,7 +1033,7 @@ class BlockLayout:
         """Load a ``BlockLayout`` from a :class:`FlexDataProvider`.
 
         Step 2.5 Phase A: ``blocks.write_block_data`` is now patched
-        into ``_PATCH_MODULES`` so the six per-solve block frames
+        into ``_PATCH_MODULES`` so the seven per-solve block frames
         live in the Provider after the cascade's preprocessing pass.
         Callers MUST pass *provider*.  When only a workdir is available
         (off-cascade tests, transitional bridges), use
@@ -1101,6 +1110,10 @@ class BlockLayout:
             "entity_block.csv",
             {"entity": pl.Utf8, "block": pl.Utf8},
         )
+        layout.block_duration_frame = _read(
+            "block_duration.csv",
+            {"block": pl.Utf8, "step_duration": pl.Float64},
+        )
         layout.block_step_duration_frame = _read(
             "block_step_duration.csv",
             {
@@ -1142,16 +1155,20 @@ class BlockLayout:
                 layout.entity_block_frame["entity"].to_list(),
                 layout.entity_block_frame["block"].to_list(),
             ))
-        # block_step_duration: dict[block → step_duration] uses the
-        # first step's duration for each block (every step in a block
-        # shares the same duration by construction).
+        # block_step_duration: dict[block → nominal step] from block_duration (the default block's entry is the
+        # solve's step as the emitter resolved it); without that frame (older workdirs) the first step's
+        # duration of each block.
         bsd = layout.block_step_duration_frame
-        if bsd.height > 0:
+        bd = layout.block_duration_frame
+        if bd.height > 0:
+            layout.block_step_duration = dict(bd.select("block", "step_duration").iter_rows())
+        elif bsd.height > 0:
             layout.block_step_duration = dict(
-                bsd.group_by("block")
+                bsd.group_by("block", maintain_order=True)
                    .agg(pl.col("step_duration").first())
                    .iter_rows()
             )
+        if bsd.height > 0:
             # per_block_timeline reconstruction.
             for row in bsd.iter_rows(named=True):
                 blk = row["block"]

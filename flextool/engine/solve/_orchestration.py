@@ -2009,6 +2009,8 @@ def run_orchestration(
     FlexToolSolveError
         Any per-solve LP infeasibility / non-optimal status.
     """
+    from flextool.engine.preprocess.params._coarse import reset_warnings as _reset_coarse_warnings
+    _reset_coarse_warnings()
     work_folder = Path(work_folder)
     work_folder.mkdir(parents=True, exist_ok=True)
     # Rebuild ``paths`` for this run's work_folder, but CARRY FORWARD

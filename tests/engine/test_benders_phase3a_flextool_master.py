@@ -10,8 +10,9 @@ omission, native flow / invest / capacity / cost emit) from RP / scale.
 
 GATE (spec ``benders_option_c.md`` §5 sub-stage 3a):
 
-* converges (≤12 iters, tol 1e-4) to ``M = 1.2217878e10`` (rtol 1e-4; 8.5442474e9
-  before c15b's coarse-group fix);
+* converges (≤12 iters, tol 1e-4) to ``M = 4.6054965e9`` (rtol 1e-4) on the
+  re-tuned sibling ``lh2_trade_invest_retuned`` (both pipes built again since
+  c15b; tests/conftest.py);
 * a VALID lower bound ``LB ≤ M·(1+1e-9)`` (the whole point vs the Lagrangian
   bug);
 * recovered invest ``C`` and trade ``f̄`` match the monolith;
@@ -40,13 +41,15 @@ from flextool.engine.solve import _region_filter
 from flextool.engine.solve._benders import solve_benders
 
 _REGIONS = ["region_A", "region_B", "region_C"]
-_M_EXPECTED = 1.2217878e10
+# Monolith optimum of the re-tuned trade-invest sibling (``lh2_trade_invest_retuned``,
+# tests/conftest.py): both pipes built, A→B→C trade.
+_M_EXPECTED = 4.6054965e9
 
 
 @pytest.fixture(scope="module")
 def ti_workdir(scenario_workdir):
     return scenario_workdir(
-        "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"
+        "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest_retuned"
     )
 
 
@@ -135,7 +138,7 @@ def test_flextool_master_converges_to_monolith(ti_data, monolith) -> None:
         f"{res.iterations} iters (LB={res.lower_bound:.6e} "
         f"UB={res.upper_bound:.6e})"
     )
-    assert res.iterations <= 12, f"too many iters: {res.iterations}"
+    assert 3 <= res.iterations <= 12, f"iterations {res.iterations} outside 3..12 (a multi-iteration loop)"
 
     # total_objective (best UB) reconciles to the monolith optimum.
     assert np.isclose(res.total_objective, M, rtol=1e-4), (
@@ -174,10 +177,7 @@ def test_flextool_master_recovers_invest_and_trade(ti_data, monolith) -> None:
 
     C_ab = res.invest.get("pipe_AB", 0.0)
     C_bc = res.invest.get("pipe_BC", 0.0)
-    # pipe_AB is invested; pipe_BC is not (the monolith builds none: A's
-    # surplus does not reach C once every electrolyser hour consumes
-    # electricity) — both must match the monolith.
-    assert C_ab > 1e-3, f"pipe_AB not invested: {res.invest}"
+    assert C_ab > 1e-3 and C_bc > 1e-3, f"pipes not invested: {res.invest}"
     assert np.isclose(C_ab, C_ab_star, rtol=2e-2, atol=1e-3), (
         f"pipe_AB invest {C_ab} != monolith {C_ab_star}"
     )

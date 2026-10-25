@@ -8,6 +8,8 @@ blocks.py — Per-node temporal block derivation (group ``new_stepduration``).
 * Emit the per-solve block frames to ``solve_data/``:
 
   * ``entity_block.csv``            — one row per node.
+  * ``block_duration.csv``          — (block, step_duration): each block's
+                                       nominal step (default = the solve's step).
   * ``block_step_duration.csv``     — per (block, period, step) step
                                        duration, analogous to
                                        ``steps_in_use.csv``.
@@ -877,6 +879,17 @@ def _entity_block_frame(block_assignments: BlockAssignments) -> pl.DataFrame:
     )
 
 
+def _block_duration_frame(block_assignments: BlockAssignments) -> pl.DataFrame:
+    """``(block, step_duration)``: each block's nominal step (the default block's is the solve's step,
+    ``_solve_step_duration``; a group's its ``new_stepduration``) — the one definition of the solve's step the model
+    uses to decide which groups are coarse."""
+    rows = list(block_assignments.block_step_duration.items())
+    return pl.DataFrame(
+        {"block": [r[0] for r in rows], "step_duration": [float(r[1]) for r in rows]},
+        schema={"block": pl.Utf8, "step_duration": pl.Float64},
+    )
+
+
 def _block_step_duration_frame(
     block_timelines: BlockTimelines | None,
 ) -> pl.DataFrame:
@@ -971,7 +984,7 @@ def emit_block_data(
 ) -> None:
     """Provider-emitting twin of :func:`write_block_data`.
 
-    Emits the six block frames under ``solve_data/<basename>`` keys
+    Emits the seven block frames under ``solve_data/<basename>`` keys
     via :func:`_emit` (dual-key registration: basename and
     parent/basename).  *solve_data_dir* is retained for signature parity
     with :func:`write_block_data`; the Provider is the only sink.
@@ -979,6 +992,8 @@ def emit_block_data(
     del solve_data_dir
     _emit(provider, "solve_data/entity_block.csv",
           _entity_block_frame(block_assignments))
+    _emit(provider, "solve_data/block_duration.csv",
+          _block_duration_frame(block_assignments))
     _emit(provider, "solve_data/block_step_duration.csv",
           _block_step_duration_frame(block_timelines))
     _emit(provider, "solve_data/overlap_set.csv",
@@ -1069,13 +1084,13 @@ def emit_block_data_for_solve(
     """Provider-emitting twin of :func:`write_block_data_for_solve`.
 
     Mirrors the orchestration hook end-to-end but routes the final
-    six CSV emissions through :func:`emit_block_data` (Provider) rather
+    seven CSV emissions through :func:`emit_block_data` (Provider) rather
     than :func:`write_block_data` (disk).
 
     The ``provider`` keyword is retained as the *input* Provider —
     :func:`_read_input_rows` consults it for ``input/*.csv`` lookups.
     The new keyword-only ``emit_provider`` is the *output* Provider into
-    which the six block frames are emitted.
+    which the seven block frames are emitted.
     """
     wf = Path(work_folder)
     inp = wf / "input"

@@ -22,9 +22,14 @@
   `fix_price`. Online (unit commitment) variables of
   units next to coarse nodes now exist at every time step. A group step that
   is not a multiple of the solve's step is now an error (before the coarse
-  handling was silently dropped). Prices of coarse nodes and of
-  `bind_intraperiod_blocks` storage nodes had the wrong sign; outputs no
-  longer copy a coarse step's value to its other time steps. Listing a unit
+  handling was silently dropped). Coarse nodes now report a price (the dual
+  of their coarse-step balance) with the same sign convention as every other
+  node, and `bind_intraperiod_blocks` storage nodes now also use that
+  convention (before, their sign was the opposite of the other nodes'). Note:
+  the sign and scale of all node prices are still being corrected (they are
+  currently reported negated and divided by the period's share of the year);
+  that fix follows separately. Outputs no longer copy a coarse step's value
+  to its other time steps. Listing a unit
   or connection in a coarse group has no effect on time resolution (a
   warning names those that touch a node outside the group). Benders
   decomposition now allows a boundary between nodes of different time
