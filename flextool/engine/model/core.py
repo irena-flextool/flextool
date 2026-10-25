@@ -1592,6 +1592,10 @@ def _eq_block_coupling(b: _Build) -> None:
     m, d = b.m, b.d
     nsb = d.nodeStateBlock
     v_state = b.v_state
+    # nodeBalance_eq skips these nodes: without blocks they would have no energy balance at all.
+    if not (_has_rows(d.period_block) and _has_rows(d.period_block_succ) and _has_rows(d.period_block_time)):
+        names = ", ".join(sorted(str(n) for n in nsb["n"].to_list()))
+        raise FlexToolConfigError(f"bind_intraperiod_blocks node(s) {names} have no timeset blocks in this solve")
 
     # ─── EQ. ─── stateConstantWithinBlock_eq ─────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -1609,9 +1613,6 @@ def _eq_block_coupling(b: _Build) -> None:
                          "state_lag": -Where(Lag(v_state, interior, "t", "t_previous"), nsb)},
             rhs_terms = {},
         )
-
-    if not (_has_rows(d.period_block) and _has_rows(d.period_block_succ) and _has_rows(d.period_block_time)):
-        return
 
     # ─── EQ. ─── nodeBalanceBlock_eq ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────

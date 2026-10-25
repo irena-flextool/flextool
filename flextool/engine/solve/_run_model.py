@@ -93,6 +93,29 @@ _RP_METHOD_DOWNGRADE: dict[str, str] = {
 }
 
 
+def _reject_rolling_intraperiod_blocks(state, complete_solve_name: str, provider) -> None:
+    """Raise when a rolling_window solve has ``bind_intraperiod_blocks`` storage nodes.
+
+    How a timeset block cut by a roll window should behave (a loop per window, or the storage level carried
+    from roll to roll) is not defined yet (owner question Q-c15c-A); before this check such a node got no
+    energy balance at all in a roll.  ``solve_data/nodeStateBlock`` (the block nodes of this sub-solve) is
+    emitted by ``preprocessing_solve_time.run``, so this runs after it and before the sub-solve's data is loaded.
+    """
+    if state.solve.solve_modes.get(complete_solve_name) != "rolling_window":
+        return
+    if not provider.has("solve_data/nodeStateBlock"):
+        return
+    nsb = provider.get("solve_data/nodeStateBlock")
+    if nsb is None or nsb.height == 0:
+        return
+    col = "node" if "node" in nsb.columns else nsb.columns[0]
+    names = sorted(str(n) for n in nsb[col].unique().to_list())
+    raise FlexToolConfigError(
+        f"Solve '{complete_solve_name}' is a rolling_window solve and node(s) {', '.join(names)} use "
+        "storage_binding_method bind_intraperiod_blocks. How timeset blocks cut by a roll window should behave "
+        "is not defined yet; use bind_forward_only or bind_within_timeblock for these nodes in rolling solves.")
+
+
 def _downgrade_rp_methods_for_non_rp_solve(
     *, solve, complete_solve_name, roll_index,
     active_timeset_names, rp_weights, provider, logger,
@@ -1413,6 +1436,7 @@ def native_run_model(state, solver) -> int:
         if _mem_cp is not None:
             _mem_cp("prep_solve_time_dispatcher_done",
                     "prep: _solve_time.run (per-solve sets + params dispatcher) done")
+        _reject_rolling_intraperiod_blocks(state, complete_solve[solve], sub_solve_provider)
         # Step 1-f — Provider stash on state.  Read by
         # ``_PolarHighCascadeSolver.run`` to thread through into
         # ``load_flextool`` / ``write_outputs_for_solve`` /

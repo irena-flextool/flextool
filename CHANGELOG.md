@@ -14,6 +14,13 @@
   it now passes the storage solve's `price_t`, also for
   `bind_intraperiod_blocks` storage nodes.
 
+- **`bind_intraperiod_blocks` storage in rolling and nested solves.** A
+  rolling solve with a `bind_intraperiod_blocks` storage node now stops with
+  an error; before, the node had no energy balance at all in a roll (energy
+  could appear from nothing). The per-period sub-solves of a nested solve
+  now get their timeset blocks, so such a node is balanced there; before, it
+  had no balance either.
+
 - **Nodes in a `new_stepduration` group sum their flows over each coarse
   step.** A node of a group whose `new_stepduration` is longer than the
   solve's time step is now balanced once per coarse step by summing all its

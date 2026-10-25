@@ -5481,6 +5481,29 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                         db_reader, dt, sd, hist, "min_downtime"))
         _loadflex_prof("apply_db_overrides:pass_synthetic_mintime")
         _timed("c.synth mintime", _wire_mintime_for_synthetic_solve)
+
+        # BLOCK-1 — same class of gap.  ``nodeStateBlock`` (the bind_intraperiod_blocks nodes) is CSV-seeded, but
+        # its timeset blocks (``period_block`` / ``period_block_succ`` / ``period_block_time``,
+        # ``dtttdt_block_interior``) are produced only by ``apply_derived_e``, so a nested anchor sub-solve
+        # (``<solve>_<period>``) had a block node without blocks — no energy balance at all.  The producer reads
+        # this sub-solve's own steps (``_dt_period_active_steps`` falls back to ``steps_in_use``), so it gives
+        # what the same solve gets as a Spine solve.  Rolling solves never reach this: a rolling solve with a
+        # block node is an error (``_run_model._reject_rolling_intraperiod_blocks``).
+        def _wire_blocks_for_synthetic_solve():
+            nsb = getattr(flex_data, "nodeStateBlock", None)
+            if nsb is None or nsb.height == 0:
+                return
+            family = _drv.period_block_family_from_source(
+                db_reader, active_solve, workdir_path, ctx=ctx, provider=provider)
+            if family is None:
+                return
+            flex_data.period_block = family["period_block"]
+            flex_data.period_block_succ = family["period_block_succ"]
+            flex_data.period_block_time = family["period_block_time"]
+            flex_data.dtttdt_block_interior = _drv.dtttdt_block_interior_from_dtttdt(
+                getattr(flex_data, "dtttdt", None), family["period_block_time"])
+        _loadflex_prof("apply_db_overrides:pass_synthetic_blocks")
+        _timed("c.synth blocks", _wire_blocks_for_synthetic_solve)
         return
 
     _loadflex_prof("apply_db_overrides:pass_derived_a")
