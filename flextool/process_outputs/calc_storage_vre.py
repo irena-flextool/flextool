@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from flextool.process_outputs._annualize import annualize_dt_to_d
@@ -12,17 +13,24 @@ def compute_storage_and_vre(par, s, v, r) -> None:
     current_idx = s.dtt.droplevel('t_previous')
     # bind_within_period: the previous step in the same period, the first step wrapping to the period's own
     # last step (the model's lag; dtttdt's t_previous of a period's first step may point into another period).
-    # Later sub-solves win on a shared step, as in drop_levels.
-    wp_prev: dict = {}
+    # Built only when a node uses the method; later sub-solves win on a shared step, as in drop_levels.
+    prev_period_idx = current_idx
+    methods = s.node__storage_binding_method
     wp_lag = getattr(s, "dtt_within_period", None)
-    if wp_lag is not None and len(wp_lag):
-        for p, t, tp in zip(wp_lag.get_level_values("period"), wp_lag.get_level_values("time"),
-                            wp_lag.get_level_values("t_previous_within_period")):
-            wp_prev[(str(p), str(t))] = tp
-    prev_period_idx = pd.MultiIndex.from_tuples(
-        [(p, wp_prev.get((str(p), str(t)), t)) for p, t in current_idx],
-        names=['period', 'time'],
-    ) if len(current_idx) else current_idx
+    if (len(current_idx) and wp_lag is not None and len(wp_lag)
+            and (methods.get_level_values('method') == 'bind_within_period').any()):
+        lag = pd.Series(
+            wp_lag.get_level_values('t_previous_within_period'),
+            index=pd.MultiIndex.from_arrays(
+                [wp_lag.get_level_values('period'), wp_lag.get_level_values('time')], names=['period', 'time']),
+        )
+        lag = lag[~lag.index.duplicated(keep='last')]
+        prev_time = lag.reindex(current_idx).to_numpy(dtype=object)
+        times = current_idx.get_level_values('time').to_numpy(dtype=object)
+        prev_period_idx = pd.MultiIndex.from_arrays(
+            [current_idx.get_level_values('period'), np.where(pd.isna(prev_time), times, prev_time)],
+            names=['period', 'time'],
+        )
     prev_timeset_idx = (
         s.dtttdt
         .droplevel(['time', 't_previous', 'd_previous', 't_previous_within_solve'])

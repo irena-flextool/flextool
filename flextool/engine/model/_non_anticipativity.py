@@ -73,6 +73,15 @@ def _stochastic_nodes(d) -> "pl.DataFrame | None":
     return nodes if nodes.height > 0 else None
 
 
+def _balance_nodes(d, nodes: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """The rows of ``nodes`` that are balance nodes (``d.nodeBalance``); None when none are."""
+    if nodes is None or not _has_rows(d.nodeBalance):
+        return None
+    names = [str(n) for n in d.nodeBalance["n"].to_list()]
+    out = nodes.filter(pl.col("n").cast(pl.Utf8).is_in(names))
+    return out if out.height > 0 else None
+
+
 def add_dispatch_constraints(b: "_Build") -> None:
     """Tie storage use, units online and reserves across the forecast branches of each anchor period."""
     d = b.d
@@ -111,18 +120,20 @@ def add_dispatch_constraints(b: "_Build") -> None:
     #              − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t] · unitsize[p] · Δt[d,t]
     #              − Σ_{(p,s,n) ∈ twoway1var_arcs} v_flow_back[p,s,n,d,t] · unitsize[p] · Δt[d,t]
     #              + Σ_{(p,n,k) ∈ twoway1var_arcs} v_flow_back[p,n,k,d,t] · unitsize[p] · Δt[d,t]
-    #   ∀ n ∈ nodes of groupStochastic, (d,b) ∈ forecast star, (d,t) ∈ tied steps
+    #   ∀ n ∈ nodes of groupStochastic ∩ nodeBalance, (d,b) ∈ forecast star, (d,t) ∈ tied steps
     #   section only for p ∈ process_min_load_eff (v_online = v_online_linear or v_online_integer)
     # The net flow into a stochastic node is the same in every forecast over the tied steps: exactly the flow
     # terms of nodeBalance_eq, built by the same helper (_balance_terms.balance_flow_terms).  It ties the flows,
     # not v_state, and leaves out the balance slacks: they could otherwise absorb a flow difference.  The
-    # section input counts because efficiency and min_load may differ between forecasts.
-    if has_tie_dt and b.v_flow is not None and stoch_nodes is not None and d.p_unitsize is not None \
+    # section input counts because efficiency and min_load may differ between forecasts.  A node of the group
+    # without an energy balance (e.g. a commodity node) has no balance flow terms to tie.
+    tie_nodes = _balance_nodes(d, stoch_nodes)
+    if has_tie_dt and b.v_flow is not None and tie_nodes is not None and d.p_unitsize is not None \
             and d.p_step_duration is not None:
-        flow_d = _balance_terms.balance_flow_terms(b, nodes=stoch_nodes)
-        flow_b = _balance_terms.balance_flow_terms(b, at_branch=True, nodes=stoch_nodes)
+        flow_d = _balance_terms.balance_flow_terms(b, nodes=tie_nodes)
+        flow_b = _balance_terms.balance_flow_terms(b, at_branch=True, nodes=tie_nodes)
         if flow_d and flow_b:
-            over = (stoch_nodes
+            over = (tie_nodes
                     .join(star, how="cross")
                     .join(tie_dt, on="d", how="inner")
                     .select("n", "d", "b", "t").unique())

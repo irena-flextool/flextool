@@ -170,3 +170,16 @@ def test_backflow_overlay_solves_optimal(backflow_lp):
     """The extra terms keep the fixture feasible: the solve of the fixture already finished optimal."""
     pb, _ = backflow_lp
     assert row_terms(pb, TIE)
+
+
+def test_tie_only_at_balance_nodes(tmp_path_factory):
+    """A commodity node in the stochastic group has no energy balance, so it has no balance flow terms to tie
+    (before, its tie held only the flows into it: an asymmetric half of a balance it does not have)."""
+    data = _lp_snapshot()._overlay(
+        json.loads(STOCHASTICS.read_text()), name="custom", base="2_day_stochastic_dispatch",
+        entities=[["group__node", ["add_stochastics", "coal_market"]]], values=[])
+    step = _run(tmp_path_factory, data, "custom")[-1]
+    tie = row_terms(build(step.flex_data), TIE)
+    assert tie
+    assert not [r for r in tie if r.startswith(f"{TIE}[coal_market,")]
+    assert all(r.startswith(f"{TIE}[hydro_reservoir,") for r in tie)
