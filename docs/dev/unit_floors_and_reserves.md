@@ -90,6 +90,34 @@ The reverse arc of a two-way unit (2way_2var) is a direct arc in
 that draws from the node and a floor on the arc that feeds it. Connections
 are not coupled (Follow-up 2).
 
+## Reserve and ramp rows
+
+`core._eq_ramp` adds the reserve of an arc to its ramp rows, from the same
+`_reserve_coupling` aggregates as `maxFlow` and the floors (no new selector):
+
+| row | reserve term | meaning |
+|---|---|---|
+| `ramp_{sink,source}_up_constraint` | `+ b.reserve_up_to_sink` (up at the arc's sink) `+` every `b.reserve_down_at_source` entry (down at its source, ×φ) | R↑: raises the arc's flow |
+| `ramp_{sink,source}_down_constraint` | `− b.reserve_down_to_sink` `−` every `b.reserve_up_at_source` entry (×φ) | R↓: lowers it |
+
+Sink-side and source-side rows of a direct arc limit the same `v_flow` and
+both carry the terms.  The rule is per arc, as the floors: upward reserve at
+an indirect unit's output does not load the ramp room of its input arcs.
+The row is `v_flow[t] − v_flow[t′] ± R ≤/≥ ±ρ·c·cap` with ρ the room of the
+pair of steps (`ramp_speed·60·(Δ′+Δ)/2`); a unit ramping down from t′ to t
+can hold its decrease in addition as upward reserve (that is what "reserve
+reduces the ramp room" means per model step; activation-time-scaled room is
+item 81).  Steps without a predecessor (`dt_ramp_link` / `dt_ramp_carry`),
+where the arc holds reserve in that direction (`prundt`: at its sink in the
+same direction, at its source in the opposite one), get a reserve-only row
+`R ≤ ρ·c·cap` with ρ = `ramp_speed·60·Δ` (the linked row with
+`v_flow[t′] = v_flow[t]`).  Rows inside a period with ρ ≥ 1 are dropped also
+with reserve: `maxFlow*` carries the same R↑ and the floors (`minFlow_*`) the
+same R↓.  Units with online variables add `v_startup` / `v_shutdown` to the
+up / down rows (start despite the ramp limit), so with cheap startups the
+coupling binds only as far as startups cost (owner question Q-c14a-B).
+Connections have no ramp parameters.
+
 ## Reserve shortfall multiplier
 
 `vq_reserve ∈ [0, 1]` (bounded for numerics) is multiplied by

@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **Reserve uses ramp room.** A unit with ramp limits could hold reserve its
+  ramp limit would not let it deliver. Its upward reserve now uses the upward
+  ramp room of the time step (after the change of its flow from the previous
+  step), downward reserve the downward room, and "consume more" reserve at a
+  unit's input the input's ramp room. Models with ramp-limited reserve
+  providers can get reserve shortfalls or a different dispatch.
+
 - **Ramp limits scale with the time step.** A ramp speed is a share of
   capacity per minute; the change allowed between two time steps is now that
   speed × the average length of the two steps, so 2-hour steps allow twice

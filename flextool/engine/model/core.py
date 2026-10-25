@@ -1776,9 +1776,10 @@ def _eq_ramp(b: _Build) -> None:
 
     # ─── EQ. ─── ramp_{sink,source}_{up,down}_constraint ─────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′]
+    # v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′] + R↑[p,s,k,d,t]
     #   ≤ +ρ · c[p,s,k,d,t] · (existing_count[p,d] + Σ_{d″} v_invest_p[p,d″] − Σ_{d″} v_divest_p[p,d″])
     #     + v_startup[p,d,t]                                                                           (up)
+    # v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′] − R↓[p,s,k,d,t]
     #   ≥ −ρ · c[p,s,k,d,t] · (existing_count[p,d] + Σ v_invest_p − Σ v_divest_p) − v_shutdown[p,d,t]    (down)
     #   ρ = ramp_speed_{dir}_{side}[p,node] · 60 · (step_duration[d′,t′] + step_duration[d,t]) / 2
     #   ∀ (p,s,k) ∈ process_source_sink_ramp_limit_{side}_{dir}, (d,t,d′,t′) ∈ dt_ramp_link;
@@ -1786,20 +1787,26 @@ def _eq_ramp(b: _Build) -> None:
     # On a continuation roll the first step of a period ramps from the previous roll's realized flow
     #   (dt_ramp_carry): v_flow[p,s,k,d′,t′] → f̂[p,s,k,d,t] (p_roll_continue_flow, a constant on the RHS) and
     #   step_duration[d′,t′] → its carried duration.
-    # Limits the change of a flow between two consecutive steps to its ramp room: ramp_speed is a share of
-    # capacity per minute and flows are step averages, so the room between two step averages is the speed × the
-    # distance between the two step centres (a valid bound for every trajectory that obeys the speed; it is the
-    # tight one for a linear ramp).  A step has a predecessor (dt_ramp_link) only where it is adjacent on the
-    # timeline in the un-rolled solve: no cyclic wrap at the first step of a solve or of a period that does not
-    # continue the previous one, no row across a gap or at the start of a representative block.  Rows inside one
-    # period with ρ ≥ 1 cannot bind and are not built: the arc's capacity row (maxFlow*, coefficient M ≤ c,
-    # availability ≤ 1) gives v_flow[t] ≤ c·cap and v_flow[t′] ≥ 0, and v_flow[t] ≥ 0, v_flow[t′] ≤ c·cap, with
-    # the same built capacity at both steps.  Cross-period and carried rows are always built (the capacity can
-    # differ).  c scales the room as the arc's capacity is scaled: capacity_max_coeff[p,k] on the sink side; on
-    # the source side input_share_max[p,s], or on an indirect unit's input arc p_indirect_input_cap.  v_flow is in
-    # units of unitsize, existing_count = existing / unitsize.  v_startup / v_shutdown are the linear and integer
-    # UC variables where the process has them: units starting (stopping) in a step add to its upward (downward)
-    # ramp room.  Arcs with conversion_flow_coeff = 0 get no row.
+    # Steps without a predecessor, on arcs that hold reserve in that direction there (prundt):
+    #   R↑ ≤ ρ·c·cap (up),  −R↓ ≥ −ρ·c·cap (down),  ρ = ramp_speed · 60 · step_duration[d,t] < 1;  no startup term.
+    # R↑ = Σ_r v_reserve[p,r,up,k,d,t] + φ·Σ_r v_reserve[p,r,down,s,d,t]   (raises the arc: up at its sink, down at its source)
+    # R↓ = Σ_r v_reserve[p,r,down,k,d,t] + φ·Σ_r v_reserve[p,r,up,s,d,t]   (lowers it: down at its sink, up at its source)
+    #   φ = 1 where v_flow is the input (indirect unit's input arc, sink-less unit), 1/slope on a direct arc; units only.
+    # Limits the change of a flow between two consecutive steps, plus the reserve it holds in that direction, to its
+    # ramp room: ramp_speed is a share of capacity per minute and flows are step averages, so the room between two
+    # step averages is the speed × the distance between the two step centres (a valid bound for every trajectory
+    # that obeys the speed; it is the tight one for a linear ramp).  A step has a predecessor (dt_ramp_link) only
+    # where it is adjacent on the timeline in the un-rolled solve: no cyclic wrap at the first step of a solve or of
+    # a period that does not continue the previous one, no row across a gap or at the start of a representative
+    # block.  Rows inside one period with ρ ≥ 1 cannot bind and are not built: the arc's capacity row (maxFlow*,
+    # with the same raising reserve and coefficient M ≤ c, availability ≤ 1) gives v_flow[t] + R↑ ≤ c·cap and
+    # v_flow[t′] ≥ 0, the floors (minFlow_*) give v_flow[t] − R↓ ≥ 0 and v_flow[t′] ≤ c·cap, with the same built
+    # capacity at both steps.  Cross-period and carried rows are always built (the capacity can differ).
+    # c scales the room as the arc's capacity is scaled: capacity_max_coeff[p,k] on the sink side; on the source
+    # side input_share_max[p,s], or on an indirect unit's input arc p_indirect_input_cap.  v_flow and v_reserve
+    # are in units of unitsize, existing_count = existing / unitsize.  v_startup / v_shutdown are the linear and
+    # integer UC variables where the process has them: units starting (stopping) in a step add to its upward
+    # (downward) ramp room.  Arcs with conversion_flow_coeff = 0 get no row.
     keys = ["p", "source", "sink"]
     for side, dir_, idx_set, ramp_speed in (
         ("sink",   "up",   d.process_source_sink_ramp_limit_sink_up,     d.p_ramp_speed_up_sink),
@@ -1831,6 +1838,14 @@ def _eq_ramp(b: _Build) -> None:
                                   pl.col("__d_prev").cast(prev.frame.schema["d_previous"]).alias("d_previous"),
                                   pl.col("__t_prev").cast(prev.frame.schema["t_previous"]).alias("t_previous"))
             lhs["flow_prev"] = -Sum(Where(prev, pairs), over=("d_previous", "t_previous"))
+        if up:
+            if b.reserve_up_to_sink is not None:
+                lhs["reserve_up"] = b.reserve_up_to_sink
+            lhs.update(b.reserve_down_at_source)
+        else:
+            if b.reserve_down_to_sink is not None:
+                lhs["reserve_down"] = -b.reserve_down_to_sink
+            lhs.update({k: -v for k, v in b.reserve_up_at_source.items()})
 
         rate = Param(("p", "source", "sink", "d", "t"), rows.select(*keys, "d", "t", value=pl.col("__room")))
         if side == "sink":
@@ -1923,6 +1938,31 @@ def _ramp_rows(d, idx_set: pl.DataFrame, ramp_speed: Param, side: str, dir_: str
         parts.append(base.join(carry.lazy(), on=["_d", "_t"], how="inner")
                      .join(f_hat.lazy(), on=["_p", "_source", "_sink", "_d", "_t"], how="inner")
                      .with_columns(__kind=pl.lit("carry")))
+    prundt = getattr(d, "prundt", None)
+    if prundt is not None and prundt.height > 0:
+        # Steps without a predecessor where the arc holds reserve in this direction: at its sink in the same
+        # direction, at its source in the opposite one.
+        held = prundt.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("ud").cast(pl.Utf8).alias("_ud"),
+                                    pl.col("n").cast(pl.Utf8).alias("_rn"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                                    pl.col("t").cast(pl.Utf8).alias("_t"))
+        at_sink = held.filter(pl.col("_ud") == dir_).select("_p", pl.col("_rn").alias("_sink"), "_d", "_t").unique()
+        at_source = (held.filter(pl.col("_ud") != dir_)
+                     .select("_p", pl.col("_rn").alias("_source"), "_d", "_t").unique())
+        lone = base.join(link.lazy().select("_d", "_t"), on=["_d", "_t"], how="anti")
+        if carry.height > 0:
+            lone = lone.join(carry.lazy().select("_d", "_t"), on=["_d", "_t"], how="anti")
+        lone = lone.join(d.p_step_duration.frame.lazy().select(
+            pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
+            pl.col("value").cast(pl.Float64).alias("__dur")), on=["_d", "_t"], how="inner")
+        held_rows = pl.concat([
+            lone.join(at_sink, on=["_p", "_sink", "_d", "_t"], how="semi"),
+            lone.join(at_source, on=["_p", "_source", "_d", "_t"], how="semi"),
+        ]).unique(subset=["_p", "_source", "_sink", "_d", "_t"], keep="first", maintain_order=True)
+        parts.append(held_rows
+                     .with_columns(__d_prev=pl.lit(None, pl.Utf8), __t_prev=pl.lit(None, pl.Utf8),
+                                   __dur_prev=pl.col("__dur"), __kind=pl.lit("reserve"),
+                                   __f_hat=pl.lit(None, pl.Float64))
+                     .filter(pl.col("__speed") * 60.0 * pl.col("__dur") < 1.0))
     cols = [*keys, "d", "t", "__kind", "__d_prev", "__t_prev", "__f_hat",
             (pl.col("__speed") * 60.0 * (pl.col("__dur") + pl.col("__dur_prev")) / 2.0).alias("__room")]
     return pl.concat([p.select(cols) for p in parts]).collect()
