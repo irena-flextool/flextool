@@ -1668,7 +1668,7 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
 
 
 def _spawn_realized_dispatch_siblings(
-    solve_cfg, cascade_db_reader, logger,
+    solve_cfg, cascade_db_reader, logger, timeline_cfg=None,
 ) -> None:
     """W4b — register an engine-automatic deterministic realized-dispatch
     sibling for every eligible top-level solve that authors
@@ -1829,6 +1829,15 @@ def _spawn_realized_dispatch_siblings(
             )
         cascade_db_reader.register_derived_solve(parent, sibling)
         solve_cfg.spawn_realized_dispatch_sibling(parent, sibling)
+        # The sibling reuses the parent's timesets, which a solve-level
+        # new_stepduration has re-pointed to the aggregated timeline: it must
+        # run at the same step (aggregated data, step lengths), not on the
+        # aggregated steps with unaggregated data.  The reader half clones the
+        # raw ``new_stepduration`` (``_REALIZED_DISPATCH_SIBLING_PARAMS``).
+        if timeline_cfg is not None:
+            parent_step = timeline_cfg.new_step_durations.get(parent)
+            if parent_step is not None:
+                timeline_cfg.new_step_durations[sibling] = parent_step
         reader_solves.add(sibling)
         top_level.add(sibling)
         if logger is not None:
@@ -2243,6 +2252,7 @@ def _drive_cascade(
     # No-op (and byte-parity) when no solve authors separate_dispatch.
     _spawn_realized_dispatch_siblings(
         runner.state.solve, cascade_db_reader, _drive_logger,
+        timeline_cfg=runner.state.timeline,
     )
 
     class _PolarHighCascadeSolver(SolverRunner):

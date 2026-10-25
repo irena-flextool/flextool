@@ -333,6 +333,10 @@ class SpineDbReader:
         "realized_periods",
         "years_represented",
         "solve_mode",
+        # The sibling runs on the parent's timesets, so it must also run at the
+        # parent's solve-level step (TimelineConfig.new_step_durations half:
+        # ``_orchestration._spawn_realized_dispatch_siblings``).
+        "new_stepduration",
     )
 
     def register_derived_solve(

@@ -163,6 +163,38 @@ def test_partial_overlap_warns(caplog) -> None:
     assert any("'ta'" in r.message and "'tb'" in r.message for r in caplog.records)
 
 
+@pytest.mark.parametrize("step", [2.0, 4.0, 5.0])
+def test_rp_base_starts_on_the_timeline(step) -> None:
+    """Rep blocks t0001 / t0073 (24 h) on a 96-h timeline, base periods t0001, t0025, t0049, t0073: every base
+    start is a step of the aggregated timeline and the base chain runs in time order for any Δ.  Before (Δ 5):
+    t0049 fell inside a gap chunk, sorted last and the chain became t0025←t0001, t0073←t0025, t0049←t0073."""
+    from flextool.engine.preprocess.emit._solve_writers import _compute_rp_frames
+
+    bases = ("t0001", "t0025", "t0049", "t0073")
+    tl, sc = _config({"rp": [("t0001", 24), ("t0073", 24)]}, {"s": [("p", "rp")]}, {"s": step}, n_steps=96)
+    tl.rp_weights = {"rp": {b: {"t0001": 0.5, "t0073": 0.5} for b in bases}}
+    tl.create_timeline_from_timestep_duration(sc)
+    steps = [s for s, _d in tl.timelines[tl.timesets__timeline["rp"]]]
+    assert set(bases) <= set(steps)
+    frames = _compute_rp_frames(tl.rp_weights["rp"], tl.timeset_durations["rp"], "p", steps)
+    assert sorted(frames["rp_base_chain.csv"].rows()) == [
+        ("t0025", "t0001"), ("t0049", "t0025"), ("t0073", "t0049")]
+
+
+def test_rp_base_start_guard(monkeypatch) -> None:
+    """If a base start on the original timeline were still not a step of the aggregated timeline, the build raises
+    instead of letting the rp chain sort it last (guard; forced here by dropping the base-start cuts)."""
+    import flextool.engine.input._timeline as T
+
+    orig = T._aggregate_timeline_pieces
+    monkeypatch.setattr(T, "_aggregate_timeline_pieces",
+                        lambda steps, blocks, sd, log, extra_cuts=None: orig(steps, blocks, sd, log))
+    tl, sc = _config({"rp": [("t0001", 24), ("t0073", 24)]}, {"s": [("p", "rp")]}, {"s": 5.0}, n_steps=96)
+    tl.rp_weights = {"rp": {b: {"t0001": 0.5, "t0073": 0.5} for b in ("t0001", "t0025", "t0049", "t0073")}}
+    with pytest.raises(FlexToolConfigError, match="t0049"):
+        tl.create_timeline_from_timestep_duration(sc)
+
+
 # ---------------------------------------------------------------------------
 # solves
 
@@ -253,7 +285,10 @@ def test_derived_lags_equal_step_previous(tmp_path_factory, case) -> None:
     """The derived dtttdt (ranks in the solve's own timeline) equals make_step_jump's step_previous on the lag
     columns, unaggregated and aggregated.  Before: on 5weeks + Δ 2 every aggregated step was a block start.
     (``t_previous`` of a period's first step is left out: make_step_jump takes the period's own last step there,
-    the derived frame the predecessor period's — a difference independent of new_stepduration.)"""
+    the derived frame the predecessor period's.  It is read only by the block-interior filter
+    (``dtttdt_block_interior``, ``t_previous_within_timeset == t_previous``), where the difference adds or drops a
+    redundant row tying a block's first state to its last; pre-existing and independent of new_stepduration,
+    item 110.)"""
     if case == "5w":
         steps = _run(tmp_path_factory, "lag_5w", [], BATTERY + ["5weeks"])
     elif case == "5w2h":
@@ -329,3 +364,22 @@ def test_rp_blocks_with_step(tmp_path_factory) -> None:
     assert "v_state_rp_start[battery,p2020,t0049]" in " ".join(bal["nodeBalance_eq[battery,p2020,t0049]"])
     chain = set(row_terms(pb, "rp_inter_period_balance"))
     assert chain == {"rp_inter_period_balance[battery,t0025,t0001]", "rp_inter_period_balance[battery,t0049,t0025]"}
+
+
+def test_realized_dispatch_sibling_inherits_step(tmp_path_factory) -> None:
+    """separate_dispatch parent with a solve-level new_stepduration 2 on a 3-h timeline: the auto-spawned
+    realized-dispatch sibling runs at the parent's step (t0001 2 h, t0003 1 h, inflow summed per step) and costs
+    the same as the hourly sibling (constant demand).  Before: the sibling got the aggregated step labels with
+    unaggregated data — steps t0001–t0003 of 1 h but inflow only at t0001 / t0003 (−100 each), a third of the
+    demand dropped."""
+    fixture = FLEXTOOL_ROOT / "tests" / "fixtures" / "w4b_auto_dispatch.json"
+    chain = ["init", "base", "stoch"]
+    hourly = _run(tmp_path_factory, "sib_1h", [], chain, fixture_json=fixture)["stoch_rd__realized_dispatch"]
+    steps = _run(tmp_path_factory, "sib_2h", [["solve", "stoch_rd", "new_stepduration", b64(2.0, "float")]], chain,
+                 fixture_json=fixture)
+    sib = steps["stoch_rd__realized_dispatch"]
+    fd = sib.flex_data
+    assert sorted(utf8(fd.p_step_duration.frame).select("d", "t", "value").rows()) == [
+        ("p2035", "t0001", 2.0), ("p2035", "t0003", 1.0)]
+    assert sorted(utf8(fd.p_inflow.frame).select("t", "value").rows()) == [("t0001", -200.0), ("t0003", -100.0)]
+    assert sib.solution.obj == pytest.approx(hourly.solution.obj, rel=1e-9)

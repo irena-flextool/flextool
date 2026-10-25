@@ -12,7 +12,9 @@ feature map at ``_orchestration._spawn_realized_dispatch_siblings``):
 The four DEFINING facts must agree across both halves:
 ``period_timeset`` ↔ ``timesets_used_by_solves``,
 ``years_represented`` ↔ ``solve_period_years_represented``,
-``solve_mode`` ↔ ``solve_modes``, ``realized_periods`` ↔ ``realized_periods``.
+``solve_mode`` ↔ ``solve_modes``, ``realized_periods`` ↔ ``realized_periods``,
+plus ``new_stepduration`` ↔ ``TimelineConfig.new_step_durations`` (set by
+``_spawn_realized_dispatch_siblings`` itself).
 
 Nothing structurally forces the two lists to stay aligned (they live in
 different layers / vocabularies), so this test is the fracture guard: adding a
@@ -35,15 +37,22 @@ _DEFINING_FACT_MAP = {
 }
 
 
+#: Defining facts whose DERIVED half lives on TimelineConfig (set by
+#: ``_spawn_realized_dispatch_siblings`` from the parent's value).
+_TIMELINE_FACT_MAP = {
+    "new_stepduration": "new_step_durations",
+}
+
+
 def test_reader_allow_list_matches_the_defining_facts():
-    """The reader's raw-param allow-list is exactly the four defining facts.
+    """The reader's raw-param allow-list is exactly the defining facts.
 
     If this drifts, update ``_DEFINING_FACT_MAP`` AND the SolveConfig
     ``spawn_realized_dispatch_sibling`` copy/set in lockstep.
     """
     assert set(SpineDbReader._REALIZED_DISPATCH_SIBLING_PARAMS) == set(
         _DEFINING_FACT_MAP
-    ), (
+    ) | set(_TIMELINE_FACT_MAP), (
         "SpineDbReader._REALIZED_DISPATCH_SIBLING_PARAMS drifted from the four "
         "defining realized-dispatch facts — the reader half and the SolveConfig "
         "half of the sibling config are no longer in lockstep (feature map: "

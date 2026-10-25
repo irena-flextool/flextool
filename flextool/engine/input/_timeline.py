@@ -389,12 +389,34 @@ class TimelineConfig:
                 by_timeline.setdefault(raw_timeline_of[ts], []).append(ts)
             for timeline_name, tl_timesets in by_timeline.items():
                 old_steps = self.timelines[timeline_name]
+                # Representative-period base starts are cut too, so every base
+                # period starts at a step of the aggregated timeline (the rp
+                # base chain is ordered by timeline position).
+                base_cuts = {
+                    f"{ts} (representative_period_weights)": [str(b) for b in self.rp_weights[ts]]
+                    for ts in tl_timesets if self.rp_weights.get(ts)
+                }
                 chunks, block_chunks = _aggregate_timeline_pieces(
                     old_steps,
                     {ts: raw_durations[ts] for ts in tl_timesets},
                     step_duration,
                     logger,
+                    extra_cuts=base_cuts,
                 )
+                # Guard: every base start on the original timeline must start a step
+                # of the aggregated one, else the rp base chain would sort it last.
+                chunk_labels = {label for label, _hours in chunks}
+                original_labels = {step[0] for step in old_steps}
+                for owner, labels in base_cuts.items():
+                    off = [b for b in labels if b in original_labels and b not in chunk_labels]
+                    if off:
+                        message = (
+                            f"new_stepduration {step_duration} h: base period start(s) {off[:5]} of "
+                            f"{owner} are not time steps of the aggregated timeline of solve "
+                            f"'{first_solve}'."
+                        )
+                        logger.error(message)
+                        raise FlexToolConfigError(message)
                 new_timeline_name = timeline_name + "_" + first_solve
                 self.timelines[new_timeline_name] = chunks
                 self.original_timeline[new_timeline_name] = timeline_name
@@ -954,12 +976,14 @@ def _aggregate_timeline_pieces(
     timeset_blocks: dict[str, list],
     step_duration: float,
     logger: logging.Logger,
+    extra_cuts: dict[str, list[str]] | None = None,
 ) -> tuple[list[tuple[str, str]], dict[str, list[tuple[str, int]]]]:
     """Aggregate a whole timeline to ``step_duration`` hours, piece by piece.
 
     ``old_steps`` is the original ``[(step, duration), ...]``; the pieces are
     the runs between the block starts and block ends of ``timeset_blocks``
-    (``{timeset: [(start, count), ...]}``).  Each piece is aggregated from its
+    (``{timeset: [(start, count), ...]}``) and the steps in ``extra_cuts``
+    (``{owner: [step, ...]}``, e.g. representative base-period starts).  Each piece is aggregated from its
     first step: a chunk closes once it holds ``step_duration`` hours or more.
     Returns the chunks ``[(first step, str(hours)), ...]`` in timeline order and
     per timeset ``[(block start, number of chunks in the block), ...]`` (a block
@@ -983,6 +1007,10 @@ def _aggregate_timeline_pieces(
             ranges[ts].append((start, first, end))
             cut_owners.setdefault(first, set()).add(ts)
             cut_owners.setdefault(end, set()).add(ts)
+    for owner, labels in (extra_cuts or {}).items():
+        for label in labels:
+            if label in index_of:
+                cut_owners.setdefault(index_of[label], set()).add(owner)
     cuts = sorted(c for c in cut_owners if c < n_steps) + [n_steps]
 
     chunks: list[tuple[str, str]] = []
@@ -1025,8 +1053,8 @@ def _aggregate_timeline_pieces(
                     logger.warning(
                         f"new_stepduration {step_duration} h: step {label!r} of timeset {ts!r} "
                         f"(block starting {rng[0]!r}) is only {hours} h long, because a block "
-                        f"of timeset(s) {', '.join(repr(o) for o in others)} on the same timeline "
-                        f"starts or ends inside it."
+                        f"or base period of {', '.join(repr(o) for o in others)} on the same "
+                        f"timeline starts or ends inside it."
                     )
                 else:
                     logger.warning(
