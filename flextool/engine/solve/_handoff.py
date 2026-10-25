@@ -139,6 +139,8 @@ class SolveHandoff:
     # ramps from it when that step precedes it, adjacent, in the un-rolled solve (``_load_ramp_carry``).
     # Producer: ``flex_data._roll_end_flow``.  Consumer: next roll's ``p_roll_continue_flow`` /
     # ``dt_ramp_carry`` (``model.core._eq_ramp``).  In-memory only.
+    # The carry is keyed on ``roll_end_step``: an override of ``roll_end_flow`` without ``roll_end_step`` is
+    # ignored, and one whose step differs from ``roll_end_step`` raises (``params._ramp_links.ramp_roll_carry``).
     roll_end_flow: pl.DataFrame | None = None
 
     # The roll's last realized step in time (with its duration): the step the next roll's first step ramps

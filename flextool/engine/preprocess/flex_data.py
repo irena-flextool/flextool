@@ -2363,7 +2363,10 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         dt_ramp_carry=None,
         p_roll_continue_flow=None,
     )
-    blank["dt_ramp_carry"], _ = _load_ramp_carry(sd, dt, provider=provider)
+    # One read of the carry (pure on the Provider): dt_ramp_carry is needed also without ramp limits (the ramp
+    # output), p_roll_continue_flow only with them.
+    dt_ramp_carry, p_roll_continue_flow = _load_ramp_carry(sd, dt, provider=provider)
+    blank["dt_ramp_carry"] = dt_ramp_carry
     if pss is None:
         return blank
 
@@ -2389,7 +2392,6 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
     # ``p_process_source.csv`` are removed).  The four ramp-limit set
     # frames above remain CSV-loaded — apply_projection_params doesn't
     # cover those set partitions today.
-    dt_ramp_carry, p_roll_continue_flow = _load_ramp_carry(sd, dt, provider=provider)
     return dict(
         **sets,
         p_ramp_speed_up_sink   = None,
