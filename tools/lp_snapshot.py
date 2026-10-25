@@ -871,6 +871,73 @@ def _patch_ramp_blocks_2h(data: dict) -> dict:
                     values=_RAMP_COAL + [["solve", "y2020_5week", "new_stepduration", 2.0]])
 
 
+_BATTERY = ["init", "west", "wind", "battery"]
+
+
+def _patch_agg_blocks_storage(data: dict) -> dict:
+    """battery (bind_within_timeblock) on the 5weeks timeset aggregated to 2-hour steps: each block keeps its
+    own state cycle and the gaps between blocks stay gaps."""
+    return _overlay(data, name="agg_blocks_storage", base=_BATTERY + ["5weeks"],
+                    values=[["solve", "y2020_5week", "new_stepduration", 2.0]])
+
+
+def _patch_agg_intraperiod(data: dict) -> dict:
+    """battery bind_intraperiod_blocks on the 5weeks timeset aggregated to 2-hour steps: four blocks per
+    period (t0009 and t0013 touch)."""
+    return _overlay(data, name="agg_intraperiod", base=_BATTERY + ["5weeks", "bind_battery_intraperiod_blocks"],
+                    values=[["solve", "y2020_5week", "new_stepduration", 2.0]])
+
+
+def _patch_agg_two_timesets(data: dict) -> dict:
+    """Two periods on two timesets of one timeline (ta t0001-24, tb t0025-48) with the solve's
+    new_stepduration = 2: both periods keep their steps."""
+    return _overlay(data, name="agg_two_timesets", base=["init", "west", "coal"],
+                    entities=[["timeset", "ta"], ["timeset", "tb"]],
+                    values=_two_period_values() + [["solve", "y2020_2day_dispatch", "new_stepduration", 2.0]])
+
+
+def _patch_agg_stoch_trunk(data: dict) -> dict:
+    """Mid-horizon stochastic fixture (p2035 trunk, p2040 branches) with the solve's new_stepduration = 2:
+    the trunk period keeps its steps."""
+    return _overlay(data, name="agg_stoch_trunk", base="midhorizon",
+                    values=[["solve", "stoch_2p_mid", "new_stepduration", 2.0]])
+
+
+def _patch_agg_roll_blocks(data: dict) -> dict:
+    """coal ramp, rolling dispatch (horizon 8 h, jump 4 h) over the 5weeks timeset aggregated to 2 h: only
+    the roll that starts at t0013 (adjacent to the t0009 block) carries the previous roll's flow."""
+    return _overlay(data, name="agg_roll_blocks", base=["init", "west", "coal", "fullYear", "dispatch_fullYear_roll"],
+                    values=_RAMP_COAL + [
+                        ["solve", "dispatch_fullYear_roll", "period_timeset", _pmap({"p2020": "5weeks"})],
+                        ["solve", "dispatch_fullYear_roll", "realized_periods",
+                         {"type": "array", "value_type": "str", "data": ["p2020"]}],
+                        ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", 8.0],
+                        ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", 4.0],
+                        ["solve", "dispatch_fullYear_roll", "new_stepduration", 2.0]])
+
+
+def _agg_rp_values() -> list:
+    """Representative-period timeset rpg on y2020: rep blocks t0001 and t0049 (24 h each, gap t0025-t0048),
+    base periods t0001, t0025, t0049 blended from them."""
+    def rep(w: float) -> dict:
+        return {"type": "map", "index_type": "str", "index_name": "representative_period", "rank": 1,
+                "data": [["t0001", w], ["t0049", 1.0 - w]]}
+    rpw = {"type": "map", "index_type": "str", "index_name": "base_period", "rank": 1,
+           "data": [["t0001", rep(1.0)], ["t0025", rep(0.5)], ["t0049", rep(0.0)]]}
+    return [["timeset", "rpg", "timeline", "y2020"],
+            ["timeset", "rpg", "timeset_duration", _pmap({"t0001": 24.0, "t0049": 24.0}, "time")],
+            ["timeset", "rpg", "representative_period_weights", rpw],
+            ["solve", "y2020_2day_dispatch", "period_timeset", _pmap({"p2020": "rpg"})],
+            ["node", "battery", "storage_binding_method", "bind_within_period_blended_weights"]]
+
+
+def _patch_agg_rp(data: dict) -> dict:
+    """battery bind_within_period_blended_weights on a gapped representative-period timeset with the solve's
+    new_stepduration = 2: the rep blocks keep their first / last steps and the base periods their order."""
+    return _overlay(data, name="agg_rp", base=_BATTERY + ["coal"], entities=[["timeset", "rpg"]],
+                    values=_agg_rp_values() + [["solve", "y2020_2day_dispatch", "new_stepduration", 2.0]])
+
+
 _MLE_CHP = [["unit", "coal_chp", "startup_method", "linear"],
             ["unit", "coal_chp", "min_load", 0.3],
             ["unit", "coal_chp", "conversion_method", "min_load_efficiency"],
@@ -1160,6 +1227,12 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "online_mintime_lin": _patch_online_mintime_lin,
     "conn_reserve_exact": _patch_conn_reserve_exact,
     "conn_online_1var_mip": _patch_conn_online_1var_mip,
+    "agg_blocks_storage": _patch_agg_blocks_storage,
+    "agg_intraperiod": _patch_agg_intraperiod,
+    "agg_two_timesets": _patch_agg_two_timesets,
+    "agg_stoch_trunk": _patch_agg_stoch_trunk,
+    "agg_roll_blocks": _patch_agg_roll_blocks,
+    "agg_rp": _patch_agg_rp,
 }
 
 
@@ -1317,6 +1390,12 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("online_mintime_lin", _T),
     ("conn_reserve_exact", _T),
     ("conn_online_1var_mip", _T),
+    ("agg_blocks_storage", _T),
+    ("agg_intraperiod", _T),
+    ("agg_two_timesets", _T),
+    ("agg_stoch_trunk", _F + "stoch_two_period_midhorizon_nreal0.json"),
+    ("agg_roll_blocks", _T),
+    ("agg_rp", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

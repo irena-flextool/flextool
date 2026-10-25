@@ -228,8 +228,8 @@ def test_midhorizon_branches_ramp_from_trunk(tmp_path_factory) -> None:
 
 def test_derived_link_equals_step_previous(tmp_path_factory) -> None:
     """dt_ramp_link built from the source timeline equals the jump == 1 rows of solve_data/step_previous
-    (make_step_jump) on gaps, continuing periods, solve-level new_stepduration (review F1) and the
-    representative-block rule; on aggregated blocks with gaps it keeps the gaps make_step_jump loses."""
+    (make_step_jump) on gaps, continuing periods, solve-level new_stepduration (review F1), aggregated blocks
+    with gaps (the solve's timeline keeps them, #101) and the representative-block rule."""
     from flextool.engine.preprocess.flex_data import _read_ramp_link
 
     for alt, vals, chain, ents in (
@@ -246,16 +246,7 @@ def test_derived_link_equals_step_previous(tmp_path_factory) -> None:
         csv = _read_ramp_link(Path("solve_data"), provider=step.flex_data_provider)
         derived = step.flex_data.dt_ramp_link
         assert csv is not None and derived is not None
-        csv_rows, der_rows = set(utf8(csv).rows()), set(utf8(derived).rows())
-        if alt == "lk_5w2h":
-            # make_step_jump numbers aggregated steps consecutively over the solve's own steps, so it loses the
-            # gaps between 5weeks blocks (t0003 covers hours 2–4, t0009 starts at hour 8); the derived link keeps
-            # them (item 101).
-            gaps = {(d, t, d, tp) for d in ("p2020", "p2025")
-                    for t, tp in (("t0009", "t0003"), ("t0025", "t0015"), ("t0037", "t0027"))}
-            assert csv_rows - der_rows == gaps and der_rows <= csv_rows
-        else:
-            assert csv_rows == der_rows
+        assert set(utf8(csv).rows()) == set(utf8(derived).rows())
 
 
 # ---------------------------------------------------------------------------

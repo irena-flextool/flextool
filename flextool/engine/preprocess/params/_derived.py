@@ -7158,21 +7158,75 @@ def _dt_period_active_steps_from_workdir(
         timeline_per_period[d] = rows_sorted["timeline"][0]
         per_period[d] = list(zip(rows_sorted["t"].to_list(),
                                     rows_sorted["rank"].to_list()))
+    step_space = _to_solve_step_space(per_period, timeline_per_period, workdir, provider)
+    for d, steps in per_period.items():
+        if not steps:
+            continue
         # Block starts: indices where the rank gap to the previous step
         # is >1.  Mirrors ``make_period_block``'s detection rule.
-        ts = rows_sorted["t"].to_list()
-        rks = rows_sorted["rank"].to_list()
-        block_firsts: list[str] = [ts[0]] if ts else []
-        for j in range(1, len(rks)):
-            if rks[j] - rks[j - 1] > 1:
-                block_firsts.append(ts[j])
+        block_firsts: list[str] = [steps[0][0]]
+        for j in range(1, len(steps)):
+            if steps[j][1] - steps[j - 1][1] > 1:
+                block_firsts.append(steps[j][0])
         block_starts_per_period[d] = block_firsts
     return dict(
         per_period=per_period,
         timeline_for_period=timeline_per_period,
         period_order=period_order,
         block_starts_per_period=block_starts_per_period,
+        step_space=step_space,
     )
+
+
+def _solve_step_positions(timeline_for_period: dict[str, str], workdir: "Path | None",
+                          provider: "object | None") -> "dict[tuple[str, str], int] | None":
+    """``{(timeline, t): 1-based position}`` of every step in the solve's own timeline of each original timeline.
+
+    Read from ``solve_data/steps_in_timeline`` (every step of each period's timeline, in timeline order; under a
+    solve-level ``new_stepduration`` the aggregated timeline, whose gap chunks keep the gaps between timeset
+    blocks).  The longest list per timeline wins (stochastic branch rows list only their active steps).  ``None``
+    when the frame is absent."""
+    if workdir is None:
+        return None
+    path = Path(workdir) / "solve_data" / "steps_in_timeline.csv"
+    if not _provider_has_key(provider, path):
+        return None
+    try:
+        df = _provider_read(provider, path)
+    except Exception:
+        return None
+    if df.height == 0 or len(df.columns) < 2:
+        return None
+    steps_of: dict[str, list[str]] = {}
+    for d, t in df.select(pl.col(df.columns[0]).cast(pl.Utf8), pl.col(df.columns[1]).cast(pl.Utf8)).iter_rows():
+        steps_of.setdefault(d, []).append(t)
+    best: dict[str, list[str]] = {}
+    for d, steps in steps_of.items():
+        tl = timeline_for_period.get(d)
+        if tl is not None and len(steps) > len(best.get(tl, ())):
+            best[tl] = steps
+    return {(tl, t): i + 1 for tl, steps in best.items() for i, t in enumerate(steps)}
+
+
+def _to_solve_step_space(per_period: dict[str, list[tuple[str, int]]], timeline_for_period: dict[str, str],
+                         workdir: "Path | None", provider: "object | None") -> bool:
+    """Re-rank ``per_period`` in place by position in the solve's own timeline (:func:`_solve_step_positions`).
+
+    The rank difference of two steps is then ``make_step_jump``'s ``jump``: 1 exactly for steps adjacent on the
+    timeline, also for aggregated ``new_stepduration`` steps, and > 1 across a gap.  Without the solve's timeline
+    (or when a step is missing from it) the raw timeline ranks stay; returns whether the re-rank was applied."""
+    positions = _solve_step_positions(timeline_for_period, workdir, provider)
+    if not positions:
+        return False
+    reranked: dict[str, list[tuple[str, int]]] = {}
+    for d, steps in per_period.items():
+        tl = timeline_for_period.get(d)
+        new = [(t, positions.get((tl, str(t)))) for t, _rk in steps]
+        if any(rk is None for _t, rk in new):
+            return False
+        reranked[d] = sorted(new, key=lambda r: r[1])
+    per_period.update(reranked)
+    return True
 
 
 def _dt_period_active_steps(source: "InputSource",
@@ -7188,9 +7242,11 @@ def _dt_period_active_steps(source: "InputSource",
     Returns a dict ``{"per_period": {d -> [(t, global_rank), ...]},
     "timeline_for_period": {d -> timeline_name},
     "period_order": [d in dispatch order],
-    "block_starts_per_period": {d -> [t_block_first ordered by rank]}}``,
-    where ``global_rank`` is the timeline rank (cum_count over the
-    timeline).  The block-first list is derived from
+    "block_starts_per_period": {d -> [t_block_first ordered by rank]},
+    "step_space": bool}``, where ``global_rank`` is the step's position in
+    the solve's own timeline (:func:`_to_solve_step_space`; ``step_space``
+    True), else the raw timeline rank (cum_count over the timeline).  The
+    block-first list is derived from
     ``timeset.timeset_duration`` block start_steps cross-joined with
     ``period_timeset`` for the active solve.
 
@@ -7455,11 +7511,13 @@ def _dt_period_active_steps(source: "InputSource",
                        .agg(pl.col("rank").min().alias("rk"))
                        .sort("rk"))
         block_starts_per_period[d] = first_occ["start_step"].to_list()
+    step_space = _to_solve_step_space(per_period, timeline_per_period, workdir, provider)
     return dict(
         per_period=per_period,
         timeline_for_period=timeline_per_period,
         period_order=period_order,
         block_starts_per_period=block_starts_per_period,
+        step_space=step_space,
     )
 
 
@@ -7536,11 +7594,11 @@ def dtttdt_with_jump_from_source(source: "InputSource",
       * Within-period predecessor: previous step in the same period
         cyclically (first wraps to block_last of the period).
 
-    The extra ``jump`` column is ``make_step_jump``'s, in the solve's own step space: 1 where the predecessor
-    ``(d_previous, t_previous_within_solve)`` ends where the step starts on the timeline (with ``step_duration``,
-    the solve's step lengths, so aggregated ``new_stepduration`` steps are adjacent); otherwise the raw rank
-    difference (≤ 0 at a cyclic wrap, > 1 across a gap).  Without ``step_duration`` (or timeline durations) it is
-    the raw rank difference.
+    The extra ``jump`` column is ``make_step_jump``'s: the rank difference to the predecessor
+    ``(d_previous, t_previous_within_solve)`` in the solve's own timeline (1 for adjacent steps, also aggregated
+    ``new_stepduration`` steps; ≤ 0 at a cyclic wrap, > 1 across a gap).  When the solve's timeline is not
+    available (raw ranks), 1 where the predecessor ends where the step starts on the timeline (with
+    ``step_duration``, the solve's step lengths), otherwise the raw rank difference.
     """
     info = _dt_period_active_steps(source, active_solve, workdir, ctx=ctx, provider=provider)
     if info is None:
@@ -7556,9 +7614,11 @@ def dtttdt_with_jump_from_source(source: "InputSource",
         durs = {(str(d), str(t)): float(v) for d, t, v in
                 step_duration.frame.select("d", "t", "value").iter_rows()}
 
+    step_space = bool(info.get("step_space"))
+
     def _jump(d_cur: str, t_cur: str, rk_cur: int, d_prev: str, t_prev: str, rk_prev: int) -> int:
         raw = rk_cur - rk_prev
-        if not durs:
+        if step_space or not durs:
             return raw
         tl_c, tl_p = timeline_of.get(d_cur), timeline_of.get(d_prev)
         h_c, h_p = hours.get((tl_c, t_cur)), hours.get((tl_p, t_prev))

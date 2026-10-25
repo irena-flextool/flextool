@@ -128,6 +128,10 @@ class TimelineConfig:
         # Mutable state — populated later by orchestration / stochastic.
         self.stochastic_timesteps: defaultdict[str, list] = defaultdict(list)
         self.original_timeline: defaultdict[str, str] = defaultdict()
+        # Original timeset durations / timelines, kept by the first
+        # create_timeline_from_timestep_duration call.
+        self._raw_timeset_durations: dict[str, list] | None = None
+        self._raw_timesets__timeline: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Factories
@@ -276,34 +280,55 @@ class TimelineConfig:
     ) -> None:
         """Synthesise per-solve aggregated timelines.
 
-        For each solve that sets ``new_stepduration``, build a freshly
-        aggregated timeline ``"{timeline}_{solve}"`` and re-point every
-        timeset the solve uses at that new timeline.  Preserves the
-        ``original_timeline`` map so :meth:`create_averaged_timeseries`
-        can find the unaggregated source.
+        For each solve that sets ``new_stepduration`` (Δ), build one
+        aggregated timeline ``"{timeline}_{solve}"`` per original timeline
+        its timesets use and re-point those timesets at it.  The whole
+        original timeline is cut at every block start and block end of the
+        timesets on it, and each piece — a block or a gap between blocks —
+        is aggregated from its first step in chunks of Δ hours (label = the
+        first original step, duration = the summed original durations; a
+        piece whose length is not a multiple of Δ ends with a shorter
+        chunk).  Gap chunks are never active (no timeset covers them) but
+        keep the gaps in the step numbering, so steps are adjacent in the
+        aggregated timeline exactly when they are adjacent on the original
+        timeline, and every timeset of the solve keeps its own steps.  Each
+        timeset's ``timeset_durations`` becomes ``[(block start, number of
+        chunks in the block)]``.
 
-        Mirrors lines 161-236 of the flextool source.
+        Always aggregates from the original timelines and timeset durations
+        (kept on the first call), so a timeset shared by several solves with
+        the same Δ gets one timeline, built from the timesets of all those
+        solves.  ``original_timeline`` maps the new name to the original.
 
-        A defensive guard (``"fail loudly"`` per
-        ``audit/handoff_post_split_todo.md``): if the same timeset is
-        shared between two solves with *different* ``new_stepduration``
-        values, raise rather than silently overwrite.  Flextool's source
-        comment claims this is "rejected at migration time" but doesn't
-        check; the native engine enforces the invariant.
+        Raises :class:`FlexToolConfigError` when a timeset is shared between
+        two solves with different ``new_stepduration`` values, or between a
+        solve of the model with ``new_stepduration`` and one without:
+        flextool needs one timeline per timeset.
         """
         logger = logging.getLogger(__name__)
+        if self._raw_timeset_durations is None:
+            self._raw_timeset_durations = {
+                ts: list(blocks) for ts, blocks in self.timeset_durations.items()
+            }
+            self._raw_timesets__timeline = dict(self.timesets__timeline)
+        raw_durations = self._raw_timeset_durations
+        raw_timeline_of = self._raw_timesets__timeline
 
-        # Defensive check for "shared timeset, conflicting new_stepduration".
-        # Walk all (solve, timeset) pairs and assert at most one
-        # ``new_stepduration`` value per timeset.
+        def _timesets_of(solve_name: str) -> list[str]:
+            return list(dict.fromkeys(
+                ts for _period, ts in solve_config.timesets_used_by_solves.get(solve_name, [])
+            ))
+
+        step_solves: dict[str, float] = {
+            solve_name: float(raw)
+            for solve_name, raw in self.new_step_durations.items()
+            if raw is not None
+        }
+
+        # One new_stepduration per timeset.
         timeset_to_step_duration: dict[str, tuple[str, float]] = {}
-        for solve_name, step_duration_raw in self.new_step_durations.items():
-            if step_duration_raw is None:
-                continue
-            sd = float(step_duration_raw)
-            for _period, ts in solve_config.timesets_used_by_solves.get(
-                solve_name, []
-            ):
+        for solve_name, sd in step_solves.items():
+            for ts in _timesets_of(solve_name):
                 prev = timeset_to_step_duration.get(ts)
                 if prev is None:
                     timeset_to_step_duration[ts] = (solve_name, sd)
@@ -316,60 +341,66 @@ class TimelineConfig:
                     )
                     logger.error(message)
                     raise FlexToolConfigError(message)
+        # ... also between a solve of the model with new_stepduration and one without.
+        in_model = _solves_in_model(solve_config)
+        step_solve_in_model_of: dict[str, str] = {}
+        for solve_name in step_solves:
+            if solve_name in in_model:
+                for ts in _timesets_of(solve_name):
+                    step_solve_in_model_of.setdefault(ts, solve_name)
+        for solve_name in sorted(in_model - set(step_solves)):
+            for ts in _timesets_of(solve_name):
+                other = step_solve_in_model_of.get(ts)
+                if other is not None:
+                    message = (
+                        f"Timeset '{ts}' is shared between solve '{other}' "
+                        f"(new_stepduration={step_solves[other]}) and solve '{solve_name}' "
+                        f"(no new_stepduration); flextool needs one timeline "
+                        f"per timeset — give the solves separate timesets."
+                    )
+                    logger.error(message)
+                    raise FlexToolConfigError(message)
 
-        for solve_name, step_duration_raw in self.new_step_durations.items():
-            if step_duration_raw is None:
-                continue
-            step_duration = float(step_duration_raw)
-            period_timesets = solve_config.timesets_used_by_solves.get(
-                solve_name, []
-            )
-            # De-duplicate timeset names while keeping their order.
-            seen_timesets: set[str] = set()
-            timesets_in_solve: list[str] = []
-            for _period, timeset_name in period_timesets:
-                if timeset_name in seen_timesets:
-                    continue
-                seen_timesets.add(timeset_name)
-                timesets_in_solve.append(timeset_name)
+        # Solves sharing a timeset (same Δ by the check above) share its
+        # aggregated timeline: group them, first solve names the timeline.
+        groups: list[tuple[str, float, list[str]]] = []
+        group_of_timeset: dict[str, int] = {}
+        for solve_name, sd in step_solves.items():
+            timesets = [ts for ts in _timesets_of(solve_name) if raw_durations.get(ts)]
+            hit = sorted({group_of_timeset[ts] for ts in timesets if ts in group_of_timeset})
+            if not hit:
+                groups.append((solve_name, sd, []))
+                gi = len(groups) - 1
+            else:
+                gi = hit[0]
+                for other in hit[1:]:
+                    groups[gi][2].extend(groups[other][2])
+                    for ts in groups[other][2]:
+                        group_of_timeset[ts] = gi
+                    groups[other] = (groups[other][0], groups[other][1], [])
+            for ts in timesets:
+                if ts not in groups[gi][2]:
+                    groups[gi][2].append(ts)
+                group_of_timeset[ts] = gi
 
-            for timeset_name in timesets_in_solve:
-                timeset = self.timeset_durations.get(timeset_name)
-                if not timeset:
-                    continue
-                timeline_name = self.timesets__timeline[timeset_name]
+        for first_solve, step_duration, timesets in groups:
+            by_timeline: dict[str, list[str]] = {}
+            for ts in timesets:
+                by_timeline.setdefault(raw_timeline_of[ts], []).append(ts)
+            for timeline_name, tl_timesets in by_timeline.items():
                 old_steps = self.timelines[timeline_name]
-                new_steps: list[tuple[str, str]] = []
-                new_timesets: list[tuple[str, int]] = []
-                for ts in timeset:
-                    first_step = ts[0]
-                    first_index = [step[0] for step in old_steps].index(ts[0])
-                    step_counter = 0.0
-                    last_index = first_index + int(float(ts[1]))
-                    added_steps = 0
-                    for step in old_steps[first_index:last_index]:
-                        if step_counter >= step_duration:
-                            new_steps.append((first_step, str(step_counter)))
-                            first_step = step[0]
-                            step_counter = 0.0
-                            added_steps += 1
-                            if step_counter > step_duration:
-                                logger.warning(
-                                    "Warning: All new steps are not the "
-                                    "size of the given step duration. The "
-                                    "new step duration has to be multiple "
-                                    "of old step durations for this to "
-                                    "happen."
-                                )
-                        step_counter += float(step[1])
-                    new_steps.append((first_step, str(step_counter)))
-                    added_steps += 1
-                    new_timesets.append((ts[0], added_steps))
-                self.timeset_durations[timeset_name] = new_timesets
-                new_timeline_name = timeline_name + "_" + solve_name
-                self.timelines[new_timeline_name] = new_steps
-                self.timesets__timeline[timeset_name] = new_timeline_name
+                chunks, block_chunks = _aggregate_timeline_pieces(
+                    old_steps,
+                    {ts: raw_durations[ts] for ts in tl_timesets},
+                    step_duration,
+                    logger,
+                )
+                new_timeline_name = timeline_name + "_" + first_solve
+                self.timelines[new_timeline_name] = chunks
                 self.original_timeline[new_timeline_name] = timeline_name
+                for ts in tl_timesets:
+                    self.timeset_durations[ts] = block_chunks[ts]
+                    self.timesets__timeline[ts] = new_timeline_name
 
     def create_assumptive_parts(self, solve_config: "SolveConfig") -> None:
         """Fill in missing time-structure parts from assumptions when
@@ -903,6 +934,107 @@ class TimelineConfig:
 # ---------------------------------------------------------------------------
 # Helpers (private)
 # ---------------------------------------------------------------------------
+
+
+def _solves_in_model(solve_config: "SolveConfig") -> set[str]:
+    """Solves the model runs: ``model.solves`` and, recursively, their ``contains_solves``."""
+    out: set[str] = set()
+    todo = [s for solves in solve_config.model_solve.values() for s in solves]
+    while todo:
+        s = todo.pop()
+        if s in out:
+            continue
+        out.add(s)
+        todo.extend(solve_config.contains_solves.get(s, []))
+    return out
+
+
+def _aggregate_timeline_pieces(
+    old_steps: list,
+    timeset_blocks: dict[str, list],
+    step_duration: float,
+    logger: logging.Logger,
+) -> tuple[list[tuple[str, str]], dict[str, list[tuple[str, int]]]]:
+    """Aggregate a whole timeline to ``step_duration`` hours, piece by piece.
+
+    ``old_steps`` is the original ``[(step, duration), ...]``; the pieces are
+    the runs between the block starts and block ends of ``timeset_blocks``
+    (``{timeset: [(start, count), ...]}``).  Each piece is aggregated from its
+    first step: a chunk closes once it holds ``step_duration`` hours or more.
+    Returns the chunks ``[(first step, str(hours)), ...]`` in timeline order and
+    per timeset ``[(block start, number of chunks in the block), ...]`` (a block
+    whose start is not on the timeline is kept as given; ``get_active_time``
+    skips it).  Logs a warning when a block ends with a shorter chunk, naming
+    the other timeset when its boundary is what cut the chunk short.
+    """
+    index_of = {step[0]: i for i, step in enumerate(old_steps)}
+    n_steps = len(old_steps)
+    # Block index ranges [first, end) per timeset, and who owns each cut.
+    ranges: dict[str, list[tuple[str, int, int] | None]] = {}
+    cut_owners: dict[int, set[str]] = {0: set()}
+    for ts, blocks in timeset_blocks.items():
+        ranges[ts] = []
+        for start, count in blocks:
+            first = index_of.get(start)
+            if first is None:
+                ranges[ts].append(None)
+                continue
+            end = min(first + int(float(count)), n_steps)
+            ranges[ts].append((start, first, end))
+            cut_owners.setdefault(first, set()).add(ts)
+            cut_owners.setdefault(end, set()).add(ts)
+    cuts = sorted(c for c in cut_owners if c < n_steps) + [n_steps]
+
+    chunks: list[tuple[str, str]] = []
+    chunk_first: list[int] = []
+    short_chunks: list[tuple[int, int, float]] = []   # (first, end, hours)
+    for piece_first, piece_end in zip(cuts, cuts[1:]):
+        i = piece_first
+        while i < piece_end:
+            first = i
+            hours = 0.0
+            while i < piece_end and (hours < step_duration or i == first):
+                hours += float(old_steps[i][1])
+                i += 1
+            chunks.append((old_steps[first][0], str(hours)))
+            chunk_first.append(first)
+            if hours < step_duration:
+                short_chunks.append((first, i, hours))
+
+    block_chunks: dict[str, list[tuple[str, int]]] = {}
+    for ts, blocks in timeset_blocks.items():
+        out: list[tuple[str, int]] = []
+        for (start, count), rng in zip(blocks, ranges[ts]):
+            if rng is None:
+                out.append((start, count))
+                continue
+            _start, first, end = rng
+            out.append((start, sum(1 for c in chunk_first if first <= c < end)))
+        block_chunks[ts] = out
+
+    warned: set[tuple[str, str]] = set()
+    for first, end, hours in short_chunks:
+        for ts, rngs in ranges.items():
+            for rng in rngs:
+                if rng is None or not (rng[1] <= first < rng[2]) or (ts, rng[0]) in warned:
+                    continue
+                warned.add((ts, rng[0]))
+                label = old_steps[first][0]
+                others = sorted(cut_owners.get(end, set()) - {ts}) if end < rng[2] else []
+                if others:
+                    logger.warning(
+                        f"new_stepduration {step_duration} h: step {label!r} of timeset {ts!r} "
+                        f"(block starting {rng[0]!r}) is only {hours} h long, because a block "
+                        f"of timeset(s) {', '.join(repr(o) for o in others)} on the same timeline "
+                        f"starts or ends inside it."
+                    )
+                else:
+                    logger.warning(
+                        f"new_stepduration {step_duration} h: the block of timeset {ts!r} "
+                        f"starting {rng[0]!r} is not a multiple of the step; its last step "
+                        f"{label!r} is {hours} h long."
+                    )
+    return chunks, block_chunks
 
 
 def _provider_get_or_read(

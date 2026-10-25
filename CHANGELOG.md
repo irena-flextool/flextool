@@ -1,5 +1,19 @@
 ## Unreleased
 
+- **Solve-level `new_stepduration` keeps the gaps between timeset blocks and
+  every period's time steps.** With a timeset made of separate blocks (e.g.
+  sample weeks), the aggregated steps of a solve with `new_stepduration` now
+  keep the gaps between the blocks: storage bound within a timeblock or with
+  intraperiod blocks cycles within each block again (before, every aggregated
+  step looked like its own block, so storage could not shift energy), ramp
+  limits and rolling windows no longer link steps across a gap, and
+  representative blocks keep their order. When several timesets of the solve
+  share a timeline (one per period, or a stochastic trunk period before the
+  branches), every period keeps its time steps; before, only the last
+  timeset's period survived. A
+  timeset shared by a solve with `new_stepduration` and a solve without it is
+  now an error.
+
 - **Benders decomposition checks connections between regions.** A connection
   between regions with a `startup_method`, the `exact` transfer method or
   reserve now stops the run with an error (its online variables, direction
