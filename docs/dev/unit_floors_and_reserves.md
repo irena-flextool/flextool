@@ -118,6 +118,42 @@ up / down rows (start despite the ramp limit), so with cheap startups the
 coupling binds only as far as startups cost (owner question Q-c14a-B).
 Connections have no ramp parameters.
 
+## Startup / shutdown capacity reduction
+
+`_online._cap_reduction` (Q8, item 49): for an online unit's arc with a ramp
+**limit** on a side (`process_source_sink_ramp_limit_*`, docs: "if the unit also
+has ramp limits"; GMPL keyed it on the speed alone),
+`SU = min(1, ml + ½·ramp_speed_up·60·Δt)` (the tighter side when both),
+`red_su = max(0, availability − SU)`; `SD` / `red_sd` with the down speed at the
+pre-shutdown step.  The half step is the step average of a unit synchronising at
+min load (owner question Q-c14a-A; GMPL used the full step).  Availability
+correction: GMPL subtracted `(1 − SU)·v_startup` from `availability·online`,
+limiting started units to `availability − 1 + SU`; `red_su` gives them
+`min(availability, SU)` (identical at availability 1).
+
+Rows (`maxFlow_online_<kind>`, and `maxInputFlow_online_<kind>` on an indirect
+unit's input arc):
+
+| row | reduction |
+|---|---|
+| base row | `κ·red_su·v_startup[t] + κ·max(0, red_sd − red_su)·v_shutdown[t⁺]` |
+| `…_shutdown_<kind>` (new, where `red_sd > 0` and t⁺ exists) | `κ·red_sd·v_shutdown[t⁺] + κ·max(0, red_su − red_sd)·v_startup[t]` |
+
+The pair is the exact aggregate bound for any mix of starts at t and stops at
+t⁺ (one-step runs get `min(SU, SD)`); GMPL's single row with both reductions is
+the minimum-uptime ≥ 2 form and forbids one-step runs.  t⁺ is the step whose
+`dt_ramp_link` predecessor is t in the same period: none at a period's last step,
+before a gap, a representative-block start or a roll's last step.  κ =
+`capacity_max_coeff` on capped arcs, `p_indirect_input_cap` on input arcs.  `ml`:
+`min_load` on output-measured arcs (direct arcs: also for an input-side ramp,
+v_flow is the output); on an indirect unit's input arc the input drawn at min
+load per unit of input limit, `x / input_share_max` with
+`x = (slope·W(min_load) + section)/(slope·W(1) + section)` (`W(y)` the output fuel
+width filled to y, as `p_indirect_input_cap`), so a started unit can always draw
+its min-load input.  A ramp-limited input arc of an online indirect unit gets
+`maxInputFlow_online` rows even without reserve.  Per arc: `maxOutputSum_online`
+of a multi-output unit is not reduced (as GMPL; ramps are arc attributes).
+
 ## Reserve shortfall multiplier
 
 `vq_reserve ∈ [0, 1]` (bounded for numerics) is multiplied by

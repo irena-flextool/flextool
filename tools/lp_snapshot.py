@@ -1500,7 +1500,8 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
           for base in ("maxOnline", "maxStartup", "maxShutdown",
                        "online__startup", "online__shutdown",
                        "maxFlow_online", "maxOutputSum_online",
-                       "maxInputFlow_online",
+                       "maxInputFlow_online", "maxFlow_online_shutdown",
+                       "maxInputFlow_online_shutdown",
                        "minimum_uptime", "minimum_downtime",
                        "online_fix_eq")
           for kind in ("linear", "integer")),

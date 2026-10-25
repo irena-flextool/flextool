@@ -417,3 +417,29 @@ def test_ramp_output_at_roll_boundary_on_direct_input(tmp_path_factory) -> None:
         assert col[("p2020", t)] == pytest.approx((f[("p2020", t)] - f[("p2020", prev)]) / 0.5, abs=1e-4)
     assert abs(f[("p2020", "t0025")] - f[("p2020", "t0024")]) > 1.0   # the boundary carries a real change
     assert col[("p2020", "t0001")] is None
+
+
+def test_stochastic_roll_branches_take_the_carry(tmp_path_factory) -> None:
+    """Rolling stochastic 1-week fixture (horizon 96, jump 24, forecast branches over the whole window): on
+    every continuation roll the realized period and each forecast branch ramp from the previous roll's realized
+    flow, at their common first step, without a predecessor column."""
+    from tests.engine._unit_db import FLEXTOOL_ROOT
+
+    url, scen = make_db(tmp_path_factory, alt="ramp_stroll",
+                        values=_ramp(0.002, rel=[PLANT, "demand_node"]),
+                        base_chain=["init", "base", "system", "1week_rolling"],
+                        fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json")
+    steps = list(run(tmp_path_factory, url, scen).values())
+    assert len(steps) > 2
+    assert steps[0].flex_data.dt_ramp_carry is None
+    for s in steps[1:]:
+        fd = s.flex_data
+        firsts = (utf8(fd.dt).with_row_index("i").group_by("d", maintain_order=True)
+                  .agg(pl.col("t").sort_by("i").first()))
+        carry = utf8(fd.dt_ramp_carry)
+        assert sorted(carry.select("d", "t").rows()) == sorted(firsts.rows())
+        assert carry["d_previous"].unique().to_list() == ["period1"]
+        rows = row_terms(build(fd), "ramp_sink_up_constraint", f"{PLANT},coal_market,demand_node,")
+        for d, t in firsts.rows():
+            assert set(rows[f"ramp_sink_up_constraint[{PLANT},coal_market,demand_node,{d},{t}]"]) <= {
+                f"v_flow[{PLANT},coal_market,demand_node,{d},{t}]"}

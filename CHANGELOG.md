@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Startup and shutdown capacity reduction.** As documented in the how-to,
+  a unit with online variables and ramp limits can no longer run at full
+  output in the step it starts in or in the step before it shuts down: it
+  reaches at most its minimum load plus half a step's ramp on average (one
+  step's ramp from minimum load, reached at the end of the step). A unit
+  online for one step gets the smaller of the two limits. This was in the old
+  model and had not been ported.
+
 - **Reserve uses ramp room.** A unit with ramp limits could hold reserve its
   ramp limit would not let it deliver. Its upward reserve now uses the upward
   ramp room of the time step (after the change of its flow from the previous

@@ -701,7 +701,9 @@ The minimum time constraints work with variable timestep durations. The constrai
 
 When using rolling window solves, ensure that the solve horizon overlap is at least as long as the longest `min_uptime` or `min_downtime` value. A warning will be issued if this condition is not met.
 
-If the unit also has ramp limits (`ramp_speed_up`, `ramp_speed_down`), the model will additionally tighten the maximum output in the startup and pre-shutdown timesteps based on how fast the unit can ramp within one timestep. Without ramp limits, the unit can reach full output immediately after starting.
+If the unit also has ramp limits (`ramp_method` with `ramp_speed_up`, `ramp_speed_down`), the model additionally tightens the maximum output in the startup and pre-shutdown timesteps based on how fast the unit can ramp within one timestep. A unit that starts in a timestep reaches on average at most `min_load + ½ × ramp_speed_up × 60 × timestep duration` of the started capacity in that step (it synchronises at minimum load and then ramps up: half a step's ramp on average), and in the step before it shuts down at most `min_load + ½ × ramp_speed_down × 60 × timestep duration` (both capped at full output and by `availability`). A unit online for a single step gets the smaller of the two. On an input with a ramp limit of a unit with several inputs or outputs, the limit is on the input it draws (at minimum load it needs the input of its minimum-load output). Without ramp limits, the unit can reach full output immediately after starting.
+
+Units started (shut down) in a timestep also add to that timestep's upward (downward) ramp room, so that a unit can start despite its ramp limit. The model only requires *at least* as many startups as units coming online, so with no or a very low startup cost a unit with online variables can declare startups to get ramp room (and room for reserve it holds); the ramp limits of such units bind only as far as startups and shutdowns have a cost.
 
 ## How to add CO2 emissions, costs and limits
 

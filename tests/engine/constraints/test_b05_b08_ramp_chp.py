@@ -88,6 +88,8 @@ def test_ramp_sink_up_with_uc_startup_tightening(toy_uc_3t):
 
     Without the startup term in rhs_terms (``model._eq_ramp``) the
     optimum would have to pay slack on every step — here it does not.
+    The startup step's output is limited to 0.43 of the started capacity
+    (startup capacity reduction, ``_online._cap_reduction``).
     """
     d = toy_uc_3t
     # Demand: 0 at t01 (no penalty if off), 40 at t02/t03 → flow=[0, 0.4, 0.4].
@@ -103,11 +105,17 @@ def test_ramp_sink_up_with_uc_startup_tightening(toy_uc_3t):
     assert "ramp_sink_up_constraint" in cstr
     # 1 ramp arc × the 2 steps with a predecessor.
     assert pb.cstr_row_count("ramp_sink_up_constraint") == 2
-    # Hand-calc: v_flow = [0, 0.4, 0.4] (no slack burnt).
+    # Hand-calc: v_flow = 0.4 at t02/t03 (no slack burnt).  The jump into t02 exceeds the bare ramp room
+    # 0.06, so it needs the startup term.  With the startup capacity reduction a unit started at t02 reaches at
+    # most 0.4 + ½·0.06 = 0.43 of its capacity there, so the model may keep part of the unit online at t01 (at
+    # min load, a small surplus) instead of starting all of it — the flow at t01 is then above 0.
     v_flow = sol.value("v_flow").sort("t")["value"].to_list()
-    assert v_flow[0] == pytest.approx(0.0, abs=1e-7)
     assert v_flow[1] == pytest.approx(0.4, rel=1e-7)
     assert v_flow[2] == pytest.approx(0.4, rel=1e-7)
+    assert v_flow[1] - v_flow[0] > 0.06 + 1e-6
+    startup = sol.value("v_startup_linear").sort("t")["value"].to_list()
+    online = sol.value("v_online_linear").sort("t")["value"].to_list()
+    assert v_flow[1] <= online[1] - (1.0 - 0.43) * startup[1] + 1e-7
     # Slack on the demand node must be zero — the startup term made the
     # ramp constraint feasible exactly at the demand jump.
     vq_up = sol.value("vq_state_up")

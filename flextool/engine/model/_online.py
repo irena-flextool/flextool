@@ -1,8 +1,8 @@
 """Unit commitment: units online, startups, shutdowns and minimum up/down times.
 
 Owns the variables v_online_*, v_startup_*, v_shutdown_* and the equations maxOnline, maxStartup,
-maxShutdown, online__startup, online__shutdown, maxFlow_online, maxOutputSum_online, maxInputFlow_online,
-minimum_uptime, minimum_downtime and online_fix_eq.  Each exists once per UC class present: ``linear`` (continuous
+maxShutdown, online__startup, online__shutdown, maxFlow_online, maxFlow_online_shutdown, maxOutputSum_online,
+maxInputFlow_online, maxInputFlow_online_shutdown, minimum_uptime, minimum_downtime and online_fix_eq.  Each exists once per UC class present: ``linear`` (continuous
 v_online) and ``integer`` (integer v_online), suffixed ``_linear`` / ``_integer``.
 """
 
@@ -12,8 +12,9 @@ import polars as pl
 from polar_high import Lag, Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
+from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.model._common import (
-    _availability_factor, _capped_arcs, _coef_factor, _drop_uncapped, _entity_rows, _indirect_input_cap,
+    _availability_factor, _capped_arcs, _coef_factor, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap,
     _indirect_sum_arcs, _utf8_keys, _var_view,
 )
 
@@ -174,16 +175,30 @@ def add_constraints(b: "_Build") -> None:
         # ─── EQ. ─── maxFlow_online_{linear,integer} ─────────────────────────
         # ─────────────────────────────────────────────────────────────────────
         # v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t] + Σ_r v_reserve_down[p,r,s,d,t] · φ[p,s,k,d,t]
-        #   ≤  v_online[p,d,t] · availability[p,d,t] · capacity_max_coeff[p,s,k]
-        #   ∀ (p,s,k) capped arc of an online process, (d,t) ∈ dt;   φ as in maxFlow, units only
+        #   ≤  κ[p,s,k] · ( v_online[p,d,t] · availability[p,d,t] − red_su[p,s,k,d,t] · v_startup[p,d,t]
+        #                   − max(0, red_sd − red_su)[p,s,k,d,t] · v_shutdown[p,d,t⁺] )
+        #   ∀ (p,s,k) capped arc of an online process, (d,t) ∈ dt;   φ as in maxFlow, units only;
+        #   κ = capacity_max_coeff[p,s,k]
+        # ─── EQ. ─── maxFlow_online_shutdown_{linear,integer} ────────────────
+        # (maxFlow_online LHS)
+        #   ≤  κ · ( v_online · availability − red_sd · v_shutdown[p,d,t⁺] − max(0, red_su − red_sd) · v_startup[p,d,t] )
+        #   ∀ rows of maxFlow_online with red_sd > 0 and a successor t⁺
+        # red_su = max(0, availability − SU),  SU = min(1, min_load[p,d,t] + ½ · ramp_speed_up · 60 · step_duration[d,t])
+        #   over the sides of the arc with an up ramp limit (process_source_sink_ramp_limit_{sink,source}_up; the
+        #   smaller SU when both); red_sd likewise with ramp_speed_down at the pre-shutdown step (d,t); 0 without a
+        #   ramp limit.  t⁺ = the step whose ramp predecessor (dt_ramp_link) is (d,t) in the same period.
         # A unit's flow and the reserve that raises it — upward reserve at the arc's sink and
         # "consume more" downward reserve at its source — are limited by the units online
         # (spinning reserve: an offline unit holds neither).  The reserve terms are maxFlow's.
-        # Only capped arcs (direct arcs and indirect
+        # Units starting in step t reach at most SU of their capacity on average over the step (synchronised at
+        # min load, then ramping as fast as they may: half a step's ramp on average; owner question Q-c14a-A),
+        # units shutting down after step t at most SD in t.  Two rows, so capacity online for a single step gets
+        # the smaller of the two limits instead of both reductions (exact for any mix of starts and stops; GMPL's
+        # one row with both reductions forbids one-step runs).  Only capped arcs (direct arcs and indirect
         # output arcs, see _capped_arcs): indirect input arcs are tied to the outputs by
         # conversion_indirect, and conversion_flow_coeff = 0 arcs are uncapped.  Availability and
         # capacity_max_coeff are densified to their 1.0 defaults so an unauthored unit keeps
-        # its row.
+        # its row.  The reduction is per arc (a multi-output unit's maxOutputSum_online is not reduced).
         pss_online = _capped_arcs(d, d.process_source_sink.join(online_set, on="p", how="inner"))
         if pss_online.height > 0:
             over_pss_online = pss_online.join(d.dt, how="cross")
@@ -197,22 +212,48 @@ def add_constraints(b: "_Build") -> None:
             if b.reserve_up_to_sink is not None:
                 online_lhs["reserve_up"] = b.reserve_up_to_sink
             online_lhs.update(b.reserve_down_at_source)
+            online_rhs_terms: dict = {"online": online_rhs}
+            shutdown_rows = None
+            red = _cap_reduction(b, pss_online, input_side=False)
+            if red is not None:
+                kappa = (_coef_factor(pss_online, d.p_arc_max_cap_coef, ["p", "source", "sink"]).frame
+                         if d.p_arc_max_cap_coef is not None
+                         else pss_online.select("p", "source", "sink").unique().with_columns(value=pl.lit(1.0)))
+                row1, row2, over2 = _reduction_terms(red, kappa, v_startup, v_shutdown, sfx)
+                online_rhs_terms.update(row1)
+                if over2.height > 0:
+                    shutdown_rows = (over2, {"online": online_rhs, **row2})
             m.add_cstr(f"maxFlow_online{sfx}",
                        over=over_pss_online, sense="<=",
                        lhs_terms=online_lhs,
-                       rhs_terms={"online": online_rhs})
+                       rhs_terms=online_rhs_terms)
+            if shutdown_rows is not None:
+                m.add_cstr(f"maxFlow_online_shutdown{sfx}",
+                           over=shutdown_rows[0], sense="<=",
+                           lhs_terms=online_lhs,
+                           rhs_terms=shutdown_rows[1])
 
         # ─── EQ. ─── maxInputFlow_online_{linear,integer} ────────────────────
         # ─────────────────────────────────────────────────────────────────────
         # v_flow[p,s,p,d,t] + Σ_r v_reserve_down[p,r,s,d,t]
-        #   ≤ v_online[p,d,t] · availability[p,d,t] · input_cap[p,s,p,d,t]
-        #   ∀ (p,s,p) ∈ reserve_down_input_arcs, an input arc of an online indirect unit, (d,t) ∈ dt
+        #   ≤ input_cap[p,s,p,d,t] · ( v_online[p,d,t] · availability[p,d,t] − red_su · v_startup[p,d,t]
+        #                              − max(0, red_sd − red_su) · v_shutdown[p,d,t⁺] )
+        #   ∀ (p,s,p) input arc of an online indirect unit that is in reserve_down_input_arcs or has a source-side
+        #     ramp limit with a reduction, (d,t) ∈ dt
         #   input_cap = p_indirect_input_cap (input_share_max × full-load input per unit of capacity)
-        # The online analogue of maxFlow on an indirect unit's input arc, built only where the arc
-        # carries downward reserve at its source: consuming more needs online capacity.  The other
-        # inputs and the outputs are not adjusted (the per-arc simplification of the input-side
-        # floors).
-        _add_max_input_flow_online(b, sfx, online_set, v_online)
+        # ─── EQ. ─── maxInputFlow_online_shutdown_{linear,integer} ───────────
+        # (maxInputFlow_online LHS) ≤ input_cap · ( v_online · availability − red_sd · v_shutdown[p,d,t⁺]
+        #                                           − max(0, red_su − red_sd) · v_startup[p,d,t] )
+        #   ∀ rows of maxInputFlow_online with red_sd > 0 and a successor t⁺
+        # red_su / red_sd as in maxFlow_online, from the input node's ramp speeds, with min_load replaced by the input
+        # the unit draws at min load as a share of input_cap: x / input_share_max[p,s],
+        #   x = (slope · W(min_load) + section) / (slope · W(1) + section)
+        #   (W(y): the output-side fuel width filled up to y, as in p_indirect_input_cap; section only for
+        #   min_load_efficiency units), so a started unit can always draw what it needs at min load.
+        # The online analogue of maxFlow on an indirect unit's input arc: consuming more needs online capacity,
+        # and a starting (stopping) unit draws at most its startup (pre-shutdown) share of the input.  The other
+        # inputs and the outputs are not adjusted (the per-arc simplification of the input-side floors).
+        _add_max_input_flow_online(b, sfx, online_set, v_online, v_startup, v_shutdown)
 
         # ─── EQ. ─── maxOutputSum_online_{linear,integer} ────────────────────
         # ─────────────────────────────────────────────────────────────────────
@@ -338,24 +379,38 @@ def add_constraints(b: "_Build") -> None:
             )
 
 
-def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame", v_online) -> None:
-    """maxInputFlow_online rows of one UC class (see the EQ. header in :func:`add_constraints`)."""
+def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame", v_online, v_startup,
+                               v_shutdown) -> None:
+    """maxInputFlow_online (+ _shutdown) rows of one UC class (see the EQ. header in :func:`add_constraints`)."""
     d = b.d
-    arcs = b.reserve_down_input_arcs
     indirect = getattr(d, "process_indirect", None)
-    if arcs is None or not b.reserve_down_at_source or indirect is None or indirect.height == 0:
+    if indirect is None or indirect.height == 0:
         return
     keys = ["p", "source", "sink"]
-    sel = (_utf8_keys(arcs.lazy(), keys)
-           .filter(pl.col("_sink") == pl.col("_p"))
-           .join(_utf8_keys(indirect.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi")
-           .join(_utf8_keys(online_set.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi"))
-    # the arc rows of v_flow (process_source_sink dtypes), restricted to sel; conversion_flow_coeff = 0 inputs
-    # are uncapped (no capacity row, as in maxFlow_online)
     pss = d.process_source_sink.select(keys).unique()
-    in_arcs = _drop_uncapped(d, _utf8_keys(pss.lazy(), keys)
-                             .join(sel.select("_p", "_source", "_sink"), on=["_p", "_source", "_sink"], how="semi")
-                             .select(keys).collect())
+
+    def _online_inputs(arcs: "pl.DataFrame | None") -> "pl.DataFrame":
+        """The rows of v_flow's arcs (process_source_sink dtypes) among ``arcs`` that are capped input arcs of
+        online indirect units (conversion_flow_coeff = 0 inputs are uncapped: no capacity row)."""
+        if arcs is None or arcs.height == 0:
+            return pss.head(0)
+        sel = (_utf8_keys(arcs.lazy().select(keys), keys)
+               .filter(pl.col("_sink") == pl.col("_p"))
+               .join(_utf8_keys(indirect.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi")
+               .join(_utf8_keys(online_set.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi"))
+        return _drop_uncapped(d, _utf8_keys(pss.lazy(), keys)
+                              .join(sel.select("_p", "_source", "_sink"), on=["_p", "_source", "_sink"], how="semi")
+                              .select(keys).collect())
+
+    reserve_arcs = (_online_inputs(b.reserve_down_input_arcs) if b.reserve_down_at_source
+                    else pss.head(0))
+    ramp_sets = [f for f in (d.process_source_sink_ramp_limit_source_up, d.process_source_sink_ramp_limit_source_down)
+                 if _has_rows(f)]
+    ramp_arcs = _online_inputs(pl.concat([f.select(keys) for f in ramp_sets]).unique() if ramp_sets else None)
+    red = _cap_reduction(b, ramp_arcs, input_side=True) if ramp_arcs.height > 0 else None
+    in_arcs = reserve_arcs
+    if red is not None:
+        in_arcs = pl.concat([reserve_arcs, red.select(keys).unique(maintain_order=True)]).unique(maintain_order=True)
     if in_arcs.height == 0:
         return
     over = in_arcs.join(d.dt, how="cross")
@@ -365,7 +420,224 @@ def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame"
         rhs = rhs * _availability_factor(d, in_arcs)
     lhs: dict = {"flow": b.v_flow}
     lhs.update(b.reserve_down_at_source)
-    b.m.add_cstr(f"maxInputFlow_online{sfx}", over=over, sense="<=", lhs_terms=lhs, rhs_terms={"online": rhs})
+    rhs_terms: dict = {"online": rhs}
+    over2 = None
+    if red is not None:
+        row1, row2, over2 = _reduction_terms(red, cap, v_startup, v_shutdown, f"_in{sfx}")
+        rhs_terms.update(row1)
+    b.m.add_cstr(f"maxInputFlow_online{sfx}", over=over, sense="<=", lhs_terms=lhs, rhs_terms=rhs_terms)
+    if over2 is not None and over2.height > 0:
+        b.m.add_cstr(f"maxInputFlow_online_shutdown{sfx}", over=over2, sense="<=", lhs_terms=lhs,
+                     rhs_terms={"online": rhs, **row2})
+
+
+def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *, input_side: bool) -> "pl.DataFrame | None":
+    """Startup / shutdown capacity reduction of online arcs ``arcs`` (``p, source, sink``) over dt.
+
+    Returns ``(p, source, sink, d, t, red_su, red_sd, t_next)`` in the dtypes of ``arcs`` / ``d.dt`` (``t_next``
+    Utf8, null where the step has no successor in the same period), only rows with ``red_su > 0`` or (a
+    successor and ``red_sd > 0``); ``None`` when there are none.  See the EQ. header of maxFlow_online:
+    ``SU = min(1, ml + ½ · ramp_speed_up · 60 · step_duration)`` over the sides of the arc with an up ramp limit,
+    ``red_su = max(0, availability − SU)``; ``SD`` / ``red_sd`` likewise with the down speeds.  ``ml`` is
+    ``min_load`` on an output-measured arc (``input_side`` False) and the input the unit draws at min load as a
+    share of the arc's input limit on an indirect unit's input arc (``input_side`` True).
+    """
+    d = b.d
+    keys = ["p", "source", "sink"]
+    sides = []
+    for dir_ in ("up", "down"):
+        for side in (("source",) if input_side else ("sink", "source")):
+            idx = getattr(d, f"process_source_sink_ramp_limit_{side}_{dir_}", None)
+            speed = getattr(d, f"p_ramp_speed_{dir_}_{side}", None)
+            if idx is None or idx.height == 0 or speed is None:
+                continue
+            hit = (_utf8_keys(idx.lazy().select(keys), keys).select([f"_{k}" for k in keys]).unique()
+                   .with_columns(pl.col(f"_{side}").alias("_n"))
+                   .join(speed.frame.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"),
+                                                   pl.col(side).cast(pl.Utf8).alias("_n"),
+                                                   pl.col("value").cast(pl.Float64).alias("__speed")),
+                         on=["_p", "_n"], how="inner")
+                   .select("_p", "_source", "_sink", "__speed")
+                   .with_columns(__dir=pl.lit(dir_)))
+            sides.append(hit)
+    if not sides:
+        return None
+    speeds = pl.concat(sides)
+    base = (_utf8_keys(arcs.select(keys).unique(maintain_order=True).join(d.dt.select("d", "t"), how="cross")
+                       .lazy(), keys + ["d", "t"])
+            .join(speeds.select("_p", "_source", "_sink").unique(), on=["_p", "_source", "_sink"], how="semi"))
+    dur = d.p_step_duration.frame.lazy().select(pl.col("d").cast(pl.Utf8).alias("_d"),
+                                                pl.col("t").cast(pl.Utf8).alias("_t"),
+                                                pl.col("value").cast(pl.Float64).alias("__dur"))
+    ml = _min_load_share(b, base, input_side=input_side)
+    avail = (_availability_factor(d, arcs).frame.lazy()
+             .select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                     pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias("__av"))
+             if d.p_process_availability is not None else None)
+    grid = base.join(dur, on=["_d", "_t"], how="inner").join(ml, on=["_p", "_source", "_sink", "_d", "_t"],
+                                                              how="left")
+    grid = grid.with_columns(pl.col("__ml").fill_null(0.0))
+    if avail is not None:
+        grid = grid.join(avail, on=["_p", "_d", "_t"], how="left").with_columns(pl.col("__av").fill_null(1.0))
+    else:
+        grid = grid.with_columns(__av=pl.lit(1.0))
+    # One startup (shutdown) step reaches ml + half a step's ramp on average (Q-c14a-A); the tightest side wins.
+    lim = (grid.join(speeds, on=["_p", "_source", "_sink"], how="inner")
+           .with_columns(__lim=pl.min_horizontal(pl.lit(1.0),
+                                                 pl.col("__ml") + 0.5 * pl.col("__speed") * 60.0 * pl.col("__dur")))
+           .group_by("_p", "_source", "_sink", "_d", "_t", "__dir")
+           .agg(pl.col("__lim").min()))
+    su = lim.filter(pl.col("__dir") == "up").select("_p", "_source", "_sink", "_d", "_t",
+                                                     pl.col("__lim").alias("__su"))
+    sd = lim.filter(pl.col("__dir") == "down").select("_p", "_source", "_sink", "_d", "_t",
+                                                       pl.col("__lim").alias("__sd"))
+    succ = _successor_steps(d)
+    out = (grid.join(su, on=["_p", "_source", "_sink", "_d", "_t"], how="left")
+           .join(sd, on=["_p", "_source", "_sink", "_d", "_t"], how="left")
+           .join(succ, on=["_d", "_t"], how="left")
+           .with_columns(red_su=(pl.col("__av") - pl.col("__su")).clip(lower_bound=0.0).fill_null(0.0),
+                         red_sd=pl.when(pl.col("t_next").is_not_null())
+                         .then((pl.col("__av") - pl.col("__sd")).clip(lower_bound=0.0).fill_null(0.0))
+                         .otherwise(0.0))
+           .filter((pl.col("red_su") > 0.0) | (pl.col("red_sd") > 0.0))
+           .select(*keys, "d", "t", "red_su", "red_sd", "t_next")
+           .collect())
+    return out if out.height > 0 else None
+
+
+def _successor_steps(d) -> "pl.LazyFrame":
+    """``(_d, _t, t_next)`` Utf8: the step whose ramp predecessor (dt_ramp_link) is ``(_d, _t)`` in the same period."""
+    link = getattr(d, "dt_ramp_link", None)
+    if link is None or link.height == 0:
+        return pl.LazyFrame(schema={"_d": pl.Utf8, "_t": pl.Utf8, "t_next": pl.Utf8})
+    return (link.lazy()
+            .select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                    pl.col("d_previous").cast(pl.Utf8), pl.col("t_previous").cast(pl.Utf8))
+            .filter(pl.col("d_previous") == pl.col("d"))
+            .select(pl.col("d").alias("_d"), pl.col("t_previous").alias("_t"), pl.col("t").alias("t_next")))
+
+
+def _min_load_share(b: "_Build", base: "pl.LazyFrame", *, input_side: bool) -> "pl.LazyFrame":
+    """``(_p, _source, _sink, _d, _t, __ml)``: the share of the arc's capacity limit a unit online runs at
+    at min load.  Output-measured arcs: ``min_load``.  An indirect unit's input arc (``input_side``): the input
+    drawn at min load per unit of input limit, ``x(min_load) / input_share_max`` with
+    ``x(y) = (slope · W(y) + section) / (slope · W(1) + section)``, ``W(y)`` the output-side fuel width filled up to
+    ``y`` (outputs in descending conversion_flow_coeff order, each up to its capacity_max_coeff — the most fuel
+    the outputs can draw at that output level, as in ``p_indirect_input_cap``), section only for
+    ``min_load_efficiency`` units.  0 where the unit has no min_load."""
+    d = b.d
+    cols = ["_p", "_source", "_sink", "_d", "_t"]
+    if d.p_min_load is None:
+        return base.select(cols).with_columns(__ml=pl.lit(0.0))
+    ml = (promote_param_to_dt(d.p_min_load, d.dt)
+          .select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                  pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias("__mlu")))
+    rows = base.select(cols).join(ml, on=["_p", "_d", "_t"], how="left").with_columns(pl.col("__mlu").fill_null(0.0))
+    if not input_side:
+        return rows.select(*cols, pl.col("__mlu").alias("__ml"))
+    outs = getattr(d, "process_output_flows", None)
+    if outs is None or outs.height == 0:
+        return rows.select(*cols, __ml=pl.lit(0.0))
+    k = (outs.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("sink").cast(pl.Utf8).alias("_k"))
+         .unique())
+    for name, col in ((getattr(d, "p_process_sink_max_capacity_coef", None), "__cap"),
+                      (getattr(d, "p_process_sink_conversion_flow_coeff", None), "__conv")):
+        if name is not None:
+            k = k.join(name.frame.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"),
+                                                pl.col("sink").cast(pl.Utf8).alias("_k"),
+                                                pl.col("value").cast(pl.Float64).alias(col)),
+                       on=["_p", "_k"], how="left")
+        else:
+            k = k.with_columns(pl.lit(None, pl.Float64).alias(col))
+    k = (k.with_columns(__cap=pl.col("__cap").fill_null(1.0).clip(lower_bound=0.0),
+                        __conv=pl.col("__conv").fill_null(1.0))
+         .filter(pl.col("__conv") > 0.0)
+         .sort(["_p", "__conv", "_k"], descending=[False, True, False])
+         .with_columns(__prev=pl.col("__cap").cum_sum().over("_p") - pl.col("__cap")))
+
+    def _width(y: str, out: str) -> "pl.LazyFrame":
+        return (rows.select("_p", "_d", "_t", y).unique().join(k, on="_p", how="inner")
+                .with_columns(__fill=pl.min_horizontal(pl.col("__cap"),
+                                                       (pl.col(y) - pl.col("__prev")).clip(lower_bound=0.0)))
+                .group_by("_p", "_d", "_t").agg((pl.col("__conv") * pl.col("__fill")).sum().alias(out)))
+
+    rows = rows.with_columns(__one=pl.lit(1.0))
+    w = _width("__mlu", "__w_ml").join(_width("__one", "__w_full"), on=["_p", "_d", "_t"], how="inner")
+
+    def _pdt(param, out: str) -> "pl.LazyFrame | None":
+        if param is None:
+            return None
+        return (promote_param_to_dt(param, d.dt)
+                .select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                        pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias(out)))
+
+    slope = _pdt(d.p_slope, "__slope")
+    sec = _pdt(getattr(d, "p_section", None), "__sec")
+    w = w.join(slope, on=["_p", "_d", "_t"], how="left") if slope is not None else w.with_columns(__slope=pl.lit(None))
+    if sec is not None and _has_rows(getattr(d, "process_min_load_eff", None)):
+        mle = d.process_min_load_eff.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p")).unique()
+        w = (w.join(sec, on=["_p", "_d", "_t"], how="left")
+             .join(mle.with_columns(__mle=pl.lit(True)), on="_p", how="left")
+             .with_columns(__sec=pl.when(pl.col("__mle")).then(pl.col("__sec").fill_null(0.0)).otherwise(0.0)))
+    else:
+        w = w.with_columns(__sec=pl.lit(0.0))
+    w = w.with_columns(pl.col("__slope").cast(pl.Float64).fill_null(0.0))
+    x = w.select("_p", "_d", "_t",
+                 __x=pl.when(pl.col("__slope") * pl.col("__w_full") + pl.col("__sec") > 0.0)
+                 .then((pl.col("__slope") * pl.col("__w_ml") + pl.col("__sec"))
+                       / (pl.col("__slope") * pl.col("__w_full") + pl.col("__sec")))
+                 .otherwise(None))
+    share = getattr(d, "p_process_source_input_share_max", None)
+    out = rows.join(x, on=["_p", "_d", "_t"], how="left")
+    if share is not None:
+        out = (out.join(share.frame.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"),
+                                                  pl.col("source").cast(pl.Utf8).alias("_source"),
+                                                  pl.col("value").cast(pl.Float64).alias("__ism")),
+                        on=["_p", "_source"], how="left"))
+    else:
+        out = out.with_columns(__ism=pl.lit(None, pl.Float64))
+    # No fuel width (no min load or no output data): no reduction is safe only with share 1 (SU = 1).
+    return out.select(*cols, __ml=pl.when(pl.col("__x").is_null()).then(1.0)
+                      .otherwise(pl.col("__x") / pl.col("__ism").fill_null(1.0)))
+
+
+def _reduction_terms(red: "pl.DataFrame", kappa: "pl.DataFrame", v_startup, v_shutdown, sfx: str):
+    """RHS terms of the pair maxFlow_online / maxFlow_online_shutdown (or the input pair) from ``red``
+    (:func:`_cap_reduction`) and the arc limit factor ``kappa`` ``(p, source, sink, d, t, value)``: returns
+    ``(terms_row1, terms_row2, over_row2)``."""
+    keys = ["p", "source", "sink", "d", "t"]
+    on = [k for k in keys if k in kappa.columns]
+    r = (_utf8_keys(red.lazy(), on)
+         .join(_utf8_keys(kappa.lazy(), on).select([f"_{k}" for k in on] + [pl.col("value").alias("__k")]),
+               on=[f"_{k}" for k in on], how="inner")
+         .drop([f"_{k}" for k in on]).collect()
+         .with_columns(__a=pl.col("__k") * pl.col("red_su"),
+                       __b=pl.col("__k") * (pl.col("red_sd") - pl.col("red_su")).clip(lower_bound=0.0),
+                       __c=pl.col("__k") * pl.col("red_sd"),
+                       __e=pl.col("__k") * (pl.col("red_su") - pl.col("red_sd")).clip(lower_bound=0.0)))
+    sd_next = _var_view(v_shutdown, f"__sd_next{sfx}", {"t": "t_next"}, to_axis=True)
+    t_dtype = sd_next.frame.schema["t_next"]
+
+    def _su(col: str):
+        rows = r.filter(pl.col(col) > 0.0)
+        if rows.height == 0:
+            return None
+        return v_startup * Param(tuple(keys), rows.select(*keys, value=pl.col(col)))
+
+    def _sd(col: str):
+        rows = r.filter((pl.col(col) > 0.0) & pl.col("t_next").is_not_null())
+        if rows.height == 0:
+            return None
+        coef = Param(tuple(keys) + ("t_next",),
+                     rows.select(*keys, pl.col("t_next").cast(t_dtype), value=pl.col(col)))
+        return Sum(sd_next * coef, over=("t_next",))
+
+    row1 = {k: -v for k, v in (("startup_reduction", _su("__a")), ("shutdown_reduction", _sd("__b")))
+            if v is not None}
+    over2 = r.filter((pl.col("red_sd") > 0.0) & pl.col("t_next").is_not_null()).select(keys)
+    row2 = {k: -v for k, v in (("shutdown_reduction", _sd("__c")), ("startup_reduction", _su("__e")))
+            if v is not None}
+    return row1, row2, over2
 
 
 def _online_mintime_carry_term(carry: "pl.DataFrame | None", idx: "pl.DataFrame") -> "Param | None":
