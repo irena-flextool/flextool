@@ -860,8 +860,9 @@ def p_window_fraction_from_shares(
     roll of a rolling solve ``p_period_share`` is the complete (parent) solve's share, so the
     fraction is the roll's window over the complete solve, per period.  A value within 1e-9
     (relative) of 1 is snapped to exactly 1.0, so a sub-solve that covers its periods whole keeps
-    the ``co2_max_period`` RHS bit for bit.  A dt period without a ``p_period_share`` row raises
-    (loader bug: the cap's RHS would lose that period).
+    the ``co2_max_period`` RHS bit for bit.  A dt period without a ``p_period_share`` row raises: the
+    share is inconsistent with dt (a loader bug, or a reloaded workdir whose share file lacks the
+    period), and the operational costs (``op_factor``) and the cap's RHS of that period would be lost.
     """
     window = p_period_share_from_source(None, dt, step_dur)
     if window is None:
@@ -873,8 +874,10 @@ def p_window_fraction_from_shares(
     missing = out.filter(pl.col("_share").is_null())["_d"].to_list()
     if missing:
         raise ValueError(
-            f"p_window_fraction: p_period_share has no row for dt periods {missing}; this is a loader bug "
-            f"(the share must cover every dt period).")
+            f"p_window_fraction: p_period_share has no row for dt periods {missing}; the period share (the "
+            f"complete solve's share in a sub-solve, complete_period_share_of_year_calc.csv in a reloaded workdir) "
+            f"must cover every dt period, else that period's operational costs and co2_max_period cap lose "
+            f"their weight.")
     out = out.with_columns(
         value=pl.when((pl.col("value") - pl.col("_share")).abs() <= 1e-9 * pl.col("value").abs())
         .then(pl.lit(1.0, dtype=pl.Float64))

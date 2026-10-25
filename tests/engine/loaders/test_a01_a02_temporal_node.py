@@ -22,18 +22,36 @@ from .conftest import write_csv
 
 # --- A.1 ------------------------------------------------------------
 
+_SCATTERED_STEPS = [
+    {"period": "p2020", "step": "t0001", "step_duration": "2.5"},
+    {"period": "p2020", "step": "t0003", "step_duration": "1.0"},
+    {"period": "p2030", "step": "t0002", "step_duration": "0.5"},
+    {"period": "p2030", "step": "t0004", "step_duration": "1.0"},
+]
+
+
+def _write_scattered_periods(workdir, share_hours: dict[str, float]) -> None:
+    """Two scattered periods in ``steps_in_use.csv`` plus the per-period files that go with a period set.
+
+    The seed workdir has one period (p2020); adding p2030 to ``steps_in_use.csv`` alone leaves the
+    period-keyed companions without a p2030 row.  ``complete_period_share_of_year_calc.csv`` (the
+    complete solve's hours of each period / 8760) and ``p_inflation_factor_operations_yearly.csv``
+    weight every operational cost of their period, so they are written for both periods.
+    """
+    write_csv(workdir, "steps_in_use.csv", _SCATTERED_STEPS)
+    write_csv(workdir, "complete_period_share_of_year_calc.csv",
+              [{"period": d, "value": h / 8760.0} for d, h in share_hours.items()])
+    write_csv(workdir, "p_inflation_factor_operations_yearly.csv",
+              [{"period": d, "value": 1.0} for d in share_hours])
+
+
 def test_step_duration_string_cast_and_scattered_periods(tiny_workdir):
     """Covers A1-step_duration_casts_to_float (direct) +
     A1-multi_period_steps_scattered (direct).  Sparse 2-period scatter
     with string ``step_duration`` confirms (a) no spurious cross-join
     injects (p2020,t0002) etc, and (b) ``cast(Float64)`` parses "2.5".
     """
-    write_csv(tiny_workdir, "steps_in_use.csv", [
-        {"period": "p2020", "step": "t0001", "step_duration": "2.5"},
-        {"period": "p2020", "step": "t0003", "step_duration": "1.0"},
-        {"period": "p2030", "step": "t0002", "step_duration": "0.5"},
-        {"period": "p2030", "step": "t0004", "step_duration": "1.0"},
-    ])
+    _write_scattered_periods(tiny_workdir, {"p2020": 3.5, "p2030": 1.5})
     data = load_flextool(tiny_workdir)
     # Hand-calc: dt = exactly the 4 input rows, no cross-product.
     # Phase 4: data.dt's d/t columns are Enum (post-vocab activation);
@@ -52,6 +70,37 @@ def test_step_duration_string_cast_and_scattered_periods(tiny_workdir):
     sd = data.p_step_duration.frame.sort(["d", "t"])
     assert sd["value"].to_list() == pytest.approx([2.5, 1.0, 0.5, 1.0],
                                                     rel=1e-7)
+
+
+def test_scattered_periods_window_fraction(tiny_workdir):
+    """``p_window_fraction`` of a reader-less load: the dt hours of each period over the complete
+    solve's hours (``complete_period_share_of_year_calc.csv``), summed over the steps of dt only.
+
+    Hand-calc: p2020 dt hours 2.5 + 1.0 = 3.5 of a complete 3.5 h -> exactly 1.0 (snapped);
+    p2030 dt hours 0.5 + 1.0 = 1.5 of a complete 6.0 h -> 0.25.
+    """
+    _write_scattered_periods(tiny_workdir, {"p2020": 3.5, "p2030": 6.0})
+    data = load_flextool(tiny_workdir)
+    share = data.p_period_share.frame.sort("d")
+    assert [str(x) for x in share["d"]] == ["p2020", "p2030"]
+    assert share["value"].to_list() == pytest.approx([3.5 / 8760, 6.0 / 8760], rel=1e-12)
+    wf = data.p_window_fraction.frame.sort("d")
+    assert data.p_window_fraction.dims == ("d",)
+    assert [str(x) for x in wf["d"]] == ["p2020", "p2030"]
+    assert wf["value"][0] == 1.0
+    assert wf["value"][1] == pytest.approx(0.25, rel=1e-12)
+
+
+def test_period_share_without_a_dt_period_raises(tiny_workdir):
+    """A workdir whose ``complete_period_share_of_year_calc.csv`` lacks a period of dt does not load.
+
+    Every operational cost of a period is divided by its share (``op_factor``) and the
+    ``co2_max_period`` cap is scaled by its window fraction, so a dt period without a share would drop
+    out of the objective and the caps.  The load boundary refuses it, naming the period.
+    """
+    write_csv(tiny_workdir, "steps_in_use.csv", _SCATTERED_STEPS)  # the seed's share has p2020 only
+    with pytest.raises(ValueError, match=r"p_period_share has no row for dt periods \['p2030'\]"):
+        load_flextool(tiny_workdir)
 
 
 def test_timestep_weight_strict_false_scientific_notation(tiny_workdir):
