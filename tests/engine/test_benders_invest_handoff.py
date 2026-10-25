@@ -114,10 +114,10 @@ def test_invest_solution_vars_matches_monolith(benders_result, monolith) -> None
     # MONOLITH ground truth: the nonzero v_invest_p cells (normalised units).
     mono_p = _nonzero(monolith.value("v_invest_p"), "p")
     assert mono_p, "monolith has no v_invest_p — fixture changed?"
-    # Sanity: the only invested entities are the two cross-region pipes.
-    assert {k[0] for k in mono_p} == _TRADE_CONNS, (
-        f"monolith invest entities {set(k[0] for k in mono_p)} != "
-        f"{_TRADE_CONNS}"
+    # Sanity: the invested entities are cross-region pipes — pipe_AB (pipe_BC
+    # is not built since every electrolyser hour consumes electricity, c15b).
+    assert {k[0] for k in mono_p} == {"pipe_AB"}, (
+        f"monolith invest entities {set(k[0] for k in mono_p)} != {{'pipe_AB'}}"
     )
 
     assembled_p = _nonzero(isv["v_invest_p"], "p")

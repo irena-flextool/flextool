@@ -12,9 +12,9 @@ three independent flavours, all implemented natively in
   cuts the master accumulates until the optimality gap closes. Selected
   **per solve** from the database (`solve.decomposition = benders`); see
   [§2.8](#28-selecting-the-scheme-per-solve).
-- **Flex-temporal** — let different parts of the same solve run at
-  different timestep resolutions (hourly power, daily hydrogen, …) in
-  one LP. Configured per-entity via `group.new_stepduration`.
+- **Flex-temporal** — balance some nodes at a coarser step than the
+  solve (hourly power, daily hydrogen, …) in one LP; every flow stays on
+  the solve's steps. Configured per node via `group.new_stepduration`.
 - **Sequential / rolling / nested** — split a long horizon into
   overlapping windows (rolling) or into an outer long-horizon solve
   whose decisions feed an inner short-horizon solve (nested). The user
@@ -293,143 +293,107 @@ as a "Solve modes" entry in
 
 ### 3.1 Concept
 
-Mixed-resolution scheduling: some entities (power demand, VRE
-generation, batteries) need fine timesteps; others (long-duration
-storage, hydrogen, district heat) only need coarser steps for their
-dynamics to be well-represented. A monolithic LP at the fine
-resolution wastes solve time on the slow entities. Flex-temporal
-decomposition lets a single LP carry both — every entity runs on the
-block resolution it needs, joined by overlap-set aggregation across
-the LP's constraints.
+Mixed-resolution scheduling: some nodes (power demand, VRE, batteries)
+need fine timesteps; others (long-duration storage, hydrogen, district
+heat) only need a coarser energy balance.  A node of a group whose
+`new_stepduration` is longer than the solve's step is a *coarse node*:
+it is balanced once per coarse step by summing its fine balance terms
+(`nodeBalanceCoarse_eq`), and a coarse storage node keeps one state per
+coarse step (`stateConstantCoarse_eq`).  Every flow, online status,
+reserve and angle stays on the solve's steps (owner decision Q1), so an
+arc between a fine and a coarse node — or between two coarse nodes —
+conserves energy at both ends without any per-arc weights or filters.
 
 This is structurally different from the Benders path: there is one
-LP, one HiGHS run, no outer loop. The decomposition lives in the LP
-*structure* (which `(entity, block)` rows the `preprocess/emit/` modules produce).
+LP, one HiGHS run, no outer loop.
 
 ### 3.2 Schema surface
 
 | Parameter | Entity | Effect |
 |---|---|---|
-| `solve.new_stepduration` | `solve` | Solve-wide default block duration (existing parameter, predates the multi-block work) |
-| `group.new_stepduration` | `group` | Override: members of this group operate at this step duration |
-| `group.decomposition_method` | `group` | Tag a group as a *resolution group*. Used together with `new_stepduration`. |
-| `group__node` / `group__unit` / `group__connection` | (relation) | Membership lists for the resolution group |
+| `solve.new_stepduration` | `solve` | Solve-wide step (aggregates the solve's timeline) |
+| `group.new_stepduration` | `group` | The group's balance / storage nodes are balanced per coarse step of this length (when longer than the solve's step) |
+| `group.decomposition_method` | `group` | Benders region groups |
+| `group__node` | (relation) | The coarse nodes |
+| `group__unit` / `group__connection` | (relation) | No effect on time resolution (a warning names a listed process that touches a node outside the group — Q-c15-A) |
 
-Validation in `BlockLayout.validate_group_membership`:
+Validation in `validate_group_membership`:
 
-- every entity may belong to at most one resolution-group (otherwise
-  block assignment is ambiguous)
+- every entity may belong to at most one resolution-group
 - every entity may belong to at most one decomposition-group (the
   Benders region groups counted here too)
-- reserve participants must NOT sit in any resolution-group (reserve
-  blocks are V1 only — preserved compatibility quirk)
+- reserve participants must NOT sit in any resolution-group
 
-Violations raise `FlexToolConfigError` at solve setup.
+Validation in `params._coarse.coarse_node_frames`: a group step that is
+not a multiple of the solve's step, a fine step crossing the end of a
+coarse step, a coarse step that would straddle a representative period,
+and a `bind_intraperiod_blocks` node in a coarse group raise
+`FlexToolConfigError`; a group step shorter than the solve's step is
+ignored with a warning.
 
-### 3.3 BlockLayout
+### 3.3 Block layout and coarse steps
 
-`BlockLayout.build` (in `_block_layout.py`) is called once per solve
-and produces, in one pass, every per-solve block-related frame:
+`emit/_blocks.py` (production) and its port `BlockLayout.build` (in
+`_block_layout.py`) emit the per-solve block frames:
 
-- `entity_block_frame` — `(entity, block)`
-- `process_side_block_frame` — `(process, side, block)`
-- `process_block_frame` — `(process, block)` (process-unified)
-- `block_step_duration_frame` — `(block, period, step, step_duration)`
-- `overlap_set_frame` —
-  `(period, block_coarse, step_coarse, block_fine, step_fine, fraction)`
-- `block_step_previous_frame` — per-block predecessor 7-tuples
-- `block_period_time_first_frame` / `block_period_time_last_frame` —
-  per-block period boundaries
+- `entity_block` — `(entity, block)`: each node's group, else `default`
+- `block_step_duration` — `(block, period, step, step_duration)`
+- `overlap_set`, `block_step_previous`, `block_period_time_first/_last`
 
-The `DEFAULT_BLOCK` block always exists and inherits
-`solve.new_stepduration` (or the bare timeline if unset). Every
-resolution group becomes one additional named block at its own step
-duration.
+The model reads the node → group map and the group step durations from
+these frames and the default block's period boundaries
+(`nodeState_last_dt`).  The per-block aggregated timelines of the coarse
+blocks are a plain chunking of each period and do not feed the model.
 
-```mermaid
-flowchart LR
-    A[group.new_stepduration<br/>+ group__*] --> B[BlockLayout.build]
-    C[solve.new_stepduration] --> B
-    D[timeline_config] --> B
-    B --> E[entity_block]
-    B --> F[overlap_set]
-    B --> G[block_step_duration]
-    B --> H[block_step_previous]
-    E & F & G & H --> I[BlockBundle]
-    I --> J[block-aware preprocess/emit/]
-```
+The coarse steps come from one place, `params._coarse.coarse_node_frames`,
+called at the end of `load_flextool` for every solve, roll, nested and
+stochastic sub-solve.  It takes the solve's own steps (`dt` in order, step
+durations, `dtttdt`), splits each period into runs of consecutive steps — a
+run ends where `t_previous_within_timeset` is not the step before (a gap, a
+timeset block start, a period or roll start), at every representative-block
+start (`rp_block_first`) and after the period's last realized step (a roll's
+realized end, so the state a roll hands over excludes look-ahead flows) — and
+chunks each run from its start: a coarse step closes once its fine durations
+add up to the group step (a run that is not a multiple ends with a shorter
+step).  Result: `nodeCoarse (n)`, `node_coarse_step (n, d, b_first, t)` and
+`node_coarse_interior (n, d, t, t_previous)`.
 
-`BlockBundle` (in `_block.py`) wraps the `BlockLayout` with
-cached lazy-frame join helpers (`block_compat_frame`,
-`process_side_block_lf`, …) that the `preprocess/emit/` modules use to filter and
-re-project their rows.
+### 3.4 The coarse balance
 
-### 3.4 Overlap-set aggregation
+`nodeBalanceCoarse_eq[n, d, b]` is `nodeBalance_eq` summed over the fine
+steps `t ∈ b`: flows, slacks, the state change of the node's binding
+method, the `fix_start` and roll-continuation start terms and
+self-discharge, with the summed `−inflow` as RHS.  With the state constant
+inside the coarse step the state terms telescope to
+`v_state[b⁻] − v_state[b]`, so every storage binding method applies.
+Same orientation and units as `nodeBalance_eq`: its dual is the node's
+price over the coarse step.  `bind_intraperiod_blocks` nodes keep their
+own per-timeset-block row (`nodeBalanceBlock_eq`, written negated).
 
-The `overlap_set` is the cross-block aggregation key. For each
-`(period, block_coarse, step_coarse)` row there are one or more
-`(block_fine, step_fine, fraction)` rows whose `fraction` sums to 1.
-The constraint generators use this to project fine-block decision
-variables onto coarse-block constraints (and vice versa).
+### 3.5 Paths
 
-Concretely, when a coarse-block (e.g. daily hydrogen) node balance
-joins an hourly arc, the hourly `v_flow` rows are aggregated to the
-daily key via `arc_sink_block_dt` / `arc_source_block_dt`
-(`_block.py`), weighted by `block_step_duration`. The other
-direction — a fine-block constraint reading a coarse-block variable —
-projects the coarse value onto each fine step at fraction 1
-(piecewise-constant).
+- **Rolling / nested / stochastic:** every sub-solve builds its own
+  coarse frames from its own steps; nested `fix_price` reads the coarse
+  row's dual for a coarse parent node.
+- **Benders:** region subproblems and the master filter the coarse frames
+  by node; half-flows enter coarse rows like any arc, so a region↔master
+  boundary may join nodes of different resolutions.
+- **Warm start:** the coarse frames are in the fingerprint.
 
-Two structural assumptions:
+### 3.6 Outputs
 
-- **Two-block-deep limit** — one resolution-group block plus the
-  natural default fine block. Lifting it is a model-design question.
-- **Aligned subsets only** — every coarse step must align with an
-  integer number of fine steps. Non-aligned configurations raise
-  `NotImplementedError` from `_build_overlap_set`.
-
-### 3.5 Block-aware emitters
-
-The modules in `engine/preprocess/emit/` (formerly `_writer_*.py`,
-renamed in the writer→emitter Phases 1–5; see
-[engine.md § Emitters](engine.md#emitters-formerly-writer-ports))
-are block-aware. The major touch points:
-
-- **Node balance** — built on the block of the node, joined with
-  per-side arcs through `overlap_set` (loss-aware when the arc
-  efficiency depends on flow direction).
-- **Storage transition** — `v_state` ties at block boundaries; the
-  `block_step_previous_frame` provides the per-block predecessor
-  lookup so storage state continuity is enforced on the block
-  granularity, not the fine granularity.
-- **Ramp / minimum-load** — block-aware: ramps use the block's step
-  duration, not the underlying timeline's.
-- **Reserves** — V1-only-on-default-block; reserves cannot ride a
-  coarse block (the validation rule above guarantees this).
-
-### 3.6 Output expansion
-
-Coarse-block decision variables are expanded back onto the fine
-timeline before the `preprocess/emit/` modules write results, using the same
-`overlap_set` (read in reverse). Per-fraction attribution stays
-consistent across the solve / write boundary; downstream tooling sees
-the same fine-grained output regardless of which entities ran on
-which block.
-
-This expansion is the reason that `output_node_state_t`,
-`output_node_balance_t`, etc. emit one row per `(period, fine_step)`
-even for entities on a coarse block.
+Every variable lives on the solve's steps, so outputs need no expansion;
+a coarse storage state is constant within its coarse step.  Coarse-node
+prices are the `nodeBalanceCoarse_eq` duals broadcast to the fine steps of
+each coarse step (`read_highs_solution._broadcast_block_node_duals`).
 
 ### 3.7 Caveats
 
-- `representative_period_weights` interacts with block durations via
-  the per-period normalisation in `TimelineConfig.timeset_weights`;
-  picking arbitrary block durations on top of an RP-clustered timeset
-  is supported but requires the block step duration to divide the RP
-  period length evenly.
 - Block-aware reserves are not implemented; if you tag a reserve
   participant into a resolution group, the validator refuses the
   scenario.
+- Commitment (online status) per coarse step is not a feature: units and
+  connections always decide per solve step (owner question Q-c15-A).
 
 The engine-side overview of flex-temporal lives in
 [engine.md § Flex-temporal decomposition](engine.md#flex-temporal-decomposition).
@@ -547,12 +511,12 @@ features. Quick map (full text in
 
 | Combination | Supported | Notes |
 |---|---|---|
-| Benders + flex-temporal | Yes | Each region's `build_flextool` runs through the block-aware `preprocess/emit/` modules unchanged. |
+| Benders + flex-temporal | Yes | Region subproblems and the master filter the coarse-step frames by node; a region↔master boundary may join nodes of different resolutions (the half-flows are hourly on both sides). |
 | Benders + rolling | No | One Benders solve is the unit of work for the outer rolling loop. Not currently wired; would require per-roll cut warm-start. The TIER-1 invest→dispatch handoff threads a Benders *invest* solve into a downstream *rolling dispatch* solve, which is the supported pattern. |
 | Benders + nested | Partial | The outer (parent) solve can be Benders, but the parent's handoff to children propagates only the invest→dispatch capacity, not per-region operational state. Treat as untested beyond the invest→dispatch chain. |
-| Flex-temporal + rolling | Yes | The rolling jump is on the fine timeline; coarse blocks honour the jump boundary inside each window. |
-| Flex-temporal + nested | Yes | Each parent / child solve carries its own `BlockLayout`. |
-| Flex-temporal + stochastic | Yes | Branches enter the active-time lists at the fine resolution; coarse-block constraints pick up the relevant branch-suffixed steps via the same overlap set. |
+| Flex-temporal + rolling | Yes | Each roll cuts its own coarse steps; a coarse step ends at the roll's realized end, and the roll carry reaches the first coarse row. |
+| Flex-temporal + nested | Yes | Each parent / child solve builds its own coarse steps; `fix_price` reads a coarse parent node's coarse-row dual. |
+| Flex-temporal + stochastic | Yes | Every branch period gets its own coarse steps; a branch's first coarse row starts from the trunk's state. |
 | Rolling + nested | Yes | The legacy "more than one solve in a rolling solve" raise still trips for unsupported sibling-rolling-children patterns. |
 | Rolling + stochastic | Yes | Each roll can carry branches; the realised branch chains forward. |
 
@@ -560,7 +524,7 @@ features. Quick map (full text in
 
 - [engine.md](engine.md) — the engine guide; Solve modes
   section covers monolithic / warm / Benders and Flex-temporal
-  decomposition section covers the BlockLayout shape.
+  decomposition section covers the coarse-group frames.
 - [architecture.md](architecture.md) — top-level architecture; how the
   decomposition pieces fit into the larger pipeline.
 - [scaling.md](scaling.md) — auto-scaling pipeline; runs per

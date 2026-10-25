@@ -77,7 +77,12 @@ _REGIONS = ["region_A", "region_B", "region_C"]
 # Derived from a real cascade+monolith solve of the regenerated fixture
 # (``tests/fixtures/lh2_three_region_rp_invest.json``); see
 # ``regen_lh2_three_region._build_rp_invest_overlay``.
-_M_RP_EXPECTED = 7.5779590452e9
+_M_RP_EXPECTED = 9.0265500853e9
+# The Benders runs use the production objective scale: with c15b's coarse-group
+# fix the region duals carry the real (penalty-level) H2 prices, and at s = 1.0
+# the master's cut coefficients span ~1e10 — HiGHS returns kUnknown mid-loop
+# (the same cost-range limit test_benders_master_hosted documents).
+_OBJ_SCALE = 1e-6
 # Forward import arc with non-trivial flow in BOTH (non-unit-weight) reps.
 _ARC = ("pipe_AB", "lh2_A", "lh2_B")
 _IMPORT_REGION = "region_B"
@@ -249,7 +254,7 @@ def test_rp_loop_converges_to_monolith(rp_data, monolith) -> None:
 
     res = solve_benders(
         rp_data, _REGIONS, max_iters=20, tol=1e-4,
-        monolith_objective=M, master="flextool",
+        monolith_objective=M, master="flextool", scale_the_objective=_OBJ_SCALE,
     )
 
     assert res.converged, (
@@ -295,6 +300,7 @@ def test_rp_loop_recovers_per_period_invest_and_trade(rp_data, monolith) -> None
     res = solve_benders(
         rp_data, _REGIONS, max_iters=20, tol=1e-4,
         monolith_objective=monolith.obj, master="flextool",
+        scale_the_objective=_OBJ_SCALE,
     )
     assert res.converged
 
@@ -374,7 +380,8 @@ def _capture_loop_slopes(rp_data, region):
     _BendersMaster.add_cut = spy
     try:
         res = solve_benders(
-            rp_data, _REGIONS, max_iters=20, tol=1e-4, master="flextool"
+            rp_data, _REGIONS, max_iters=20, tol=1e-4, master="flextool",
+            scale_the_objective=_OBJ_SCALE,
         )
     finally:
         _BendersMaster.add_cut = orig
@@ -399,8 +406,8 @@ def _finite_difference_region_cost(rp_data, res, arc_key, cells):
     every imported unit) admits the RIGHT derivative; a period with import
     slack admits the LEFT.  Taking the smaller-|·| (non-penalty) side yields
     the displaced-cost gradient the loop's ``col_dual`` reproduces, in BOTH
-    periods.  Also returns the per-period ``nodeBalanceBlock_eq`` dual at
-    lh2_B read at the same (settled) vertex.
+    periods.  Also returns the ``nodeBalanceCoarse_eq`` dual at lh2_B of each
+    period's first rep day, read at the same (settled) vertex.
     """
     _enums = getattr(rp_data, "_axis_enums", None)
     if _enums is not None and _enums != get_global_axis_enums():
@@ -412,7 +419,7 @@ def _finite_difference_region_cost(rp_data, res, arc_key, cells):
     region_idx = {s.region: i for i, s in enumerate(splits)}
     subs = [Problem() for _ in splits]
     for s, pb in zip(splits, subs):
-        build_flextool(pb, s.data)
+        build_flextool(pb, s.data, scale_the_objective=_OBJ_SCALE)
     warm = [WarmProblem(p) for p in subs]
     for w in warm:
         w.solve()
@@ -452,12 +459,12 @@ def _finite_difference_region_cost(rp_data, res, arc_key, cells):
         assert sol.optimal, f"region {region} subproblem not optimal"
         return sol
 
-    # nodeBalanceBlock_eq dual rows for lh2_B (one per period).
-    meta = w._cstr_meta["nodeBalanceBlock_eq"]
+    # nodeBalanceCoarse_eq dual rows for lh2_B (one per coarse step = rep day).
+    meta = w._cstr_meta["nodeBalanceCoarse_eq"]
     over = meta["over"]
     with_rid = over.with_columns(_rid=pl.int_range(0, over.height, dtype=pl.Int64))
     bsub = with_rid.filter(pl.col("n").cast(pl.Utf8) == "lh2_B")
-    block_rows = {str(r["d"]): meta["base_row"] + r["_rid"]
+    block_rows = {(str(r["d"]), str(r["b_first"])): meta["base_row"] + r["_rid"]
                   for r in bsub.iter_rows(named=True)}
 
     fbar = {(r["d"], r["t"]): r["value"]
@@ -487,7 +494,7 @@ def _finite_difference_region_cost(rp_data, res, arc_key, cells):
         # for this period — once, at its first rep cell.
         if tt == first_rep[dd]:
             sol_econ = solm if econ_left else solp
-            block_dual[dd] = float(sol_econ.row_dual[block_rows[dd]])
+            block_dual[dd] = float(sol_econ.row_dual[block_rows[(dd, tt)]])
     return out, cost0, block_dual
 
 
@@ -501,7 +508,7 @@ def _settled_loop_slope(captured, arc_key, cells, fd):
     for rec in captured:
         sl = {(dd, tt): rec.get((arc_key, dd, tt), 0.0) for (dd, tt) in cells}
         if all(
-            np.isclose(sl[(dd, tt)], fd[(dd, tt)], rtol=1e-6, atol=1.0)
+            np.isclose(sl[(dd, tt)], fd[(dd, tt)], rtol=1e-6, atol=_OBJ_SCALE)
             for (dd, tt) in cells
         ):
             return sl
@@ -538,7 +545,7 @@ def test_finite_difference_rp_weight_lock(rp_data, monolith) -> None:
 
     # (b) Independent finite difference of region_B's cost wrt the pinned f̄
     # (two-sided → the economic/displaced-cost side per cell), plus the
-    # region's nodeBalanceBlock_eq dual at lh2_B at that settled vertex.
+    # region's nodeBalanceCoarse_eq dual at lh2_B at that settled vertex.
     fd, region_cost0, region_block_dual = _finite_difference_region_cost(
         rp_data, res, _ARC, cells
     )
@@ -555,7 +562,7 @@ def test_finite_difference_rp_weight_lock(rp_data, monolith) -> None:
     for (dd, tt) in cells:
         sl = loop_slope[(dd, tt)]
         d_fd = fd[(dd, tt)]
-        assert np.isclose(sl, d_fd, rtol=1e-6, atol=1.0), (
+        assert np.isclose(sl, d_fd, rtol=1e-6, atol=_OBJ_SCALE), (
             f"cut slope {sl:.10e} != finite-diff ∂cost/∂f̄ {d_fd:.10e} at "
             f"({dd},{tt})"
         )

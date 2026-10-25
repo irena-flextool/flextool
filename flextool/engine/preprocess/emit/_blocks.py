@@ -1,69 +1,36 @@
 """
-blocks.py — Per-entity temporal block derivation and overlap set.
-
-Purpose:
+blocks.py — Per-node temporal block derivation (group ``new_stepduration``).
 
 * Take group-level ``new_stepduration`` (v51 schema) and derive a
-  **block** for every node, unit and connection.  A block is an
-  identifier that pairs the entity with a particular stepduration
-  schedule in the solve.  When no group sets ``new_stepduration`` the
-  derivation collapses to a single block named ``"default"``, which is
-  bit-identical to pre-v51 behaviour.
-* Precompute the cross-resolution **overlap set** — the mapping from
-  each (coarse block, coarse timestep) to the (fine block, fine
-  timestep) tuples it contains, with the area-fraction the fine step
-  contributes to the coarse row.  The generalised node balance
-  consumes this set.
-* Emit CSVs in ``solve_data/`` so downstream consumers can
-  index by block without re-running the derivation:
+  **block** for every node: the node's ``new_stepduration`` group, or
+  ``"default"``.  When no group sets ``new_stepduration`` the derivation
+  collapses to the single block ``"default"``.
+* Emit the per-solve block frames to ``solve_data/``:
 
   * ``entity_block.csv``            — one row per node.
-  * ``process_side_block.csv``      — two rows per process (source + sink).
   * ``block_step_duration.csv``     — per (block, period, step) step
                                        duration, analogous to
                                        ``steps_in_use.csv``.
   * ``overlap_set.csv``             — (period, block_coarse, step_coarse,
                                        block_fine, step_fine, fraction).
   * ``block_step_previous.csv``     — per-block predecessor relations
-                                       analogous to ``step_previous.csv``
-                                       (Agent 1.4): for each
-                                       (block, period, step) row the
-                                       corresponding
-                                       ``step_previous``,
-                                       ``step_previous_within_timeset``,
-                                       ``period_previous`` and
-                                       ``step_previous_within_solve``.
-  * ``block_period_time_first.csv`` — per-block first step of each
-                                       period (Agent 1.4).  Analogous
-                                       to ``first_timesteps.csv``.
-  * ``block_period_time_last.csv``  — per-block last step of each
-                                       period (Agent 1.4).  Analogous
-                                       to ``last_timesteps.csv``.
+                                       analogous to ``step_previous.csv``.
+  * ``block_period_time_first.csv`` / ``block_period_time_last.csv`` —
+                                       per-block first / last step of each
+                                       period.
 
-These CSVs are consumed by the polars LP build.
+The model reads the node -> group map and the group step durations from
+these frames (``entity_block``, ``block_step_duration``) and the
+default block's period boundaries; the coarse steps of a coarse node are
+cut from the solve's own steps by
+``flextool.engine.preprocess.params._coarse.coarse_node_frames``.  The
+per-block aggregated timelines of the non-default blocks (and their
+overlap / predecessor rows) are a plain chunking of each period's steps
+(a chunk closes once it holds the group's step; a period that is not a
+multiple ends with a shorter chunk) and do not feed the model.
 
-Design notes
-------------
-* Block naming: an entity in a resolution-group takes that group's
-  name; everything else is in ``"default"``.
-* Step duration of a block: the resolution-group's
-  ``new_stepduration`` if set; else the solve's new_stepduration
-  (v50); else the finest step from the solve's timeline.  The
-  ``"default"`` block always takes the solve-level value (or the
-  raw timeline when unset).
-* Per-process block: an explicit ``group__unit`` /
-  ``group__connection`` membership in a resolution-group overrides
-  both sides to that block.  Otherwise the source-side block follows
-  the source node and the sink-side block follows the sink node.
-  For direct (1var) methods the two sides agree in practice — when
-  they don't the finer side's resolution dominates (Agent 1.2 will
-  express this in the model).
-* Overlap set: for **aligned subsets** (all coarse stepdurations are
-  integer multiples of the finest in the solve, and the finer timeline
-  cleanly partitions each coarse row), the fraction is always 1.0 and
-  non-matching rows are omitted.  A ``NotImplementedError`` is raised
-  for the non-aligned case; the three-region LH2 test case is aligned
-  by construction.
+Units and connections have no block: their flows and online status stay
+at the solve's step whatever groups they are listed in.
 """
 from __future__ import annotations
 
@@ -76,6 +43,7 @@ from typing import TYPE_CHECKING, Iterable
 import polars as pl
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.preprocess.params._coarse import _warn_once, coarse_membership_warnings
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.flex_data import _provider_open
 
@@ -98,39 +66,6 @@ if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
 DEFAULT_BLOCK = "default"
 
 
-# Direct (1var) and indirect (nvar) ct_method classification — matches
-# ``set method_direct`` / ``set method_indirect`` in flextool_base.dat.
-# Users write ct_method values in their DB (constant_efficiency, regular,
-# …); the per-(ct, startup, fork) → method resolution happens in
-# ``_write_process_method``.  For block derivation we only need the
-# single-var vs two-var distinction.  Classification is at the ct_method
-# level; an ``exact`` unit with fork_yes becomes ``method_2way_nvar_off``
-# — still indirect — so the ct_method → direct/indirect mapping below
-# holds regardless of fork.
-_CT_METHOD_DIRECT: frozenset[str] = frozenset({
-    "constant_efficiency",
-    "min_load_efficiency",
-    "no_losses_no_variable_cost",
-    "variable_cost_only",
-    "unidirectional",
-})
-_CT_METHOD_INDIRECT: frozenset[str] = frozenset({
-    "regular",
-    "exact",
-})
-
-
-def _is_direct(ct_method: str) -> bool:
-    """Return True for 1var-per-process (direct) methods.
-
-    Unknown ct_method values default to ``True`` — i.e. treat them as
-    direct — because the block-assignment logic for direct methods is
-    strictly more conservative (it picks the finer adjacent block),
-    keeping the per-side blocks identical for mis-classified processes.
-    """
-    return ct_method in _CT_METHOD_DIRECT or ct_method not in _CT_METHOD_INDIRECT
-
-
 @dataclass
 class BlockAssignments:
     """Per-entity block mappings for a single solve.
@@ -139,26 +74,10 @@ class BlockAssignments:
     ----------
     node_block : dict[str, str]
         node_name → block_name.
-    process_block_in : dict[str, str]
-        process_name → source-side block_name.
-    process_block_out : dict[str, str]
-        process_name → sink-side block_name.
-    process_block : dict[str, str]
-        process_name → process's unified block.  Equals the process's
-        explicit resolution-group block if set, else the finer of
-        ``process_block_in`` / ``process_block_out``.  Used to index
-        UC / startup / shutdown variables and their constraints so
-        that unit commitment lives at the process's own temporal
-        resolution.  In the degenerate case (all entities on
-        ``DEFAULT_BLOCK``) this equals ``DEFAULT_BLOCK`` for every
-        process.
     block_step_duration : dict[str, float]
         block_name → hours per step.  ``DEFAULT_BLOCK`` always present.
     """
     node_block: dict[str, str] = field(default_factory=dict)
-    process_block_in: dict[str, str] = field(default_factory=dict)
-    process_block_out: dict[str, str] = field(default_factory=dict)
-    process_block: dict[str, str] = field(default_factory=dict)
     block_step_duration: dict[str, float] = field(default_factory=dict)
 
 
@@ -435,16 +354,10 @@ def derive_blocks(
     solve_config: "SolveConfig | None",
     timeline_config: "TimelineConfig | None",
     nodes: Iterable[str],
-    units: Iterable[str],
-    connections: Iterable[str],
     resolution_groups: dict[str, float],
-    group_unit: Iterable[tuple[str, str]],
-    group_connection: Iterable[tuple[str, str]],
     group_node: Iterable[tuple[str, str]],
-    process_source_sink: Iterable[tuple[str, str, str]],
-    process_ct_method: dict[str, str],
 ) -> BlockAssignments:
-    """Compute per-entity block assignments for *solve*.
+    """Compute per-node block assignments for *solve*.
 
     Args:
         solve: Solve name (for ``new_stepduration`` lookup).
@@ -452,33 +365,17 @@ def derive_blocks(
         timeline_config: Live TimelineConfig (optional — None in unit
             tests).
         nodes: Iterable of node names in the solve.
-        units: Iterable of unit names in the solve.
-        connections: Iterable of connection names in the solve.
         resolution_groups: group_name → hours (``new_stepduration``).
             Used as the set of resolution-groups and for
             ``block_step_duration`` lookup.
-        group_unit: ``(group, unit)`` membership rows.
-        group_connection: ``(group, connection)`` membership rows.
         group_node: ``(group, node)`` membership rows.
-        process_source_sink: ``(process, source_node, sink_node)`` rows.
-            A process can appear multiple times for a multi-source or
-            multi-sink setup (fork_yes).  The first source/sink seen is
-            canonical for block assignment — per-flow blocks are
-            derived from node_block in Agent 1.3.
-        process_ct_method: process_name → ct_method string (raw
-            user-facing values: constant_efficiency, regular, exact,
-            …).  Drives direct vs indirect classification.
 
     Returns:
-        BlockAssignments with node_block, process_block_in,
-        process_block_out and block_step_duration populated.
+        BlockAssignments with node_block and block_step_duration populated.
     """
-    gu = list(group_unit)
-    gc = list(group_connection)
     gn = list(group_node)
 
-    # Step-duration table for all blocks seen so far.  Always includes
-    # the default block.
+    # Step-duration table for all blocks.  Always includes the default block.
     default_step_duration = _solve_step_duration(
         solve, solve_config, timeline_config
     )
@@ -489,85 +386,15 @@ def derive_blocks(
         except (TypeError, ValueError):
             continue
 
-    # --- Node block ----------------------------------------------------
-    # Pre-build node→group lookup once: was O(|nodes| × |gn|) linear scans
-    # per node (quadratic in entity count for models where ~every node is
-    # tagged).  Now O(|gn|) once + O(|nodes|) lookups.
+    # Pre-build the node→group lookup once (O(|gn|) + O(|nodes|)).
     node_membership_index = _build_membership_index(gn, resolution_groups)
     node_block: dict[str, str] = {}
     for n in nodes:
         g = node_membership_index.get(n)
         node_block[n] = g if g is not None else DEFAULT_BLOCK
 
-    # --- Process block(s) ----------------------------------------------
-    # First source and first sink per process (preserve iteration order).
-    first_source: dict[str, str] = {}
-    first_sink: dict[str, str] = {}
-    for p, s, k in process_source_sink:
-        first_source.setdefault(p, s)
-        first_sink.setdefault(p, k)
-
-    process_block_in: dict[str, str] = {}
-    process_block_out: dict[str, str] = {}
-    process_block: dict[str, str] = {}
-
-    def _finer(a: str, b: str) -> str:
-        """Pick the block with the shorter step duration.
-
-        Ties broken in favour of *a* to keep the iteration-order
-        determinism callers rely on.
-        """
-        da = block_step_duration.get(a, default_step_duration)
-        db = block_step_duration.get(b, default_step_duration)
-        return a if da <= db else b
-
-    # Pre-build process→group lookup once across both unit and connection
-    # membership tables.  Was an O((|units|+|connections|) × (|gu|+|gc|))
-    # nested scan with `list(gu) + list(gc)` rebuilt every iteration.
-    process_memberships: list[tuple[str, str]] = list(gu) + list(gc)
-    process_membership_index = _build_membership_index(
-        process_memberships, resolution_groups
-    )
-
-    for p in list(units) + list(connections):
-        # Check explicit unit / connection membership first (same code path —
-        # both lists get scanned).
-        explicit_block = process_membership_index.get(p)
-        if explicit_block is not None:
-            process_block_in[p] = explicit_block
-            process_block_out[p] = explicit_block
-            process_block[p] = explicit_block
-            continue
-
-        src = first_source.get(p)
-        snk = first_sink.get(p)
-        src_block = node_block.get(src, DEFAULT_BLOCK) if src else DEFAULT_BLOCK
-        snk_block = node_block.get(snk, DEFAULT_BLOCK) if snk else DEFAULT_BLOCK
-
-        ct = process_ct_method.get(p, "")
-        if _is_direct(ct):
-            # One flow variable per process; put it on the finer side.
-            finer = _finer(src_block, snk_block)
-            process_block_in[p] = finer
-            process_block_out[p] = finer
-            # Agent 1.6: process's unified block for UC / ramp / profile.
-            # Direct methods already collapsed both sides to the finer
-            # one, so the process block matches.
-            process_block[p] = finer
-        else:
-            # Indirect (nvar) — flows already split by side.
-            process_block_in[p] = src_block
-            process_block_out[p] = snk_block
-            # Agent 1.6: process's unified block for UC / ramp / profile.
-            # No explicit process-level resolution-group override, so
-            # fall back to the finer of the two sides.
-            process_block[p] = _finer(src_block, snk_block)
-
     return BlockAssignments(
         node_block=node_block,
-        process_block_in=process_block_in,
-        process_block_out=process_block_out,
-        process_block=process_block,
         block_step_duration=block_step_duration,
     )
 
@@ -594,13 +421,8 @@ def _build_block_timelines(
 
     Aggregation rule
     ----------------
-    Every timestep in the default timeline is assigned to the coarse
-    block row whose step duration it contributes to.  Currently this
-    requires the coarse step duration to be an integer multiple of the
-    default step duration (aligned subsets).  The non-aligned case (e.g.
-    default=2h, coarse=3h) is surfaced as ``NotImplementedError`` —
-    Agent 1.3 will revisit it when the model actually consumes these
-    fractions.
+    See :func:`_aggregate_timeline`.  These timelines are diagnostic: the
+    model's coarse steps come from ``params._coarse.coarse_node_frames``.
     """
     per_block: dict[str, dict[str, list[tuple[str, float]]]] = {}
 
@@ -638,12 +460,7 @@ def _build_block_timelines(
         # Skip blocks that no entity is assigned to (would produce
         # empty rows); consumers still get the duration via
         # block_step_duration.
-        if (
-            block not in block_assignments.node_block.values()
-            and block not in block_assignments.process_block_in.values()
-            and block not in block_assignments.process_block_out.values()
-            and block not in block_assignments.process_block.values()
-        ):
+        if block not in block_assignments.node_block.values():
             continue
         block_rows: dict[str, list[tuple[str, float]]] = {}
         for period, rows in default_periods.items():
@@ -657,17 +474,12 @@ def _build_block_timelines(
 def _aggregate_timeline(
     rows: list[tuple[str, float]], coarse_duration: float,
 ) -> list[tuple[str, float]]:
-    """Aggregate a fine-resolution timeline to *coarse_duration* hours.
+    """Chunk a fine-resolution timeline into *coarse_duration*-hour rows.
 
-    Emits one coarse row per accumulated block of fine rows whose
-    durations sum to exactly ``coarse_duration``.  The coarse row's
-    label is the label of the first fine step it covers (matches the
-    pattern used by ``create_timeline_from_timestep_duration``).
-
-    Raises ``NotImplementedError`` when a block of fine rows cannot be
-    cleanly packed — i.e. the coarse duration is not an integer multiple
-    of the fine row it straddles.  The three-region LH2 example is
-    aligned-subsets by construction; non-aligned support is deferred.
+    A chunk starts at a fine step and closes once its fine durations add up
+    to at least ``coarse_duration``; the last chunk of a period may be
+    shorter.  The coarse row's label is the label of the first fine step it
+    covers and its duration is ``coarse_duration`` (the group's step).
     """
     out: list[tuple[str, float]] = []
     i = 0
@@ -677,19 +489,11 @@ def _aggregate_timeline(
         acc = 0.0
         first_label = rows[i][0]
         j = i
-        while j < n and acc + float(rows[j][1]) <= coarse_duration + eps:
+        while j < n:
             acc += float(rows[j][1])
             j += 1
-            if abs(acc - coarse_duration) <= eps:
+            if acc >= coarse_duration - eps:
                 break
-        if abs(acc - coarse_duration) > eps:
-            raise NotImplementedError(
-                f"Non-aligned subset: fine rows starting at "
-                f"'{first_label}' accumulate to {acc}h but coarse "
-                f"block stepduration is {coarse_duration}h.  "
-                f"Non-integer multiples of the default step are not "
-                f"supported yet (aligned-subsets only)."
-            )
         out.append((first_label, coarse_duration))
         i = j
     return out
@@ -793,11 +597,11 @@ def derive_overlap_set(
             for coarse_step, coarse_dur in c_rows:
                 remaining = float(coarse_dur)
                 eps = 1e-9
+                # The same chunking as _aggregate_timeline: fine rows join
+                # the coarse row until it holds coarse_dur (the last coarse
+                # row of a period may be shorter).
                 while remaining > eps and f_idx < len(fine):
                     fine_step, fine_dur = fine[f_idx]
-                    # Aligned-subsets assumption: every fine row is fully
-                    # contained in the current coarse row, so we emit the
-                    # 1.0 overlap and advance.
                     rows.append(
                         (period, coarse, coarse_step, DEFAULT_BLOCK, fine_step, 1.0)
                     )
@@ -808,13 +612,6 @@ def derive_overlap_set(
                     )
                     remaining -= float(fine_dur)
                     f_idx += 1
-                if remaining > eps:
-                    raise NotImplementedError(
-                        f"overlap_set: coarse step '{coarse_step}' on "
-                        f"block '{coarse}' left {remaining}h unmatched "
-                        f"at end of fine timeline — non-aligned subsets "
-                        f"are not supported yet."
-                    )
 
     # Pairs of resolution-group blocks (coarse vs finer-coarse): emit
     # an overlap row for every shared fine step.  Handles e.g. a 24h
@@ -1080,39 +877,6 @@ def _entity_block_frame(block_assignments: BlockAssignments) -> pl.DataFrame:
     )
 
 
-def _process_side_block_frame(
-    block_assignments: BlockAssignments,
-) -> pl.DataFrame:
-    procs: list[str] = []
-    sides: list[str] = []
-    blocks: list[str] = []
-    for process, block in block_assignments.process_block_in.items():
-        procs.append(process)
-        sides.append("source")
-        blocks.append(block)
-    for process, block in block_assignments.process_block_out.items():
-        procs.append(process)
-        sides.append("sink")
-        blocks.append(block)
-    return pl.DataFrame(
-        {"process": procs, "side": sides, "block": blocks},
-        schema={"process": pl.Utf8, "side": pl.Utf8, "block": pl.Utf8},
-    )
-
-
-def _process_block_frame(
-    block_assignments: BlockAssignments,
-) -> pl.DataFrame:
-    rows = list(block_assignments.process_block.items())
-    return pl.DataFrame(
-        {
-            "process": [r[0] for r in rows],
-            "block": [r[1] for r in rows],
-        },
-        schema={"process": pl.Utf8, "block": pl.Utf8},
-    )
-
-
 def _block_step_duration_frame(
     block_timelines: BlockTimelines | None,
 ) -> pl.DataFrame:
@@ -1207,7 +971,7 @@ def emit_block_data(
 ) -> None:
     """Provider-emitting twin of :func:`write_block_data`.
 
-    Emits the eight block frames under ``solve_data/<basename>`` keys
+    Emits the six block frames under ``solve_data/<basename>`` keys
     via :func:`_emit` (dual-key registration: basename and
     parent/basename).  *solve_data_dir* is retained for signature parity
     with :func:`write_block_data`; the Provider is the only sink.
@@ -1215,10 +979,6 @@ def emit_block_data(
     del solve_data_dir
     _emit(provider, "solve_data/entity_block.csv",
           _entity_block_frame(block_assignments))
-    _emit(provider, "solve_data/process_side_block.csv",
-          _process_side_block_frame(block_assignments))
-    _emit(provider, "solve_data/process_block.csv",
-          _process_block_frame(block_assignments))
     _emit(provider, "solve_data/block_step_duration.csv",
           _block_step_duration_frame(block_timelines))
     _emit(provider, "solve_data/overlap_set.csv",
@@ -1309,13 +1069,13 @@ def emit_block_data_for_solve(
     """Provider-emitting twin of :func:`write_block_data_for_solve`.
 
     Mirrors the orchestration hook end-to-end but routes the final
-    eight CSV emissions through :func:`emit_block_data` (Provider) rather
+    six CSV emissions through :func:`emit_block_data` (Provider) rather
     than :func:`write_block_data` (disk).
 
     The ``provider`` keyword is retained as the *input* Provider —
     :func:`_read_input_rows` consults it for ``input/*.csv`` lookups.
     The new keyword-only ``emit_provider`` is the *output* Provider into
-    which the eight block frames are emitted.
+    which the six block frames are emitted.
     """
     wf = Path(work_folder)
     inp = wf / "input"
@@ -1443,39 +1203,27 @@ def emit_block_data_for_solve(
         process_reserve_upDown_node=process_reserve_upDown_node,
     )
 
-    process_source_sink: list[tuple[str, str, str]] = []
-    sources: dict[str, list[str]] = defaultdict(list)
-    sinks: dict[str, list[str]] = defaultdict(list)
-    for row in _read_input_rows(inp, "process__source.csv", provider):
-        if len(row) >= 2:
-            sources[row[0]].append(row[1])
-    for row in _read_input_rows(inp, "process__sink.csv", provider):
-        if len(row) >= 2:
-            sinks[row[0]].append(row[1])
-    for p in set(list(sources.keys()) + list(sinks.keys())):
-        src_list = sources.get(p, [""])
-        snk_list = sinks.get(p, [""])
-        process_source_sink.append((p, src_list[0], snk_list[0]))
-
-    process_ct_method: dict[str, str] = {}
-    for row in _read_input_rows(inp, "process__ct_method.csv", provider):
-        if len(row) >= 2:
-            process_ct_method[row[0]] = row[1]
-
     block_assignments = derive_blocks(
         solve=solve,
         solve_config=solve_config,
         timeline_config=timeline_config,
         nodes=nodes,
-        units=units,
-        connections=connections,
         resolution_groups=resolution_groups,
-        group_unit=group_unit,
-        group_connection=group_connection,
         group_node=group_node,
-        process_source_sink=process_source_sink,
-        process_ct_method=process_ct_method,
     )
+
+    # Q-c15-A: a unit / connection listed in a coarse group keeps its flows and online status at the solve's
+    # step; warn where the listing would have mattered (it touches a node outside the group).
+    process_nodes: dict[str, set[str]] = defaultdict(set)
+    for basename in ("process__source.csv", "process__sink.csv"):
+        for row in _read_input_rows(inp, basename, provider):
+            if len(row) >= 2:
+                process_nodes[row[0]].add(row[1])
+    solve_step = block_assignments.block_step_duration[DEFAULT_BLOCK]
+    coarse = {g: float(st) for g, st in resolution_groups.items() if float(st) > solve_step + 1e-9}
+    for msg in coarse_membership_warnings(group_unit + group_connection, process_nodes,
+                                          block_assignments.node_block, coarse):
+        _warn_once(msg)
 
     block_timelines = _build_block_timelines(
         solve=solve,

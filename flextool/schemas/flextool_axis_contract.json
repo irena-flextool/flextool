@@ -253,7 +253,7 @@
         "(c) Schema-aware cast helper that picks the right enum based on the surrounding columns ((d, b, w) → branch, (n, b) → block)."
       ],
       "recommendation_for_phase_1": "Pick option (a) (rename block→'bk'). branch is far more pervasive in stochastic-aware code; block is contained to ~4 modules and easier to rename.",
-      "resolution": "Phase 1 landed option (a). The block-axis column is now 'bk' in BlockBundle properties (entity_block_lf, block_period_time_first_lf, block_period_time_last_lf), in block_compat() and in the block-aware flow_to_n / flow_from_n filters in flex_data.py and _block.py. The branch column remains 'b'."
+      "resolution": "Phase 1 landed option (a). The block-axis column is now 'bk' in BlockBundle properties (entity_block_lf, block_period_time_first_lf, block_period_time_last_lf). (The block-aware flow_to_n / flow_from_n filters and block_compat() that also used it were removed in c15b: every arc enters both its nodes' balances.) The branch column remains 'b'."
     },
     {
       "id": "i_axis_depth",

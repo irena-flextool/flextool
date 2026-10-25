@@ -1049,30 +1049,19 @@ def native_run_model(state, solver) -> int:
                     sub_solve_provider.put(_key, _frame)
         previous_complete_solve = complete_solve[solve]
 
-        # ---- Block data (Agent 1.1) ----
-        # Δ.31: thread the per-sub-solve Provider so the legacy reads
-        # find the ``input/*.csv`` frames in memory.  Without this the
-        # cascade silently produces a single-block layout (the input/
-        # CSVs are kept on the Provider rather than flushed to disk),
-        # collapsing every coarse-block fixture (e.g. lh2_three_region)
-        # to the default block and breaking the daily-block aggregation.
-        try:
-            emit_block_data_for_solve(
-                solve=complete_solve[solve],
-                solve_config=state.solve,
-                timeline_config=state.timeline,
-                work_folder=wf,
-                active_time_list=active_time_lists[solve],
-                default_jump_list=jump_lists[solve],
-                provider=sub_solve_provider,
-                emit_provider=sub_solve_provider,
-            )
-        except FlexToolConfigError:
-            raise
-        except Exception as exc:  # pragma: no cover — defensive only
-            state.logger.warning(
-                f"blocks: emission failed (non-fatal — not consumed yet): {exc}"
-            )
+        # ---- Block data (node -> new_stepduration group) ----
+        # Δ.31: thread the per-sub-solve Provider so the reads find the ``input/*.csv`` frames in memory.  The
+        # model's coarse-group frames are built from this layout, so a failure here is an error.
+        emit_block_data_for_solve(
+            solve=complete_solve[solve],
+            solve_config=state.solve,
+            timeline_config=state.timeline,
+            work_folder=wf,
+            active_time_list=active_time_lists[solve],
+            default_jump_list=jump_lists[solve],
+            provider=sub_solve_provider,
+            emit_provider=sub_solve_provider,
+        )
 
         first_of_nested_level = solve in state.solve.first_of_complete_solve
         last_of_nested_level = solve in state.solve.last_of_solve

@@ -369,8 +369,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # Per-solve block frames populated by emit_block_data into the
     # Provider.
     "entity_block.csv",
-    "process_side_block.csv",
-    "process_block.csv",
     "block_step_duration.csv",
     "overlap_set.csv",
     "block_step_previous.csv",

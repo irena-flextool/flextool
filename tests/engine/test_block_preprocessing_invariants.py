@@ -3,8 +3,8 @@
 flextool's ``test_blocks.py`` exercises the *producer* side of block
 machinery — the ``derive_blocks`` / ``derive_overlap_set`` /
 ``write_block_data`` pure-Python helpers that emit the per-solve block
-CSVs (``entity_block.csv``, ``process_side_block.csv``,
-``block_step_duration.csv``, ``overlap_set.csv``,
+CSVs (``entity_block.csv``, ``block_step_duration.csv``,
+``overlap_set.csv``,
 ``block_period_time_first.csv``, ``block_period_time_last.csv``).
 polar_high_spike is a *consumer* of those CSVs (preprocessing happens
 upstream in flextool), so the equivalent invariants in polar_high are
@@ -13,8 +13,7 @@ on-disk shape contracts the input/model layer relies on.
 This test pins the two block-aware paths polar_high actually walks:
 
 * **Single-block degeneracy** (``work_base`` — the most common case):
-  one ``default`` block per period, identity-only overlap, empty
-  ``process_side_block``.  Mirrors flextool's
+  one ``default`` block per period, identity-only overlap.  Mirrors flextool's
   ``TestDeriveBlocksDefaultCase`` and
   ``TestOverlapSetAlignedSubsets::test_degenerate_identity_rows``.
 
@@ -22,11 +21,9 @@ This test pins the two block-aware paths polar_high actually walks:
   3-block hourly/daily/default case): per-block step-duration sums
   match the period length; daily-coarse rows partition the
   hourly-fine rows exactly (each coarse step covers 24 fine steps);
-  mixed-block arcs land where the .mod expects (electrolyser:
-  source=hourly_group, sink=daily_group; pipes: daily on both sides;
-  wind: hourly on both sides); per-block first/last steps match the
-  block's own timeline.  Mirrors flextool's
-  ``TestDeriveBlocksTwoBlocks`` (per-side block assignment),
+  per-block first/last steps match the block's own timeline (units and
+  connections have no block).  Mirrors flextool's
+  ``TestDeriveBlocksTwoBlocks`` (node block assignment),
   ``TestOverlapSetAlignedSubsets`` (24:1 coarse-to-fine partition),
   and ``TestBlockBoundaries::test_two_blocks``.
 
@@ -49,8 +46,8 @@ DEFAULT_BLOCK = "default"
 
 def _check_single_block_degeneracy(sd: Path) -> None:
     """work_base: one period, one block.  Asserts entity_block,
-    block_set, block_step_duration, process_side_block (empty), and
-    overlap_set (identity-only) all collapse to default."""
+    block_set, block_step_duration and overlap_set (identity-only) all
+    collapse to default; no process block frame is written."""
     # block_set: only default.
     bs = pl.read_csv(sd / "block_set.csv")
     assert bs["block"].to_list() == [DEFAULT_BLOCK]
@@ -60,9 +57,8 @@ def _check_single_block_degeneracy(sd: Path) -> None:
     assert eb.height >= 1
     assert set(eb["block"].to_list()) == {DEFAULT_BLOCK}
 
-    # process_side_block: empty (no multi-block arcs needed).
-    psb = pl.read_csv(sd / "process_side_block.csv")
-    assert psb.height == 0
+    # Units and connections have no block.
+    assert not (sd / "process_side_block.csv").exists()
 
     # block_step_duration: only default, all unit-1h steps.
     bsd = pl.read_csv(sd / "block_step_duration.csv")
@@ -126,24 +122,10 @@ def _check_multi_block_aggregation(sd: Path) -> None:
     for n in ("h2_A", "h2_B", "h2_C", "lh2_A", "lh2_B", "lh2_C"):
         assert nb[n] == DAILY, (n, nb.get(n))
 
-    # process_side_block: indirect electrolyser splits per side
-    # (test_indirect_unit_splits_by_side); wind is direct hourly→hourly
-    # (test_direct_unit_picks_finer_side); pipes are daily↔daily.
-    psb = pl.read_csv(sd / "process_side_block.csv")
-    elec_sides = (psb
-        .filter(pl.col("process").str.starts_with("electrolyser_"))
-        .pivot(values="block", index="process", on="side")
-        .to_dicts())
-    assert len(elec_sides) >= 1
-    for r in elec_sides:
-        assert r["source"] == HOURLY, r
-        assert r["sink"] == DAILY, r
-    for r in psb.filter(pl.col("process").str.starts_with("wind_")).to_dicts():
-        assert r["block"] == HOURLY, r
-    pipe_rows = psb.filter(pl.col("process").str.starts_with("pipe_")).to_dicts()
-    assert len(pipe_rows) >= 2
-    for r in pipe_rows:
-        assert r["block"] == DAILY, r
+    # Units and connections have no block: their flows live on the solve's
+    # steps and a daily node sums them over each day.
+    assert not (sd / "process_side_block.csv").exists()
+    assert not (sd / "process_block.csv").exists()
 
     # overlap_set: daily↔hourly partition (TestOverlapSetAlignedSubsets
     # ::test_4_block_coarse_6to1, scaled to 24:1).

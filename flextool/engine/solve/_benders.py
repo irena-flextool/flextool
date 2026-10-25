@@ -1452,12 +1452,11 @@ class _BendersMaster:
         coupling-column bounds, pin, solve once, read ``obj − Σ η``, restore
         the bounds in a ``finally``), but pinned to ``point`` values instead
         of 0 — so it evaluates the master's own cost at an ARBITRARY feasible
-        coupling point.  Used ONLY by the off-loop single-point pin
-        diagnostic (:func:`polar_high.benders.evaluate_at_point`); it is never
-        reached from :func:`solve_benders_loop` (which reads the native cost
-        at the master's own vertex via :meth:`native_cost`), so it adds no
-        byte-parity risk to the loop.  ``point`` must carry a value for every
-        coupling f col-id (the diagnostic supplies the full arc universe).
+        coupling point.  Used by the in-out upper bound of a flow-dependent
+        master (:attr:`native_cost_flow_dependent`) and by the off-loop
+        single-point pin diagnostic (:func:`polar_high.benders.
+        evaluate_at_point`).  ``point`` must carry a value for every coupling
+        f col-id.
         """
         wp = self._wp
         col_ids = np.concatenate(
@@ -2296,11 +2295,9 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         benders_uncap_cross_region=True,
         master_hosted_nodes=master_hosted,
     )
-    # Mixed-resolution coupling guard (master-hosted mode only, before any
-    # LP build): a region↔master boundary connection must join SAME-time-
-    # resolution nodes, or the single-sided half-flow pin silently distorts
-    # the model (a leak, not a crash) — hard-error instead.
-    _assert_no_mixed_resolution_coupling(data, splits, master_hosted)
+    # A region↔master boundary connection may join nodes of different time resolutions: every flow lives on
+    # the solve's steps and a coarse node sums its fine flows (nodeBalanceCoarse_eq), so the pinned half-flows
+    # describe the same physical flow on both sides.
     region_duals = _resolve_benders_region_duals()
     subproblems = [Problem() for _ in splits]
     # Full autoscale (Layer-2 per-type rescale + Layer-3 HiGHS-native top-up)
@@ -3301,87 +3298,6 @@ def _raise_stalled(
             "model."
         ),
     )) from exc
-
-def _assert_no_mixed_resolution_coupling(
-    data: FlexData,
-    splits,
-    master_hosted_nodes: "frozenset[str] | set[str]",
-) -> None:
-    """Hard-error on a region↔master coupling arc whose two terminal
-    nodes live on DIFFERENT time resolutions (one on aggregated
-    ``new_stepduration`` blocks, the other on plain timesteps).
-
-    The single-sided half-flow injection mirrors the original arc's
-    cell-level terms per side, and for a MIXED-resolution arc the
-    monolith's emit is asymmetric (the block side aggregates to the
-    block-first cell while the fine side stays per-step), so the pinned
-    region cells and the master's native cells no longer describe the
-    same physical flow — the decomposition silently becomes a RELAXATION
-    (measured on the lh2 fixture: the exactness gap, not a crash).
-    Until the mirroring supports it, this is a loud unsupported-data
-    error, never a silent degrade (plan D-a / R5 family).  The C9
-    handover pattern side-steps it by design: the handover node MIRRORS
-    the hosted node's time-aggregation group memberships (plan F10), so
-    every boundary connection joins same-resolution nodes.
-
-    Block membership is read from ``data.nodeStateBlock`` (the set of
-    nodes whose balance/state lives on aggregated blocks).  Empty
-    ``master_hosted_nodes`` returns immediately (byte-parity gate);
-    region↔region arcs are untouched (both sides pinned — today's
-    proven machinery).
-    """
-    if not master_hosted_nodes:
-        return
-    nsb = getattr(data, "nodeStateBlock", None)
-    if nsb is None or nsb.height == 0:
-        return
-    block_nodes = set(nsb["n"].cast(pl.Utf8).to_list())
-    seen: set[tuple] = set()
-    for s in splits:
-        for hf in s.half_flows:
-            key = (hf.original_p, hf.original_source, hf.original_sink)
-            if key in seen:
-                continue
-            seen.add(key)
-            src, snk = hf.original_source, hf.original_sink
-            # Single-sided (region↔master) arcs only: exactly one
-            # terminal is master-hosted.
-            if (src in master_hosted_nodes) == (snk in master_hosted_nodes):
-                continue
-            if (src in block_nodes) == (snk in block_nodes):
-                continue
-            coarse = src if src in block_nodes else snk
-            fine = snk if coarse == src else src
-            raise RuntimeError(_benders_failure_message(
-                summary=(
-                    f"Benders coupling connection {hf.original_p!r} "
-                    f"joins nodes with different time resolutions "
-                    f"across the master boundary: node {coarse!r} is "
-                    f"on aggregated (multi-hour) time blocks while "
-                    f"node {fine!r} is on plain timesteps."
-                ),
-                meaning=(
-                    "A connection between a node group and a "
-                    "master-hosted node is decomposed into a pinned "
-                    "boundary flow, and that split is only exact when "
-                    "both end nodes share the same time resolution. "
-                    "With one end on aggregated time blocks, the "
-                    "pinned per-timestep flows and the aggregated "
-                    "block flows no longer describe the same physical "
-                    "quantity, which silently distorts costs instead "
-                    "of failing — so it is rejected up front."
-                ),
-                how_to_avoid=(
-                    "Give both end nodes of the boundary connection "
-                    "the same time resolution: put them in the same "
-                    "time-aggregation (new_stepduration) group — the "
-                    "recommended boundary pattern inserts a dedicated "
-                    "handover node that mirrors the hosted node's "
-                    "time-aggregation group memberships — or remove "
-                    "the aggregation from one side."
-                ),
-            ))
-
 
 def _assert_finite_boundary_penalties(
     data: FlexData,

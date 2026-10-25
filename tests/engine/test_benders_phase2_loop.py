@@ -4,7 +4,8 @@ Proves the hand-built persistent Benders master + the multi-cut loop
 (``flextool.engine.solve._benders.solve_benders``) converges to the MONOLITH
 optimum ``M`` on the prototype fixture ``lh2_three_region_trade_invest`` with a
 VALID lower bound — the key contrast with the Lagrangian bug, whose autarkic
-"bound" 9.071e9 sits ABOVE the true optimum M=8.544e9.
+"bound" sat ABOVE the true optimum (M = 1.2218e10 since c15b's coarse-group
+fix; 8.544e9 before, when the daily H2 nodes took hydrogen from nothing).
 
 See ``specs/benders_option_c.md`` (Phase 2 design + revised + critique) and the
 verified Phase-1 pin/dual contract in ``test_benders_phase1_dual.py``.
@@ -21,7 +22,7 @@ from flextool.engine import build_flextool, load_flextool
 from flextool.engine.solve._benders import solve_benders
 
 _REGIONS = ["region_A", "region_B", "region_C"]
-_M_EXPECTED = 8.544247e9
+_M_EXPECTED = 1.2217878e10
 
 
 @pytest.fixture(scope="module")
@@ -116,7 +117,10 @@ def test_benders_recovers_invest_and_trade(ti_data, monolith) -> None:
     # Recovered invested capacity C ≈ C* (invest is coarser-grained → rtol 1e-2).
     C_ab = res.invest.get("pipe_AB", 0.0)
     C_bc = res.invest.get("pipe_BC", 0.0)
-    assert C_ab > 1e-3 and C_bc > 1e-3, f"pipes not invested: {res.invest}"
+    # pipe_AB is invested; pipe_BC is not (the monolith builds none: A's
+    # surplus does not reach C once every electrolyser hour consumes
+    # electricity) — both must match the monolith.
+    assert C_ab > 1e-3, f"pipe_AB not invested: {res.invest}"
     assert np.isclose(C_ab, C_ab_star, rtol=2e-2, atol=1e-3), (
         f"pipe_AB invest {C_ab} != monolith {C_ab_star}"
     )

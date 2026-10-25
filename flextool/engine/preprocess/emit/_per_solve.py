@@ -273,18 +273,6 @@ def emit_per_solve_sets(
         if v and v not in seen_b:
             seen_b[v] = None
 
-    df = _read_csv(solve_data_dir / "process_side_block.csv",
-                   ["process", "side", "block"], provider=provider)
-    for v in df["block"].to_list():
-        if v and v not in seen_b:
-            seen_b[v] = None
-
-    df = _read_csv(solve_data_dir / "process_block.csv",
-                   ["process", "block"], provider=provider)
-    for v in df["block"].to_list():
-        if v and v not in seen_b:
-            seen_b[v] = None
-
     df = _read_csv(solve_data_dir / "block_step_duration.csv",
                    ["block", "period", "step", "duration"], provider=provider)
     for v in df["block"].to_list():
@@ -537,43 +525,18 @@ def emit_per_solve_sets(
         v for v in _read_csv(solve_data_dir / "process_online.csv",
                              ["process"], provider=provider)["process"].to_list() if v
     )
-    proc_blocks: dict[str, list[str]] = {}
-    pb_df = _read_csv(solve_data_dir / "process_block.csv",
-                      ["process", "block"], provider=provider)
-    for p, b in zip(pb_df["process"].to_list(), pb_df["block"].to_list()):
-        if p and b:
-            proc_blocks.setdefault(p, []).append(b)
-    block_dt: dict[str, set[tuple[str, str]]] = {}
-    bsd_df = _read_csv(solve_data_dir / "block_step_duration.csv",
-                       ["block", "period", "step", "duration"], provider=provider)
-    for b, d, t in zip(bsd_df["block"].to_list(),
-                       bsd_df["period"].to_list(),
-                       bsd_df["step"].to_list()):
-        if b and d and t:
-            block_dt.setdefault(b, set()).add((d, t))
+    # Online variables live on every step of the solve, like the flows they bound (a unit or connection in a
+    # coarse new_stepduration group too: membership has no effect on time resolution).
     su_df = _read_csv(solve_data_dir / "steps_in_use.csv",
                       ["period", "time"], provider=provider)
-    dt_set = frozenset(
-        (d, t) for d, t in zip(su_df["period"].to_list(),
-                               su_df["time"].to_list())
-        if d and t
-    )
+    steps = [(d, t) for d, t in zip(su_df["period"].to_list(), su_df["time"].to_list()) if d and t]
     online_rows: list[tuple[str, str, str]] = []
     for p in proc_online:
         seen_pdt: set[tuple[str, str]] = set()
-        blocks_for_p = proc_blocks.get(p)
-        if blocks_for_p:
-            for b in blocks_for_p:
-                for d, t in block_dt.get(b, ()):
-                    if (d, t) in dt_set and (d, t) not in seen_pdt:
-                        seen_pdt.add((d, t))
-                        online_rows.append((p, d, t))
-        else:
-            for d, t in zip(su_df["period"].to_list(),
-                            su_df["time"].to_list()):
-                if d and t and (d, t) not in seen_pdt:
-                    seen_pdt.add((d, t))
-                    online_rows.append((p, d, t))
+        for d, t in steps:
+            if (d, t) not in seen_pdt:
+                seen_pdt.add((d, t))
+                online_rows.append((p, d, t))
     _emit_tuples(provider, "solve_data/p_online_dt_set.csv",
                  ("process", "period", "step"), online_rows)
 

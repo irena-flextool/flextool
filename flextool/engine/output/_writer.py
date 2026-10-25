@@ -4,7 +4,7 @@ Bridges the polars-build :class:`polar_high.Solution` to the post-solve
 writers in ``flextool.process_outputs``.  Feeds them the live
 ``highspy.Highs`` instance the polars LP just produced + the work
 folder so they read the support CSVs (``p_step_duration.csv``,
-``process_block.csv``, …) emitted by ``FlexToolRunner.write_input`` /
+``entity_block.csv``, …) emitted by ``FlexToolRunner.write_input`` /
 ``preprocessing_solve_time``.
 
 Variable-name reconciliation: the polars LP carries
@@ -21,8 +21,7 @@ well-shaped parquet (see ``read_highs_solution.extract_variable``'s
 ``if not seen_cols`` fallback).
 
 The carry-forward dependency is the support CSV cluster
-(``p_step_duration.csv``, ``process_block.csv``, ``entity_block.csv``,
-…) read by ``read_highs_solution._apply_block_expand`` /
+(``p_step_duration.csv``, ``entity_block.csv``, …) read by
 ``handoff_writers._load_*``.  Δ.2-Δ.10 retire those one cluster at a
 time; Δ.1's job is to consume them via the writers, not to replace.
 

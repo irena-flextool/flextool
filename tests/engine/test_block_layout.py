@@ -157,28 +157,6 @@ def _build_inputs_from_fixture(workdir: Path):
         if len(r) >= 4
     ]
 
-    # Process source/sink: first source/sink per process ------------------
-    sources: dict[str, list[str]] = defaultdict(list)
-    sinks: dict[str, list[str]] = defaultdict(list)
-    for r in _read_csv_rows(inp / "process__source.csv"):
-        if len(r) >= 2:
-            sources[r[0]].append(r[1])
-    for r in _read_csv_rows(inp / "process__sink.csv"):
-        if len(r) >= 2:
-            sinks[r[0]].append(r[1])
-    process_source_sink = []
-    for p in set(list(sources.keys()) + list(sinks.keys())):
-        src_list = sources.get(p, [""])
-        snk_list = sinks.get(p, [""])
-        process_source_sink.append((p, src_list[0], snk_list[0]))
-
-    # Process ct_method ----------------------------------------------------
-    process_ct_method: dict[str, str] = {
-        r[0]: r[1]
-        for r in _read_csv_rows(inp / "process__ct_method.csv")
-        if len(r) >= 2
-    }
-
     # active_time_list: reconstructed from block_step_duration's default
     # rows.  This is what the reference would build when given the
     # default-block timeline directly.
@@ -222,8 +200,6 @@ def _build_inputs_from_fixture(workdir: Path):
         group_node=group_node,
         reserve_upDown_group=reserve_upDown_group,
         process_reserve_upDown_node=process_reserve_upDown_node,
-        process_source_sink=process_source_sink,
-        process_ct_method=process_ct_method,
         active_time_list=active_time_list,
         default_jump_list=default_jump_list,
     )
@@ -246,8 +222,6 @@ def _run_port(inputs: dict) -> BlockLayout:
         group_unit=inputs["group_unit"],
         group_connection=inputs["group_connection"],
         group_node=inputs["group_node"],
-        process_source_sink=inputs["process_source_sink"],
-        process_ct_method=inputs["process_ct_method"],
         decomposition_groups=inputs["decomposition_groups"],
         reserve_upDown_group=inputs["reserve_upDown_group"],
         process_reserve_upDown_node=inputs["process_reserve_upDown_node"],
@@ -274,11 +248,6 @@ def test_single_block_degeneracy_work_base(scenario_workdir) -> None:
     # Every node maps to default.
     assert set(port.node_block.values()) == {DEFAULT_BLOCK}
 
-    # process_side_block — every entry is default.
-    psb = port.process_side_block_frame
-    if psb.height > 0:
-        assert set(psb["block"].to_list()) == {DEFAULT_BLOCK}
-
     # overlap_set — all identity rows (block_coarse == block_fine,
     # step_coarse == step_fine, fraction == 1.0).
     ov = port.overlap_set_frame
@@ -303,26 +272,14 @@ def test_multi_block_lh2_three_region(scenario_workdir) -> None:
     assert port.block_step_duration[HOURLY] == 1.0
     assert port.block_step_duration[DAILY] == 24.0
 
-    # Per-side block assignment: hourly nodes (electrolyser sources) on
-    # hourly_group; daily nodes (h2 / lh2) on daily_group.
+    # Node blocks: hourly nodes (electrolyser sources) on hourly_group;
+    # daily nodes (h2 / lh2) on daily_group.  Units and connections have no
+    # block (their flows live on the solve's steps).
     nb = port.node_block
     for n in ("h2_A", "h2_B", "h2_C", "lh2_A", "lh2_B", "lh2_C"):
         assert nb.get(n) == DAILY, n
     for n in ("battery_A", "battery_B", "battery_C", "elec_A"):
         assert nb.get(n) == HOURLY, n
-
-    # process_side_block: indirect electrolysers split per side
-    # (source=hourly, sink=daily); pipes are daily↔daily.
-    psb = port.process_side_block_frame
-    elec_sides = (
-        psb.filter(pl.col("process").str.starts_with("electrolyser_"))
-        .pivot(values="block", index="process", on="side")
-        .to_dicts()
-    )
-    assert len(elec_sides) >= 1
-    for r in elec_sides:
-        assert r["source"] == HOURLY, r
-        assert r["sink"] == DAILY, r
 
     # overlap_set: 168 daily↔hourly rows per period (7 coarse × 24 fine).
     ov = port.overlap_set_frame
@@ -358,8 +315,7 @@ def test_frame_columns_match_canonical_csv_headers(scenario_workdir) -> None:
     port = _run_port(inputs)
 
     assert port.entity_block_frame.columns == ["entity", "block"]
-    assert port.process_side_block_frame.columns == ["process", "side", "block"]
-    assert port.process_block_frame.columns == ["process", "block"]
+    assert not hasattr(port, "process_side_block_frame")
     assert port.block_step_duration_frame.columns == [
         "block", "period", "step", "step_duration",
     ]
@@ -416,15 +372,19 @@ def test_validate_group_membership_rejects_reserve_in_resolution_group() -> None
         )
 
 
-def test_aligned_subsets_only_raises_on_non_aligned() -> None:
-    """The reference's aligned-subsets assumption raises on non-aligned
-    fine→coarse aggregation; our port preserves that behaviour."""
+def test_aggregate_timeline_chunks_without_raising() -> None:
+    """The per-block (diagnostic) timeline chunks a period's steps: a chunk
+    closes once it holds the group's step and the period may end with a
+    shorter chunk; a group step shorter than the fine step gives one chunk per
+    step.  It never raises (the model's coarse steps and their errors come
+    from ``params._coarse``)."""
+    from flextool.engine.preprocess.emit._blocks import _aggregate_timeline as emit_agg
     from flextool.engine.preprocess.params._block_layout import _aggregate_timeline
 
-    # 3h coarse against 2h fine rows — not aligned.
-    rows = [("t1", 2.0), ("t2", 2.0), ("t3", 2.0)]
-    with pytest.raises(NotImplementedError, match="Non-aligned subset"):
-        _aggregate_timeline(rows, coarse_duration=3.0)
+    for agg in (_aggregate_timeline, emit_agg):
+        rows = [(f"t{i}", 1.0) for i in range(1, 8)]
+        assert agg(rows, coarse_duration=3.0) == [("t1", 3.0), ("t4", 3.0), ("t7", 3.0)]
+        assert agg([("t1", 2.0), ("t2", 2.0)], coarse_duration=1.0) == [("t1", 1.0), ("t2", 1.0)]
 
 
 def test_load_from_solve_data_bridge_work_lh2(scenario_workdir) -> None:
@@ -448,8 +408,6 @@ def test_load_from_solve_data_bridge_work_lh2(scenario_workdir) -> None:
         return sorted(a.iter_rows()) == sorted(b.iter_rows())
 
     assert _eq(built.entity_block_frame, loaded.entity_block_frame)
-    assert _eq(built.process_side_block_frame, loaded.process_side_block_frame)
-    assert _eq(built.process_block_frame, loaded.process_block_frame)
     assert _eq(built.block_step_duration_frame, loaded.block_step_duration_frame)
     assert _eq(built.overlap_set_frame, loaded.overlap_set_frame)
     assert _eq(built.block_period_time_first_frame,
@@ -461,7 +419,6 @@ def test_load_from_solve_data_bridge_work_lh2(scenario_workdir) -> None:
 
     # Reconstructed dicts.
     assert built.node_block == loaded.node_block
-    assert built.process_block == loaded.process_block
     assert built.block_step_duration == loaded.block_step_duration
 
 
@@ -472,40 +429,6 @@ def test_load_from_solve_data_missing_directory_returns_empty() -> None:
         DATA / "no_such_directory_for_blockslayout",
     )
     assert layout.is_empty()
-
-
-def test_load_from_solve_data_block_compat_lh2(scenario_workdir) -> None:
-    """``block_compat`` returns the (bk, b_f) compatibility set used to
-    filter flow_to_n / flow_from_n in flex_data.py.  The block-axis column
-    is ``bk`` (not ``b``) — see the b_collision contract review note.
-    """
-    workdir = scenario_workdir("lh2_three_region", db_fixture="lh2")
-
-    layout = BlockLayout.load_from_solve_data(workdir / "solve_data")
-    compat = layout.block_compat()
-    pairs = set(zip(compat["bk"].to_list(), compat["b_f"].to_list()))
-
-    # daily_group → fine (hourly / default) emitted in both senses
-    # (coarse↔default symmetric, coarse↔fine canonical-direction).
-    assert ("daily_group", "hourly_group") in pairs
-    assert ("daily_group", "default") in pairs
-    # default↔coarse symmetric row exists (default→daily) so node-side
-    # filtering on a default-block node picks up daily-side arcs.
-    assert ("default", "daily_group") in pairs
-    # Self-identity for every block.
-    assert ("daily_group", "daily_group") in pairs
-    assert ("hourly_group", "hourly_group") in pairs
-    assert ("default", "default") in pairs
-
-
-def test_load_from_solve_data_coarse_blocks_lh2(scenario_workdir) -> None:
-    """``coarse_blocks`` selects blocks with step_duration > threshold."""
-    workdir = scenario_workdir("lh2_three_region", db_fixture="lh2")
-
-    layout = BlockLayout.load_from_solve_data(workdir / "solve_data")
-    coarse = set(layout.coarse_blocks(threshold=1.0))
-    # daily_group is the only block with step_duration > 1h.
-    assert coarse == {"daily_group"}
 
 
 def test_default_block_only_emits_identity_overlap() -> None:
@@ -522,8 +445,6 @@ def test_default_block_only_emits_identity_overlap() -> None:
         group_unit=[],
         group_connection=[],
         group_node=[],
-        process_source_sink=[("u1", "n1", "n2")],
-        process_ct_method={"u1": "constant_efficiency"},
         active_time_list={
             "p1": [
                 ActiveTimeEntry(timestep="t1", index=0, duration="1.0"),
@@ -533,8 +454,6 @@ def test_default_block_only_emits_identity_overlap() -> None:
     )
     assert set(layout.block_step_duration) == {DEFAULT_BLOCK}
     assert layout.node_block == {"n1": DEFAULT_BLOCK, "n2": DEFAULT_BLOCK}
-    assert layout.process_block_in == {"u1": DEFAULT_BLOCK}
-    assert layout.process_block_out == {"u1": DEFAULT_BLOCK}
     ov = layout.overlap_set_frame
     assert ov.height == 2
     assert (ov["block_coarse"] == DEFAULT_BLOCK).all()
@@ -587,8 +506,6 @@ def test_block_layout_from_source_matches_load_from_solve_data_lh2(
 
     frame_attrs = (
         "entity_block_frame",
-        "process_side_block_frame",
-        "process_block_frame",
         "block_step_duration_frame",
         "overlap_set_frame",
         "block_step_previous_frame",

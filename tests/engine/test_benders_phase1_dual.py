@@ -12,8 +12,9 @@ critique):
 1. **Monolith reference.** ``build_flextool`` over the undecomposed fixture
    data, solve.  Read the optimal FORWARD trade flows ``f*`` per ``(d, t)``
    on ``pipe_AB(lh2_A→lh2_B)`` and ``pipe_BC(lh2_B→lh2_C)`` and the boundary
-   BLOCK-node marginals (``nodeBalanceBlock_eq``; lh2_* are block nodes, so
-   ``nodeBalance_eq`` anti-joins them out — do NOT read it).
+   COARSE-node marginals (``nodeBalanceCoarse_eq``; lh2_* are nodes of the
+   24-h ``daily_group``, so ``nodeBalance_eq`` anti-joins them out — do NOT
+   read it).
 
 2. **Region split** via ``_region_filter.split`` (A/B/C subproblems).
 
@@ -32,8 +33,11 @@ critique):
    (``Solution.col_dual[col_id]``) is the exact cut slope
    ``∂(region operating cost)/∂f̄``.  We verify it against a one-sided
    finite-difference re-solve (the true derivative on the binding side), and
-   we map it to the region's own boundary block-node dual via
-   ``rc = node_dual_raw × unitsize × (slope|1) × block_step_duration``.
+   we map it to the region's own boundary coarse-node dual via
+   ``rc = ∓node_dual_raw × unitsize × (slope|1) × Δt`` (each hourly flow enters
+   its day's coarse row with its own step duration Δt; ``nodeBalanceCoarse_eq``
+   has the orientation of ``nodeBalance_eq``, so a node short of energy has a
+   POSITIVE raw dual).
 
 PHASE 1 FINDING — exporter boundary dual ≠ monolith boundary dual (by
 design).  The brief's draft PRIMARY gate "region block dual == monolith block
@@ -49,21 +53,20 @@ difference to ~1e-9 here).  The severed subproblem cannot see downstream
 scarcity (the virtual far-node absorbs flow for free), which is exactly the
 intended Benders separation.  Hence this module's gates:
 
-* IMPORTER C — region lh2_C block dual == MONOLITH lh2_C block dual
+* IMPORTER C — region lh2_C coarse dual == MONOLITH lh2_C coarse dual
   (rtol=1e-6), the design's PRIMARY gate.
 * EXPORTER A — reduced cost == one-sided finite-difference cut slope
   (the mechanism-validating gate; the monolith-match is NOT asserted because
   it is mathematically inappropriate for the exporter — see above).
-* BOTH — reduced cost == region-own block dual × unitsize × (slope|1) ×
-  block_step_duration, with the documented sign (importer negative, exporter
-  positive ×slope=1/0.95), locking the sign + efficiency-side convention.
+* BOTH — reduced cost == region-own coarse dual × unitsize × (slope|1) × Δt,
+  with the documented sign (importer negative, exporter positive
+  ×slope=1/0.95), locking the sign + efficiency-side convention.
 
 Units: ``v_flow`` is normalised by ``p_unitsize`` (1000 for the pipes); the
-daily LH2 boundary nodes are balanced on a 24h block, so a one-unit increment
-of the normalised forward ``v_flow`` injects ``unitsize × block_step`` MWh.
-``p_step_duration`` is uniformly 1.0 in this fixture; the block aggregation
-weight (24) lives in the block-aware ``nodeBalanceBlock_eq`` and is recovered
-empirically here as ``BLOCK_STEP``.
+daily LH2 boundary nodes are balanced once per day by summing their hourly
+flows, so a one-unit increment of the normalised forward ``v_flow`` in one hour
+injects ``unitsize × Δt`` MWh into that day's balance (``p_step_duration`` is
+uniformly 1.0 in this fixture: ``_STEP``).
 """
 from __future__ import annotations
 
@@ -88,7 +91,7 @@ from flextool.engine.input._axis_enums import (
 # basis is identical and the factor cancels too.  inflation[y2030] = 1.0.
 _PIPE_UNITSIZE = 1000.0
 _SLOPE = 1.0 / 0.95               # p_slope = 1/efficiency for the pipes
-_BLOCK_STEP = 24.0                # daily LH2 block aggregation weight
+_STEP = 1.0                       # Δt of every hourly flow in its day's coarse row
 _CAP = 50.0                       # test-local half-flow capacity (≫ max f*)
 _RTOL = 1e-6
 _ATOL = 1e-3
@@ -143,10 +146,10 @@ def _forward_flow(sol, p: str, source: str, sink: str) -> pl.DataFrame:
 
 
 def _parse_block_duals(sol) -> pl.DataFrame:
-    """``constraint_dual('nodeBalanceBlock_eq')`` returns ``(key, dual)``
+    """``constraint_dual('nodeBalanceCoarse_eq')`` returns ``(key, dual)``
     with ``key = 'n,d,b_first'`` (the constraint's ``over`` axis order).
     Parse it back into ``(n, d, b_first, dual)``."""
-    bd = sol.constraint_dual("nodeBalanceBlock_eq")
+    bd = sol.constraint_dual("nodeBalanceCoarse_eq")
     rows = []
     for r in bd.iter_rows(named=True):
         n, d, b_first = r["key"].split(",")
@@ -155,11 +158,10 @@ def _parse_block_duals(sol) -> pl.DataFrame:
 
 
 def _node_block_dual(block_duals: pl.DataFrame, node: str) -> float:
-    """The (single, block-constant) non-zero raw block dual at ``node``.
+    """The (single, day-constant) non-zero raw coarse dual at ``node``.
 
-    The block dual lives only on the block's ``b_first`` row (0 elsewhere) and
-    is constant across the fixture's two daily blocks; assert that and return
-    the shared value."""
+    One coarse row per day; the dual is constant across the fixture's two
+    days; assert that and return the shared value."""
     sub = block_duals.filter(
         (pl.col("n") == node) & (pl.col("dual").abs() > 1e-12)
     )
@@ -305,9 +307,9 @@ def _pinned_region(ti_data, region: str, fwd_arc, monolith_forward):
 
 
 def _pinned_reduced_cost(sol, pin_col_ids: np.ndarray) -> float:
-    """The (single, block-constant) non-zero reduced cost of the pinned
-    forward column.  Flow is concentrated on the two block-first cells, so
-    the reduced cost is non-zero only there and identical across blocks."""
+    """The (single, constant) non-zero reduced cost of the pinned forward
+    columns.  Every hourly column enters its day's coarse row with the same
+    coefficient, so the reduced cost is the same at every hour and day."""
     rc = sol.col_dual[pin_col_ids]
     nz = rc[np.abs(rc) > 1e-6]
     assert nz.size > 0, "pinned column reduced cost is all ~0 (pin not binding)"
@@ -360,12 +362,13 @@ def test_importer_region_dual_matches_monolith(ti_data, monolith) -> None:
             f"  rtol                      = {_RTOL}"
         )
 
-    # Reduced cost ↔ region's own block dual (importer: sink side, no slope):
-    #   rc = node_dual_raw × unitsize × block_step   (negative — cost falls).
-    expected_rc = region_price_c * _PIPE_UNITSIZE * _BLOCK_STEP
+    # Reduced cost ↔ region's own coarse dual (importer: sink side, no slope):
+    #   rc = −node_dual_raw × unitsize × Δt   (negative — cost falls; the raw
+    #   dual of a short node is positive in the nodeBalance_eq orientation).
+    expected_rc = -region_price_c * _PIPE_UNITSIZE * _STEP
     assert rc < 0.0, f"importer reduced cost should be negative, got {rc}"
     assert np.isclose(rc, expected_rc, rtol=_RTOL, atol=_ATOL), (
-        f"importer reduced cost {rc} != node_dual×unitsize×block_step "
+        f"importer reduced cost {rc} != node_dual×unitsize×Δt "
         f"{expected_rc}"
     )
 
@@ -406,7 +409,7 @@ def test_importer_reduced_cost_is_true_cut_slope(ti_data, monolith) -> None:
 def test_exporter_reduced_cost_sign_and_efficiency(ti_data, monolith) -> None:
     """Region A's export pin reduced cost is POSITIVE (exporting costs A its
     marginal generation) and equals ``+π_{lh2_A,region} × unitsize × slope ×
-    block_step`` — locking the sign + the SOURCE-side efficiency convention
+    Δt`` — locking the sign + the SOURCE-side efficiency convention
     (slope = 1/0.95).
 
     NOTE (Phase 1 finding): the exporter's REGION boundary dual does NOT equal
@@ -434,15 +437,15 @@ def test_exporter_reduced_cost_sign_and_efficiency(ti_data, monolith) -> None:
     rc = _pinned_reduced_cost(sol, pin_ids)
 
     # Exporter: source side loses v_flow × unitsize × slope (efficiency on the
-    # SOURCE side), so rc = −node_dual_raw × unitsize × slope × block_step.
-    # node_dual_raw is negative (demand-short sign convention) ⇒ rc positive.
-    expected_rc = -region_price_a * _PIPE_UNITSIZE * _SLOPE * _BLOCK_STEP
+    # SOURCE side), so rc = +node_dual_raw × unitsize × slope × Δt.
+    # node_dual_raw is positive (nodeBalance_eq orientation) ⇒ rc positive.
+    expected_rc = region_price_a * _PIPE_UNITSIZE * _SLOPE * _STEP
     assert rc > 0.0, (
         f"exporter reduced cost should be POSITIVE (exporting costs A), "
         f"got {rc}"
     )
     assert np.isclose(rc, expected_rc, rtol=_RTOL, atol=_ATOL), (
-        "exporter reduced cost vs node-dual×unitsize×slope×block_step "
+        "exporter reduced cost vs node-dual×unitsize×slope×Δt "
         f"mismatch:\n  rc       = {rc}\n  expected = {expected_rc}\n"
         f"  region lh2_A raw dual = {region_price_a}\n"
         f"  slope (1/0.95)        = {_SLOPE}"

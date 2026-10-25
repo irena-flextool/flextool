@@ -1,44 +1,20 @@
-"""BlockLayout — multi-resolution timestep grouping (Δ.2).
+"""BlockLayout — per-solve node blocks of the group ``new_stepduration`` feature.
 
-Native ``engine`` port of
-``flextool/engine/preprocess/emit/_blocks.py`` (1368 LOC).  Produces, in one
-pass, every per-solve block-related frame consumed downstream:
+Native port of ``flextool/engine/preprocess/emit/_blocks.py``.  Produces, in one pass, the per-solve block frames:
 
-* ``entity_block``         — ``(entity, block)``
-* ``process_side_block``   — ``(process, side, block)``
-* ``process_block``        — ``(process, block)`` — process-unified
+* ``entity_block``         — ``(entity, block)``: each node's ``new_stepduration`` group, else ``default``
 * ``block_step_duration``  — ``(block, period, step, step_duration)``
-* ``overlap_set``          — ``(period, block_coarse, step_coarse,
-  block_fine, step_fine, fraction)``
+* ``overlap_set``          — ``(period, block_coarse, step_coarse, block_fine, step_fine, fraction)``
 * ``block_step_previous``  — per-block predecessor 7-tuples
 * ``block_period_time_first/_last`` — per-block period boundaries
 
-The algorithm is a 1:1 port of the reference (multi-resolution
-alignment is genuinely intricate; the port preserves every quirk of
-the original — including the two-block-deep limit and the
-aligned-subsets-only assumption).  Internal bookkeeping uses Python
-dicts/tuples (the input data is small — O(entities + arcs)) and the
-output surface is polars DataFrames so consumers get a uniform shape.
+The model reads the node -> group map, the group step durations and the default block's period boundaries.  The
+coarse steps of a coarse node are cut from the solve's own steps by
+``flextool.engine.preprocess.params._coarse.coarse_node_frames``; the aggregated timelines of the non-default
+blocks here (and their overlap / predecessor rows) are a plain per-period chunking that does not feed the model.
+Units and connections have no block: their flows and online status stay at the solve's step.
 
-Key decisions:
-
-* **Lazy polars at the rim**: the public ``BlockLayout`` exposes
-  ``LazyFrame``-friendly polars frames; consumers ``.collect()`` once
-  at LP-build time.
-* **Cache per-(b_coarse, b_fine) overlap rows** as the schematic
-  recommends — built once during ``derive_overlap_set`` and shared
-  across every arc that references the pair.
-* **Two-block-deep limit accepted** — the reference assumes one
-  resolution-group block + the natural fine block; the port preserves
-  this.  Lifting it is a model-design question.
-* **No defensive gating** — degenerate single-block fixtures produce
-  identity-only overlap rows (matching pre-v51 behaviour); fixtures
-  with no resolution groups bypass the multi-block branches entirely.
-* **Fail loud** — ambiguous group memberships and non-aligned subsets
-  raise ``FlexToolConfigError`` / ``NotImplementedError`` (matching
-  the reference).
-
-Reference: ``flextool/engine/preprocess/emit/_blocks.py`` (read-only).
+Ambiguous group memberships raise ``FlexToolConfigError``.
 """
 from __future__ import annotations
 
@@ -49,7 +25,6 @@ from typing import TYPE_CHECKING, Iterable
 import polars as pl
 
 from flextool.engine.input._axis_enums import (
-    rename_to_axis,
     schema_dtype,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
@@ -75,7 +50,7 @@ if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
 DEFAULT_BLOCK = "default"
 
 
-# Eight per-solve block CSV stems written by
+# Six per-solve block CSV stems written by
 # ``flextool.engine.preprocess.emit._blocks.write_block_data`` and consumed by
 # :meth:`BlockLayout.load_from_solve_data`.  Defined as a module
 # constant so the off-cascade workdir bridge can seed only these files
@@ -84,39 +59,12 @@ DEFAULT_BLOCK = "default"
 # the strict CSV reader).
 _BLOCK_CSV_STEMS: tuple[str, ...] = (
     "entity_block",
-    "process_side_block",
-    "process_block",
     "block_step_duration",
     "overlap_set",
     "block_step_previous",
     "block_period_time_first",
     "block_period_time_last",
 )
-
-
-# Direct (1var) and indirect (nvar) ct_method classification — matches
-# ``set method_direct`` / ``set method_indirect`` in flextool_base.dat.
-# Classification is at the ct_method level: unknown values default to
-# direct (the more conservative choice for block assignment).
-_CT_METHOD_DIRECT: frozenset[str] = frozenset({
-    "constant_efficiency",
-    "min_load_efficiency",
-    "no_losses_no_variable_cost",
-    "variable_cost_only",
-    "unidirectional",
-})
-_CT_METHOD_INDIRECT: frozenset[str] = frozenset({
-    "regular",
-    "exact",
-})
-
-
-def _is_direct(ct_method: str) -> bool:
-    """Return ``True`` for 1var-per-process (direct) methods."""
-    return (
-        ct_method in _CT_METHOD_DIRECT
-        or ct_method not in _CT_METHOD_INDIRECT
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -262,11 +210,11 @@ def _assign_entity_to_group(
 def _aggregate_timeline(
     rows: list[tuple[str, float]], coarse_duration: float,
 ) -> list[tuple[str, float]]:
-    """Aggregate a fine-resolution timeline to *coarse_duration* hours.
+    """Chunk a fine-resolution timeline into *coarse_duration*-hour rows.
 
-    Mirrors ``blocks._aggregate_timeline`` 1:1.  Aligned-subsets only:
-    raises ``NotImplementedError`` when fine rows can't pack cleanly
-    into coarse rows.
+    Mirrors ``blocks._aggregate_timeline`` 1:1: a chunk closes once its fine durations add up to at least
+    ``coarse_duration``; the last chunk of a period may be shorter.  Label = the chunk's first fine step,
+    duration = ``coarse_duration``.
     """
     out: list[tuple[str, float]] = []
     i = 0
@@ -276,19 +224,11 @@ def _aggregate_timeline(
         acc = 0.0
         first_label = rows[i][0]
         j = i
-        while j < n and acc + float(rows[j][1]) <= coarse_duration + eps:
+        while j < n:
             acc += float(rows[j][1])
             j += 1
-            if abs(acc - coarse_duration) <= eps:
+            if acc >= coarse_duration - eps:
                 break
-        if abs(acc - coarse_duration) > eps:
-            raise NotImplementedError(
-                f"Non-aligned subset: fine rows starting at "
-                f"'{first_label}' accumulate to {acc}h but coarse "
-                f"block stepduration is {coarse_duration}h.  "
-                f"Non-integer multiples of the default step are not "
-                f"supported yet (aligned-subsets only)."
-            )
         out.append((first_label, coarse_duration))
         i = j
     return out
@@ -362,13 +302,12 @@ def _cyclic_block_predecessors(
 
 @dataclass
 class BlockLayout:
-    """Per-solve block layout — multi-resolution storage.
+    """Per-solve node block layout.
 
-    Internal bookkeeping (``node_block``, ``process_block_in/_out/_block``,
-    ``block_step_duration``) lives as Python dicts because the input
-    data is small (O(entities + arcs)) and the algorithm is naturally
-    expressed in dict/tuple form.  The output surface (``entity_block``,
-    ``process_side_block``, ``block_step_duration_frame``, etc.) exposes
+    Internal bookkeeping (``node_block``, ``block_step_duration``) lives as
+    Python dicts because the input data is small (O(entities)) and the
+    algorithm is naturally expressed in dict/tuple form.  The output
+    surface (``entity_block``, ``block_step_duration_frame``, etc.) exposes
     every frame the LP-build layer needs as a polars DataFrame in the
     same column-naming convention the reference CSVs use.
 
@@ -378,9 +317,6 @@ class BlockLayout:
 
     node_block : dict[str, str]
         ``node_name → block_name``.
-    process_block_in / process_block_out / process_block : dict[str, str]
-        Per-process block on each side; ``process_block`` is the
-        unified block used for UC / startup / shutdown indices.
     block_step_duration : dict[str, float]
         ``block_name → hours per step``.  ``DEFAULT_BLOCK`` always
         present.
@@ -389,10 +325,6 @@ class BlockLayout:
 
     entity_block_frame : pl.DataFrame
         Columns ``(entity, block)``.
-    process_side_block_frame : pl.DataFrame
-        Columns ``(process, side, block)`` — two rows per process.
-    process_block_frame : pl.DataFrame
-        Columns ``(process, block)`` — one row per process.
     block_step_duration_frame : pl.DataFrame
         Columns ``(block, period, step, step_duration)``.
     overlap_set_frame : pl.DataFrame
@@ -408,9 +340,6 @@ class BlockLayout:
 
     # --- Internal bookkeeping --------------------------------------------
     node_block: dict[str, str] = field(default_factory=dict)
-    process_block_in: dict[str, str] = field(default_factory=dict)
-    process_block_out: dict[str, str] = field(default_factory=dict)
-    process_block: dict[str, str] = field(default_factory=dict)
     block_step_duration: dict[str, float] = field(default_factory=dict)
     # Per-block (period → [(step, duration)]) timeline.
     per_block_timeline: dict[str, dict[str, list[tuple[str, float]]]] = field(
@@ -419,8 +348,6 @@ class BlockLayout:
 
     # --- Output frames ----------------------------------------------------
     entity_block_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
-    process_side_block_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
-    process_block_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
     block_step_duration_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
     overlap_set_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
     block_step_previous_frame: pl.DataFrame = field(default_factory=pl.DataFrame)
@@ -445,8 +372,6 @@ class BlockLayout:
         group_unit: Iterable[tuple[str, str]],
         group_connection: Iterable[tuple[str, str]],
         group_node: Iterable[tuple[str, str]],
-        process_source_sink: Iterable[tuple[str, str, str]],
-        process_ct_method: dict[str, str],
         decomposition_groups: dict[str, str] | None = None,
         reserve_upDown_group: Iterable[tuple[str, str, str]] | None = None,
         process_reserve_upDown_node: (
@@ -475,8 +400,6 @@ class BlockLayout:
         ------
         FlexToolConfigError
             On ambiguous group membership (validation failure).
-        NotImplementedError
-            On non-aligned-subset coarse blocks (reference behaviour).
         """
         gu = list(group_unit)
         gc = list(group_connection)
@@ -498,14 +421,8 @@ class BlockLayout:
             solve_config=solve_config,
             timeline_config=timeline_config,
             nodes=nodes,
-            units=units,
-            connections=connections,
             resolution_groups=resolution_groups,
-            group_unit=gu,
-            group_connection=gc,
             group_node=gn,
-            process_source_sink=process_source_sink,
-            process_ct_method=process_ct_method,
         )
         layout._build_block_timelines(
             solve=solve,
@@ -687,52 +604,6 @@ class BlockLayout:
             ):
                 process_reserve_upDown_node.append((p, r, ud, n))
 
-        # ── 6. process_source_sink (first source / first sink per process)
-        # Built directly from ``unit__inputNode`` / ``unit__outputNode`` /
-        # ``connection__node__node`` — matching the slow path's
-        # ``process__source.csv`` / ``process__sink.csv`` derivation
-        # (input_writer.py emits one row per (process, input-or-output
-        # node) pair; first one wins per `derive_blocks`'s usage).
-        first_source: dict[str, str] = {}
-        first_sink: dict[str, str] = {}
-        uin = _try_entities(source, "unit__inputNode")
-        if uin is not None:
-            for u, n in zip(uin["unit"].to_list(), uin["node"].to_list()):
-                first_source.setdefault(u, n)
-        uout = _try_entities(source, "unit__outputNode")
-        if uout is not None:
-            for u, n in zip(uout["unit"].to_list(), uout["node"].to_list()):
-                first_sink.setdefault(u, n)
-        cnn = _try_entities(source, "connection__node__node")
-        if cnn is not None:
-            for c, a, b in zip(
-                cnn["connection"].to_list(),
-                cnn["node_1"].to_list(),
-                cnn["node_2"].to_list(),
-            ):
-                first_source.setdefault(c, a)
-                first_sink.setdefault(c, b)
-        process_source_sink: list[tuple[str, str, str]] = []
-        all_procs = set(first_source) | set(first_sink)
-        for p in all_procs:
-            process_source_sink.append(
-                (p, first_source.get(p, ""), first_sink.get(p, ""))
-            )
-
-        # ── 7. process_ct_method ──────────────────────────────────────
-        # Slow-path ``process__ct_method.csv`` = union of
-        # ``unit.conversion_method`` and ``connection.transfer_method``
-        # (input_writer.py:394).
-        process_ct_method: dict[str, str] = {}
-        cm_unit = _try_param(source, "unit", "conversion_method")
-        if cm_unit is not None:
-            for row in cm_unit.iter_rows(named=True):
-                process_ct_method[row["name"]] = str(row["value"])
-        cm_conn = _try_param(source, "connection", "transfer_method")
-        if cm_conn is not None:
-            for row in cm_conn.iter_rows(named=True):
-                process_ct_method[row["name"]] = str(row["value"])
-
         # ── 8. active_time_list — derived from timeline + solve configs.
         from flextool.engine.input._timeline import get_active_time
 
@@ -766,8 +637,6 @@ class BlockLayout:
             group_unit=group_unit,
             group_connection=group_connection,
             group_node=group_node,
-            process_source_sink=process_source_sink,
-            process_ct_method=process_ct_method,
             decomposition_groups=decomposition_groups,
             reserve_upDown_group=reserve_upDown_group or None,
             process_reserve_upDown_node=(
@@ -779,7 +648,7 @@ class BlockLayout:
         )
 
     # ------------------------------------------------------------------
-    # Phase 1: block tagging (entity + process side)
+    # Phase 1: node block tagging
     # ------------------------------------------------------------------
 
     def _derive_blocks(
@@ -789,20 +658,10 @@ class BlockLayout:
         solve_config,
         timeline_config,
         nodes: Iterable[str],
-        units: Iterable[str],
-        connections: Iterable[str],
         resolution_groups: dict[str, float],
-        group_unit: list[tuple[str, str]],
-        group_connection: list[tuple[str, str]],
         group_node: list[tuple[str, str]],
-        process_source_sink: Iterable[tuple[str, str, str]],
-        process_ct_method: dict[str, str],
     ) -> None:
         """Mirror ``blocks.derive_blocks``."""
-        gu = group_unit
-        gc = group_connection
-        gn = group_node
-
         default_step_duration = _solve_step_duration(
             solve, solve_config, timeline_config
         )
@@ -815,63 +674,12 @@ class BlockLayout:
             except (TypeError, ValueError):
                 continue
 
-        # Node block.
         node_block: dict[str, str] = {}
         for n in nodes:
-            g = _assign_entity_to_group(n, gn, resolution_groups)
+            g = _assign_entity_to_group(n, group_node, resolution_groups)
             node_block[n] = g if g is not None else DEFAULT_BLOCK
 
-        # Process source/sink — first source/sink per process.
-        first_source: dict[str, str] = {}
-        first_sink: dict[str, str] = {}
-        for p, s, k in process_source_sink:
-            first_source.setdefault(p, s)
-            first_sink.setdefault(p, k)
-
-        process_block_in: dict[str, str] = {}
-        process_block_out: dict[str, str] = {}
-        process_block: dict[str, str] = {}
-
-        def _finer(a: str, b: str) -> str:
-            da = block_step_duration.get(a, default_step_duration)
-            db = block_step_duration.get(b, default_step_duration)
-            return a if da <= db else b
-
-        explicit_membership = list(gu) + list(gc)
-        for p in list(units) + list(connections):
-            explicit_block = _assign_entity_to_group(
-                p, explicit_membership, resolution_groups
-            )
-            if explicit_block is not None:
-                process_block_in[p] = explicit_block
-                process_block_out[p] = explicit_block
-                process_block[p] = explicit_block
-                continue
-
-            src = first_source.get(p)
-            snk = first_sink.get(p)
-            src_block = (
-                node_block.get(src, DEFAULT_BLOCK) if src else DEFAULT_BLOCK
-            )
-            snk_block = (
-                node_block.get(snk, DEFAULT_BLOCK) if snk else DEFAULT_BLOCK
-            )
-
-            ct = process_ct_method.get(p, "")
-            if _is_direct(ct):
-                finer = _finer(src_block, snk_block)
-                process_block_in[p] = finer
-                process_block_out[p] = finer
-                process_block[p] = finer
-            else:
-                process_block_in[p] = src_block
-                process_block_out[p] = snk_block
-                process_block[p] = _finer(src_block, snk_block)
-
         self.node_block = node_block
-        self.process_block_in = process_block_in
-        self.process_block_out = process_block_out
-        self.process_block = process_block
         self.block_step_duration = block_step_duration
 
     # ------------------------------------------------------------------
@@ -912,12 +720,7 @@ class BlockLayout:
             if block == DEFAULT_BLOCK:
                 continue
             # Skip blocks no entity is assigned to.
-            if (
-                block not in self.node_block.values()
-                and block not in self.process_block_in.values()
-                and block not in self.process_block_out.values()
-                and block not in self.process_block.values()
-            ):
+            if block not in self.node_block.values():
                 continue
             block_rows: dict[str, list[tuple[str, float]]] = {}
             for period, rows in default_periods.items():
@@ -1004,13 +807,6 @@ class BlockLayout:
                         coverage[coarse][period][fine_step] = coarse_step
                         remaining -= float(fine_dur)
                         f_idx += 1
-                    if remaining > eps:
-                        raise NotImplementedError(
-                            f"overlap_set: coarse step '{coarse_step}' on "
-                            f"block '{coarse}' left {remaining}h unmatched "
-                            f"at end of fine timeline — non-aligned subsets "
-                            f"are not supported yet."
-                        )
 
         # Pairs of resolution-group blocks: emit coarse→fine rows
         # (canonical direction) for blocks of different durations.
@@ -1130,33 +926,6 @@ class BlockLayout:
                     "block": pl.Utf8},
         )
 
-        # process_side_block.csv — two rows per process (source + sink).
-        psb_rows: list[tuple[str, str, str]] = []
-        for process, block in self.process_block_in.items():
-            psb_rows.append((process, "source", block))
-        for process, block in self.process_block_out.items():
-            psb_rows.append((process, "sink", block))
-        self.process_side_block_frame = pl.DataFrame(
-            {
-                "process": [r[0] for r in psb_rows],
-                "side": [r[1] for r in psb_rows],
-                "block": [r[2] for r in psb_rows],
-            },
-            schema={"process": schema_dtype(_enums, "process"),
-                    "side": pl.Utf8, "block": pl.Utf8},
-        )
-
-        # process_block.csv — process-unified block.
-        pb_rows = list(self.process_block.items())
-        self.process_block_frame = pl.DataFrame(
-            {
-                "process": [r[0] for r in pb_rows],
-                "block": [r[1] for r in pb_rows],
-            },
-            schema={"process": schema_dtype(_enums, "process"),
-                    "block": pl.Utf8},
-        )
-
         # block_step_duration.csv — full per-block timeline.
         bsd_rows: list[tuple[str, str, str, float]] = []
         for block, period_rows in self.per_block_timeline.items():
@@ -1255,7 +1024,7 @@ class BlockLayout:
         """Load a ``BlockLayout`` from a :class:`FlexDataProvider`.
 
         Step 2.5 Phase A: ``blocks.write_block_data`` is now patched
-        into ``_PATCH_MODULES`` so the eight per-solve block frames
+        into ``_PATCH_MODULES`` so the six per-solve block frames
         live in the Provider after the cascade's preprocessing pass.
         Callers MUST pass *provider*.  When only a workdir is available
         (off-cascade tests, transitional bridges), use
@@ -1332,14 +1101,6 @@ class BlockLayout:
             "entity_block.csv",
             {"entity": pl.Utf8, "block": pl.Utf8},
         )
-        layout.process_side_block_frame = _read(
-            "process_side_block.csv",
-            {"process": pl.Utf8, "side": pl.Utf8, "block": pl.Utf8},
-        )
-        layout.process_block_frame = _read(
-            "process_block.csv",
-            {"process": pl.Utf8, "block": pl.Utf8},
-        )
         layout.block_step_duration_frame = _read(
             "block_step_duration.csv",
             {
@@ -1381,18 +1142,6 @@ class BlockLayout:
                 layout.entity_block_frame["entity"].to_list(),
                 layout.entity_block_frame["block"].to_list(),
             ))
-        if layout.process_side_block_frame.height > 0:
-            for row in layout.process_side_block_frame.iter_rows(named=True):
-                if row["side"] == "source":
-                    layout.process_block_in[row["process"]] = row["block"]
-                elif row["side"] == "sink":
-                    layout.process_block_out[row["process"]] = row["block"]
-        if layout.process_block_frame.height > 0:
-            layout.process_block = dict(zip(
-                layout.process_block_frame["process"].to_list(),
-                layout.process_block_frame["block"].to_list(),
-            ))
-
         # block_step_duration: dict[block → step_duration] uses the
         # first step's duration for each block (every step in a block
         # shares the same duration by construction).
@@ -1415,51 +1164,6 @@ class BlockLayout:
     # ------------------------------------------------------------------
     # Convenience accessors for downstream consumers
     # ------------------------------------------------------------------
-
-    def block_compat(self) -> pl.DataFrame:
-        """Return the (bk, b_f) → 1 compatibility set used by the
-        block-aware filtering of flow_to_n / flow_from_n.
-
-        The block axis column is named ``bk`` (not ``b``) to disambiguate
-        from the branch axis — see the b_collision review note in
-        ``schemas/flextool_axis_contract.json``.  ``b_f`` is the
-        block-fine companion column (also block vocabulary, but distinct
-        column name so it doesn't collide).
-
-        Equivalent to::
-
-            overlap_set_frame
-                .rename({"block_coarse": "bk", "block_fine": "b_f"})
-                .select("bk", "b_f").unique()
-
-        Cached attribute would help on hot paths; the materialised set
-        is small (≤ |blocks|² ≈ tens of rows).
-        """
-        if self.overlap_set_frame.height == 0:
-            return pl.DataFrame(schema={
-                "bk": schema_dtype(_enums, "bk"),
-                "b_f": schema_dtype(_enums, "b_f"),
-            })
-        return (
-            self.overlap_set_frame
-            .pipe(rename_to_axis, {"block_coarse": "bk", "block_fine": "b_f"})
-            .select("bk", "b_f").unique()
-        )
-
-    def coarse_blocks(self, threshold: float = 1.0) -> list[str]:
-        """Return blocks with at least one row of ``step_duration >
-        threshold``.
-
-        Mirrors the ``coarse_blocks`` selection in
-        ``flex_data.py``'s nodeStateBlock synthesis (lines 2013-2040).
-        """
-        if self.block_step_duration_frame.height == 0:
-            return []
-        return (
-            self.block_step_duration_frame
-            .filter(pl.col("step_duration") > threshold)
-            ["block"].unique().to_list()
-        )
 
     def is_empty(self) -> bool:
         """Return True if the layout carries no block data at all

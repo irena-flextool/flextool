@@ -158,10 +158,10 @@ def node_additional_results(par, s, v, r, debug):
     results = []
 
     # 1. Nodal prices — the per-(d,t) nodal-balance dual.  Per-step balance
-    # nodes carry ``nodeBalance_eq``; coarse variable-resolution nodes
-    # (``new_stepduration`` → ``nodeStateBlock``) carry ``nodeBalanceBlock_eq``
-    # broadcast to per-(d,t) — both are merged into ``v.dual_node_balance``
-    # by ``write_v_dual_node_balance``.  Defensive intersection with the
+    # nodes carry ``nodeBalance_eq``; nodes of coarse ``new_stepduration``
+    # groups carry ``nodeBalanceCoarse_eq`` and ``bind_intraperiod_blocks``
+    # nodes ``nodeBalanceBlock_eq``, broadcast to per-(d,t) — all merged into
+    # ``v.dual_node_balance`` by ``write_v_dual_node_balance``.  Defensive intersection with the
     # available columns (order-preserving): every requested node normally
     # has a dual, but if a node genuinely lacks one (e.g. a future balance
     # mode without a dual writer) this omits it rather than raising

@@ -93,7 +93,7 @@ These are period-level tables only — there are no per-timestep per-entity cost
 
 ## Prices
 
-- `node` entity `price_t` parameter — [CUR/MWh] dual of the balance constraint for every node that maintains an energy balance (nominal currency at period `d`, un-discounted from NPV)
+- `node` entity `price_t` parameter — [CUR/MWh] dual of the balance constraint for every node that maintains an energy balance (nominal currency at period `d`, un-discounted from NPV). A node of a group with a coarser `new_stepduration` (and a `bind_intraperiod_blocks` storage node) has one balance per coarse step (per timeset block); its price is that balance's dual, the same at every time step of the coarse step. Within a coarse step the energy may be moved freely between time steps, so for such a node the hour at which a slack (or any flow that only the coarse balance limits) is reported is one of several equally good choices; with a time-varying penalty the solver picks the cheapest hour.
 - `group__reserve__upDown` entity `reserve_price_t` parameter — [CUR/MWh] dual of the reserve balance constraint: the timeseries requirement for groups that have one, the dynamic requirement for groups with `reserve_method` `dynamic_only`. Groups whose only requirements are dynamic and large_failure, or large_failure alone, have one requirement row per failing unit and step and are not reported yet.
 - `group` entity `co2_price_period` parameter — [CUR/tCO2] shadow price of the per-period CO2 cap (nominal currency, sign-flipped so a binding cap shows positive)
 - `group` entity `co2_price_total` parameter — [CUR/tCO2] shadow price of the cumulative CO2 cap, per tonne over the represented years (NPV currency, broadcast across periods)

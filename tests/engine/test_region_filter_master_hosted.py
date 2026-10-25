@@ -949,12 +949,12 @@ class TestMasterBuildThrough:
             _canon(ms_o.over.filter(in_master)))
 
     def test_master_balance_rows_and_inflow(self, mb_builds) -> None:
-        """The master nodes' balance rows (block nodes ⇒
-        ``nodeBalanceBlock_eq``) AND their inflow RHS equal the
+        """The master nodes' balance rows (daily coarse-group nodes ⇒
+        ``nodeBalanceCoarse_eq``) AND their inflow RHS equal the
         monolith's."""
         _, pb, mono = mb_builds
-        bm = _cstr_rec(pb, "nodeBalanceBlock_eq")
-        bo = _cstr_rec(mono, "nodeBalanceBlock_eq")
+        bm = _cstr_rec(pb, "nodeBalanceCoarse_eq")
+        bo = _cstr_rec(mono, "nodeBalanceCoarse_eq")
         for n in sorted(MASTER_BIG):
             om = _canon(_filter_val(bm.over, "n", n))
             oo = _canon(_filter_val(bo.over, "n", n))

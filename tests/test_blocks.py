@@ -37,9 +37,8 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 
 
 class TestDeriveBlocksDefaultCase:
-    """When no group carries ``new_stepduration``, every entity lands
-    in ``"default"`` and the step duration matches the solve's
-    timeline."""
+    """When no group carries ``new_stepduration``, every node lands in
+    ``"default"`` and the step duration matches the solve's timeline."""
 
     def test_all_entities_in_default_block(self) -> None:
         ba = derive_blocks(
@@ -47,121 +46,43 @@ class TestDeriveBlocksDefaultCase:
             solve_config=None,
             timeline_config=None,
             nodes=["electricity", "hydrogen"],
-            units=["ocgt", "electrolyser"],
-            connections=["transmission"],
             resolution_groups={},
-            group_unit=[("co2_cap", "ocgt")],
-            group_connection=[],
             group_node=[("co2_cap", "electricity")],
-            process_source_sink=[
-                ("ocgt", "gas", "electricity"),
-                ("electrolyser", "electricity", "hydrogen"),
-                ("transmission", "electricity", "electricity_B"),
-            ],
-            process_ct_method={
-                "ocgt": "constant_efficiency",
-                "electrolyser": "regular",
-                "transmission": "regular",
-            },
         )
 
         assert ba.node_block == {
             "electricity": DEFAULT_BLOCK,
             "hydrogen": DEFAULT_BLOCK,
         }
-        assert ba.process_block_in == {
-            "ocgt": DEFAULT_BLOCK,
-            "electrolyser": DEFAULT_BLOCK,
-            "transmission": DEFAULT_BLOCK,
-        }
-        assert ba.process_block_out == {
-            "ocgt": DEFAULT_BLOCK,
-            "electrolyser": DEFAULT_BLOCK,
-            "transmission": DEFAULT_BLOCK,
-        }
         # Only the default block in the duration table.
         assert set(ba.block_step_duration) == {DEFAULT_BLOCK}
 
 
 class TestDeriveBlocksTwoBlocks:
-    """Hand-crafted fixture: one hourly group (block=hourly),
-    one daily group (block=daily), one unit crossing them."""
+    """Hand-crafted fixture: one hourly group (block=hourly), one daily
+    group (block=daily)."""
 
-    def test_direct_unit_picks_finer_side(self) -> None:
-        """A direct (1var) unit with hourly source + daily sink must
-        end up on the hourly side for both process_block_in and _out —
-        one flow variable can only live at one resolution."""
+    def test_nodes_take_their_group_block(self) -> None:
+        """Each node takes its new_stepduration group's block; units and
+        connections have no block (their flows live on the solve's steps)."""
         ba = derive_blocks(
             solve="invest",
             solve_config=None,
             timeline_config=None,
-            nodes=["elec_node", "h2_node"],
-            units=["electrolyser"],
-            connections=[],
+            nodes=["elec_node", "h2_node", "other"],
             resolution_groups={"hourly": 1.0, "daily": 24.0},
-            group_unit=[],
-            group_connection=[],
             group_node=[
                 ("hourly", "elec_node"),
                 ("daily", "h2_node"),
             ],
-            process_source_sink=[("electrolyser", "elec_node", "h2_node")],
-            process_ct_method={"electrolyser": "constant_efficiency"},
         )
-        assert ba.node_block["elec_node"] == "hourly"
-        assert ba.node_block["h2_node"] == "daily"
-        # Direct method: both sides end up on the finer (hourly) block.
-        assert ba.process_block_in["electrolyser"] == "hourly"
-        assert ba.process_block_out["electrolyser"] == "hourly"
+        assert ba.node_block == {"elec_node": "hourly", "h2_node": "daily", "other": DEFAULT_BLOCK}
         assert ba.block_step_duration == {
             DEFAULT_BLOCK: 1.0,
             "hourly": 1.0,
             "daily": 24.0,
         }
-
-    def test_indirect_unit_splits_by_side(self) -> None:
-        """An indirect (nvar) unit with hourly source + daily sink
-        ends up with per-side blocks: in=hourly, out=daily."""
-        ba = derive_blocks(
-            solve="invest",
-            solve_config=None,
-            timeline_config=None,
-            nodes=["elec_node", "h2_node"],
-            units=["electrolyser"],
-            connections=[],
-            resolution_groups={"hourly": 1.0, "daily": 24.0},
-            group_unit=[],
-            group_connection=[],
-            group_node=[
-                ("hourly", "elec_node"),
-                ("daily", "h2_node"),
-            ],
-            process_source_sink=[("electrolyser", "elec_node", "h2_node")],
-            process_ct_method={"electrolyser": "regular"},
-        )
-        assert ba.process_block_in["electrolyser"] == "hourly"
-        assert ba.process_block_out["electrolyser"] == "daily"
-
-    def test_explicit_process_membership_wins(self) -> None:
-        """When a unit is explicitly in a resolution-group, it
-        overrides the per-side node-adjacent logic."""
-        ba = derive_blocks(
-            solve="invest",
-            solve_config=None,
-            timeline_config=None,
-            nodes=["elec_node", "h2_node"],
-            units=["electrolyser"],
-            connections=[],
-            resolution_groups={"hourly": 1.0, "daily": 24.0},
-            group_unit=[("daily", "electrolyser")],
-            group_connection=[],
-            group_node=[("hourly", "elec_node")],
-            process_source_sink=[("electrolyser", "elec_node", "h2_node")],
-            process_ct_method={"electrolyser": "regular"},
-        )
-        # Explicit unit membership in 'daily' overrides everything.
-        assert ba.process_block_in["electrolyser"] == "daily"
-        assert ba.process_block_out["electrolyser"] == "daily"
+        assert not hasattr(ba, "process_block_in")
 
 
 # ---------------------------------------------------------------------------
@@ -177,8 +98,6 @@ class TestOverlapSetAlignedSubsets:
     ) -> tuple[BlockAssignments, BlockTimelines]:
         ba = BlockAssignments(
             node_block={"coarse_node": "coarse", "fine_node": DEFAULT_BLOCK},
-            process_block_in={},
-            process_block_out={},
             block_step_duration={DEFAULT_BLOCK: 1.0, "coarse": coarse_hours},
         )
         # 24 fine hourly steps in period "p".
@@ -234,8 +153,6 @@ class TestOverlapSetAlignedSubsets:
         """No resolution-group blocks → only identity rows."""
         ba = BlockAssignments(
             node_block={"n1": DEFAULT_BLOCK},
-            process_block_in={},
-            process_block_out={},
             block_step_duration={DEFAULT_BLOCK: 1.0},
         )
         bt = BlockTimelines(per_block={
@@ -454,8 +371,6 @@ class TestBlockPredecessors:
         ]
         ba = BlockAssignments(
             node_block={"n1": DEFAULT_BLOCK},
-            process_block_in={},
-            process_block_out={},
             block_step_duration={DEFAULT_BLOCK: 1.0},
         )
         bt = BlockTimelines(per_block={
@@ -481,8 +396,6 @@ class TestBlockPredecessors:
         jump_list) follows the same cyclic pattern."""
         ba = BlockAssignments(
             node_block={"n1": "daily"},
-            process_block_in={},
-            process_block_out={},
             block_step_duration={DEFAULT_BLOCK: 1.0, "daily": 24.0},
         )
         bt = BlockTimelines(per_block={
@@ -514,8 +427,6 @@ class TestBlockBoundaries:
     def test_default_only(self) -> None:
         ba = BlockAssignments(
             node_block={"n1": DEFAULT_BLOCK},
-            process_block_in={},
-            process_block_out={},
             block_step_duration={DEFAULT_BLOCK: 1.0},
         )
         bt = BlockTimelines(per_block={
@@ -528,8 +439,6 @@ class TestBlockBoundaries:
     def test_two_blocks(self) -> None:
         ba = BlockAssignments(
             node_block={"n1": "daily"},
-            process_block_in={},
-            process_block_out={},
             block_step_duration={DEFAULT_BLOCK: 1.0, "daily": 24.0},
         )
         bt = BlockTimelines(per_block={
@@ -552,8 +461,6 @@ class TestEmitBlockData:
     def test_emits_all_keys(self, tmp_path: Path) -> None:
         ba = BlockAssignments(
             node_block={"n1": "coarse", "n2": DEFAULT_BLOCK},
-            process_block_in={"u1": "coarse"},
-            process_block_out={"u1": DEFAULT_BLOCK},
             block_step_duration={DEFAULT_BLOCK: 1.0, "coarse": 24.0},
         )
         bt = BlockTimelines(per_block={
@@ -588,7 +495,6 @@ class TestEmitBlockData:
         # Each emit_* registers under the canonical qualified key.
         for fname in [
             "entity_block.csv",
-            "process_side_block.csv",
             "block_step_duration.csv",
             "overlap_set.csv",
             "block_step_previous.csv",
@@ -597,12 +503,9 @@ class TestEmitBlockData:
         ]:
             assert provider.get(f"solve_data/{fname}") is not None, fname
 
-        # process_side_block emits two rows per process.
-        psb = provider.get("solve_data/process_side_block")
-        psb_rows = [list(r) for r in psb.rows()]
-        assert psb.columns == ["process", "side", "block"]
-        assert ["u1", "source", "coarse"] in psb_rows
-        assert ["u1", "sink", DEFAULT_BLOCK] in psb_rows
+        # Units and connections have no block frames any more.
+        assert not provider.has("solve_data/process_side_block")
+        assert not provider.has("solve_data/process_block")
 
         bsp = provider.get("solve_data/block_step_previous")
         assert bsp.columns == [

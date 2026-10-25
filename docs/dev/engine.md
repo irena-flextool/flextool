@@ -753,37 +753,26 @@ timeline that HiGHS sees through `polar_high`.
 
 ## Flex-temporal decomposition
 
-`_block_layout.py` and `_block.py` carry the multi-resolution
-period-block layout that lets one solve run hourly power dispatch
-alongside daily hydrogen dispatch in the same LP. The public surface
-is `BlockLayout` — a dataclass produced once per solve, carrying:
+A node of a `group` whose `new_stepduration` is longer than the solve's
+step is a *coarse node*.  Every flow, online status, reserve and angle
+stays on the solve's steps; a coarse node is balanced once per coarse
+step by `nodeBalanceCoarse_eq` — `nodeBalance_eq` summed over the fine
+steps of the coarse step — and a coarse storage node keeps one state per
+coarse step (`stateConstantCoarse_eq`).  No arc is filtered or weighted by
+block: every arc enters the balance of both its nodes.
 
-- `entity_block` — `(entity, block)` membership.
-- `process_side_block` — `(process, side, block)`.
-- `block_step_duration` — `(block, period, step, step_duration)`.
-- `overlap_set` — `(period, block_coarse, step_coarse, block_fine,
-  step_fine, fraction)` — the cross-block aggregation key.
-- `block_step_previous` — per-block predecessor 7-tuples (the
-  storage-transition lookup, block-aware).
-- `block_period_time_first` / `block_period_time_last` — per-block
-  period boundaries.
+- `emit/_blocks.py` / `_block_layout.BlockLayout` — per-solve node blocks
+  (`entity_block`) and block step durations; the default block's period
+  boundaries give `nodeState_last_dt`.
+- `params/_coarse.coarse_node_frames` — the one source of the coarse
+  steps (`nodeCoarse`, `node_coarse_step`, `node_coarse_interior`), cut
+  from the solve's own steps at gaps, timeset-block / period / roll
+  starts, representative-block starts and a roll's realized end; called
+  at the end of `load_flextool` for every (sub-)solve.
+- `bind_intraperiod_blocks` storage nodes (`nodeStateBlock`) keep their
+  per-timeset-block balance `nodeBalanceBlock_eq`.
 
-Writer ports become block-aware by joining their output through
-`overlap_set` and weighting by `block_step_duration`. Concretely:
-the node balance constraint is built on the *daily* block when the
-node is hydrogen, but each contributing arc on the *hourly* block
-projects its hourly `v_flow` rows up to the daily key via
-`arc_sink_block_dt` / `arc_source_block_dt` and the
-`p_arc_sink_weight` / `p_arc_source_weight` weights.
-
-Post-solve, every coarse-block variable is expanded back onto the
-fine timeline before the writer ports emit results. The expansion
-uses the same `overlap_set` (read in reverse) so per-fraction
-attribution stays consistent across the solve / write boundary.
-
-The block algorithm has two model-design constraints (not engine
-bugs): a two-block-deep limit and an aligned-subsets-only assumption
-on the block hierarchy.
+See [decomposition.md § 3](decomposition.md#3-flex-temporal-decomposition).
 
 ## Stochastic branches
 

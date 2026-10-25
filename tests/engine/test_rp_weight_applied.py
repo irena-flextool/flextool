@@ -134,9 +134,11 @@ def test_rp_weights_reach_objective_swap_moves_M(
     )
     # Pin the post-fix weighted M_rp magnitude (both finite, well-banded).
     # The 4-day RP fixture (y2030 = days 1-2, y2040 = days 3-4 with grown
-    # demand) clears around 7.6e9 (base) / 7.9e9 (swap).
-    assert 1e9 < m_base < 1e10, f"M_base out of band: {m_base!r}"
-    assert 1e9 < m_swap < 1e10, f"M_swap out of band: {m_swap!r}"
+    # demand) clears around 9.0e9 (base) / 1.07e10 (swap) since c15b's
+    # coarse-group fix (the daily H2 nodes pay for their electricity; it was
+    # 7.6e9 / 7.9e9).
+    assert 1e9 < m_base < 1e11, f"M_base out of band: {m_base!r}"
+    assert 1e9 < m_swap < 1e11, f"M_swap out of band: {m_swap!r}"
 
 
 def test_flexdata_matches_emitted_csv_folded_weights(rp_base_workdir):
@@ -181,4 +183,5 @@ def test_uniform_rp_weights_byte_identical_to_prefix(rp_uniform_workdir):
     # Objective is finite & banded (the uniform run is the byte-identity
     # baseline; its value is unchanged by the fix by construction since
     # the loaded CSV value already coalesces to the dense 1.0 default).
-    assert 1e9 < sol.obj < 1e10, f"uniform M out of band: {sol.obj!r}"
+    # ~1.64e10 since c15b's coarse-group fix.
+    assert 1e9 < sol.obj < 1e11, f"uniform M out of band: {sol.obj!r}"

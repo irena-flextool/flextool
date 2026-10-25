@@ -1035,13 +1035,10 @@ def _build_region_data(
     new.p_roll_continue_state = _filter_param(src.p_roll_continue_state, "n", keep_nodes)
     new.p_node_capacity_for_scaling = _filter_param(src.p_node_capacity_for_scaling, "n", keep_nodes)
 
-    # ---- Per-arc block weights (lh2 fixture) ----
-    new.arc_sink_block_dt = _filter_arc_by_proc(src.arc_sink_block_dt) \
-        if hasattr(src, "arc_sink_block_dt") else None
-    new.arc_source_block_dt = _filter_arc_by_proc(src.arc_source_block_dt) \
-        if hasattr(src, "arc_source_block_dt") else None
-    new.p_arc_sink_weight = _filter_param_arc(getattr(src, "p_arc_sink_weight", None))
-    new.p_arc_source_weight = _filter_param_arc(getattr(src, "p_arc_source_weight", None))
+    # ---- Coarse new_stepduration group nodes ----
+    new.nodeCoarse = _filter_frame(getattr(src, "nodeCoarse", None), "n", keep_nodes)
+    new.node_coarse_step = _filter_frame(getattr(src, "node_coarse_step", None), "n", keep_nodes)
+    new.node_coarse_interior = _filter_frame(getattr(src, "node_coarse_interior", None), "n", keep_nodes)
 
     # ---- Drop group_entity / group_node rows referencing dropped entities ----
     if src.group_entity is not None and "e" in src.group_entity.columns:
@@ -1138,8 +1135,6 @@ def _inject_half_flows(
     new_unitsize_rows: list[dict] = []
     new_flow_upper_rows: list[dict] = []
     new_flow_upper_existing_rows: list[dict] = []
-    new_arc_sink_block_dt_rows: list[dict] = []
-    new_p_arc_sink_weight_rows: list[dict] = []
 
     # Classification: inherit from the original arc.  When the original
     # arc is in process_source_sink_eff (with slope p_slope), so is the
@@ -1304,75 +1299,6 @@ def _inject_half_flows(
                     "d": r["d"],
                     "value": value,
                 })
-
-        # ── arc-block weights (lh2 fixture only) ──
-        # For each half-flow, mirror the original arc's weights so the
-        # block-aware nodeBalance aggregation includes the half-flow at
-        # the right (d, t) granularity.
-        if hf.side == "export":
-            # Source-side: original arc_source_block_dt row(s).
-            if src.arc_source_block_dt is not None:
-                src_rows = src.arc_source_block_dt.filter(
-                    (pl.col("p") == hf.original_p)
-                    & (pl.col("source") == hf.original_source)
-                    & (pl.col("sink") == hf.original_sink)
-                ).select("d", "b_first", "t", "weight")
-                for r in src_rows.iter_rows(named=True):
-                    # We'll augment arc_source_block_dt later; collect.
-                    new_arc_sink_block_dt_rows.append({
-                        "p": hf.virtual_p,
-                        "source": hf.virtual_arc_source,
-                        "sink": hf.virtual_arc_sink,
-                        "d": r["d"], "b_first": r["b_first"],
-                        "t": r["t"], "weight": r["weight"],
-                        "_side": "source",
-                    })
-            if src.p_arc_source_weight is not None:
-                w_rows = src.p_arc_source_weight.frame.filter(
-                    (pl.col("p") == hf.original_p)
-                    & (pl.col("source") == hf.original_source)
-                    & (pl.col("sink") == hf.original_sink)
-                ).select("d", "t", "value")
-                for r in w_rows.iter_rows(named=True):
-                    new_p_arc_sink_weight_rows.append({
-                        "p": hf.virtual_p,
-                        "source": hf.virtual_arc_source,
-                        "sink": hf.virtual_arc_sink,
-                        "d": r["d"], "t": r["t"],
-                        "value": float(r["value"]),
-                        "_side": "source",
-                    })
-        else:
-            if src.arc_sink_block_dt is not None:
-                snk_rows = src.arc_sink_block_dt.filter(
-                    (pl.col("p") == hf.original_p)
-                    & (pl.col("source") == hf.original_source)
-                    & (pl.col("sink") == hf.original_sink)
-                ).select("d", "b_first", "t", "weight")
-                for r in snk_rows.iter_rows(named=True):
-                    new_arc_sink_block_dt_rows.append({
-                        "p": hf.virtual_p,
-                        "source": hf.virtual_arc_source,
-                        "sink": hf.virtual_arc_sink,
-                        "d": r["d"], "b_first": r["b_first"],
-                        "t": r["t"], "weight": r["weight"],
-                        "_side": "sink",
-                    })
-            if src.p_arc_sink_weight is not None:
-                w_rows = src.p_arc_sink_weight.frame.filter(
-                    (pl.col("p") == hf.original_p)
-                    & (pl.col("source") == hf.original_source)
-                    & (pl.col("sink") == hf.original_sink)
-                ).select("d", "t", "value")
-                for r in w_rows.iter_rows(named=True):
-                    new_p_arc_sink_weight_rows.append({
-                        "p": hf.virtual_p,
-                        "source": hf.virtual_arc_source,
-                        "sink": hf.virtual_arc_sink,
-                        "d": r["d"], "t": r["t"],
-                        "value": float(r["value"]),
-                        "_side": "sink",
-                    })
 
     # The widened Enum vocabulary set by ``split()`` lives on the global
     # ContextVar.  ``src._axis_enums`` is the narrower snapshot captured
@@ -1544,81 +1470,6 @@ def _inject_half_flows(
                 ("p", "d"), merged,
                 name=rd.p_process_existing_count.name)
 
-    # Append arc-block-weight rows (lh2 fixture).  Half-flows on the
-    # source side go to arc_source_block_dt + p_arc_source_weight; on
-    # sink side they go to arc_sink_block_dt + p_arc_sink_weight.
-    src_block_rows = [r for r in new_arc_sink_block_dt_rows if r["_side"] == "source"]
-    snk_block_rows = [r for r in new_arc_sink_block_dt_rows if r["_side"] == "sink"]
-    src_w_rows = [r for r in new_p_arc_sink_weight_rows if r["_side"] == "source"]
-    snk_w_rows = [r for r in new_p_arc_sink_weight_rows if r["_side"] == "sink"]
-
-    if rd.arc_source_block_dt is not None and src_block_rows:
-        new_df = pl.DataFrame(
-            [{k: r[k] for k in ("p", "source", "sink", "d", "b_first", "t", "weight")}
-             for r in src_block_rows],
-            schema={"p": schema_dtype(_enums_loc, "p"),
-                    "source": schema_dtype(_enums_loc, "source"),
-                    "sink": schema_dtype(_enums_loc, "sink"),
-                    "d": schema_dtype(_enums_loc, "d"),
-                    "b_first": schema_dtype(_enums_loc, "b_first"),
-                    "t": schema_dtype(_enums_loc, "t"),
-                    "weight": pl.Float64})
-        rd.arc_source_block_dt = pl.concat([
-            _upcast_dims(rd.arc_source_block_dt,
-                         ("p", "source", "sink", "d", "b_first", "t"))
-              .select(*new_df.columns), new_df],
-            how="vertical")
-    if rd.arc_sink_block_dt is not None and snk_block_rows:
-        new_df = pl.DataFrame(
-            [{k: r[k] for k in ("p", "source", "sink", "d", "b_first", "t", "weight")}
-             for r in snk_block_rows],
-            schema={"p": schema_dtype(_enums_loc, "p"),
-                    "source": schema_dtype(_enums_loc, "source"),
-                    "sink": schema_dtype(_enums_loc, "sink"),
-                    "d": schema_dtype(_enums_loc, "d"),
-                    "b_first": schema_dtype(_enums_loc, "b_first"),
-                    "t": schema_dtype(_enums_loc, "t"),
-                    "weight": pl.Float64})
-        rd.arc_sink_block_dt = pl.concat([
-            _upcast_dims(rd.arc_sink_block_dt,
-                         ("p", "source", "sink", "d", "b_first", "t"))
-              .select(*new_df.columns), new_df],
-            how="vertical")
-    if rd.p_arc_source_weight is not None and src_w_rows:
-        new_df = pl.DataFrame(
-            [{k: r[k] for k in ("p", "source", "sink", "d", "t", "value")}
-             for r in src_w_rows],
-            schema={"p": schema_dtype(_enums_loc, "p"),
-                    "source": schema_dtype(_enums_loc, "source"),
-                    "sink": schema_dtype(_enums_loc, "sink"),
-                    "d": schema_dtype(_enums_loc, "d"),
-                    "t": schema_dtype(_enums_loc, "t"),
-                    "value": pl.Float64})
-        rd.p_arc_source_weight = Param(
-            ("p", "source", "sink", "d", "t"),
-            pl.concat([_upcast_dims(rd.p_arc_source_weight.frame,
-                                    ("p", "source", "sink", "d", "t"))
-                         .select(*new_df.columns),
-                       new_df], how="vertical"),
-            name=rd.p_arc_source_weight.name)
-    if rd.p_arc_sink_weight is not None and snk_w_rows:
-        new_df = pl.DataFrame(
-            [{k: r[k] for k in ("p", "source", "sink", "d", "t", "value")}
-             for r in snk_w_rows],
-            schema={"p": schema_dtype(_enums_loc, "p"),
-                    "source": schema_dtype(_enums_loc, "source"),
-                    "sink": schema_dtype(_enums_loc, "sink"),
-                    "d": schema_dtype(_enums_loc, "d"),
-                    "t": schema_dtype(_enums_loc, "t"),
-                    "value": pl.Float64})
-        rd.p_arc_sink_weight = Param(
-            ("p", "source", "sink", "d", "t"),
-            pl.concat([_upcast_dims(rd.p_arc_sink_weight.frame,
-                                    ("p", "source", "sink", "d", "t"))
-                         .select(*new_df.columns),
-                       new_df], how="vertical"),
-            name=rd.p_arc_sink_weight.name)
-
     # group_entity / group_node — augment with virtual entities under the
     # half-flow's region (so downstream group-aware emitters don't
     # spuriously skip them).  Skip — the group_* sets only matter for
@@ -1642,6 +1493,7 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "nodeBalance_dt", "nodeBalancePeriod",
     "nodeState", "nodeState_dt", "nodeState_first_dt", "nodeState_last_dt",
     "nodeState_rp", "nodeStateBlock",
+    "nodeCoarse", "node_coarse_step", "node_coarse_interior",
     "storage_bind_within_timeblock", "storage_bind_forward_only",
     "storage_bind_within_solve", "storage_bind_within_solve_blended_weights",
     "storage_bind_within_period_blended_weights",
@@ -1702,6 +1554,7 @@ _MASTER_N_KEYED_FIELDS: tuple[str, ...] = (
     "nodeBalance_dt", "nodeBalancePeriod",
     "nodeState", "nodeState_dt", "nodeState_first_dt", "nodeState_last_dt",
     "nodeState_rp", "nodeStateBlock",
+    "nodeCoarse", "node_coarse_step", "node_coarse_interior",
     "storage_bind_within_timeblock", "storage_bind_forward_only",
     "storage_bind_within_solve", "storage_bind_within_solve_blended_weights",
     "storage_bind_within_period_blended_weights",
@@ -2043,16 +1896,6 @@ def master_network_data(
     new.process_profile_upper = _keep_proc(data.process_profile_upper)
     new.process_profile_lower = _keep_proc(data.process_profile_lower)
     new.process_profile_fixed = _keep_proc(data.process_profile_fixed)
-
-    # ---- Per-arc block weights (lh2 fixture; trade nodes are block nodes) ----
-    new.arc_sink_block_dt = _keep_cross_triple(getattr(data, "arc_sink_block_dt", None))
-    new.arc_source_block_dt = _keep_cross_triple(getattr(data, "arc_source_block_dt", None))
-    new.p_arc_sink_weight = _keep_cross_triple_param(getattr(data, "p_arc_sink_weight", None))
-    new.p_arc_source_weight = _keep_cross_triple_param(getattr(data, "p_arc_source_weight", None))
-    new.p_arc_step_duration_sink = _keep_cross_triple_param(
-        getattr(data, "p_arc_step_duration_sink", None))
-    new.p_arc_step_duration_source = _keep_cross_triple_param(
-        getattr(data, "p_arc_step_duration_source", None))
 
     # ---- Per-arc / per-process variable-cost frames (flow cost) ----
     new.pssdt_varCost_eff_connection = _keep_cross_triple(

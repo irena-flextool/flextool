@@ -186,24 +186,6 @@ class VariableSpec(NamedTuple):
     # is a no-op.  Mode B: recovers absolute CSV magnitudes matching the
     # pre-row-scaling (Agent 1) baselines.
     unscale_by: str | None = None
-    # Agent 1.8 — block-aware output expansion.  When non-None, the
-    # extracted frame is broadcast from the variable's temporal-resolution
-    # block down to the finest timeline.  The raw MPS only emits values
-    # at the block's coarse ``(period, step)`` pairs; fine steps covered
-    # by a coarse step receive the same value so downstream CSV / parquet
-    # readers always see a rectangular fine-grid frame (design rule
-    # from Agent 1.8: "print all at finest resolution and drop the block
-    # dimension").
-    # Recognised values:
-    #   * "process_block" — lookup per ``col_names[0]`` in
-    #                       ``solve_data/process_block.csv``.  Used for
-    #                       v_flow, v_ramp, v_online_*, v_startup_*,
-    #                       v_shutdown_* (every process-scoped var).
-    #   * "node_block"    — lookup in ``solve_data/entity_block.csv``.
-    #                       Used for v_state, v_angle.
-    # In the degenerate case every entity maps to ``"default"`` so the
-    # overlap lookup is identity and the broadcast is a no-op.
-    expand_by: str | None = None
     # Canonical-row period axis for period-only (``has_period and not
     # has_time``) variables.  ``"dispatch"`` (default) sources the row
     # order from the roll's realized-DISPATCH periods
@@ -302,42 +284,37 @@ def _invest_dual(
 
 VARIABLE_SPECS: list[VariableSpec] = [
     # -- Time-indexed decision variables ------------------------------------
-    # Agent 1.8: ``expand_by`` broadcasts coarse-block values to every
-    # covered fine timestep.  Degenerate (every entity on 'default'): no-op.
-    VariableSpec("v_flow",             ("process", "source", "sink"), expand_by="process_block"),
+    # Every variable lives on the solve's steps (a coarse node's state is constant within its coarse step by
+    # stateConstantCoarse_eq), so no value is copied between steps.
+    VariableSpec("v_flow",             ("process", "source", "sink")),
     # Reverse-flow auxiliary for method_2way_1var_off arcs.  The signed
     # net flow on such an arc is ``v_flow - v_flow_back``; the output layer
     # folds it into ``r.flow_dt`` (calc_capacity_flows) so the reported
     # connection flow carries the correct sign (negative = sink→source).
-    VariableSpec("v_flow_back",        ("process", "source", "sink"), expand_by="process_block"),
-    VariableSpec("v_ramp",             ("process", "source", "sink"), expand_by="process_block"),
-    # Reserve participants are pinned to the default block in V1 (Agent
-    # 1.7), so v_reserve effectively needs no expansion — but the
-    # broadcast is still safely identity there.
-    VariableSpec("v_reserve",          ("process", "reserve", "updown", "node"), expand_by="process_block"),
-    VariableSpec("v_state",            ("node",), expand_by="node_block"),
-    VariableSpec("v_online_linear",    ("process",), expand_by="process_block"),
-    VariableSpec("v_startup_linear",   ("process",), expand_by="process_block"),
-    VariableSpec("v_shutdown_linear",  ("process",), expand_by="process_block"),
-    VariableSpec("v_online_integer",   ("process",), expand_by="process_block"),
-    VariableSpec("v_startup_integer",  ("process",), expand_by="process_block"),
-    VariableSpec("v_shutdown_integer", ("process",), expand_by="process_block"),
-    VariableSpec("v_angle",            ("node",), expand_by="node_block"),
+    VariableSpec("v_flow_back",        ("process", "source", "sink")),
+    VariableSpec("v_ramp",             ("process", "source", "sink")),
+    VariableSpec("v_reserve",          ("process", "reserve", "updown", "node")),
+    VariableSpec("v_state",            ("node",)),
+    VariableSpec("v_online_linear",    ("process",)),
+    VariableSpec("v_startup_linear",   ("process",)),
+    VariableSpec("v_shutdown_linear",  ("process",)),
+    VariableSpec("v_online_integer",   ("process",)),
+    VariableSpec("v_startup_integer",  ("process",)),
+    VariableSpec("v_shutdown_integer", ("process",)),
+    VariableSpec("v_angle",            ("node",)),
 
     # -- Time-indexed slack / penalty variables -----------------------------
     # Agent 9 ``unscale_by="node_cap"`` / ``"group_cap"`` un-scales row
     # scaling when ``use_row_scaling=yes`` (no-op in Mode A where the
     # scaler defaults to 1).  See flextool/SLACK_CONVENTION.md for the
     # single-variable slack convention.
-    # Agent 1.8: vq_state_up / vq_state_down appear in the node balance,
-    # which is emitted at the node's block — broadcast via node_block.
     VariableSpec(
         "vq_state_up", ("node",),
-        unscale_by="node_cap", expand_by="node_block",
+        unscale_by="node_cap",
     ),
     VariableSpec(
         "vq_state_down", ("node",),
-        unscale_by="node_cap", expand_by="node_block",
+        unscale_by="node_cap",
     ),
     # Column level names must match the CSV reader
     # (``read_variables._read_from_csv``) so cross-reader mul aligns
@@ -1238,17 +1215,6 @@ def write_variable_parquet(
             row_dual=row_dual,
             period_source=spec.period_source,
         )
-    # Agent 1.8 — block-aware output expansion.  Broadcast coarse-block
-    # values to every covered fine timestep so parquet output stays
-    # rectangular at the finest resolution.  Degenerate case (every
-    # entity on 'default'): no-op, bit-identical to pre-Agent-1.8.
-    # Apply BEFORE unscale so the row scaler (keyed at the fine grid)
-    # multiplies the broadcasted values consistently.
-    if spec.expand_by is not None:
-        df = _apply_block_expand(
-            df, spec.expand_by, work_folder,
-            flex_data=flex_data, provider=provider,
-        )
     # Agent 9 — row-scaling un-scaling applied at the output boundary.
     # Source CSV comes from the same work folder as realized_*_csv
     # (``work_folder`` was inferred above for the scale_the_objective
@@ -1433,204 +1399,6 @@ def _load_row_scaler(
     # emitted headers but no values; ignore parsing failures.
     df = df.apply(pd.to_numeric, errors="coerce")
     return df
-
-
-# ---------------------------------------------------------------------------
-# Agent 1.8 — block-aware output expansion
-# ---------------------------------------------------------------------------
-
-
-def _load_entity_block_map(
-    work_folder: Path | str | None, kind: str,
-    *,
-    provider: "object | None" = None,
-) -> dict[str, str]:
-    """Return ``{entity: block}`` read from ``solve_data/{entity,process}_block.csv``.
-
-    * ``kind="node_block"``  → reads ``entity_block.csv`` (columns
-      ``entity, block``) — every node maps to its temporal-resolution
-      block.
-    * ``kind="process_block"`` → reads ``process_block.csv`` (columns
-      ``process, block``) — per-process unified block (Agent 1.6).
-
-    When *provider* is supplied and carries the frame (cascade path —
-    block CSVs are kept in memory rather than flushed to disk), the
-    Provider lookup wins over the disk read.  Missing both →
-    empty / default fall-through (caller treats every entity as on the
-    ``"default"`` block, i.e. identity overlap).
-    """
-    if work_folder is None and provider is None:
-        return {}
-    if kind == "node_block":
-        path = (Path(work_folder) if work_folder is not None else Path()) / "solve_data" / "entity_block.csv"
-        key_col = "entity"
-    elif kind == "process_block":
-        path = (Path(work_folder) if work_folder is not None else Path()) / "solve_data" / "process_block.csv"
-        key_col = "process"
-    else:
-        return {}
-    # Δ.31 — provider-first: the cascade keeps block frames in-memory
-    # because ``emit_block_data_for_solve`` registers them on the
-    # Provider rather than flushing to disk.  Without this lookup the
-    # output writer would broadcast nothing for daily-block fixtures
-    # (lh2_three_region).
-    pframe = _provider_lookup(provider, path)
-    if pframe is not None and pframe.height > 0:
-        cols = pframe.columns
-        if key_col in cols and "block" in cols:
-            return dict(zip(
-                pframe[key_col].cast(pl.Utf8).to_list(),
-                pframe["block"].cast(pl.Utf8).to_list(),
-            ))
-    if not path.exists():
-        return {}
-    try:
-        df = pd.read_csv(path, dtype=str)
-    except Exception:
-        return {}
-    if df.empty or key_col not in df.columns or "block" not in df.columns:
-        return {}
-    return dict(zip(df[key_col].astype(str), df["block"].astype(str)))
-
-
-def _load_overlap_fine_to_coarse(
-    work_folder: Path | str | None,
-    *,
-    provider: "object | None" = None,
-) -> dict[tuple[str, str, str], str]:
-    """Return ``{(period, block_coarse, step_fine): step_coarse}``.
-
-    Read from ``solve_data/overlap_set.csv`` (columns ``period,
-    block_coarse, step_coarse, block_fine, step_fine, fraction``).
-    Only rows where ``block_fine == 'default'`` are kept — those are the
-    rows used to broadcast a coarse-block value to every fine timestep
-    it covers.
-
-    Provider-first: when *provider* carries the frame, prefer it over
-    the disk read (cascade path keeps the block CSVs in memory).
-    Missing both → empty dict (caller treats every entity as on the
-    default block → identity broadcast).
-    """
-    if work_folder is None and provider is None:
-        return {}
-    path = (Path(work_folder) if work_folder is not None else Path()) / "solve_data" / "overlap_set.csv"
-    pframe = _provider_lookup(provider, path)
-    df: pd.DataFrame | None = None
-    if pframe is not None and pframe.height > 0:
-        df = pframe.to_pandas()
-    elif path.exists():
-        try:
-            df = pd.read_csv(path, dtype=str)
-        except Exception:
-            return {}
-    if df is None:
-        return {}
-    required = {"period", "block_coarse", "step_coarse", "block_fine", "step_fine"}
-    if not required.issubset(df.columns):
-        return {}
-    df = df[df["block_fine"].astype(str) == "default"]
-    if df.empty:
-        return {}
-    return {
-        (str(p), str(bc), str(sf)): str(sc)
-        for p, bc, sf, sc in zip(
-            df["period"], df["block_coarse"],
-            df["step_fine"], df["step_coarse"],
-        )
-    }
-
-
-def _apply_block_expand(
-    df: pd.DataFrame,
-    expand_by: str,
-    work_folder: Path | str | None,
-    *,
-    flex_data: "FlexData | None" = None,
-    provider: "object | None" = None,
-) -> pd.DataFrame:
-    """Broadcast coarse-block variable values to covered fine timesteps.
-
-    For each column ``e`` whose entity maps to a non-default block ``b``,
-    every fine row ``(d, tf)`` has its value replaced with the coarse
-    value at ``(d, tc)`` where ``tc = overlap[(d, b, tf)]``.  Entities on
-    the default block are left untouched (identity broadcast).
-
-    The DataFrame's row index must be ``(solve, period, time)``; the
-    column (Multi)Index's first level is the entity name.
-
-    Degenerate case (every entity on ``'default'``): no columns trigger
-    the broadcast → returns *df* unchanged, bit-identical to pre-Agent-
-    1.8 state.
-    """
-    if df.empty or df.shape[1] == 0:
-        return df
-    if expand_by not in ("process_block", "node_block"):
-        return df
-    if not isinstance(df.index, pd.MultiIndex):
-        return df
-    level_names = df.index.names or []
-    if "period" not in level_names or "time" not in level_names:
-        return df
-
-    entity_block = _load_entity_block_map(
-        work_folder, expand_by, provider=provider,
-    )
-    # Fast path: no entity on a non-default block → nothing to do.
-    if not any(v != "default" for v in entity_block.values()):
-        return df
-
-    overlap = _load_overlap_fine_to_coarse(work_folder, provider=provider)
-    if not overlap:
-        return df
-
-    # Entity level on the column index (row 0 of MultiIndex; the only
-    # level otherwise).  Agent 1.8's expand_by is always keyed on
-    # ``col_names[0]`` by construction.
-    if isinstance(df.columns, pd.MultiIndex):
-        entity_names = df.columns.get_level_values(0).astype(str).tolist()
-    else:
-        entity_names = df.columns.astype(str).tolist()
-
-    # Working in-place would mutate the caller's frame — copy once.
-    out = df.copy()
-
-    # Row tuples (period, time) in the frame's order — we'll vector-assign
-    # into each expand-target column via numpy positional writes.
-    periods = df.index.get_level_values("period").astype(str).to_numpy()
-    times = df.index.get_level_values("time").astype(str).to_numpy()
-    row_count = len(periods)
-
-    # Column axis for block-aware expansion: entity per column position.
-    for col_pos, entity in enumerate(entity_names):
-        block = entity_block.get(entity, "default")
-        if block == "default":
-            continue  # identity broadcast → leave column alone
-        # Build a per-row source index — position of the coarse row to copy
-        # from.  For each (d, tf), find tc via overlap; then locate the row
-        # in the frame.  Rows whose (d, tf) has no overlap entry keep their
-        # own value (defensive — shouldn't happen with consistent data).
-        source_pos = list(range(row_count))
-        # Build a (period, time) → row_pos map once.
-        row_pos_map: dict[tuple[str, str], int] = {
-            (p, t): i for i, (p, t) in enumerate(zip(periods, times))
-        }
-        for i in range(row_count):
-            d = periods[i]
-            tf = times[i]
-            tc = overlap.get((d, block, tf))
-            if tc is None:
-                continue
-            src = row_pos_map.get((d, tc))
-            if src is None:
-                continue
-            source_pos[i] = src
-        # Apply the column-scoped rewrite: new values = existing values
-        # indexed by source_pos.  ``out.iloc[:, col_pos]`` returns a view;
-        # reassign so pandas records the update without triggering a
-        # SettingWithCopy warning.
-        col_values = out.iloc[:, col_pos].to_numpy()
-        out.iloc[:, col_pos] = col_values[source_pos]
-    return out
 
 
 def _apply_unscale(
@@ -1840,8 +1608,9 @@ def _divide_by_inflation_and_row_scaler(
     ``inflation_factor_operations_yearly`` (recover nominal currency) and
     each ``(period, node)`` cell by ``node_capacity_for_scaling`` (Mode A:
     scaler ≡ 1 → no effect).  Shared verbatim by the per-(d,t)
-    ``nodeBalance_eq`` path and the per-block ``nodeBalanceBlock_eq`` path
-    so both report user-facing currency/MWh under the same convention.
+    ``nodeBalance_eq`` path and the per-step ``nodeBalanceCoarse_eq`` /
+    ``nodeBalanceBlock_eq`` paths so all report user-facing currency/MWh
+    under the same convention.
     """
     if df.empty:
         return df
@@ -1874,6 +1643,53 @@ def _divide_by_inflation_and_row_scaler(
     return df
 
 
+def _broadcast_step_duals(
+    h: "highspy.Highs",
+    family: str,
+    steps: "pl.DataFrame",
+    *,
+    value_scale: float,
+    solve_name: str,
+    realized_dispatch_csv: "Path | str | None",
+    flex_data: "FlexData | None",
+    wf: "Path",
+) -> "pd.DataFrame | None":
+    """Per-(d,t) prices from the rows of ``family`` (``[node, period, b_first]``), each broadcast to the fine
+    steps ``steps`` maps it to: ``(n, d, b_first, t)`` (per node) or ``(d, b_first, t)`` (every node).
+
+    The row's RHS is the node's energy over the whole step in MWh, so its dual is already currency/MWh, the unit
+    of the per-step ``nodeBalance_eq`` dual (no step-length factor).  ``value_scale`` carries the row's
+    orientation.  Returns a ``(solve, period, time)`` × node DataFrame, or ``None`` without rows."""
+    raw = extract_variable(
+        h, family, ("node",),
+        solve_name=solve_name, has_time=True, source="row_dual",
+        value_scale=value_scale,
+        realized_dispatch_csv=realized_dispatch_csv,
+        flex_data=flex_data,
+    )
+    if raw.empty or raw.shape[1] == 0:
+        return None
+    # Same un-discount / un-row-scale convention as nodeBalance_eq.  The raw extract places each row's dual on
+    # its ``b_first`` row (0 on the other canonical rows); inflation and the row scaler are per period, so
+    # applying them before the broadcast equals applying them after.
+    raw = _divide_by_inflation_and_row_scaler(raw, wf=wf, solve_name=solve_name, flex_data=flex_data)
+    long = raw.stack(future_stack=True).rename("value").reset_index()  # solve, period, time, node, value
+    cols = [c for c in ("n", "d", "b_first", "t") if c in steps.columns]
+    m = steps.select([pl.col(c).cast(pl.Utf8) for c in cols]).to_pandas()
+    left = ["period", "time"] + (["node"] if "n" in cols else [])
+    right = ["d", "b_first"] + (["n"] if "n" in cols else [])
+    long["period"] = long["period"].astype(str)
+    long["time"] = long["time"].astype(str)
+    long["node"] = long["node"].astype(str)
+    merged = long.merge(m, left_on=left, right_on=right, how="inner")
+    if merged.empty:
+        return None
+    wide = merged.pivot_table(index=["solve", "period", "t"], columns="node", values="value", aggfunc="first")
+    wide.index = wide.index.set_names(["solve", "period", "time"])
+    wide.columns.name = "node"
+    return wide
+
+
 def _broadcast_block_node_duals(
     h: "highspy.Highs",
     *,
@@ -1882,72 +1698,34 @@ def _broadcast_block_node_duals(
     realized_dispatch_csv: "Path | str | None",
     flex_data: "FlexData | None",
     wf: "Path",
-) -> "pd.DataFrame | None":
-    """Per-(d,t) nodal prices for ``nodeStateBlock`` nodes.
+) -> "list[pd.DataFrame]":
+    """Per-(d,t) nodal prices of the nodes without a per-step ``nodeBalance_eq``.
 
-    Nodes balanced on a coarse block (``new_stepduration`` variable-
-    resolution feature) carry ``nodeBalanceBlock_eq[n, d, b_first]`` — one
-    row per (node, period, block), summed over the block's timesteps — NOT
-    the per-(d,t) ``nodeBalance_eq``.  Its dual is the marginal value of
-    one MWh of energy anywhere in the block (the block RHS is total block
-    energy in MWh, so the dual is already currency/MWh, the same unit as
-    the per-step ``nodeBalance_eq`` dual — no block-size or step-duration
-    factor).  We therefore extract it under the identical sign/scaling
-    convention as ``nodeBalance_eq`` and **broadcast** each block's price
-    to every ``(d, t)`` in the block via ``period_block_time``, giving a
-    per-(d,t) price that is constant within each block.
+    * coarse new_stepduration group nodes (``nodeCoarse``): ``nodeBalanceCoarse_eq[n, d, b_first]`` has the
+      orientation of ``nodeBalance_eq`` (``value_scale = −inv_scale``) and is broadcast per node through
+      ``node_coarse_step``;
+    * ``bind_intraperiod_blocks`` nodes (``nodeStateBlock``): ``nodeBalanceBlock_eq[n, d, b_first]`` is written
+      as the negation of ``nodeBalance_eq`` (state change − flows = inflow), so its price is
+      ``+dual`` (``value_scale = +inv_scale``), broadcast through ``period_block_time``.
 
-    Returns a ``(solve, period, time)`` × block-node DataFrame, or
-    ``None`` when the run has no block-balanced nodes.
+    The price is constant within each coarse step / block.
     """
-    block_set = getattr(flex_data, "nodeStateBlock", None) if flex_data else None
-    pbt = getattr(flex_data, "period_block_time", None) if flex_data else None
-    if (block_set is None or block_set.height == 0
-            or pbt is None or pbt.height == 0):
-        return None
-
-    blk = extract_variable(
-        h, "nodeBalanceBlock_eq", ("node",),
-        solve_name=solve_name, has_time=True, source="row_dual",
-        value_scale=-inv_scale,
-        realized_dispatch_csv=realized_dispatch_csv,
-        flex_data=flex_data,
-    )
-    if blk.empty or blk.shape[1] == 0:
-        return None
-
-    # Same un-discount / un-row-scale convention as nodeBalance_eq.  The
-    # raw extract places each block's dual on its ``b_first`` row and 0 on
-    # the other (canonical) rows; both inflation and the row-scaler are
-    # per-period (constant across a block's timesteps), so applying them
-    # here — before the broadcast — is equivalent to applying them after.
-    blk = _divide_by_inflation_and_row_scaler(
-        blk, wf=wf, solve_name=solve_name, flex_data=flex_data,
-    )
-
-    # Broadcast the b_first price across every (d, t) in the block.
-    # ``period_block_time`` is (d, b_first, t); the block dual lives on the
-    # (period, b_first) row, so join on (period == d, time == b_first) and
-    # re-key to (period, t).
-    pbt_pd = pbt.select(["d", "b_first", "t"]).to_pandas()
-    blk_long = (
-        blk.stack(future_stack=True)
-        .rename("value")
-        .reset_index()
-    )  # columns: solve, period, time, node, value
-    merged = blk_long.merge(
-        pbt_pd, left_on=["period", "time"], right_on=["d", "b_first"],
-        how="inner",
-    )
-    if merged.empty:
-        return None
-    wide = merged.pivot_table(
-        index=["solve", "period", "t"], columns="node", values="value",
-        aggfunc="first",
-    )
-    wide.index = wide.index.set_names(["solve", "period", "time"])
-    wide.columns.name = "node"
-    return wide
+    out: list[pd.DataFrame] = []
+    if flex_data is None:
+        return out
+    kw = dict(solve_name=solve_name, realized_dispatch_csv=realized_dispatch_csv, flex_data=flex_data, wf=wf)
+    coarse = getattr(flex_data, "node_coarse_step", None)
+    if coarse is not None and coarse.height > 0:
+        df = _broadcast_step_duals(h, "nodeBalanceCoarse_eq", coarse, value_scale=-inv_scale, **kw)
+        if df is not None:
+            out.append(df)
+    block_set = getattr(flex_data, "nodeStateBlock", None)
+    pbt = getattr(flex_data, "period_block_time", None)
+    if block_set is not None and block_set.height > 0 and pbt is not None and pbt.height > 0:
+        df = _broadcast_step_duals(h, "nodeBalanceBlock_eq", pbt, value_scale=inv_scale, **kw)
+        if df is not None:
+            out.append(df)
+    return out
 
 
 def write_v_dual_node_balance(
@@ -1962,22 +1740,20 @@ def write_v_dual_node_balance(
 ) -> Path:
     """Write ``v_dual_node_balance__{solve}.parquet``.
 
-    Model formula (for n not in nodeStateBlock)::
+    Model formula (for n not in nodeStateBlock ∪ nodeCoarse)::
 
         -nodeBalance_eq[n, d, t].dual
          / p_inflation_factor_operations_yearly[d]
          / scale_the_objective
 
-    Equivalently, raw-dual × (−1e6 / inflation[d]).  Nodes in
-    ``nodeStateBlock`` (coarse ``new_stepduration`` variable-resolution
-    nodes) are balanced by ``nodeBalanceBlock_eq`` (one row per block,
-    summed over ``period_block_time``) instead.  Their per-block dual —
-    in the same currency/MWh units and under the same sign/scale
-    convention as ``nodeBalance_eq`` — is extracted and **broadcast** to
-    every ``(d, t)`` in the block (constant within a block); see
-    :func:`_broadcast_block_node_duals`.  Without this those nodes would
-    have no dual column and the ``node_prices_dt_e`` output would raise a
-    KeyError indexing them.
+    Equivalently, raw-dual × (−1e6 / inflation[d]).  Nodes of coarse
+    new_stepduration groups (``nodeCoarse``) are balanced per coarse step by
+    ``nodeBalanceCoarse_eq`` and ``bind_intraperiod_blocks`` nodes per
+    timeset block by ``nodeBalanceBlock_eq``; their per-step dual, in the
+    same currency/MWh units, is **broadcast** to every ``(d, t)`` of the
+    step (constant within it); see :func:`_broadcast_block_node_duals`.
+    Without this those nodes would have no dual column and the
+    ``node_prices_dt_e`` output would raise a KeyError indexing them.
 
     The polars LP emits ``nodeBalance_eq`` with arity-3
     ``(node, period, time)``; this writer reads that arity directly.
@@ -2006,18 +1782,17 @@ def write_v_dual_node_balance(
         df, wf=wf, solve_name=solve_name, flex_data=flex_data,
     )
 
-    # Per-block ``nodeBalanceBlock_eq`` duals for ``nodeStateBlock`` nodes
-    # (coarse variable-resolution nodes), broadcast to per-(d,t) and merged
-    # in.  Without this these nodes have NO dual column and the downstream
-    # ``node_prices_dt_e`` output (out_node) raises a KeyError indexing
-    # them.  None when the run has no block-balanced nodes → existing
-    # (non-block) outputs are byte-identical.
-    block_prices = _broadcast_block_node_duals(
+    # Coarse-step (``nodeBalanceCoarse_eq``) and timeset-block (``nodeBalanceBlock_eq``) duals of the nodes
+    # without a per-step row, broadcast to per-(d,t) and merged in.  Without them these nodes have no dual
+    # column and ``node_prices_dt_e`` (out_node) raises a KeyError indexing them.  Empty when every node has
+    # per-step rows → the other outputs are byte-identical.
+    for block_prices in _broadcast_block_node_duals(
         h, solve_name=solve_name, inv_scale=inv_scale,
         realized_dispatch_csv=realized_dispatch_csv,
         flex_data=flex_data, wf=wf,
-    )
-    if block_prices is not None and not block_prices.empty:
+    ):
+        if block_prices.empty:
+            continue
         if df.empty:
             df = block_prices
         else:

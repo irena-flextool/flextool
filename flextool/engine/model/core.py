@@ -33,8 +33,9 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
 
 Equation families, in emit order (module in brackets when not model/core.py):
   Balance & storage   rp_inter_period_{balance,cyclic,max_state}, maxState_rp_start; nodeBalance_eq;
+                      nodeBalanceCoarse_eq, stateConstantCoarse_eq (coarse new_stepduration groups);
                       nodeBalancePeriod_eq; node_balance_fix_quantity_eq_lower; node_storage_usage_fix_le;
-                      stateConstantWithinBlock_eq, nodeBalanceBlock_eq
+                      stateConstantWithinBlock_eq, nodeBalanceBlock_eq (bind_intraperiod_blocks)
   Flows & capacity    maxFlow, maxFlow_negCap, maxFlow_back; maxOutputSum(_negCap);
                       dc_reference_angle_eq, dc_flow_eq [_dc_power_flow]
   Units               max{Online,Startup,Shutdown}, online__{startup,shutdown}, maxFlow_online[_shutdown],
@@ -239,7 +240,8 @@ class _Build:
     has_profile: bool = False
     has_storage: bool = False
     has_rp: bool = False                 # representative-period (blended-weights) storage
-    has_nsb: bool = False                # nodeStateBlock: storage balanced per coarse block
+    has_nsb: bool = False                # nodeStateBlock: bind_intraperiod_blocks storage, balanced per timeset block
+    has_coarse: bool = False             # nodeCoarse: nodes of coarse new_stepduration groups
     has_online_lin: bool = False
     has_online_int: bool = False
     has_online: bool = False
@@ -345,6 +347,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         # ── constraints, in emit order ──
         _eq_rp_storage_chain,
         _eq_node_balance,
+        _eq_node_balance_coarse,
         _eq_node_balance_period,
         _eq_node_balance_fix_quantity,
         _eq_storage_usage_fix,
@@ -438,6 +441,7 @@ def _prepare(b: _Build) -> None:
     b.has_storage = _has_rows(d.nodeState)
     b.has_rp = _has_rows(d.nodeState_rp)
     b.has_nsb = _has_rows(d.nodeStateBlock)
+    b.has_coarse = _has_rows(getattr(d, "nodeCoarse", None)) and _has_rows(getattr(d, "node_coarse_step", None))
     b.has_online_lin = _has_rows(d.process_online_linear)
     b.has_online_int = _has_rows(d.process_online_integer)
     b.has_online = b.has_online_lin or b.has_online_int
@@ -1107,17 +1111,37 @@ def _eq_node_balance(b: _Build) -> None:
     #   − v_state[n,d,t]·self_discharge[n]·state_unitsize[n]
     #   + first-step start terms
     #   = −inflow[n,d,t]
-    #   ∀ (n,d,t) ∈ nodeBalance_dt, n ∉ nodeStateBlock;   Δt = step_duration[d,t]
+    #   ∀ (n,d,t) ∈ nodeBalance_dt, n ∉ nodeStateBlock ∪ nodeCoarse;   Δt = step_duration[d,t]
     #   slope[p,d,t] = (1/eta − min_load/eta_min) / (1 − min_load)
     #   section[p,d,t] ≈ min_load·(1/eta_min − 1/eta) / (1 − min_load)
     #     for min_load_efficiency units (eta = efficiency, default 1; min_load = 0 where not authored;
     #     eta_min = efficiency_at_min_load, else efficiency); slope = 1/eta and no section for the other units
     # Energy conservation per node and time step, in MWh.  Storage nodes add
     # the state change; the previous step t⁻ depends on storage_binding_method.
-    # nodeStateBlock nodes are balanced per coarse block (nodeBalanceBlock_eq).
+    # nodeStateBlock nodes are balanced per timeset block (nodeBalanceBlock_eq),
+    # nodeCoarse nodes per coarse step (nodeBalanceCoarse_eq).
     # The section term exists for min_load_efficiency units only.  The flow
     # and slack terms are b.node_balance_flow_terms.  Self-discharge applies
     # the per-step loss rate without step_duration (exact for 1 h steps).
+    over = b.nodeBalance_dt
+    if b.has_nsb:
+        over = over.join(d.nodeStateBlock, on="n", how="anti")
+    if b.has_coarse:
+        over = over.join(d.nodeCoarse, on="n", how="anti")
+    m.add_cstr(
+        "nodeBalance_eq",
+        over      = over,
+        sense     = "==",
+        lhs_terms = _node_balance_terms(b),
+        rhs_terms = {"neg_inflow": -d.p_inflow},
+    )
+
+
+def _node_balance_terms(b: _Build) -> dict:
+    """Every LHS term of nodeBalance_eq, (n, d, t) in MWh: flows, slacks and, for storage nodes, the state
+    change, start / roll-continuation terms and self-discharge.  nodeBalanceCoarse_eq sums them over each coarse
+    step."""
+    d = b.d
     terms = dict(b.node_balance_flow_terms)
     if b.has_storage:
         terms.update(_state_change_terms(b))
@@ -1125,16 +1149,79 @@ def _eq_node_balance(b: _Build) -> None:
         terms.update(_roll_continue_terms(b))
         if d.p_state_self_discharge is not None:
             terms["self_discharge"] = -b.v_state * d.p_state_self_discharge * d.p_state_unitsize
-    over = b.nodeBalance_dt
-    if b.has_nsb:
-        over = over.join(d.nodeStateBlock, on="n", how="anti")
+    return terms
+
+
+def _sum_over_coarse_step(term, step_of: pl.DataFrame):
+    """``term`` (n, d, t) summed over the fine steps t of each coarse step: (n, d, b_first).  A constant
+    (``Param``) term is summed in its frame (sorted before the group-by, so the sum order is fixed)."""
+    if isinstance(term, Param):
+        frame = (term.frame
+                 .join(step_of, on=["n", "d", "t"], how="inner")
+                 .sort("n", "d", "b_first", "t")
+                 .group_by(["n", "d", "b_first"], maintain_order=True)
+                 .agg(pl.col("value").sum())
+                 .select("n", "d", "b_first", "value"))
+        return Param(("n", "d", "b_first"), frame)
+    return Sum(Where(term, step_of), over=("t",))
+
+
+def _eq_node_balance_coarse(b: _Build) -> None:
+    """Energy balance per coarse step of the nodes of coarse new_stepduration groups."""
+    if not b.has_coarse:
+        return
+    m, d = b.m, b.d
+    step_of = d.node_coarse_step
+
+    # ─── EQ. ─── nodeBalanceCoarse_eq ────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{t ∈ b} [ Σ_{(p,s,n) ∈ flow_to_n} v_flow[p,s,n,d,t]·unitsize[p]·Δt
+    #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff}
+    #       (v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])·Δt
+    #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·Δt
+    #   + back-flow terms of two-way one-variable and DC arcs
+    #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
+    #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n] − v_state[n,d,t]·self_discharge[n]·state_unitsize[n]
+    #   + first-step start terms + roll-continuation terms ]
+    #   = − Σ_{t ∈ b} inflow[n,d,t]
+    #   ∀ n ∈ nodeCoarse, (n,d,b) ∈ node_coarse_step;   t ∈ b: (n,d,b,t) ∈ node_coarse_step;   Δt = step_duration[d,t]
+    #   t⁻, start and roll terms per storage_binding_method exactly as in nodeBalance_eq
+    # nodeBalance_eq summed over the fine steps of each coarse step of the node's group: every flow stays on the
+    # solve's steps and each coarse leg sums its fine flows, so an arc between a fine and a coarse node, or
+    # between two coarse nodes, conserves energy at both ends.  The node may shift energy freely within a coarse
+    # step.  With the state constant within the coarse step (stateConstantCoarse_eq) the state terms telescope to
+    # v_state[n,d,b⁻] − v_state[n,d,b] (b⁻ = the coarse step before b by the node's binding method), so storage
+    # binding methods, fix_start and the roll carry apply to coarse nodes as to fine ones.  Same orientation and
+    # units as nodeBalance_eq: its dual is the node's price (currency/MWh) over the coarse step.
+    lhs = {key: _sum_over_coarse_step(term, step_of) for key, term in _node_balance_terms(b).items()}
+    inflow = _sum_over_coarse_step(-d.p_inflow, step_of)
+    rhs = {"neg_inflow": inflow} if inflow.frame.height > 0 else {}
     m.add_cstr(
-        "nodeBalance_eq",
-        over      = over,
+        "nodeBalanceCoarse_eq",
+        over      = step_of.select("n", "d", "b_first").unique(maintain_order=True),
         sense     = "==",
-        lhs_terms = terms,
-        rhs_terms = {"neg_inflow": -d.p_inflow},
+        lhs_terms = lhs,
+        rhs_terms = rhs,
     )
+
+    # ─── EQ. ─── stateConstantCoarse_eq ──────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t] − v_state[n,d,t_previous] = 0
+    #   ∀ (n,d,t,t_previous) ∈ node_coarse_interior   (n ∈ nodeCoarse ∩ nodeState; t_previous: the step before t
+    #   within its coarse step)
+    # A coarse storage node keeps one state per coarse step.
+    if b.has_storage and _has_rows(d.node_coarse_interior):
+        interior = d.node_coarse_interior
+        state_prev = _var_view(b.v_state, "__prev", {"t": "t_previous"})
+        steps = interior.select("n", "d", "t")
+        m.add_cstr(
+            "stateConstantCoarse_eq",
+            over      = steps,
+            sense     = "==",
+            lhs_terms = {"state":      Where(b.v_state, steps),
+                         "state_prev": -Sum(Where(state_prev, interior), over=("t_previous",))},
+            rhs_terms = {},
+        )
 
 
 def _node_balance_flow_terms(b: _Build) -> dict:
@@ -1499,7 +1586,7 @@ def _eq_storage_usage_fix(b: _Build) -> None:
 
 
 def _eq_block_coupling(b: _Build) -> None:
-    """Storage nodes balanced per coarse block (nodeStateBlock)."""
+    """bind_intraperiod_blocks storage nodes (nodeStateBlock), balanced per timeset block."""
     if not (b.has_nsb and b.has_storage):
         return
     m, d = b.m, b.d
@@ -1510,7 +1597,7 @@ def _eq_block_coupling(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] − v_state[n,d,t_previous] = 0
     #   ∀ n ∈ nodeStateBlock, (d,t,t_previous) ∈ dtttdt_block_interior
-    # Keeps the state of a nodeStateBlock node constant within each coarse
+    # Keeps the state of a nodeStateBlock node constant within each timeset
     # block.  Interior steps never cross a period boundary.
     if _has_rows(d.dtttdt_block_interior):
         interior = d.dtttdt_block_interior
@@ -1528,81 +1615,42 @@ def _eq_block_coupling(b: _Build) -> None:
 
     # ─── EQ. ─── nodeBalanceBlock_eq ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # state_change[n,d,b]·state_unitsize[n]
-    #   − Σ_{(p,s,n)} v_flow[p,s,n,d,t]·unitsize[p]·w_sink
-    #   + Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff} v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t]·w_source
-    #   + Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·w_source
+    # (Σ_{(d,b,b_next) ∈ period_block_succ} v_state[n,d,b_next] − v_state[n,d,b])·state_unitsize[n]
+    #   − Σ_{t ∈ b} Σ_{(p,s,n) ∈ flow_to_n} v_flow[p,s,n,d,t]·unitsize[p]·Δt
+    #   + Σ_{t ∈ b} Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff} v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t]·Δt
+    #   + Σ_{t ∈ b} Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·Δt
     #   + Σ_{t ∈ b} v_state[n,d,t]·self_discharge[n]·state_unitsize[n]·Δt
     #   − Σ_{t ∈ b} (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
     #   = Σ_{t ∈ b} inflow[n,d,t]
     #   ∀ n ∈ nodeStateBlock, (d,b) ∈ period_block;   b is named by its first step b_first, t ∈ b by period_block_time
-    # Energy balance per coarse block (MWh) for the nodes nodeBalance_eq skips.
-    # state_change, non-rp nodes (bind_intraperiod_blocks):
-    #   Σ_{(d,b,b_next) ∈ period_block_succ} v_state[n,d,b_next] − v_state[n,d,b];
-    #   the blocks of each representative period form one cycle.
-    # state_change, blended-weights (rp) nodes: v_state[n,d,b] − v_state[n,d,b_prev], where the first block of a
-    #   representative day starts from v_state_rp_start instead of a cyclic predecessor.  This is the fine rp
-    #   state change lifted to blocks, so the rp inter-period chain keeps binding v_state_rp_start.
-    # Flow weights: with per-arc block data (arc_{sink,source}_block_dt), w = p_arc_{sink,source}_weight, the step
-    #   duration of the arc's block on that side; otherwise w = Δt over the fine steps of the block.
-    # v_flow of an arc with both ends on a coarse block enters only at the coarse step; its values at the other
-    #   fine steps are not tied to it.
+    # Energy balance per timeset block (MWh) of the bind_intraperiod_blocks nodes, which nodeBalance_eq skips.
+    # The blocks of each period form one cycle (period_block_succ).  Each arc term carries the node n of
+    # flow_to_n / flow_from_nodeBalance_*, so a node's row holds only its own arcs.  The row is the negation of
+    # nodeBalance_eq (state change − flows = inflow): its dual has the opposite sign of a nodeBalance_eq dual.
     succ = d.period_block_succ.select("d", "b_first", "b_next")
     state_at_block = _var_view(v_state, "__b_first", {"t": "b_first"})
-    if b.has_rp:
-        rp_nodes = nsb.join(d.nodeState_rp.select("n"), on="n", how="inner")
-        nonrp_nodes = nsb.join(d.nodeState_rp.select("n"), on="n", how="anti")
-    else:
-        rp_nodes = nsb.clear()
-        nonrp_nodes = nsb
-
-    lhs: dict = {}
     state_at_next = _var_view(v_state, "__b_next", {"t": "b_next"})
-    lhs["state_change"] = (Sum(Where(Where(state_at_next, succ), nonrp_nodes), over=("b_next",))
-                           - Sum(Where(Where(state_at_block, succ), nonrp_nodes), over=("b_next",))
+    lhs: dict = {}
+    lhs["state_change"] = (Sum(Where(Where(state_at_next, succ), nsb), over=("b_next",))
+                           - Sum(Where(Where(state_at_block, succ), nsb), over=("b_next",))
                            ) * d.p_state_unitsize
-    if rp_nodes.height > 0:
-        # Predecessor of block b: the b_first whose b_next is b; first blocks
-        # of a representative day take v_state_rp_start instead.
-        rp_first = d.rp_block_first.select("d", pl.col("t").alias("b_first"))
-        pred_interior = (succ.select("d", pl.col("b_next").alias("b_first"), pl.col("b_first").alias("b_prev"))
-                         .join(rp_first, on=["d", "b_first"], how="anti"))
-        state_at_prev = _var_view(v_state, "__b_prev", {"t": "b_prev"})
-        prev = Sum(Where(Where(state_at_prev, pred_interior), rp_nodes), over=("b_prev",))
-        rp_start = _var_view(b.v_state_rp_start, "__b_first", {"t": "b_first"})
-        start = Where(Where(rp_start, rp_first), rp_nodes)
-        now = Where(state_at_block, rp_nodes.join(d.period_block, how="cross").select("n", "d", "b_first"))
-        lhs["state_change_rp"] = (now - prev - start) * d.p_state_unitsize
 
     v_flow = b.v_flow
     block_t = d.period_block_time
     over_arcs_t = ("p", "source", "sink", "t")
-    if _has_rows(d.arc_sink_block_dt) and d.p_arc_sink_weight is not None:
-        into_node = d.arc_sink_block_dt.drop("weight").pipe(rename_to_axis, {"sink": "n"})
-        lhs["sink_flow_block"] = -Sum(Where(v_flow * d.p_unitsize * d.p_arc_sink_weight, into_node),
-                                      over=over_arcs_t)
-    elif _has_rows(d.flow_to_n):
+    if _has_rows(d.flow_to_n):
         into_node = d.flow_to_n.filter(pl.col("n").is_in(nsb["n"]))
         if into_node.height > 0:
             lhs["sink_flow_block"] = -Sum(Where(Where(v_flow * d.p_unitsize, into_node) * d.p_step_duration, block_t),
                                           over=over_arcs_t)
-
-    has_source_weights = _has_rows(d.arc_source_block_dt) and d.p_arc_source_weight is not None
     for key, from_node, with_slope in (("source_eff_block", d.flow_from_nodeBalance_eff, True),
                                        ("source_noEff_block", d.flow_from_nodeBalance_noEff, False)):
         if not _has_rows(from_node):
             continue
         flow = v_flow * d.p_unitsize * d.p_slope if with_slope else v_flow * d.p_unitsize
-        if has_source_weights:
-            idx = (d.arc_source_block_dt.drop("weight")
-                   .join(from_node.select("p", "source", "sink"), on=["p", "source", "sink"], how="inner")
-                   .pipe(rename_to_axis, {"source": "n"}))
-            if idx.height > 0:
-                lhs[key] = Sum(Where(flow * d.p_arc_source_weight, idx), over=over_arcs_t)
-        else:
-            idx = from_node.filter(pl.col("n").is_in(nsb["n"]))
-            if idx.height > 0:
-                lhs[key] = Sum(Where(Where(flow, idx) * d.p_step_duration, block_t), over=over_arcs_t)
+        idx = from_node.filter(pl.col("n").is_in(nsb["n"]))
+        if idx.height > 0:
+            lhs[key] = Sum(Where(Where(flow, idx) * d.p_step_duration, block_t), over=over_arcs_t)
 
     if d.p_state_self_discharge is not None:
         lhs["self_discharge_block"] = Sum(

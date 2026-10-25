@@ -10,7 +10,8 @@ omission, native flow / invest / capacity / cost emit) from RP / scale.
 
 GATE (spec ``benders_option_c.md`` §5 sub-stage 3a):
 
-* converges (≤12 iters, tol 1e-4) to ``M = 8.5442474e9`` (rtol 1e-4);
+* converges (≤12 iters, tol 1e-4) to ``M = 1.2217878e10`` (rtol 1e-4; 8.5442474e9
+  before c15b's coarse-group fix);
 * a VALID lower bound ``LB ≤ M·(1+1e-9)`` (the whole point vs the Lagrangian
   bug);
 * recovered invest ``C`` and trade ``f̄`` match the monolith;
@@ -39,7 +40,7 @@ from flextool.engine.solve import _region_filter
 from flextool.engine.solve._benders import solve_benders
 
 _REGIONS = ["region_A", "region_B", "region_C"]
-_M_EXPECTED = 8.5442474e9
+_M_EXPECTED = 1.2217878e10
 
 
 @pytest.fixture(scope="module")
@@ -173,7 +174,10 @@ def test_flextool_master_recovers_invest_and_trade(ti_data, monolith) -> None:
 
     C_ab = res.invest.get("pipe_AB", 0.0)
     C_bc = res.invest.get("pipe_BC", 0.0)
-    assert C_ab > 1e-3 and C_bc > 1e-3, f"pipes not invested: {res.invest}"
+    # pipe_AB is invested; pipe_BC is not (the monolith builds none: A's
+    # surplus does not reach C once every electrolyser hour consumes
+    # electricity) — both must match the monolith.
+    assert C_ab > 1e-3, f"pipe_AB not invested: {res.invest}"
     assert np.isclose(C_ab, C_ab_star, rtol=2e-2, atol=1e-3), (
         f"pipe_AB invest {C_ab} != monolith {C_ab_star}"
     )

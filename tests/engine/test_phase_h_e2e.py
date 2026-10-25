@@ -149,8 +149,6 @@ _DOCUMENTED_OUT_OF_SCOPE_SOLVE_DATA: frozenset[str] = frozenset({
     "pbt_process_source.csv",
     "pbt_profile.csv",
     "pbt_reserve__upDown__group.csv",
-    "process_block.csv",
-    "process_side_block.csv",
     "pt_commodity.csv",
     "pt_group.csv",
     "pt_node.csv",

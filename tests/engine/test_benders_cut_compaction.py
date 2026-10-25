@@ -123,11 +123,26 @@ def ti_data(scenario_workdir):
     return load_flextool(wd)
 
 
+#: The e2e compaction run needs a multi-iteration solve: the representative-
+#: period invest fixture (two invest periods, both pipes) takes ~6 iterations
+#: at the production objective scale.  (The trade-invest fixture converges in
+#: 2 iterations since c15b's coarse-group fix, too few to drop a cut.)
+_OBJ_SCALE = 1e-6
+
+
+@pytest.fixture(scope="module")
+def rp_data(scenario_workdir):
+    wd = scenario_workdir(
+        "lh2_three_region_rp_invest", db_fixture="lh2_rp_invest"
+    )
+    return load_flextool(wd)
+
+
 # ---------------------------------------------------------------------------
 # e2e — compaction ON converges to the SAME optimum as OFF, LB monotone,
 # active cut-row count bounded.
 # ---------------------------------------------------------------------------
-def test_compaction_matches_off_and_bounds_cut_rows(ti_data, monkeypatch):
+def test_compaction_matches_off_and_bounds_cut_rows(rp_data, monkeypatch):
     """With compaction forced ON at a LOW threshold (3 regions => 3 cuts/iter,
     so threshold 6 triggers a compaction by iter 2), the solve:
 
@@ -145,7 +160,7 @@ def test_compaction_matches_off_and_bounds_cut_rows(ti_data, monkeypatch):
     """
     # --- OFF (default) baseline. ---
     monkeypatch.delenv(_BENDERS_CUT_COMPACT_AT_ENV, raising=False)
-    res_off = solve_benders(ti_data, _REGIONS, max_iters=20, tol=1e-4)
+    res_off = solve_benders(rp_data, _REGIONS, max_iters=20, tol=1e-4, scale_the_objective=_OBJ_SCALE)
     assert res_off.converged, "OFF baseline did not converge"
 
     # --- ON at a low threshold, forcing >= 1 compaction.  Opt in to the
@@ -171,7 +186,7 @@ def test_compaction_matches_off_and_bounds_cut_rows(ti_data, monkeypatch):
     monkeypatch.setattr(_BendersMaster, "compact_cuts", spy_compact)
 
     with caplog_active_rows() as (active_rows, dropped_line):
-        res_on = solve_benders(ti_data, _REGIONS, max_iters=20, tol=1e-4)
+        res_on = solve_benders(rp_data, _REGIONS, max_iters=20, tol=1e-4, scale_the_objective=_OBJ_SCALE)
 
     assert res_on.converged, (
         f"ON did not converge: gap={res_on.gap:.3e} iters={res_on.iterations}"

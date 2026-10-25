@@ -1,33 +1,14 @@
-"""Δ.9 — Cluster E (block-layout consumers) parity tests.
+"""Block-layout consumers in :mod:`flextool.engine.preprocess.params._block`.
 
-Per-fixture parity check: lazy port in
-:mod:`flextool.engine.preprocess.params._block` vs. flextool's canonical
-preprocessed CSVs in ``solve_data/``.
+Per-fixture parity check against flextool's canonical preprocessed CSVs in
+``solve_data/``:
 
-The CSVs are the parity oracle — any divergence between the lazy port
-and the preprocessed reference surfaces as a per-fixture failure.
-
-Cluster E fields covered (per
-``audit/native_data_path_design_derived_clusters.md`` / dedicated
-schematic ``audit/native_data_path_design_block_layout.md``):
-
-* ``flow_to_n`` block-aware filter — drops ``(p, source, sink)`` rows
-  whose sink-block doesn't overlap the destination node's block.
-* ``flow_from_n`` block-aware filter — symmetric for source.
-* ``flow_from_nodeBalance_*`` block-aware filter — symmetric on
-  source-side nodeBalance arcs.
-* ``nodeState_last_dt`` — last fine-step of last block per node.
-* ``arc_sink_block_dt`` / ``arc_source_block_dt`` — per-arc daily-block
-  aggregation index.
-* ``nodeStateBlock`` — synthesised set of nodes pulling daily balance.
-* ``period_block`` / ``period_block_succ`` / ``period_block_time``
-  multi-resolution synthesis (multi-block fixtures only).
+* ``flow_to_n`` / ``flow_from_n`` — every arc ``(p, source, sink)`` with
+  ``n`` = its sink / source (no block filter: a node of a coarse
+  ``new_stepduration`` group sums its fine flows, ``nodeBalanceCoarse_eq``).
+* ``nodeState_last_dt`` — the default block's last step of each period for
+  every storage node.
 * ``dtttdt_block_interior`` — interior-of-block dtttdt rows.
-
-Δ.3 carry-over: the ``flow_to_n`` / ``flow_from_n`` block-aware filter
-gap is closed by the parity test below — multi-block fixtures
-(``work_lh2_three_region``) now match the CSV path's filtered shape on
-the source-driven path.
 """
 from __future__ import annotations
 
@@ -36,18 +17,13 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine.preprocess.params._block_layout import (
-    DEFAULT_BLOCK,
-    BlockLayout,
-)
+from flextool.engine.preprocess.params._block_layout import DEFAULT_BLOCK
 from flextool.engine.preprocess.params._block import (
-    arc_block_dt,
     dtttdt_block_interior_lf,
-    flow_from_n_block_filtered,
-    flow_to_n_block_filtered,
+    flow_from_n_frame,
+    flow_to_n_frame,
     load_block_bundle,
     nodeState_last_dt_lf,
-    period_block_multi_resolution_lf,
 )
 from flextool.engine.input._input_source import _read_csv_file
 
@@ -120,84 +96,15 @@ def _frames_equal(a: pl.DataFrame, b: pl.DataFrame, *,
     return True, "ok"
 
 
-def _csv_path_flow_to_n(workdir_path: Path) -> pl.DataFrame:
-    """Compute ``flow_to_n`` via the canonical CSV path's algorithm.
-
-    Mirrors ``flex_data.py::_load_process_topology`` lines 728-769 exactly.
-    Used as the parity oracle for the cluster E port.
-    """
+def _csv_path_flow_n(workdir_path: Path, side: str) -> pl.DataFrame:
+    """``flow_to_n`` (``side='sink'``) / ``flow_from_n`` (``'source'``) from
+    the canonical CSVs: every arc, ``n`` = its ``side`` node."""
     sd = workdir_path / "solve_data"
     pss = _read_csv_file(sd / "process_source_sink.csv").rename(
         {"process": "p"})
-    base = pss.with_columns(n=pl.col("sink")) \
-              .select("p", "source", "sink", "n").unique()
-    bl = BlockLayout.load_from_solve_data(sd)
-    if (bl.process_side_block_frame.height == 0
-            or bl.entity_block_frame.height == 0
-            or bl.overlap_set_frame.height == 0):
-        return base.sort("p", "source", "sink", "n")
-    psb_l = bl.process_side_block_frame.rename(
-        {"process": "p", "block": "b_f"})
-    eb_l = bl.entity_block_frame.rename({"entity": "n", "block": "bk"})
-    block_compat = bl.block_compat()
-    if block_compat.height == 0:
-        return base.sort("p", "source", "sink", "n")
-    psb_sink = psb_l.filter(pl.col("side") == "sink").select("p", "b_f")
-    with_blocks = (base
-        .join(psb_sink, on="p", how="left")
-        .join(eb_l, on="n", how="left")
-        .with_columns(b_f=pl.col("b_f").fill_null(DEFAULT_BLOCK),
-                       bk=pl.col("bk").fill_null(DEFAULT_BLOCK)))
-    filtered = (with_blocks
-        .join(block_compat, on=["bk", "b_f"], how="inner")
-        .select("p", "source", "sink", "n").unique())
-    if 0 < filtered.height < base.height:
-        return filtered.sort("p", "source", "sink", "n")
-    return base.sort("p", "source", "sink", "n")
-
-
-def _csv_path_flow_from_n(workdir_path: Path) -> pl.DataFrame:
-    """``flow_from_n`` reference using the same CSV-path algorithm
-    (symmetric to ``_csv_path_flow_to_n`` but on source side)."""
-    sd = workdir_path / "solve_data"
-    pss = _read_csv_file(sd / "process_source_sink.csv").rename(
-        {"process": "p"})
-    base = pss.with_columns(n=pl.col("source")) \
-              .select("p", "source", "sink", "n").unique()
-    bl = BlockLayout.load_from_solve_data(sd)
-    if (bl.process_side_block_frame.height == 0
-            or bl.entity_block_frame.height == 0
-            or bl.overlap_set_frame.height == 0):
-        return base.sort("p", "source", "sink", "n")
-    psb_l = bl.process_side_block_frame.rename(
-        {"process": "p", "block": "b_f"})
-    eb_l = bl.entity_block_frame.rename({"entity": "n", "block": "bk"})
-    block_compat = bl.block_compat()
-    if block_compat.height == 0:
-        return base.sort("p", "source", "sink", "n")
-    psb_source = psb_l.filter(pl.col("side") == "source").select("p", "b_f")
-    with_blocks = (base
-        .join(psb_source, on="p", how="left")
-        .join(eb_l, on="n", how="left")
-        .with_columns(b_f=pl.col("b_f").fill_null(DEFAULT_BLOCK),
-                       bk=pl.col("bk").fill_null(DEFAULT_BLOCK)))
-    filtered = (with_blocks
-        .join(block_compat, on=["bk", "b_f"], how="inner")
-        .select("p", "source", "sink", "n").unique())
-    if 0 < filtered.height < base.height:
-        return filtered.sort("p", "source", "sink", "n")
-    return base.sort("p", "source", "sink", "n")
-
-
-def _csv_nodeStateBlock(sd: Path) -> pl.DataFrame:
-    """Read ``solve_data/nodeStateBlock.csv``."""
-    p = sd / "nodeStateBlock.csv"
-    if not p.exists():
-        return pl.DataFrame(schema={"n": pl.Utf8})
-    df = _read_csv_file(p)
-    if df.height == 0:
-        return pl.DataFrame(schema={"n": pl.Utf8})
-    return df.rename({"node": "n"}).select("n").unique().sort("n")
+    return (pss.with_columns(n=pl.col(side))
+            .select("p", "source", "sink", "n").unique()
+            .sort("p", "source", "sink", "n"))
 
 
 # ---------------------------------------------------------------------------
@@ -206,102 +113,22 @@ def _csv_nodeStateBlock(sd: Path) -> pl.DataFrame:
 
 
 @pytest.mark.parametrize("work", PARITY_CASES, ids=PARITY_CASES)
-def test_flow_to_n_block_filter_parity(work: str, scenario_workdir) -> None:
-    """``flow_to_n_block_filtered`` matches the CSV path's filter
-    output (mirror of ``flex_data.py::_load_process_topology`` lines
-    728-769).  Closes the Δ.3 deferred-port gap."""
+@pytest.mark.parametrize("side", ["sink", "source"])
+def test_flow_n_parity(work: str, side: str, scenario_workdir) -> None:
+    """``flow_to_n_frame`` / ``flow_from_n_frame`` hold every arc once per
+    end node (multi-block fixtures included)."""
     workdir_path = _resolve_work(work, scenario_workdir)
     sd = workdir_path / "solve_data"
     pss = _read_csv_file(sd / "process_source_sink.csv").rename(
         {"process": "p"})
-    bundle = load_block_bundle(workdir_path)
-    actual = flow_to_n_block_filtered(pss, bundle)
-    expected = _csv_path_flow_to_n(workdir_path)
-    actual = actual.sort("p", "source", "sink", "n")
+    fn = flow_to_n_frame if side == "sink" else flow_from_n_frame
+    actual = fn(pss).sort("p", "source", "sink", "n")
+    expected = _csv_path_flow_n(workdir_path, side)
     eq, diag = _frames_equal(expected, actual)
     assert eq, (
-        f"{work}: flow_to_n block filter differs: {diag}\n"
+        f"{work}: flow_n ({side}) differs: {diag}\n"
         f"expected (head):\n{expected.head(8)}\n"
         f"actual   (head):\n{actual.head(8)}"
-    )
-
-
-@pytest.mark.parametrize("work", PARITY_CASES, ids=PARITY_CASES)
-def test_flow_from_n_block_filter_parity(work: str, scenario_workdir) -> None:
-    workdir_path = _resolve_work(work, scenario_workdir)
-    """``flow_from_n_block_filtered`` matches the CSV path's filter."""
-    sd = workdir_path / "solve_data"
-    pss = _read_csv_file(sd / "process_source_sink.csv").rename(
-        {"process": "p"})
-    bundle = load_block_bundle(workdir_path)
-    actual = flow_from_n_block_filtered(pss, bundle)
-    expected = _csv_path_flow_from_n(workdir_path)
-    actual = actual.sort("p", "source", "sink", "n")
-    eq, diag = _frames_equal(expected, actual)
-    assert eq, (
-        f"{work}: flow_from_n block filter differs: {diag}\n"
-        f"expected (head):\n{expected.head(8)}\n"
-        f"actual   (head):\n{actual.head(8)}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Per-fixture parity — nodeStateBlock synthesis
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("work", PARITY_CASES, ids=PARITY_CASES)
-def test_nodeStateBlock_synthesis_parity(work: str, scenario_workdir) -> None:
-    """The lazy synthesis matches the CSV-path's combined output:
-    explicit ``bind_intraperiod_blocks`` set ∪ multi-resolution
-    nodeBalance synthesis.
-
-    The CSV oracle ``solve_data/nodeStateBlock.csv`` only carries the
-    EXPLICIT branch; the multi-resolution synthesis is layered onto it
-    in ``flex_data.py::_load_storage`` lines 2010-2146 by computing
-    ``entity_block ∩ coarse_blocks ∩ nodeBalance``.  This test mirrors
-    the union.
-    """
-    workdir_path = _resolve_work(work, scenario_workdir)
-    sd = workdir_path / "solve_data"
-    explicit = _csv_nodeStateBlock(sd)
-    bundle = load_block_bundle(workdir_path)
-    if bundle is None or not bundle.is_multi_block():
-        # Single-block fixtures: synthesis branch yields nothing;
-        # the expected set is just the explicit CSV.
-        if explicit.height == 0:
-            return  # vacuously true
-        return
-    coarse = bundle.layout.coarse_blocks(threshold=1.0)
-    if not coarse:
-        return
-    nb_path = sd / "nodeBalance.csv"
-    nb_set: set[str] = set()
-    if nb_path.exists():
-        nb_df = _read_csv_file(nb_path)
-        if nb_df.height > 0:
-            nb_set = set(nb_df.rename({"node": "n"})["n"].to_list())
-    # Reference combined frame: explicit ∪ (entity_block ∩ coarse ∩ nb).
-    eb_lf = bundle.entity_block_lf
-    synth = (eb_lf
-              .filter(pl.col("bk").is_in(coarse))
-              .select("n")
-              .filter(pl.col("n").is_in(list(nb_set)))
-              .unique().sort("n").collect())
-    expected_combined = pl.concat([
-        explicit.select("n"),
-        synth.select("n"),
-    ]).unique().sort("n")
-    eq, diag = _frames_equal(expected_combined, synth.sort("n")
-                              if explicit.height == 0 else expected_combined)
-    # Sanity: when explicit is empty the synth IS the combined set.
-    actual = synth.sort("n")
-    if explicit.height > 0:
-        actual = pl.concat([explicit.select("n"), actual]).unique().sort("n")
-    eq, diag = _frames_equal(expected_combined, actual)
-    assert eq, (
-        f"{work}: nodeStateBlock combined synthesis differs: {diag}\n"
-        f"expected:\n{expected_combined}\nactual:\n{actual}"
     )
 
 
@@ -330,13 +157,11 @@ def test_nodeState_last_dt_parity(work: str, scenario_workdir) -> None:
     if bptl_f.height == 0 or eb_f.height == 0:
         return
 
-    # Reference: build the same way ``flex_data.py:2233-2253`` does.
+    # Reference: the default block's last step of each period × every storage node.
     bptl = bptl_f.rename({"block": "bk", "period": "d", "step": "t"})
-    eb = eb_f.rename({"entity": "n", "block": "bk"})
-    expected = (nodeState.select("n")
-        .join(eb, on="n", how="inner")
-        .join(bptl, on="bk", how="inner")
-        .select("n", "d", "t").unique())
+    expected = (nodeState.select("n").unique()
+        .join(bptl.filter(pl.col("bk") == DEFAULT_BLOCK).select("d", "t"), how="cross")
+        .select("n", "d", "t"))
 
     actual = nodeState_last_dt_lf(nodeState, bundle).collect()
     if expected.height == 0 and actual.height == 0:
@@ -350,149 +175,23 @@ def test_nodeState_last_dt_parity(work: str, scenario_workdir) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-fixture parity — arc_block_dt
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("work", PARITY_CASES, ids=PARITY_CASES)
-def test_arc_block_dt_basic_invariants(work: str, scenario_workdir) -> None:
-    """Validate basic invariants of the arc-block aggregation:
-       * each row is keyed on ``(p, source, sink, d, b_first, t, weight)``
-         with weight = block_step_duration of the arc-side block at (d, t).
-       * the result is empty when there's no nodeStateBlock.
-    """
-    workdir_path = _resolve_work(work, scenario_workdir)
-    sd = workdir_path / "solve_data"
-    pss = _read_csv_file(sd / "process_source_sink.csv").rename(
-        {"process": "p"})
-    if pss.height == 0:
-        return
-    nsb = _csv_nodeStateBlock(sd)
-    bundle = load_block_bundle(workdir_path)
-    if bundle is None or nsb.height == 0:
-        return
-    # Build period_block_time via the multi-resolution branch when the
-    # fixture exercises it; otherwise we synthesise from
-    # ``block_period_time_first`` for a degenerate input.
-    multi_pbt = period_block_multi_resolution_lf(bundle)
-    if multi_pbt is not None:
-        pbt = multi_pbt["period_block_time"].collect()
-    else:
-        return  # Single-block fixtures: skip — covered by basic flow tests.
-    out = arc_block_dt(pss, nsb, pbt, bundle)
-    sink_ab = out.arc_sink_block_dt
-    src_ab = out.arc_source_block_dt
-    if sink_ab is not None:
-        # Every row's weight equals block_step_duration[b_f, d, t]
-        # for some valid block; spot-check non-zero.
-        assert sink_ab["weight"].min() > 0, (
-            f"{work}: arc_sink_block_dt has zero/negative weight")
-        # All n=sink values must be in nodeStateBlock.
-        sinks = set(sink_ab["sink"].unique().to_list())
-        assert sinks.issubset(set(nsb["n"].to_list())), (
-            f"{work}: arc_sink_block_dt sinks not in nodeStateBlock")
-    if src_ab is not None:
-        assert src_ab["weight"].min() > 0, (
-            f"{work}: arc_source_block_dt has zero/negative weight")
-        sources = set(src_ab["source"].unique().to_list())
-        assert sources.issubset(set(nsb["n"].to_list())), (
-            f"{work}: arc_source_block_dt sources not in nodeStateBlock")
-
-
-# ---------------------------------------------------------------------------
-# Per-fixture parity — period_block_multi_resolution
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("work", PARITY_CASES, ids=PARITY_CASES)
-def test_period_block_multi_resolution_parity(work: str, scenario_workdir) -> None:
-    """The synthesised ``period_block_*`` frames match the algorithm
-    that consumes ``block_step_duration.csv`` + ``overlap_set.csv``."""
-    workdir_path = _resolve_work(work, scenario_workdir)
-    bundle = load_block_bundle(workdir_path)
-    if bundle is None:
-        return
-    if not bundle.is_multi_block():
-        # Single-block fixture: synthesis branch yields None.
-        out = period_block_multi_resolution_lf(bundle)
-        assert out is None, (
-            f"{work}: synthesis fired on single-block fixture")
-        return
-    coarse = bundle.layout.coarse_blocks(threshold=1.0)
-    if not coarse:
-        out = period_block_multi_resolution_lf(bundle)
-        assert out is None
-        return
-    out = period_block_multi_resolution_lf(bundle)
-    assert out is not None
-    pb = out["period_block"].collect()
-    out["period_block_succ"].collect()
-    pbt = out["period_block_time"].collect()
-    # period_block: distinct (d, b_first) per coarse block.
-    coarse_use = bundle.layout.entity_block_frame.filter(
-        pl.col("block").is_in(coarse))["block"].unique().to_list()
-    bsd = bundle.layout.block_step_duration_frame.filter(
-        pl.col("block").is_in(coarse_use))
-    expected_pb = (bsd.rename({"period": "d", "step": "b_first"})
-                       .select("d", "b_first").unique())
-    eq, diag = _frames_equal(expected_pb, pb)
-    assert eq, f"{work}: period_block differs: {diag}"
-    # period_block_time: overlap_set rows with b_coarse=coarse,
-    # b_fine=default.
-    ov = bundle.layout.overlap_set_frame
-    expected_pbt = (ov.rename({"period": "d", "block_coarse": "bk",
-                                 "step_coarse": "b_first",
-                                 "block_fine": "b_fine",
-                                 "step_fine": "t"})
-                      .filter(pl.col("bk").is_in(coarse_use)
-                              & (pl.col("b_fine") == DEFAULT_BLOCK))
-                      .select("d", "b_first", "t").unique())
-    eq, diag = _frames_equal(expected_pbt, pbt)
-    assert eq, f"{work}: period_block_time differs: {diag}"
-
-
-# ---------------------------------------------------------------------------
 # Hand-cooked invariants — single-block + multi-block
 # ---------------------------------------------------------------------------
 
 
-def test_single_block_filter_is_identity(scenario_workdir) -> None:
-    """On a single-block fixture, the block-aware filter is an identity:
-    no rows are dropped because ``(default, default)`` is in
-    ``block_compat`` and every entity defaults to ``default``."""
-    work_coal = scenario_workdir("coal")
-    bundle = load_block_bundle(work_coal)
-    pss = _read_csv_file(
-        work_coal / "solve_data" / "process_source_sink.csv"
-    ).rename({"process": "p"})
-    actual = flow_to_n_block_filtered(pss, bundle)
-    # Single-block: shape == pss.height (with 'n' projected from sink).
-    assert actual.height == pss.height
-    assert "n" in actual.columns
-
-
-def test_multi_block_filter_drops_incompatible_rows(scenario_workdir) -> None:
-    """On ``work_lh2_three_region`` the daily-block↔hourly-block filter
-    drops at least one row (the canonical multi-resolution scenario)."""
+def test_multi_block_flow_to_n_keeps_every_arc(scenario_workdir) -> None:
+    """On ``lh2_three_region`` (hourly + daily nodes) every arc enters the
+    balance of its sink: the electrolysers' hourly→daily arcs and the
+    liquefiers' daily→daily arcs included.  Before c15b the block filter
+    dropped the arcs whose side block did not overlap the node's block."""
     work_lh2 = scenario_workdir("lh2_three_region", db_fixture="lh2")
     sd = work_lh2 / "solve_data"
     pss = _read_csv_file(sd / "process_source_sink.csv").rename(
         {"process": "p"})
-    bundle = load_block_bundle(work_lh2)
-    actual_to_n = flow_to_n_block_filtered(pss, bundle)
-    # At least one row dropped (or the filter returned identical for
-    # safety — the assertion below also covers the parity oracle).
-    expected_to_n = _csv_path_flow_to_n(work_lh2)
-    eq, diag = _frames_equal(
-        expected_to_n.sort("p", "source", "sink", "n"),
-        actual_to_n.sort("p", "source", "sink", "n"))
-    assert eq, f"work_lh2_three_region flow_to_n: {diag}"
-    # Verify the filter actually dropped rows on this fixture.
-    pss_with_n = pss.with_columns(n=pl.col("sink")).select(
-        "p", "source", "sink", "n").unique()
-    assert actual_to_n.height < pss_with_n.height, (
-        "work_lh2_three_region: filter expected to drop multi-block "
-        "incompatible rows but produced no change")
+    actual = flow_to_n_frame(pss)
+    assert actual.height == pss.select("p", "source", "sink").unique().height
+    sinks = set(zip(actual["p"].cast(pl.Utf8).to_list(), actual["n"].cast(pl.Utf8).to_list()))
+    assert ("electrolyser_A", "h2_A") in sinks and ("liquefier_A", "lh2_A") in sinks
 
 
 def test_no_workdir_returns_none() -> None:
@@ -541,21 +240,14 @@ def test_dtttdt_block_interior_synthesised_branch() -> None:
     assert (out.filter(pl.col("t") == "t4").height == 0)
 
 
-def test_block_bundle_block_compat_is_cached(scenario_workdir) -> None:
-    """``block_compat_frame`` materialises once per bundle."""
-    work_lh2 = scenario_workdir("lh2_three_region", db_fixture="lh2")
-    bundle = load_block_bundle(work_lh2)
-    f1 = bundle.block_compat_frame
-    f2 = bundle.block_compat_frame
-    assert f1 is f2  # identical object — cached.
-
-
-def test_block_bundle_multi_block_detection(scenario_workdir) -> None:
-    """``is_multi_block`` distinguishes single from multi-resolution."""
+def test_block_bundle_group_steps(scenario_workdir) -> None:
+    """The bundle's layout carries each node's group and the group steps:
+    lh2's daily_group is 24 h; a fixture without groups has the default block
+    only."""
     single = load_block_bundle(scenario_workdir("coal"))
     multi = load_block_bundle(
         scenario_workdir("lh2_three_region", db_fixture="lh2"))
-    assert single is not None
-    assert multi is not None
-    assert not single.is_multi_block()
-    assert multi.is_multi_block()
+    assert single is not None and multi is not None
+    assert set(single.layout.block_step_duration) == {DEFAULT_BLOCK}
+    assert multi.layout.block_step_duration["daily_group"] == 24.0
+    assert multi.layout.node_block["h2_A"] == "daily_group"

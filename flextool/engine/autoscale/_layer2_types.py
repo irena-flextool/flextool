@@ -220,6 +220,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "nodeBalancePeriod_eq": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_block_coupling
     "nodeBalanceBlock_eq": CstrFamily(QuantityType.ENERGY),
+    # Per-coarse-step energy balance of coarse new_stepduration group nodes — ENERGY.
+    # flextool/engine/model/core.py _eq_node_balance_coarse
+    "nodeBalanceCoarse_eq": CstrFamily(QuantityType.ENERGY),
 
     # ── Storage state max / state ladder.  ENERGY.
     # flextool/engine/model/core.py _eq_max_state
@@ -228,6 +231,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxState_rp_start": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_block_coupling
     "stateConstantWithinBlock_eq": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_node_balance_coarse
+    "stateConstantCoarse_eq": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_rp_storage_chain
     "rp_inter_period_balance": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_rp_storage_chain

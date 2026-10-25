@@ -55,7 +55,10 @@ LH2_FIXTURE_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "lh2_three_region.json
 REGIONS = ["region_A", "region_B", "region_C"]
 TRADE_CONNS = {"pipe_AB", "pipe_BC"}
 INVEST_SCENARIO = "lh2_three_region_invest"
-INVEST_UNITS = {"wind_A", "wind_B", "wind_C"}
+# The in-region wind units the monolith invests in: A and B.  wind_C is not
+# built (since c15b's coarse-group fix every electrolyser hour consumes
+# electricity; before, C built 838 MW).
+INVEST_UNITS = {"wind_A", "wind_B"}
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +337,7 @@ def test_benders_invest_over_existing_pipes_matches_monolith(invest_solve_data):
             f"v_invest_p{cell}: Benders {asm[cell]:.6e} != monolith "
             f"{mono_v:.6e}"
         )
-    # Wind invest spans all three regions (owner-selection exercised).
+    # Wind invest spans two regions (owner-selection exercised).
     assert {k[0] for k in asm} == INVEST_UNITS
 
     # --- the non-investable pipes contribute no invested capacity ----------

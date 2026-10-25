@@ -1,5 +1,40 @@
 ## Unreleased
 
+- **Nodes in a `new_stepduration` group sum their flows over each coarse
+  step.** A node of a group whose `new_stepduration` is longer than the
+  solve's time step is now balanced once per coarse step by summing all its
+  flows of the solve's time steps; flows, online status and reserves of every
+  unit and connection stay at the solve's time step. Before, a flow between an
+  hourly and a daily node (e.g. an electrolyser from hourly electricity to
+  daily hydrogen) entered the daily balance only in the first hour of each
+  day, multiplied by 24, so the other hours produced hydrogen from free
+  electricity; flows between two daily nodes were similar, a unit listed in a
+  daily group was missing from its hourly node's balance, DC lines' reverse
+  flow was missing from a coarse bus's balance, and a node's balance could
+  pick up the output arcs of another node. Models with coarse groups now pay
+  for the energy they convert and get higher costs (the three-region hydrogen
+  test model: +14 %). Coarse groups now also work without storage nodes, in
+  rolling solves (a coarse step ends at each roll's realized end), with a
+  solve-level `new_stepduration` (coarse means longer than the solve's step;
+  a shorter group step is ignored with a warning) and with two groups of
+  different steps; coarse storage follows its `storage_binding_method`,
+  `fix_start`, `storage_solve_horizon_method` (reference value) and nested
+  `fix_price`. Online (unit commitment) variables of
+  units next to coarse nodes now exist at every time step. A group step that
+  is not a multiple of the solve's step is now an error (before the coarse
+  handling was silently dropped). Prices of coarse nodes and of
+  `bind_intraperiod_blocks` storage nodes had the wrong sign; outputs no
+  longer copy a coarse step's value to its other time steps. Listing a unit
+  or connection in a coarse group has no effect on time resolution (a
+  warning names those that touch a node outside the group). Benders
+  decomposition now allows a boundary between nodes of different time
+  resolutions.
+
+- **A representative base period that does not start at a time step of the
+  timeline is an error.** Before, it was ordered after all other base periods
+  without a message, so the storage chain between base periods linked it out
+  of time order.
+
 - **Solve-level `new_stepduration` keeps the gaps between timeset blocks and
   every period's time steps.** With a timeset made of separate blocks (e.g.
   sample weeks), the aggregated steps of a solve with `new_stepduration` now

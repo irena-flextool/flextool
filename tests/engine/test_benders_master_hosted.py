@@ -8,17 +8,15 @@ master-local arcs/procs native in the master — C6/C7), folds the
 master's stand-alone (autarky) cost into the stall-guard reference
 scale (plan D-c, via the coordinator's ``extra_reference_cost`` hook),
 extends the penalty precondition to master-hosted balance nodes (F9),
-rejects mixed-resolution and in-out-stabilized configurations it cannot
-solve EXACTLY (loud errors, never silent distortion), and rides the
-master's own invest/divest decisions on the Tier-1 handoff.
+and rides the master's own invest/divest decisions on the Tier-1 handoff.
 
 Fixture: the ``lh2_master_hourly`` sibling of the trade-invest LH2
 fixture (JSON-fixture DB per CLAUDE.md invariant #3) — node invest on
 ``lh2_B``, unit invest on ``liquefier_B``, small distinct flow costs on
 the connections, and the ``daily_group`` time aggregation REMOVED so
 every region↔master coupling arc joins SAME-resolution nodes (the
-driver hard-errors on a mixed-resolution boundary; the daily-block
-sibling ``lh2_master_build`` is the vehicle for THAT test).
+daily-group sibling ``lh2_master_build`` is the vehicle for the
+mixed-resolution boundary test).
 
 MAIN CONFIGURATION (the spec's 2-region exactness shape): pass
 ``regions=["region_A", "region_C"]`` — region B's whole subsystem
@@ -611,25 +609,43 @@ def test_straddling_unit_raises_through_driver(mh_data) -> None:
         solve_benders(data, REGIONS_ABC, max_iters=5, tol=1e-4)
 
 
-def test_mixed_resolution_coupling_raises_through_driver(_workdirs) -> None:
-    """On the DAILY-block sibling (``lh2_master_build``), hosting the
-    A/B carrier chains makes every electrolyser coupling arc join an
-    hourly node (elec) to a daily-block node (h2) — a mixed-resolution
-    boundary the single-sided half-flow pin cannot represent exactly
-    (it silently relaxes the model).  The driver must reject it up
-    front with the plain-English diagnostic pointing at the handover /
-    same-time-aggregation pattern."""
+def test_mixed_resolution_coupling_brackets_monolith(_workdirs) -> None:
+    """On the DAILY-group sibling (``lh2_master_build``), hosting the A/B
+    carrier chains makes every electrolyser coupling arc join an hourly
+    node (elec) to a daily node (h2).  Every flow lives on the hourly
+    steps and a daily node sums its hourly flows (nodeBalanceCoarse_eq),
+    so the pinned per-hour half-flows describe the same physical flow on
+    both sides and the decomposition is EXACT: its lower bound stays below
+    the monolith optimum M and its feasible-point upper bound above it
+    (a relaxation would let the upper bound fall below M) while the gap
+    closes.  Before c15b the monolith's emit was asymmetric (the daily
+    side read the flow only at the day's first hour), the split was a
+    relaxation, and the driver rejected the configuration.
+
+    The 2 × 48 hourly electrolyser coupling columns make plain Benders
+    slow here (gap 1.2e-2 after 300 iterations); in-out stabilization
+    (λ = 0.7) closes it to ~1e-2 in 80 iterations."""
     mb_data = load_flextool(_workdirs[2])
     data = _host_nodes(
         mb_data, frozenset({"h2_A", "lh2_A", "h2_B", "lh2_B"}), REGIONS_ABC
     )
-    with pytest.raises(RuntimeError) as excinfo:
-        solve_benders(data, REGIONS_ABC, max_iters=5, tol=1e-4)
-    msg = str(excinfo.value)
-    assert "different time resolutions" in msg
-    assert "electrolyser" in msg
-    assert "What this means:" in msg
-    assert "new_stepduration" in msg
+    pb = Problem()
+    build_flextool(pb, data)
+    mono = pb.solve()
+    assert mono.optimal
+    M = mono.obj
+    res = solve_benders(
+        data, REGIONS_ABC, max_iters=80, tol=1e-4,
+        monolith_objective=M, scale_the_objective=OBJ_SCALE, in_out_weight=0.7,
+    )
+    assert res.lower_bound <= M * (1 + 1e-9), (
+        f"LB {res.lower_bound:.8e} exceeds the monolith optimum {M:.8e}"
+    )
+    assert res.total_objective >= M * (1 - 1e-9), (
+        f"feasible-point UB {res.total_objective:.8e} below the monolith "
+        f"optimum {M:.8e}: the split is a relaxation"
+    )
+    assert res.gap < 2e-2, f"gap {res.gap:.3e} after {res.iterations} iterations"
 
 
 def test_in_out_with_master_hosted_converges_to_monolith(mh_data, monolith) -> None:

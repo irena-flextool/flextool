@@ -34,10 +34,8 @@ The helpers are intentionally tiny (5–25 LOC each).  Common patterns:
    Example: ``group_entity`` unions ``group__node``, ``group__unit``,
    ``group__connection`` into one ``(group, entity)`` frame.
 
-Block-aware filters (``flow_to_n``, ``flow_from_n``, etc.) are NOT
-implemented here — they depend on multi-resolution preprocessed
-auxiliary tables (``process_side_block``, ``entity_block``,
-``overlap_set``) that are themselves Derived (Γ.3) artefacts.
+``flow_to_n`` / ``flow_from_n`` are Derived (``params._block``): every arc
+enters the balance of both its nodes.
 
 See ``audit/db_direct_param_map.md`` §1, §5, §7.2 for the contract.
 """

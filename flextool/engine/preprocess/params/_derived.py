@@ -67,32 +67,6 @@ from flextool.engine.input._param_shapes import (
 )
 
 
-def _load_block_layout_with_seed(workdir, provider):
-    """Common helper for the three block-aware derived-helpers that
-    consume a ``BlockLayout`` from a Provider.
-
-    Resolution order:
-
-    1. *provider* is non-None → :meth:`BlockLayout.load_from_solve_data`
-       reads from it directly (cascade path).
-    2. *provider* is None but *workdir* is set →
-       :meth:`load_from_solve_data` seeds an ephemeral Provider from
-       ``workdir/solve_data`` internally.
-    3. Neither available → ``None``.
-    """
-    from flextool.engine.preprocess.params._block_layout import BlockLayout
-    if provider is None and workdir is None:
-        return None
-    from pathlib import Path
-    if workdir is not None:
-        sd = Path(workdir) / "solve_data"
-        if provider is None and not sd.exists():
-            return None
-    else:
-        sd = Path(".")
-    return BlockLayout.load_from_solve_data(sd, provider=provider)
-
-
 def _provider_has_key(provider, path: "Path | str") -> bool:
     """Provider-only existence check.  Returns ``True`` iff the live
     :class:`FlexDataProvider` carries the artefact for *path* (under
@@ -418,7 +392,6 @@ _ENTITY_UNITSIZE_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary(
 _NODE_UNITSIZE_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 if TYPE_CHECKING:
-    from flextool.engine.preprocess.params._block_layout import BlockLayout
     from flextool.engine.input._input_source import InputSource
     from flextool.engine.preprocess._solve_context import SolveContext
 
@@ -2405,14 +2378,8 @@ def flow_to_n(source: "InputSource",
               pss: pl.DataFrame) -> pl.DataFrame:
     """Augment pss with ``n = sink``.  Schema ``[p, source, sink, n]``.
 
-    Block-compatibility filtering (the ``process_side_block.csv`` /
-    ``entity_block.csv`` / ``overlap_set.csv`` triple-join in
-    flex_data.py:713-762) is OUT OF SCOPE for the DB-direct overlay —
-    those auxiliary tables are themselves preprocessed Derived
-    artefacts.  The default behaviour is "no block filtering" which
-    is correct on every fixture except those activating non-default
-    blocks (``lh2_three_region``, ``5weeks_battery_intraperiod_blocks``
-    — explicitly deferred to Batch C in the task spec).
+    Every arc enters the balance of its sink node (a node of a coarse
+    new_stepduration group sums its fine flows, nodeBalanceCoarse_eq).
     """
     if pss is None or pss.height == 0:
         return pl.DataFrame(schema={"p": schema_dtype(_enums, "p"),
@@ -3078,36 +3045,16 @@ def apply_derived_b(
         # field stays declared on ``FlexData`` for ``getattr`` defenders
         # but defaults to ``None``.
 
-    # flow_to_n / flow_from_n — Δ.9 closes the Δ.3 gap: the lazy
-    # cluster E port now applies the block-aware filter on the source-
-    # driven path, mirroring ``flex_data.py::_load_process_topology`` lines
-    # 728-782.  Single-block fixtures are no-ops; multi-block fixtures
-    # (work_lh2_three_region) drop arc rows incompatible with the
-    # destination node's block.
-    # Δ.12b: bundle load failure is non-fatal (workdir without block
-    # CSVs => no block filtering).  Helper exceptions propagate.
+    # flow_to_n / flow_from_n: every arc enters the balance of both its nodes (a coarse node sums its fine
+    # flows over each coarse step, nodeBalanceCoarse_eq).
     if pss_frame is not None and pss_frame.height > 0:
         from flextool.engine.preprocess.params._block import (
-            flow_to_n_block_filtered,
-            flow_from_n_block_filtered,
+            flow_from_n_frame,
             flow_from_nodeBalance_seed,
-            load_block_bundle,
+            flow_to_n_frame,
         )
-        # Phase 2 multi-block fast-path: thread the in-memory layout
-        # (built source-only by the fast loader and stashed on
-        # ``FlexData``) so the block-aware filter fires on the fast path
-        # too — without it, multi-block fixtures produce un-filtered
-        # ``flow_from_nodeBalance_*`` seeds and the resulting LP is
-        # over-constrained.
-        fd_layout_b = getattr(flex_data, "block_layout", None)
-        try:
-            bundle = load_block_bundle(
-                workdir, block_layout=fd_layout_b, provider=provider,
-            )
-        except Exception:
-            bundle = None
-        ftn_db = flow_to_n_block_filtered(pss_frame, bundle)
-        ffn_db = flow_from_n_block_filtered(pss_frame, bundle)
+        ftn_db = flow_to_n_frame(pss_frame)
+        ffn_db = flow_from_n_frame(pss_frame)
         if ftn_db is not None and ftn_db.height > 0:
             flex_data.flow_to_n = ftn_db
         if ffn_db is not None and ffn_db.height > 0:
@@ -3120,11 +3067,7 @@ def apply_derived_b(
         # nodeBalance nodes (e.g. transmission discharge into a
         # balance node) don't appear in nodeBalance_eq and the LP
         # decouples on multi-arc fixtures
-        # (``work_lh2_three_region``).  ``apply_derived_e`` step 4c
-        # is now an idempotent overlay: it re-applies the same
-        # block-compat filter when bundle data is present, but the
-        # seed produced here already includes the filter so the
-        # overlay is a no-op.
+        # (``work_lh2_three_region``).
         # Source-side flows must be gathered for BOTH plain ``nodeBalance``
         # nodes and ``balance_within_period`` (``nodeBalancePeriod``) nodes —
         # a period node that is a *source* on an arc (e.g. GAS → gas plant)
@@ -3149,15 +3092,13 @@ def apply_derived_b(
         if (nb_for_ffnb is not None and nb_for_ffnb.height > 0
                 and pss_eff_frame is not None
                 and pss_eff_frame.height > 0):
-            ffnb_eff = flow_from_nodeBalance_seed(
-                pss_eff_frame, nb_for_ffnb, bundle)
+            ffnb_eff = flow_from_nodeBalance_seed(pss_eff_frame, nb_for_ffnb)
             if ffnb_eff is not None and ffnb_eff.height > 0:
                 flex_data.flow_from_nodeBalance_eff = ffnb_eff
         if (nb_for_ffnb is not None and nb_for_ffnb.height > 0
                 and pss_noEff_frame is not None
                 and pss_noEff_frame.height > 0):
-            ffnb_noEff = flow_from_nodeBalance_seed(
-                pss_noEff_frame, nb_for_ffnb, bundle)
+            ffnb_noEff = flow_from_nodeBalance_seed(pss_noEff_frame, nb_for_ffnb)
             if ffnb_noEff is not None and ffnb_noEff.height > 0:
                 flex_data.flow_from_nodeBalance_noEff = ffnb_noEff
 
@@ -7847,120 +7788,19 @@ def dtttdt_with_jump_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
-def _repday_segment_map(
-    per_period: dict[str, list[tuple[str, int]]],
-) -> dict[tuple[str, str], int]:
-    """Map ``(period, fine_step_label) -> representative-period segment id``.
-
-    Representative periods are concatenated into a single FlexTool period
-    but are sampled non-adjacently; they appear as gaps (>1) in the fine
-    timeline rank.  The segment id increments at each such gap, so all
-    fine steps belonging to the same representative day share one id.  On
-    a plain contiguous timeline (no gaps) every step is segment 0.
-    """
-    out: dict[tuple[str, str], int] = {}
-    for d_key, steps in per_period.items():
-        seg = 0
-        prev_rank: int | None = None
-        for (t, rk) in steps:
-            if prev_rank is not None and rk - prev_rank > 1:
-                seg += 1
-            out[(d_key, t)] = seg
-            prev_rank = rk
-    return out
-
-
-def _guard_coarse_blocks_within_repday(
-    period_block_time: pl.DataFrame,
-    label_seg: dict[tuple[str, str], int],
-    coarse_blocks: list[str],
-) -> None:
-    """Reject coarse blocks that straddle a representative-period seam.
-
-    ``period_block_time`` maps each coarse block ``(d, b_first)`` to the
-    fine steps ``t`` it covers.  ``label_seg`` maps ``(d, t)`` to a
-    representative-period segment id.  If any coarse block covers fine
-    steps from more than one representative period, its aggregated energy
-    balance would combine flows from days that are months apart — the
-    result is meaningless — so we fail loud with an explanation.
-
-    Raised as :class:`FlexToolConfigError` so it surfaces as a
-    configuration problem the user can fix (choose a ``new_stepduration``
-    that evenly divides the representative-period length).
-    """
-    straddlers: list[tuple[str, str]] = []
-    for (dval, bfirst), grp in period_block_time.group_by(
-            ["d", "b_first"], maintain_order=True):
-        segs = {label_seg.get((dval, t)) for t in grp["t"].to_list()}
-        if len(segs) > 1:
-            straddlers.append((dval, bfirst))
-    if straddlers:
-        example_period, example_block = straddlers[0]
-        raise FlexToolConfigError(
-            "Coarse time resolution is not aligned with the representative "
-            "periods.\n\n"
-            f"The group(s) {sorted(coarse_blocks)} set a coarser time "
-            "resolution (new_stepduration) on their nodes, but that step "
-            "length does not evenly divide the length of a representative "
-            "period. As a result at least one coarse time step "
-            f"(period {example_period!r}, block starting {example_block!r}) "
-            "would span the boundary BETWEEN two representative periods.\n\n"
-            "Representative periods are individual days/weeks sampled from "
-            "across the year — they are not consecutive in real time. A "
-            "single coarse time step that reaches across that boundary would "
-            "average together flows from days that are months apart, which is "
-            "not a meaningful storage balance.\n\n"
-            "Fix: choose a new_stepduration that divides the representative-"
-            "period length exactly (e.g. for 24-hour representative days use "
-            "2, 3, 4, 6, 8, 12 or 24 hours — not 5), or remove the coarse "
-            "resolution from these nodes."
-        )
-
-
-def _fine_rank_map(
-    per_period: dict[str, list[tuple[str, int]]],
-) -> dict[tuple[str, str], int]:
-    """Map ``(period, fine_step_label) -> global fine-timeline rank`` so
-    coarse-block first-steps can be ordered chronologically within a
-    representative-period segment (string labels do not always sort in
-    time order across timelines)."""
-    out: dict[tuple[str, str], int] = {}
-    for d_key, steps in per_period.items():
-        for (t, rk) in steps:
-            out[(d_key, t)] = rk
-    return out
-
-
 def period_block_family_from_source(source: "InputSource",
                                        active_solve: str | None,
                                        workdir: Path | None = None,
                                        *,
-                                       block_layout: "BlockLayout | None" = None,
                                        ctx: "SolveContext | None" = None,
                                        provider: "object | None" = None,
                                        ) -> dict | None:
-    """Build the ``period_block_set`` / ``period_block_succ`` /
-    ``period_block_time`` frames mirrored on
-    ``timeline_config.make_period_block`` AND the multi-resolution
-    synthesis branch in ``flex_data.py:1985-2126``.
+    """``period_block`` ``(d, b_first)``, ``period_block_succ`` ``(d, b_first, b_next)`` and
+    ``period_block_time`` ``(d, b_first, t)``: the timeset blocks of each period (mirrors
+    ``timeline_config.make_period_block``) for the ``bind_intraperiod_blocks`` nodes.  Per period the active
+    steps are taken in rank order; a new block starts where the rank gap to the previous step exceeds 1.
 
-    Two paths:
-
-      1. **Default (timeset-block detection)**: per realized period,
-         sort active steps by rank.  A new block starts when the rank
-         gap to the previous step exceeds 1.  This matches
-         ``make_period_block`` exactly.
-
-      2. **Multi-resolution synthesis**: when the workdir's
-         ``entity_block.csv`` assigns coarse blocks (sd>1) to one or
-         more nodeBalance entities AND multiple distinct blocks are in
-         use, REPLACE the block decomposition with the daily-aggregated
-         coarse-block structure: per-period block_firsts come from the
-         coarse block's step list in ``block_step_duration.csv``;
-         ``period_block_time`` comes from ``overlap_set.csv`` (rows
-         where ``b_coarse=coarse, b_fine=default``).
-
-    Returns dict with the three frames or None when source insufficient.
+    Returns the three frames, or None when the source is insufficient.
     """
     info = _dt_period_active_steps(source, active_solve, workdir, ctx=ctx, provider=provider)
     if info is None:
@@ -7997,116 +7837,6 @@ def period_block_family_from_source(source: "InputSource",
                                           orient="row").unique()
                           if pbt_rows else None)
 
-    # Multi-resolution synthesis (flex_data.py:1985-2126 mirror).  Δ.2:
-    # consume frames via BlockLayout.load_from_solve_data instead of
-    # re-reading the CSVs at the call site.  Phase 2 multi-block fast-
-    # path: prefer the in-memory ``block_layout`` (built source-only by
-    # the fast loader and stashed on FlexData) over the workdir CSV
-    # read — on the fast path the workdir's solve_data/ is empty.
-    bl = block_layout
-    if bl is None and (workdir is not None or provider is not None):
-        bl = _load_block_layout_with_seed(workdir, provider)
-    if bl is not None:
-        eb = bl.entity_block_frame
-        bsd = bl.block_step_duration_frame
-        if eb.height > 0 and bsd.height > 0:
-            distinct_blocks = bsd["block"].unique().to_list()
-            if len(distinct_blocks) >= 2:
-                coarse = bl.coarse_blocks(threshold=1.0)
-                if coarse:
-                    non_default_nodes = eb.filter(
-                        pl.col("block").is_in(coarse))
-                    if non_default_nodes.height > 0:
-                        coarse_use = non_default_nodes["block"] \
-                                      .unique().to_list()
-                        bsd_c = bsd.filter(
-                            pl.col("block").is_in(coarse_use))
-                        new_pb = (bsd_c
-                            .pipe(rename_to_axis, {"period": "d", "step": "b_first"})
-                            .select("d", "b_first").unique())
-                        # period_block_succ: cyclic per (block, period),
-                        # SEGMENTED by representative period.  Representative
-                        # periods are concatenated into one FlexTool period
-                        # but are NOT temporally adjacent (they are days
-                        # sampled months apart); they show up as gaps in the
-                        # fine-timeline rank.  Closing one cyclic storage loop
-                        # over the whole period would let a coarse node carry
-                        # inventory across months-apart representative days as
-                        # if consecutive (the coarse-storage relaxation bug).
-                        # Instead we close one cyclic loop PER representative
-                        # period.  On a plain contiguous timeline there are no
-                        # gaps, so this collapses to the previous whole-period
-                        # loop (no-op).
-                        label_seg = _repday_segment_map(per_period)
-                        label_rank = _fine_rank_map(per_period)
-                        succ_rows: list[tuple[str, str, str]] = []
-                        bsd_sorted = bsd_c.pipe(
-                            rename_to_axis,
-                            {"period": "d", "step": "b_first"}
-                            ).sort("block", "d", "b_first")
-                        for (blk, dval), grp in bsd_sorted.group_by(
-                                ["block", "d"], maintain_order=True):
-                            bfs = grp["b_first"].to_list()
-                            segs: dict[int, list[str]] = {}
-                            for b in bfs:
-                                seg = label_seg.get((dval, b), 0)
-                                segs.setdefault(seg, []).append(b)
-                            for seg_id in sorted(segs):
-                                seg_bfs = sorted(
-                                    segs[seg_id],
-                                    key=lambda b: label_rank.get((dval, b), 0))
-                                n = len(seg_bfs)
-                                for i in range(n):
-                                    succ_rows.append(
-                                        (dval, seg_bfs[i],
-                                         seg_bfs[(i + 1) % n]))
-                        new_pbs = (pl.DataFrame(
-                            succ_rows,
-                            schema=["d", "b_first", "b_next"],
-                            orient="row")
-                            if succ_rows else None)
-                        new_pbt = None
-                        ov = bl.overlap_set_frame
-                        if ov.height > 0:
-                            # Mirror the canonical block-axis cascade
-                            # column name ``bk`` (see _AXIS_SYNONYMS in
-                            # _axis_enums.py: ``"b" → "branch"``,
-                            # ``"bk" → "block"``).  Using ``"b"`` here
-                            # would cast block tokens to the BRANCH enum
-                            # and null every row out.  Parallel pattern:
-                            # _block.py:696-705.
-                            ov = ov.pipe(rename_to_axis, {
-                                "period": "d",
-                                "block_coarse": "bk",
-                                "step_coarse": "b_first",
-                                "block_fine": "b_fine",
-                                "step_fine": "t",
-                            })
-                            ov_keep = ov.filter(
-                                pl.col("bk").is_in(coarse_use)
-                                & (pl.col("b_fine") == "default"))
-                            if ov_keep.height > 0:
-                                new_pbt = ov_keep.select(
-                                    "d", "b_first", "t").unique()
-                        # Guard (Option C): a coarse resolution block must lie
-                        # ENTIRELY within one representative period.  When
-                        # new_stepduration does not evenly divide the length of
-                        # a representative period, a coarse block straddles the
-                        # seam between two representative days — which are
-                        # sampled months apart, not consecutive — so its
-                        # aggregated energy balance would mix flows from
-                        # unrelated days.  Reject with a plain-English message
-                        # rather than silently produce a meaningless block.
-                        if new_pbt is not None and new_pbt.height > 0:
-                            _guard_coarse_blocks_within_repday(
-                                new_pbt, label_seg, coarse_use)
-                        if new_pb is not None and new_pb.height > 0:
-                            period_block = new_pb
-                        if new_pbs is not None and new_pbs.height > 0:
-                            period_block_succ = new_pbs
-                        if new_pbt is not None and new_pbt.height > 0:
-                            period_block_time = new_pbt
-
     return dict(
         period_block=period_block,
         period_block_succ=period_block_succ,
@@ -8115,7 +7845,7 @@ def period_block_family_from_source(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# §3.9.2 — nodeStateBlock multi-resolution synthesis
+# §3.9.2 — nodeStateBlock (bind_intraperiod_blocks nodes)
 # ---------------------------------------------------------------------------
 
 
@@ -8155,236 +7885,20 @@ def _node_storage_binding_method_with_fallback(source: "InputSource"
     return out
 
 
-def _coarse_blocks_from_source(source: "InputSource"
-                                  ) -> tuple[set[str], dict[str, str]] | None:
-    """Identify *coarse* blocks (block_step_duration > 1) and the
-    per-entity block assignment from the source.
-
-    Returns ``(coarse_blocks, entity_block)``: a set of coarse block
-    names and a dict ``entity -> block_name`` for entities whose block
-    assignment is non-default.  Returns ``None`` when the schema is
-    incomplete.
-
-    Currently the multi-resolution synthesis is driven primarily by
-    flextool's preprocessing CSVs (``entity_block.csv`` /
-    ``block_step_duration.csv`` / ``overlap_set.csv``) that are NOT yet
-    on the Spine schema in a way that polar_high's Param helpers can read.
-    The Spine layer exposes ``solve.contains_solves`` and
-    ``timeset.timeset_duration``; the per-block (``daily_group``,
-    ``hourly_group``, ``default``) infrastructure is the responsibility
-    of ``preprocessing/blocks.py`` running on the canonical
-    ``solve_data/`` CSVs.
-
-    For the DB-direct port, the synthesis ALSO falls back to reading
-    the on-disk CSVs from the workdir — see the wrapper
-    ``nodeStateBlock_from_source`` which is workdir-aware.  This
-    function returns only what's discoverable on the Spine schema.
-    """
-    # Probe for any source-level info about blocks.  In current schemas
-    # (v25-v28) we don't have ``block`` as a queryable entity class with
-    # ``step_duration`` as a parameter — return None.
-    return None
-
-
-def nodeStateBlock_from_source(source: "InputSource",
-                                  workdir: Path | None,
-                                  *,
-                                  block_layout: "BlockLayout | None" = None,
-                                  provider: "object | None" = None,
-                                  ) -> pl.DataFrame | None:
-    """Synthesise the ``nodeStateBlock`` set per audit §3.9.2.
-
-    Two contributing branches (matching ``flex_data.py:_load_storage``):
-
-      1. **Explicit method**: nodes whose
-         ``storage_binding_method == 'bind_intraperiod_blocks'`` join
-         the set directly.
-      2. **Multi-resolution synthesis**: when the workdir's
-         ``entity_block.csv`` assigns *coarse* blocks (any
-         ``block_step_duration > 1``) AND the scenario has multiple
-         distinct blocks AND the entity is on the nodeBalance side, that
-         entity is folded into ``nodeStateBlock`` so the daily-aggregation
-         balance fires.
-
-    The flextool preprocessing emits the ``entity_block.csv``,
-    ``block_step_duration.csv`` and ``nodeStateBlock.csv`` to
-    ``solve_data/``; the Spine schema in v25-v28 does not yet expose
-    these as queryable entity classes.  We therefore read the
-    workdir-side CSVs as the source of truth for the synthesis.
-
-    Returns ``None`` if neither branch yields any rows (most fixtures).
-    """
-    rows: list[str] = []
-    # Branch 1: explicit bind_intraperiod_blocks method on Spine schema.
+def nodeStateBlock_from_source(source: "InputSource") -> pl.DataFrame | None:
+    """The ``nodeStateBlock`` set: nodes with ``storage_binding_method == 'bind_intraperiod_blocks'``, balanced
+    once per timeset block (``nodeBalanceBlock_eq``).  ``None`` when there are none.  (Nodes of a coarse
+    new_stepduration group are ``nodeCoarse``, see ``params._coarse``.)"""
     sbm = _try_param(source, "node", "storage_binding_method")
-    if sbm is not None:
-        intraperiod = (sbm.lazy()
-                          .filter(pl.col("value")
-                                  == "bind_intraperiod_blocks")
-                          .select(alias_to_axis("name", "n"))
-                          .collect())
-        if intraperiod.height > 0:
-            rows.extend(intraperiod["n"].to_list())
-    # Branch 2: multi-resolution synthesis via in-memory BlockLayout
-    # (Δ.2: consolidated through ``BlockLayout.load_from_solve_data``).
-    # Phase 2 multi-block fast-path: prefer the in-memory ``block_layout``
-    # (built source-only by the fast loader and stashed on FlexData) so
-    # the workdir CSV read can be skipped when ``solve_data/`` is empty.
-    bl = block_layout
-    if bl is None and (workdir is not None or provider is not None):
-        bl = _load_block_layout_with_seed(workdir, provider)
-    if bl is not None:
-        eb = bl.entity_block_frame
-        bsd = bl.block_step_duration_frame
-        if eb.height > 0 and bsd.height > 0:
-            distinct_blocks = bsd["block"].unique().to_list()
-            if len(distinct_blocks) >= 2:
-                coarse = bl.coarse_blocks(threshold=1.0)
-                if coarse:
-                    # Filter to nodeBalance nodes — read node entities
-                    # from source (we don't have nodeBalance set on
-                    # Spine, but every node-entity is an
-                    # entity_block candidate here).
-                    nodes = _try_entities(source, "node")
-                    if nodes is not None:
-                        node_set = set(nodes["name"].to_list())
-                        picked = (eb
-                                   .filter(pl.col("block").is_in(coarse))
-                                   .filter(pl.col("entity").is_in(node_set))
-                                   ["entity"].unique().to_list())
-                        rows.extend(picked)
-    if not rows:
+    if sbm is None:
         return None
-    out = (pl.DataFrame({"n": sorted(set(rows))})
-              .unique().sort("n"))
-    if out.height == 0:
+    intraperiod = (sbm.lazy()
+                   .filter(pl.col("value") == "bind_intraperiod_blocks")
+                   .select(alias_to_axis("name", "n"))
+                   .collect())
+    if intraperiod.height == 0:
         return None
-    return out
-
-
-# ---------------------------------------------------------------------------
-# §3.9.4 — arc_sink_block_dt / arc_source_block_dt + weights
-# ---------------------------------------------------------------------------
-
-
-def arc_block_dt_from_source(source: "InputSource",
-                                 workdir: Path | None,
-                                 nodeStateBlock_df: pl.DataFrame | None,
-                                 period_block_time_df: pl.DataFrame | None,
-                                 pss: pl.DataFrame | None,
-                                 *,
-                                 block_layout: "BlockLayout | None" = None,
-                                 provider: "object | None" = None,
-                                 ) -> dict | None:
-    """Build per-arc daily-block aggregation frames.
-
-    For each arc (p, source, sink) participating in nodeStateBlock on its
-    sink (or source) side, project to ``(p, source, sink, d, b_first, t,
-    weight)`` with weight = block_step_duration on the arc-side block.
-
-    Inputs (workdir-side CSVs as source-of-truth, since block schema is
-    on the preprocessing side):
-
-      * ``solve_data/process_side_block.csv`` — (process, side, block).
-      * ``solve_data/block_step_duration.csv`` — (block, period, step,
-        step_duration).
-      * ``period_block_time`` — (d, b_first, t) computed Param.
-      * ``pss`` — (p, source, sink) topology.
-      * ``nodeStateBlock_df`` — set of nodes that pull this aggregation.
-
-    Returns dict with ``arc_sink_block_dt``, ``arc_source_block_dt``,
-    ``p_arc_sink_weight``, ``p_arc_source_weight``.  Any of these may be
-    ``None`` when the corresponding side has no rows.
-    """
-    if (workdir is None or nodeStateBlock_df is None
-            or period_block_time_df is None or pss is None
-            or pss.height == 0 or nodeStateBlock_df.height == 0
-            or period_block_time_df.height == 0):
-        return None
-    # Phase 4.8f: defensive cast of axis-aware columns on incoming
-    # cascade-helper params so joins on ``d``/``t``/``source``/``sink``
-    # never observe an Enum/Utf8 mismatch under axis-enum activation.
-    _enums = get_global_axis_enums()
-    if _enums is not None:
-        nodeStateBlock_df = cast_frame_axes(nodeStateBlock_df, _enums)
-        period_block_time_df = cast_frame_axes(period_block_time_df, _enums)
-        pss = cast_frame_axes(pss, _enums)
-    # Δ.2: consume block frames via BlockLayout instead of reading
-    # process_side_block.csv + block_step_duration.csv directly.
-    # Phase 2 multi-block fast-path: prefer the in-memory ``block_layout``
-    # (built source-only by the fast loader and stashed on FlexData) so
-    # the workdir CSV read can be skipped when ``solve_data/`` is empty.
-    bl = block_layout
-    if bl is None:
-        bl = _load_block_layout_with_seed(workdir, provider)
-        if bl is None:
-            return None
-    if (bl is None
-            or bl.process_side_block_frame.height == 0
-            or bl.block_step_duration_frame.height == 0):
-        return None
-    psb = bl.process_side_block_frame.pipe(
-        rename_to_axis, {"process": "p", "block": "b_f"})
-    bsd_arc = bl.block_step_duration_frame.pipe(
-        rename_to_axis,
-        {"block": "b_f", "period": "d", "step": "t",
-          "step_duration": "weight"})
-    # Phase 4.8f: ``nsb_set`` participates in ``is_in`` against
-    # ``pss['sink']`` / ``pss['source']`` whose canonical axis is the
-    # ``entity`` union Enum vocabulary.  ``nodeStateBlock_df['n']``
-    # carries the ``node`` Enum vocabulary which differs from the entity
-    # Enum.  Use a 1-column frame and ``semi`` join (membership) on the
-    # entity axis instead of ``is_in`` so polars resolves both sides via
-    # the same Enum dtype path (no Series-side dtype mismatch).
-    nsb_set_e_df = (nodeStateBlock_df.select(pl.col("n").alias("e"))
-                                       .unique())
-    if _enums is not None:
-        nsb_set_e_df = cast_frame_axes(nsb_set_e_df, _enums)
-    pbt = period_block_time_df
-
-    out: dict[str, object | None] = {
-        "arc_sink_block_dt": None,
-        "arc_source_block_dt": None,
-        "p_arc_sink_weight": None,
-        "p_arc_source_weight": None,
-    }
-
-    psb_sink = psb.filter(pl.col("side") == "sink").select("p", "b_f")
-    sink_arcs = (pss
-        .join(nsb_set_e_df.rename({"e": "sink"}), on="sink", how="semi")
-        .join(psb_sink, on="p", how="inner"))
-    if sink_arcs.height > 0:
-        ab = (sink_arcs
-            .join(bsd_arc, on="b_f", how="inner")
-            .join(pbt, on=["d", "t"], how="inner")
-            .select("p", "source", "sink", "d", "b_first", "t", "weight")
-            .unique())
-        if ab.height > 0:
-            out["arc_sink_block_dt"] = ab
-            wf = (ab.select("p", "source", "sink", "d", "t", "weight")
-                     .unique()
-                     .rename({"weight": "value"}))
-            out["p_arc_sink_weight"] = Param(
-                ("p", "source", "sink", "d", "t"), wf)
-
-    psb_src = psb.filter(pl.col("side") == "source").select("p", "b_f")
-    src_arcs = (pss
-        .join(nsb_set_e_df.rename({"e": "source"}), on="source", how="semi")
-        .join(psb_src, on="p", how="inner"))
-    if src_arcs.height > 0:
-        ab = (src_arcs
-            .join(bsd_arc, on="b_f", how="inner")
-            .join(pbt, on=["d", "t"], how="inner")
-            .select("p", "source", "sink", "d", "b_first", "t", "weight")
-            .unique())
-        if ab.height > 0:
-            out["arc_source_block_dt"] = ab
-            wf = (ab.select("p", "source", "sink", "d", "t", "weight")
-                     .unique()
-                     .rename({"weight": "value"}))
-            out["p_arc_source_weight"] = Param(
-                ("p", "source", "sink", "d", "t"), wf)
-    return out
+    return pl.DataFrame({"n": sorted(set(intraperiod["n"].to_list()))})
 
 
 # ---------------------------------------------------------------------------
@@ -8900,10 +8414,6 @@ E_PUBLIC_FIELDS: tuple[str, ...] = (
     "period_block",
     "period_block_succ",
     "period_block_time",
-    "arc_sink_block_dt",
-    "arc_source_block_dt",
-    "p_arc_sink_weight",
-    "p_arc_source_weight",
     "p_state_upper",
     "p_state_existing_capacity",
     "storage_use_reference_value",
@@ -8927,28 +8437,18 @@ def apply_derived_e(
 
     Order — dependency-driven:
       1. dtttdt + auxiliary lag frames (§3.9.1).
-      2. period_block / _succ / _time (§3.9.3).
-      3. nodeStateBlock multi-resolution synthesis (§3.9.2).
-      4. arc_sink_block_dt / arc_source_block_dt + weights (§3.9.4).
-      4b. nodeState_last_dt + flow_from_nodeBalance block filter (Δ.9).
+      2. period_block / _succ / _time: the timeset blocks of bind_intraperiod_blocks nodes (§3.9.3).
+      3. nodeStateBlock: the bind_intraperiod_blocks nodes (§3.9.2).
+      4. nodeState_last_dt.
       5. p_state_existing_capacity / p_state_upper (§3.9.5).
       6. storage_use_reference_value (§3.9.6).
       7. p_roll_continue_state / p_fix_storage_quantity (§3.9.7).
       8. dtt_timeline_matching / period_branch (§3.9.8).
 
-    Δ.3 replaced the previous ``derived_overrides_e`` dict-return;
-    Δ.4 deleted the deprecated wrapper alias.
-    Δ.9 wires every cluster E consumer onto a single ``BlockBundle``
-    instance (replacing four separate ``BlockLayout.load_from_solve_data``
-    calls per solve) and lands the previously-CSV-only
-    ``nodeState_last_dt`` + ``flow_from_nodeBalance_*`` block filter on
-    the source-driven path.
+    The coarse new_stepduration groups are not handled here: ``load_flextool`` derives their frames for every
+    solve (``params._coarse.coarse_node_frames``).
     """
-    from flextool.engine.preprocess.params._block import (
-        load_block_bundle,
-        nodeState_last_dt_lf,
-        flow_from_nodeBalance_block_filtered,
-    )
+    from flextool.engine.preprocess.params._block import load_block_bundle, nodeState_last_dt_lf
 
     active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
     nodeState_df = getattr(flex_data, "nodeState", None)
@@ -8996,8 +8496,7 @@ def apply_derived_e(
     pb_family = None
     if has_state:
         pb_family = period_block_family_from_source(
-            source, active_solve, workdir, block_layout=fd_layout, ctx=ctx,
-            provider=provider)
+            source, active_solve, workdir, ctx=ctx, provider=provider)
     period_block_time_for_arc: pl.DataFrame | None = None
     if pb_family is not None:
         flex_data.period_block = pb_family["period_block"]
@@ -9017,61 +8516,18 @@ def apply_derived_e(
         flex_data.dtttdt_block_interior = dtttdt_block_interior_from_dtttdt(
             dtttdt_db, period_block_time_for_arc)
 
-    # 3. nodeStateBlock synthesis (storage-only) ----------------------
+    # 3. nodeStateBlock = the bind_intraperiod_blocks nodes (storage-only) -
     nsb_db = None
     if has_state:
-        nsb_db = nodeStateBlock_from_source(
-            source, workdir, block_layout=fd_layout, provider=provider)
+        nsb_db = nodeStateBlock_from_source(source)
         flex_data.nodeStateBlock = nsb_db
 
-    # 4. arc block weights --------------------------------------------
-    # NB: FlexData attribute is ``process_source_sink`` (not ``pss``);
-    # the prior ``getattr(..., "pss", ...)`` always returned None and
-    # the override never fired — local seeds in flex_data.py:3060+ were the
-    # sole producer.  Δ.17b Gap A: fixed; eff/noEff fallbacks also use
-    # canonical names.
-    pss = getattr(flex_data, "process_source_sink", None)
-    if pss is None:
-        pss = (getattr(flex_data, "process_source_sink_eff", None)
-               or getattr(flex_data, "process_source_sink_noEff", None))
-    if (nsb_db is not None and period_block_time_for_arc is not None
-            and pss is not None):
-        arc = arc_block_dt_from_source(
-            source, workdir, nsb_db, period_block_time_for_arc, pss,
-            block_layout=fd_layout, provider=provider)
-        if arc is not None:
-            for k in ("arc_sink_block_dt", "arc_source_block_dt",
-                       "p_arc_sink_weight", "p_arc_source_weight"):
-                setattr(flex_data, k, arc.get(k))
-
-    # 4b. nodeState_last_dt — Δ.9: previously only set by ``flex_data.py``'s
-    # ``_load_storage`` from the CSV path.  The lazy port lifts the
-    # algorithm onto the in-memory ``BlockBundle`` so source-driven
-    # parity holds for multi-block fixtures.
+    # 4. nodeState_last_dt: the default block's last step of each period (every node lives on the solve's
+    # steps; a coarse node's state is constant within its last coarse step).
     if has_state and block_bundle is not None:
         nsld = nodeState_last_dt_lf(nodeState_df, block_bundle).collect()
-        if nsld is not None and nsld.height > 0:
+        if nsld.height > 0:
             flex_data.nodeState_last_dt = nsld
-
-    # 4c. flow_from_nodeBalance block filter — Δ.9: mirrors
-    # ``flex_data.py::_load_storage`` lines 1664-1699.  Drops arc rows
-    # whose source block doesn't overlap the destination node's block.
-    # Δ.27: ``apply_derived_b`` is now the authoritative producer of the
-    # ``flow_from_nodeBalance_{eff,noEff}`` seed AND already applies the
-    # block-compat filter when a bundle is loadable from the workdir.
-    # This re-application is therefore an idempotent safety net for the
-    # case where ``apply_derived_b`` ran without a bundle (workdir's
-    # block CSVs not yet written) but ``apply_derived_e`` later resolves
-    # one — re-filter so the source-driven path matches the slow path.
-    if block_bundle is not None and block_bundle.has_block_data():
-        for fld in ("flow_from_nodeBalance_eff",
-                     "flow_from_nodeBalance_noEff"):
-            cur = getattr(flex_data, fld, None)
-            if cur is None or getattr(cur, "height", 0) == 0:
-                continue
-            filtered = flow_from_nodeBalance_block_filtered(cur, block_bundle)
-            if filtered is not None and filtered.height > 0:
-                setattr(flex_data, fld, filtered)
 
     # 5. p_state_existing_capacity / p_state_upper --------------------
     if has_state:
