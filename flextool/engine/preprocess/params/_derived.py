@@ -8415,6 +8415,32 @@ def dtttdt_block_interior_from_dtttdt(dtttdt: pl.DataFrame | None,
     return out if out.height > 0 else None
 
 
+def dtttdt_block_lag_from_dtttdt(dtttdt: pl.DataFrame | None,
+                                 period_block_time: pl.DataFrame | None,
+                                 ) -> pl.DataFrame | None:
+    """``(d, t, d_previous, t_previous_within_solve)``: the step each step of a ``bind_intraperiod_blocks`` block
+    continues from (the state change of ``nodeBalanceBlock_eq``).
+
+    The blocks of a period form a loop: inside the period the previous step (across block boundaries too), and the
+    period's first step continues from the period's own last step (the within-period lag of
+    ``flex_data._within_period_lag``).  Restricted to the steps of *period_block_time*.
+    """
+    if dtttdt is None or dtttdt.height == 0 or period_block_time is None or period_block_time.height == 0:
+        return None
+    from flextool.engine.preprocess.flex_data import _within_period_lag
+
+    lag = _within_period_lag(dtttdt)
+    if lag is None:
+        return None
+    steps = period_block_time.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique()
+    out = (lag.with_columns(_d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
+           .join(steps.rename({"d": "_d", "t": "_t"}), on=["_d", "_t"], how="semi")
+           .select("d", "t", pl.col("d").alias("d_previous"),
+                   pl.col("t_previous_within_period").alias("t_previous_within_solve"))
+           .sort("d", "t"))
+    return out if out.height > 0 else None
+
+
 # ---------------------------------------------------------------------------
 # Public — Γ.3.E field list (selective scope-checking).
 # ---------------------------------------------------------------------------
@@ -8424,6 +8450,7 @@ E_PUBLIC_FIELDS: tuple[str, ...] = (
     "dtttdt",
     "dtttdt_forward_only",
     "dtttdt_block_interior",
+    "dtttdt_block_lag",
     "nodeStateBlock",
     "period_block",
     "period_block_succ",
@@ -8529,6 +8556,8 @@ def apply_derived_e(
                 flex_data.dtttdt_forward_only = fwd
         flex_data.dtttdt_block_interior = dtttdt_block_interior_from_dtttdt(
             dtttdt_db, period_block_time_for_arc)
+        flex_data.dtttdt_block_lag = dtttdt_block_lag_from_dtttdt(
+            getattr(flex_data, "dtttdt", None), period_block_time_for_arc)
 
     # 3. nodeStateBlock = the bind_intraperiod_blocks nodes (storage-only) -
     nsb_db = None

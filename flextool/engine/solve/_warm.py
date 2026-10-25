@@ -125,7 +125,7 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "dtt_timeline_matching", "period_branch", "period_last",
     "nodeState_last_dt",
     "nodeStateBlock", "period_block", "period_block_succ",
-    "period_block_time", "dtttdt_block_interior",
+    "period_block_time", "dtttdt_block_interior", "dtttdt_block_lag",
     # Coarse new_stepduration group nodes.
     "nodeCoarse", "node_coarse_step", "node_coarse_interior",
     # RP-blended-weights (bind_within_solve_blended_weights) sets / params —

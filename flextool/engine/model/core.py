@@ -1310,6 +1310,17 @@ def _state_change_terms(b: _Build) -> dict:
         prev = Where(Lag(v_state, d.dtttdt_within_period, "t", "t_previous_within_period"), nodes)
         terms["state_change_wp"] = (prev - now) * su
 
+    # bind_intraperiod_blocks (nodeStateBlock): t⁻ from dtttdt_block_lag — the previous step of the period, the
+    # period's first step continuing from the period's last step (the blocks of a period form a loop).  These
+    # terms reach nodeBalanceBlock_eq only (nodeBalance_eq and nodeBalanceCoarse_eq skip block nodes), which sums
+    # them over each block: with the state constant within a block they telescope to v_state[b⁻] − v_state[b].
+    if b.has_nsb and _has_rows(d.dtttdt_block_lag):
+        nodes = d.nodeStateBlock
+        steps = d.dtttdt_block_lag.select("d", "t").unique()
+        now = Where(Where(v_state, steps), nodes)
+        prev = Where(_state_lag_cross_period(v_state, d.dtttdt_block_lag), nodes)
+        terms["state_change_block"] = (prev - now) * su
+
     # Blended weights (nodeState_rp, all three variants): t⁻ is the previous
     # step inside a representative block; the first step of each block
     # starts from the free state v_state_rp_start.
@@ -1628,7 +1639,7 @@ def _eq_block_coupling(b: _Build) -> None:
     nsb = d.nodeStateBlock
     v_state = b.v_state
     # nodeBalance_eq skips these nodes: without blocks they would have no energy balance at all.
-    if not (_has_rows(d.period_block) and _has_rows(d.period_block_succ) and _has_rows(d.period_block_time)):
+    if not (_has_rows(d.period_block) and _has_rows(d.period_block_time) and _has_rows(d.dtttdt_block_lag)):
         names = ", ".join(sorted(str(n) for n in nsb["n"].to_list()))
         raise FlexToolConfigError(f"bind_intraperiod_blocks node(s) {names} have no timeset blocks in this solve")
 
@@ -1651,60 +1662,32 @@ def _eq_block_coupling(b: _Build) -> None:
 
     # ─── EQ. ─── nodeBalanceBlock_eq ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # (Σ_{(d,b,b_next) ∈ period_block_succ} v_state[n,d,b_next] − v_state[n,d,b])·state_unitsize[n]
-    #   − Σ_{t ∈ b} Σ_{(p,s,n) ∈ flow_to_n} v_flow[p,s,n,d,t]·unitsize[p]·Δt
-    #   + Σ_{t ∈ b} Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff} v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t]·Δt
-    #   + Σ_{t ∈ b} Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·Δt
-    #   + Σ_{t ∈ b} v_state[n,d,t]·self_discharge[n]·state_unitsize[n]·Δt
-    #   − Σ_{t ∈ b} (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
-    #   = Σ_{t ∈ b} inflow[n,d,t]
-    #   ∀ n ∈ nodeStateBlock, (d,b) ∈ period_block;   b is named by its first step b_first, t ∈ b by period_block_time
-    # Energy balance per timeset block (MWh) of the bind_intraperiod_blocks nodes, which nodeBalance_eq skips.
-    # The blocks of each period form one cycle (period_block_succ).  Each arc term carries the node n of
-    # flow_to_n / flow_from_nodeBalance_*, so a node's row holds only its own arcs.  The row is the negation of
-    # nodeBalance_eq (state change − flows = inflow): its dual has the opposite sign of a nodeBalance_eq dual.
-    succ = d.period_block_succ.select("d", "b_first", "b_next")
-    state_at_block = _var_view(v_state, "__b_first", {"t": "b_first"})
-    state_at_next = _var_view(v_state, "__b_next", {"t": "b_next"})
-    lhs: dict = {}
-    lhs["state_change"] = (Sum(Where(Where(state_at_next, succ), nsb), over=("b_next",))
-                           - Sum(Where(Where(state_at_block, succ), nsb), over=("b_next",))
-                           ) * d.p_state_unitsize
-
-    v_flow = b.v_flow
-    block_t = d.period_block_time
-    over_arcs_t = ("p", "source", "sink", "t")
-    if _has_rows(d.flow_to_n):
-        into_node = d.flow_to_n.filter(pl.col("n").is_in(nsb["n"]))
-        if into_node.height > 0:
-            lhs["sink_flow_block"] = -Sum(Where(Where(v_flow * d.p_unitsize, into_node) * d.p_step_duration, block_t),
-                                          over=over_arcs_t)
-    for key, from_node, with_slope in (("source_eff_block", d.flow_from_nodeBalance_eff, True),
-                                       ("source_noEff_block", d.flow_from_nodeBalance_noEff, False)):
-        if not _has_rows(from_node):
-            continue
-        flow = v_flow * d.p_unitsize * d.p_slope if with_slope else v_flow * d.p_unitsize
-        idx = from_node.filter(pl.col("n").is_in(nsb["n"]))
-        if idx.height > 0:
-            lhs[key] = Sum(Where(Where(flow, idx) * d.p_step_duration, block_t), over=over_arcs_t)
-
+    # Σ_{t ∈ b} [ Σ_{(p,s,n) ∈ flow_to_n} v_flow[p,s,n,d,t]·unitsize[p]·Δt
+    #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff}
+    #       (v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])·Δt
+    #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·Δt
+    #   + back-flow terms of two-way one-variable and DC arcs
+    #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
+    #   + (v_state[n,d′,t⁻] − v_state[n,d,t])·state_unitsize[n]   ((d′,t⁻) of (d,t) in dtttdt_block_lag)
+    #   − v_state[n,d,t]·self_discharge[n]·state_unitsize[n]·Δt ]
+    #   = − Σ_{t ∈ b} inflow[n,d,t]
+    #   ∀ n ∈ nodeStateBlock, (d,b) ∈ period_block;   t ∈ b by period_block_time;   Δt = step_duration[d,t]
+    # nodeBalance_eq summed over each timeset block of a bind_intraperiod_blocks node.  The state is constant within
+    # a block (stateConstantWithinBlock_eq), so the state terms telescope to v_state[b⁻] − v_state[b]: v_state of a
+    # block is its state at the end of the block.  b⁻ is the previous block of the period, the first block of a
+    # period continuing from the period's last block (the blocks of a period form a loop).  Same orientation and
+    # units as nodeBalance_eq: its dual is the node's price (currency/MWh) over the block.
+    terms = _node_balance_terms(b)
     if d.p_state_self_discharge is not None:
-        lhs["self_discharge_block"] = Sum(
-            Where(Where(v_state * d.p_state_self_discharge * d.p_state_unitsize, nsb) * d.p_step_duration, block_t),
-            over=("t",))
-    lhs["slack_up_block"] = -Sum(Where(Where(b.vq_state_up, nsb) * d.p_step_duration, block_t), over=("t",))
-    lhs["slack_down_block"] = Sum(Where(Where(b.vq_state_down, nsb) * d.p_step_duration, block_t), over=("t",))
-
-    inflow_block = (d.p_inflow.frame
-                    .filter(pl.col("n").is_in(nsb["n"]))
-                    .join(block_t, on=["d", "t"], how="inner")
-                    .group_by(["n", "d", "b_first"])
-                    .agg(pl.col("value").sum())
-                    .select("n", "d", "b_first", "value"))
-    rhs = {"inflow_block": Param(("n", "d", "b_first"), inflow_block)} if inflow_block.height > 0 else {}
+        terms["self_discharge"] = -(v_state * d.p_state_self_discharge * d.p_state_unitsize) * d.p_step_duration
+    step_of = (nsb.select("n").join(d.period_block_time.select("d", "b_first", "t"), how="cross")
+               .select("n", "d", "b_first", "t"))
+    lhs = {key: _sum_over_coarse_step(term, step_of) for key, term in terms.items()}
+    inflow = _sum_over_coarse_step(-d.p_inflow, step_of)
+    rhs = {"neg_inflow": inflow} if inflow.frame.height > 0 else {}
     m.add_cstr(
         "nodeBalanceBlock_eq",
-        over      = nsb.join(d.period_block, how="cross").select("n", "d", "b_first"),
+        over      = nsb.select("n").join(d.period_block.select("d", "b_first"), how="cross").select("n", "d", "b_first"),
         sense     = "==",
         lhs_terms = lhs,
         rhs_terms = rhs,
@@ -2778,14 +2761,15 @@ def _eq_storage_start_binding(b: _Build) -> None:
     #   + state_start[n]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   = state_start[n] · existing[n,d] / state_unitsize[n]
     #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ storage_fix_start,
-    #     n ∉ bind_forward_only ∪ bind_within_solve ∪ bind_within_period
+    #     n ∉ bind_forward_only ∪ bind_within_solve ∪ bind_within_period ∪ nodeStateBlock
     # Pins the state at the first step to the share state_start of the built storage capacity (state
     # units).  First solve of a chain only: continuation solves start from the state handed over by the
     # previous solve (nodeBalance_eq).  bind_forward_only nodes get their start through nodeBalance_eq
-    # (_fix_start_terms); bind_within_solve and bind_within_period nodes are pinned by
+    # (_fix_start_terms); bind_within_solve, bind_within_period and bind_intraperiod_blocks nodes are pinned by
     # storage_state_start_binding_cyclic_period.
     nodes = d.storage_fix_start
-    for excluded in (d.storage_bind_forward_only, d.storage_bind_within_solve, d.storage_bind_within_period):
+    for excluded in (d.storage_bind_forward_only, d.storage_bind_within_solve, d.storage_bind_within_period,
+                     d.nodeStateBlock):
         if _has_rows(excluded):
             nodes = nodes.join(excluded, on="n", how="anti")
     target = (d.p_state_start * d.p_state_existing_capacity) / d.p_state_unitsize
@@ -2814,10 +2798,12 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
             and d.p_state_existing_capacity is not None
             and d.p_state_unitsize is not None
             and _has_rows(d.nodeState_last_dt)
-            and (_has_rows(d.storage_bind_within_solve) or _has_rows(d.storage_bind_within_period))):
+            and (_has_rows(d.storage_bind_within_solve) or _has_rows(d.storage_bind_within_period)
+                 or _has_rows(d.nodeStateBlock))):
         return
     m = b.m
-    cyclic = pl.concat([f.select("n") for f in (d.storage_bind_within_solve, d.storage_bind_within_period)
+    cyclic = pl.concat([f.select("n") for f in (d.storage_bind_within_solve, d.storage_bind_within_period,
+                                                 d.nodeStateBlock)
                         if _has_rows(f)], how="vertical").unique()
     nodes = cyclic.join(d.storage_fix_start, on="n", how="inner")
     if nodes.height == 0:
@@ -2835,12 +2821,12 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     # v_state[n,d,t] − state_start[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + state_start[n]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   = state_start[n] · existing[n,d] / state_unitsize[n]
-    #   ∀ n ∈ (bind_within_solve ∪ bind_within_period) ∩ storage_fix_start, (n,d,t) ∈ nodeState_last_dt,
-    #     d ∈ first period
+    #   ∀ n ∈ (bind_within_solve ∪ bind_within_period ∪ nodeStateBlock) ∩ storage_fix_start,
+    #     (n,d,t) ∈ nodeState_last_dt, d ∈ first period
     # The first step of a cyclic node wraps to a last step, so the start state is pinned there: the last
     # step of the first period, to the share state_start of the built storage capacity (state units).  For
-    # bind_within_period that is exactly the step the first period wraps to; for bind_within_solve it is a
-    # known limitation (not the last step of the horizon).  First solve of a chain only.
+    # bind_within_period and bind_intraperiod_blocks that is exactly the step the first period wraps to; for
+    # bind_within_solve it is a known limitation (not the last step of the horizon).  First solve of a chain only.
     lhs: dict = {"state": b.v_state}
     invested, divested = _node_in_service(b, d.nodeState, "_cyclic", coef=d.p_state_start)
     if invested is not None:

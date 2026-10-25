@@ -15,7 +15,7 @@ Every operational cost term of the objective carries ``w_op[d,t] = Δt · tw · 
   #   w[d,t] = timestep_weight[d,t] · inflation_op[d] / period_share[d] · branch_weight[d,t]
   #   row(n,d,t) = nodeBalance_eq[n,d,t]                      σ = +1
   #              | nodeBalanceCoarse_eq[n,d,b], t ∈ b         σ = +1   (node_coarse_step)
-  #              | nodeBalanceBlock_eq[n,d,b],  t ∈ b         σ = −1   (period_block_time; row written negated)
+  #              | nodeBalanceBlock_eq[n,d,b],  t ∈ b         σ = +1   (period_block_time)
   #   s = scale_the_objective (live, per solve);   price = null where w = 0
   # The cost of one more MWh of demand at (n,d,t), in CUR/MWh in the price base of the cost inputs (inflation and
   # the years the period represents removed), not weighted by the timestep weight or by the branch probability.
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 ROW_SIGN: dict[str, float] = {
     "nodeBalance_eq": 1.0,
     "nodeBalanceCoarse_eq": 1.0,
-    "nodeBalanceBlock_eq": -1.0,
+    "nodeBalanceBlock_eq": 1.0,
 }
 
 

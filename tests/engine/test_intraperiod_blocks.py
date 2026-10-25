@@ -106,3 +106,112 @@ def test_synthetic_subsolve_gets_blocks(tmp_path_factory) -> None:
         assert len(row_terms(pb, "nodeBalanceBlock_eq", "battery,")) == n_blocks, name
         assert len(row_terms(pb, "stateConstantWithinBlock_eq", "battery,")) > 0, name
         assert len(row_terms(pb, "nodeBalance_eq", "battery,")) == 0, name
+
+
+# ---------------------------------------------------------------------------
+# #117 — nodeBalanceBlock_eq is nodeBalance_eq summed over each block
+# ---------------------------------------------------------------------------
+
+BLOCK_CHAIN = ["init", "west", "wind", "battery", "5weeks", "bind_battery_intraperiod_blocks"]
+# 5weeks blocks (the t0009 and t0013 weeks touch and merge): first step → steps of the block.
+BLOCKS = {"t0001": [f"t{i:04d}" for i in range(1, 5)], "t0009": [f"t{i:04d}" for i in range(9, 17)],
+          "t0025": [f"t{i:04d}" for i in range(25, 29)], "t0037": [f"t{i:04d}" for i in range(37, 41)]}
+SU = 50.0          # battery existing 50 MWh → state_unitsize 50
+
+
+def _no_loss() -> list:
+    return [["node", "battery", "self_discharge_loss", b64(0.0, "float")]]
+
+
+def _inner(name: str) -> list[str]:
+    return name[name.index("[") + 1:-1].split(",")
+
+
+def test_block_state_is_end_of_block(tmp_path_factory) -> None:
+    """Inverter off, 10 MWh into the battery in t0003 and out in t0026, fix_start 0: the state of each block is its
+    end state — p2020 blocks t0001 / t0009 / t0025 / t0037 hold 10 / 10 / 0 / 0 MWh — and the fix_start pin sits on
+    the period's last step t0040 (the state the first block starts from).  Before: start-of-block labelling
+    (0 / 10 / 10 / 0) and the pin on t0001."""
+    from tests.engine._unit_db import time_map
+
+    vals = _no_loss() + [["connection", "battery_inverter", "existing", b64(0.0, "float")],
+                         ["node", "battery", "storage_state_start", b64(0.0, "float")],
+                         ["node", "battery", "inflow", time_map({"t0003": 10.0, "t0026": -10.0}, 0.0)]]
+    url, scen = make_db(tmp_path_factory, alt="ib117_end", values=vals, base_chain=BLOCK_CHAIN)
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    state = utf8(step.solution.value("v_state")).filter((pl.col("n") == "battery") & (pl.col("d") == "p2020"))
+    got = {t: v * SU for t, v in state.select("t", "value").iter_rows()}
+    for b_first, ts in BLOCKS.items():
+        want = 10.0 if b_first in ("t0001", "t0009") else 0.0
+        for t in ts:
+            assert got[t] == pytest.approx(want, abs=1e-6), (b_first, t, got[t])
+    pb = build(step.flex_data)
+    assert row_terms(pb, "storage_state_start_binding", "battery,") == {}
+    pins = row_terms(pb, "storage_state_start_binding_cyclic_period", "battery,")
+    assert set(pins) == {"storage_state_start_binding_cyclic_period[battery,p2020,t0040]"}, sorted(pins)
+
+
+def _overlay_values() -> tuple[list, list]:
+    """A lossless two-way inverter (one flow variable: v_flow_back) and a min_load_efficiency unit ``bgen``
+    drawing from the battery (section input v_online · section)."""
+    entities = [["unit", "bgen", None], ["unit__inputNode", ["bgen", "battery"], None],
+                ["unit__outputNode", ["bgen", "west"], None]]
+    vals = _no_loss() + [
+        ["connection", "battery_inverter", "transfer_method", b64("no_losses_no_variable_cost", "str")],
+        ["unit", "bgen", "existing", b64(10.0, "float")],
+        ["unit", "bgen", "conversion_method", b64("min_load_efficiency", "str")],
+        ["unit", "bgen", "efficiency", b64(0.9, "float")],
+        ["unit", "bgen", "efficiency_at_min_load", b64(0.8, "float")],
+        ["unit", "bgen", "min_load", b64(0.3, "float")],
+        ["unit", "bgen", "startup_method", b64("linear", "str")]]
+    return entities, vals
+
+
+def _built(tmp_path_factory, alt: str, extra: list):
+    entities, vals = _overlay_values()
+    url, scen = make_db(tmp_path_factory, alt=alt, values=vals + extra, base_chain=BLOCK_CHAIN, entities=entities)
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    return step.flex_data, build(step.flex_data)
+
+
+def test_block_row_is_summed_node_balance(tmp_path_factory) -> None:
+    """Every non-state column of a block row (flows, the inverter's v_flow_back, bgen's v_online section input,
+    slacks) has the coefficient the same column has in the battery's nodeBalance_eq row when the battery is a
+    plain bind_within_period node, the RHS is the summed −inflow, and the state terms are −su on the block's
+    state and +su on the previous block's state (the first block of a period: the period's last block).  Before:
+    no v_flow_back and no section terms, the row negated, the state change from the block to the next block."""
+    fd, pb = _built(tmp_path_factory, "ib117_sum", [])
+    _, pb_wp = _built(tmp_path_factory, "ib117_wp",
+                      [["node", "battery", "storage_binding_method", b64("bind_within_period", "str")]])
+    from tests.engine._lp_rows import row_bounds
+
+    blocks = row_terms(pb, "nodeBalanceBlock_eq", "battery,")
+    fine = row_terms(pb_wp, "nodeBalance_eq", "battery,")
+    fine_bounds = row_bounds(pb_wp, "nodeBalance_eq", "battery,")
+    bounds = row_bounds(pb, "nodeBalanceBlock_eq", "battery,")
+    periods = sorted(set(utf8(fd.period_block)["d"].to_list()))
+    assert len(blocks) == len(BLOCKS) * len(periods)
+    order = list(BLOCKS)
+    seen_back = seen_online = 0
+    for d in periods:
+        for i, (b_first, ts) in enumerate(BLOCKS.items()):
+            row = blocks[f"nodeBalanceBlock_eq[battery,{d},{b_first}]"]
+            want: dict[str, float] = {}
+            for t in ts:
+                for col, v in fine[f"nodeBalance_eq[battery,{d},{t}]"].items():
+                    if not col.startswith("v_state["):
+                        want[col] = v
+            got = {c: v for c, v in row.items() if not c.startswith("v_state[")}
+            assert set(got) == set(want), (d, b_first, sorted(set(got) ^ set(want)))
+            for c, v in want.items():
+                assert got[c] == pytest.approx(v, rel=1e-12, abs=1e-12), (d, b_first, c)
+            seen_back += sum(c.startswith("v_flow_back[battery_inverter,") for c in got)
+            seen_online += sum(c.startswith("v_online_linear[bgen,") for c in got)
+            lo = sum(fine_bounds[f"nodeBalance_eq[battery,{d},{t}]"][0] for t in ts)
+            assert bounds[f"nodeBalanceBlock_eq[battery,{d},{b_first}]"][0] == pytest.approx(lo, abs=1e-9)
+            states = {c: v for c, v in row.items() if c.startswith("v_state[") and v != 0.0}
+            prev_last = BLOCKS[order[i - 1]][-1]          # i = 0 → the period's last block (the loop)
+            assert states == {f"v_state[battery,{d},{ts[-1]}]": pytest.approx(-SU, rel=1e-12),
+                              f"v_state[battery,{d},{prev_last}]": pytest.approx(SU, rel=1e-12)}, (d, b_first)
+    assert seen_back == sum(len(ts) for ts in BLOCKS.values()) * len(periods)
+    assert seen_online == seen_back

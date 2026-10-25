@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **`bind_intraperiod_blocks` storage balance.** The balance of such a node
+  over each timeset block is now exactly its per-step energy balance summed
+  over the block. Before, it left out the reverse flow of two-way connections
+  that use one flow variable (`no_losses_no_variable_cost`) and of DC
+  power-flow lines, and the part-load (minimum load) input of
+  `min_load_efficiency` units drawing from the node. The reported storage
+  state of a block is now the state at the end of the block (before: at its
+  start), like the state of every other storage node, and with `fix_start`
+  the start state is pinned at the end of the first period (the state the
+  first block starts from). The node's price keeps its sign.
+
 - **Cyclic storage in rolling solves.** In the second and later rolls of a
   rolling solve, the first step of a *bind_within_timeblock*,
   *bind_within_period* or *bind_within_solve* storage node mixed the cycle with

@@ -776,8 +776,10 @@ block: every arc enters the balance of both its nodes.
   from the solve's own steps at gaps, timeset-block / period / roll
   starts, representative-block starts and a roll's realized end; called
   at the end of `load_flextool` for every (sub-)solve.
-- `bind_intraperiod_blocks` storage nodes (`nodeStateBlock`) keep their
-  per-timeset-block balance `nodeBalanceBlock_eq`.
+- `bind_intraperiod_blocks` storage nodes (`nodeStateBlock`) are balanced
+  per timeset block by `nodeBalanceBlock_eq`: `nodeBalance_eq` summed over
+  the block, the state change through `dtttdt_block_lag` (state constant
+  within the block, `v_state` of a block = its end state).
 
 See [decomposition.md § 3](decomposition.md#3-flex-temporal-decomposition).
 

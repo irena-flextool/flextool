@@ -631,3 +631,26 @@ LP snapshot: only the continuation rolls of `coarse_roll`, `coarse_roll_jump12`,
 change (the battery's first-step row: −2·su → −su on `v_state[first]`, the carry leaves the bound).
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate fullYear_roll`.
+
+## 2026-10-25 — `5weeks_battery_intraperiod_blocks` (cycle c15e1, item 117: block row = summed node balance)
+
+**Context.** `nodeBalanceBlock_eq` (the per-timeset-block balance of a `bind_intraperiod_blocks` storage) is now
+`nodeBalance_eq` summed over the block, with the state change through the block lag (the previous step of the
+period, the period's first step continuing from its last step).  With the state constant within a block the state
+terms telescope to `v_state[b⁻] − v_state[b]`, so `v_state` of a block is its state at the END of the block (before:
+the state at its start, `S[b_next] − S[b]`), and the `fix_start` pin moves from `storage_state_start_binding
+[battery,p2020,t0001]` to `storage_state_start_binding_cyclic_period[battery,p2020,t0040]` (the same physical
+instant: the start of block 1 is the end of the period's last block).  The two LPs admit the same schedules and
+differ only in which state each block's (linear, × Δt) self-discharge is charged on: the end state instead of the
+start state.
+
+- `node_state__dt.csv` battery column: p2020 block states (start labelling) 5 / 0 / 0 / 0 → (end labelling)
+  0 / 7.3101 / 26.7731 / 5 MWh for blocks t0001 / t0009 / t0025 / t0037; p2025 unchanged.
+- The solver lands on another vertex of a nearly flat optimum: objective 1 843.3814949 → 1 843.37775 (−2.0e-6
+  relative; full-horizon total 956.4314949 → 956.42775 M CUR).  The battery now arbitrages in p2020 (charges at
+  t0009, discharges at t0027–t0028, empty at t0039–t0040 with 10 MW more coal there), as p2025 already did:
+  `node__dt.csv` 6 of 160 rows, `costs__dt.csv` 1 of 220 cells (t0004 commodity 15 526.71 → 15 525.0).
+- Verified term by term against the design probe (`test_q5_block_rows.py`, the same objective 1 843.37775).
+- LP snapshot: only `5weeks_battery_intraperiod_blocks` and `agg_intraperiod` change.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate 5weeks_battery_intraperiod_blocks`.

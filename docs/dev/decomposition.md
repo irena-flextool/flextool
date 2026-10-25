@@ -367,8 +367,9 @@ self-discharge, with the summed `−inflow` as RHS.  With the state constant
 inside the coarse step the state terms telescope to
 `v_state[b⁻] − v_state[b]`, so every storage binding method applies.
 Same orientation and units as `nodeBalance_eq`: its dual is the node's
-price over the coarse step.  `bind_intraperiod_blocks` nodes keep their
-own per-timeset-block row (`nodeBalanceBlock_eq`, written negated).
+price over the coarse step.  `bind_intraperiod_blocks` nodes have the
+same summed row per timeset block (`nodeBalanceBlock_eq`) with the block
+lag `dtttdt_block_lag` (the blocks of a period form a loop).
 
 ### 3.5 Paths
 

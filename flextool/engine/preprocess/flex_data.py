@@ -833,6 +833,7 @@ class FlexData:
     period_block_succ: pl.DataFrame | None = None          # set: (d, b_first, b_next)
     period_block_time: pl.DataFrame | None = None          # set: (d, b_first, t)
     dtttdt_block_interior: pl.DataFrame | None = None      # dtttdt rows where t_previous_within_timeset == t_previous (interior-of-block jump=1)
+    dtttdt_block_lag: pl.DataFrame | None = None           # (d, t, d_previous, t_previous_within_solve): block state lag
     # ─── Coarse new_stepduration groups (params._coarse.coarse_node_frames) ─────────
     # Nodes of a group whose new_stepduration is longer than the solve's step: balanced once per coarse step
     # (nodeBalanceCoarse_eq); a coarse storage node keeps one state per coarse step (stateConstantCoarse_eq).
@@ -5361,6 +5362,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
             flex_data.period_block_time = family["period_block_time"]
             flex_data.dtttdt_block_interior = _drv.dtttdt_block_interior_from_dtttdt(
                 getattr(flex_data, "dtttdt", None), family["period_block_time"])
+            flex_data.dtttdt_block_lag = _drv.dtttdt_block_lag_from_dtttdt(
+                getattr(flex_data, "dtttdt", None), family["period_block_time"])
         _loadflex_prof("apply_db_overrides:pass_synthetic_blocks")
         _timed("c.synth blocks", _wire_blocks_for_synthetic_solve)
         return
@@ -6829,7 +6832,7 @@ def build_handoff_from_solution(
     #
     #   p_fix_storage_price[n,d,t] = σ_row · dual[row(n,d,t)] / s / (tw[d,t] · inflation_op[d] / period_share[d]
     #                                · branch_weight[d,t])
-    #     row = nodeBalance_eq[n,d,t] (σ +1) | nodeBalanceCoarse_eq[n,d,b ∋ t] (σ +1) | nodeBalanceBlock_eq (σ −1)
+    #     row = nodeBalance_eq[n,d,t] (σ +1) | nodeBalanceCoarse_eq[n,d,b ∋ t] (σ +1) | nodeBalanceBlock_eq (σ +1)
     #     s = scale_the_objective of this solve (the ``scale_the_objective`` argument; None = 1, as build_flextool)
     #
     # CUR/MWh, as the child's storage_reference_price term (_obj_storage_reference_price) uses it with its own

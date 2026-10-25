@@ -302,6 +302,15 @@ def toy_storage_blocks() -> FlexData:
         "t_previous": ["t01", "t03"],
     })
 
+    # dtttdt_block_lag: the step each block step continues from — the previous step of the period, the
+    # period's first step continuing from its last step (the blocks of a period form a loop).
+    dtttdt_block_lag = pl.DataFrame({
+        "d": ["d1"]*4,
+        "t": ["t01", "t02", "t03", "t04"],
+        "d_previous": ["d1"]*4,
+        "t_previous_within_solve": ["t04", "t01", "t02", "t03"],
+    })
+
     return FlexData(
         dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
         p_inflation_op=p_infl, p_period_share=p_psh,
@@ -316,6 +325,7 @@ def toy_storage_blocks() -> FlexData:
         p_state_existing_capacity=p_state_existing_capacity,
         dtttdt=dtttdt,
         nodeStateBlock=nodeStateBlock,
+        dtttdt_block_lag=dtttdt_block_lag,
         period_block=period_block,
         period_block_succ=period_block_succ,
         period_block_time=period_block_time,
