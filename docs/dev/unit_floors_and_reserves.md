@@ -73,7 +73,7 @@ give `b.reserve_up_at_source` for `profile_flow_lower_limit`.
 |---|---|
 | `maxFlow` | `+ Σ_r v_reserve_down[p,r,s]·φ`; a bound input arc carrying the reserve gets a row too (the v_flow bound stays, redundant) |
 | `maxFlow_online_<kind>` | same term against online capacity |
-| `maxInputFlow_online_<kind>` (new) | an online indirect unit's input arc with the reserve: `v_flow + Σ_r v_reserve_down ≤ v_online·avail·p_indirect_input_cap` |
+| `maxInputFlow_online_<kind>` (new) | an online indirect unit's input arc with the reserve: `v_flow + Σ_r v_reserve_down ≤ v_online·x(avail)·p_indirect_input_cap`, `x(y) = (slope·W(y) + section)/(slope·W(1) + section)` — the min-load section is drawn per unit online, so `avail·p_indirect_input_cap` would cap the derated full output (`x = avail` without a section) |
 | `profile_flow_upper_limit` / `_lower_limit` | `+ down at the source` / `− up at the source`, × φ |
 | `reserve_process_{upward,downward}` | `max_share · c`, c = input capacity per unit at an input node (`_reserve._input_capacity_factor`: `p_indirect_input_cap`, `slope + section`, 1) |
 
@@ -151,7 +151,8 @@ load per unit of input limit, `x / input_share_max` with
 `x = (slope·W(min_load) + section)/(slope·W(1) + section)` (`W(y)` the output fuel
 width filled to y, as `p_indirect_input_cap`), so a started unit can always draw
 its min-load input.  A ramp-limited input arc of an online indirect unit gets
-`maxInputFlow_online` rows even without reserve.  Per arc: `maxOutputSum_online`
+`maxInputFlow_online` rows even without reserve.  On input arcs availability is replaced by
+`x(availability)` in the row and in `red = max(0, x(availability) − SU_in)` (`_online._input_availability_share`).  Per arc: `maxOutputSum_online`
 of a multi-output unit is not reduced (as GMPL; ramps are arc attributes).
 
 ## Reserve shortfall multiplier

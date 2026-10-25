@@ -40,6 +40,7 @@ _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
     K.HANDOFF_UPWARD_ROLL_END_STATE: ("node", "value"),
     K.HANDOFF_ROLL_END_ONLINE:    ("process", "value"),
     K.HANDOFF_ROLL_END_FLOW:      ("process", "source", "sink", "period", "step", "duration", "value"),
+    K.HANDOFF_ROLL_END_STEP:      ("period", "step", "duration"),
     K.HANDOFF_ONLINE_HISTORY:     ("process", "period", "step",
                                    "startup", "shutdown", "duration"),
     K.HANDOFF_FIX_ONLINE:         ("process", "period", "step", "value"),
@@ -67,7 +68,7 @@ def _empty_handoff_frame(key: str) -> pl.DataFrame:
 # translates that never clobber each other's keys.
 ROLL_FORWARD_FIELDS: frozenset = frozenset((
     "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
-    "online_history", "cumulative_co2", "cumulative_commodity",
+    "roll_end_step", "online_history", "cumulative_co2", "cumulative_commodity",
     "cum_sim_hours",
 ))
 PIN_FIELDS: frozenset = frozenset((
@@ -108,6 +109,7 @@ def translate_handoff_to_provider(
         ("upward_roll_end_state", K.HANDOFF_UPWARD_ROLL_END_STATE),
         ("roll_end_online",     K.HANDOFF_ROLL_END_ONLINE),
         ("roll_end_flow",       K.HANDOFF_ROLL_END_FLOW),
+        ("roll_end_step",       K.HANDOFF_ROLL_END_STEP),
         ("online_history",      K.HANDOFF_ONLINE_HISTORY),
         ("fix_online",          K.HANDOFF_FIX_ONLINE),
         ("cumulative_co2",      K.HANDOFF_CUMULATIVE_CO2),
@@ -141,6 +143,7 @@ _HANDOFF_TO_OVERRIDE: dict[str, str] = {
     K.HANDOFF_UPWARD_ROLL_END_STATE: K.OVERRIDE_UPWARD_ROLL_END_STATE,
     K.HANDOFF_ROLL_END_ONLINE:      K.OVERRIDE_ROLL_END_ONLINE,
     K.HANDOFF_ROLL_END_FLOW:        K.OVERRIDE_ROLL_END_FLOW,
+    K.HANDOFF_ROLL_END_STEP:        K.OVERRIDE_ROLL_END_STEP,
     K.HANDOFF_ONLINE_HISTORY:       K.OVERRIDE_ONLINE_HISTORY,
     K.HANDOFF_CUMULATIVE_CO2:       K.OVERRIDE_CUMULATIVE_CO2,
     K.HANDOFF_CUMULATIVE_COMMODITY: K.OVERRIDE_CUMULATIVE_COMMODITY,

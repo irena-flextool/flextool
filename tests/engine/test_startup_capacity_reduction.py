@@ -264,3 +264,90 @@ def test_min_load_and_availability_shapes_same_lp(tmp_path_factory, solve_kind) 
                for rows in ref)
     for key, got in results.items():
         assert got == ref, key
+
+
+# ---------------------------------------------------------------------------
+# input-arc online limit at derated full output (review F2)
+
+
+def _chp_mle(avail: float, *, ramp: bool, extra=None) -> list:
+    vals = (_uc(CHP, 0.3)
+            + [["unit", CHP, "conversion_method", b64("min_load_efficiency", "str")],
+               ["unit", CHP, "efficiency_at_min_load", b64(0.6, "float")],
+               ["unit", CHP, "availability", b64(avail, "float")],
+               ["constraint", "coal_chp_fix", "is_enabled", b64("no", "str")],
+               ["node", "heat", "inflow", b64(0.0, "float")],
+               ["node", "west", "inflow", _tmap({f"t{i:04d}": -3000.0 for i in range(1, 49)})]])
+    if ramp:
+        vals += _ramp(0.005, cls="unit__inputNode", rel=[CHP, COAL])
+    return vals + (extra or [])
+
+
+def _x(fd, y: float) -> float:
+    """Fuel at output level y per unit of full-load fuel, x(y) = (slope·y + section)/(slope + section)."""
+    slope = float(utf8(fd.p_slope.frame).filter(pl.col("p") == CHP)["value"][0])
+    section = float(utf8(fd.p_section.frame).filter(pl.col("p") == CHP)["value"][0])
+    return (slope * y + section) / (slope + section)
+
+
+def test_input_limit_keeps_derated_full_output(tmp_path_factory) -> None:
+    """coal_chp (min_load_efficiency, availability 0.8, demand far above capacity, online all the time): the
+    maxInputFlow_online rows of its ramp-limited fuel arc must not cap the derated full output.  Their online
+    coefficient is input_cap · x(0.8) (the section is drawn per unit online), so the output with the input ramp
+    equals the output without it (0.7593 units: the fuel arc's own v_flow bound, input_cap · availability ·
+    capacity, still applies — item 102).  Before: input_cap · 0.8 · online capped the output at 0.7455 units."""
+    no_ramp = _last(_solve(tmp_path_factory, "av_noramp", _chp_mle(0.8, ramp=False),
+                           chain=("init", "west", "coal_chp", "heat")))
+    with_ramp = _last(_solve(tmp_path_factory, "av_ramp", _chp_mle(0.8, ramp=True),
+                             chain=("init", "west", "coal_chp", "heat")))
+    f0 = _vals(no_ramp, "v_flow", CHP, {"sink": "west"})
+    f1 = _vals(with_ramp, "v_flow", CHP, {"sink": "west"})
+    assert min(f0.values()) > 0.75
+    for k in f0:
+        assert f1[k] == pytest.approx(f0[k], abs=1e-6), k
+    fd = with_ramp.flex_data
+    cap = float(utf8(fd.p_indirect_input_cap.frame).filter((pl.col("p") == CHP) & (pl.col("source") == COAL))
+                ["value"][0])
+    rows = row_terms(build(fd), "maxInputFlow_online_linear", f"{CHP},{COAL},{CHP},")
+    assert rows
+    for row, terms in rows.items():
+        d, t = step_of(row)
+        assert coef(terms, f"v_online_linear[{CHP},{d},{t}]") == pytest.approx(-cap * _x(fd, 0.8)), row
+        su_in = min(1.0, _x(fd, 0.3) + 0.5 * 0.005 * 60.0)
+        hit = [c for c in terms if c.startswith("v_startup_linear")]
+        if _x(fd, 0.8) - su_in > 0:
+            assert coef(terms, "v_startup_linear") == pytest.approx(cap * (_x(fd, 0.8) - su_in)), row
+        else:
+            assert not hit, row
+
+
+def test_consume_more_row_at_derated_full_output(tmp_path_factory) -> None:
+    """c13's "consume more" row (maxInputFlow_online on a fuel arc with downward reserve at coal_market) uses the
+    same limit: fuel + reserve ≤ input_cap · x(availability) · online, so holding the reserve row does not lower
+    the output below the unit's output without the reserve.  Before: input_cap · availability · online
+    (0.7455 units)."""
+    grp = ["rf", "down", "fuel"]
+    ents = [["reserve", "rf", None], ["reserve__upDown__group", grp, None],
+            ["reserve__upDown__unit__node", ["rf", "down", CHP, COAL], None]]
+    res = [["reserve__upDown__group", grp, "reserve_method", b64("timeseries_only", "str")],
+           ["reserve__upDown__group", grp, "reservation", b64(1.0, "float")],
+           ["reserve__upDown__group", grp, "penalty_reserve", b64(1.0, "float")],
+           ["reserve__upDown__unit__node", ["rf", "down", CHP, COAL], "is_enabled", b64("yes", "str")],
+           ["reserve__upDown__unit__node", ["rf", "down", CHP, COAL], "max_share", b64(1.0, "float")],
+           ["reserve__upDown__unit__node", ["rf", "down", CHP, COAL], "reliability", b64(1.0, "float")]]
+    step = _last(_solve(tmp_path_factory, "av_res", _chp_mle(0.8, ramp=False, extra=res),
+                        chain=("init", "west", "coal_chp", "heat"), entities=ents))
+    fd = step.flex_data
+    cap = float(utf8(fd.p_indirect_input_cap.frame).filter((pl.col("p") == CHP) & (pl.col("source") == COAL))
+                ["value"][0])
+    rows = row_terms(build(fd), "maxInputFlow_online_linear", f"{CHP},{COAL},{CHP},")
+    assert rows
+    for row, terms in rows.items():
+        d, t = step_of(row)
+        assert coef(terms, f"v_online_linear[{CHP},{d},{t}]") == pytest.approx(-cap * _x(fd, 0.8)), row
+    base = _last(_solve(tmp_path_factory, "av_nores", _chp_mle(0.8, ramp=False),
+                        chain=("init", "west", "coal_chp", "heat")))
+    f = _vals(step, "v_flow", CHP, {"sink": "west"})
+    f0 = _vals(base, "v_flow", CHP, {"sink": "west"})
+    for k in f0:
+        assert f[k] == pytest.approx(f0[k], abs=1e-6), k

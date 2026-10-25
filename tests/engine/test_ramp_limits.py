@@ -134,6 +134,34 @@ def test_representative_blocks_do_not_link(tmp_path_factory) -> None:
     assert ("p2020", "t0002") in have and ("p2020", "t0026") in have and ("p2020", "t0048") in have
 
 
+def test_aggregated_steps_keep_ramp_rows(tmp_path_factory) -> None:
+    """Solve-level new_stepduration 6 h (fullYear, 72 h → 12 steps): consecutive aggregated steps are adjacent
+    in the solve's own step space, so each step after the first has a ramp row with room 0.002·60·6 = 0.72.
+    Review F1: the derived adjacency compared raw timeline ranks (6 apart) and dropped every row."""
+    step = _last(_solve(tmp_path_factory, "ramp_6h", _ramp(0.002) + [
+        ["solve", "y2020_fullYear_dispatch", "new_stepduration", b64(6.0, "float")]],
+        chain=("init", "west", "coal", "fullYear")))
+    pb = build(step.flex_data)
+    terms = row_terms(pb, "ramp_sink_up_constraint", ARC)
+    bounds = row_bounds(pb, "ramp_sink_up_constraint", ARC)
+    assert len(terms) == step.flex_data.dt.height - 1 == 11
+    row = f"ramp_sink_up_constraint[{ARC}p2020,t0007]"
+    assert coef(terms[row], f"v_flow[{ARC}p2020,t0001]") == pytest.approx(-1.0)
+    assert bounds[row][1] == pytest.approx(0.72)
+
+
+def test_aggregated_blocks_keep_their_gaps(tmp_path_factory) -> None:
+    """5weeks aggregated to 2-h steps: rows inside a block and across touching blocks (t0013 after t0011),
+    none after a gap (t0009, t0025, t0037) or at a period start."""
+    step = _last(_solve(tmp_path_factory, "ramp_5w2h", _ramp(0.002) + [
+        ["solve", "y2020_5week", "new_stepduration", b64(2.0, "float")]],
+        chain=("init", "west", "coal", "coal_ramp", "5weeks")))
+    have = {step_of(r) for r in row_terms(build(step.flex_data), "ramp_sink_up_constraint", ARC)}
+    for t in ("t0001", "t0009", "t0025", "t0037"):
+        assert ("p2020", t) not in have
+    assert ("p2020", "t0003") in have and ("p2020", "t0013") in have
+
+
 # ---------------------------------------------------------------------------
 # periods that continue the timeline
 
@@ -200,12 +228,17 @@ def test_midhorizon_branches_ramp_from_trunk(tmp_path_factory) -> None:
 
 def test_derived_link_equals_step_previous(tmp_path_factory) -> None:
     """dt_ramp_link built from the source timeline equals the jump == 1 rows of solve_data/step_previous
-    (make_step_jump) on gaps, continuing periods and the representative-block rule."""
+    (make_step_jump) on gaps, continuing periods, solve-level new_stepduration (review F1) and the
+    representative-block rule; on aggregated blocks with gaps it keeps the gaps make_step_jump loses."""
     from flextool.engine.preprocess.flex_data import _read_ramp_link
 
     for alt, vals, chain, ents in (
         ("lk_5w", _ramp(0.002), ("init", "west", "coal", "coal_ramp", "5weeks"), None),
         ("lk_2p", _ramp(0.002) + TWO_PERIODS, ("init", "west", "coal"), TWO_PERIODS_ENTS),
+        ("lk_6h", _ramp(0.002) + [["solve", "y2020_fullYear_dispatch", "new_stepduration", b64(6.0, "float")]],
+         ("init", "west", "coal", "fullYear"), None),
+        ("lk_5w2h", _ramp(0.002) + [["solve", "y2020_5week", "new_stepduration", b64(2.0, "float")]],
+         ("init", "west", "coal", "coal_ramp", "5weeks"), None),
     ):
         url, scen = make_db(tmp_path_factory, alt=alt, values=vals, base_chain=list(chain), entities=ents)
         step = _last(run(tmp_path_factory, url, scen))
@@ -213,7 +246,16 @@ def test_derived_link_equals_step_previous(tmp_path_factory) -> None:
         csv = _read_ramp_link(Path("solve_data"), provider=step.flex_data_provider)
         derived = step.flex_data.dt_ramp_link
         assert csv is not None and derived is not None
-        assert sorted(utf8(csv).rows()) == sorted(utf8(derived).rows())
+        csv_rows, der_rows = set(utf8(csv).rows()), set(utf8(derived).rows())
+        if alt == "lk_5w2h":
+            # make_step_jump numbers aggregated steps consecutively over the solve's own steps, so it loses the
+            # gaps between 5weeks blocks (t0003 covers hours 2–4, t0009 starts at hour 8); the derived link keeps
+            # them (item 101).
+            gaps = {(d, t, d, tp) for d in ("p2020", "p2025")
+                    for t, tp in (("t0009", "t0003"), ("t0025", "t0015"), ("t0037", "t0027"))}
+            assert csv_rows - der_rows == gaps and der_rows <= csv_rows
+        else:
+            assert csv_rows == der_rows
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +344,51 @@ def test_roll_across_continuing_periods(tmp_path_factory) -> None:
     assert carry.select("d", "t", "d_previous", "t_previous").rows() == [("p2025", "t0025", "p2020", "t0024")]
 
 
+def test_roll_carriers_take_the_last_realized_step_in_time(tmp_path_factory) -> None:
+    """Review F3 / item 100: continuing periods p2020 (t0001–24) and a2025 (t0025–48; the name sorts before
+    p2020), coal linear online with a ramp, the battery storage, rolls of 16 h with jump 10: roll 2 realizes
+    p2020 t0011–t0020 … and roll 3 realizes p2020 t0021–t0024 + a2025 t0025–t0030.  The next roll's carriers are
+    read at a2025 t0030 (the last realized step in time), not at the (d, t)-sorted last pair p2020 t0024: the ramp
+    carry links a2025 t0031 to a2025 t0030 with that step's flow, the online carry is that step's v_online, the
+    storage carry that step's state.  Before: (p2020, t0024) for all three, so roll 4 had no ramp row at its first
+    step and started online and storage from the wrong step."""
+    tp = [v for v in TWO_PERIODS if v[2] not in ("period_timeset", "realized_periods")] + [
+        ["solve", "y2020_2day_dispatch", "period_timeset", b64(_pmap({"p2020": "ta", "a2025": "tb"}), "map")],
+        ["solve", "y2020_2day_dispatch", "realized_periods",
+         b64({"value_type": "str", "data": ["p2020", "a2025"]}, "array")]]
+    vals = _ramp(0.002) + tp + [
+        ["unit", PLANT, "startup_method", b64("linear", "str")],
+        ["unit", PLANT, "min_load", b64(0.2, "float")],
+        ["solve", "y2020_2day_dispatch", "solve_mode", b64("rolling_window", "str")],
+        ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", b64(16.0, "float")],
+        ["solve", "y2020_2day_dispatch", "rolling_solve_jump", b64(10.0, "float")]]
+    steps = list(_solve(tmp_path_factory, "ramp_span", vals, chain=("init", "west", "battery", "coal"),
+                        entities=TWO_PERIODS_ENTS).values())
+    spanning = [i for i, s in enumerate(steps)
+                if set(utf8(s.flex_data.realized_dispatch).select(pl.first()).to_series().to_list())
+                >= {"p2020", "a2025"}]
+    assert spanning, "no roll realizes steps of both periods"
+    i = spanning[0]
+    prev, nxt = steps[i], steps[i + 1]
+    carry = utf8(nxt.flex_data.dt_ramp_carry)
+    assert carry.select("d", "t", "d_previous", "t_previous").rows() == [("a2025", "t0031", "a2025", "t0030")]
+    last = ("a2025", "t0030")
+    flow_last = [x for d, t, x in utf8(prev.solution.value("v_flow"))
+                 .filter((pl.col("p") == PLANT) & (pl.col("sink") == "west")).select("d", "t", "value").rows()
+                 if (d, t) == last][0]
+    f_hat = utf8(nxt.flex_data.p_roll_continue_flow.frame)["value"].to_list()
+    assert f_hat == [pytest.approx(flow_last)]
+    on_last = [x for p, d, t, x in utf8(prev.solution.value("v_online_linear")).rows() if (p, d, t) == (PLANT, *last)]
+    assert utf8(nxt.flex_data.p_roll_continue_online.frame).filter(pl.col("p") == PLANT)["value"].to_list() == [
+        pytest.approx(on_last[0])]
+    us = float(utf8(prev.flex_data.p_state_unitsize.frame).filter(pl.col("n") == "battery")["value"][0])
+    st_last = [x for n, d, t, x in utf8(prev.solution.value("v_state")).rows() if (n, d, t) == ("battery", *last)]
+    assert utf8(nxt.flex_data.p_roll_continue_state.frame).filter(pl.col("n") == "battery")["value"].to_list() == [
+        pytest.approx(st_last[0] * us)]
+    assert f"ramp_sink_up_constraint[{ARC}a2025,t0031]" in row_terms(build(nxt.flex_data), "ramp_sink_up_constraint",
+                                                                      ARC)
+
+
 def test_roll_carry_needs_adjacency() -> None:
     """ramp_roll_carry: the carry applies where the complete solve's predecessor of a period's first step is
     the carried step and adjacent; not before a gap; forecast branches starting at the anchor's first step
@@ -317,13 +404,19 @@ def test_roll_carry_needs_adjacency() -> None:
                              "previous_period": ["p1", "p1"], "previous_within_solve": [prev_t, "t0006"],
                              "jump": [str(jump), "-5"]})
 
-    rows, flows = ramp_roll_carry(dt, carry, link("t0004", 1),
-                                  pl.DataFrame({"period": ["p1", "p1"], "branch": ["p1", "b1"]}))
+    step = carry.select("period", "step", "duration")
+    pb = pl.DataFrame({"period": ["p1", "p1"], "branch": ["p1", "b1"]})
+    rows, flows = ramp_roll_carry(dt, step, link("t0004", 1), pb, flows=carry)
     assert sorted(rows.select("d", "t").rows()) == [("b1", "t0005"), ("p1", "t0005")]
     assert flows["value"].to_list() == [0.3, 0.3]
-    assert ramp_roll_carry(dt, carry, link("t0004", 5), None) == (None, None)       # gap before t0005
-    assert ramp_roll_carry(dt, carry, link("t0003", 1), None) == (None, None)       # not the carried step
+    rows, flows = ramp_roll_carry(dt, step, link("t0004", 1), pb)                    # no ramp limits: link only
+    assert sorted(rows.select("d", "t").rows()) == [("b1", "t0005"), ("p1", "t0005")] and flows is None
+    assert ramp_roll_carry(dt, step, link("t0004", 5), None) == (None, None)        # gap before t0005
+    assert ramp_roll_carry(dt, step, link("t0003", 1), None) == (None, None)        # not the carried step
     assert ramp_roll_carry(dt, None, link("t0004", 1), None) == (None, None)        # first roll
+    # a representative-block start never takes the carry (review F5)
+    rp = pl.DataFrame({"d": ["p1", "b1"], "t": ["t0005", "t0005"]})
+    assert ramp_roll_carry(dt, step, link("t0004", 1), pb, flows=carry, rp_block_first=rp) == (None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -422,16 +515,24 @@ def test_ramp_output_at_roll_boundary_on_direct_input(tmp_path_factory) -> None:
 def test_stochastic_roll_branches_take_the_carry(tmp_path_factory) -> None:
     """Rolling stochastic 1-week fixture (horizon 96, jump 24, forecast branches over the whole window): on
     every continuation roll the realized period and each forecast branch ramp from the previous roll's realized
-    flow, at their common first step, without a predecessor column."""
+    flow, at their common first step, without a predecessor column, and the carried flow is on the RHS:
+    ub = 0.12 + f̂.  A lower-limit profile keeps coal at ≥ 0.1 of capacity everywhere, so f̂ > 0 (the realized
+    trunk of this fixture otherwise dispatches nothing; review F7)."""
     from tests.engine._unit_db import FLEXTOOL_ROOT
 
     url, scen = make_db(tmp_path_factory, alt="ramp_stroll",
-                        values=_ramp(0.002, rel=[PLANT, "demand_node"]),
+                        values=_ramp(0.002, rel=[PLANT, "demand_node"]) + [
+                            ["profile", "coal_floor", "profile", b64(0.1, "float")],
+                            ["unit__node__profile", [PLANT, "demand_node", "coal_floor"], "profile_method",
+                             b64("lower_limit", "str")]],
+                        entities=[["profile", "coal_floor", None],
+                                  ["unit__node__profile", [PLANT, "demand_node", "coal_floor"], None]],
                         base_chain=["init", "base", "system", "1week_rolling"],
                         fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json")
     steps = list(run(tmp_path_factory, url, scen).values())
     assert len(steps) > 2
     assert steps[0].flex_data.dt_ramp_carry is None
+    arc = f"{PLANT},coal_market,demand_node,"
     for s in steps[1:]:
         fd = s.flex_data
         firsts = (utf8(fd.dt).with_row_index("i").group_by("d", maintain_order=True)
@@ -439,7 +540,26 @@ def test_stochastic_roll_branches_take_the_carry(tmp_path_factory) -> None:
         carry = utf8(fd.dt_ramp_carry)
         assert sorted(carry.select("d", "t").rows()) == sorted(firsts.rows())
         assert carry["d_previous"].unique().to_list() == ["period1"]
-        rows = row_terms(build(fd), "ramp_sink_up_constraint", f"{PLANT},coal_market,demand_node,")
+        f_hat = utf8(fd.p_roll_continue_flow.frame)["value"].unique().to_list()
+        assert len(f_hat) == 1 and f_hat[0] >= 0.1 - 1e-9
+        pb = build(fd)
+        rows = row_terms(pb, "ramp_sink_up_constraint", arc)
+        bounds = row_bounds(pb, "ramp_sink_up_constraint", arc)
         for d, t in firsts.rows():
-            assert set(rows[f"ramp_sink_up_constraint[{PLANT},coal_market,demand_node,{d},{t}]"]) <= {
-                f"v_flow[{PLANT},coal_market,demand_node,{d},{t}]"}
+            row = f"ramp_sink_up_constraint[{arc}{d},{t}]"
+            assert set(rows[row]) <= {f"v_flow[{arc}{d},{t}]"}
+            assert bounds[row][1] == pytest.approx(0.12 + f_hat[0], abs=1e-9)
+
+
+def test_ramp_output_at_roll_boundary_without_ramp_limits(tmp_path_factory) -> None:
+    """Rolling with horizon == jump (24 h) and no ramp limit anywhere: the reported ramp at a roll's first step
+    is the realized change from the previous roll's last step (review F4: the boundary link came only with a ramp
+    carry, so the cell was empty)."""
+    vals = [["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", b64(24.0, "float")],
+            ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", b64(24.0, "float")]]
+    steps, out, _ = _write_csv(tmp_path_factory, "ro_noramp", vals, ROLL_CHAIN)
+    col = out[(PLANT, "west")]
+    f = _flow_mw(steps, (PLANT, "coal_market", "west"))
+    for t, prev in (("t0025", "t0024"), ("t0049", "t0048")):
+        assert col[("p2020", t)] == pytest.approx(f[("p2020", t)] - f[("p2020", prev)], abs=1e-4)
+    assert col[("p2020", "t0001")] is None and col[("p2025", "t0001")] is None

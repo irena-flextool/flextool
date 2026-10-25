@@ -2310,14 +2310,16 @@ def _read_rp_block_first_utf8(sd: Path, *, provider: "object | None" = None) -> 
 def _load_ramp_carry(sd: Path, dt: "pl.DataFrame | None", *,
                      provider: "object | None" = None) -> "tuple[pl.DataFrame | None, Param | None]":
     """``(dt_ramp_carry, p_roll_continue_flow)`` of a continuation roll (``params._ramp_links.ramp_roll_carry``)
-    from the previous roll's ``handoff/roll_end_flow``, the complete solve's ``solve_data/roll_first_step_link``
-    and ``solve_data/period__branch``; ``(None, None)`` otherwise."""
+    from the previous roll's ``handoff/roll_end_step`` and ``handoff/roll_end_flow``, the complete solve's
+    ``solve_data/roll_first_step_link``, ``solve_data/period__branch`` and ``solve_data/rp_block_first``;
+    ``(None, None)`` otherwise.  ``dt_ramp_carry`` exists also without ramp limits (the ramp output measures a
+    roll's first step from it); ``p_roll_continue_flow`` only with ramp-limited arcs."""
     from flextool.engine.preprocess import _provider_keys as K
     from flextool.engine.preprocess._provider_translators import read_handoff_frame
     from flextool.engine.preprocess.params._ramp_links import ramp_roll_carry
 
-    carry = read_handoff_frame(provider, K.HANDOFF_ROLL_END_FLOW)
-    if carry is None or carry.height == 0:
+    step = read_handoff_frame(provider, K.HANDOFF_ROLL_END_STEP)
+    if step is None or step.height == 0:
         return None, None
     link_path = sd / "roll_first_step_link.csv"
     if not _provider_has(provider, K.SOLVE_DATA_ROLL_FIRST_STEP_LINK, link_path):
@@ -2327,11 +2329,15 @@ def _load_ramp_carry(sd: Path, dt: "pl.DataFrame | None", *,
     pb_path = sd / "period__branch.csv"
     if _provider_has(provider, "solve_data/period__branch", pb_path):
         pb = _provider_read(provider, "solve_data/period__branch", pb_path)
-    rows, flows = ramp_roll_carry(dt, carry, link, pb)
+    flows = read_handoff_frame(provider, K.HANDOFF_ROLL_END_FLOW)
+    rows, flows_out = ramp_roll_carry(dt, step, link, pb, flows=flows,
+                                      rp_block_first=_read_rp_block_first_utf8(sd, provider=provider))
     if rows is None:
         return None, None
-    flows = flows.pipe(rename_to_axis, {"p": "p", "source": "source", "sink": "sink", "d": "d", "t": "t"})
-    return rows, Param(("p", "source", "sink", "d", "t"), flows)
+    if flows_out is None:
+        return rows, None
+    flows_out = flows_out.pipe(rename_to_axis, {"p": "p", "source": "source", "sink": "sink", "d": "d", "t": "t"})
+    return rows, Param(("p", "source", "sink", "d", "t"), flows_out)
 
 
 def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
@@ -2354,6 +2360,7 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         dt_ramp_carry=None,
         p_roll_continue_flow=None,
     )
+    blank["dt_ramp_carry"], _ = _load_ramp_carry(sd, dt, provider=provider)
     if pss is None:
         return blank
 
@@ -6176,28 +6183,46 @@ def _extract_cumulative_commodity(
     )
 
 
-def _last_realized_step(realized: "pl.DataFrame | None",
-                        flex_data: "FlexData | None") -> "tuple[str, str] | None":
-    """The last realized ``(d, t)`` of a solve in its own step order (the order of ``flex_data.dt``; the
-    ``(d, t)`` sort only when ``dt`` is unavailable — Enum or string order need not be chronological)."""
-    if realized is None or realized.height == 0:
+def _last_realized_step(sd: Path, flex_data: "FlexData | None", *,
+                        provider: "object | None" = None) -> "tuple[str, str] | None":
+    """The last realized ``(d, t)`` of a solve in time: the last row of ``solve_data/realized_dispatch`` in its
+    emitted (solve-step) order — the committed jump-end of the realized trunk.  Only when that key is absent
+    (unit-test synthesis without a real solve) the ``(d, t)``-sorted last row of ``flex_data.realized_dispatch``
+    (the forecast-expanded set, whose sort order need not be chronological).  The carriers of the next roll
+    (``roll_end_state``, ``roll_end_online``, ``roll_end_flow``) are read at this step."""
+    frame = None
+    emitted = False
+    rd_path = sd / "realized_dispatch.csv"
+    if _provider_has(provider, "solve_data/realized_dispatch", rd_path):
+        try:
+            frame = _provider_read(provider, "solve_data/realized_dispatch", rd_path)
+            emitted = True
+        except pl.exceptions.NoDataError:
+            frame = None
+    if frame is None and flex_data is not None and getattr(flex_data, "realized_dispatch", None) is not None:
+        frame = flex_data.realized_dispatch
+    if frame is None or frame.height == 0:
         return None
-    cols = realized.columns
+    cols = frame.columns
     d_col = "period" if "period" in cols else "d"
     t_col = "step" if "step" in cols else "t"
-    pairs = realized.select(pl.col(d_col).cast(pl.Utf8).alias("d"), pl.col(t_col).cast(pl.Utf8).alias("t")).unique()
-    dt = getattr(flex_data, "dt", None) if flex_data is not None else None
-    if dt is not None and dt.height > 0:
-        order = (dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
-                 .with_row_index("__i").unique(subset=["d", "t"], keep="first"))
-        ranked = pairs.join(order, on=["d", "t"], how="inner").sort("__i")
-        if ranked.height > 0:
-            return ranked["d"][-1], ranked["t"][-1]
-    pairs = pairs.sort(["d", "t"])
+    pairs = frame.select(pl.col(d_col).cast(pl.Utf8).alias("d"), pl.col(t_col).cast(pl.Utf8).alias("t"))
+    if not emitted:
+        pairs = pairs.unique().sort(["d", "t"])
     return pairs["d"][-1], pairs["t"][-1]
 
 
-def _roll_end_flow(sol, flex_data: "FlexData | None", realized: "pl.DataFrame | None") -> "pl.DataFrame | None":
+def _step_duration_at(flex_data: "FlexData | None", step: "tuple[str, str]") -> float:
+    """``p_step_duration`` of ``step`` ``(d, t)`` (1.0 when unknown)."""
+    sd_param = getattr(flex_data, "p_step_duration", None) if flex_data is not None else None
+    if sd_param is not None:
+        hit = sd_param.frame.filter((pl.col("d").cast(pl.Utf8) == step[0]) & (pl.col("t").cast(pl.Utf8) == step[1]))
+        if hit.height > 0:
+            return float(hit["value"][0])
+    return 1.0
+
+
+def _roll_end_flow(sol, flex_data: "FlexData | None", last: "tuple[str, str] | None") -> "pl.DataFrame | None":
     """``[process, source, sink, period, step, duration, value]``: ``v_flow`` of the ramp-limited arcs at the
     solve's last realized step; ``None`` without ramp limits, realized steps or ``v_flow``."""
     if flex_data is None or "v_flow" not in sol._vars:
@@ -6206,10 +6231,7 @@ def _roll_end_flow(sol, flex_data: "FlexData | None", realized: "pl.DataFrame | 
             for k in ("sink_up", "sink_down", "source_up", "source_down")]
     sets = [x.select(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")) for x in sets
             if x is not None and x.height > 0]
-    if not sets:
-        return None
-    last = _last_realized_step(realized, flex_data)
-    if last is None:
+    if not sets or last is None:
         return None
     arcs = pl.concat(sets).unique()
     v = sol._vars["v_flow"]
@@ -6222,12 +6244,7 @@ def _roll_end_flow(sol, flex_data: "FlexData | None", realized: "pl.DataFrame | 
             .join(arcs, on=["p", "source", "sink"], how="semi"))
     if rows.height == 0:
         return None
-    dur = 1.0
-    sd_param = getattr(flex_data, "p_step_duration", None)
-    if sd_param is not None:
-        hit = sd_param.frame.filter((pl.col("d").cast(pl.Utf8) == last[0]) & (pl.col("t").cast(pl.Utf8) == last[1]))
-        if hit.height > 0:
-            dur = float(hit["value"][0])
+    dur = _step_duration_at(flex_data, last)
     return rows.select(pl.col("p").alias("process"), "source", "sink",
                        pl.lit(last[0]).alias("period"), pl.lit(last[1]).alias("step"),
                        pl.lit(dur, dtype=pl.Float64).alias("duration"), "value")
@@ -6481,76 +6498,53 @@ def build_handoff_from_solution(
     # discarded HORIZON-END of a FORECAST branch, not the committed trunk
     # jump-end — see NOTE above.  Fall back to ``flex_data.realized_dispatch``
     # only when the Provider key is absent (unit-test synthesis, no real solve).
-    last_pairs_df = None
-    rd_path = sd / "realized_dispatch.csv"
-    if _provider_has(provider, "solve_data/realized_dispatch", rd_path):
-        try:
-            last_pairs_df = _provider_read(provider, "solve_data/realized_dispatch", rd_path)
-        except pl.exceptions.NoDataError:
-            last_pairs_df = None
-    if (last_pairs_df is None and flex_data is not None
-            and getattr(flex_data, "realized_dispatch", None) is not None):
-        last_pairs_df = flex_data.realized_dispatch
-    if nodes_state and last_pairs_df is not None and "v_state" in sol._vars:
-        # Schema: ``period, step``.  Take the last (period, step) in
-        # dispatch order — equivalent to ``_load_realized_period_time_last``
-        # in v3.32.0 followed by ``last_pairs[-1]`` in
-        # ``write_p_roll_continue_state``.  Sorting by (d, t) and picking
-        # the lexically-last row yields the end-of-realized step of the
-        # last realized period.
-        if last_pairs_df.height > 0:
-            cols = last_pairs_df.columns
-            d_col = "period" if "period" in cols else "d"
-            t_col = "step" if "step" in cols else "t"
-            last_pairs_df = (last_pairs_df
-                .select(alias_to_axis(d_col, "d"),
-                         alias_to_axis(t_col, "t"))
-                .unique()
-                .sort(["d", "t"]))
-            if last_pairs_df.height > 0:
-                last_d = last_pairs_df["d"][-1]
-                last_t = last_pairs_df["t"][-1]
-                rcs_rows: list[tuple[str, float]] = []
-                import os
-                if os.environ.get("FLEXTOOL_DISABLE_VSTATE_FILTER") == "1":
-                    # Old path: materialize the FULL (n, d, t) v_state frame
-                    # for the whole dispatch window, then drop all but the
-                    # last (d, t).  ~17GB transient peak on the real DES model.
-                    v_state = sol.value("v_state")
-                    last_state = (
-                        v_state.filter(
-                            (pl.col("d") == last_d) & (pl.col("t") == last_t))
-                        if v_state is not None and v_state.height > 0
-                        else None)
-                else:
-                    # Filter the variable's col_id frame to ONLY the last
-                    # (d, t) keys, then pull values for those rows alone.
-                    # Avoids materializing the full per-step v_state frame.
-                    # ``sol.value`` does ``v.frame.select(dims).with_columns(
-                    # value=col_value[col_id])``; we replicate that against the
-                    # pre-filtered frame so the result is byte-identical to the
-                    # old path's post-filter output.
-                    _v = sol._vars["v_state"]
-                    _last_frame = _v.frame.filter(
-                        (pl.col("d") == last_d) & (pl.col("t") == last_t))
-                    if _last_frame.height > 0:
-                        _ids = _last_frame["col_id"].to_numpy()
-                        _vals = sol.col_value[_ids]
-                        last_state = _last_frame.select(*_v.dims).with_columns(
-                            value=pl.Series(_vals))
-                    else:
-                        last_state = None
-                if last_state is not None:
-                    nodes_state_set = set(nodes_state)
-                    for r in last_state.iter_rows(named=True):
-                        n = str(r["n"])
-                        if n not in nodes_state_set:
-                            continue
-                        v = float(r["value"]) * unitsize.get(n, 1.0)
-                        rcs_rows.append((n, v))
-                if rcs_rows:
-                    roll_end_state_df = pl.DataFrame(
-                        rcs_rows, schema=["node", "value"], orient="row")
+    # The last realized step in time (``_last_realized_step``: the emitted order of
+    # ``solve_data/realized_dispatch``, equivalent to ``_load_realized_period_time_last`` followed by
+    # ``last_pairs[-1]`` in v3.32.0's ``write_p_roll_continue_state``), shared by the three roll carriers.
+    last_step = _last_realized_step(sd, flex_data, provider=provider)
+    if nodes_state and last_step is not None and "v_state" in sol._vars:
+        last_d, last_t = last_step
+        rcs_rows: list[tuple[str, float]] = []
+        import os
+        if os.environ.get("FLEXTOOL_DISABLE_VSTATE_FILTER") == "1":
+            # Old path: materialize the FULL (n, d, t) v_state frame
+            # for the whole dispatch window, then drop all but the
+            # last (d, t).  ~17GB transient peak on the real DES model.
+            v_state = sol.value("v_state")
+            last_state = (
+                v_state.filter(
+                    (pl.col("d") == last_d) & (pl.col("t") == last_t))
+                if v_state is not None and v_state.height > 0
+                else None)
+        else:
+            # Filter the variable's col_id frame to ONLY the last
+            # (d, t) keys, then pull values for those rows alone.
+            # Avoids materializing the full per-step v_state frame.
+            # ``sol.value`` does ``v.frame.select(dims).with_columns(
+            # value=col_value[col_id])``; we replicate that against the
+            # pre-filtered frame so the result is byte-identical to the
+            # old path's post-filter output.
+            _v = sol._vars["v_state"]
+            _last_frame = _v.frame.filter(
+                (pl.col("d") == last_d) & (pl.col("t") == last_t))
+            if _last_frame.height > 0:
+                _ids = _last_frame["col_id"].to_numpy()
+                _vals = sol.col_value[_ids]
+                last_state = _last_frame.select(*_v.dims).with_columns(
+                    value=pl.Series(_vals))
+            else:
+                last_state = None
+        if last_state is not None:
+            nodes_state_set = set(nodes_state)
+            for r in last_state.iter_rows(named=True):
+                n = str(r["n"])
+                if n not in nodes_state_set:
+                    continue
+                v = float(r["value"]) * unitsize.get(n, 1.0)
+                rcs_rows.append((n, v))
+        if rcs_rows:
+            roll_end_state_df = pl.DataFrame(
+                rcs_rows, schema=["node", "value"], orient="row")
 
     # ---- upward_roll_end_state: routed UPWARD to parent storage's next roll ----
     # Per specs/feature_fixes.md §1: dispatch sub-solves pass their
@@ -6580,64 +6574,50 @@ def build_handoff_from_solution(
     # cyclic wrap (which re-charges a startup at every boundary).  Kept in
     # unit-count space (NOT ×unitsize): the online dynamics operate on
     # ``v_online ∈ [0, existing_count]``, the same units the cyclic lag
-    # carries.  Self-contained (own realized-dispatch read + last-(d,t)
-    # pick) because online can exist without any nodeState, so it must not
-    # depend on the storage block above having run.  Keyed on ``p`` alone
+    # carries.  Read at the same last realized step as ``roll_end_state``
+    # (``last_step``, computed whether or not the solve has storage).  Keyed on ``p`` alone
     # (a process has one startup_method at a time, so linear/integer never
     # mix for the same ``p``); linear and integer rows are unioned.
     roll_end_online_df = None
-    rd_path_on = sd / "realized_dispatch.csv"
-    last_pairs_on = None
-    if _provider_has(provider, "solve_data/realized_dispatch", rd_path_on):
-        try:
-            last_pairs_on = _provider_read(
-                provider, "solve_data/realized_dispatch", rd_path_on)
-        except pl.exceptions.NoDataError:
-            last_pairs_on = None
-    if (last_pairs_on is None and flex_data is not None
-            and getattr(flex_data, "realized_dispatch", None) is not None):
-        last_pairs_on = flex_data.realized_dispatch
     _has_online_var = ("v_online_linear" in sol._vars
                        or "v_online_integer" in sol._vars)
-    if last_pairs_on is not None and last_pairs_on.height > 0 and _has_online_var:
-        cols = last_pairs_on.columns
-        d_col = "period" if "period" in cols else "d"
-        t_col = "step" if "step" in cols else "t"
-        lp_on = (last_pairs_on
-                 .select(alias_to_axis(d_col, "d"), alias_to_axis(t_col, "t"))
-                 .unique()
-                 .sort(["d", "t"]))
-        if lp_on.height > 0:
-            last_d_on = lp_on["d"][-1]
-            last_t_on = lp_on["t"][-1]
-            rco_rows: list[tuple[str, float]] = []
-            for _vname in ("v_online_linear", "v_online_integer"):
-                if _vname not in sol._vars:
-                    continue
-                _v = sol._vars[_vname]
-                # col_id-filtered pull (mirrors the memory-frugal v_state
-                # path above): filter the variable's col_id frame to the
-                # single committed-jump-end (d, t), then read values for
-                # those rows alone instead of materialising the full frame.
-                _last_frame = _v.frame.filter(
-                    (pl.col("d") == last_d_on) & (pl.col("t") == last_t_on))
-                if _last_frame.height == 0:
-                    continue
-                _ids = _last_frame["col_id"].to_numpy()
-                _vals = sol.col_value[_ids]
-                _lst = _last_frame.select(*_v.dims).with_columns(
-                    value=pl.Series(_vals))
-                for r in _lst.iter_rows(named=True):
-                    rco_rows.append((str(r["p"]), float(r["value"])))
-            if rco_rows:
-                roll_end_online_df = pl.DataFrame(
-                    rco_rows, schema=["process", "value"], orient="row")
+    if last_step is not None and _has_online_var:
+        last_d_on, last_t_on = last_step
+        rco_rows: list[tuple[str, float]] = []
+        for _vname in ("v_online_linear", "v_online_integer"):
+            if _vname not in sol._vars:
+                continue
+            _v = sol._vars[_vname]
+            # col_id-filtered pull (mirrors the memory-frugal v_state
+            # path above): filter the variable's col_id frame to the
+            # single committed-jump-end (d, t), then read values for
+            # those rows alone instead of materialising the full frame.
+            _last_frame = _v.frame.filter(
+                (pl.col("d") == last_d_on) & (pl.col("t") == last_t_on))
+            if _last_frame.height == 0:
+                continue
+            _ids = _last_frame["col_id"].to_numpy()
+            _vals = sol.col_value[_ids]
+            _lst = _last_frame.select(*_v.dims).with_columns(
+                value=pl.Series(_vals))
+            for r in _lst.iter_rows(named=True):
+                rco_rows.append((str(r["p"]), float(r["value"])))
+        if rco_rows:
+            roll_end_online_df = pl.DataFrame(
+                rco_rows, schema=["process", "value"], orient="row")
 
     # ---- roll_end_flow: v_flow of the ramp-limited arcs at the last realized step ----
     # The next roll's first step ramps from this flow (``_load_ramp_carry``; the next roll applies it only
     # where the complete solve's predecessor of its first step is this step and adjacent).  Units of
     # unitsize, like v_flow.  ``duration`` = this step's length (the ramp room uses both step lengths).
-    roll_end_flow_df = _roll_end_flow(sol, flex_data, last_pairs_on)
+    roll_end_flow_df = _roll_end_flow(sol, flex_data, last_step)
+    # ---- roll_end_step: the last realized step itself (with its duration) ----
+    # The next roll links its first step to it (ramp rows with roll_end_flow, and the ramp output also in
+    # models without ramp limits).
+    roll_end_step_df = None
+    if last_step is not None:
+        roll_end_step_df = pl.DataFrame({"period": [last_step[0]], "step": [last_step[1]],
+                                         "duration": [_step_duration_at(flex_data, last_step)]})
 
     # ---- fix_online: committed v_online over the JUMP for the sibling ----
     # OC1 #1 sub-slice (b).  For a separate_dispatch PARENT (its name is a
@@ -6707,6 +6687,17 @@ def build_handoff_from_solution(
     # author min-up/down (inner-joined on ``online_min_time``) — a process
     # with no obligation never carries, so it is never stored.
     online_history_df = None
+    last_pairs_on = None
+    rd_path_on = sd / "realized_dispatch.csv"
+    if _provider_has(provider, "solve_data/realized_dispatch", rd_path_on):
+        try:
+            last_pairs_on = _provider_read(
+                provider, "solve_data/realized_dispatch", rd_path_on)
+        except pl.exceptions.NoDataError:
+            last_pairs_on = None
+    if (last_pairs_on is None and flex_data is not None
+            and getattr(flex_data, "realized_dispatch", None) is not None):
+        last_pairs_on = flex_data.realized_dispatch
     _has_su_sd = any(
         v in sol._vars for v in
         ("v_startup_linear", "v_startup_integer",
@@ -7450,6 +7441,7 @@ def build_handoff_from_solution(
         upward_roll_end_state=upward_roll_end_state_df,
         roll_end_online=roll_end_online_df,
         roll_end_flow=roll_end_flow_df,
+        roll_end_step=roll_end_step_df,
         online_history=online_history_df,
         fix_online=fix_online_df,
         fix_storage_quantity=fix_storage_quantity_df,

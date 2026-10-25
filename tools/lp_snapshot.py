@@ -858,6 +858,66 @@ def _patch_ramp_stoch_rolling(data: dict) -> dict:
                     values=_ramp_on("unit__outputNode", ["coal_plant", "demand_node"], 0.002))
 
 
+def _patch_ramp_6h(data: dict) -> dict:
+    """coal ramp with the solve's new_stepduration = 6 h (aggregated steps, adjacent in the solve's own
+    step space)."""
+    return _overlay(data, name="ramp_6h", base=["init", "west", "coal", "fullYear"],
+                    values=_RAMP_COAL + [["solve", "y2020_fullYear_dispatch", "new_stepduration", 6.0]])
+
+
+def _patch_ramp_blocks_2h(data: dict) -> dict:
+    """coal ramp on the 5weeks timeset aggregated to 2-hour steps: gaps between blocks stay gaps."""
+    return _overlay(data, name="ramp_blocks_2h", base=["init", "west", "coal", "coal_ramp", "5weeks"],
+                    values=_RAMP_COAL + [["solve", "y2020_5week", "new_stepduration", 2.0]])
+
+
+_MLE_CHP = [["unit", "coal_chp", "startup_method", "linear"],
+            ["unit", "coal_chp", "min_load", 0.3],
+            ["unit", "coal_chp", "conversion_method", "min_load_efficiency"],
+            ["unit", "coal_chp", "efficiency_at_min_load", 0.6],
+            ["unit", "coal_chp", "availability", 0.8],
+            ["constraint", "coal_chp_fix", "is_enabled", "no"]]
+
+
+def _patch_ramp_avail_section(data: dict) -> dict:
+    """coal_chp (linear online, min_load_efficiency, availability 0.8, demand above capacity) with a ramp on
+    its fuel input: the input-arc capacity rows must not cap the derated full output."""
+    return _overlay(data, name="ramp_avail_section", base=["init", "west", "coal_chp", "heat"],
+                    values=_MLE_CHP + _ramp_on("unit__inputNode", ["coal_chp", "coal_market"], 0.005) + [
+                        ["node", "heat", "inflow", 0.0],
+                        ["node", "west", "inflow", _tmap([-3000.0] * 48)]])
+
+
+def _patch_reserve_input_avail(data: dict) -> dict:
+    """reserve_input_side with coal_chp min_load_efficiency and availability 0.8: the "consume more" row of
+    the fuel arc (maxInputFlow_online) at derated full output."""
+    data = _patch_reserve_input_side(data)
+    for cls, ent, param, val in _MLE_CHP[2:5]:
+        data["parameter_values"].append([cls, ent, param, _pack(val), "reserve_input_side"])
+    data["scenarios"].append(["reserve_input_avail", False, ""])
+    full = _chain(data, "reserve_input_side")
+    for a, before in zip(full, full[1:] + [None]):
+        data["scenario_alternatives"].append(["reserve_input_avail", a, before])
+    return data
+
+
+def _patch_ramp_roll_span(data: dict) -> dict:
+    """Two continuing periods p2020 (t0001-24) and a2025 (t0025-48, a name that sorts before p2020), coal
+    linear online with a ramp, rolling horizon 16 / jump 10: one roll realizes steps of both periods; the
+    carriers must take the last realized step in time."""
+    vals = [v for v in _two_period_values() if v[2] not in ("period_timeset", "realized_periods")] + [
+        ["solve", "y2020_2day_dispatch", "period_timeset", _pmap({"p2020": "ta", "a2025": "tb"})],
+        ["solve", "y2020_2day_dispatch", "realized_periods",
+         {"type": "array", "value_type": "str", "data": ["p2020", "a2025"]}],
+        ["unit", "coal_plant", "startup_method", "linear"],
+        ["unit", "coal_plant", "min_load", 0.2],
+        ["solve", "y2020_2day_dispatch", "solve_mode", "rolling_window"],
+        ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", 16.0],
+        ["solve", "y2020_2day_dispatch", "rolling_solve_jump", 10.0]]
+    return _overlay(data, name="ramp_roll_span", base=["init", "west", "coal"],
+                    entities=[["timeset", "ta"], ["timeset", "tb"]], values=_RAMP_COAL + vals)
+
+
 PATCHES: dict[str, Callable[[dict], dict]] = {
     "none": _no_patch,
     "invest_limits": _patch_invest_limits,
@@ -892,6 +952,11 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "ramp_rp": _patch_ramp_rp,
     "ramp_midhorizon": _patch_ramp_midhorizon,
     "ramp_stoch_rolling": _patch_ramp_stoch_rolling,
+    "ramp_6h": _patch_ramp_6h,
+    "ramp_blocks_2h": _patch_ramp_blocks_2h,
+    "ramp_avail_section": _patch_ramp_avail_section,
+    "reserve_input_avail": _patch_reserve_input_avail,
+    "ramp_roll_span": _patch_ramp_roll_span,
 }
 
 
@@ -1026,6 +1091,11 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("ramp_rp", _T),
     ("ramp_midhorizon", _F + "stoch_two_period_midhorizon_nreal0.json"),
     ("ramp_stoch_rolling", _F + "stochastics.json"),
+    ("ramp_6h", _T),
+    ("ramp_blocks_2h", _T),
+    ("ramp_avail_section", _T),
+    ("reserve_input_avail", _T),
+    ("ramp_roll_span", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

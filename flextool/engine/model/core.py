@@ -1789,9 +1789,12 @@ def _eq_ramp(b: _Build) -> None:
     #   step_duration[d′,t′] → its carried duration.
     # Steps without a predecessor, on arcs that hold reserve in that direction there (prundt):
     #   R↑ ≤ ρ·c·cap (up),  −R↓ ≥ −ρ·c·cap (down),  ρ = ramp_speed · 60 · step_duration[d,t] < 1;  no startup term.
-    # R↑ = Σ_r v_reserve[p,r,up,k,d,t] + φ·Σ_r v_reserve[p,r,down,s,d,t]   (raises the arc: up at its sink, down at its source)
-    # R↓ = Σ_r v_reserve[p,r,down,k,d,t] + φ·Σ_r v_reserve[p,r,up,s,d,t]   (lowers it: down at its sink, up at its source)
-    #   φ = 1 where v_flow is the input (indirect unit's input arc, sink-less unit), 1/slope on a direct arc; units only.
+    # R↑ = Σ_r v_reserve[p,r,up,k,d,t] + φ·Σ_r v_reserve[p,r,down,s,d,t]
+    #   (raises the arc: up at its sink, down at its source)
+    # R↓ = Σ_r v_reserve[p,r,down,k,d,t] + φ·Σ_r v_reserve[p,r,up,s,d,t]
+    #   (lowers it: down at its sink, up at its source)
+    #   φ = 1 where v_flow is the input (indirect unit's input arc, sink-less unit), 1/slope on a direct arc;
+    #   units only.
     # Limits the change of a flow between two consecutive steps, plus the reserve it holds in that direction, to its
     # ramp room: ramp_speed is a share of capacity per minute and flows are step averages, so the room between two
     # step averages is the speed × the distance between the two step centres (a valid bound for every trajectory

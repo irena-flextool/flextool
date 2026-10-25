@@ -148,6 +148,8 @@ HANDOFF_UPWARD_ROLL_END_STATE = "handoff/upward_roll_end_state"
 HANDOFF_ROLL_END_ONLINE = "handoff/roll_end_online"
 # The previous roll's v_flow of the ramp-limited arcs at its last realized step (ramp carry-in).
 HANDOFF_ROLL_END_FLOW = "handoff/roll_end_flow"
+# The previous roll's last realized step [period, step, duration] (ramp carry-in and ramp output).
+HANDOFF_ROLL_END_STEP = "handoff/roll_end_step"
 HANDOFF_ONLINE_HISTORY = "handoff/online_history"
 # OC1 #1 sub-slice (b) — separate_dispatch parent's committed v_online over
 # the jump, pinned into the realized-dispatch sibling.
@@ -178,6 +180,7 @@ OVERRIDE_ROLL_END_STATE = "override/roll_end_state"
 OVERRIDE_UPWARD_ROLL_END_STATE = "override/upward_roll_end_state"
 OVERRIDE_ROLL_END_ONLINE = "override/roll_end_online"
 OVERRIDE_ROLL_END_FLOW = "override/roll_end_flow"
+OVERRIDE_ROLL_END_STEP = "override/roll_end_step"
 OVERRIDE_ONLINE_HISTORY = "override/online_history"
 OVERRIDE_CUMULATIVE_CO2 = "override/cumulative_co2"
 OVERRIDE_CUMULATIVE_COMMODITY = "override/cumulative_commodity"

@@ -2,8 +2,9 @@
 
 Owns the variables v_online_*, v_startup_*, v_shutdown_* and the equations maxOnline, maxStartup,
 maxShutdown, online__startup, online__shutdown, maxFlow_online, maxFlow_online_shutdown, maxOutputSum_online,
-maxInputFlow_online, maxInputFlow_online_shutdown, minimum_uptime, minimum_downtime and online_fix_eq.  Each exists once per UC class present: ``linear`` (continuous
-v_online) and ``integer`` (integer v_online), suffixed ``_linear`` / ``_integer``.
+maxInputFlow_online, maxInputFlow_online_shutdown, minimum_uptime, minimum_downtime and online_fix_eq.  Each
+exists once per UC class present: ``linear`` (continuous v_online) and ``integer`` (integer v_online), suffixed
+``_linear`` / ``_integer``.
 """
 
 from typing import TYPE_CHECKING
@@ -181,9 +182,11 @@ def add_constraints(b: "_Build") -> None:
         #   κ = capacity_max_coeff[p,s,k]
         # ─── EQ. ─── maxFlow_online_shutdown_{linear,integer} ────────────────
         # (maxFlow_online LHS)
-        #   ≤  κ · ( v_online · availability − red_sd · v_shutdown[p,d,t⁺] − max(0, red_su − red_sd) · v_startup[p,d,t] )
+        #   ≤  κ · ( v_online · availability − red_sd · v_shutdown[p,d,t⁺]
+        #            − max(0, red_su − red_sd) · v_startup[p,d,t] )
         #   ∀ rows of maxFlow_online with red_sd > 0 and a successor t⁺
-        # red_su = max(0, availability − SU),  SU = min(1, min_load[p,d,t] + ½ · ramp_speed_up · 60 · step_duration[d,t])
+        # red_su = max(0, availability − SU),
+        #   SU = min(1, min_load[p,d,t] + ½ · ramp_speed_up · 60 · step_duration[d,t])
         #   over the sides of the arc with an up ramp limit (process_source_sink_ramp_limit_{sink,source}_up; the
         #   smaller SU when both); red_sd likewise with ramp_speed_down at the pre-shutdown step (d,t); 0 without a
         #   ramp limit.  t⁺ = the step whose ramp predecessor (dt_ramp_link) is (d,t) in the same period.
@@ -236,20 +239,23 @@ def add_constraints(b: "_Build") -> None:
         # ─── EQ. ─── maxInputFlow_online_{linear,integer} ────────────────────
         # ─────────────────────────────────────────────────────────────────────
         # v_flow[p,s,p,d,t] + Σ_r v_reserve_down[p,r,s,d,t]
-        #   ≤ input_cap[p,s,p,d,t] · ( v_online[p,d,t] · availability[p,d,t] − red_su · v_startup[p,d,t]
+        #   ≤ input_cap[p,s,p,d,t] · ( v_online[p,d,t] · x(availability)[p,d,t] − red_su · v_startup[p,d,t]
         #                              − max(0, red_sd − red_su) · v_shutdown[p,d,t⁺] )
         #   ∀ (p,s,p) input arc of an online indirect unit that is in reserve_down_input_arcs or has a source-side
         #     ramp limit with a reduction, (d,t) ∈ dt
         #   input_cap = p_indirect_input_cap (input_share_max × full-load input per unit of capacity)
         # ─── EQ. ─── maxInputFlow_online_shutdown_{linear,integer} ───────────
-        # (maxInputFlow_online LHS) ≤ input_cap · ( v_online · availability − red_sd · v_shutdown[p,d,t⁺]
+        # (maxInputFlow_online LHS) ≤ input_cap · ( v_online · x(availability) − red_sd · v_shutdown[p,d,t⁺]
         #                                           − max(0, red_su − red_sd) · v_startup[p,d,t] )
         #   ∀ rows of maxInputFlow_online with red_sd > 0 and a successor t⁺
-        # red_su / red_sd as in maxFlow_online, from the input node's ramp speeds, with min_load replaced by the input
-        # the unit draws at min load as a share of input_cap: x / input_share_max[p,s],
-        #   x = (slope · W(min_load) + section) / (slope · W(1) + section)
-        #   (W(y): the output-side fuel width filled up to y, as in p_indirect_input_cap; section only for
-        #   min_load_efficiency units), so a started unit can always draw what it needs at min load.
+        # x(y) = (slope · W(y) + section) / (slope · W(1) + section): the input drawn at output level y per unit of
+        #   full-load input (W(y): the output-side fuel width filled up to y, as in p_indirect_input_cap; section
+        #   only for min_load_efficiency units).  x(availability) replaces availability: the section is drawn per
+        #   unit online, so availability × full-load input would cap the derated full output (x = availability
+        #   without a section).
+        # red_su = max(0, x(availability) − SU_in), SU_in = min(1, x(min_load) / input_share_max[p,s]
+        #   + ½ · ramp_speed_up · 60 · step_duration) from the input node's ramp speeds (red_sd likewise), so a
+        #   started unit can always draw what it needs at min load.
         # The online analogue of maxFlow on an indirect unit's input arc: consuming more needs online capacity,
         # and a starting (stopping) unit draws at most its startup (pre-shutdown) share of the input.  The other
         # inputs and the outputs are not adjusted (the per-arc simplification of the input-side floors).
@@ -417,7 +423,7 @@ def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame"
     cap = _indirect_input_cap(d, in_arcs)
     rhs = v_online * Param(("p", "source", "sink", "d", "t"), cap)
     if d.p_process_availability is not None:
-        rhs = rhs * _availability_factor(d, in_arcs)
+        rhs = rhs * Param(("p", "source", "sink", "d", "t"), _input_availability_share(b, in_arcs))
     lhs: dict = {"flow": b.v_flow}
     lhs.update(b.reserve_down_at_source)
     rhs_terms: dict = {"online": rhs}
@@ -470,15 +476,23 @@ def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *, input_side: bool) -> "p
                                                 pl.col("t").cast(pl.Utf8).alias("_t"),
                                                 pl.col("value").cast(pl.Float64).alias("__dur"))
     ml = _min_load_share(b, base, input_side=input_side)
-    avail = (_availability_factor(d, arcs).frame.lazy()
-             .select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
-                     pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias("__av"))
-             if d.p_process_availability is not None else None)
+    if input_side:
+        avail = (_input_availability_share(b, arcs).lazy()
+                 .select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("source").cast(pl.Utf8).alias("_source"),
+                         pl.col("sink").cast(pl.Utf8).alias("_sink"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                         pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias("__av")))
+    elif d.p_process_availability is not None:
+        avail = (_availability_factor(d, arcs).frame.lazy()
+                 .select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                         pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias("__av")))
+    else:
+        avail = None
     grid = base.join(dur, on=["_d", "_t"], how="inner").join(ml, on=["_p", "_source", "_sink", "_d", "_t"],
                                                               how="left")
     grid = grid.with_columns(pl.col("__ml").fill_null(0.0))
     if avail is not None:
-        grid = grid.join(avail, on=["_p", "_d", "_t"], how="left").with_columns(pl.col("__av").fill_null(1.0))
+        on = ["_p", "_source", "_sink", "_d", "_t"] if input_side else ["_p", "_d", "_t"]
+        grid = grid.join(avail, on=on, how="left").with_columns(pl.col("__av").fill_null(1.0))
     else:
         grid = grid.with_columns(__av=pl.lit(1.0))
     # One startup (shutdown) step reaches ml + half a step's ramp on average (Q-c14a-A); the tightest side wins.
@@ -520,24 +534,67 @@ def _successor_steps(d) -> "pl.LazyFrame":
 def _min_load_share(b: "_Build", base: "pl.LazyFrame", *, input_side: bool) -> "pl.LazyFrame":
     """``(_p, _source, _sink, _d, _t, __ml)``: the share of the arc's capacity limit a unit online runs at
     at min load.  Output-measured arcs: ``min_load``.  An indirect unit's input arc (``input_side``): the input
-    drawn at min load per unit of input limit, ``x(min_load) / input_share_max`` with
-    ``x(y) = (slope · W(y) + section) / (slope · W(1) + section)``, ``W(y)`` the output-side fuel width filled up to
-    ``y`` (outputs in descending conversion_flow_coeff order, each up to its capacity_max_coeff — the most fuel
-    the outputs can draw at that output level, as in ``p_indirect_input_cap``), section only for
-    ``min_load_efficiency`` units.  0 where the unit has no min_load."""
+    drawn at min load per unit of input limit, ``x(min_load) / input_share_max`` (:func:`_fuel_share`).  0 where
+    the unit has no min_load."""
     d = b.d
     cols = ["_p", "_source", "_sink", "_d", "_t"]
     if d.p_min_load is None:
         return base.select(cols).with_columns(__ml=pl.lit(0.0))
     ml = (promote_param_to_dt(d.p_min_load, d.dt)
           .select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
-                  pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias("__mlu")))
-    rows = base.select(cols).join(ml, on=["_p", "_d", "_t"], how="left").with_columns(pl.col("__mlu").fill_null(0.0))
+                  pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias("__y")))
+    rows = base.select(cols).join(ml, on=["_p", "_d", "_t"], how="left").with_columns(pl.col("__y").fill_null(0.0))
     if not input_side:
-        return rows.select(*cols, pl.col("__mlu").alias("__ml"))
+        return rows.select(*cols, pl.col("__y").alias("__ml"))
+    out = rows.join(_fuel_share(b, rows.select("_p", "_d", "_t", "__y").unique()), on=["_p", "_d", "_t"], how="left")
+    share = getattr(d, "p_process_source_input_share_max", None)
+    if share is not None:
+        out = (out.join(share.frame.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"),
+                                                  pl.col("source").cast(pl.Utf8).alias("_source"),
+                                                  pl.col("value").cast(pl.Float64).alias("__ism")),
+                        on=["_p", "_source"], how="left"))
+    else:
+        out = out.with_columns(__ism=pl.lit(None, pl.Float64))
+    # No fuel width (no output data): no reduction is safe only with share 1 (SU = 1).
+    return out.select(*cols, __ml=pl.when(pl.col("__x").is_null()).then(1.0)
+                      .otherwise(pl.col("__x") / pl.col("__ism").fill_null(1.0)))
+
+
+def _input_availability_share(b: "_Build", arcs: "pl.DataFrame") -> "pl.DataFrame":
+    """``(p, source, sink, d, t, value)`` over ``arcs`` (indirect units' input arcs) × dt, dtypes of ``arcs`` /
+    ``dt``: the input drawn at derated full output per unit of full-load input, ``x(availability)``
+    (:func:`_fuel_share`).  It replaces availability on the input arc's online limit: the min-load section is drawn
+    per unit online, not per available unit, so ``availability · full-load input`` would cap the derated full
+    output.  Equal to availability without a section (one output); availability where there is no fuel width."""
+    d = b.d
+    keys = ["p", "source", "sink"]
+    over = arcs.select(keys).unique(maintain_order=True).join(d.dt.select("d", "t"), how="cross")
+    ou = _utf8_keys(over.lazy(), keys + ["d", "t"])
+    if d.p_process_availability is not None:
+        av = (_availability_factor(d, arcs).frame.lazy()
+              .select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                      pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias("__y")))
+        ou = ou.join(av, on=["_p", "_d", "_t"], how="left").with_columns(pl.col("__y").fill_null(1.0))
+    else:
+        ou = ou.with_columns(__y=pl.lit(1.0))
+    x = _fuel_share(b, ou.select("_p", "_d", "_t", "__y").unique())
+    return (ou.join(x, on=["_p", "_d", "_t"], how="left")
+            .select(*keys, "d", "t", value=pl.coalesce(pl.col("__x"), pl.col("__y")))
+            .collect())
+
+
+def _fuel_share(b: "_Build", levels: "pl.LazyFrame") -> "pl.LazyFrame":
+    """``(_p, _d, _t, __x)`` for ``levels`` ``(_p, _d, _t, __y)`` (Utf8 keys): the input an indirect unit online
+    draws at output level y per unit of its full-load input,
+    ``x(y) = (slope · W(y) + section) / (slope · W(1) + section)``, ``W(y)`` the output-side fuel width filled up to
+    y (outputs in descending conversion_flow_coeff order, each up to its capacity_max_coeff — the most fuel the
+    outputs can draw at that output level, as in ``p_indirect_input_cap``), section only for ``min_load_efficiency``
+    units.  ``__x`` null where the unit has no fuel width (no output data)."""
+    d = b.d
+    empty = pl.LazyFrame(schema={"_p": pl.Utf8, "_d": pl.Utf8, "_t": pl.Utf8, "__x": pl.Float64})
     outs = getattr(d, "process_output_flows", None)
     if outs is None or outs.height == 0:
-        return rows.select(*cols, __ml=pl.lit(0.0))
+        return empty
     k = (outs.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("sink").cast(pl.Utf8).alias("_k"))
          .unique())
     for name, col in ((getattr(d, "p_process_sink_max_capacity_coef", None), "__cap"),
@@ -554,6 +611,7 @@ def _min_load_share(b: "_Build", base: "pl.LazyFrame", *, input_side: bool) -> "
          .filter(pl.col("__conv") > 0.0)
          .sort(["_p", "__conv", "_k"], descending=[False, True, False])
          .with_columns(__prev=pl.col("__cap").cum_sum().over("_p") - pl.col("__cap")))
+    rows = levels.with_columns(__one=pl.lit(1.0))
 
     def _width(y: str, out: str) -> "pl.LazyFrame":
         return (rows.select("_p", "_d", "_t", y).unique().join(k, on="_p", how="inner")
@@ -561,8 +619,7 @@ def _min_load_share(b: "_Build", base: "pl.LazyFrame", *, input_side: bool) -> "
                                                        (pl.col(y) - pl.col("__prev")).clip(lower_bound=0.0)))
                 .group_by("_p", "_d", "_t").agg((pl.col("__conv") * pl.col("__fill")).sum().alias(out)))
 
-    rows = rows.with_columns(__one=pl.lit(1.0))
-    w = _width("__mlu", "__w_ml").join(_width("__one", "__w_full"), on=["_p", "_d", "_t"], how="inner")
+    w = _width("__y", "__w_y").join(_width("__one", "__w_full"), on=["_p", "_d", "_t"], how="inner")
 
     def _pdt(param, out: str) -> "pl.LazyFrame | None":
         if param is None:
@@ -582,23 +639,11 @@ def _min_load_share(b: "_Build", base: "pl.LazyFrame", *, input_side: bool) -> "
     else:
         w = w.with_columns(__sec=pl.lit(0.0))
     w = w.with_columns(pl.col("__slope").cast(pl.Float64).fill_null(0.0))
-    x = w.select("_p", "_d", "_t",
-                 __x=pl.when(pl.col("__slope") * pl.col("__w_full") + pl.col("__sec") > 0.0)
-                 .then((pl.col("__slope") * pl.col("__w_ml") + pl.col("__sec"))
-                       / (pl.col("__slope") * pl.col("__w_full") + pl.col("__sec")))
-                 .otherwise(None))
-    share = getattr(d, "p_process_source_input_share_max", None)
-    out = rows.join(x, on=["_p", "_d", "_t"], how="left")
-    if share is not None:
-        out = (out.join(share.frame.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"),
-                                                  pl.col("source").cast(pl.Utf8).alias("_source"),
-                                                  pl.col("value").cast(pl.Float64).alias("__ism")),
-                        on=["_p", "_source"], how="left"))
-    else:
-        out = out.with_columns(__ism=pl.lit(None, pl.Float64))
-    # No fuel width (no min load or no output data): no reduction is safe only with share 1 (SU = 1).
-    return out.select(*cols, __ml=pl.when(pl.col("__x").is_null()).then(1.0)
-                      .otherwise(pl.col("__x") / pl.col("__ism").fill_null(1.0)))
+    return w.select("_p", "_d", "_t",
+                    __x=pl.when(pl.col("__slope") * pl.col("__w_full") + pl.col("__sec") > 0.0)
+                    .then((pl.col("__slope") * pl.col("__w_y") + pl.col("__sec"))
+                          / (pl.col("__slope") * pl.col("__w_full") + pl.col("__sec")))
+                    .otherwise(None))
 
 
 def _reduction_terms(red: "pl.DataFrame", kappa: "pl.DataFrame", v_startup, v_shutdown, sfx: str):

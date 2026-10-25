@@ -7412,12 +7412,30 @@ def dtttdt_from_source(source: "InputSource",
     return None if df is None else df.drop("jump")
 
 
+def _timeline_start_hours(source: "InputSource") -> "dict[tuple[str, str], float]":
+    """``{(timeline, t): start hour}`` of every raw timeline step (cumulative ``timestep_duration`` in the rank
+    order of :func:`_dt_period_active_steps`, i.e. sorted by step name within the timeline)."""
+    tl_dur = _try_param(source, "timeline", "timestep_duration")
+    if tl_dur is None:
+        return {}
+    step_col = next((c for c in ("t", "step", "timestep", "x") if c in tl_dur.columns and c not in ("name", "value")),
+                    None)
+    if step_col is None:
+        return {}
+    df = (tl_dur.select(pl.col("name").cast(pl.Utf8).alias("tl"), pl.col(step_col).cast(pl.Utf8).alias("t"),
+                        pl.col("value").cast(pl.Float64).alias("dur"))
+          .sort("tl", "t")
+          .with_columns(start=(pl.col("dur").cum_sum().over("tl") - pl.col("dur"))))
+    return {(tl, t): h for tl, t, h in df.select("tl", "t", "start").iter_rows()}
+
+
 def dtttdt_with_jump_from_source(source: "InputSource",
                                  active_solve: str | None,
                                  workdir: Path | None = None,
                                  *,
                                  ctx: "SolveContext | None" = None,
                                  provider: "object | None" = None,
+                                 step_duration: "Param | None" = None,
                                  ) -> pl.DataFrame | None:
     """Build the canonical ``(d, t, t_previous, t_previous_within_timeset,
     d_previous, t_previous_within_solve)`` dispatch-step lag frame.
@@ -7434,8 +7452,11 @@ def dtttdt_with_jump_from_source(source: "InputSource",
       * Within-period predecessor: previous step in the same period
         cyclically (first wraps to block_last of the period).
 
-    The extra ``jump`` column is ``make_step_jump``'s: the timeline rank of the step minus the rank of its
-    ``(d_previous, t_previous_within_solve)`` (1 = adjacent; ≤ 0 at a cyclic wrap; > 1 across a gap).
+    The extra ``jump`` column is ``make_step_jump``'s, in the solve's own step space: 1 where the predecessor
+    ``(d_previous, t_previous_within_solve)`` ends where the step starts on the timeline (with ``step_duration``,
+    the solve's step lengths, so aggregated ``new_stepduration`` steps are adjacent); otherwise the raw rank
+    difference (≤ 0 at a cyclic wrap, > 1 across a gap).  Without ``step_duration`` (or timeline durations) it is
+    the raw rank difference.
     """
     info = _dt_period_active_steps(source, active_solve, workdir, ctx=ctx, provider=provider)
     if info is None:
@@ -7444,6 +7465,26 @@ def dtttdt_with_jump_from_source(source: "InputSource",
     period_order = info["period_order"]
     if not period_order:
         return None
+    timeline_of = info.get("timeline_for_period") or {}
+    hours = _timeline_start_hours(source) if step_duration is not None else {}
+    durs: dict[tuple[str, str], float] = {}
+    if hours and step_duration is not None:
+        durs = {(str(d), str(t)): float(v) for d, t, v in
+                step_duration.frame.select("d", "t", "value").iter_rows()}
+
+    def _jump(d_cur: str, t_cur: str, rk_cur: int, d_prev: str, t_prev: str, rk_prev: int) -> int:
+        raw = rk_cur - rk_prev
+        if not durs:
+            return raw
+        tl_c, tl_p = timeline_of.get(d_cur), timeline_of.get(d_prev)
+        h_c, h_p = hours.get((tl_c, t_cur)), hours.get((tl_p, t_prev))
+        dur_p = durs.get((d_prev, t_prev))
+        if tl_c is None or tl_c != tl_p or h_c is None or h_p is None or dur_p is None:
+            return raw
+        if abs(h_c - (h_p + dur_p)) < 1e-9:
+            return 1
+        return raw if raw != 1 else 2
+
     # Per-period anchor lookup: branches whose anchor != self use a
     # per-branch self-loop for the period-wrap predecessor.  Read
     # period__branch.csv (workdir-aware) to discover which periods are
@@ -7623,7 +7664,8 @@ def dtttdt_with_jump_from_source(source: "InputSource",
                 prev_within_ts = steps[bli0][0]
                 prev_within_solve = prev_solve_last_t
                 d_prev = prev_p
-                jump = rk_cur - prev_p_steps[-1][1] if prev_p_steps else 0
+                jump = (_jump(period, t_cur, rk_cur, prev_p, prev_p_steps[-1][0], prev_p_steps[-1][1])
+                        if prev_p_steps else 0)
             else:
                 t_prev, rk_prev = steps[j - 1]
                 prev_t = t_prev
@@ -7642,6 +7684,7 @@ def dtttdt_with_jump_from_source(source: "InputSource",
                     prev_within_ts = t_prev
                 d_prev = period
                 prev_within_solve = t_prev
+                jump = _jump(period, t_cur, rk_cur, period, t_prev, rk_prev)
             out_rows.append((period, t_cur, prev_t, prev_within_ts,
                               d_prev, prev_within_solve, jump))
     if not out_rows:
@@ -8795,7 +8838,8 @@ def apply_derived_e(
     # because fixtures genuinely lacking timeline data on the source AND
     # the workdir CSV (very rare; not present in the engine
     # corpus) still need to fall through to the seed-loaded value.
-    dtttdt_jump = dtttdt_with_jump_from_source(source, active_solve, workdir, ctx=ctx, provider=provider)
+    dtttdt_jump = dtttdt_with_jump_from_source(source, active_solve, workdir, ctx=ctx, provider=provider,
+                                               step_duration=getattr(flex_data, "p_step_duration", None))
     dtttdt_db = None if dtttdt_jump is None else dtttdt_jump.drop("jump")
     if dtttdt_db is not None:
         flex_data.dtttdt = dtttdt_db
