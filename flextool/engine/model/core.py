@@ -15,7 +15,7 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
   v_flow[p,source,sink,d,t]            flow on a process arc; × unitsize = MW
   vq_state_up / _down[n,d,t]           balance slack (shortfall / surplus), MW
   v_state[n,d,t]                       storage state; × state_unitsize = MWh
-  v_state_inter[n,b]                   representative-period storage state at base-period boundaries
+  v_state_inter[n,d,b]                 representative-period storage state at base-period boundaries of d
   v_state_rp_start[n,d,t]              free start state of each representative block
   v_{online,startup,shutdown}_{linear,integer}[p,d,t]
                                        units (connections) online / starting / stopping, count of unitsize
@@ -693,15 +693,17 @@ def _declare_variables(b: _Build) -> None:
 
     # ─── VAR. ─── v_state_inter / v_state_rp_start ───────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state_inter[n,b] ≥ 0          ∀ n ∈ nodeState_rp, b ∈ rp_base_period
+    # v_state_inter[n,d,b] ≥ 0        ∀ n ∈ nodeState_rp, (d,b) ∈ rp_base_period
     # v_state_rp_start[n,d,t] ≥ 0     ∀ n ∈ nodeState_rp, (d,t) ∈ rp_block_first
-    # Representative-period storage, in state units: the state at each
-    # base-period boundary, and the free starting state of each
-    # representative block.  Upper bounds are the rows
+    # Representative-period storage, in state units: the state at the end of
+    # base period b of period d, and the free starting state of each
+    # representative block.  Every period has its own base periods (two
+    # periods may share base-period names).  Upper bounds are the rows
     # rp_inter_period_max_state and maxState_rp_start.
     if b.has_rp:
-        b.v_state_inter = m.add_var("v_state_inter", ("n", "b"),
-                                    d.nodeState_rp.join(d.rp_base_period_set, how="cross"), lower=0.0)
+        b.v_state_inter = m.add_var("v_state_inter", ("n", "d", "b"),
+                                    d.nodeState_rp.join(d.rp_base_period_set, how="cross").select("n", "d", "b"),
+                                    lower=0.0)
         b.v_state_rp_start = m.add_var("v_state_rp_start", ("n", "d", "t"), b.rp_start_idx, lower=0.0)
 
     # Unit commitment (v_online, v_startup, v_shutdown): declared by _online.
@@ -910,100 +912,123 @@ def _invest_in_dispatch(b: _Build) -> None:
 
 
 def _eq_rp_storage_chain(b: _Build) -> None:
-    """Representative-period storage: inter-period state chain and its bounds."""
+    """Representative-period storage: the base-period state chain of every period and its bounds."""
     if not (b.has_storage and b.has_rp):
         return
     m, d = b.m, b.d
     v_inter = b.v_state_inter
     b_dtype = v_inter.frame.schema["b"]
+    d_dtype = v_inter.frame.schema["d"]
     has_rep_blocks = d.rp_base__rep is not None and _has_rows(d.rp_block_first) and _has_rows(d.p_rp_last_step)
+    nodes = d.nodeState_rp
+
+    def typed(frame: pl.DataFrame) -> pl.DataFrame:
+        """Base-period labels (b, b_prev) onto v_state_inter's b dtype, periods (d, d_prev) onto its d dtype."""
+        return frame.with_columns(
+            [pl.col(c).cast(b_dtype, strict=False) for c in ("b", "b_prev") if c in frame.columns]
+            + [pl.col(c).cast(pl.Utf8).cast(d_dtype, strict=False) for c in ("d", "d_prev") if c in frame.columns])
+
+    first = typed(d.rp_base_first) if _has_rows(d.rp_base_first) else None    # (d, b)
+    last = typed(d.rp_base_last) if _has_rows(d.rp_base_last) else None       # (d, b)
+    period_previous = typed(d.rp_period_previous) if _has_rows(d.rp_period_previous) else None
+    inter_prev = _var_view(v_inter, "__prev", {"d": "d_prev", "b": "b_prev"})
+    drift = _rp_weighted_drift(b, nodes) if has_rep_blocks else None          # (n, d, b)
+    keys = ("n", "d", "b", "d_prev", "b_prev")
 
     # ─── EQ. ─── rp_inter_period_balance ─────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state_inter[n,b] − v_state_inter[n,b_prev]
-    #   = Σ_{(b,r) ∈ rp_base__rep, (d,r) ∈ rp_block_first, d ∈ period_in_use}
-    #       rp_weight[b,r] · (v_state[n,d,last_step[r]] − v_state_rp_start[n,d,r])
-    #   ∀ n ∈ nodeState_rp, (b,b_prev) ∈ rp_base_chain
-    # Chains the storage state across base periods: each base period is
-    # represented by weighted representative blocks r, and the boundary state
-    # moves by the weighted net change of those blocks.
-    # All terms are in state units (no state_unitsize factor).
-    if has_rep_blocks and _has_rows(d.rp_base_chain):
-        nodes = d.nodeState_rp
-        chain = d.rp_base_chain.with_columns(
-            pl.col("b").cast(b_dtype, strict=False),
-            pl.col("b_prev").cast(b_dtype, strict=False),
+    # v_state_inter[n,d,b] − v_state_inter[n,d′,b′] = drift[n,d,b]
+    #   drift[n,d,b] = Σ_{(d,b,r) ∈ rp_base__rep, (d,r) ∈ rp_block_first, d ∈ period_in_use}
+    #                    rp_weight[d,b,r] · (v_state[n,d,last_step[d,r]] − v_state_rp_start[n,d,r])
+    #   ∀ n ∈ nodeState_rp, (d,b,b′) ∈ rp_base_chain, d′ = d                         (within a period)
+    #   ∀ n ∈ bind_within_solve_blended_weights ∪ bind_forward_only_blended_weights,
+    #     (d,d′) ∈ rp_period_previous, b = first base period of d, b′ = last of d′    (period to period)
+    # Chains the storage state across the base periods of each period: a base
+    # period is represented by weighted representative blocks r, and the
+    # boundary state moves by the weighted net change of those blocks.  The
+    # across-solve variants continue from the last base period of the previous
+    # period in solve order, as bind_within_solve / bind_forward_only continue
+    # v_state across periods.  All terms are in state units.
+    edges = []
+    if _has_rows(d.rp_base_chain):
+        chain = typed(d.rp_base_chain).with_columns(d_prev=pl.col("d"))
+        edges.append(nodes.join(chain.select("d", "b", "d_prev", "b_prev"), how="cross"))
+    across = [f for f in (d.storage_bind_within_solve_blended_weights, d.storage_bind_forward_only_blended_weights)
+              if _has_rows(f)]
+    if across and period_previous is not None and first is not None and last is not None:
+        cross = (period_previous
+                 .join(first, on="d", how="inner")
+                 .join(last.rename({"d": "d_prev", "b": "b_prev"}), on="d_prev", how="inner")
+                 .select("d", "b", "d_prev", "b_prev"))
+        edges.append(pl.concat(across, how="vertical").unique().join(cross, how="cross"))
+    if drift is not None and edges:
+        over = pl.concat([e.select(*keys) for e in edges], how="vertical").unique(maintain_order=True)
+        m.add_cstr(
+            "rp_inter_period_balance",
+            over      = over,
+            sense     = "==",
+            lhs_terms = {"d_inter": Where(v_inter, over) - Where(inter_prev, over),
+                         "neg_rp_drift": -Where(drift, over)},
+            rhs_terms = {},
         )
-        over = nodes.join(chain, how="cross").select("n", "b", "b_prev")
-        inter_prev = _var_view(v_inter, "__bprev", {"b": "b_prev"})
-        drift = _rp_weighted_drift(b, nodes, d.rp_base__rep.frame, "b", "")
-        if drift is not None:
-            m.add_cstr(
-                "rp_inter_period_balance",
-                over      = over,
-                sense     = "==",
-                lhs_terms = {"d_inter": Where(v_inter, over) - Where(inter_prev, over),
-                             "neg_rp_drift": -Where(drift, over)},
-                rhs_terms = {},
-            )
 
     # ─── EQ. ─── rp_inter_period_cyclic ──────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state_inter[n,b_first] − v_state_inter[n,b_last]
-    #   = Σ_{(b_first,r) ∈ rp_base__rep, (d,r) ∈ rp_block_first, d ∈ period_in_use}
-    #       rp_weight[b_first,r] · (v_state[n,d,last_step[r]] − v_state_rp_start[n,d,r])
-    #   ∀ n ∈ bind_within_{solve,period}_blended_weights,
-    #     (b_first,b_last) ∈ rp_base_first × rp_base_last
+    # v_state_inter[n,d,b_first(d)] − v_state_inter[n,d′,b_last(d′)] = drift[n,d,b_first(d)]
+    #   n ∈ bind_within_period_blended_weights: every rp period d, d′ = d
+    #   n ∈ bind_within_solve_blended_weights: d = the rp period without a predecessor in rp_period_previous,
+    #     d′ = the rp period that is no period's predecessor (the last one)
     # Closes the chain: the last boundary state connects back to the first.
-    # bind_within_solve_blended_weights closes once per solve,
-    # bind_within_period_blended_weights once per period (rp_base_first /
-    # rp_base_last then carry d and are paired on it).
+    # bind_within_period_blended_weights closes every period on itself,
+    # bind_within_solve_blended_weights closes once per solve.
     # bind_forward_only_blended_weights has no closure.
-    cyclic_sets = [f for f in (d.storage_bind_within_solve_blended_weights,
-                               getattr(d, "storage_bind_within_period_blended_weights", None))
-                   if _has_rows(f)]
-    if has_rep_blocks and cyclic_sets and _has_rows(d.rp_base_first) and _has_rows(d.rp_base_last):
-        nodes = pl.concat(cyclic_sets, how="vertical").unique()
-        first = d.rp_base_first.rename({"b": "b_first"}).with_columns(pl.col("b_first").cast(b_dtype, strict=False))
-        last = d.rp_base_last.rename({"b": "b_last"}).with_columns(pl.col("b_last").cast(b_dtype, strict=False))
-        if "d" in first.columns and "d" in last.columns:
-            pairs = first.join(last, on="d", how="inner").select("b_first", "b_last")
-        else:
-            pairs = first.select("b_first").join(last.select("b_last"), how="cross")
-        over = nodes.join(pairs, how="cross").select("n", "b_first", "b_last")
-        inter_first = _var_view(v_inter, "__bfirst", {"b": "b_first"})
-        inter_last = _var_view(v_inter, "__blast", {"b": "b_last"})
-        rep_first = (d.rp_base__rep.frame.rename({"b": "b_first"})
-                     .with_columns(pl.col("b_first").cast(b_dtype, strict=False)))
-        drift = _rp_weighted_drift(b, nodes, rep_first, "b_first", "_cyc")
-        if drift is not None:
-            m.add_cstr(
-                "rp_inter_period_cyclic",
-                over      = over,
-                sense     = "==",
-                lhs_terms = {"d_cyclic": Where(inter_first, over) - Where(inter_last, over),
-                             "neg_rp_drift_first": -Where(drift, over)},
-                rhs_terms = {},
-            )
+    closures = []
+    if first is not None and last is not None:
+        within_period = d.storage_bind_within_period_blended_weights
+        if _has_rows(within_period):
+            pairs = first.join(last.rename({"b": "b_prev"}), on="d", how="inner").with_columns(d_prev=pl.col("d"))
+            closures.append(within_period.join(pairs.select("d", "b", "d_prev", "b_prev"), how="cross"))
+        within_solve = d.storage_bind_within_solve_blended_weights
+        if _has_rows(within_solve):
+            periods = first.select("d").unique()
+            if period_previous is not None:
+                d_first = periods.join(period_previous.select("d"), on="d", how="anti")
+                d_last = periods.join(period_previous.select(pl.col("d_prev").alias("d")), on="d", how="anti")
+            else:
+                d_first = d_last = periods
+            pair = (first.join(d_first, on="d", how="inner")
+                    .join(last.join(d_last, on="d", how="inner").rename({"d": "d_prev", "b": "b_prev"}),
+                          how="cross"))
+            closures.append(within_solve.join(pair.select("d", "b", "d_prev", "b_prev"), how="cross"))
+    if drift is not None and closures:
+        over = pl.concat([c.select(*keys) for c in closures], how="vertical").unique(maintain_order=True)
+        m.add_cstr(
+            "rp_inter_period_cyclic",
+            over      = over,
+            sense     = "==",
+            lhs_terms = {"d_cyclic": Where(v_inter, over) - Where(inter_prev, over),
+                         "neg_rp_drift_first": -Where(drift, over)},
+            rhs_terms = {},
+        )
 
     # ─── EQ. ─── rp_inter_period_max_state / maxState_rp_start ───────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state_inter[n,b] + Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
+    # v_state_inter[n,d,b] + Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]  ≤  state_upper[n,d]
-    #   ∀ n ∈ nodeState_rp, b ∈ rp_base_period, d ∈ period_in_use
+    #   ∀ n ∈ nodeState_rp, (d,b) ∈ rp_base_period, d ∈ period_in_use
     # v_state_rp_start[n,d,t] + (same invest/divest terms)  ≤  state_upper[n,d]
     #   ∀ (n,d,t) ∈ nodeState_rp × rp_block_first
     # Capacity bounds of the boundary and block-start states, as maxState
-    # bounds v_state.  state_upper = existing / state_unitsize, so every term
-    # is in state units.  Without period_in_use, d runs over the periods of dt.
-    nodes = d.nodeState_rp
+    # bounds v_state: a base period of d is bounded by d's capacity.
+    # state_upper = existing / state_unitsize, so every term is in state units.
     if _has_rows(d.rp_base_period_set):
+        base_periods = typed(d.rp_base_period_set)
         if _has_rows(d.period_in_use_set):
-            periods = d.period_in_use_set.select("d").unique()
-        else:
-            periods = d.dt.select("d").unique()
-        if periods.height > 0:
-            over = nodes.join(d.rp_base_period_set, how="cross").join(periods, how="cross").select("n", "b", "d")
+            base_periods = base_periods.join(
+                d.period_in_use_set.select(pl.col("d").cast(pl.Utf8).cast(d_dtype, strict=False)).unique(),
+                on="d", how="inner")
+        over = nodes.join(base_periods.select("d", "b"), how="cross").select("n", "d", "b")
+        if over.height > 0:
             lhs: dict = {"state_inter": Where(v_inter, over)}
             lhs.update(_node_capacity_change_terms(b, nodes, "_rp"))
             m.add_cstr(
@@ -1025,37 +1050,40 @@ def _eq_rp_storage_chain(b: _Build) -> None:
         )
 
 
-def _rp_weighted_drift(b: _Build, nodes: pl.DataFrame, rep: pl.DataFrame,
-                       base: str, tag: str):
-    """Σ_{(base,r), d} rp_weight · (v_state[n,d,last_step[r]] − v_state_rp_start[n,d,r]).
+def _rp_weighted_drift(b: _Build, nodes: pl.DataFrame):
+    """drift[n,d,b] = Σ_r rp_weight[d,b,r] · (v_state[n,d,last_step[d,r]] − v_state_rp_start[n,d,r]).
 
-    ``rep`` holds (base, r, value=rp_weight); the result keeps dims
-    (n, base).  None when no representative block is in use.  ``tag``
-    keeps the variable-view names of the two callers apart.
+    Block r of period d starts at (d, t = r) ∈ rp_block_first and ends at last_step[d,r].  Dims (n, d, b);
+    None when no representative block is in use.
     """
     d = b.d
     t_dtype = d.rp_block_first.schema["t"]
+    d_dtype = d.rp_block_first.schema["d"]
+    b_dtype = b.v_state_inter.frame.schema["b"]
     state_t_dtype = b.v_state.frame.schema["t"]
-    # Block r starts at (d, t = r) ∈ rp_block_first and ends at last_step[r].
     block_first = (d.rp_block_first.rename({"t": "r"})
                    .with_columns(pl.col("r").cast(t_dtype, strict=False)))
-    rep = rep.with_columns(pl.col("r").cast(t_dtype, strict=False))
+    rep = d.rp_base__rep.frame.with_columns(
+        pl.col("d").cast(pl.Utf8).cast(d_dtype, strict=False),
+        pl.col("b").cast(b_dtype, strict=False),
+        pl.col("r").cast(t_dtype, strict=False))
     last_step = d.p_rp_last_step.with_columns(
+        pl.col("d").cast(pl.Utf8).cast(d_dtype, strict=False),
         pl.col("r").cast(t_dtype, strict=False),
         pl.col("last_step").cast(state_t_dtype, strict=False))
-    cohort = (rep.join(block_first, on="r", how="inner")
-              .join(last_step, on="r", how="inner"))
+    cohort = (rep.join(block_first, on=["d", "r"], how="inner")
+              .join(last_step, on=["d", "r"], how="inner"))
     if d.period_in_use_set is not None:
         cohort = cohort.join(d.period_in_use_set, on="d", how="inner")
     if cohort.height == 0:
         return None
-    keys = (base, "r", "d", "last_step")
+    keys = ("d", "b", "r", "last_step")
     rp_weight = Param(keys, cohort.select(*keys, "value"))
-    state_at_last = _var_view(b.v_state, "__rp_last" + tag, {"t": "last_step"})
-    start_at_r = _var_view(b.v_state_rp_start, "__at_r" + tag, {"t": "r"})
+    state_at_last = _var_view(b.v_state, "__rp_last", {"t": "last_step"})
+    start_at_r = _var_view(b.v_state_rp_start, "__at_r", {"t": "r"})
     idx = nodes.select("n").unique().join(cohort.select(*keys), how="cross")
     return Sum((Where(state_at_last, idx) - Where(start_at_r, idx)) * rp_weight,
-               over=("r", "d", "last_step"))
+               over=("r", "last_step"))
 
 
 def _node_capacity_change_terms(b: _Build, nodes: pl.DataFrame, tag: str) -> dict:

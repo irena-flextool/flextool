@@ -731,8 +731,10 @@ def _patch_rp_multi_base_period(data: dict) -> dict:
 
 
 def _patch_rp_multi_base_solve(data: dict) -> dict:
-    # within_solve and forward_only may share a solve; within_period may
-    # not be mixed with either (FlexToolConfigError).
+    # The across-solve variants: y2040's base periods continue from the last
+    # base period of y2030 (rp_period_previous); lh2_A / lh2_C close the
+    # two-period chain once, lh2_B (forward_only) not at all.  Any blended
+    # variants may share a solve.
     return _rp_multi_base(data, "rp_multi_base_solve", {
         "lh2_A": "bind_within_solve_blended_weights",
         "lh2_B": "bind_forward_only_blended_weights",

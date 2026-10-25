@@ -1027,6 +1027,26 @@ def p_inflation_op_from_source(
 # ---------------------------------------------------------------------------
 
 
+def solve_has_rp_timeset(source: "InputSource", active_solve: str | None) -> bool:
+    """True when a timeset in ``active_solve``'s ``period_timeset`` has ``representative_period_weights``.
+
+    Such a solve's per-step weights come from the writer's ``solve_data/timestep_weight`` frame
+    (``_solve_writers._compute_rp_frames``): the folded representative-period weights of its rp periods and
+    the ``timeset_weights`` rows of its other periods, so no derived value may replace them.
+    """
+    if active_solve is None:
+        return False
+    pt = _try_param(source, "solve", "period_timeset")
+    rpw = _try_param_explicit(source, "timeset", "representative_period_weights")
+    if pt is None or rpw is None or rpw.height == 0 or "name" not in rpw.columns:
+        return False
+    if "value" not in pt.columns:
+        return False
+    active_ts = set(pt.filter(pl.col("name") == active_solve).get_column("value").cast(pl.Utf8).to_list())
+    rp_ts = {str(n) for n in rpw.get_column("name").to_list()}
+    return bool(active_ts & rp_ts)
+
+
 def p_timestep_weight_from_source(
     source: "InputSource",
     dt: pl.DataFrame,
@@ -1744,9 +1764,11 @@ def apply_derived_a(
     #    always populates a non-None Param, at minimum the dense 1.0
     #    default, so arithmetic stays safe).  Non-RP ``timeset_weights``
     #    solves still take the helper's computed Param unchanged.
+    #    An rp solve keeps the writer's frame even when timeset_weights exist: it holds the rp periods'
+    #    folded weights and the other periods' timeset_weights rows (solve_has_rp_timeset).
     tsw_new = p_timestep_weight_from_source(
         source, usable_dt, active_solve)
-    if tsw_new is not None:
+    if tsw_new is not None and not solve_has_rp_timeset(source, active_solve):
         flex_data.p_timestep_weight = tsw_new
 
     # 5. pd_branch_weight + pdt_branch_weight — Δ.12b: unconditional.

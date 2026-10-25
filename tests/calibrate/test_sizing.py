@@ -332,7 +332,7 @@ def test_rp_weight_sum_uses_actual_nonuniform_weights(tmp_path):
     """The RP path sums the ACTUAL (non-uniform) folded weights, not ``n_d``.
 
     ``_weight_sum_by_period`` must reproduce the engine writer's
-    ``_compute_rp_frames`` per-period weight sum, whose underlying per-step
+    ``_compute_rp_period_frames`` per-period weight sum, whose underlying per-step
     weights are genuinely non-uniform (0.6/1.4, 0.9/1.1 here) — proving the
     sizer reads the real ``timestep_weight`` the annualiser applies, not a
     step-count shortcut that would ignore the weighting.
@@ -368,11 +368,11 @@ def test_rp_weight_sum_uses_actual_nonuniform_weights(tmp_path):
             import polars as pl
 
             from flextool.engine.preprocess.emit._solve_writers import (
-                _compute_rp_frames,
+                _compute_rp_period_frames,
             )
             tl = tc.timesets__timeline[ts]
             steps = [s for s, _ in tc.timelines[tl]]
-            tw = _compute_rp_frames(
+            tw = _compute_rp_period_frames(
                 tc.rp_weights[ts], tc.timeset_durations[ts], period, steps,
             )["timestep_weight.csv"].with_columns(pl.col("weight").cast(pl.Float64))
             uniq = set(tw["weight"].round(6).unique().to_list())

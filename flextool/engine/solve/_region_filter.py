@@ -1022,7 +1022,7 @@ def _build_region_data(
     )
     # The remaining RP-blended-weights fields (rp_base_period_set,
     # rp_base_chain, rp_base_first, rp_base_last, rp_block_first,
-    # p_rp_last_step, rp_base__rep) are solve-data-keyed (period / step
+    # p_rp_last_step, rp_base__rep, rp_period_previous) are solve-data-keyed (period / step
     # / base / rep) — not entity-keyed — so the ``dataclasses.replace``
     # shallow copy above already carries them through unchanged.
     new.nodeState_last_dt = _filter_frame(src.nodeState_last_dt, "n", keep_nodes)

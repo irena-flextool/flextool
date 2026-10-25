@@ -814,17 +814,18 @@ class FlexData:
     # tightly-coupled fields (``rp_base_period_set``, ``rp_base__rep``,
     # ``rp_block_first``, ``p_rp_last_step``) are also non-empty.
     nodeState_rp: pl.DataFrame | None = None               # set: (n,)
-    rp_base_period_set: pl.DataFrame | None = None         # set: (b,)
-    rp_base_chain: pl.DataFrame | None = None              # set: (b, b_prev)
-    rp_base_first: pl.DataFrame | None = None              # set: (b,)
-    rp_base_last: pl.DataFrame | None = None               # set: (b,)
+    # Every rp frame carries the owning period d: each period has its own base periods b (base-period start
+    # steps), representative blocks r (block start steps) and weights.
+    rp_base_period_set: pl.DataFrame | None = None         # set: (d, b)
+    rp_base_chain: pl.DataFrame | None = None              # set: (d, b, b_prev) — within-period edges
+    rp_base_first: pl.DataFrame | None = None              # set: (d, b)
+    rp_base_last: pl.DataFrame | None = None               # set: (d, b)
     rp_block_first: pl.DataFrame | None = None             # set: (d, t)
-    # Relation r → last_step (DataFrame, not Param — see audit §6 Risk #1:
-    # the .mod's ``p_rp_last_step`` is a symbolic-Param-keyed-by-value
-    # pattern; Phase 7 implements ``v_state[n, d, p_rp_last_step[r]]`` as
-    # a relational join on ``r → last_step``).
-    p_rp_last_step: pl.DataFrame | None = None             # set: (r, last_step)
-    rp_base__rep: Param | None = None                      # (b, r) → weight
+    # Relation (d, r) → last_step (DataFrame, not Param: v_state[n, d, p_rp_last_step[d, r]] is a relational
+    # join on (d, r) → last_step).
+    p_rp_last_step: pl.DataFrame | None = None             # set: (d, r, last_step)
+    rp_base__rep: Param | None = None                      # (d, b, r) → weight
+    rp_period_previous: pl.DataFrame | None = None         # set: (d, d_prev) — across-solve rp period chain
     flow_from_nodeBalance_eff: pl.DataFrame | None = None
     flow_from_nodeBalance_noEff: pl.DataFrame | None = None
     p_state_upper: Param | None = None           # (n, d) — capacity / unitsize
@@ -2698,6 +2699,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         rp_block_first = None,
         p_rp_last_step = None,
         rp_base__rep = None,
+        rp_period_previous = None,
         flow_from_nodeBalance_eff = flow_from_nb_eff,
         flow_from_nodeBalance_noEff = flow_from_nb_noEff,
         p_nested_solve_first = None,
@@ -3035,118 +3037,40 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             if nodeState_rp.height == 0:
                 nodeState_rp = None
 
-    rp_base_period_set = None
-    rpbps_path = sd / "rp_base_period_set.csv"
-    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BASE_PERIOD_SET,
-                     rpbps_path):
-        df_rpbps = _provider_read(
-            provider, _K_rp.SOLVE_DATA_RP_BASE_PERIOD_SET, rpbps_path,
-        )
-        if df_rpbps.height > 0:
-            # Emitter writes a single column ``period`` (see
-            # ``_per_solve`` line ~169 via ``_emit_singles``).
-            col = "period" if "period" in df_rpbps.columns else df_rpbps.columns[0]
-            rp_base_period_set = (df_rpbps
-                                  .rename({col: "b"})
-                                  .select("b").unique())
-            if rp_base_period_set.height == 0:
-                rp_base_period_set = None
+    # Every frame carries the owning period ``d``: two periods of a solve may share a timeset or a timeline
+    # (the same base-period names), and each period has its own base-period chain, blocks and weights.
+    def _rp_frame(key: str, basename: str, axis: dict, plain: dict, keep: tuple) -> "pl.DataFrame | None":
+        """The frame at ``key``: ``axis`` columns renamed onto their axis (typed), ``plain`` ones renamed as
+        text (base-period / rep-start labels, cast at their use site in model/core.py)."""
+        path = sd / basename
+        if not _provider_has(provider, key, path):
+            return None
+        df = _provider_read(provider, key, path)
+        if df.height == 0:
+            return None
+        df = df.rename(plain).pipe(rename_to_axis, axis).select(*keep).unique()
+        return df if df.height > 0 else None
 
-    rp_base_chain = None
-    rpbc_path = sd / "rp_base_chain.csv"
-    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BASE_CHAIN, rpbc_path):
-        df_rpbc = _provider_read(
-            provider, _K_rp.SOLVE_DATA_RP_BASE_CHAIN, rpbc_path,
-        )
-        if df_rpbc.height > 0:
-            # Emitter columns: ``(base_start, prev_base_start)`` for the
-            # within_solve variant; Phase E adds an optional ``period``
-            # column for the within_period variant so the downstream
-            # cyclic constraint can pair endpoints per FlexTool period.
-            _renames = {"base_start": "b", "prev_base_start": "b_prev"}
-            if "period" in df_rpbc.columns:
-                _renames["period"] = "d"
-            df_rpbc = df_rpbc.rename(_renames)
-            _keep = ["b", "b_prev"] + (["d"] if "d" in df_rpbc.columns else [])
-            rp_base_chain = df_rpbc.select(_keep).unique()
-            if rp_base_chain.height == 0:
-                rp_base_chain = None
+    rp_base_period_set = _rp_frame(_K_rp.SOLVE_DATA_RP_BASE_PERIOD_SET, "rp_base_period_set.csv",
+                                   {"period": "d"}, {"base_start": "b"}, ("d", "b"))
+    rp_base_chain = _rp_frame(_K_rp.SOLVE_DATA_RP_BASE_CHAIN, "rp_base_chain.csv",
+                              {"period": "d"}, {"base_start": "b", "prev_base_start": "b_prev"}, ("d", "b", "b_prev"))
+    rp_base_first = _rp_frame(_K_rp.SOLVE_DATA_RP_BASE_FIRST, "rp_base_first.csv",
+                              {"period": "d"}, {"base_start": "b"}, ("d", "b"))
+    rp_base_last = _rp_frame(_K_rp.SOLVE_DATA_RP_BASE_LAST, "rp_base_last.csv",
+                             {"period": "d"}, {"base_start": "b"}, ("d", "b"))
+    rp_block_first = _rp_frame(_K_rp.SOLVE_DATA_RP_BLOCK_FIRST, "rp_block_first.csv",
+                               {"period": "d", "step": "t"}, {}, ("d", "t"))
+    # ``p_rp_last_step`` — a relation (d, r, last_step), NOT a numeric Param: block r of period d ends at
+    # last_step (model/core.py joins on (d, r) → last_step).
+    p_rp_last_step = _rp_frame(_K_rp.SOLVE_DATA_RP_BLOCK_START_LAST, "rp_block_start_last.csv",
+                               {"period": "d"}, {"rep_start": "r"}, ("d", "r", "last_step"))
+    # ``rp_period_previous`` (d, d_prev): the across-solve chain of the rp periods in solve order.
+    rp_period_previous = _rp_frame(_K_rp.SOLVE_DATA_RP_PERIOD_PREVIOUS, "rp_period_previous.csv",
+                                   {"period": "d"}, {"prev_period": "d_prev"}, ("d", "d_prev"))
 
-    rp_base_first = None
-    rpbf_path = sd / "rp_base_first.csv"
-    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BASE_FIRST, rpbf_path):
-        df_rpbf = _provider_read(
-            provider, _K_rp.SOLVE_DATA_RP_BASE_FIRST, rpbf_path,
-        )
-        if df_rpbf.height > 0:
-            # Phase E — preserve the optional ``period`` column (within
-            # period variant emits one row per FlexTool period).
-            _renames = {"base_start": "b"}
-            if "period" in df_rpbf.columns:
-                _renames["period"] = "d"
-            df_rpbf = df_rpbf.rename(_renames)
-            _keep = ["b"] + (["d"] if "d" in df_rpbf.columns else [])
-            rp_base_first = df_rpbf.select(_keep).unique()
-            if rp_base_first.height == 0:
-                rp_base_first = None
-
-    rp_base_last = None
-    rpbl_path = sd / "rp_base_last.csv"
-    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BASE_LAST, rpbl_path):
-        df_rpbl = _provider_read(
-            provider, _K_rp.SOLVE_DATA_RP_BASE_LAST, rpbl_path,
-        )
-        if df_rpbl.height > 0:
-            # Phase E — preserve the optional ``period`` column.
-            _renames = {"base_start": "b"}
-            if "period" in df_rpbl.columns:
-                _renames["period"] = "d"
-            df_rpbl = df_rpbl.rename(_renames)
-            _keep = ["b"] + (["d"] if "d" in df_rpbl.columns else [])
-            rp_base_last = df_rpbl.select(_keep).unique()
-            if rp_base_last.height == 0:
-                rp_base_last = None
-
-    rp_block_first = None
-    rpblkf_path = sd / "rp_block_first.csv"
-    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BLOCK_FIRST,
-                     rpblkf_path):
-        df_rpblkf = _provider_read(
-            provider, _K_rp.SOLVE_DATA_RP_BLOCK_FIRST, rpblkf_path,
-        )
-        if df_rpblkf.height > 0:
-            # Emitter columns: ``(period, step)``.
-            rp_block_first = (df_rpblkf
-                              .pipe(rename_to_axis,
-                                    {"period": "d", "step": "t"})
-                              .select("d", "t").unique())
-            if rp_block_first.height == 0:
-                rp_block_first = None
-
-    # ``p_rp_last_step`` — stored as a DataFrame relation [r, last_step]
-    # (NOT a numeric Param) — see audit §6 Risk #1.  Source basename is
-    # ``rp_block_start_last.csv`` with header ``(rep_start, last_step)``;
-    # we rename ``rep_start → r`` so the .mod's symbol ``r`` is the join
-    # key.  Phase 7 implements ``v_state[n, d, p_rp_last_step[r]]`` as a
-    # join on ``r → last_step``.
-    p_rp_last_step = None
-    prpls_path = sd / "rp_block_start_last.csv"
-    if _provider_has(provider, _K_rp.SOLVE_DATA_RP_BLOCK_START_LAST,
-                     prpls_path):
-        df_prpls = _provider_read(
-            provider, _K_rp.SOLVE_DATA_RP_BLOCK_START_LAST, prpls_path,
-        )
-        if df_prpls.height > 0:
-            p_rp_last_step = (df_prpls
-                              .rename({"rep_start": "r"})
-                              .select("r", "last_step").unique())
-            if p_rp_last_step.height == 0:
-                p_rp_last_step = None
-
-    # ``rp_base__rep`` — Param keyed by (b, r) with weight value.  Source
-    # basename ``rp_weights.csv`` carries ``(base_start, rep_start,
-    # weight)`` rows with weight as a stringified float (see
-    # ``_compute_rp_frames``).
+    # ``rp_base__rep`` — Param keyed by (d, b, r) with the weight of rep block r in base period b of period d
+    # (``rp_weights.csv``: period, base_start, rep_start, weight as a stringified float).
     rp_base__rep = None
     rpw_path = sd / "rp_weights.csv"
     if _provider_has(provider, _K_rp.SOLVE_DATA_RP_WEIGHTS, rpw_path):
@@ -3158,12 +3082,13 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                       .rename({"base_start": "b",
                                "rep_start": "r",
                                "weight": "value"})
+                      .pipe(rename_to_axis, {"period": "d"})
                       .with_columns(value=pl.col("value")
                                               .cast(pl.Float64, strict=False)
                                               .fill_null(0.0))
-                      .select("b", "r", "value"))
+                      .select("d", "b", "r", "value"))
             if df_rpw.height > 0:
-                rp_base__rep = Param(("b", "r"), df_rpw)
+                rp_base__rep = Param(("d", "b", "r"), df_rpw)
 
     # ─── Invariant: when nodeState_rp is non-empty, the four tightly
     # coupled fields below must also be non-empty.  Silent absence has no
@@ -3427,6 +3352,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         rp_block_first = rp_block_first,
         p_rp_last_step = p_rp_last_step,
         rp_base__rep = rp_base__rep,
+        rp_period_previous = rp_period_previous,
         flow_from_nodeBalance_eff = flow_from_nb_eff,
         flow_from_nodeBalance_noEff = flow_from_nb_noEff,
         p_nested_solve_first = p_nested_solve_first,

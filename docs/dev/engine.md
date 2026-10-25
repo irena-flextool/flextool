@@ -239,14 +239,14 @@ adds:
 
 | Element | Where | Role |
 |---|---|---|
-| `v_state_inter[n, b]` | `model._declare_variables` | Long-run state at base-period boundaries, free per `(n, b)`. |
+| `v_state_inter[n, d, b]` | `model._declare_variables` | Long-run state at the end of base period `b` of period `d`, free per `(n, d, b)`. Every period has its own base periods, also when two periods share a timeset or a timeline (the same base-period names). |
 | `v_state_rp_start[n, d, t]` | `model._declare_variables` | Free starting state at the first step of each RP block. |
 | `nodeState_rp_dt` | `_pdt_join.compute_nodeState_rp_dt` | The `(n, d, t)` join used to project `v_state` rows onto the RP cohort. |
 | `nodeState_rp_block_first_dt` | `_pdt_join.compute_nodeState_rp_block_first_dt` | Index set for `v_state_rp_start` — RP-block-first `(d, t)` tuples per RP node. |
 | `state_change_rp_interior` / `state_change_rp_start` | `model._state_change_terms` (`nodeBalance_eq` terms) | Intra-period state-change. Interior steps use the ordinary within-timeset lag; the first step of each RP block replaces the lag with `v_state_rp_start` so each block starts free. |
-| `rp_inter_period_balance` | `model._eq_rp_storage_chain` | Inter-period balance over `(n, b, b_prev) ∈ nodeState_rp × rp_base_chain`, summing the per-RP-block drift weighted by `p_rp_weight[b, r]` and `p_state_unitsize[n]`. |
-| `rp_inter_period_cyclic` | `model._eq_rp_storage_chain` | End-to-start closure for the within-solve / within-period variants, indexed over `nodeState_rp × rp_base_first × rp_base_last`. The forward-only variant skips this constraint. |
-| `rp_inter_period_max_state` | `model._eq_rp_storage_chain` | Capacity bound on `v_state_inter[n, b]` over `(n, b, d) ∈ nodeState_rp × rp_base_period × period_in_use`, tightened by cumulative invest/divest exactly as the ordinary `maxState`. |
+| `rp_inter_period_balance` | `model._eq_rp_storage_chain` | Inter-period balance over `(n, d, b, d′, b′)`: the within-period edges `(d, b, b′) ∈ rp_base_chain` (`d′ = d`) for every `nodeState_rp` node, and for the within-solve / forward-only variants the period-to-period edges `(d, d′) ∈ rp_period_previous` from the last base period of `d′` to the first of `d` (solve order, the predecessor the `bind_within_solve` state lag uses). The drift sums the per-RP-block state change weighted by `rp_base__rep[d, b, r]`. |
+| `rp_inter_period_cyclic` | `model._eq_rp_storage_chain` | End-to-start closure: within-period — every rp period's first base period ← its own last; within-solve — the first rp period's first base period ← the last rp period's last. The forward-only variant skips this constraint. |
+| `rp_inter_period_max_state` | `model._eq_rp_storage_chain` | Capacity bound on `v_state_inter[n, d, b]` over `(n, d, b) ∈ nodeState_rp × rp_base_period`, `d ∈ period_in_use` (a base period of `d` by `d`'s capacity), tightened by cumulative invest/divest exactly as the ordinary `maxState`. |
 | `maxState_rp_start` | `model._eq_rp_storage_chain` | Sibling capacity bound on `v_state_rp_start[n, d, t]` over `rp_block_first`. Both bounds depend on invest/divest, so they are rows rather than variable bounds. |
 
 The three blended-weights methods that activate the block —
@@ -268,10 +268,17 @@ The on-disk `rp_weights` carrier is authored as a flat triple
 shape and the flattened list-of-Maps shape Spine produces depending on
 import path. Both decode to the same nested
 `{base: {rep: weight}}` dict that
-`_solve_writers.derive_rp_weights` converts into the per-solve
-`rp_weights.csv` frame and that `_solve_writers` derives the
-`rp_base_chain`, `rp_base_first`, `rp_base_last`, and `rp_base__rep`
-companion sets from. See architecture.md
+`_solve_writers._compute_rp_frames` converts into the per-solve
+`rp_weights` frame and from which it derives the `rp_base_chain`,
+`rp_base_first`, `rp_base_last`, `rp_block_*` and `rp_base_period_set`
+companion sets, one set of rows per period of the solve (every frame has a
+`period` column), plus `rp_period_previous` (the rp periods in solve
+order).  `solve/_run_model.py` emits them for every period whose timeset
+has `representative_period_weights`; periods without keep their
+`timeset_weights` rows in the same `timestep_weight` frame.  A solve with
+stochastic branch periods and an rp timeset, a rolling solve with
+blended-weights nodes, and a solve that mixes rp and other periods while it
+has blended-weights nodes stop with an error. See architecture.md
 [Feature flags in `build_flextool`](architecture.md#feature-flags-in-build_flextool)
 for the entry in the gating table.
 

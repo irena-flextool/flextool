@@ -168,7 +168,7 @@ def test_rp_base_starts_on_the_timeline(step) -> None:
     """Rep blocks t0001 / t0073 (24 h) on a 96-h timeline, base periods t0001, t0025, t0049, t0073: every base
     start is a step of the aggregated timeline and the base chain runs in time order for any Δ.  Before (Δ 5):
     t0049 fell inside a gap chunk, sorted last and the chain became t0025←t0001, t0073←t0025, t0049←t0073."""
-    from flextool.engine.preprocess.emit._solve_writers import _compute_rp_frames
+    from flextool.engine.preprocess.emit._solve_writers import _compute_rp_period_frames
 
     bases = ("t0001", "t0025", "t0049", "t0073")
     tl, sc = _config({"rp": [("t0001", 24), ("t0073", 24)]}, {"s": [("p", "rp")]}, {"s": step}, n_steps=96)
@@ -176,7 +176,7 @@ def test_rp_base_starts_on_the_timeline(step) -> None:
     tl.create_timeline_from_timestep_duration(sc)
     steps = [s for s, _d in tl.timelines[tl.timesets__timeline["rp"]]]
     assert set(bases) <= set(steps)
-    frames = _compute_rp_frames(tl.rp_weights["rp"], tl.timeset_durations["rp"], "p", steps)
+    frames = _compute_rp_period_frames(tl.rp_weights["rp"], tl.timeset_durations["rp"], "p", steps)
     assert sorted(frames["rp_base_chain.csv"].rows()) == [
         ("t0025", "t0001"), ("t0049", "t0025"), ("t0073", "t0049")]
 
@@ -185,13 +185,13 @@ def test_rp_base_start_off_the_timeline_raises() -> None:
     """Item 112: a base period that does not start at a step of the timeline (t0097 on a 96-step timeline) is a
     configuration error.  Before: it was sorted after every other base period and the inter-period storage chain
     linked it out of time order, silently."""
-    from flextool.engine.preprocess.emit._solve_writers import _compute_rp_frames
+    from flextool.engine.preprocess.emit._solve_writers import _compute_rp_period_frames
 
     steps = [f"t{i:04d}" for i in range(1, 97)]
     weights = {b: {"t0001": 0.5, "t0025": 0.5} for b in ("t0001", "t0025", "t0097")}
     with pytest.raises(FlexToolConfigError, match="t0097"):
-        _compute_rp_frames(weights, [("t0001", 24), ("t0025", 24)], "p", steps)
-    frames = _compute_rp_frames({b: weights[b] for b in ("t0025", "t0001")}, [("t0001", 24), ("t0025", 24)],
+        _compute_rp_period_frames(weights, [("t0001", 24), ("t0025", 24)], "p", steps)
+    frames = _compute_rp_period_frames({b: weights[b] for b in ("t0025", "t0001")}, [("t0001", 24), ("t0025", 24)],
                                 "p", steps)
     assert frames["rp_base_chain.csv"].rows() == [("t0025", "t0001")]
 
@@ -378,7 +378,8 @@ def test_rp_blocks_with_step(tmp_path_factory) -> None:
         assert coef(bal[f"nodeBalance_eq[battery,p2020,{t}]"], f"v_state[battery,p2020,{tp}]") > 0
     assert "v_state_rp_start[battery,p2020,t0049]" in " ".join(bal["nodeBalance_eq[battery,p2020,t0049]"])
     chain = set(row_terms(pb, "rp_inter_period_balance"))
-    assert chain == {"rp_inter_period_balance[battery,t0025,t0001]", "rp_inter_period_balance[battery,t0049,t0025]"}
+    assert chain == {"rp_inter_period_balance[battery,p2020,t0025,p2020,t0001]",
+                     "rp_inter_period_balance[battery,p2020,t0049,p2020,t0025]"}
 
 
 def test_realized_dispatch_sibling_inherits_step(tmp_path_factory) -> None:

@@ -171,59 +171,35 @@ def _build_toy_rp_two_periods(*, method: str) -> FlexData:
         storage_bind_forward_only_blended_weights = bat_only
     nodeState_rp = bat_only
 
-    # rp_base_period_set: two bases, one per period.
-    rp_base_period_set = pl.DataFrame({"b": ["b25", "b30"]})
-    # rp_block_first: each period's representative block starts at t*_01.
+    # Every rp frame carries the owning period d.  One base per period: b25 in y2025, b30 in y2030; each
+    # period's representative block starts at t*_01 and ends at t*_02.
+    rp_base_period_set = pl.DataFrame({"d": ["y2025", "y2030"], "b": ["b25", "b30"]})
     rp_block_first = pl.DataFrame({
         "d": ["y2025", "y2030"],
         "t": ["t25_01", "t30_01"],
     })
-    # p_rp_last_step: maps the rep_start to its last step within the
-    # SAME period.  Distinct rep_start labels per period mean each row
-    # is unambiguous.
     p_rp_last_step = pl.DataFrame({
+        "d": ["y2025", "y2030"],
         "r": ["t25_01", "t30_01"],
         "last_step": ["t25_02", "t30_02"],
     })
-    # rp_base__rep: each base maps to its OWN period's rep with weight
-    # 1.0.  No cross-period mapping (the within_period semantics fall
-    # out naturally from this label discipline).
-    rp_base__rep = Param(("b", "r"), pl.DataFrame({
+    # rp_base__rep: each base is represented by its own period's block with weight 1.0.
+    rp_base__rep = Param(("d", "b", "r"), pl.DataFrame({
+        "d": ["y2025", "y2030"],
         "b": ["b25", "b30"],
         "r": ["t25_01", "t30_01"],
         "value": [1.0, 1.0],
     }))
-
-    # rp_base_chain / rp_base_first / rp_base_last — TOPOLOGY DEPENDS
-    # ON THE VARIANT.  Within-solve concatenates the two bases into one
-    # chain (b25 → b30) with a single cycle b25 ↔ b30; within-period
-    # gives each period a SINGLE-base trivial chain that closes onto
-    # itself via the ``d`` column on the first/last frames.
-    if method == "bind_within_period_blended_weights":
-        # No predecessor edges (1 base per period).  rp_base_chain stays
-        # empty so balance fires nowhere; cyclic fires once per period.
-        rp_base_chain = pl.DataFrame(
-            {"b": [], "b_prev": [], "d": []},
-            schema={"b": pl.Utf8, "b_prev": pl.Utf8, "d": pl.Utf8},
-        )
-        # Each period's first base == its last base (single-base
-        # subchain): cyclic closes v_state_inter[b25] ↔ v_state_inter[b25]
-        # ⇒ drift_25 must vanish.
-        rp_base_first = pl.DataFrame({
-            "b": ["b25", "b30"],
-            "d": ["y2025", "y2030"],
-        })
-        rp_base_last = pl.DataFrame({
-            "b": ["b25", "b30"],
-            "d": ["y2025", "y2030"],
-        })
-    else:
-        # within_solve / forward_only: one chain b25 → b30.  Singleton
-        # first / last (the ``d`` column is absent so the cyclic-emit
-        # block falls back to the legacy cross-join — single pair).
-        rp_base_chain = pl.DataFrame({"b": ["b30"], "b_prev": ["b25"]})
-        rp_base_first = pl.DataFrame({"b": ["b25"]})
-        rp_base_last = pl.DataFrame({"b": ["b30"]})
+    # No within-period chain edges (one base per period); each period's first base is its last base.  The
+    # across-solve variants chain y2030 after y2025 (rp_period_previous): within_solve closes b25 ← b30 once,
+    # forward_only has only the y2025 → y2030 edge, within_period closes every period on itself.
+    rp_base_chain = pl.DataFrame(
+        {"d": [], "b": [], "b_prev": []},
+        schema={"d": pl.Utf8, "b": pl.Utf8, "b_prev": pl.Utf8},
+    )
+    rp_base_first = pl.DataFrame({"d": ["y2025", "y2030"], "b": ["b25", "b30"]})
+    rp_base_last = pl.DataFrame({"d": ["y2025", "y2030"], "b": ["b25", "b30"]})
+    rp_period_previous = pl.DataFrame({"d": ["y2030"], "d_prev": ["y2025"]})
 
     return FlexData(
         dt=dt, p_step_duration=p_step, p_timestep_weight=p_rpcw,
@@ -249,6 +225,7 @@ def _build_toy_rp_two_periods(*, method: str) -> FlexData:
         rp_block_first=rp_block_first,
         p_rp_last_step=p_rp_last_step,
         rp_base__rep=rp_base__rep,
+        rp_period_previous=rp_period_previous,
     )
 
 

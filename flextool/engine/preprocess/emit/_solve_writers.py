@@ -951,144 +951,78 @@ def emit_delayed_durations(
 
 
 def _compute_rp_frames(
+    per_period_inputs: (
+        "list[tuple[str, dict[str, dict[str, float]], "
+        "list[tuple[str, float]], list[str]]]"
+    ),
+    period_previous: "list[tuple[str, str]] | None" = None,
+) -> dict[str, pl.DataFrame]:
+    """The representative-period frames of one solve: every rp period has its own data.
+
+    ``per_period_inputs`` holds one ``(period, rp_weights, timeset_duration_entries, timeline_steps)`` entry
+    per period of the solve whose timeset has ``representative_period_weights``, in the solve's period order.
+    Two periods may use the same timeset or the same timeline (same base-period names): every frame carries
+    the owning ``period``, so their base-period chains, blocks and weights stay apart.
+    ``period_previous`` lists ``(period, previous period)`` in solve order (the chain from one period's last
+    base period to the next period's first, used by the across-solve variants).
+
+    Output basenames (columns): ``rp_weights.csv`` (period, base_start, rep_start, weight),
+    ``rp_base_chain.csv`` (period, base_start, prev_base_start; within-period edges only),
+    ``rp_base_first.csv`` / ``rp_base_last.csv`` (period, base_start), ``rp_period_previous.csv``
+    (period, prev_period), ``rp_block_first.csv`` / ``rp_block_last.csv`` (period, step),
+    ``rp_block_start_last.csv`` (period, rep_start, last_step), ``rp_base_period_set.csv``
+    (period, base_start), ``rp_rep_period_set.csv`` (period: the rep starts), ``timestep_weight.csv``
+    (period, time, weight).
+    """
+    chain_rows: list[tuple[Any, ...]] = []
+    first_rows: list[tuple[Any, ...]] = []
+    last_rows: list[tuple[Any, ...]] = []
+    block_first_rows: list[tuple[Any, ...]] = []
+    block_last_rows: list[tuple[Any, ...]] = []
+    block_sl_rows: list[tuple[Any, ...]] = []
+    base_period_rows: list[tuple[Any, ...]] = []
+    rep_period_rows: list[tuple[Any, ...]] = []
+    weights_rows: list[tuple[Any, ...]] = []
+    cost_rows: list[tuple[Any, ...]] = []
+    for p_name, p_rp_w, p_ts_dur, p_tl_steps in per_period_inputs:
+        sub = _compute_rp_period_frames(p_rp_w, p_ts_dur, p_name, p_tl_steps)
+        chain_rows.extend((p_name,) + r for r in sub["rp_base_chain.csv"].iter_rows())
+        first_rows.extend((p_name,) + r for r in sub["rp_base_first.csv"].iter_rows())
+        last_rows.extend((p_name,) + r for r in sub["rp_base_last.csv"].iter_rows())
+        block_first_rows.extend(sub["rp_block_first.csv"].iter_rows())
+        block_last_rows.extend(sub["rp_block_last.csv"].iter_rows())
+        block_sl_rows.extend((p_name,) + r for r in sub["rp_block_start_last.csv"].iter_rows())
+        base_period_rows.extend((p_name,) + r for r in sub["rp_base_period_set.csv"].iter_rows())
+        rep_period_rows.extend(sub["rp_rep_period_set.csv"].iter_rows())
+        weights_rows.extend((p_name,) + r for r in sub["rp_weights.csv"].iter_rows())
+        cost_rows.extend(sub["timestep_weight.csv"].iter_rows())
+    out: dict[str, pl.DataFrame] = {}
+    out["rp_weights.csv"] = _to_utf8_frame(("period", "base_start", "rep_start", "weight"), weights_rows)
+    out["rp_base_chain.csv"] = _to_utf8_frame(("period", "base_start", "prev_base_start"), chain_rows)
+    out["rp_base_first.csv"] = _to_utf8_frame(("period", "base_start"), first_rows)
+    out["rp_base_last.csv"] = _to_utf8_frame(("period", "base_start"), last_rows)
+    out["rp_period_previous.csv"] = _to_utf8_frame(("period", "prev_period"), list(period_previous or []))
+    out["rp_block_first.csv"] = _to_utf8_frame(("period", "step"), block_first_rows)
+    out["rp_block_last.csv"] = _to_utf8_frame(("period", "step"), block_last_rows)
+    out["rp_block_start_last.csv"] = _to_utf8_frame(("period", "rep_start", "last_step"), block_sl_rows)
+    out["rp_base_period_set.csv"] = _to_utf8_frame(("period", "base_start"), base_period_rows)
+    out["rp_rep_period_set.csv"] = _to_utf8_frame(("period",), rep_period_rows)
+    out["timestep_weight.csv"] = _to_utf8_frame(("period", "time", "weight"), cost_rows)
+    return out
+
+
+def _compute_rp_period_frames(
     rp_weights: dict[str, dict[str, float]],
     timeset_duration_entries: list[tuple[str, float]],
     period_name: str,
     timeline_steps: list[str],
-    *,
-    variant: str = "within_solve",
-    per_period_inputs: (
-        "list[tuple[str, dict[str, dict[str, float]], "
-        "list[tuple[str, float]], list[str]]] | None"
-    ) = None,
 ) -> dict[str, pl.DataFrame]:
-    """Shared compute for the eight representative-period CSVs.
+    """The representative-period frames of ONE period (no ``period`` column on the base-period frames).
 
-    Returns a dict keyed by output basename — used by both the
-    ``derive_*`` accessors and the wrapper writer.
-
-    Output basenames: ``rp_weights.csv``, ``rp_base_chain.csv``,
-    ``rp_base_first.csv``, ``rp_base_last.csv``, ``rp_block_first.csv``,
-    ``rp_block_last.csv``, ``rp_block_start_last.csv``,
-    ``rp_base_period_set.csv``, ``rp_rep_period_set.csv``,
-    ``timestep_weight.csv``.
-
-    ``timeline_steps`` is the ordered list of step IDs for the timeline
-    this timeset belongs to; it anchors ``(start, count)`` block entries
-    to real step labels (e.g. ``2050-01-01T00:00:00``) rather than the
-    synthetic ``t####`` form.
-
-    Phase E — ``variant`` toggles the RP chain TOPOLOGY:
-
-    * ``"within_solve"`` (default, back-compat): one base-period chain
-      spanning every base period in the solve.  ``rp_base_first`` /
-      ``rp_base_last`` are singletons (head/tail of the single chain).
-      Used by ``bind_within_solve_blended_weights`` (cyclic closure
-      across the entire chain) and ``bind_forward_only_blended_weights``
-      (no closure).
-    * ``"within_period"``: each FlexTool period has its own independent
-      chain that closes within itself.  ``per_period_inputs`` carries
-      one entry per RP-bearing FlexTool period;
-      ``rp_base_chain`` accumulates only WITHIN-period predecessor
-      edges, and ``rp_base_first`` / ``rp_base_last`` carry one row per
-      period plus a ``period`` column so the downstream cyclic-closure
-      constraint (``model/core.py``'s ``rp_inter_period_cyclic``) can pair
-      each period's first base against its OWN period's last base.
-
-    ``per_period_inputs`` is required when ``variant == "within_period"``
-    and ignored otherwise; the legacy single-period args
-    (``rp_weights`` / ``timeset_duration_entries`` / ``period_name`` /
-    ``timeline_steps``) drive the within_solve path.
+    ``timeline_steps`` is the ordered list of step IDs for the timeline this timeset belongs to; it anchors
+    ``(start, count)`` block entries to real step labels (e.g. ``2050-01-01T00:00:00``) rather than the
+    synthetic ``t####`` form.  :func:`_compute_rp_frames` tags the frames with the period.
     """
-    if variant not in ("within_solve", "within_period"):
-        raise ValueError(
-            f"_compute_rp_frames: variant must be 'within_solve' or "
-            f"'within_period', got {variant!r}."
-        )
-    if variant == "within_period":
-        if not per_period_inputs:
-            raise ValueError(
-                "_compute_rp_frames: variant='within_period' requires a "
-                "non-empty per_period_inputs list (one entry per "
-                "RP-bearing FlexTool period)."
-            )
-        # Per-period assembly: each entry yields a chain segment fully
-        # contained within its FlexTool period.  Cross-period edges are
-        # omitted by construction (we never concatenate cross-segment
-        # predecessor edges).
-        wp_chain_rows: list[tuple[Any, ...]] = []
-        wp_first_rows: list[tuple[Any, ...]] = []
-        wp_last_rows: list[tuple[Any, ...]] = []
-        wp_block_first_rows: list[tuple[Any, ...]] = []
-        wp_block_last_rows: list[tuple[Any, ...]] = []
-        wp_block_sl_rows: list[tuple[Any, ...]] = []
-        wp_base_period_rows: list[tuple[Any, ...]] = []
-        wp_rep_period_rows: list[tuple[Any, ...]] = []
-        wp_weights_rows: list[tuple[Any, ...]] = []
-        wp_cost_rows: list[tuple[Any, ...]] = []
-        for (p_name, p_rp_w, p_ts_dur, p_tl_steps) in per_period_inputs:
-            p_sub = _compute_rp_frames(
-                p_rp_w, p_ts_dur, p_name, p_tl_steps,
-            )
-            # rp_base_chain: rename to add the owning period column.
-            sub_chain = p_sub["rp_base_chain.csv"]
-            for row in sub_chain.iter_rows():
-                wp_chain_rows.append((row[0], row[1], p_name))
-            # rp_base_first / rp_base_last: tag with period.
-            sub_first = p_sub["rp_base_first.csv"]
-            for row in sub_first.iter_rows():
-                wp_first_rows.append((row[0], p_name))
-            sub_last = p_sub["rp_base_last.csv"]
-            for row in sub_last.iter_rows():
-                wp_last_rows.append((row[0], p_name))
-            # Pass through unchanged.
-            wp_block_first_rows.extend(p_sub["rp_block_first.csv"].iter_rows())
-            wp_block_last_rows.extend(p_sub["rp_block_last.csv"].iter_rows())
-            wp_block_sl_rows.extend(
-                p_sub["rp_block_start_last.csv"].iter_rows())
-            wp_base_period_rows.extend(
-                p_sub["rp_base_period_set.csv"].iter_rows())
-            wp_rep_period_rows.extend(
-                p_sub["rp_rep_period_set.csv"].iter_rows())
-            wp_weights_rows.extend(p_sub["rp_weights.csv"].iter_rows())
-            wp_cost_rows.extend(p_sub["timestep_weight.csv"].iter_rows())
-        out: dict[str, pl.DataFrame] = {}
-        out["rp_weights.csv"] = _to_utf8_frame(
-            ("base_start", "rep_start", "weight"), wp_weights_rows,
-        )
-        # ``period`` column is the period that owns this chain edge /
-        # endpoint; consumed by the FlexData loader and propagated as
-        # ``d`` so ``model/core.py``'s ``rp_inter_period_cyclic`` can pair
-        # endpoints per period.
-        out["rp_base_chain.csv"] = _to_utf8_frame(
-            ("base_start", "prev_base_start", "period"), wp_chain_rows,
-        )
-        out["rp_base_first.csv"] = _to_utf8_frame(
-            ("base_start", "period"), wp_first_rows,
-        )
-        out["rp_base_last.csv"] = _to_utf8_frame(
-            ("base_start", "period"), wp_last_rows,
-        )
-        out["rp_block_first.csv"] = _to_utf8_frame(
-            ("period", "step"), wp_block_first_rows,
-        )
-        out["rp_block_last.csv"] = _to_utf8_frame(
-            ("period", "step"), wp_block_last_rows,
-        )
-        out["rp_block_start_last.csv"] = _to_utf8_frame(
-            ("rep_start", "last_step"), wp_block_sl_rows,
-        )
-        out["rp_base_period_set.csv"] = _to_utf8_frame(
-            ("period",), wp_base_period_rows,
-        )
-        out["rp_rep_period_set.csv"] = _to_utf8_frame(
-            ("period",), wp_rep_period_rows,
-        )
-        out["timestep_weight.csv"] = _to_utf8_frame(
-            ("period", "time", "weight"), wp_cost_rows,
-        )
-        return out
-
     step_to_idx: dict[str, int] = {s: i for i, s in enumerate(timeline_steps)}
 
     # RP block boundaries from the timeset_duration entries.
@@ -1223,36 +1157,33 @@ _RP_BASENAME_TO_PROVIDER_KEY: dict[str, str] = {
     "rp_block_start_last.csv": K.SOLVE_DATA_RP_BLOCK_START_LAST,
     "rp_base_period_set.csv": K.SOLVE_DATA_RP_BASE_PERIOD_SET,
     "rp_rep_period_set.csv": K.SOLVE_DATA_RP_REP_PERIOD_SET,
+    "rp_period_previous.csv": K.SOLVE_DATA_RP_PERIOD_PREVIOUS,
     "timestep_weight.csv": "solve_data/timestep_weight",
 }
 
 
 def emit_rp_data(
-    rp_weights: dict[str, dict[str, float]],
-    timeset_duration_entries: list[tuple[str, float]],
-    period_name: str,
-    timeline_steps: list[str],
-    *, provider,
-    variant: str = "within_solve",
     per_period_inputs: (
         "list[tuple[str, dict[str, dict[str, float]], "
-        "list[tuple[str, float]], list[str]]] | None"
-    ) = None,
+        "list[tuple[str, float]], list[str]]]"
+    ),
+    *, provider,
+    period_previous: "list[tuple[str, str]] | None" = None,
+    extra_timestep_weight_rows: "list[tuple[Any, ...]] | None" = None,
 ) -> None:
-    """Emit ``rp_data`` to the Provider.
+    """Emit the representative-period frames of a solve (:func:`_compute_rp_frames`) to the Provider.
 
-    Phase E added ``variant`` + ``per_period_inputs`` (see
-    :func:`_compute_rp_frames` for semantics).  The caller in
-    :mod:`flextool.engine.solve._run_model` selects the variant
-    based on the binding-method mix of nodes in this solve; mixed
-    within_solve/within_period in a single solve is rejected upstream
-    with ``FlexToolConfigError`` because the per-solve RP frame family
-    can only carry one chain topology.
+    ``extra_timestep_weight_rows`` are ``(period, time, weight)`` rows of the solve's periods without
+    representative periods (their ``timeset_weights``), appended to ``timestep_weight`` as rendered by
+    :func:`_compute_timeset_cost_weight_rows`.
     """
-    frames = _compute_rp_frames(
-        rp_weights, timeset_duration_entries, period_name, timeline_steps,
-        variant=variant, per_period_inputs=per_period_inputs,
-    )
+    frames = _compute_rp_frames(per_period_inputs, period_previous)
+    if extra_timestep_weight_rows:
+        frames["timestep_weight.csv"] = pl.concat(
+            [frames["timestep_weight.csv"],
+             _to_utf8_frame(("period", "time", "weight"), extra_timestep_weight_rows)],
+            how="vertical",
+        )
     for basename, df in frames.items():
         _emit(provider, _RP_BASENAME_TO_PROVIDER_KEY[basename], df)
 
@@ -1302,14 +1233,15 @@ def emit_timeset_cost_weight(
 
 
 _EMPTY_RP_HEADERS: dict[str, tuple[str, ...]] = {
-    "rp_weights.csv": ("base_start", "rep_start", "weight"),
-    "rp_base_chain.csv": ("base_start", "prev_base_start"),
-    "rp_base_first.csv": ("base_start",),
-    "rp_base_last.csv": ("base_start",),
+    "rp_weights.csv": ("period", "base_start", "rep_start", "weight"),
+    "rp_base_chain.csv": ("period", "base_start", "prev_base_start"),
+    "rp_base_first.csv": ("period", "base_start"),
+    "rp_base_last.csv": ("period", "base_start"),
+    "rp_period_previous.csv": ("period", "prev_period"),
     "rp_block_first.csv": ("period", "step"),
     "rp_block_last.csv": ("period", "step"),
-    "rp_block_start_last.csv": ("rep_start", "last_step"),
-    "rp_base_period_set.csv": ("period",),
+    "rp_block_start_last.csv": ("period", "rep_start", "last_step"),
+    "rp_base_period_set.csv": ("period", "base_start"),
     "rp_rep_period_set.csv": ("period",),
     "timestep_weight.csv": ("period", "time", "weight"),
 }

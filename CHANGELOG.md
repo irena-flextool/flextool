@@ -1,5 +1,24 @@
 ## Unreleased
 
+- **Representative periods in solves with several periods.** Every period of
+  a solve whose timeset has `representative_period_weights` now gets its own
+  weights, representative blocks and base-period storage chain. Before, only
+  the first such period did (unless a node used
+  `bind_within_period_blended_weights`): the other periods' representative
+  days were weighted 1.0 instead of their weights, so their operating costs
+  were under- or over-counted, and the `bind_within_solve_blended_weights` /
+  `bind_forward_only_blended_weights` storage of later periods lost its
+  base-period chain. Periods sharing a timeset, or base-period names on one
+  timeline, shared one chain and weight set. Objectives of multi-period
+  representative-period models change (the test models by −45 % to +74 %;
+  compared with the hourly model of the same days the error drops from 3–100 %
+  to under 0.3 %). The across-solve variants now chain the periods in solve
+  order; different blended-weights methods may now share a solve. A solve
+  that mixes representative and other periods with a blended-weights node, a
+  stochastic solve on a representative-period timeset, and a rolling solve
+  with blended-weights nodes now stop with an error (their representative
+  data was not defined).
+
 - **Benders with in-out stabilisation reports a valid upper bound.** With
   `benders_in_out_weight` > 0 the decomposition could stop on an upper bound
   below the true optimum (by up to 3e-4 on the three-region hydrogen test

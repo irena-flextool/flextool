@@ -104,15 +104,15 @@ def _build_toy_rp_2base_1rep() -> FlexData:
     # RP-blended-weights structures.
     storage_bind_within_solve_blended_weights = pl.DataFrame({"n": ["bat"]})
     nodeState_rp = pl.DataFrame({"n": ["bat"]})
-    rp_base_period_set = pl.DataFrame({"b": ["b1", "b2"]})
+    rp_base_period_set = pl.DataFrame({"d": ["p_rp", "p_rp"], "b": ["b1", "b2"]})
     # Chain b2 ← b1 (Phase 7 active edge).
-    rp_base_chain = pl.DataFrame({"b": ["b2"], "b_prev": ["b1"]})
-    rp_base_first = pl.DataFrame({"b": ["b1"]})
-    rp_base_last = pl.DataFrame({"b": ["b2"]})
+    rp_base_chain = pl.DataFrame({"d": ["p_rp"], "b": ["b2"], "b_prev": ["b1"]})
+    rp_base_first = pl.DataFrame({"d": ["p_rp"], "b": ["b1"]})
+    rp_base_last = pl.DataFrame({"d": ["p_rp"], "b": ["b2"]})
     rp_block_first = pl.DataFrame({"d": ["p_rp"], "t": ["t01"]})
-    p_rp_last_step = pl.DataFrame({"r": ["t01"], "last_step": ["t02"]})
-    rp_base__rep = Param(("b", "r"), pl.DataFrame({
-        "b": ["b1", "b2"], "r": ["t01", "t01"], "value": [1.0, 1.0]}))
+    p_rp_last_step = pl.DataFrame({"d": ["p_rp"], "r": ["t01"], "last_step": ["t02"]})
+    rp_base__rep = Param(("d", "b", "r"), pl.DataFrame({
+        "d": ["p_rp", "p_rp"], "b": ["b1", "b2"], "r": ["t01", "t01"], "value": [1.0, 1.0]}))
 
     return FlexData(
         dt=dt, p_step_duration=p_step, p_timestep_weight=p_rpcw,

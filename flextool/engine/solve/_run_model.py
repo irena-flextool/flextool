@@ -116,6 +116,80 @@ def _reject_rolling_intraperiod_blocks(state, complete_solve_name: str, provider
         "is not defined yet; use bind_forward_only or bind_within_timeblock for these nodes in rolling solves.")
 
 
+_BLENDED_METHODS = tuple(_RP_METHOD_DOWNGRADE)
+
+
+def _blended_nodes(provider) -> list[str]:
+    """Nodes of the per-solve ``input/node__storage_binding_method`` with a ``*_blended_weights`` method."""
+    key = "input/node__storage_binding_method"
+    if not provider.has(key):
+        return []
+    import polars as pl
+    sbm = provider.get(key)
+    if sbm.height == 0:
+        return []
+    col = "storage_binding_method" if "storage_binding_method" in sbm.columns else "method"
+    return sorted(str(n) for n in sbm.filter(pl.col(col).is_in(_BLENDED_METHODS))["node"].unique().to_list())
+
+
+def _check_rp_solve(*, complete_solve_name: str, rp_periods: list[str], period_order: list[str],
+                    period_branch: list, rolling: bool, provider) -> None:
+    """Raise for a representative-period solve whose rp data would not be defined.
+
+    * Stochastic branch periods: the forecast branch periods are created from the solve's periods and have no
+      timeset of their own, so they would get no representative-period weights, blocks or base-period chain
+      (and how a base-period chain should run through a forecast tree is not defined).
+    * A rolling_window solve with ``*_blended_weights`` nodes: the base-period chain spans the whole period and
+      cannot be cut into roll windows.
+    * A solve that mixes periods with and without representative periods while it has ``*_blended_weights``
+      nodes: the blocks of the other periods would be outside the base-period chain.
+    """
+    branches = sorted({str(b) for a, b in period_branch if a != b and b in period_order})
+    if branches:
+        raise FlexToolConfigError(
+            f"Solve '{complete_solve_name}' uses representative periods (representative_period_weights on the "
+            f"timeset of {', '.join(rp_periods)}) and has stochastic branch periods ({', '.join(branches)}). "
+            "Representative periods are not available in stochastic solves: the branch periods would get no "
+            "representative-period weights or base-period chain. Use a timeset without "
+            "representative_period_weights for this solve.")
+    blended = _blended_nodes(provider)
+    if blended and rolling:
+        raise FlexToolConfigError(
+            f"Solve '{complete_solve_name}' is a rolling_window solve on representative periods and node(s) "
+            f"{', '.join(blended)} use a *_blended_weights storage_binding_method. Their base-period storage "
+            "chain spans the whole period and cannot be cut into rolls; use a single_solve for the "
+            "representative periods, or the method without _blended_weights.")
+    non_rp = [p for p in period_order if p not in rp_periods]
+    if blended and non_rp:
+        raise FlexToolConfigError(
+            f"Solve '{complete_solve_name}' mixes periods with representative periods ({', '.join(rp_periods)}) "
+            f"and without ({', '.join(non_rp)}) while node(s) {', '.join(blended)} use a *_blended_weights "
+            "storage_binding_method; the blocks of the periods without representative periods would be outside "
+            "the base-period storage chain. Give every period of the solve a timeset with "
+            "representative_period_weights, or use separate solves.")
+
+
+def _rp_period_previous(jump_list: list, active_time_list: dict, rp_periods: list[str],
+                        period_order: list[str]) -> list[tuple[str, str]]:
+    """``(period, previous period)`` of the across-solve representative-period chain.
+
+    The previous period of an rp period is the ``previous_period`` of its first step in the solve's step-jump
+    list (the predecessor the bind_within_solve / bind_forward_only state lag uses), kept when it is another rp
+    period.  The solve's first period has none (its jump wraps to the last period: that is the
+    bind_within_solve_blended_weights closure, built in the model).
+    """
+    prev_of = {(row[0], row[1]): row[4] for row in jump_list}
+    out: list[tuple[str, str]] = []
+    for period in rp_periods:
+        steps = active_time_list.get(period) or []
+        if period == period_order[0] or not steps:
+            continue
+        prev = prev_of.get((period, steps[0].timestep))
+        if prev is not None and prev != period and prev in rp_periods:
+            out.append((period, str(prev)))
+    return out
+
+
 def _downgrade_rp_methods_for_non_rp_solve(
     *, solve, complete_solve_name, roll_index,
     active_timeset_names, rp_weights, provider, logger,
@@ -1168,146 +1242,49 @@ def native_run_model(state, solver) -> int:
                 state.logger.error(message)
                 raise FlexToolConfigError(message)
 
-        # Phase E — determine the RP chain TOPOLOGY for this solve based
-        # on which blended-weights binding methods appear in the per-solve
-        # ``input/node__storage_binding_method`` frame.  The frame family
-        # emitted to the per-solve provider can carry only ONE chain
-        # topology, so mixing ``bind_within_solve_blended_weights`` (or
-        # ``bind_forward_only_blended_weights`` — same across-solve
-        # topology) with ``bind_within_period_blended_weights`` (per-
-        # FlexTool-period topology) in a single solve is rejected here
-        # with a ``FlexToolConfigError`` listing the conflict and the
-        # canonical fix (separate solves, or pick one variant for the
-        # whole solve).  The downgrade above has already rewritten
-        # blended-weights methods to their non-RP equivalents on non-RP
-        # solves, so this branch only sees genuine RP-active solves.
-        _rp_variant = "within_solve"
-        _wp_nodes: list[str] = []
-        _ws_or_fo_nodes: list[str] = []
-        if sub_solve_provider.has("input/node__storage_binding_method"):
-            _sbm = sub_solve_provider.get(
-                "input/node__storage_binding_method"
+        # Representative periods: every period of the solve whose timeset has representative_period_weights
+        # gets its own rp data (weights, blocks, base-period chain), in the solve's period order; periods
+        # without representative periods keep their timeset_weights.  The across-solve blended variants chain
+        # the periods in the order of the solve's step jumps (rp_period_previous), like bind_within_solve /
+        # bind_forward_only chain v_state.
+        _period_order = list(active_time_lists[solve])
+        _timeset_of = {p: ts for p, ts in timesets_used}
+        rp_periods = [p for p in _period_order if _timeset_of.get(p) in state.timeline.rp_weights]
+        if rp_periods:
+            _check_rp_solve(
+                complete_solve_name=complete_solve[solve],
+                rp_periods=rp_periods,
+                period_order=_period_order,
+                period_branch=period__branch_lists.get(solve, []),
+                rolling=state.solve.solve_modes.get(complete_solve[solve]) == "rolling_window",
+                provider=sub_solve_provider,
             )
-            if _sbm.height > 0:
-                _mcol = ("storage_binding_method"
-                         if "storage_binding_method" in _sbm.columns
-                         else "method")
-                import polars as _pl
-                _wp_df = _sbm.filter(
-                    _pl.col(_mcol) == "bind_within_period_blended_weights"
-                ).select("node").unique()
-                _ws_df = _sbm.filter(_pl.col(_mcol).is_in([
-                    "bind_within_solve_blended_weights",
-                    "bind_forward_only_blended_weights",
-                ])).select("node").unique()
-                _wp_nodes = _wp_df["node"].to_list() if _wp_df.height else []
-                _ws_or_fo_nodes = (
-                    _ws_df["node"].to_list() if _ws_df.height else []
-                )
-                if _wp_nodes and _ws_or_fo_nodes:
-                    _shown_wp = _wp_nodes[:5]
-                    _shown_ws = _ws_or_fo_nodes[:5]
-                    raise FlexToolConfigError(
-                        f"Solve '{complete_solve[solve]}' mixes "
-                        f"bind_within_period_blended_weights "
-                        f"({len(_wp_nodes)} node(s), e.g. "
-                        f"{', '.join(_shown_wp)}) with "
-                        f"bind_within_solve_blended_weights / "
-                        f"bind_forward_only_blended_weights "
-                        f"({len(_ws_or_fo_nodes)} node(s), e.g. "
-                        f"{', '.join(_shown_ws)}).  The two RP chain "
-                        f"topologies (per-FlexTool-period vs. across-"
-                        f"solve) cannot share the per-solve RP frame "
-                        f"family — split into separate solves, or pick "
-                        f"a single blended-weights variant for every "
-                        f"node in this solve."
-                    )
-                if _wp_nodes:
-                    _rp_variant = "within_period"
-
-        rp_written = False
-        if _rp_variant == "within_period":
-            # Iterate ALL RP-bearing active timesets (each owning a
-            # distinct FlexTool period) and accumulate per-period inputs.
-            # Cross-period chain edges are dropped by _compute_rp_frames
-            # so each period closes its own cycle independently.
-            per_period_inputs: list = []
-            for ts_name in active_timeset_names:
-                if ts_name not in state.timeline.rp_weights:
-                    continue
-                period_name = None
-                for p, ts in timesets_used:
-                    if ts == ts_name:
-                        period_name = p
-                        break
-                if not period_name:
-                    continue
+            per_period_inputs = []
+            for period_name in rp_periods:
+                ts_name = _timeset_of[period_name]
                 timeline_name = state.timeline.timesets__timeline[ts_name]
-                timeline_steps = [
-                    step
-                    for step, _dur in state.timeline.timelines.get(
-                        timeline_name, []
-                    )
-                ]
+                timeline_steps = [step for step, _dur in state.timeline.timelines.get(timeline_name, [])]
                 per_period_inputs.append((
                     period_name,
                     state.timeline.rp_weights[ts_name],
                     state.timeline.timeset_durations[ts_name],
                     timeline_steps,
                 ))
-            if per_period_inputs:
-                # The legacy single-period args are ignored when variant
-                # is within_period (asserted inside _compute_rp_frames),
-                # but pass through harmless placeholders for the
-                # signature; the function reads from per_period_inputs.
-                first_p_name, first_rp_w, first_ts_dur, first_tl = (
-                    per_period_inputs[0]
-                )
-                solve_writers.emit_rp_data(
-                    rp_weights=first_rp_w,
-                    timeset_duration_entries=first_ts_dur,
-                    period_name=first_p_name,
-                    timeline_steps=first_tl,
-                    provider=sub_solve_provider,
-                    variant="within_period",
-                    per_period_inputs=per_period_inputs,
-                )
-                rp_written = True
+            non_rp_time = {p: active_time_lists[solve][p] for p in _period_order if p not in rp_periods}
+            extra_weight_rows, _ = solve_writers._compute_timeset_cost_weight_rows(
+                non_rp_time, timesets_used, state.timeline.timeset_weights,
+            )
+            solve_writers.emit_rp_data(
+                per_period_inputs,
+                provider=sub_solve_provider,
+                period_previous=_rp_period_previous(
+                    jump_lists[solve], active_time_lists[solve], rp_periods, _period_order),
+                extra_timestep_weight_rows=extra_weight_rows,
+            )
         else:
-            for ts_name in active_timeset_names:
-                if ts_name in state.timeline.rp_weights:
-                    period_name = None
-                    for p, ts in timesets_used:
-                        if ts == ts_name:
-                            period_name = p
-                            break
-                    if period_name:
-                        timeline_name = state.timeline.timesets__timeline[ts_name]
-                        timeline_steps = [
-                            step
-                            for step, _dur in state.timeline.timelines.get(
-                                timeline_name, []
-                            )
-                        ]
-                        solve_writers.emit_rp_data(
-                            rp_weights=state.timeline.rp_weights[ts_name],
-                            timeset_duration_entries=state.timeline.timeset_durations[
-                                ts_name
-                            ],
-                            period_name=period_name,
-                            timeline_steps=timeline_steps,
-                            provider=sub_solve_provider,
-                        )
-                        rp_written = True
-                        break
-        if not rp_written:
-            # Phase C — Phase 5's strict ``_assert_blended_weights_have_rp_weights``
-            # check has been retired.  Per-solve downgrade fired earlier
-            # in this iter (see ``_downgrade_rp_methods_for_non_rp_solve``
-            # above), so any blended-weights node has already been
-            # rewritten to its non-RP equivalent in this solve's
-            # provider.  Emit the empty RP scaffolding so downstream
-            # consumers don't see missing keys.
+            # The per-solve downgrade above has already rewritten any blended-weights node to its non-RP
+            # equivalent in this solve's provider.  Emit the empty RP scaffolding so downstream consumers
+            # don't see missing keys.
             solve_writers.emit_empty_rp_data(
                 provider=sub_solve_provider,
             )

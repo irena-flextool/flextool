@@ -133,7 +133,7 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     # level; same carry-over kind as the intraperiod-block family above.
     "nodeState_rp", "rp_base_period_set",
     "rp_base_chain", "rp_base_first", "rp_base_last",
-    "rp_block_first", "p_rp_last_step", "rp_base__rep",
+    "rp_block_first", "p_rp_last_step", "rp_base__rep", "rp_period_previous",
     "flow_from_nodeBalance_eff", "flow_from_nodeBalance_noEff",
     "node_profile_upper", "node_profile_lower", "node_profile_fixed",
     # Variable cost partitions.
