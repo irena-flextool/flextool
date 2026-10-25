@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+import polar_high.decomposition
 import pytest
 
 from polar_high import Problem
@@ -33,6 +34,15 @@ from flextool.engine.solve._benders import (
 )
 
 _REGIONS = ["region_A", "region_B", "region_C"]
+
+# The in-out upper-bound fix (#114) lives in polar-high (one value per shared coupling column, UB scored at that
+# point).  CI installs polar-high from PyPI; until the release carrying it is pinned in pyproject.toml these tests
+# run only against a polar-high that has it.  Feature detection, not a version check: an editable install keeps
+# the old version metadata until it is reinstalled.
+_needs_in_out_ub_fix = pytest.mark.skipif(
+    not hasattr(polar_high.decomposition, "consistent_separation_points"),
+    reason="needs polar-high >= 3.9.1 (#114)",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -234,25 +244,70 @@ def test_weight_zero_converges_to_monolith(ti_data, monolith_obj, monkeypatch):
     assert res.lower_bound <= monolith_obj * (1 + 1e-9), "OFF-path LB invalid"
 
 
+# ---------------------------------------------------------------------------
+# In-out ON on the re-tuned trade fixture (c15b review F3): region A's enlarged
+# chain ships LH2 A→B→C over both pipes, so λ=0 needs several iterations and
+# the per-region stabilizers genuinely diverge.  Each pipe's flow column is
+# pinned in its exporter AND its importer region.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def retuned_data(scenario_workdir):
+    return load_flextool(scenario_workdir(
+        "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest_retuned"))
+
+
+@pytest.fixture(scope="module")
+def retuned_monolith(retuned_data):
+    pb = Problem()
+    build_flextool(pb, retuned_data)
+    sol = pb.solve()
+    assert sol.optimal, "re-tuned monolith solve not optimal"
+    return float(sol.obj)
+
+
+@_needs_in_out_ub_fix
 @pytest.mark.parametrize("weight", ["0.3", "0.5", "0.7"])
 def test_in_out_on_converges_to_same_optimum(
-    ti_data, monolith_obj, monkeypatch, weight
+    retuned_data, retuned_monolith, monkeypatch, weight
 ):
     """With in-out ON (λ>0) the cuts are still VALID supporting hyperplanes, so
     the loop converges to the SAME monolith optimum with a valid lower bound —
     the optimum is unchanged, only the cut-generation point moves (plan §5)."""
     monkeypatch.setenv(_BENDERS_IN_OUT_WEIGHT_ENV, weight)
-    res = _solve(ti_data, monolith_obj)
+    res = _solve(retuned_data, retuned_monolith)
     assert res.converged, (
         f"in-out (λ={weight}) did not converge: gap={res.gap:.3e} after "
         f"{res.iterations} iters"
     )
-    assert np.isclose(res.total_objective, monolith_obj, rtol=1e-4), (
+    assert np.isclose(res.total_objective, retuned_monolith, rtol=1e-4), (
         f"in-out (λ={weight}) UB {res.total_objective:.8e} != monolith "
-        f"{monolith_obj:.8e}"
+        f"{retuned_monolith:.8e}"
     )
     # Valid lower bound preserved (the key correctness invariant).
-    assert res.lower_bound <= monolith_obj * (1 + 1e-9), (
+    assert res.lower_bound <= retuned_monolith * (1 + 1e-9), (
         f"in-out (λ={weight}) LB {res.lower_bound:.8e} EXCEEDS monolith "
-        f"{monolith_obj:.8e} — invalid bound"
+        f"{retuned_monolith:.8e} — invalid bound"
     )
+
+
+@_needs_in_out_ub_fix
+@pytest.mark.parametrize("weight", [0.3, 0.5, 0.7])
+def test_in_out_upper_bound_is_valid(retuned_data, retuned_monolith, monkeypatch, weight):
+    """The in-out upper bound is the cost of one feasible point, so it is never
+    below the monolith optimum M (#114: before, λ 0.3 / 0.5 / 0.7 stopped on
+    UBs 1.3e-4 / 3.1e-4 / 5.8e-5 below M, because the exporter and importer
+    halves of a pipe were pinned at different flows), and at tol 1e-6 it is
+    within 1e-6 of M."""
+    monkeypatch.delenv(_BENDERS_IN_OUT_WEIGHT_ENV, raising=False)
+    m = retuned_monolith
+    res = solve_benders(
+        retuned_data, _REGIONS, max_iters=60, tol=1e-6, monolith_objective=m,
+        scale_the_objective=1e-6, in_out_weight=weight,
+    )
+    assert res.converged, f"λ={weight}: gap {res.gap:.3e} after {res.iterations} iterations"
+    assert res.upper_bound >= m * (1 - 1e-8), (
+        f"λ={weight}: UB {res.upper_bound:.10e} below the monolith {m:.10e} (rel {(res.upper_bound - m) / m:+.2e})"
+    )
+    assert res.upper_bound - m <= 1e-6 * m

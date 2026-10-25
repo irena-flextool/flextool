@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Benders with in-out stabilisation reports a valid upper bound.** With
+  `benders_in_out_weight` > 0 the decomposition could stop on an upper bound
+  below the true optimum (by up to 3e-4 on the three-region hydrogen test
+  model): the two regions at the ends of a pipe could be solved with
+  different flows on it. Both ends now always get the same flow, and the
+  upper bound is the cost of that one point. Needs polar-high 3.9.1; such
+  runs can take a few more iterations.
+
 - **Solver options reach every solve.** `solver_mip_gap` was ignored on the
   default (warm) HiGHS path; it is now honoured. A solve with
   `solver_arguments` or `solver_mip_gap` that runs cold (`warm=False`,

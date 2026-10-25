@@ -93,6 +93,7 @@ from polar_high.benders import (
 )
 from polar_high.benders import _check_cuts_satisfied as _ph_check_cuts_satisfied
 from polar_high.benders import _cut_separates as _ph_cut_separates
+import polar_high.benders as _ph_benders
 
 from flextool.engine.solve import _region_filter
 from flextool.engine import build_flextool as _build_flextool
@@ -121,6 +122,11 @@ from flextool.engine.preprocess._stochastic_detect import (
 from flextool.engine.preprocess.flex_data import FlexData
 
 _logger = logging.getLogger(__name__)
+
+# The in-out upper bound skips an iteration whose separation point the pinned master cannot reach when
+# native_cost_at raises polar-high's PinnedMasterNotOptimal (polar-high >= 3.9.1); with an older polar-high the
+# plain RuntimeError keeps the previous behaviour (the error propagates).
+_PinnedMasterNotOptimal = getattr(_ph_benders, "PinnedMasterNotOptimal", RuntimeError)
 
 
 def _benders_quiet() -> bool:
@@ -1459,11 +1465,15 @@ class _BendersMaster:
         coupling-column bounds, pin, solve once, read ``obj − Σ η``, restore
         the bounds in a ``finally``), but pinned to ``point`` values instead
         of 0 — so it evaluates the master's own cost at an ARBITRARY feasible
-        coupling point.  Used by the in-out upper bound of a flow-dependent
-        master (:attr:`native_cost_flow_dependent`) and by the off-loop
-        single-point pin diagnostic (:func:`polar_high.benders.
+        coupling point.  Used by the in-out upper bound (with polar-high >=
+        3.9.1 every in-out iteration scores the master's cost at the
+        consistent overlay point: it depends on the coupling flows through a
+        connection's flow / online / startup cost or hosted nodes) and by the
+        off-loop single-point pin diagnostic (:func:`polar_high.benders.
         evaluate_at_point`).  ``point`` must carry a value for every coupling
-        f col-id.
+        f col-id.  A pinned master that is not optimal raises polar-high's
+        ``PinnedMasterNotOptimal`` (a ``RuntimeError``); the in-out loop then
+        does not use that iteration's upper bound.
         """
         wp = self._wp
         col_ids = np.concatenate(
@@ -1478,11 +1488,10 @@ class _BendersMaster:
             sol = wp.solve(retry_on_unknown=True)
             if not sol.optimal:
                 status = wp._h.getModelStatus()
-                raise RuntimeError(
-                    "Benders pin diagnostic: the master problem did not "
-                    "solve to optimality with every node-group coupling "
-                    "flow pinned at the diagnostic point (solver status "
-                    f"{status})."
+                raise _PinnedMasterNotOptimal(
+                    "Benders: the master problem did not solve to "
+                    "optimality with every node-group coupling flow pinned "
+                    f"at the query point (solver status {status})."
                 )
             eta_sum = sum(
                 float(sol.col_value[col]) for col in self._eta_col.values()
@@ -1500,15 +1509,14 @@ class _BendersMaster:
         overlay point (via :meth:`native_cost_at`) instead of the mixed
         ``native_cost(msol)`` sum.
 
-        Flow-dependent exactly when the master hosts balance/storage nodes:
-        those nodes' balances are filled by the coupling flows, so the
-        master's own cost (their penalty slack + storage terms) is a genuine
-        function of the coupling flow.  In the current (trade-invest)
-        partition ``self._master_hosted_nodes`` is empty and the master's
-        native cost is pure coupling-connection invest cost — independent of
-        the coupling FLOW columns — so this returns ``False`` and the
-        coordinator keeps its exact ``native_cost(msol)`` UB verbatim
-        (byte-parity)."""
+        True when the master hosts balance/storage nodes: those nodes'
+        balances are filled by the coupling flows, so the master's own cost
+        (their penalty slack + storage terms) is a genuine function of the
+        coupling flow.  The flag does not cover a coupling connection's own
+        flow / online / startup cost, which also depends on the flows; with
+        polar-high >= 3.9.1 that does not matter, because the in-out upper
+        bound then always reads the cost at the overlay point via
+        :meth:`native_cost_at` (this master implements it)."""
         return bool(self._master_hosted_nodes)
 
     def apply_coupling_box(self, center: dict[int, float], radius: float) -> None:
@@ -2631,8 +2639,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # at the SAME overlay point the subproblems used
         # (:meth:`_BendersMaster.native_cost_at`), so the UB is scored at one
         # consistent feasible primal — a valid L-shaped feasible-point bound.
-        # No guard needed; the current (non-master-hosted) partition keeps its
-        # exact ``native_cost(msol)`` UB verbatim (flow_dependent = False).
+        # With polar-high >= 3.9.1 every in-out UB is scored this way (a
+        # coupling connection's flow / online / startup cost also makes the
+        # master's cost flow-dependent), and a coupling column shared by an
+        # exporter and an importer region is pinned at one value in both.
         _logger.info(
             "Benders: in-out separation ON (weight λ=%.3f) with %d "
             "master-hosted node(s); UB scored at the consistent overlay "
