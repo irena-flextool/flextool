@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **Group `transfer_method` applies to the network topology.** A group's
+  `transfer_method` was applied to some of the model's inputs only: DC
+  power-flow lines kept an unconstrained reverse flow next to the one set by
+  the voltage angles, and a group `unidirectional` override left its
+  connections two-way. The group's method now decides the connections' flows
+  everywhere.
+
 - **Startup and shutdown capacity reduction.** As documented in the how-to,
   a unit with online variables and ramp limits can no longer run at full
   output in the step it starts in or in the step before it shuts down: it

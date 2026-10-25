@@ -1976,6 +1976,49 @@ _METHOD_MIP = frozenset((
 ))
 
 
+def _group_transfer_method_overrides(source: "InputSource") -> "pl.LazyFrame | None":
+    """``(p, ct_override)``: the transfer method a group's ``transfer_method`` imposes on its connections.
+
+    Mirrors :func:`flextool.input_derivation._dc_power_flow.derive_dc_power_flow`: every group whose
+    ``transfer_method`` is not ``use_connection_transfer_methods`` overrides the method of each connection with
+    both endpoints (``connection__node__node``) among the group's nodes; ``dc_power_flow_with_angles`` becomes
+    ``no_losses_no_variable_cost`` (the DC lines carry one signed flow) and skips the ``is_DC = yes``
+    connections.  A connection matched by several groups takes the override of the last group in name order.
+    The process key is the Utf8 column ``_pk``.  None when no group overrides anything.
+    """
+    gtm = _try_param(source, "group", "transfer_method")
+    gn = _try_entities(source, "group__node")
+    cnn = _try_entities(source, "connection__node__node")
+    if gtm is None or gn is None or cnn is None:
+        return None
+    groups = (gtm.lazy()
+              .select(pl.col("name").cast(pl.Utf8).alias("g"), pl.col("value").cast(pl.Utf8).alias("method"))
+              .filter(pl.col("method").is_not_null() & (pl.col("method") != "use_connection_transfer_methods")))
+    nodes = gn.lazy().select(pl.col("group").cast(pl.Utf8).alias("g"), pl.col("node").cast(pl.Utf8).alias("n"))
+    ends = cnn.lazy().select(pl.col("connection").cast(pl.Utf8).alias("p"),
+                             pl.col("node_1").cast(pl.Utf8).alias("n1"), pl.col("node_2").cast(pl.Utf8).alias("n2"))
+    matched = (groups.join(nodes, on="g", how="inner").rename({"n": "n1"})
+               .join(ends, on="n1", how="inner")
+               .join(nodes.rename({"n": "n2"}), on=["g", "n2"], how="semi")
+               .select("p", "g", "method"))
+    is_dc = _try_param(source, "connection", "is_DC")
+    if is_dc is not None:
+        dc = is_dc.lazy().filter(pl.col("value") == "yes").select(pl.col("name").cast(pl.Utf8).alias("p"))
+        matched = pl.concat([
+            matched.filter(pl.col("method") != "dc_power_flow_with_angles"),
+            matched.filter(pl.col("method") == "dc_power_flow_with_angles").join(dc, on="p", how="anti"),
+        ])
+    out = (matched
+           .with_columns(ct_override=pl.when(pl.col("method") == "dc_power_flow_with_angles")
+                         .then(pl.lit("no_losses_no_variable_cost")).otherwise(pl.col("method")))
+           .sort("p", "g")
+           .group_by("p", maintain_order=True).agg(pl.col("ct_override").last())
+           .collect())
+    if out.height == 0:
+        return None
+    return out.lazy().select(pl.col("p").alias("_pk"), "ct_override")
+
+
 def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     """Build the per-process internal-method classification.
 
@@ -2003,7 +2046,10 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
          connection ``delay`` is ignored).
       3. Count input/output arcs per process.
       4. Apply defaults (``constant_efficiency`` for units,
-         ``regular`` for connections; ``no_startup``).
+         ``regular`` for connections; ``no_startup``), then the group
+         ``transfer_method`` overrides
+         (:func:`_group_transfer_method_overrides`, as the input
+         derivation's ``derived/ct_method_overrides``).
       5. Apply minimum_time → linear-startup override.
       6. Resolve fork from arc counts + delayed-set membership.
       7. Map ``(ct, startup, fork) → method`` via the polars when/then
@@ -2119,6 +2165,14 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
             .when(pl.col("klass") == "unit").then(pl.lit("constant_efficiency"))
             .otherwise(pl.lit("regular"))
     )
+    # Step 4b — group transfer_method overrides (connections with both endpoints in the group).
+    overrides = _group_transfer_method_overrides(source)
+    if overrides is not None:
+        lf = (lf.with_columns(_pk=pl.col("p").cast(pl.Utf8))
+                .join(overrides, on="_pk", how="left")
+                .with_columns(ct=pl.when((pl.col("klass") == "connection") & pl.col("ct_override").is_not_null())
+                                .then(pl.col("ct_override")).otherwise(pl.col("ct")))
+                .drop("ct_override", "_pk"))
     if sm_lazy is not None:
         lf = lf.join(sm_lazy, on="p", how="left")
     else:

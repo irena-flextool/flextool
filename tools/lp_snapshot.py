@@ -918,6 +918,174 @@ def _patch_ramp_roll_span(data: dict) -> dict:
                     entities=[["timeset", "ta"], ["timeset", "tb"]], values=_RAMP_COAL + vals)
 
 
+_UNI = ["init", "west", "coal", "wind", "network", "unidirectional"]
+_NET = ["init", "west", "coal", "wind", "network"]
+_LL = ["Base", "lossless_2way"]
+
+
+def _conn_startup(conn: str, method: str, cost: float = 3.0) -> list:
+    return [["connection", conn, "startup_method", method], ["connection", conn, "startup_cost", cost]]
+
+
+def _patch_conn_online_uni(data: dict) -> dict:
+    """One-way west_east with linear online variables next to an online unit (coal_plant linear)."""
+    return _overlay(data, name="conn_online_uni", base=_UNI + ["coal_min_load"],
+                    values=_conn_startup("west_east", "linear"))
+
+
+def _patch_conn_online_regular(data: dict) -> dict:
+    """Two-way (regular, two variables) west_east with linear online variables."""
+    return _overlay(data, name="conn_online_regular", base=_NET, values=_conn_startup("west_east", "linear"))
+
+
+def _patch_conn_online_regular_mip(data: dict) -> dict:
+    """Two-way (regular) west_east with binary online variables."""
+    return _overlay(data, name="conn_online_regular_mip", base=_NET,
+                    values=_conn_startup("west_east", "binary"))
+
+
+def _patch_conn_online_1var(data: dict) -> dict:
+    """One-variable (no_losses_no_variable_cost) west_east, linear online, holding up and down reserve at
+    west."""
+    eu, vu = _reserve("ru", "up", "electricity", [("connection", "west_east", "west")], reservation=100.0)
+    ed, vd = _reserve("rd", "down", "electricity", [("connection", "west_east", "west")], reservation=100.0)
+    return _overlay(data, name="conn_online_1var", base=_NET, entities=eu + ed,
+                    values=vu + vd + _conn_startup("west_east", "linear") + [
+                        ["connection", "west_east", "transfer_method", "no_losses_no_variable_cost"]])
+
+
+def _patch_conn_exact(data: dict) -> dict:
+    """exact ll (efficiency 0.9) with a 50 MW surplus at lw and costly spill: it must not dissipate the
+    surplus by flowing both ways at once."""
+    return _overlay(data, name="conn_exact", base=_LL, values=[
+        ["connection", "ll", "transfer_method", "exact"], ["connection", "ll", "efficiency", 0.9],
+        ["node", "lw", "inflow", 50.0], ["node", "le", "inflow", 0.0]])
+
+
+def _patch_conn_exact_flow(data: dict) -> dict:
+    """exact west_east in the plain network: the normal case."""
+    return _overlay(data, name="conn_exact_flow", base=_NET,
+                    values=[["connection", "west_east", "transfer_method", "exact"]])
+
+
+def _patch_conn_exact_invest(data: dict) -> dict:
+    """exact ll without existing capacity, investment allowed: the invested capacity flows both ways (one
+    direction per step)."""
+    return _overlay(data, name="conn_exact_invest", base=_LL, values=[
+        ["connection", "ll", "transfer_method", "exact"], ["connection", "ll", "efficiency", 0.95],
+        ["connection", "ll", "existing", 0.0], ["connection", "ll", "invest_method", "invest_no_limit"],
+        ["connection", "ll", "invest_cost", 1.0], ["connection", "ll", "lifetime", 20.0],
+        ["connection", "ll", "discount_rate", 0.05],
+        ["node", "lw", "penalty_up", 1000.0], ["node", "lw", "penalty_down", 1000.0],
+        ["node", "le", "penalty_up", 1000.0], ["node", "le", "penalty_down", 1000.0],
+        ["solve", "lossless_2way_solve", "invest_periods",
+         {"type": "array", "value_type": "str", "data": ["p2020"]}],
+        ["solve", "lossless_2way_solve", "realized_invest_periods",
+         {"type": "array", "value_type": "str", "data": ["p2020"]}]])
+
+
+_GW = [["group", "gw"], ["group__node", ["gw", "lw"]]]
+
+
+def _ll_reserve(r: str, ud: str, method: str, extra: list, reservation: float = 0.0) -> tuple[list, list]:
+    ents, vals = _reserve(r, ud, "gw", [("connection", "ll", "lw")], method=method, reservation=reservation,
+                          penalty=1000.0)
+    rel = [r, ud, "ll", "lw"]
+    vals += [["reserve__upDown__connection__node", rel, k, v] for k, v in extra]
+    return ents, vals
+
+
+def _patch_conn_reserve_1var(data: dict) -> dict:
+    """One-variable ll (lossless_2way) at lw: dynamic up (ratio 0.5), n-1 up (ll fails), timeseries up and
+    down 150 MW; ll exports 100 MW from lw at t0001 and imports 100 MW at t0002 (v_flow_back)."""
+    e1, v1 = _ll_reserve("dyu", "up", "dynamic_only", [("increase_reserve_ratio", 0.5)])
+    e2, v2 = _ll_reserve("n1u", "up", "large_failure_only", [("large_failure_ratio", 1.0)])
+    e3, v3 = _ll_reserve("tsu", "up", "timeseries_only", [], reservation=150.0)
+    e4, v4 = _ll_reserve("tsd", "down", "timeseries_only", [], reservation=150.0)
+    return _overlay(data, name="conn_reserve_1var", base=_LL, values=v1 + v2 + v3 + v4,
+                    entities=_GW + e1 + e2 + e3 + e4)
+
+
+def _patch_conn_reserve_uni(data: dict) -> dict:
+    """One-way west_east (west -> east) holding down reserve (send more) and up reserve (send less) at
+    west."""
+    ed, vd = _reserve("rdw", "down", "gww", [("connection", "west_east", "west")], reservation=300.0)
+    eu, vu = _reserve("ruw", "up", "gww", [("connection", "west_east", "west")], reservation=300.0)
+    return _overlay(data, name="conn_reserve_uni", base=_UNI, values=vd + vu,
+                    entities=[["group", "gww"], ["group__node", ["gww", "west"]]] + ed + eu)
+
+
+def _patch_conn_reserve_dc(data: dict) -> dict:
+    """Upward and downward reserve at bus_10 from the two DC power-flow lines there (one-variable arcs with
+    v_flow_back)."""
+    provs = [("connection", "line_10_11", "bus_10"), ("connection", "line_9_10", "bus_10")]
+    eu, vu = _reserve("ru", "up", "g10", provs, reservation=20.0)
+    ed, vd = _reserve("rd", "down", "g10", provs, reservation=20.0)
+    return _overlay(data, name="conn_reserve_dc", base=["base"], values=vu + vd,
+                    entities=[["group", "g10"], ["group__node", ["g10", "bus_10"]]] + eu + ed)
+
+
+def _patch_conn_online_roll(data: dict) -> dict:
+    """One-way west_east with linear online variables in the rolling fullYear dispatch (horizon 36, jump
+    24): every continuation roll carries the connection's online state."""
+    return _overlay(data, name="conn_online_roll",
+                    base=["init", "west", "battery", "wind", "coal", "network", "unidirectional", "fullYear",
+                          "dispatch_fullYear_roll"],
+                    values=_conn_startup("west_east", "linear") + [
+                        ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", 36.0],
+                        ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", 24.0]])
+
+
+def _patch_conn_online_stoch(data: dict) -> dict:
+    """Stochastic 2-day dispatch with node north fed from demand_node by a one-way connection (linear
+    online) and a regular one (binary online): online ties across the forecast branches."""
+    ents = [["node", "north"], ["connection", "dn_north"], ["connection", "dn_north2"],
+            ["connection__node__node", ["dn_north", "demand_node", "north"]],
+            ["connection__node__node", ["dn_north2", "demand_node", "north"]]]
+    vals = [["node", "north", "node_type", "balance"], ["node", "north", "inflow", -150.0],
+            ["node", "north", "penalty_up", 5000.0], ["node", "north", "penalty_down", 5000.0],
+            ["connection", "dn_north", "transfer_method", "unidirectional"],
+            ["connection", "dn_north", "existing", 100.0], ["connection", "dn_north", "efficiency", 0.95],
+            ["connection", "dn_north2", "transfer_method", "regular"],
+            ["connection", "dn_north2", "existing", 100.0], ["connection", "dn_north2", "efficiency", 0.9]]
+    vals += _conn_startup("dn_north", "linear") + _conn_startup("dn_north2", "binary", 5.0)
+    return _overlay(data, name="conn_online_stoch", base="2_day_stochastic_dispatch", entities=ents,
+                    values=vals)
+
+
+def _group_override(data: dict, name: str, method: str) -> dict:
+    return _overlay(data, name=name, base=_NET, values=[["group", "gwe", "transfer_method", method]],
+                    entities=[["group", "gwe"], ["group__node", ["gwe", "west"]],
+                              ["group__node", ["gwe", "east"]]])
+
+
+def _patch_conn_group_override_uni(data: dict) -> dict:
+    """group transfer_method = unidirectional over west, east (west_east regular): one arc."""
+    return _group_override(data, "conn_group_override_uni", "unidirectional")
+
+
+def _patch_conn_group_override_exact(data: dict) -> dict:
+    """group transfer_method = exact over west, east: west_east gets the direction switch."""
+    return _group_override(data, "conn_group_override_exact", "exact")
+
+
+def _patch_online_bin_lin(data: dict) -> dict:
+    """coal_plant binary online next to coal_chp linear online, with an inertia limit: both units online,
+    one inertia term each."""
+    return _overlay(data, name="online_bin_lin",
+                    base=["init", "west", "coal", "heat", "coal_chp", "coal_min_load", "coal_min_load_MIP",
+                          "inertia"],
+                    values=[["unit", "coal_chp", "startup_method", "linear"]])
+
+
+def _patch_online_mintime_lin(data: dict) -> dict:
+    """coal_plant online only through minimum_time_method next to coal_chp linear online: coal_plant keeps
+    its online variables and min up / down rows."""
+    return _overlay(data, name="online_mintime_lin",
+                    base=["init", "west", "coal", "heat", "coal_chp", "coal_min_updowntime"],
+                    values=[["unit", "coal_chp", "startup_method", "linear"]])
+
+
 PATCHES: dict[str, Callable[[dict], dict]] = {
     "none": _no_patch,
     "invest_limits": _patch_invest_limits,
@@ -957,6 +1125,22 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "ramp_avail_section": _patch_ramp_avail_section,
     "reserve_input_avail": _patch_reserve_input_avail,
     "ramp_roll_span": _patch_ramp_roll_span,
+    "conn_online_uni": _patch_conn_online_uni,
+    "conn_online_regular": _patch_conn_online_regular,
+    "conn_online_regular_mip": _patch_conn_online_regular_mip,
+    "conn_online_1var": _patch_conn_online_1var,
+    "conn_exact": _patch_conn_exact,
+    "conn_exact_flow": _patch_conn_exact_flow,
+    "conn_exact_invest": _patch_conn_exact_invest,
+    "conn_reserve_1var": _patch_conn_reserve_1var,
+    "conn_reserve_uni": _patch_conn_reserve_uni,
+    "conn_reserve_dc": _patch_conn_reserve_dc,
+    "conn_online_roll": _patch_conn_online_roll,
+    "conn_online_stoch": _patch_conn_online_stoch,
+    "conn_group_override_uni": _patch_conn_group_override_uni,
+    "conn_group_override_exact": _patch_conn_group_override_exact,
+    "online_bin_lin": _patch_online_bin_lin,
+    "online_mintime_lin": _patch_online_mintime_lin,
 }
 
 
@@ -1096,6 +1280,22 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("ramp_avail_section", _T),
     ("reserve_input_avail", _T),
     ("ramp_roll_span", _T),
+    ("conn_online_uni", _T),
+    ("conn_online_regular", _T),
+    ("conn_online_regular_mip", _T),
+    ("conn_online_1var", _T),
+    ("conn_exact", _T),
+    ("conn_exact_flow", _T),
+    ("conn_exact_invest", _T),
+    ("conn_reserve_1var", _T),
+    ("conn_reserve_uni", _T),
+    ("conn_reserve_dc", _F + "case14_dc_power_flow.json"),
+    ("conn_online_roll", _T),
+    ("conn_online_stoch", _F + "stochastics.json"),
+    ("conn_group_override_uni", _T),
+    ("conn_group_override_exact", _T),
+    ("online_bin_lin", _T),
+    ("online_mintime_lin", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (
