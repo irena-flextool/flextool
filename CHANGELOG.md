@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **Benders decomposition checks connections between regions.** A connection
+  between regions with a `startup_method`, the `exact` transfer method or
+  reserve now stops the run with an error (its online variables, direction
+  switch or reserve would be left without flows in the region subproblems);
+  integer variables in a region subproblem print a warning.
+
 - **Connection reserve limited by the connection's flow.** A connection's
   reserve at a node is now limited by its net position there: upward
   reserve by its free capacity towards the node plus the flow it sends

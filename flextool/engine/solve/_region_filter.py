@@ -38,6 +38,7 @@ Public surface
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 import dataclasses
@@ -57,6 +58,9 @@ from flextool.engine.input._axis_enums import (
 )
 from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.model._pdt_join import compute_pss_dt
+from flextool.engine.input._solve_state import FlexToolConfigError
+
+_logger = logging.getLogger(__name__)
 
 
 __all__ = [
@@ -2254,6 +2258,53 @@ def master_network_data(
 # ---------------------------------------------------------------------------
 
 
+def _validate_cross_region_connections(data: FlexData, cross: pl.DataFrame,
+                                       region_master: pl.DataFrame) -> None:
+    """Raise when a connection severed by the split has online variables, the exact transfer method or reserve.
+
+    A severed connection is replaced by half-flows (other processes) in the regions, so its own rows are gone:
+    its online status and direction switch would be free columns without flow rows, and its reserve (limited by
+    its flows, connection_reserve_*) would have no channel left.  None of them can be split between two region
+    subproblems.
+    """
+    procs = {str(p) for frame in (cross, region_master) if frame is not None and frame.height > 0
+             for p in frame.get_column("p").to_list()}
+    if not procs:
+        return
+    checks = (("a startup_method (online variables)",
+               [getattr(data, "process_online_linear", None), getattr(data, "process_online_integer", None)]),
+              ("the exact transfer method", [getattr(data, "process_exact", None)]),
+              ("reserve", [getattr(data, "process_reserve_upDown_node_active", None)]))
+    problems = []
+    for what, frames in checks:
+        hit = sorted(procs & {str(p) for f in frames if f is not None and f.height > 0
+                              for p in f.get_column("p").to_list()})
+        if hit:
+            problems.append(f"{', '.join(hit)} ({what})")
+    if problems:
+        raise FlexToolConfigError(
+            "Benders decomposition: connection(s) between regions (or between a region and the master) cannot "
+            "have online variables, the exact transfer method or reserve, because the split replaces them with "
+            "half-flows in each region: " + "; ".join(problems) + ".  Remove these from the connections, or put "
+            "both of their nodes in one region.")
+
+
+def _warn_integer_region(region: str, rdata: FlexData) -> None:
+    """Warn when a region subproblem has integer columns (binary online status, exact direction switch): the
+    Benders cuts use the subproblem's duals, which are not valid for a mixed-integer subproblem."""
+    pss = getattr(rdata, "process_source_sink", None)
+    in_region = ({str(p) for p in pss.get_column("p").to_list()} if pss is not None and pss.height > 0 else set())
+    names = sorted(in_region & {str(p) for f in (getattr(rdata, "process_online_integer", None),
+                                                 getattr(rdata, "process_exact", None))
+                                if f is not None and f.height > 0 for p in f.get_column("p").to_list()})
+    if names:
+        _logger.warning(
+            "Benders: region %s has integer variables (binary startup_method or exact transfer method: %s). "
+            "Benders cuts come from the duals of the region subproblem, which are not valid for a mixed-integer "
+            "subproblem; the decomposition may stop at a wrong solution. Use startup_method linear and a "
+            "non-exact transfer method in decomposed regions.", region, ", ".join(names))
+
+
 def split(
     data: FlexData,
     *,
@@ -2420,6 +2471,8 @@ def split(
         # carry neither their arcs nor their entity rows.
         shared_procs -= master_local_procs
 
+    _validate_cross_region_connections(data, cross, region_master)
+
     half_flows_by_region = _make_half_flows(cross, region_master)
 
     cross_arcs_by_pss: set[tuple[str, str, str]] = set()
@@ -2514,6 +2567,7 @@ def split(
                 master_cns=master_cns,
                 master_groups=master_groups,
             )
+            _warn_integer_region(r, rdata)
             splits.append(RegionSplit(
                 region=r,
                 data=rdata,

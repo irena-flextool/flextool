@@ -1419,6 +1419,14 @@ regions are tightly coupled (i.e. cross-region flows dominate the
 dispatch) the cut loop may need many iterations and a monolithic solve is
 usually better.
 
+Connections between regions (or between a region and the master) are
+replaced by trade flows in the decomposition, so they cannot have a
+`startup_method`, the *exact* transfer method or reserve: the run stops with
+an error naming them. Binary online variables or *exact* connections inside a
+region make the region subproblem a mixed-integer problem; the cuts are then
+not exact (a warning is printed), so prefer `startup_method` *linear* in
+decomposed solves.
+
 ## How to use timeset weights (non-RP weighted timesteps)
 
 `timeset.timeset_weights` lets each timestep within a `timeset` carry a custom weight that is applied to the cost and slack terms in the objective. The typical use case is a coarse, OSeMOSYS-style timeslice structure where some timesteps cover more year-hours than others (wet vs. dry season, peak vs. off-peak day-types) — `timeset_duration` already controls how long each step is, but `timeset_weights` is what scales the *contribution to the annual cost* when those slices are uneven.
