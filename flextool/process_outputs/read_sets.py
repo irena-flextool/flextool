@@ -686,6 +686,21 @@ def read_sets(
             ["solve", "period", "time", "t_previous"]
         )
 
+    # dtt_within_period — (solve, period, time, t_previous_within_period):
+    # the bind_within_period predecessor of each step in its own period (the
+    # first step wraps to the period's own last step); the model's lag
+    # (FlexData.dtttdt_within_period).
+    wp_lag = getattr(flex_data, "dtttdt_within_period", None)
+    if wp_lag is not None and wp_lag.height > 0:
+        pdf = (wp_lag.select(pl.lit(solve_name).alias("solve"),
+                             pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                             pl.col("t_previous_within_period").cast(pl.Utf8))
+               .sort("d", "t").to_pandas())
+        s.dtt_within_period = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "period", "time", "t_previous_within_period"])
+    else:
+        s.dtt_within_period = empty_multi_index(["solve", "period", "time", "t_previous_within_period"])
+
     # dtt — typically (d, t, t_previous). Derive from dtttdt if available.
     # Sort by (solve, period, time, t_previous) so the resulting
     # MultiIndex follows the canonical iteration order — without
@@ -786,17 +801,14 @@ def read_sets(
     # ``bind_within_timeblock`` and ``bind_within_solve_blended_weights`` methods and
     # broke ``calc_storage_vre.py`` for nodes carrying them.
     #
-    # Orthogonal gap (per audit §4): the v54 value list also accepts
-    # ``bind_within_period`` and ``bind_intraperiod_blocks``, but
-    # ``nodeBalance_eq`` (model._eq_node_balance) has no constraint branch for either,
-    # and FlexData carries no projection attribute for them.  Those methods
-    # are accepted at ingestion but currently produce no constraint term —
-    # tracked separately, not in scope here.
+    # ``bind_intraperiod_blocks`` nodes are balanced by nodeBalanceBlock_eq
+    # and have their own outputs; they are not listed here.
     binding_pieces: list[tuple[str, str]] = []
     bind_projections: tuple[tuple[str, str], ...] = (
         ("storage_bind_within_solve", "bind_within_solve"),
         ("storage_bind_forward_only", "bind_forward_only"),
         ("storage_bind_within_timeblock", "bind_within_timeblock"),
+        ("storage_bind_within_period", "bind_within_period"),
         ("storage_bind_within_solve_blended_weights", "bind_within_solve_blended_weights"),
         # Phase D — added with the constraint wiring.
         ("storage_bind_forward_only_blended_weights",

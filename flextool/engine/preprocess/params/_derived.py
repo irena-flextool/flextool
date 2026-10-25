@@ -8180,8 +8180,11 @@ def storage_use_reference_value_from_source(source: "InputSource",
     anti-join against:
 
       * ``storage_start_end_method ∈ {fix_end, fix_start_end}``
-      * ``storage_binding_method ∈ {bind_within_solve, bind_within_timeblock,
-                                      bind_intraperiod_blocks}``
+      * ``storage_binding_method ∈ {bind_within_solve, bind_within_period,
+                                      bind_within_timeblock, bind_intraperiod_blocks}``
+        (the end state is tied to the start); the caller also drops the
+        nodes of the solve's own plain cyclic sets, which hold the
+        blended-weights nodes a non-RP solve downgrades to those methods
       * ``nodeStateBlock`` (synthesised + explicit).
     """
     sshm = _try_param(source, "node", "storage_solve_horizon_method")
@@ -8208,8 +8211,8 @@ def storage_use_reference_value_from_source(source: "InputSource",
     if sbm_full is not None:
         b = (sbm_full.lazy()
                   .filter(pl.col("method").is_in([
-                      "bind_within_solve", "bind_within_timeblock",
-                      "bind_intraperiod_blocks"]))
+                      "bind_within_solve", "bind_within_period",
+                      "bind_within_timeblock", "bind_intraperiod_blocks"]))
                   .select("n")
                   .collect())
         if b.height > 0:
@@ -8569,8 +8572,14 @@ def apply_derived_e(
 
     # 6. storage_use_reference_value (storage-only) -------------------
     if has_state:
-        flex_data.storage_use_reference_value = (
-            storage_use_reference_value_from_source(source, nsb_db))
+        use_ref = storage_use_reference_value_from_source(source, nsb_db)
+        # The solve's plain cyclic sets come from the per-solve frame, so they include the blended-weights
+        # nodes this solve downgraded (no representative periods): those cycle too and get no end pin.
+        for cyclic in (flex_data.storage_bind_within_solve, flex_data.storage_bind_within_period):
+            if use_ref is not None and cyclic is not None and cyclic.height > 0:
+                names = [str(n) for n in cyclic["n"].to_list()]
+                use_ref = use_ref.filter(~pl.col("n").cast(pl.Utf8).is_in(names))
+        flex_data.storage_use_reference_value = use_ref if use_ref is not None and use_ref.height > 0 else None
 
     # 7. rolling-handoff (storage-only — read-from-disk handoff) ------
     # Path B Cat A: ``_load_storage`` (flex_data.py:2083-2104, 2106-2133)

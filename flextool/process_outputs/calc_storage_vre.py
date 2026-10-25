@@ -10,11 +10,19 @@ def compute_storage_and_vre(par, s, v, r) -> None:
 
     # node_state_change_dt (four storage binding methods)
     current_idx = s.dtt.droplevel('t_previous')
-    prev_period_idx = (
-        s.dtttdt
-        .droplevel(['time', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve'])
-        .set_names(['period', 'time'])
-    )
+    # bind_within_period: the previous step in the same period, the first step wrapping to the period's own
+    # last step (the model's lag; dtttdt's t_previous of a period's first step may point into another period).
+    # Later sub-solves win on a shared step, as in drop_levels.
+    wp_prev: dict = {}
+    wp_lag = getattr(s, "dtt_within_period", None)
+    if wp_lag is not None and len(wp_lag):
+        for p, t, tp in zip(wp_lag.get_level_values("period"), wp_lag.get_level_values("time"),
+                            wp_lag.get_level_values("t_previous_within_period")):
+            wp_prev[(str(p), str(t))] = tp
+    prev_period_idx = pd.MultiIndex.from_tuples(
+        [(p, wp_prev.get((str(p), str(t)), t)) for p, t in current_idx],
+        names=['period', 'time'],
+    ) if len(current_idx) else current_idx
     prev_timeset_idx = (
         s.dtttdt
         .droplevel(['time', 't_previous', 'd_previous', 't_previous_within_solve'])

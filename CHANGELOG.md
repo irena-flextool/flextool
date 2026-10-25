@@ -1,5 +1,21 @@
 ## Unreleased
 
+- **`bind_within_period` storage works.** A storage node with
+  `storage_binding_method` *bind_within_period* had no state-change term at
+  all (its energy could appear or vanish freely) and no error was raised; the
+  same happened to *bind_within_period_blended_weights* nodes in solves
+  without representative periods (e.g. a chronological dispatch after a
+  representative-period investment solve). The state now cycles within each
+  period: blocks chain inside the period and the period's first step
+  continues from its own last step, also in rolling, stochastic and coarse
+  (`new_stepduration`) solves. With `fix_start` the start state is pinned at
+  the last step of the first period, as for *bind_within_solve*.
+  `use_reference_value` does not pin the end state of a *bind_within_period*
+  node (nor of a blended-weights node a solve without representative periods
+  turns into *bind_within_period* / *bind_within_solve*), as already for
+  *bind_within_solve* / *bind_within_timeblock*: their end is tied to their
+  start.
+
 - **Representative periods in solves with several periods.** Every period of
   a solve whose timeset has `representative_period_weights` now gets its own
   weights, representative blocks and base-period storage chain. Before, only

@@ -1064,6 +1064,13 @@ def _patch_coarse_nested_fix_price(data: dict) -> dict:
                     values=[["group", "half_day", "new_stepduration", 12.0]])
 
 
+def _patch_bind_within_period_2p(data: dict) -> dict:
+    """battery bind_within_period on two periods sharing the 5weeks timeset (five blocks per period, fix_start,
+    use_reference_value): each period cycles on itself, blocks chain inside the period (item 124)."""
+    return _overlay(data, name="bind_within_period_2p", base="wind_battery_invest",
+                    values=[["node", "battery", "storage_binding_method", "bind_within_period"]])
+
+
 def _patch_coarse_stoch(data: dict) -> dict:
     """stochastic 2-day dispatch with hydro_reservoir in a 24-h group: coarse rows in every period incl.
     the forecast branches."""
@@ -1379,6 +1386,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "coarse_not_coarse": _patch_coarse_not_coarse,
     "coarse_nested_fix_price": _patch_coarse_nested_fix_price,
     "coarse_stoch": _patch_coarse_stoch,
+    "bind_within_period_2p": _patch_bind_within_period_2p,
 }
 
 
@@ -1554,6 +1562,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("coarse_not_coarse", _T),
     ("coarse_nested_fix_price", _T),
     ("coarse_stoch", _F + "stochastics.json"),
+    ("bind_within_period_2p", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

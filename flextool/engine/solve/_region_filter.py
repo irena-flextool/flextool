@@ -1001,6 +1001,7 @@ def _build_region_data(
     new.storage_bind_within_timeblock = _filter_frame(src.storage_bind_within_timeblock, "n", keep_nodes)
     new.storage_bind_forward_only = _filter_frame(src.storage_bind_forward_only, "n", keep_nodes)
     new.storage_bind_within_solve = _filter_frame(src.storage_bind_within_solve, "n", keep_nodes)
+    new.storage_bind_within_period = _filter_frame(src.storage_bind_within_period, "n", keep_nodes)
     new.storage_bind_within_solve_blended_weights = _filter_frame(
         getattr(src, "storage_bind_within_solve_blended_weights", None),
         "n", keep_nodes,
@@ -1495,7 +1496,7 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "nodeState_rp", "nodeStateBlock",
     "nodeCoarse", "node_coarse_step", "node_coarse_interior",
     "storage_bind_within_timeblock", "storage_bind_forward_only",
-    "storage_bind_within_solve", "storage_bind_within_solve_blended_weights",
+    "storage_bind_within_solve", "storage_bind_within_period", "storage_bind_within_solve_blended_weights",
     "storage_bind_within_period_blended_weights",
     "storage_bind_forward_only_blended_weights", "storage_fix_start",
     "p_state_upper", "p_state_unitsize", "p_state_self_discharge",
@@ -1556,7 +1557,7 @@ _MASTER_N_KEYED_FIELDS: tuple[str, ...] = (
     "nodeState_rp", "nodeStateBlock",
     "nodeCoarse", "node_coarse_step", "node_coarse_interior",
     "storage_bind_within_timeblock", "storage_bind_forward_only",
-    "storage_bind_within_solve", "storage_bind_within_solve_blended_weights",
+    "storage_bind_within_solve", "storage_bind_within_period", "storage_bind_within_solve_blended_weights",
     "storage_bind_within_period_blended_weights",
     "storage_bind_forward_only_blended_weights", "storage_fix_start",
     "p_state_upper", "p_state_unitsize", "p_state_self_discharge",

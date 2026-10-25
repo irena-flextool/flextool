@@ -598,6 +598,7 @@ def _validate_storage_binding_disjoint(d) -> None:
         ("bind_within_timeblock", d.storage_bind_within_timeblock),
         ("bind_forward_only", d.storage_bind_forward_only),
         ("bind_within_solve", d.storage_bind_within_solve),
+        ("bind_within_period", d.storage_bind_within_period),
         ("bind_within_solve_blended_weights",
          d.storage_bind_within_solve_blended_weights),
         ("bind_forward_only_blended_weights",
@@ -1299,6 +1300,15 @@ def _state_change_terms(b: _Build) -> dict:
         now = Where(v_state, nodes)
         prev = Where(_state_lag_cross_period(v_state, d.dtttdt), nodes)
         terms["state_change_ws"] = (prev - now) * su
+
+    # bind_within_period: t⁻ is the previous step of the period (blocks
+    # chain inside the period); the first step of each period wraps to the
+    # period's own last step, so the state cycles within every period.
+    if _has_rows(d.storage_bind_within_period) and _has_rows(d.dtttdt_within_period):
+        nodes = d.storage_bind_within_period
+        now = Where(v_state, nodes)
+        prev = Where(Lag(v_state, d.dtttdt_within_period, "t", "t_previous_within_period"), nodes)
+        terms["state_change_wp"] = (prev - now) * su
 
     # Blended weights (nodeState_rp, all three variants): t⁻ is the previous
     # step inside a representative block; the first step of each block
@@ -2738,13 +2748,15 @@ def _eq_storage_start_binding(b: _Build) -> None:
     # v_state[n,d,t] − state_start[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + state_start[n]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   = state_start[n] · existing[n,d] / state_unitsize[n]
-    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ storage_fix_start, n ∉ bind_forward_only ∪ bind_within_solve
+    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ storage_fix_start,
+    #     n ∉ bind_forward_only ∪ bind_within_solve ∪ bind_within_period
     # Pins the state at the first step to the share state_start of the built storage capacity (state
     # units).  First solve of a chain only: continuation solves start from the state handed over by the
     # previous solve (nodeBalance_eq).  bind_forward_only nodes get their start through nodeBalance_eq
-    # (_fix_start_terms); bind_within_solve nodes are pinned by storage_state_start_binding_cyclic_period.
+    # (_fix_start_terms); bind_within_solve and bind_within_period nodes are pinned by
+    # storage_state_start_binding_cyclic_period.
     nodes = d.storage_fix_start
-    for excluded in (d.storage_bind_forward_only, d.storage_bind_within_solve):
+    for excluded in (d.storage_bind_forward_only, d.storage_bind_within_solve, d.storage_bind_within_period):
         if _has_rows(excluded):
             nodes = nodes.join(excluded, on="n", how="anti")
     target = (d.p_state_start * d.p_state_existing_capacity) / d.p_state_unitsize
@@ -2765,7 +2777,7 @@ def _eq_storage_start_binding(b: _Build) -> None:
 
 
 def _eq_storage_start_binding_cyclic(b: _Build) -> None:
-    """Start state of fix_start storage nodes that cycle within the solve."""
+    """Start state of fix_start storage nodes that cycle within the solve or within each period."""
     d = b.d
     if not (b.has_storage and b.is_solve_first
             and _has_rows(d.storage_fix_start)
@@ -2773,10 +2785,12 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
             and d.p_state_existing_capacity is not None
             and d.p_state_unitsize is not None
             and _has_rows(d.nodeState_last_dt)
-            and _has_rows(d.storage_bind_within_solve)):
+            and (_has_rows(d.storage_bind_within_solve) or _has_rows(d.storage_bind_within_period))):
         return
     m = b.m
-    nodes = d.storage_bind_within_solve.join(d.storage_fix_start, on="n", how="inner")
+    cyclic = pl.concat([f.select("n") for f in (d.storage_bind_within_solve, d.storage_bind_within_period)
+                        if _has_rows(f)], how="vertical").unique()
+    nodes = cyclic.join(d.storage_fix_start, on="n", how="inner")
     if nodes.height == 0:
         return
     first_period = d.nodeState_first_dt.select("d").unique()
@@ -2792,10 +2806,12 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     # v_state[n,d,t] − state_start[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + state_start[n]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   = state_start[n] · existing[n,d] / state_unitsize[n]
-    #   ∀ n ∈ bind_within_solve ∩ storage_fix_start, (n,d,t) ∈ nodeState_last_dt, d ∈ first period
-    # The first step of a bind_within_solve node wraps to the last one, so the start state is pinned at
-    # the last step of the first period (known limitation: not the last step of the horizon) to the share
-    # state_start of the built storage capacity (state units).  First solve of a chain only.
+    #   ∀ n ∈ (bind_within_solve ∪ bind_within_period) ∩ storage_fix_start, (n,d,t) ∈ nodeState_last_dt,
+    #     d ∈ first period
+    # The first step of a cyclic node wraps to a last step, so the start state is pinned there: the last
+    # step of the first period, to the share state_start of the built storage capacity (state units).  For
+    # bind_within_period that is exactly the step the first period wraps to; for bind_within_solve it is a
+    # known limitation (not the last step of the horizon).  First solve of a chain only.
     lhs: dict = {"state": b.v_state}
     invested, divested = _node_in_service(b, d.nodeState, "_cyclic", coef=d.p_state_start)
     if invested is not None:

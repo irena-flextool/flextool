@@ -439,6 +439,38 @@ def _apply_coarse_frames(flex_data: "FlexData", sd: Path, *, provider: "object |
     flex_data.node_coarse_interior = frames.node_coarse_interior
 
 
+def _within_period_lag(dtttdt: pl.DataFrame) -> "pl.DataFrame | None":
+    """``(d, t, t_previous_within_period)``: the bind_within_period predecessor of every step of ``dtttdt``.
+
+    Inside a period it is the step's ``t_previous`` (across block boundaries too: blocks chain inside the
+    period).  The first step of a period wraps to the period's OWN last step — the state cycles within each
+    period.  ``dtttdt``'s first step of a period continues from another period (``d_previous`` ≠ ``d``) or, for
+    a period that wraps onto itself, already points at its own last step.  A period's last step is the step
+    no same-period step follows.
+    """
+    t_dtype = dtttdt.schema["t"]
+    frame = (dtttdt.select("d", "t", "t_previous", "d_previous")
+             .with_columns(pl.col("t_previous").cast(t_dtype, strict=False)))
+    same = pl.col("d_previous").cast(pl.Utf8) == pl.col("d").cast(pl.Utf8)
+    inner = frame.filter(same)
+    first = frame.filter(~same)
+    followed = inner.select("d", pl.col("t_previous").alias("t"))
+    last = (frame.select("d", "t").unique()
+            .join(followed, on=["d", "t"], how="anti")
+            .rename({"t": "t_previous_within_period"}))
+    multi = last.group_by("d").len().filter(pl.col("len") > 1)
+    if multi.height > 0:
+        raise ValueError(
+            "bind_within_period: the steps of period(s) "
+            f"{sorted(str(x) for x in multi['d'].to_list())} do not form one chain in step_previous "
+            "(more than one last step)")
+    out = pl.concat([
+        inner.select("d", "t", pl.col("t_previous").alias("t_previous_within_period")),
+        first.select("d", "t").join(last, on="d", how="inner"),
+    ], how="vertical")
+    return out.sort("d", "t") if out.height > 0 else None
+
+
 def _read_step_previous(path: Path,
                          *,
                          provider: "object | None" = None) -> pl.DataFrame | None:
@@ -754,6 +786,7 @@ class FlexData:
     storage_bind_within_timeblock: pl.DataFrame | None = None
     storage_bind_forward_only: pl.DataFrame | None = None    # set: (n,)
     storage_bind_within_solve: pl.DataFrame | None = None    # set: (n,)
+    storage_bind_within_period: pl.DataFrame | None = None   # set: (n,)
     storage_bind_within_solve_blended_weights: pl.DataFrame | None = None  # set: (n,)
     # Phase C — recognised by the v55 value_list but the constraint
     # implementations land in Phases D / E.  Loaded here so the
@@ -765,6 +798,9 @@ class FlexData:
     storage_fix_start: pl.DataFrame | None = None
     dtttdt: pl.DataFrame | None = None           # (d, t, t_previous_*, ...)
     dtttdt_forward_only: pl.DataFrame | None = None  # dtttdt with first (d,t) per solve dropped
+    # (d, t, t_previous_within_period): the previous step of t in its own period; the first step of each period
+    # wraps to the period's own last step (the bind_within_period lag; blocks chain inside the period).
+    dtttdt_within_period: pl.DataFrame | None = None
     # Rolling-horizon (nested-solve) framework — flextool.mod:2196 + 2760.
     # ``p_nested_solve_first``: tri-state.  None → no p_nested_model.csv,
     # treat as single-solve (== solveFirst).  True / False — read from
@@ -2821,8 +2857,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # nodeBalance for several binding methods, with subtle differences:
     #   * ``bind_within_timeblock``  — fully cyclic (wraps via
     #     ``t_previous_within_timeset``).
-    #   * ``bind_within_period``   — cyclic within period
-    #     (``t_previous`` column).
+    #   * ``bind_within_period``   — cyclic within period: the first step of
+    #     each period wraps to the period's own last step
+    #     (``dtttdt_within_period``, built below).
     #   * ``bind_within_solve``    — cyclic within solve
     #     (``t_previous_within_solve``); equivalent to within_timeset for
     #     a single-block dispatch.
@@ -2841,6 +2878,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     binding_within_timeblock = None
     binding_forward_only = None
     binding_within_solve = None
+    binding_within_period = None
     # Phase C — ``binding_within_solve_blended_weights`` is also derived
     # here from the per-solve provider so the partition reflects any
     # cascade-applied silent downgrade (see
@@ -2871,6 +2909,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                  .select("n").unique())
         if ws.height > 0:
             binding_within_solve = ws
+        wp = (sbm.filter(pl.col("method")=="bind_within_period")
+                 .select("n").unique())
+        if wp.height > 0:
+            binding_within_period = wp
         wsbw = (sbm.filter(pl.col("method")=="bind_within_solve_blended_weights")
                    .select("n").unique())
         if wsbw.height > 0:
@@ -2897,6 +2939,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         dtttdt_forward_only_df = dtttdt.sort("d", "t").slice(1)
         if dtttdt_forward_only_df.height == 0:
             dtttdt_forward_only_df = None
+
+    dtttdt_within_period_df = None
+    if binding_within_period is not None and dtttdt is not None and dtttdt.height > 0:
+        dtttdt_within_period_df = _within_period_lag(dtttdt)
 
     # node__storage_start_end_method is read by .mod from input/
     # (flextool.mod:662) — that's the canonical user-input source.
@@ -2943,7 +2989,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         # bind_within_timeblock / bind_intraperiod_blocks.
         # ``nodeStateBlock`` is the set carrying bind_intraperiod_blocks
         # (loaded below; we look it up via the on-disk CSV here to keep
-        # ordering simple).  bind_within_period not exercised yet.
+        # ordering simple).
         nsb_for_excl = None
         nsb_path_local = sd / "nodeStateBlock.csv"
         if _provider_has(provider, "solve_data/nodeStateBlock", nsb_path_local):
@@ -2951,7 +2997,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             if nsb_df_local.height > 0:
                 nsb_for_excl = nsb_df_local.pipe(rename_to_axis, {"node": "n"}).select("n")
         for excl in (fix_end, fix_start_end,
-                     binding_within_solve, binding_within_timeblock,
+                     binding_within_solve, binding_within_period, binding_within_timeblock,
                      nsb_for_excl):
             if excl is not None and excl.height > 0:
                 use_reference_value = use_reference_value.join(
@@ -3323,6 +3369,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_bind_within_timeblock = binding_within_timeblock,
         storage_bind_forward_only = binding_forward_only,
         storage_bind_within_solve = binding_within_solve,
+        storage_bind_within_period = binding_within_period,
         # Phase C — single source of truth for the RP-flavoured partition
         # is the per-solve CSV; apply_projection_params no longer
         # contributes here so the cascade's silent-downgrade rewrite
@@ -3339,6 +3386,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         p_storage_state_reference_price = p_storage_state_reference_price,
         dtttdt = dtttdt,
         dtttdt_forward_only = dtttdt_forward_only_df,
+        dtttdt_within_period = dtttdt_within_period_df,
         nodeStateBlock = nodeStateBlock,
         period_block = period_block,
         period_block_succ = period_block_succ,
