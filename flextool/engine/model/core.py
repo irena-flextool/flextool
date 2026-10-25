@@ -622,8 +622,9 @@ def _two_way_one_var_arcs(d) -> "pl.DataFrame | None":
     module so they are covered even when the projection field is absent.
     """
     parts = []
-    if _has_rows(d.process_source_sink_2way_1var):
-        parts.append(d.process_source_sink_2way_1var.select("p", "source", "sink"))
+    two_way = getattr(d, "process_source_sink_2way_1var", None)
+    if _has_rows(two_way):
+        parts.append(two_way.select("p", "source", "sink"))
     if _dc_power_flow.has_feature(d):
         dc_arcs = _dc_power_flow.dc_arcs_frame(d)
         if _has_rows(dc_arcs):

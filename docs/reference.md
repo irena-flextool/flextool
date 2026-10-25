@@ -598,8 +598,8 @@ For `reserve__upDown__connection__node` entities:
 
 - `max_share` - [factor] Maximum share of the connection's built capacity (existing + invested − retired) that can be held as this reserve at this node. Constant.
 - `reliability` - [factor] The share of the reservation that is counted to reserves (sometimes reserve sources are not fully trusted). Constant.
-- `increase_reserve_ratio` - [factor] The reserve requirement is increased by the flow between the connection and the node multiplied by this ratio (at the node the connection takes from: the flow it draws there, including its losses). Constant.
-- `large_failure_ratio` - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio): for upward reserve the loss of its flow into the group's nodes, for downward reserve the loss of the flow it draws from them. The failing connection's own reserve does not count towards covering its own failure. Constant.
+- `increase_reserve_ratio` - [factor] The reserve requirement is increased by the flow between the connection and the node, in either direction, multiplied by this ratio (at the node the connection takes from: the flow it draws there, including its losses; a *no_losses_no_variable_cost* or DC power-flow connection's reverse flow counts too). Constant.
+- `large_failure_ratio` - [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the connection (multiplied by this ratio): for upward reserve the loss of its flow into the group's nodes, for downward reserve the loss of the flow it draws from them, in either direction (a *no_losses_no_variable_cost* or DC power-flow connection's reverse flow counts too). The failing connection's own reserve does not count towards covering its own failure. Constant.
 - `is_active` - Can the unit provide this reserve. Empty indicates not allowed. Use 'yes' to indicate true. Only exist in Toolbox 0.7, before 5/2024. It is replaced by `Entity Alternative` sheet.
 
 ## Parameter groups (metadata)

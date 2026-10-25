@@ -179,10 +179,33 @@ def _flow_requirement_bound(d, ratio_set, ratio_param, rug_sel, side: str, *,
              .with_columns((pl.col("value") * pl.col("__us") * pl.col("__ratio")).abs().alias("value")))
     if side == "source":
         bound = _with_full_load_draw(d, bound)
+    # The reverse flow v_flow_back of one-variable and DC arcs arrives at the arc's source and leaves its sink;
+    # its bound is the arc's (maxFlow_back), lossless (no full-load draw factor).
+    back = _back_arcs(d)
+    if back is not None:
+        other = "source" if side == "sink" else "sink"
+        b_arcs = _u8(back.lazy().select("p", "source", "sink"), ["p", "source", "sink"]).with_columns(
+            pl.col(other).alias("n"))
+        b_bound = (sel.join(b_arcs, on=["p", "n"], how="inner")
+                   .join(upper, on=["p", "source", "sink"], how="inner")
+                   .join(us_lf, on="p", how="inner")
+                   .with_columns((pl.col("value") * pl.col("__us") * pl.col("__ratio")).abs().alias("value")))
+        bound = pl.concat([bound, b_bound.select(bound.collect_schema().names())])
     if per_process_max:
         return (bound.group_by("r", "ud", "g", "p", "d", "t").agg(pl.col("value").sum())
                 .group_by("r", "ud", "g", "d", "t").agg(pl.col("value").max()))
     return bound.group_by("r", "ud", "g", "d", "t").agg(pl.col("value").sum())
+
+
+def _back_arcs(d) -> "pl.DataFrame | None":
+    """(p, source, sink) of the arcs with a reverse-flow variable v_flow_back (one-variable and DC arcs), as
+    model/core.py declares them; None when there are none."""
+    from flextool.engine.model.core import _two_way_one_var_arcs
+
+    if not _has_rows(getattr(d, "process_source_sink", None)):
+        return None
+    arcs = _two_way_one_var_arcs(d)
+    return arcs if _has_rows(arcs) else None
 
 
 def _with_full_load_draw(d, bound: "pl.LazyFrame") -> "pl.LazyFrame":
@@ -384,8 +407,9 @@ def _n_1_failing(d, gn: pl.DataFrame) -> "dict[str, dict[str, pl.DataFrame]]":
     """Failing processes of the n-1 groups, per direction ``ud``.
 
     Each entry has ``n1_rug`` (r, ud, g) of the n-1 groups of that direction, ``lfr_g`` (p, r, ud, n, g) the
-    large-failure relationships at the group's nodes, ``fail_arcs`` the failing arcs (p_fail and the arc's
-    nodes, the group-side node as n) and ``fail_g`` (r, ud, g, p_fail) sorted.  Empty when the n-1 method has
+    large-failure relationships at the group's nodes, ``fail_arcs`` the failing v_flow arcs (p_fail and the arc's
+    nodes, the group-side node as n), ``fail_back_arcs`` the failing v_flow_back arcs (the group-side node, the
+    arc's source for up and its sink for down, as n; None without any) and ``fail_g`` (r, ud, g, p_fail) sorted.  Empty when the n-1 method has
     no group, ratio or failing arc.  The caller checks that v_flow exists.
     """
     method_n1 = getattr(d, "reserve_upDown_group_method_n_1", None)
@@ -408,12 +432,28 @@ def _n_1_failing(d, gn: pl.DataFrame) -> "dict[str, dict[str, pl.DataFrame]]":
         pss_idx = (d.process_source_sink.pipe(rename_to_axis, {side: "n"})
                    .select("p", *(("source", "n") if side == "sink" else ("n", "sink"))))
         fail_arcs = pss_idx.join(lfr_g, on=["p", "n"], how="inner").pipe(rename_to_axis, {"p": "p_fail"})
-        if fail_arcs.height == 0:
+        # The reverse flow v_flow_back of a one-variable / DC arc arrives at the arc's source (up) and leaves its
+        # sink (down): n is the other side of the arc, keyed on the large-failure relationship's (p, n).
+        other = "source" if side == "sink" else "sink"
+        fail_back_arcs = None
+        back = _back_arcs(d)
+        if back is not None:
+            back_idx = (back.pipe(rename_to_axis, {other: "n"})
+                        .select("p", *(("n", "sink") if other == "source" else ("source", "n"))))
+            fail_back_arcs = (back_idx.join(lfr_g, on=["p", "n"], how="inner")
+                              .pipe(rename_to_axis, {"p": "p_fail"}))
+            if fail_back_arcs.height == 0:
+                fail_back_arcs = None
+        if fail_arcs.height == 0 and fail_back_arcs is None:
             continue
-        fail_g = (fail_arcs.select("r", "ud", "g", "p_fail")
+        failing = [fail_arcs.select("r", "ud", "g", "p_fail")]
+        if fail_back_arcs is not None:
+            failing.append(fail_back_arcs.select("r", "ud", "g", "p_fail"))
+        fail_g = (pl.concat(failing)
                   .unique(maintain_order=True)
                   .sort("r", "ud", "g", "p_fail"))
-        out[ud_filter] = {"n1_rug": n1_rug, "lfr_g": lfr_g, "fail_arcs": fail_arcs, "fail_g": fail_g}
+        out[ud_filter] = {"n1_rug": n1_rug, "lfr_g": lfr_g, "fail_arcs": fail_arcs, "fail_back_arcs": fail_back_arcs,
+                          "fail_g": fail_g}
     return out
 
 
@@ -631,6 +671,8 @@ def add_constraints(b: "_Build") -> None:
     #       · ratio[p,r,ud,n]
     #   + Σ_{(p,n,k) ∈ process_source_sink \ eff_out, (p,r,ud,n) ∈ irr_g} v_flow[p,n,k,d,t] · unitsize[p]
     #       · ratio[p,r,ud,n]
+    #   + Σ_{(p,n,k) ∈ twoway1var_arcs, (p,r,ud,n) ∈ irr_g} v_flow_back[p,n,k,d,t] · unitsize[p] · ratio[p,r,ud,n]
+    #   + Σ_{(p,s,n) ∈ twoway1var_arcs, (p,r,ud,n) ∈ irr_g} v_flow_back[p,s,n,d,t] · unitsize[p] · ratio[p,r,ud,n]
     #   + group_demand[r,ud,g,d,t]
     #   ∀ (r,ud,g) ∈ reserve_upDown_group_method_dynamic, (d,t) ∈ dt
     #   group_demand = ratio_g[r,ud,g] · Σ_{n : (g,n) ∈ group_node} max(−inflow[n,d,t], 0) / Δt[d,t]
@@ -643,7 +685,9 @@ def add_constraints(b: "_Build") -> None:
     # The requirement grows with the flows into and out of the group's nodes
     # (e.g. variable generation and consumption).  A flow out of a node counts
     # as drawn from it, as in nodeBalance_eq: on an efficiency arc the input is
-    # v_flow · slope plus the min-load section (_drawn_terms).  The group
+    # v_flow · slope plus the min-load section (_drawn_terms).  The reverse flow
+    # of a one-variable (and DC) arc arrives at the arc's source and leaves its
+    # sink, as in nodeBalance_eq (lossless, no slope).  The group
     # term adds the demand of the group's nodes (negative inflow only; a
     # node with positive inflow does not count) times the group's ratio
     # (group_demand_requirement).  RHS 0 when nothing drives it.  A group that also has n-1 rows uses
@@ -671,6 +715,21 @@ def add_constraints(b: "_Build") -> None:
                                      p_col="p", over=("p", "sink", "n"))
                 rhs_terms["dynamic_flow"] = into_n + drawn.pop("noEff") if "noEff" in drawn else into_n
                 rhs_terms |= {f"dynamic_{k}": v for k, v in drawn.items()}
+                if b.v_flow_back is not None and _has_rows(b.twoway1var_arcs):
+                    back = b.twoway1var_arcs
+                    # Reverse flow arrives at the arc's source (into n) and leaves its sink (drawn from n).
+                    back_in = back.pipe(rename_to_axis, {"source": "n"}).select("p", "n", "sink").join(
+                        irr_g, on=["p", "n"], how="inner")
+                    back_out = back.pipe(rename_to_axis, {"sink": "n"}).select("p", "source", "n").join(
+                        irr_g, on=["p", "n"], how="inner")
+                    if back_in.height > 0:
+                        rhs_terms["dynamic_back_in"] = Sum(Where(
+                            _flow_node_view(b.v_flow_back, "source") * p_unitsize * irr_param, back_in),
+                            over=("p", "n", "sink"))
+                    if back_out.height > 0:
+                        rhs_terms["dynamic_back_out"] = Sum(Where(
+                            _flow_node_view(b.v_flow_back, "sink") * p_unitsize * irr_param, back_out),
+                            over=("p", "source", "n"))
         demand = group_demand_requirement(d)
         if demand is not None:
             rhs_terms["group_demand"] = demand
@@ -694,11 +753,13 @@ def add_constraints(b: "_Build") -> None:
     #                                                   · ratio[f,r,ud,n]
     #           + Σ_{(f,n,k) ∈ process_source_sink \ eff_out, (f,r,ud,n) ∈ lfr_g} v_flow[f,n,k,d,t] · unitsize[f]
     #               · ratio[f,r,ud,n]
+    #   + up:   Σ_{(f,n,k) ∈ twoway1var_arcs, (f,r,ud,n) ∈ lfr_g} v_flow_back[f,n,k,d,t] · unitsize[f] · ratio[f,r,ud,n]
+    #     down: Σ_{(f,s,n) ∈ twoway1var_arcs, (f,r,ud,n) ∈ lfr_g} v_flow_back[f,s,n,d,t] · unitsize[f] · ratio[f,r,ud,n]
     #   ∀ (r,ud,g,f) ∈ fail_g, (d,t) ∈ dt
     #   pruna_g = the providers of the reserve_sum above, per group
     #   lfr_g   = process_reserve_upDown_node_large_failure_ratio with n ∈ group g,
     #             (r,ud,g) ∈ reserve_upDown_group_method_n_1 with ud = up / down
-    #   fail_g  = (r,ud,g,f): f in lfr_g with a flow into (up) / out of (down) a node of g
+    #   fail_g  = (r,ud,g,f): f in lfr_g with a flow (v_flow or v_flow_back) into (up) / out of (down) a node of g
     #   ratio   = large_failure_ratio;   f is the row dim p_fail;   eff_out, section as in the dynamic row
     # Reserve covers the loss of each large process f separately (the largest
     # failure binds): upward reserve the loss of its output into the group,
@@ -708,7 +769,9 @@ def add_constraints(b: "_Build") -> None:
     # share vq_term, so the priced shortfall is the largest deficit.  The
     # lost consumption is the flow the process draws from the node, as in
     # nodeBalance_eq (output · slope plus the min-load section on an
-    # efficiency arc); a lost output counts at unitsize.  No row for a group
+    # efficiency arc); a lost output counts at unitsize.  A one-variable (or DC)
+    # connection also fails while flowing backwards: its v_flow_back arrives at
+    # the arc's source and leaves its sink (lossless).  No row for a group
     # without a failing process; a group without providers (or without
     # reliability data) has no v_reserve_total term.  Nonzeros grow with
     # providers + failing processes per group.
@@ -721,14 +784,21 @@ def add_constraints(b: "_Build") -> None:
             if ud_filter not in n1:
                 continue
             n1_rug, fail_arcs, fail_g = (n1[ud_filter][k] for k in ("n1_rug", "fail_arcs", "fail_g"))
-            if ud_filter == "down":
+            if ud_filter == "down" and fail_arcs.height > 0:
                 failure_terms = _drawn_terms(b, _flow_node_view(v_flow, side, {"p": "p_fail"}), fail_arcs, us_fail,
                                              ratio_fail, p_col="p_fail", over=(other, "n"))
                 failure_terms = {("n_1_failure" if k == "noEff" else f"n_1_failure_{k}"): v
                                  for k, v in failure_terms.items()}
-            else:
+            elif fail_arcs.height > 0:
                 failure_terms = {"n_1_failure": Sum(Where(_flow_node_view(v_flow, side, {"p": "p_fail"}) * us_fail
                                                           * ratio_fail, fail_arcs), over=(other, "n"))}
+            else:
+                failure_terms = {}
+            fail_back = n1[ud_filter]["fail_back_arcs"]
+            if fail_back is not None and b.v_flow_back is not None:
+                failure_terms["n_1_failure_back"] = Sum(
+                    Where(_flow_node_view(b.v_flow_back, other, {"p": "p_fail"}) * us_fail * ratio_fail, fail_back),
+                    over=(side, "n"))
             lhs_terms = {}
             if lhs_vq is not None:
                 lhs_terms["vq_term"] = Where(lhs_vq, n1_rug)
@@ -948,28 +1018,46 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
         pr = d.process_reserve_upDown_node_active.filter(pl.col("ud") == ud_val)
         if pr.height == 0:
             return None
-        j = d.process_source_sink.pipe(rename_to_axis, {balance_side: "n"}).join(pr, on=["p", "n"], how="inner")
+        parts = []
+        orientations = [(d.process_source_sink, balance_side, storage_side, False)]
+        back = _back_arcs(d)
+        if back is not None:
+            # The reverse flow of a one-variable / DC arc runs from its sink to its source.
+            orientations.append((back, storage_side, balance_side, True))
+        for arcs, bal, sto, is_back in orientations:
+            j = arcs.pipe(rename_to_axis, {bal: "n"}).join(pr, on=["p", "n"], how="inner")
+            if j.height == 0:
+                continue
+            parts.append(j.rename({"n": "nb"})
+                         .pipe(rename_to_axis, {sto: "n"})
+                         .join(gn.rename({"n": "nb"}), on="nb", how="inner")
+                         .join(d.reserve_upDown_group, on=["r", "ud", "g"], how="inner")
+                         .join(dur_set, on=["r", "ud", "g"], how="inner")
+                         .join(d.nodeState.select("n"), on="n", how="semi")
+                         .select("p", "r", "ud", "nb", "n", "g")
+                         .with_columns(pl.lit(is_back).alias("__back")))
+        if not parts:
+            return None
+        j = pl.concat(parts).unique(subset=["p", "r", "ud", "nb", "n", "g"], keep="first", maintain_order=True)
         if j.height == 0:
             return None
-        j = (j.rename({"n": "nb"})
-             .pipe(rename_to_axis, {storage_side: "n"})
-             .join(gn.rename({"n": "nb"}), on="nb", how="inner")
-             .join(d.reserve_upDown_group, on=["r", "ud", "g"], how="inner")
-             .join(dur_set, on=["r", "ud", "g"], how="inner")
-             .join(d.nodeState.select("n"), on="n", how="semi")
-             .select("p", "r", "ud", "nb", "n", "g")
-             .unique())
-        return j if j.height > 0 else None
+        if not j["__back"].any():
+            # Byte-identical to the v_flow-only rows (row set and order).
+            j = j.drop("__back").unique()
+        return j
 
-    def _slope_factor(providers: pl.DataFrame, reciprocal: bool) -> Param:
-        """slope[p,d,t] over the providers × dt, 1.0 where p_slope has no value (noEff providers);
-        1 / slope when ``reciprocal``."""
+    def _slope_factor(providers: pl.DataFrame, reciprocal: bool, back: "pl.DataFrame | None" = None) -> Param:
+        """slope[p,d,t] over the providers × dt, 1.0 where p_slope has no value (noEff providers) and for the
+        providers in ``back`` (reverse flow of a one-variable / DC arc: lossless); 1 / slope when ``reciprocal``."""
         grid = providers.join(dt, how="cross")
         if d.p_slope is not None:
             grid = grid.join(d.p_slope.frame, on=["p", "d", "t"], how="left")
             val = pl.col("value").fill_null(1.0)
         else:
             val = pl.lit(1.0)
+        if back is not None and back.height > 0:
+            grid = grid.with_columns(pl.col("p").is_in(back["p"].implode()).alias("__b"))
+            val = pl.when(pl.col("__b")).then(pl.lit(1.0)).otherwise(val)
         if reciprocal:
             val = 1.0 / val
         return Param(("p", "d", "t"), grid.with_columns(value=val).select("p", "d", "t", "value"))
@@ -986,7 +1074,8 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
     #   − Σ_{(p,r,ud,nb,g) ∈ providers_up(n)} v_reserve[p,r,ud,nb,d,t] · unitsize[p] · duration[r,ud,g] · slope[p,d,t]
     #   ≥ 0
     #   ∀ n ∈ storage nodes of upward providers, (d,t) ∈ dt
-    #   providers_up: upward reserve for nb by a process with source n ∈ nodeState and sink nb
+    #   providers_up: upward reserve for nb by a process with source n ∈ nodeState and sink nb, or by a
+    #     one-variable / DC connection whose arc runs nb → n (its reverse flow v_flow_back runs n → nb; slope 1)
     # Upward reserve from storage is backed by stored energy (MWh) for the
     # reserve duration (hours); slope = 1/η converts output to energy drawn.
     # Reliability is not applied: the energy matches the full committed MW.
@@ -996,7 +1085,11 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
     # not to the representative-period state v_state_inter.
     join_up = _providers("up", balance_side="sink", storage_side="source")
     if join_up is not None:
-        slope_up = _slope_factor(join_up.select("p").unique(), reciprocal=False)
+        back_up = None
+        if "__back" in join_up.columns:
+            back_up = join_up.filter(pl.col("__back")).select("p").unique()
+            join_up = join_up.drop("__back")
+        slope_up = _slope_factor(join_up.select("p").unique(), reciprocal=False, back=back_up)
         e_up = Sum(Where(v_res_nb * d.p_unitsize * dur * slope_up, join_up), over=("p", "r", "ud", "nb", "g"))
         m.add_cstr("reserve_storage_up_floor", over=join_up.select("n").unique().join(dt, how="cross"), sense=">=",
                    lhs_terms={"state": v_state * us_n, "energy_neg": -e_up}, rhs_terms={"zero": 0.0})
@@ -1009,13 +1102,18 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
     #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′] · state_unitsize[n]
     #   ≤ state_upper[n,d,t] · state_unitsize[n]
     #   ∀ n ∈ storage nodes of downward providers, (d,t) ∈ dt
-    #   providers_down: downward reserve for nb by a process with source nb and sink n ∈ nodeState
+    #   providers_down: downward reserve for nb by a process with source nb and sink n ∈ nodeState, or by a
+    #     one-variable / DC connection whose arc runs n → nb (its reverse flow runs nb → n; slope 1)
     # Downward reserve into storage needs free storage capacity (MWh) for the
     # reserve duration; 1/slope = η converts input to energy stored.  The
     # capacity terms are those of maxState, in MWh.  Same notes as the floor.
     join_dn = _providers("down", balance_side="source", storage_side="sink")
     if join_dn is not None:
-        slope_dn = _slope_factor(join_dn.select("p").unique(), reciprocal=True)
+        back_dn = None
+        if "__back" in join_dn.columns:
+            back_dn = join_dn.filter(pl.col("__back")).select("p").unique()
+            join_dn = join_dn.drop("__back")
+        slope_dn = _slope_factor(join_dn.select("p").unique(), reciprocal=True, back=back_dn)
         e_dn = Sum(Where(v_res_nb * d.p_unitsize * dur * slope_dn, join_dn), over=("p", "r", "ud", "nb", "g"))
         state_lhs: dict = {"state": v_state * us_n, "energy": e_dn}
         if b.v_divest_n is not None and d.edd_divest_active is not None:

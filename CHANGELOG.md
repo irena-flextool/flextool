@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **Reserve requirements count the reverse flow of lossless connections.** A
+  `no_losses_no_variable_cost` or DC power-flow connection flowing towards a
+  node in its reverse direction now raises the dynamic requirement there,
+  sets a large-failure requirement when it can fail, and a connection to a
+  storage node backs its reserve with stored energy also in that direction.
+
 - **`exact` connections flow in one direction at a time.** The `exact`
   transfer method now has a direction switch (one binary variable per
   connection and time step), as documented. Before it only added an online
