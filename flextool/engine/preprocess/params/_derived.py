@@ -1930,6 +1930,24 @@ _METHODS_MAPPING: dict[tuple[str, str, str], str] = {
     ("regular", "no_startup", "fork_yes"): "not_applicable",
     ("exact", "no_startup", "fork_no"): "method_2way_2var_MIP_exclude",
     ("exact", "no_startup", "fork_yes"): "not_applicable",
+    # Two-way connections with a startup method: the flow shape of the no-startup entry (the online
+    # variables come from the startup method, not from the internal method).
+    ("no_losses_no_variable_cost", "linear", "fork_no"): "method_2way_1var_off",
+    ("no_losses_no_variable_cost", "linear", "fork_yes"): "method_2way_nvar_off",
+    ("no_losses_no_variable_cost", "binary", "fork_no"): "method_2way_1var_off",
+    ("no_losses_no_variable_cost", "binary", "fork_yes"): "method_2way_nvar_off",
+    ("variable_cost_only", "linear", "fork_no"): "method_2way_2var_off",
+    ("variable_cost_only", "linear", "fork_yes"): "method_2way_nvar_off",
+    ("variable_cost_only", "binary", "fork_no"): "method_2way_2var_off",
+    ("variable_cost_only", "binary", "fork_yes"): "method_2way_nvar_off",
+    ("regular", "linear", "fork_no"): "method_2way_2var_exclude",
+    ("regular", "linear", "fork_yes"): "not_applicable",
+    ("regular", "binary", "fork_no"): "method_2way_2var_exclude",
+    ("regular", "binary", "fork_yes"): "not_applicable",
+    ("exact", "linear", "fork_no"): "method_2way_2var_MIP_exclude",
+    ("exact", "linear", "fork_yes"): "not_applicable",
+    ("exact", "binary", "fork_no"): "method_2way_2var_MIP_exclude",
+    ("exact", "binary", "fork_yes"): "not_applicable",
     ("min_load_efficiency", "no_startup", "fork_no"): "not_applicable",
     ("min_load_efficiency", "no_startup", "fork_yes"): "not_applicable",
     ("min_load_efficiency", "linear", "fork_no"): "method_1way_1var_LP",
@@ -1972,7 +1990,6 @@ _METHOD_1WAY_1VAR = frozenset((
 _METHOD_LP = frozenset(("method_1way_1var_LP", "method_1way_nvar_LP"))
 _METHOD_MIP = frozenset((
     "method_1way_1var_MIP", "method_1way_nvar_MIP",
-    "method_2way_2var_MIP_exclude",
 ))
 
 

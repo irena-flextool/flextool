@@ -1,10 +1,13 @@
-"""Unit commitment: units online, startups, shutdowns and minimum up/down times.
+"""Unit commitment: units (and connections) online, startups, shutdowns and minimum up/down times.
 
 Owns the variables v_online_*, v_startup_*, v_shutdown_* and the equations maxOnline, maxStartup,
-maxShutdown, online__startup, online__shutdown, maxFlow_online, maxFlow_online_shutdown, maxOutputSum_online,
-maxInputFlow_online, maxInputFlow_online_shutdown, minimum_uptime, minimum_downtime and online_fix_eq.  Each
-exists once per UC class present: ``linear`` (continuous v_online) and ``integer`` (integer v_online), suffixed
-``_linear`` / ``_integer``.
+maxShutdown, online__startup, online__shutdown, maxFlow_online, maxFlow_online_shutdown, maxFlow_back_online,
+maxOutputSum_online, maxInputFlow_online, maxInputFlow_online_shutdown, minimum_uptime, minimum_downtime and
+online_fix_eq.  Each exists once per UC class present: ``linear`` (continuous v_online) and ``integer`` (integer
+v_online), suffixed ``_linear`` / ``_integer``.  A process is online by its startup method (units: also by
+``minimum_time_method``); a connection with a startup method has online capacity in service covering both flow
+directions, and no minimum load, minimum up / down times or startup reduction (connections have no such
+parameters).
 """
 
 from typing import TYPE_CHECKING
@@ -235,6 +238,29 @@ def add_constraints(b: "_Build") -> None:
                            over=shutdown_rows[0], sense="<=",
                            lhs_terms=online_lhs,
                            rhs_terms=shutdown_rows[1])
+
+        # ─── EQ. ─── maxFlow_back_online_{linear,integer} ────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # v_flow_back[p,s,k,d,t]  ≤  κ[p,s,k] · availability[p,d,t] · v_online[p,d,t]
+        #   ∀ (p,s,k) ∈ twoway1var_arcs with p online, (d,t) ∈ dt;   κ = capacity_max_coeff (1.0 defaults)
+        # The reverse flow of a one-variable connection is limited by the units online, as its v_flow is by
+        # maxFlow_online: one online status covers both directions (the mirror of maxFlow_back).  No reserve
+        # term (connection reserve has its own rows, connection_reserve_*).  DC power-flow lines never get here
+        # (a startup_method on them raises in core._prepare).
+        if b.v_flow_back is not None and _has_rows(b.twoway1var_arcs):
+            keys = ["p", "source", "sink"]
+            back_on = (_utf8_keys(b.twoway1var_arcs.lazy().select(keys), ["p"])
+                       .join(_utf8_keys(online_set.lazy().select("p"), ["p"]).select("_p").unique(), on="_p",
+                             how="semi")
+                       .select(keys).collect())
+            if back_on.height > 0:
+                back_rhs = v_online
+                if d.p_process_availability is not None:
+                    back_rhs = back_rhs * _availability_factor(d, back_on)
+                if d.p_arc_max_cap_coef is not None:
+                    back_rhs = back_rhs * _coef_factor(back_on, d.p_arc_max_cap_coef, keys)
+                m.add_cstr(f"maxFlow_back_online{sfx}", over=back_on.join(d.dt, how="cross"), sense="<=",
+                           lhs_terms={"flow_back": b.v_flow_back}, rhs_terms={"online": back_rhs})
 
         # ─── EQ. ─── maxInputFlow_online_{linear,integer} ────────────────────
         # ─────────────────────────────────────────────────────────────────────

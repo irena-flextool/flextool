@@ -407,6 +407,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "years_represented__d": YEARS,
     # Start-ups
     "unit_startup_d_e": COUNT_ANNUAL,
+    "connection_startup_d_e": COUNT_ANNUAL,
     # Prices / duals
     "node_prices_dt_e": PRICE_ENERGY,
     "reserve_prices_dt_ppg": PRICE_RESERVE,
@@ -427,6 +428,8 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "dc_angle_diff_dt_e": ANGLE,
     "unit_online_dt_e": ONLINE_COUNT,
     "unit_online_average_d_e": ONLINE_AVG,
+    "connection_online_dt_e": ONLINE_COUNT,
+    "connection_online_average_d_e": ONLINE_AVG,
     "flowGroup_gd_t": RATE,
     "nodeGroup_slack_reserve_dt_eeg": RATE,
     "nodeGroup_slack_reserve_d_eeg": ENERGY_ANNUAL,

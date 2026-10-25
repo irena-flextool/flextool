@@ -13,11 +13,11 @@ METHOD_LP: frozenset[str] = frozenset((
     "method_1way_nvar_LP",
 ))
 
-# MIP variants (binary online)
+# MIP variants (binary online).  ``method_2way_2var_MIP_exclude`` (``exact``) is not here: its integer is the
+# direction switch (``v_exact_forward``), and a connection is online by its startup_method.
 METHOD_MIP: frozenset[str] = frozenset((
     "method_1way_1var_MIP",
     "method_1way_nvar_MIP",
-    "method_2way_2var_MIP_exclude",
 ))
 
 # direct (no efficiency conversion)

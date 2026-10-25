@@ -301,6 +301,9 @@ for _key, _producer, _note in (
     ("unit_online_dt_e",           "out_flows.unit_online_and_startup", "Per-(period,time) unit online state; only with online tracking."),
     ("unit_online_average_d_e",    "out_flows.unit_online_and_startup", "Per-period unit online average; only with online tracking."),
     ("unit_startup_d_e",           "out_flows.unit_online_and_startup", "Per-period unit startup count; only with online tracking."),
+    ("connection_online_dt_e",     "out_flows.connection_online_and_startup", "Per-(period,time) connection online state; only with online connections."),
+    ("connection_online_average_d_e", "out_flows.connection_online_and_startup", "Per-period connection online average; only with online connections."),
+    ("connection_startup_d_e",     "out_flows.connection_online_and_startup", "Per-period connection startup count; only with online connections."),
 ):
     REGISTRY[_key] = _proc(
         _key, note=_note, producer=f"flextool.process_outputs.{_producer}",

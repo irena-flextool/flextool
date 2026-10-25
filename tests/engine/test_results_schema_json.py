@@ -18,7 +18,7 @@ RESULTS_SCHEMA = package_data_path("schemas") / "spinedb_results_schema.json"
 # Post-trim ground truth (measured from the legacy results template after the
 # .1/.2/.3 reserve-class trim).
 EXPECTED_ENTITY_CLASSES = 12
-EXPECTED_PARAMETER_DEFINITIONS = 58  # 52 base + 6 per-entity cost break-down
+EXPECTED_PARAMETER_DEFINITIONS = 61  # 52 base + 6 per-entity cost break-down + 3 connection online
 #   (unit/connection/node × cost_annualized/cost_discounted)
 
 TRIMMED_CLASSES = {

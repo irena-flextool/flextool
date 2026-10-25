@@ -25,6 +25,7 @@ For stochastic models the parquets carry only the **realised / committed** resul
 - [Capacity factors](#capacity-factors)
 - [Energy balance in nodes](#energy-balance-in-nodes)
 - [Unit online and startup](#unit-online-and-startup)
+- [Connection online and startup](#connection-online-and-startup)
 - [Unit curtailment and VRE potential](#unit-curtailment-and-vre-potential)
 - [Node group results](#node-group-results)
 - [Flow group results](#flow-group-results)
@@ -129,6 +130,14 @@ These are period-level tables only — there are no per-timestep per-entity cost
 - `unit` entity `online_t` parameter — [count] number of units online at each timestep
 - `unit` entity `online_average` parameter — [count] average online status over the period (weighted by step duration)
 - `unit` entity `startup_annualized` parameter — [count] startups during the period scaled to a full year (weighted by `rp_cost_weight` to handle representative periods correctly)
+
+## Connection online and startup
+
+Only for connections with a `startup_method`:
+
+- `connection` entity `online_t` parameter — [count] units of the connection online at each timestep
+- `connection` entity `online_average` parameter — [count] average online status over the period (weighted by step duration)
+- `connection` entity `startup_cumulative` parameter — [count] startups during the period scaled to a full year (as for units)
 
 ## Unit curtailment and VRE potential
 

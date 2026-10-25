@@ -1138,38 +1138,40 @@ def node_profile_fixed(source: "InputSource") -> pl.DataFrame:
 # §1.10 — Online / min_load Projections
 # ---------------------------------------------------------------------------
 
-def process_online(source: "InputSource") -> pl.DataFrame:
-    """Units with ``startup_method ∈ {linear, integer}``.  Schema: ``[p]``."""
-    df = _try_param(source, "unit", "startup_method")
-    if df is None:
+def _online_by_startup(source: "InputSource", methods: tuple[str, ...]) -> pl.DataFrame:
+    """Modelled units and connections whose startup method is in ``methods``.  Schema: ``[p]``.
+
+    The startup method is the classifier's (``_derived._classify_process_method``): ``startup_method`` of units
+    and connections, promoted to ``linear`` by a unit's ``minimum_time_method``; processes whose method triplet
+    is not modelled are left out.  Online-ness comes from the startup method, not from the internal method, so a
+    two-way connection keeps its flow shape (and ``exact`` its direction switch).
+    """
+    from flextool.engine.preprocess.params._derived import _classify_process_method
+    classified = _classify_process_method(source)
+    if classified.height == 0:
         return _empty({"p": pl.Utf8})
-    return (df.lazy()
-              .filter(pl.col("value").is_in(["linear", "integer"]))
-              .select(alias_to_axis("name", "p"))
+    return (classified.lazy()
+              .filter(pl.col("startup").is_in(list(methods)))
+              .select(alias_to_axis("p", "p"))
+              .unique()
               .sort("p")
               .collect())
+
+
+def process_online(source: "InputSource") -> pl.DataFrame:
+    """Units and connections with ``startup_method ∈ {linear, binary}`` (incl. the ``minimum_time_method``
+    promotion).  Schema: ``[p]``."""
+    return _online_by_startup(source, ("linear", "binary"))
 
 
 def process_online_linear(source: "InputSource") -> pl.DataFrame:
-    df = _try_param(source, "unit", "startup_method")
-    if df is None:
-        return _empty({"p": pl.Utf8})
-    return (df.lazy()
-              .filter(pl.col("value") == "linear")
-              .select(alias_to_axis("name", "p"))
-              .sort("p")
-              .collect())
+    """Units and connections with a linear startup method.  Schema: ``[p]``."""
+    return _online_by_startup(source, ("linear",))
 
 
 def process_online_integer(source: "InputSource") -> pl.DataFrame:
-    df = _try_param(source, "unit", "startup_method")
-    if df is None:
-        return _empty({"p": pl.Utf8})
-    return (df.lazy()
-              .filter(pl.col("value") == "integer")
-              .select(alias_to_axis("name", "p"))
-              .sort("p")
-              .collect())
+    """Units and connections with a binary startup method.  Schema: ``[p]``."""
+    return _online_by_startup(source, ("binary",))
 
 
 def process_minload(source: "InputSource") -> pl.DataFrame:
@@ -2011,6 +2013,7 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
 # Set projections whose empty result means "no member" (field set to None), not "keep the seed".
 _AUTHORITATIVE_SETS: tuple[str, ...] = (
     "groupCapacityMargin", "groupInertia", "groupNonSync", "process_minload",
+    "process_online", "process_online_linear", "process_online_integer",
 )
 
 

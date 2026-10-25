@@ -564,6 +564,32 @@ def validate_connection_delay(db, logger: logging.Logger) -> None:
         )
 
 
+def validate_connection_startup(db, provider) -> None:
+    """Raise when a connection in a ``dc_power_flow_with_angles`` group has a ``startup_method``.
+
+    A DC power-flow line's flow is set by the voltage angles (``dc_flow_eq``); an offline line would still tie
+    the angles, and switching it needs line-switching constraints FlexTool does not have.  Reads the DC line
+    set from the Provider (``input/connection_dc_power_flow``, after :func:`derive_dc_power_flow`).  The model
+    builder raises the same error for data built without the input derivation
+    (``model.core._validate_no_online_dc_lines``).
+    """
+    from flextool.engine.model.core import DC_ONLINE_MESSAGE
+
+    if not provider.has("input/connection_dc_power_flow"):
+        return
+    dc_frame = provider.get("input/connection_dc_power_flow")
+    if dc_frame is None or dc_frame.height == 0:
+        return
+    dc = {str(x) for x in dc_frame.get_column(dc_frame.columns[0]).to_list()}
+    hit = sorted(
+        pv["entity_byname"][0]
+        for pv in db.find_parameter_values(entity_class_name="connection",
+                                           parameter_definition_name="startup_method")
+        if pv["type"] is not None and str(pv["parsed_value"]) != "no_startup" and pv["entity_byname"][0] in dc)
+    if hit:
+        raise FlexToolConfigError(DC_ONLINE_MESSAGE.format(names=", ".join(hit)))
+
+
 def validate_group_increase_reserve_ratio(db, logger: logging.Logger) -> None:
     """Warn once per reserve group with an ``increase_reserve_ratio`` but no dynamic ``reserve_method``.
 

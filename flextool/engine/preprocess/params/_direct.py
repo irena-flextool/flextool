@@ -1316,17 +1316,25 @@ def p_process_source_inertia_constant_from_source(source: "InputSource") -> Para
 def p_startup_cost_from_source(source: "InputSource",
                                 period_filter: pl.DataFrame | None = None,
                                 ) -> Param | None:
-    """``unit.startup_cost`` → ``Param(("p", "d"))``.
+    """``unit.startup_cost`` and ``connection.startup_cost`` → ``Param(("p", "d"))``.
 
     Δ.17c-Tier1 — uses :func:`._param_shapes.resolve_param_shape`.
-    Allowed shapes: scalar / 1d_map[period].  CSV path filters zero rows
+    Allowed shapes: scalar / 1d_map[period], per class.  CSV path filters zero rows
     (``_load_online``: ``filter(value != 0)``); we mirror via
-    ``filter_zero=True``.
+    ``filter_zero=True``.  The connection rows follow the unit rows.
     """
-    resolved = resolve_param_shape(
-        source, "unit", "startup_cost", period_filter=period_filter)
-    return broadcast_to_period(
-        resolved, "p", period_filter, filter_zero=True)
+    parts = []
+    for cls in ("unit", "connection"):
+        resolved = resolve_param_shape(source, cls, "startup_cost", period_filter=period_filter)
+        param = broadcast_to_period(resolved, "p", period_filter, filter_zero=True)
+        if param is not None:
+            parts.append(param)
+    if len(parts) <= 1:
+        return parts[0] if parts else None
+    frames = [p.frame.lazy() if isinstance(p.frame, pl.DataFrame) else p.frame for p in parts]
+    schema = frames[0].collect_schema()
+    frames = [frames[0]] + [f.with_columns(pl.col(c).cast(schema[c]) for c in ("p", "d")) for f in frames[1:]]
+    return Param(("p", "d"), pl.concat(frames).select("p", "d", "value"))
 
 
 # ---------------------------------------------------------------------------

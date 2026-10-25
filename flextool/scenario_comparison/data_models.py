@@ -73,6 +73,9 @@ class TimeSeriesResults:
     unit_capacity_ed_p: pd.DataFrame | None = None
 
     # --- Connection outputs ---
+    connection_online_dt_e: pd.DataFrame | None = None
+    connection_online_average_d_e: pd.DataFrame | None = None
+    connection_startup_d_e: pd.DataFrame | None = None
     connection_leftward_dt_eee: pd.DataFrame | None = None
     connection_leftward_d_eee: pd.DataFrame | None = None
     connection_rightward_dt_eee: pd.DataFrame | None = None

@@ -299,3 +299,27 @@ def unit_online_and_startup(par, s, v, r, debug):
     results.append((startup_units_d, 'unit_startup_d_e'))
 
     return results
+
+
+def connection_online_and_startup(par, s, v, r, debug):
+    """Connection online status and startups for timesteps and periods (connections with a startup_method)"""
+    results = []
+    connections_online = s.process_connection.intersection(s.process_online)
+
+    # 1. Online connections dt (count of unitsize)
+    online_dt = r.process_online_dt[connections_online]
+    results.append((online_dt, 'connection_online_dt_e'))
+
+    # 2. Average online status at period level (weighted by step_duration)
+    complete_hours = par.complete_period_share_of_year * 8760
+    online_d = online_dt.mul(par.step_duration, axis=0).groupby('period').sum().div(complete_hours, axis=0)
+    results.append((online_d, 'connection_online_average_d_e'))
+
+    # 3. Startups annualized to period level (as for units)
+    startup_d = annualize_dt_to_d(
+        r.process_startup_dt[connections_online], par.timestep_weight,
+        par.complete_period_share_of_year)
+    results.append((startup_d, 'connection_startup_d_e'))
+
+    return results
+

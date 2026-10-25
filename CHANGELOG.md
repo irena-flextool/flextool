@@ -1,5 +1,17 @@
 ## Unreleased
 
+- **Online connections.** A connection's `startup_method` works again, for
+  one-way and two-way connections: the connection gets online capacity that
+  limits its flow in both directions, `startup_cost` is charged, and new
+  outputs report the online status and startups of connections. Before, a
+  two-way connection with a startup method silently became one-way and
+  lossless, and a one-way connection lost its online variables (and every
+  connection its startup cost) as soon as a unit had linear online
+  variables. A DC power-flow line with a startup method is now an error. Units
+  with binary online variables next to units with linear ones, and units
+  online only through `minimum_time_method`, keep their online variables
+  (they lost them, or had their inertia counted twice).
+
 - **Group `transfer_method` applies to the network topology.** A group's
   `transfer_method` was applied to some of the model's inputs only: DC
   power-flow lines kept an unconstrained reverse flow next to the one set by

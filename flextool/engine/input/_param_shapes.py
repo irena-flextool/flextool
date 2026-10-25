@@ -290,6 +290,8 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # scalar OR 1d_map(period).  Cascade: pd → p (write_pUnit / startup
     # cost wiring in ``_load_online``).
     ("unit", "startup_cost"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    # Connection startup cost (connections with a startup_method): same shapes as the unit's.
+    ("connection", "startup_cost"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # Tier-2 silent-default migration (ed_* multi-class union 1d_map(period)).
     # These six parameters are declared on each of unit/node/connection and
     # are unioned in :func:`_e_period_param_union` into a single

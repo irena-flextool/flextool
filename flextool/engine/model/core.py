@@ -18,7 +18,8 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
   v_state_inter[n,b]                   representative-period storage state at base-period boundaries
   v_state_rp_start[n,d,t]              free start state of each representative block
   v_{online,startup,shutdown}_{linear,integer}[p,d,t]
-                                       units online / starting / stopping, count of unitsize  [_online]
+                                       units (connections) online / starting / stopping, count of unitsize
+                                                                                              [_online]
   v_{invest,divest}_{p,n}[p|n,d]       capacity built / retired in d, count of unitsize
   v_reserve[p,r,ud,n,d,t]              reserve held by p for n; × unitsize = MW               [_reserve]
   vq_reserve[r,ud,g,d,t]               reserve shortfall, fraction of the requirement scale   [_reserve]
@@ -36,8 +37,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Flows & capacity    maxFlow, maxFlow_negCap, maxFlow_back; maxOutputSum(_negCap);
                       dc_reference_angle_eq, dc_flow_eq [_dc_power_flow]
   Units               max{Online,Startup,Shutdown}, online__{startup,shutdown}, maxFlow_online[_shutdown],
-                      maxOutputSum_online, maxInputFlow_online[_shutdown], minimum_{uptime,downtime},
-                      online_fix_eq [_online];
+                      maxFlow_back_online, maxOutputSum_online, maxInputFlow_online[_shutdown],
+                      minimum_{uptime,downtime}, online_fix_eq [_online];
                       minFlow_{minload,output_floor,reserve,reserve_arc} [_unit_floors];
                       ramp_{sink,source}_{up,down}_constraint
   Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n]
@@ -492,6 +493,7 @@ def _prepare(b: _Build) -> None:
     if b.has_divest_p:
         _check(d, DIVEST, "divest")
     if b.has_online:
+        _validate_no_online_dc_lines(d)
         _check(d, ONLINE, "online")
         if _has_rows(getattr(d, "process_minload", None)):
             _check(d, MIN_LOAD, "min_load")
@@ -551,6 +553,25 @@ def _validate_has_balance(d, nodeBalance_dt) -> None:
             "'balance'/'storage' assignments of lower-ranked "
             "alternatives."
         )
+
+
+DC_ONLINE_MESSAGE = (
+    "Connection(s) {names} have a startup_method but are in a dc_power_flow_with_angles group. A DC power-flow "
+    "line's flow is set by the voltage angles; switching it off would need line-switching constraints that "
+    "FlexTool does not have. Remove startup_method from these connections, or take them out of the DC "
+    "power-flow group.")
+
+
+def _validate_no_online_dc_lines(d) -> None:
+    """Raise when a DC power-flow line has online variables (``startup_method`` ≠ ``no_startup``)."""
+    dc = getattr(d, "connection_dc_power_flow", None)
+    if not _has_rows(dc):
+        return
+    online = [f for f in (d.process_online_linear, d.process_online_integer) if _has_rows(f)]
+    on_p = {str(x) for f in online for x in f.get_column("p").to_list()}
+    hit = sorted({str(x) for x in dc.get_column("p").to_list()} & on_p)
+    if hit:
+        raise FlexToolConfigError(DC_ONLINE_MESSAGE.format(names=", ".join(hit)))
 
 
 def _validate_storage_binding_disjoint(d) -> None:

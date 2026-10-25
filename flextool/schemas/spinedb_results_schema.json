@@ -140,6 +140,30 @@
       null
     ],
     [
+      "connection",
+      "online_average",
+      null,
+      null,
+      "average online status of the connection (average number of units of the connection online during the period); only for connections with a startup_method.",
+      null
+    ],
+    [
+      "connection",
+      "online_t",
+      null,
+      null,
+      "online status of the connection (number of units of the connection online in each timestep); only for connections with a startup_method.",
+      null
+    ],
+    [
+      "connection",
+      "startup_cumulative",
+      null,
+      null,
+      "cumulative number of connection startups during the period; only for connections with a startup_method.",
+      null
+    ],
+    [
       "connection__node__node",
       "cf",
       null,

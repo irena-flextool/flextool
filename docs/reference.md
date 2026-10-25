@@ -351,7 +351,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 ### Defining how the connection functions
 
 - `transfer_method` to define the way the connection transfers energy between the nodes
-- `startup_method` where *linear* startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. *binary* startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.
+- `startup_method` gives the connection online capacity. *linear*: the online capacity is anything between 0 and the built capacity; *binary*: whole units of the connection (of `virtual_unitsize`, else the whole connection), computationally more demanding. The connection's flow in each direction is limited by its online capacity × availability, its reserve by its online capacity, and `startup_cost` is paid per MW brought online. Connections have no minimum load or minimum up/down times. Not available for connections in a `dc_power_flow_with_angles` group (an error: switching a DC power-flow line off would need line-switching constraints).
 - `invest_method` to define investment and retirement limits: either *not_allowed* or then a combination of 
     - *invest* and/or *retire* 
     - investment limits for each *period* and/or for all periods (*total*) or *no_limit* 

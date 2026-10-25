@@ -193,7 +193,6 @@ _METHOD_LP: frozenset[str] = frozenset((
 ))
 _METHOD_MIP: frozenset[str] = frozenset((
     "method_1way_1var_MIP", "method_1way_nvar_MIP",
-    "method_2way_2var_MIP_exclude",
 ))
 _METHOD_INDIRECT: frozenset[str] = frozenset((
     "method_1way_nvar_off", "method_1way_nvar_LP",
@@ -220,27 +219,36 @@ _METHOD_1WAY_1VAR: frozenset[str] = frozenset((
 def derive_process_online_linear(input_dir: Path,
                                    *, provider: "object | None" = None,
                                    ) -> pl.DataFrame:
-    """``process_online_linear`` = projection of process_method onto
-    rows whose method ∈ METHOD_LP."""
-    pm = _read_csv(input_dir / "process_method.csv", ["process", "method"],
-                    provider=provider)
-    pm = _drop_blank_rows(pm, ["process", "method"])
-    return (
-        pm.filter(pl.col("method").is_in(list(_METHOD_LP)))
-          .select("process")
-          .unique(maintain_order=True)
-    )
+    """``process_online_linear`` = the process_method processes whose method ∈ METHOD_LP or whose
+    ``startup_method`` is ``linear`` (a two-way connection keeps its flow-shape method), in process_method
+    order."""
+    return _online_processes(input_dir, _METHOD_LP, "linear", provider=provider)
 
 
 def derive_process_online_integer(input_dir: Path,
                                     *, provider: "object | None" = None,
                                     ) -> pl.DataFrame:
-    """``process_online_integer`` = METHOD_MIP filter on process_method."""
+    """``process_online_integer`` = the process_method processes whose method ∈ METHOD_MIP or whose
+    ``startup_method`` is ``binary``, in process_method order."""
+    return _online_processes(input_dir, _METHOD_MIP, "binary", provider=provider)
+
+
+def _online_processes(input_dir: Path, methods: frozenset[str], startup: str,
+                      *, provider: "object | None" = None) -> pl.DataFrame:
+    """The ``process`` column of ``process_method`` rows with ``method ∈ methods`` or ``startup_method ==
+    startup`` (``input/process__startup_method``), de-duplicated in process_method order.  Units map to an LP / MIP
+    method exactly when their (minimum_time_method-promoted) startup method is linear / binary; connections are
+    online by their startup method whatever their transfer method."""
     pm = _read_csv(input_dir / "process_method.csv", ["process", "method"],
                     provider=provider)
     pm = _drop_blank_rows(pm, ["process", "method"])
+    sm = _read_csv(input_dir / "process__startup_method.csv", ["process", "startup_method"],
+                   provider=provider)
+    sm = _drop_blank_rows(sm, ["process", "startup_method"])
+    by_startup = (sm.filter(pl.col("startup_method").cast(pl.Utf8) == startup)
+                  .get_column("process").cast(pl.Utf8).to_list())
     return (
-        pm.filter(pl.col("method").is_in(list(_METHOD_MIP)))
+        pm.filter(pl.col("method").is_in(list(methods)) | pl.col("process").cast(pl.Utf8).is_in(by_startup))
           .select("process")
           .unique(maintain_order=True)
     )

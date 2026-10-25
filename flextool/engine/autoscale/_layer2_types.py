@@ -437,6 +437,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # explicitly: the "maxFlow_online" prefix would otherwise resolve them silently.
     "maxFlow_online_shutdown": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxInputFlow_online_shutdown": CstrFamily(QuantityType.DIMENSIONLESS),
+    # flextool/engine/model/_online.py (maxFlow_back_online_<sfx>: the reverse flow of an online one-variable
+    # connection ≤ online capacity).  Explicit: the "maxFlow_back" prefix would otherwise resolve it silently.
+    "maxFlow_back_online": CstrFamily(QuantityType.DIMENSIONLESS),
     # _unit_floors.py (minFlow_minload_<sfx>: per-unit floor)
     "minFlow_minload": CstrFamily(QuantityType.DIMENSIONLESS),
     # _unit_floors.py (minFlow_output_floor_<sfx>: per-output
