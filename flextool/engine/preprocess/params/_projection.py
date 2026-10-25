@@ -2017,6 +2017,12 @@ _AUTHORITATIVE_SETS: tuple[str, ...] = (
 )
 
 
+# Set projections whose empty result is kept as an empty frame: "the DB has no member" differs from "not
+# loaded" (None).  process_unit: without units every process is a connection (model._reserve connection rows;
+# None keeps the process-generic coupling of hand-built data).
+_EMPTY_KEPT_SETS: tuple[str, ...] = ("process_unit",)
+
+
 def apply_projection_params(source: "InputSource",
                               flex_data: object) -> None:
     """Apply the DB-direct construction for Γ.2 Projection Params,
@@ -2046,6 +2052,9 @@ def apply_projection_params(source: "InputSource",
         if v is None or (hasattr(v, "height") and v.height == 0):
             if field_name in _AUTHORITATIVE_SETS:
                 setattr(flex_data, field_name, None)
+            elif field_name in _EMPTY_KEPT_SETS and v is not None:
+                # The DB says "no member": keep the empty frame (not None, which means "not loaded").
+                setattr(flex_data, field_name, v)
             continue
         setattr(flex_data, field_name, v)
 

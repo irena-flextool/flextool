@@ -9,6 +9,8 @@ Reserve held upward at a node the process delivers into competes with its flow f
 
 Before, only the built-capacity rows (``maxFlow``, ``maxOutputSum``) carried the reserve, so an offline
 unit could hold upward reserve for free.  Processes without online variables keep the built-capacity limit.
+Connections hold their reserve in their own rows (``connection_reserve_*_online_*``,
+tests/engine/test_connection_reserve.py).
 
 Fixtures: ``tests.json`` + override alternatives (built from JSON).  Units: the helpers return MW
 (variable × unitsize); availability and ``capacity_max_coeff`` are 1 for the units used here.
@@ -135,40 +137,6 @@ def test_indirect_online_unit_up_reserve_sum(tmp_path_factory) -> None:
     assert heat_rows
     for row, t in heat_rows.items():
         assert not [c for c in t if c.startswith("v_reserve[")], row
-
-
-def test_online_connection_up_reserve(tmp_path_factory) -> None:
-    """The reserve term is process-generic: a connection with online variables gets it on its arc
-    west→east for the upward reserve held at its sink east (coefficient +1), not for the one held at its
-    source west.
-
-    The input path gives connections no online variables today (``process_online_*`` read only
-    ``unit.startup_method``), so the unidirectional connection ``west_east``
-    is added to the online sets of the built FlexData directly.  Only unidirectional connections map to
-    an online method, so there is no reverse arc to cover; two-way one-variable arcs keep
-    ``maxFlow_back`` without a reserve term, unchanged."""
-    import dataclasses
-
-    ents, vals = _up_reserve([("connection", "west_east", "east"), ("connection", "west_east", "west")],
-                             reservation=10.0, penalty=1.0e3)
-    step = solve(tmp_path_factory, alt="uro_conn",
-                 base_chain=PLANT_CHAIN + ["coal_min_load", "wind", "network", "unidirectional"], entities=ents,
-                 values=vals)
-    fd = step.flex_data
-    p_dtype = fd.process_online_linear.schema["p"]
-    conn = pl.DataFrame({"p": ["west_east"]}).with_columns(pl.col("p").cast(p_dtype))
-    conn_dt = conn.join(fd.dt.select("d", "t"), how="cross").select(fd.p_online_dt.columns)
-    fd = dataclasses.replace(
-        fd,
-        process_online=pl.concat([fd.process_online, conn.select(fd.process_online.columns)]),
-        process_online_linear=pl.concat([fd.process_online_linear, conn]),
-        p_online_dt=pl.concat([fd.p_online_dt, conn_dt]))
-    terms = _row_terms(build(fd), "maxFlow_online_linear")
-    fwd = {r: t for r, t in terms.items() if r.startswith("maxFlow_online_linear[west_east,west,east,")}
-    assert fwd
-    for row, t in fwd.items():
-        assert _reserve_coefs(t, "west_east", "east") == [pytest.approx(1.0)], row
-        assert _reserve_coefs(t, "west_east", "west") == [], row
 
 
 def test_non_online_unit_keeps_built_capacity_limit(tmp_path_factory) -> None:

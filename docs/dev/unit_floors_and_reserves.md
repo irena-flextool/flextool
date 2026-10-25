@@ -88,7 +88,7 @@ multi-input indirect unit is only kept within each input's own capacity.
 The reverse arc of a two-way unit (2way_2var) is a direct arc in
 `process_source_sink_eff`: down reserve at its node is headroom on the arc
 that draws from the node and a floor on the arc that feeds it. Connections
-are not coupled (Follow-up 2).
+have their own rows ("Connections and reserve" below).
 
 ## Reserve and ramp rows
 
@@ -249,12 +249,49 @@ of the `reserve_total_upper` dual is the sum of the duals of the group-step's
 rows that use the total (HiGHS reports the `≤` row with the opposite sign to
 the `≥` rows). The total is not written to the outputs.
 
+## Connections and reserve
+
+`_reserve._add_connection_reserve_constraints`.  Connections are the processes of `process_source_sink`
+that are not in `process_unit` (`_common._connection_procs`; `process_unit` None — hand-built data — keeps
+the old process-generic coupling; an empty `process_unit` makes every process a connection, so the DB
+projection keeps it empty instead of None).  `maxFlow`, `maxFlow_negCap` and `maxFlow_online_*` carry the
+upward reserve of units only (`b.reserve_up_to_sink_units`).
+
+At a reserve node n a connection p has at most one *in-channel* (a flow variable arriving at n:
+`v_flow[p,m,n]`, or `v_flow_back[p,n,m]` of a one-variable / DC arc) and at most one *out-channel*
+(`v_flow[p,n,m]` drawing `slope·v_flow` on an efficiency arc, or `v_flow_back[p,m,n]`); more raises.
+Flows are measured where they arrive; `s_out` is the power drawn at n per unit of the out-channel.
+Net-position rule (owner question Q-c13-A, recommended rule; the c14b commit implementing it is the
+switch — reverting it restores the old coupling):
+
+```
+R↑_n ≤ (C_in − x_in) + s_out·x_out        R↓_n ≤ x_in + s_out·(C_out − x_out)
+up:   x_in − s_out·x_out + R↑ ≤ C_in                  (connection_reserve_up)
+down: x_out − x_in/s_out + R↓/s_out ≤ C_out           (connection_reserve_down)
+```
+
+One row per capacity bound of the channel whose capacity the reserve uses (in-channel for up, out-channel
+for down): built (`C` and the invest / divest terms of that arc's `maxFlow` / `maxFlow_back`),
+`_online_{linear,integer}` (`κ·availability·v_online`), `_exact` (`Ū·y` on the forward arc, `Ū·(1−y)` on
+the reverse arc), so each row holds a single channel's capacity and is exact.  A missing channel
+contributes nothing (C = 0, s_out = 1): a one-way connection gets the floor `R↑ ≤ s·x_out` at its sending
+node and `x + R↑ ≤ C` (the old maxFlow coupling) at its receiving node; a one-variable connection gets
+`R↑ ≤ C − f`, `R↓ ≤ C + f` for its signed flow f into n; reserve at a node the connection does not link
+is 0.  The same capacity may back upward reserve at one end and downward reserve at the other (one
+action serves both), as for units (separate up / down rows).
+
+Kept as they were: `reserve_process_*` (`max_share` × built capacity, c = 1 for connections) and
+`profile_flow_upper_limit`, which keeps the upward-reserve term on the in-arc of a connection with a
+`connection__profile` — conservative: it does not count reserve from stopping the out-flow.
+
+The reverse flow `v_flow_back` also counts in the dynamic and n-1 requirements, their shortfall scale
+and the storage energy rows (reverse orientation of a one-variable connection to a storage node, slope 1),
+with the orientation of `nodeBalance_eq` (into the arc's source, out of its sink).
+
 ## Follow-ups (not implemented)
 
 1. (Done: "Source-side reserve and capacity" above.)
-2. Connections (not coupled yet; planned with the rewrite of the connection
-   capacity and online rows): a net-position rule (`down at n ≤ f_into_n + (cap·avail −
-   f_out_of_n)`), interacting with `v_flow_back` and the other end.
+2. (Done: "Connections and reserve" above.)
 3. `reserveBalance` lacks the .mod's slope factor for source-side reserves
    of direct units; `_unit_floors._inverse_slope` follows the current
    convention and must change with it (tripwire:
@@ -275,8 +312,4 @@ the `≥` rows). The total is not written to the outputs.
    (`tests/engine/test_connection_delay_ignored.py`). Applying a
    connection delay needs a delayed term in the node balance; when it is
    added, drop the filters and the warning.
-5. The dynamic and n-1 rows ignore `v_flow_back` (2way_1var / DC
-   connections), which `nodeBalance_eq` counts
-   (`nodeBalance_back_flow_terms`): a one-variable connection flowing
-   backwards into the group, or failing while doing so, is not counted.
-   Planned with the rewrite of the connection capacity and online rows.
+5. (Done: `v_flow_back` in the dynamic and n-1 rows, see "Connections and reserve".)

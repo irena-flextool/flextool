@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Connection reserve limited by the connection's flow.** A connection's
+  reserve at a node is now limited by its net position there: upward
+  reserve by its free capacity towards the node plus the flow it sends
+  away (which it can stop), downward reserve by the flow it brings plus
+  its free capacity away from the node. Before, only upward reserve at the
+  receiving node shared the capacity; a line could offer reserve at its
+  sending node it could not deliver. Models with connection reserve can
+  get less reserve from connections and higher costs.
+
 - **Reserve requirements count the reverse flow of lossless connections.** A
   `no_losses_no_variable_cost` or DC power-flow connection flowing towards a
   node in its reverse direction now raises the dynamic requirement there,

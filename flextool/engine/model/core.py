@@ -52,7 +52,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Objective           balance slack penalty, commodity cost and sales, CO2 price, variable cost, startup cost,
                       storage reference price, invest/divest annuities, existing fixed cost (optional constant)
   Feature modules     capacityMargin, inertia_constraint, non_sync_constraint + slack penalties [_group_slack];
-                      reserveBalance_*, reserve_total_upper, reserve_process_*, reserve_storage_*
+                      reserveBalance_*, reserve_total_upper, reserve_process_*, connection_reserve_*,
+                      reserve_storage_*
                       + shortfall penalty [_reserve];
                       investment floors, cumulative, group and flow-group limits [_cumulative_invest];
                       commodity_ladder_balance, ladder_tier_cap_* + tier costs [_commodity_ladder]
@@ -80,6 +81,7 @@ from flextool.engine.model import _unit_floors
 from flextool.engine.input._axis_enums import alias_to_axis, rename_to_axis
 from flextool.engine.model._common import (
     _availability_factor,
+    _connection_procs,
     _coef_factor,
     _drop_uncapped,
     _entity_rows,
@@ -305,6 +307,7 @@ class _Build:
     # ── shared expressions ──
     node_balance_flow_terms: dict = field(default_factory=dict)
     reserve_up_to_sink: Any = None          # Σ_r v_reserve up,   (p, sink, d, t)
+    reserve_up_to_sink_units: Any = None    # the same for units only (connections: connection_reserve_* rows)
     reserve_down_to_sink: Any = None        # Σ_r v_reserve down, (p, sink, d, t)
     reserve_up_sink_parts: Any = None       # (v_reserve at sink, up selector)
     # Source-side reserves of units, per arc (p, source, sink, d, t), converted to the arc's flow:
@@ -803,6 +806,17 @@ def _reserve_coupling(b: _Build) -> None:
         at_sink = _var_view(v_reserve, "__at_sink", {"n": "sink"}, to_axis=True)
         b.reserve_up_to_sink = Sum(Where(at_sink, up_sink), over=("r", "ud"))
         b.reserve_up_sink_parts = (at_sink, up_sink)
+        # maxFlow and maxFlow_online couple the upward reserve of units only: a connection's reserve is limited
+        # by its net position at the node (connection_reserve_* rows, _reserve).  Hand-built data without
+        # process_unit keeps the process-generic coupling (_common.connection_procs is then None).
+        if _connection_procs(b.d) is None:
+            b.reserve_up_to_sink_units = b.reserve_up_to_sink
+        else:
+            units = b.d.process_unit.select(pl.col("p").cast(pl.Utf8).alias("__p")).unique()
+            unit_sink = (up_sink.with_columns(pl.col("p").cast(pl.Utf8).alias("__p"))
+                         .join(units, on="__p", how="semi").drop("__p"))
+            if unit_sink.height > 0:
+                b.reserve_up_to_sink_units = Sum(Where(at_sink, unit_sink), over=("r", "ud"))
 
     down_sink = (pruna.filter(pl.col("ud") == "down")
                  .pipe(rename_to_axis, {"n": "sink"})
@@ -1634,7 +1648,7 @@ def _eq_max_flow(b: _Build) -> None:
     #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∉ flow_bound_arcs or (p,s,k) ∈ reserve_down_input_arcs
     #   M = capacity_max_coeff[p,s,k] · availability[p,d,t]
     #   φ = 1 where v_flow is the input (k = p), 1/slope[p,d,t] on a direct unit's input→output arc
-    #       (s ≠ p ≠ k); the down-reserve term only for units
+    #       (s ≠ p ≠ k); both reserve terms only for units (connections: connection_reserve_*, _reserve)
     # Caps every flow by the built capacity of its process (units of unitsize).
     # On indirect-unit input arcs M = input_share_max · full-load input ·
     # availability; uncapped arcs (conversion_flow_coeff = 0) have M = 1 and
@@ -1645,8 +1659,8 @@ def _eq_max_flow(b: _Build) -> None:
     # converted to the arc's flow.  A bound input arc gets this row as well
     # when it carries such a reserve (its v_flow bound stays, redundant).
     lhs: dict = {"flow": b.v_flow}
-    if b.reserve_up_to_sink is not None:
-        lhs["reserve_up"] = b.reserve_up_to_sink
+    if b.reserve_up_to_sink_units is not None:
+        lhs["reserve_up"] = b.reserve_up_to_sink_units
     lhs.update(b.reserve_down_at_source)
     if b.divest_in_dispatch_p is not None:
         lhs["divest"] = _scaled(b.divest_in_dispatch_p)

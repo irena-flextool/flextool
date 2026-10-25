@@ -485,6 +485,15 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # flextool/engine/model/_reserve.py add_constraints (reserve_process_upward / _downward)
     "reserve_process_upward": CstrFamily(QuantityType.POWER),
     "reserve_process_downward": CstrFamily(QuantityType.POWER),
+    # Connection reserve by its net position, in units of unitsize like maxFlow
+    # (flextool/engine/model/_reserve.py _add_connection_reserve_constraints).  Registered explicitly (the
+    # suffixed online / exact names too): no prefix of another family may resolve them silently.
+    "connection_reserve_up": CstrFamily(QuantityType.DIMENSIONLESS),
+    "connection_reserve_down": CstrFamily(QuantityType.DIMENSIONLESS),
+    "connection_reserve_up_online": CstrFamily(QuantityType.DIMENSIONLESS),
+    "connection_reserve_down_online": CstrFamily(QuantityType.DIMENSIONLESS),
+    "connection_reserve_up_exact": CstrFamily(QuantityType.DIMENSIONLESS),
+    "connection_reserve_down_exact": CstrFamily(QuantityType.DIMENSIONLESS),
     # Storage energy-adequacy coupling for reserve_duration (#322).  Both
     # framed in MWh: v_state·unitsize (± E) vs a stored-energy bound.
     # flextool/engine/model/_reserve.py _add_storage_energy_constraints

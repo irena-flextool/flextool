@@ -135,3 +135,202 @@ def test_storage_reserve_through_reverse_flow(tmp_path_factory) -> None:
     for row, terms in rows.items():
         t = row.split(",")[-1].rstrip("]")
         assert coef(terms, f"v_reserve[battery_inverter,rs,up,west,p2020,{t}]") == pytest.approx(-us * 2.0)
+
+
+# ---------------------------------------------------------------------------
+# (2) Connection reserve limited by its net position (connection_reserve_* rows, Q-c13-A recommended rule)
+
+UNI = ["init", "west", "coal", "wind", "network", "unidirectional"]
+WE = "west_east"
+
+
+def _vals(step, var: str, **flt) -> dict[str, float]:
+    v = utf8(step.solution.value(var))
+    for k, x in flt.items():
+        v = v.filter(pl.col(k) == x)
+    return {t: x for t, x in v.select("t", "value").rows()}
+
+
+@pytest.mark.parametrize("ud,expect,short_t", [("up", {"t0001": 0.75, "t0002": 0.5}, "t0002"),
+                                               ("down", {"t0001": 0.5, "t0002": 0.75}, "t0001")])
+def test_one_variable_reserve_net_position(tmp_path_factory, ud, expect, short_t) -> None:
+    """D1: ll (200 MW) holds a 150 MW reserve at lw.  Up: room = capacity into lw − import + export, 1.5 units at
+    t0001 (export 100 MW: the reservation 0.75 is met) and 0.5 at t0002 (import 100 MW: shortfall 50 MW = 1/3 of
+    the 150 MW scale); down mirrored.  Before: 1 unit (200 MW) in both steps whatever the flow."""
+    ents, vals = _reserve(f"ts{ud[0]}", ud, "gw", [("ll", "lw")], reservation=150.0)
+    step = _steps(tmp_path_factory, f"cr_d1_{ud}", _group("gw", "lw") + ents, vals)[-1]
+    res = _vals(step, "v_reserve", p="ll")
+    q = _vals(step, "vq_reserve")
+    for t, x in expect.items():
+        assert res[t] == pytest.approx(x, abs=1e-6), t
+    assert q[short_t] == pytest.approx(1.0 / 3.0, abs=1e-6)
+    pb = build(step.flex_data)
+    rows = row_terms(pb, f"connection_reserve_{ud}", "ll,lw,")
+    assert len(rows) == 2
+    sign = 1.0 if ud == "up" else -1.0
+    for row, terms in rows.items():
+        t = row.split(",")[-1].rstrip("]")
+        assert coef(terms, f"v_flow_back[ll,lw,le,p2020,{t}]") == pytest.approx(sign)
+        assert coef(terms, f"v_flow[ll,lw,le,p2020,{t}]") == pytest.approx(-sign)
+        assert coef(terms, f"v_reserve[ll,ts{ud[0]},{ud},lw,p2020,{t}]") == pytest.approx(1.0)
+
+
+def test_one_way_connection_floor_and_headroom(tmp_path_factory) -> None:
+    """D2: one-way west_east (400 MW, efficiency 0.9, west → east) at its sending node west.  Down reserve (send
+    more): ``v_flow + R·0.9 ≤ 1`` (R/s, s = 1/0.9); up reserve (send less): ``−v_flow/0.9 + R ≤ 0`` (at most what it
+    draws).  Solved (300 MW each): the flow and the down reserve share the line, the up reserve is at most what
+    the line draws.  Before: no row, both reserves 1 unit at every step (test_reserve_input_side's
+    "connections are not coupled")."""
+    ed, vd = _reserve("rdw", "down", "gww", [(WE, "west")], reservation=300.0)
+    eu, vu = _reserve("ruw", "up", "gww", [(WE, "west")], reservation=300.0)
+    step = _steps(tmp_path_factory, "cr_d2", _group("gww", "west") + ed + eu, vd + vu, chain=UNI)[-1]
+    pb = build(step.flex_data)
+    dn = row_terms(pb, "connection_reserve_down", f"{WE},west,")
+    up = row_terms(pb, "connection_reserve_up", f"{WE},west,")
+    assert len(dn) == len(up) == 48
+    for row, terms in dn.items():
+        t = row.split(",")[-1].rstrip("]")
+        assert coef(terms, f"v_flow[{WE},west,east,p2020,{t}]") == pytest.approx(1.0)
+        assert coef(terms, f"v_reserve[{WE},rdw,down,west,p2020,{t}]") == pytest.approx(0.9)
+    for row, terms in up.items():
+        t = row.split(",")[-1].rstrip("]")
+        assert coef(terms, f"v_flow[{WE},west,east,p2020,{t}]") == pytest.approx(-1.0 / 0.9)
+        assert coef(terms, f"v_reserve[{WE},ruw,up,west,p2020,{t}]") == pytest.approx(1.0)
+    f = _vals(step, "v_flow", p=WE)
+    rd = _vals(step, "v_reserve", p=WE, r="rdw")
+    ru = _vals(step, "v_reserve", p=WE, r="ruw")
+    for t in f:
+        assert f[t] + 0.9 * rd[t] <= 1.0 + TOL
+        assert ru[t] <= f[t] / 0.9 + TOL
+    # The flow uses capacity the down reserve cannot (before: rd = 1 at every step whatever the flow).
+    shared = [t for t in f if f[t] > 0.1 and f[t] + 0.9 * rd[t] >= 1.0 - TOL]
+    assert shared and all(rd[t] < 1.0 - 0.1 for t in shared)
+
+
+def test_two_way_reserve_rows(tmp_path_factory) -> None:
+    """D3: battery_inverter (regular, η 0.95) with up and down reserve at west (reserve_duration 2): maxFlow of
+    its arc into west has no v_reserve; up row (x_in 1, x_out −1/0.95, R 1), down row (x_out 1, x_in −0.95, R 0.95);
+    objective 1030.137 M (was 1027.312 M: the down reserve now needs charging headroom, the up reserve may count
+    stopping the charging)."""
+    eu, vu = _reserve("rs", "up", "electricity", [("battery_inverter", "west")], reservation=50.0)
+    ed, vd = _reserve("rs", "down", "electricity", [("battery_inverter", "west")], reservation=50.0)
+    vals = vu + vd + [["reserve__upDown__group", ["rs", ud, "electricity"], "reserve_duration", b64(2.0, "float")]
+                      for ud in ("up", "down")]
+    step = _steps(tmp_path_factory, "cr_d3", eu + ed, vals, chain=["init", "west", "wind", "battery"])[-1]
+    pb = build(step.flex_data)
+    mf = row_terms(pb, "maxFlow", "battery_inverter,battery,west,")
+    assert mf and all(not [c for c in t if c.startswith("v_reserve[")] for t in mf.values())
+    bi = "battery_inverter"
+    for row, terms in row_terms(pb, "connection_reserve_up", f"{bi},west,").items():
+        t = row.split(",")[-1].rstrip("]")
+        assert coef(terms, f"v_flow[{bi},battery,west,p2020,{t}]") == pytest.approx(1.0)
+        assert coef(terms, f"v_flow[{bi},west,battery,p2020,{t}]") == pytest.approx(-1.0 / 0.95)
+        assert coef(terms, f"v_reserve[{bi},rs,up,west,p2020,{t}]") == pytest.approx(1.0)
+    for row, terms in row_terms(pb, "connection_reserve_down", f"{bi},west,").items():
+        t = row.split(",")[-1].rstrip("]")
+        assert coef(terms, f"v_flow[{bi},west,battery,p2020,{t}]") == pytest.approx(1.0)
+        assert coef(terms, f"v_flow[{bi},battery,west,p2020,{t}]") == pytest.approx(-0.95)
+        assert coef(terms, f"v_reserve[{bi},rs,down,west,p2020,{t}]") == pytest.approx(0.95)
+    assert step.solution.obj == pytest.approx(1030.1371975856e6, rel=1e-8)
+
+
+def test_online_connection_reserve(tmp_path_factory) -> None:
+    """D4 (replaces test_up_reserve_online::test_online_connection_up_reserve): west_east with linear online
+    variables (JSON startup_method) holds upward reserve at its receiving node east and at its sending node west.
+    connection_reserve_up_online_linear[west_east,east] = v_flow + R − v_online ≤ 0 (the old maxFlow_online
+    coupling, now from its own row), maxFlow_online_linear has no v_reserve; at west the floor −v_flow/0.9 + R ≤ 0
+    (no online row: west_east has no in-channel at west)."""
+    ents = []
+    vals = []
+    for node in ("east", "west"):
+        e, v = _reserve("ru", "up", f"g_{node}", [(WE, node)], reservation=10.0)
+        ents += _group(f"g_{node}", node) + e
+        vals += v
+    vals += [["connection", WE, "startup_method", b64("linear", "str")]]
+    step = _steps(tmp_path_factory, "cr_d4", ents, vals, chain=["init", "west", "coal", "coal_min_load", "wind",
+                                                                "network", "unidirectional"])[-1]
+    pb = build(step.flex_data)
+    on = row_terms(pb, "connection_reserve_up_online_linear", f"{WE},east,")
+    assert len(on) == 48
+    for row, terms in on.items():
+        t = row.split(",")[-1].rstrip("]")
+        assert coef(terms, f"v_flow[{WE},west,east,p2020,{t}]") == pytest.approx(1.0)
+        assert coef(terms, f"v_reserve[{WE},ru,up,east,p2020,{t}]") == pytest.approx(1.0)
+        assert coef(terms, f"v_online_linear[{WE},p2020,{t}]") < 0.0
+    assert not row_terms(pb, "connection_reserve_up_online_linear", f"{WE},west,")
+    for terms in row_terms(pb, "maxFlow_online_linear", f"{WE},").values():
+        assert not [c for c in terms if c.startswith("v_reserve[")]
+    west = row_terms(pb, "connection_reserve_up", f"{WE},west,")
+    assert len(west) == 48
+    for row, terms in west.items():
+        t = row.split(",")[-1].rstrip("]")
+        assert coef(terms, f"v_flow[{WE},west,east,p2020,{t}]") == pytest.approx(-1.0 / 0.9)
+
+
+def test_exact_connection_reserve(tmp_path_factory) -> None:
+    """D5: exact ll (forward lw → le) with up and down reserve at lw.  The up row's channel is the reverse arc
+    le → lw: ``… + Ū·y ≤ Ū``; the down row's channel is the forward arc lw → le: ``… − Ū·y ≤ 0``."""
+    eu, vu = _reserve("ru", "up", "gw", [("ll", "lw")], reservation=50.0)
+    ed, vd = _reserve("rd", "down", "gw", [("ll", "lw")], reservation=50.0)
+    vals = vu + vd + [["connection", "ll", "transfer_method", b64("exact", "str")]]
+    step = _steps(tmp_path_factory, "cr_d5", _group("gw", "lw") + eu + ed, vals)[-1]
+    pb = build(step.flex_data)
+    from tests.engine._lp_rows import row_bounds
+    for ud, sign, cap in (("up", 1.0, 1.0), ("down", -1.0, 0.0)):
+        rows = row_terms(pb, f"connection_reserve_{ud}_exact", "ll,lw,")
+        bounds = row_bounds(pb, f"connection_reserve_{ud}_exact", "ll,lw,")
+        assert len(rows) == 2, ud
+        for row, terms in rows.items():
+            t = row.split(",")[-1].rstrip("]")
+            assert coef(terms, f"v_exact_forward[ll,p2020,{t}]") == pytest.approx(sign), (ud, terms)
+            assert bounds[row][1] == pytest.approx(cap)
+
+
+def test_connection_reserve_rolling_and_stochastic(tmp_path_factory) -> None:
+    """Every roll of the rolling fullYear dispatch and every branch period of the stochastic 2-day dispatch get the
+    connection reserve rows (sending-node floor of a one-way connection)."""
+    eu, vu = _reserve("ruw", "up", "gww", [(WE, "west")], reservation=100.0)
+    rolls = _steps(tmp_path_factory, "cr_roll", _group("gww", "west") + eu,
+                   vu + [["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", b64(36.0, "float")],
+                         ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", b64(24.0, "float")]],
+                   chain=["init", "west", "battery", "wind", "coal", "network", "unidirectional", "fullYear",
+                          "dispatch_fullYear_roll"])
+    assert len(rolls) > 1
+    for s in rolls:
+        rows = row_terms(build(s.flex_data), "connection_reserve_up", f"{WE},west,")
+        assert len(rows) == s.flex_data.dt.height
+    from tests.engine._unit_db import FLEXTOOL_ROOT
+    ents = [["node", "north", None], ["connection", "dn_north", None],
+            ["connection__node__node", ["dn_north", "demand_node", "north"], None]]
+    vals = [["node", "north", "node_type", b64("balance", "str")], ["node", "north", "inflow", b64(-150.0, "float")],
+            ["node", "north", "penalty_up", b64(5000.0, "float")],
+            ["connection", "dn_north", "transfer_method", b64("unidirectional", "str")],
+            ["connection", "dn_north", "existing", b64(200.0, "float")]]
+    er, vr = _reserve("rdn", "up", "gdn", [("dn_north", "demand_node")], reservation=50.0)
+    url, scen = make_db(tmp_path_factory, alt="cr_stoch", values=vals + vr, base_chain=["base", "init", "system",
+                                                                                          "2day"],
+                        entities=ents + _group("gdn", "demand_node") + er,
+                        fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json")
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    rows = row_terms(build(step.flex_data), "connection_reserve_up", "dn_north,demand_node,")
+    periods = {r.split(",")[-2] for r in rows}
+    assert len(rows) == step.flex_data.dt.height and len(periods) > 1
+
+
+def test_connection_reserve_with_investment(tmp_path_factory) -> None:
+    """The built rows carry the channel arc's invest terms (as its maxFlow row): battery_inverter can invest
+    (wind_battery_invest), its connection_reserve_up row at west has −M·v_invest_p with the maxFlow multiplier of
+    its in-arc battery → west."""
+    eu, vu = _reserve("ru", "up", "electricity", [("battery_inverter", "west")], reservation=5.0)
+    step = _steps(tmp_path_factory, "cr_inv", eu, vu,
+                  chain=["init", "west", "wind", "battery", "battery_invest", "5weeks"])[-1]
+    pb = build(step.flex_data)
+    up = row_terms(pb, "connection_reserve_up", "battery_inverter,west,")
+    mf = row_terms(pb, "maxFlow", "battery_inverter,battery,west,")
+    assert up and mf
+    for row, terms in up.items():
+        d, t = row.split(",")[-2], row.split(",")[-1].rstrip("]")
+        inv = {c: v for c, v in terms.items() if c.startswith("v_invest_p[battery_inverter,")}
+        mf_inv = {c: v for c, v in mf[f"maxFlow[battery_inverter,battery,west,{d},{t}]"].items()
+                  if c.startswith("v_invest_p[battery_inverter,")}
+        assert inv and inv == pytest.approx(mf_inv)

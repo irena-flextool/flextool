@@ -123,9 +123,11 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
     out["group_node"] = gn
 
     # process_unit: processes that are units.  The capacity margin counts units only, so connections do
-    # not count transmission capacity as group capacity.  Header "process_unit" or "process".
+    # not count transmission capacity as group capacity.  Header "process_unit" or "process".  A present but
+    # empty file gives an empty frame (no units: every process is a connection, which the connection reserve
+    # rows need to know); a missing file leaves the field None.
     df = _provider_get(provider, sd / "process_unit.csv")
-    if df is not None and df.height > 0:
+    if df is not None and df.width > 0:
         col = df.columns[0]
         out["process_unit"] = df.rename({col: "p"}).select("p").unique()
 

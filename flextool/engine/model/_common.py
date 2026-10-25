@@ -217,3 +217,17 @@ def _availability_factor(d, members: "pl.DataFrame", *,
               .select(axis, "d", "t", "value")
               .collect())
     return Param((axis, "d", "t"), merged)
+
+
+def _connection_procs(d) -> "pl.DataFrame | None":
+    """``(p,)`` Utf8: the processes of ``process_source_sink`` that are not units (``process_unit``), i.e. the
+    connections.  None when ``process_unit`` is None (hand-built data: the caller keeps the process-generic
+    reserve coupling); an empty ``process_unit`` frame makes every process a connection."""
+    unit = getattr(d, "process_unit", None)
+    pss = getattr(d, "process_source_sink", None)
+    if unit is None or pss is None:
+        return None
+    units = unit.select(pl.col("p").cast(pl.Utf8)).unique()
+    return (pss.select(pl.col("p").cast(pl.Utf8)).unique(maintain_order=True)
+            .join(units, on="p", how="anti"))
+

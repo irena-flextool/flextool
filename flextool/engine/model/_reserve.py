@@ -4,8 +4,9 @@ Owns the variables v_reserve (reserve held per process, reserve, direction and n
 shortfall of each reserve requirement) and v_reserve_total (the total reserve of a group with n-1 rows), the
 requirement rows reserveBalance_timeseries_eq, reserveBalance_dynamic_eq and reserveBalance_{up,down}_n_1_eq,
 the bound reserve_total_upper, the per-process limits
-reserve_process_{upward,downward}, the storage energy rows reserve_storage_up_floor /
-reserve_storage_down_headroom, and the shortfall penalty in the objective.  The coupling of v_reserve to
+reserve_process_{upward,downward}, the connection rows connection_reserve_{up,down}[_online_*|_exact] (a
+connection's reserve limited by its net position at the node), the storage energy rows reserve_storage_up_floor /
+reserve_storage_down_headroom, and the shortfall penalty in the objective.  The coupling of units' v_reserve to
 process capacity (maxFlow, maxOutputSum, maxFlow_online, maxOutputSum_online, maxInputFlow_online, profile limits,
 unit floors) lives with those families.
 """
@@ -19,7 +20,9 @@ from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.model._common import _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap, _var_view
+from flextool.engine.model._common import (
+    _connection_procs, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap, _utf8_keys, _var_view,
+)
 from flextool.engine.input._param_shapes import promote_param_to_dt
 
 if TYPE_CHECKING:
@@ -409,8 +412,8 @@ def _n_1_failing(d, gn: pl.DataFrame) -> "dict[str, dict[str, pl.DataFrame]]":
     Each entry has ``n1_rug`` (r, ud, g) of the n-1 groups of that direction, ``lfr_g`` (p, r, ud, n, g) the
     large-failure relationships at the group's nodes, ``fail_arcs`` the failing v_flow arcs (p_fail and the arc's
     nodes, the group-side node as n), ``fail_back_arcs`` the failing v_flow_back arcs (the group-side node, the
-    arc's source for up and its sink for down, as n; None without any) and ``fail_g`` (r, ud, g, p_fail) sorted.  Empty when the n-1 method has
-    no group, ratio or failing arc.  The caller checks that v_flow exists.
+    arc's source for up and its sink for down, as n; None without any) and ``fail_g`` (r, ud, g, p_fail) sorted.
+    Empty when the n-1 method has no group, ratio or failing arc.  The caller checks that v_flow exists.
     """
     method_n1 = getattr(d, "reserve_upDown_group_method_n_1", None)
     lfr_set = getattr(d, "process_reserve_upDown_node_large_failure_ratio", None)
@@ -882,7 +885,283 @@ def add_constraints(b: "_Build") -> None:
                     lhs["divest"] = Sum(Where(v_div_at, edd_p_div), over=("d_divest",)) * share
             m.add_cstr(name, over=idx, sense="<=", lhs_terms=lhs, rhs_terms={"max": rhs_param})
 
+    _add_connection_reserve_constraints(b)
     _add_storage_energy_constraints(b)
+
+
+# ---------------------------------------------------------------------------
+# Connection reserve: net-position rows
+
+
+def _connection_channels(b: "_Build", pn: pl.DataFrame) -> dict:
+    """The flow channels of the connections at the reserve nodes ``pn`` (p, n).
+
+    Returns ``{"in": ..., "out": ...}``; each is a frame ``(p, source, sink, n, kind, eff)`` in the dtypes of
+    process_source_sink: ``kind`` "flow" (a v_flow arc) or "back" (the reverse flow v_flow_back of a one-variable /
+    DC arc), ``eff`` True for a v_flow arc in process_source_sink_eff (its flow is measured at the sink and draws
+    slope × flow at the source).  In-channels deliver into n (v_flow arcs with sink n, v_flow_back of arcs with
+    source n), out-channels draw from n (v_flow arcs with source n, v_flow_back of arcs with sink n).  Raises when a
+    (p, n) has more than one channel of a kind (critique change 2: the rows hold one channel's capacity).
+    """
+    d = b.d
+    keys = ["p", "source", "sink"]
+    pn_u = pn.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("n").cast(pl.Utf8).alias("_n")).unique()
+    eff = getattr(d, "process_source_sink_eff", None)
+    eff_u = (_utf8_keys(eff.lazy().select(keys), keys).select("_p", "_source", "_sink").unique()
+             .with_columns(pl.lit(True).alias("eff")).collect()
+             if _has_rows(eff) else None)
+
+    def _side(arcs: "pl.DataFrame | None", node_col: str, kind: str) -> "pl.DataFrame | None":
+        if not _has_rows(arcs):
+            return None
+        a = (_utf8_keys(arcs.lazy().select(keys), keys)
+             .with_columns(pl.col(f"_{node_col}").alias("_n"))
+             .join(pn_u.lazy(), on=["_p", "_n"], how="semi")
+             .with_columns(pl.lit(kind).alias("kind")))
+        if kind == "flow" and eff_u is not None:
+            a = (a.join(eff_u.lazy(), on=["_p", "_source", "_sink"], how="left")
+                 .with_columns(pl.col("eff").fill_null(False)))
+        else:
+            a = a.with_columns(pl.lit(False).alias("eff"))
+        out = a.with_columns(pl.col(node_col).alias("n")).select(*keys, "n", "_p", "_source", "_sink", "_n", "kind",
+                                                                "eff").collect()
+        return out if out.height > 0 else None
+
+    back = b.twoway1var_arcs if (b.v_flow_back is not None and _has_rows(b.twoway1var_arcs)) else None
+    out: dict = {}
+    for name, flow_side, back_side in (("in", "sink", "source"), ("out", "source", "sink")):
+        parts = [x for x in (_side(d.process_source_sink, flow_side, "flow"), _side(back, back_side, "back"))
+                 if x is not None]
+        if not parts:
+            out[name] = None
+            continue
+        frame = pl.concat(parts, how="vertical_relaxed")
+        dup = frame.group_by("_p", "_n").len().filter(pl.col("len") > 1)
+        if dup.height > 0:
+            raise ValueError(f"_reserve: a connection has more than one {name}-channel at a reserve node (the "
+                             f"connection reserve rows hold one channel's capacity): {dup.to_dicts()}")
+        out[name] = frame
+    return out
+
+
+def _pndt_param(dom_u: pl.DataFrame, values: "pl.LazyFrame | None", fill: float) -> Param:
+    """Param (p, n, d, t) dense over ``dom_u`` (typed p, n, d, t plus Utf8 _p, _n, _d, _t), ``values`` (Utf8 _p,
+    _n, _d, _t, value) where present, ``fill`` elsewhere."""
+    lf = dom_u.lazy()
+    if values is not None:
+        lf = lf.join(values, on=["_p", "_n", "_d", "_t"], how="left")
+    else:
+        lf = lf.with_columns(pl.lit(None, pl.Float64).alias("value"))
+    frame = lf.with_columns(pl.col("value").cast(pl.Float64).fill_null(fill)).select("p", "n", "d", "t", "value")
+    return Param(("p", "n", "d", "t"), frame.collect())
+
+
+def _channel_values(chan: pl.DataFrame, arc_frame: "pl.LazyFrame", *, by_dt: bool = True) -> pl.LazyFrame:
+    """Values of an arc-keyed frame (Utf8 _p, _source, _sink[, _d, _t], value) at the channels ``chan``, keyed on
+    Utf8 (_p, _n[, _d, _t])."""
+    on = ["_p", "_source", "_sink"]
+    cols = ["_p", "_n", *(("_d", "_t") if by_dt else ()), "value"]
+    return chan.lazy().select("_p", "_source", "_sink", "_n").join(arc_frame, on=on, how="inner").select(cols)
+
+
+def _arc_dt_u(frame: "pl.DataFrame | pl.LazyFrame", dt: pl.DataFrame) -> pl.LazyFrame:
+    """A (p, source, sink[, d], t...) Param frame promoted over dt, with Utf8 keys _p, _source, _sink, _d, _t."""
+    lf = frame.lazy() if isinstance(frame, pl.DataFrame) else frame
+    return (_utf8_keys(lf, ["p", "source", "sink", "d", "t"])
+            .select("_p", "_source", "_sink", "_d", "_t", pl.col("value").cast(pl.Float64)))
+
+
+def _add_connection_reserve_constraints(b: "_Build") -> None:
+    """connection_reserve_{up,down}[_online_{linear,integer}|_exact] (net-position rule, see the EQ. header)."""
+    d = b.d
+    conns = _connection_procs(d)
+    if conns is None or conns.height == 0 or b.v_flow is None or d.prundt.height == 0:
+        return
+    m = b.m
+    from flextool.engine.model import _exact, _online
+
+    keys = ["p", "source", "sink"]
+    dt_u = d.dt.select("d", "t").with_columns(pl.col("d").cast(pl.Utf8).alias("_d"),
+                                              pl.col("t").cast(pl.Utf8).alias("_t"))
+    rhs_u = _arc_dt_u(b.flow_upper_rhs.frame, d.dt)
+    mult_u = _arc_dt_u(b.flow_cap_mult, d.dt) if b.flow_cap_mult is not None else None
+    avail_u = (_utf8_keys(promote_param_to_dt(d.p_process_availability, d.dt).select("p", "d", "t", "value"),
+                          ["p", "d", "t"]).select("_p", "_d", "_t", pl.col("value").alias("__av"))
+               if d.p_process_availability is not None else None)
+    coef_u = (_utf8_keys(d.p_arc_max_cap_coef.frame.lazy().select(*keys, "value"), keys)
+              .select("_p", "_source", "_sink", pl.col("value").alias("__coef"))
+              if d.p_arc_max_cap_coef is not None else None)
+    slope_u = (_utf8_keys(promote_param_to_dt(d.p_slope, d.dt).select("p", "d", "t", "value"), ["p", "d", "t"])
+               .select("_p", "_d", "_t", pl.col("value").alias("__slope"))
+               if d.p_slope is not None else None)
+    invest_procs = ({str(x) for x in b.invest_procs.get_column("p").to_list()}
+                    if b.invest_procs is not None else set())
+    exact = _exact.exact_arcs(d) if b.v_exact_forward is not None else None
+
+    def _online_factor_u(chan: pl.DataFrame) -> pl.LazyFrame:
+        """κ · availability of the channel arc over dt: (_p, _n, _d, _t, value)."""
+        lf = chan.lazy().select("_p", "_source", "_sink", "_n").join(dt_u.lazy().select("_d", "_t"), how="cross")
+        if coef_u is not None:
+            lf = lf.join(coef_u, on=["_p", "_source", "_sink"], how="left")
+        else:
+            lf = lf.with_columns(pl.lit(None, pl.Float64).alias("__coef"))
+        if avail_u is not None:
+            lf = lf.join(avail_u, on=["_p", "_d", "_t"], how="left")
+        else:
+            lf = lf.with_columns(pl.lit(None, pl.Float64).alias("__av"))
+        return lf.select("_p", "_n", "_d", "_t",
+                         (pl.col("__coef").fill_null(1.0) * pl.col("__av").fill_null(1.0)).alias("value"))
+
+    # ─── EQ. ─── connection_reserve_up / connection_reserve_down ─────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # x_in[p,n,d,t] − s_out[p,n,d,t] · x_out[p,n,d,t] + Σ_r v_reserve[p,r,up,n,d,t]
+    #   − M_in · Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
+    #   + M_in · Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]  ≤  C_in[p,n,d,t]   (up)
+    # x_out[p,n,d,t] − x_in[p,n,d,t] / s_out[p,n,d,t] + Σ_r v_reserve[p,r,down,n,d,t] / s_out[p,n,d,t]
+    #   − M_out · Σ v_invest_p[p,d′] + M_out · Σ v_divest_p[p,d′]  ≤  C_out[p,n,d,t]                         (down)
+    #   ∀ connection p (process_source_sink \ process_unit) with (p,r,ud,n,d,t) ∈ prundt, ud = up (down)
+    #   x_in  = flow of p arriving at n:  v_flow[p,m,n,d,t], or v_flow_back[p,n,m,d,t] of a one-variable / DC arc
+    #   x_out = flow of p leaving n (measured where it arrives):  v_flow[p,n,m,d,t], or v_flow_back[p,m,n,d,t]
+    #   s_out = slope[p,d,t] when x_out is v_flow on an arc of process_source_sink_eff, else 1 (power drawn at n per
+    #           unit of x_out)
+    #   C, M  = the channel arc's maxFlow (maxFlow_back) RHS and invest multiplier (b.flow_upper_rhs,
+    #           b.flow_cap_mult: capacity_max_coeff · availability · existing / unitsize and coef · availability)
+    #   a channel p does not have contributes nothing (x = 0, C = 0, M = 0, s_out = 1)
+    # ─── EQ. ─── connection_reserve_{up,down}_online_{linear,integer} ────────
+    #   same LHS without invest terms  ≤  κ · availability · v_online[p,d,t]   (κ, availability of the up row's
+    #   in-channel arc / the down row's out-channel arc)   ∀ rows above with p online and that channel present
+    # ─── EQ. ─── connection_reserve_{up,down}_exact ──────────────────────────
+    #   same LHS − Ū · v_exact_forward[p,d,t]  ≤  0     when that channel is the exact connection's forward arc
+    #   same LHS + Ū · v_exact_forward[p,d,t]  ≤  Ū     when it is the reverse arc
+    #   ∀ rows above with p ∈ process_exact;  Ū = p_flow_upper · capacity_max_coeff · availability of the arc
+    # A connection's reserve at a node is limited by its net position there (owner question Q-c13-A, recommended
+    # rule): upward reserve by the free capacity into n plus the flow out of n it can stop, downward reserve by the
+    # flow into n it can stop plus the free capacity out of n (converted to power at n by the efficiency).  One row
+    # per capacity bound (built, online, exact direction) of the channel whose capacity the reserve uses, so each
+    # row holds one channel's capacity.  A one-way connection gets a floor at its sending node (upward reserve ≤
+    # what it draws there) and its old capacity row at the receiving node; a one-variable connection's rows bound
+    # the reserve by its signed flow (C ∓ f).  Reserve at a node the connection does not link is 0.  maxFlow /
+    # maxFlow_online carry the upward reserve of units only (b.reserve_up_to_sink_units); the profile cap
+    # profile_flow_upper_limit keeps the connection's in-arc term (conservative: it does not count stopping the
+    # out-flow).
+    for ud in ("up", "down"):
+        sel = d.prundt.filter(pl.col("ud") == ud)
+        sel = (sel.with_columns(pl.col("p").cast(pl.Utf8).alias("__p"))
+               .join(conns.rename({"p": "__p"}), on="__p", how="semi").drop("__p"))
+        if sel.height == 0:
+            continue
+        dom = sel.select("p", "n", "d", "t").unique(maintain_order=True)
+        dom_u = dom.with_columns(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("n").cast(pl.Utf8).alias("_n"),
+                                 pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"))
+        ch = _connection_channels(b, dom.select("p", "n").unique())
+        own = "in" if ud == "up" else "out"
+        ch_own = ch[own]
+
+        # s_out[p,n,d,t]: power drawn at n per unit of the out-channel (slope on an efficiency v_flow arc, else 1).
+        s_vals = None
+        if ch["out"] is not None and slope_u is not None:
+            eff_out = ch["out"].filter(pl.col("eff"))
+            if eff_out.height > 0:
+                s_vals = (eff_out.lazy().select("_p", "_n").join(slope_u, on="_p", how="inner")
+                          .select("_p", "_n", "_d", "_t", pl.col("__slope").alias("value")))
+        s_out = _pndt_param(dom_u, s_vals, 1.0)
+        inv_s = Param(("p", "n", "d", "t"), s_out.frame.with_columns(value=1.0 / pl.col("value")))
+
+        def _channel_term(which: str, factor: "Param | None"):
+            """Σ of the ``which`` ("in" / "out") channel's flow variable at (p, n, d, t), × factor."""
+            chan = ch[which]
+            if chan is None:
+                return None
+            terms = []
+            for kind, var in (("flow", b.v_flow), ("back", b.v_flow_back)):
+                part = chan.filter(pl.col("kind") == kind)
+                if part.height == 0 or var is None:
+                    continue
+                # The node n of the channel: a v_flow arc delivers into its sink and draws from its source; the
+                # reverse flow v_flow_back delivers into the arc's source and draws from its sink.
+                side = {("in", "flow"): "sink", ("in", "back"): "source",
+                        ("out", "flow"): "source", ("out", "back"): "sink"}[(which, kind)]
+                frame = part.select(*keys).pipe(rename_to_axis, {side: "n"})
+                view = _flow_node_view(var, side)
+                expr = view if factor is None else view * factor
+                terms.append(Sum(Where(expr, frame), over=("sink",) if side == "source" else ("source",)))
+            if not terms:
+                return None
+            out = terms[0]
+            for t in terms[1:]:
+                out = out + t
+            return out
+
+        reserve = Sum(Where(b.v_reserve, sel.select("p", "r", "ud", "n").unique()), over=("r", "ud"))
+        lhs: dict = {}
+        if ud == "up":
+            x_in = _channel_term("in", None)
+            x_out = _channel_term("out", s_out)
+            if x_in is not None:
+                lhs["flow_in"] = x_in
+            if x_out is not None:
+                lhs["flow_out_neg"] = -x_out
+            lhs["reserve"] = reserve
+        else:
+            x_out = _channel_term("out", None)
+            x_in = _channel_term("in", inv_s)
+            if x_out is not None:
+                lhs["flow_out"] = x_out
+            if x_in is not None:
+                lhs["flow_in_neg"] = -x_in
+            lhs["reserve"] = reserve * inv_s
+
+        # Built capacity of the own channel: maxFlow's (maxFlow_back's) RHS and invest / divest terms.
+        rhs_vals = _channel_values(ch_own, rhs_u) if ch_own is not None else None
+        rhs = _pndt_param(dom_u, rhs_vals, 0.0)
+        built = dict(lhs)
+        if ch_own is not None and invest_procs:
+            inv_chan = ch_own.filter(pl.col("_p").is_in(list(invest_procs)))
+            if inv_chan.height > 0:
+                mult_vals = (_channel_values(inv_chan, mult_u) if mult_u is not None else None)
+                inv_dom = dom_u.join(inv_chan.select("_p", "_n").unique(), on=["_p", "_n"], how="semi")
+                mult = _pndt_param(inv_dom, mult_vals, 1.0)
+                if b.invest_in_dispatch_p is not None:
+                    built["invest_neg"] = -(b.invest_in_dispatch_p * mult)
+                if b.divest_in_dispatch_p is not None:
+                    built["divest"] = b.divest_in_dispatch_p * mult
+        m.add_cstr(f"connection_reserve_{ud}", over=dom, sense="<=", lhs_terms=built, rhs_terms={"cap": rhs})
+
+        if ch_own is None:
+            continue
+        own_dom = dom_u.join(ch_own.select("_p", "_n").unique(), on=["_p", "_n"], how="semi")
+        factor = _pndt_param(own_dom, _online_factor_u(ch_own), 1.0)
+        # Online capacity of the own channel.
+        for kind, _p_idx, online_set, v_online, _v_su, _v_sd in _online.uc_classes(b) if b.has_online else ():
+            on_p = online_set.select(pl.col("p").cast(pl.Utf8).alias("_p")).unique()
+            on_dom = own_dom.join(on_p, on="_p", how="semi")
+            if on_dom.height == 0:
+                continue
+            m.add_cstr(f"connection_reserve_{ud}_online_{kind}", over=on_dom.select("p", "n", "d", "t"), sense="<=",
+                       lhs_terms=dict(lhs), rhs_terms={"online": v_online * factor})
+        # Direction switch of an exact connection: the own channel is its forward or its reverse arc.
+        if exact is not None:
+            ex_u = (_utf8_keys(exact.lazy(), keys).select("_p", "_source", "_sink", "forward").collect())
+            ex_chan = ch_own.join(ex_u, on=["_p", "_source", "_sink"], how="inner")
+            if ex_chan.height > 0:
+                u_arc = _exact.exact_bound(d, ex_chan.select(*keys))
+                u_vals = _channel_values(ex_chan, _arc_dt_u(u_arc.frame, d.dt))
+                ex_dom = own_dom.join(ex_chan.select("_p", "_n").unique(), on=["_p", "_n"], how="semi")
+                fwd = ex_chan.filter(pl.col("forward")).select("_p", "_n").unique().with_columns(
+                    pl.lit(True).alias("__fwd"))
+                # forward channel: LHS − Ū·y ≤ 0;  reverse channel: LHS + Ū·y ≤ Ū
+                sign_u = (u_vals.join(fwd.lazy(), on=["_p", "_n"], how="left")
+                          .with_columns(pl.col("__fwd").fill_null(False)))
+                coef = _pndt_param(ex_dom, sign_u.select(
+                    "_p", "_n", "_d", "_t",
+                    pl.when(pl.col("__fwd")).then(-pl.col("value")).otherwise(pl.col("value")).alias("value")), 0.0)
+                cap = _pndt_param(ex_dom, sign_u.select(
+                    "_p", "_n", "_d", "_t",
+                    pl.when(pl.col("__fwd")).then(0.0).otherwise(pl.col("value")).alias("value")), 0.0)
+                ex_lhs = dict(lhs)
+                ex_lhs["switch"] = b.v_exact_forward * coef
+                m.add_cstr(f"connection_reserve_{ud}_exact", over=ex_dom.select("p", "n", "d", "t"), sense="<=",
+                           lhs_terms=ex_lhs, rhs_terms={"cap": cap})
 
 
 def _input_capacity_factor(d, idx: pl.DataFrame) -> "Param | None":

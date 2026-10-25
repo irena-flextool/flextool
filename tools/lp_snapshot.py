@@ -1053,6 +1053,23 @@ def _patch_conn_online_stoch(data: dict) -> dict:
                     values=vals)
 
 
+def _patch_conn_reserve_exact(data: dict) -> dict:
+    """exact ll (forward lw -> le) with up and down reserve at lw: the direction-switch reserve rows."""
+    e1, v1 = _ll_reserve("ru", "up", "timeseries_only", [], reservation=50.0)
+    e2, v2 = _ll_reserve("rd", "down", "timeseries_only", [], reservation=50.0)
+    return _overlay(data, name="conn_reserve_exact", base=_LL, values=v1 + v2 + [
+        ["connection", "ll", "transfer_method", "exact"]], entities=_GW + e1 + e2)
+
+
+def _patch_conn_online_1var_mip(data: dict) -> dict:
+    """One-variable west_east with binary online variables and up / down reserve at west."""
+    eu, vu = _reserve("ru", "up", "electricity", [("connection", "west_east", "west")], reservation=100.0)
+    ed, vd = _reserve("rd", "down", "electricity", [("connection", "west_east", "west")], reservation=100.0)
+    return _overlay(data, name="conn_online_1var_mip", base=_NET, entities=eu + ed,
+                    values=vu + vd + _conn_startup("west_east", "binary") + [
+                        ["connection", "west_east", "transfer_method", "no_losses_no_variable_cost"]])
+
+
 def _group_override(data: dict, name: str, method: str) -> dict:
     return _overlay(data, name=name, base=_NET, values=[["group", "gwe", "transfer_method", method]],
                     entities=[["group", "gwe"], ["group__node", ["gwe", "west"]],
@@ -1141,6 +1158,8 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "conn_group_override_exact": _patch_conn_group_override_exact,
     "online_bin_lin": _patch_online_bin_lin,
     "online_mintime_lin": _patch_online_mintime_lin,
+    "conn_reserve_exact": _patch_conn_reserve_exact,
+    "conn_online_1var_mip": _patch_conn_online_1var_mip,
 }
 
 
@@ -1296,6 +1315,8 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("conn_group_override_exact", _T),
     ("online_bin_lin", _T),
     ("online_mintime_lin", _T),
+    ("conn_reserve_exact", _T),
+    ("conn_online_1var_mip", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (
@@ -1792,6 +1813,9 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
     "model/_reserve.py": (
         "reserveBalance_up_n_1_eq", "reserveBalance_down_n_1_eq",
         "reserve_process_upward", "reserve_process_downward",
+        # f"connection_reserve_{ud}[_online_{kind}|_exact]"
+        *(f"connection_reserve_{ud}{sfx}" for ud in ("up", "down")
+          for sfx in ("", "_online_linear", "_online_integer", "_exact")),
     ),
     "model/_cumulative_invest.py": (
         # every family passes its names from a loop table

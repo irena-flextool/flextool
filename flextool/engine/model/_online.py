@@ -195,7 +195,8 @@ def add_constraints(b: "_Build") -> None:
         #   ramp limit.  t⁺ = the step whose ramp predecessor (dt_ramp_link) is (d,t) in the same period.
         # A unit's flow and the reserve that raises it — upward reserve at the arc's sink and
         # "consume more" downward reserve at its source — are limited by the units online
-        # (spinning reserve: an offline unit holds neither).  The reserve terms are maxFlow's.
+        # (spinning reserve: an offline unit holds neither).  The reserve terms are maxFlow's (units only; an online
+        # connection's reserve is in connection_reserve_*_online_*).
         # Units starting in step t reach at most SU of their capacity on average over the step (synchronised at
         # min load, then ramping as fast as they may: half a step's ramp on average; owner question Q-c14a-A),
         # units shutting down after step t at most SD in t.  Two rows, so capacity online for a single step gets
@@ -215,8 +216,8 @@ def add_constraints(b: "_Build") -> None:
             if d.p_arc_max_cap_coef is not None:
                 online_rhs = online_rhs * _coef_factor(pss_online, d.p_arc_max_cap_coef, ["p", "source", "sink"])
             online_lhs: dict = {"flow": v_flow}
-            if b.reserve_up_to_sink is not None:
-                online_lhs["reserve_up"] = b.reserve_up_to_sink
+            if b.reserve_up_to_sink_units is not None:
+                online_lhs["reserve_up"] = b.reserve_up_to_sink_units
             online_lhs.update(b.reserve_down_at_source)
             online_rhs_terms: dict = {"online": online_rhs}
             shutdown_rows = None

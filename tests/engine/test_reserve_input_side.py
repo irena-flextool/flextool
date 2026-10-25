@@ -7,8 +7,8 @@ capacity rows (``maxFlow``, ``maxFlow_online_*``, the new ``maxInputFlow_online_
 arc, ``profile_flow_upper_limit``), converted to the arc's flow (factor 1 where v_flow is the input, 1/slope on a
 direct input→output arc).  ``reserve_process_*`` at an input node caps the reserve at ``max_share`` × the input
 capacity (``_reserve._input_capacity_factor``).  Output-side ``max_share`` stays ``max_share`` × built capacity
-(about how far the asset can be trusted).  Connections are not coupled yet (planned with the rewrite of the
-connection capacity rows).
+(about how far the asset can be trusted).  Connections are limited by their own rows
+(``connection_reserve_*``, tests/engine/test_connection_reserve.py).
 
 Fixtures: ``tests.json`` (``coal`` 500 MW at west, ``coal_chp`` indirect coal_market → west + heat, ``heat``
 node) plus ``e_boiler``: west → heat, efficiency 0.5, 100 MW; heat −300 MW with ``penalty_up`` 1000, west
@@ -236,18 +236,6 @@ def test_output_side_max_share_unchanged(tmp_path_factory) -> None:
     assert rhs and all(v == pytest.approx(0.2 * existing) for v in rhs.values())
     for row, terms in _row_terms(pb, "reserve_process_upward", f"{PLANT},ru,up,west,").items():
         assert terms == {next(iter(terms)): 1.0} and next(iter(terms)).startswith(f"v_reserve[{PLANT},"), row
-
-
-def test_connection_source_reserve_unchanged(tmp_path_factory) -> None:
-    """Connections are not coupled yet: west_east offering down reserve at its source west gets no reserve term in its
-    maxFlow rows (connections are coupled in the connection work, not here)."""
-    ents, vals = _reserve("rd", "down", "electricity", [("west_east", "west", 1.0)], 50.0, cls="connection")
-    step = solve(tmp_path_factory, alt="in_conn", base_chain=["init", "west", "coal", "network"], entities=ents,
-                 values=vals)
-    rows = _row_terms(build(step.flex_data), "maxFlow", "west_east,west,east,")
-    assert rows
-    for row, terms in rows.items():
-        assert not [c for c in terms if c.startswith("v_reserve[")], row
 
 
 def test_profile_lower_limit_subtracts_source_up_reserve(tmp_path_factory) -> None:
