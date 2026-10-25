@@ -613,3 +613,21 @@ loop now converges in 2 iterations (was 4) to 12 217 878 473.89 (gap 3.1e-7).  T
 fixture are re-pinned to the same ground truth (`test_benders_phase0/2/3a`: M = 1.2217878e10; monolith invests
 pipe_AB 15.7 MW, pipe_BC 0; `test_benders_existing_capacity_trade`: wind_C is not built; the RP fixture
 `lh2_three_region_rp_invest`: M_rp 7 577 959 045.2 → 9 026 550 085.3 = the snapshot's 7 577.959 → 9 026.550).
+
+## 2026-10-25 — `fullYear_roll/summary_solve.csv` (cycle c15e1, item 119: cyclic storage takes no roll carry)
+
+**Context.** In the second and later rolls of a rolling solve the first-step balance row of a
+`bind_within_timeblock` / `bind_within_period` / `bind_within_solve` storage held both the cyclic state change
+(`v_state[wrap] − v_state[first]`) and the roll carry (`− v_state[first] + roll_continue_state`): −2·state_unitsize on
+the first state, i.e. the start was forced halfway between the wrapped and the carried level.  how_to.md (rolling
+notes) documents cycle-only behaviour, so cyclic nodes no longer take the carry.
+
+`fullYear_roll` (battery `bind_within_timeblock`, rolling 8 h / 4 h over 72 h × 4 periods): total cost (full horizon
+and realized) 6 047.34416824 → 5 979.70680794 M CUR (−1.12 %); 27 of the 72 roll objectives change (e.g. roll 4
+594.174 → 591.850, roll 5 488.235 → 483.173) and, observed in this run, none rises — the new row is not a pure
+relaxation of the old one (different feasible sets), so a lower cost is the observed result, not a guarantee.  The
+"Created" (penalty energy) lines of west fall accordingly (p2020 2 764.7 → 2 740.8, p2025–p2035 2 760.2 → 2 727).
+LP snapshot: only the continuation rolls of `coarse_roll`, `coarse_roll_jump12`, `conn_online_roll`, `ramp_rolling`
+change (the battery's first-step row: −2·su → −su on `v_state[first]`, the carry leaves the bound).
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate fullYear_roll`.

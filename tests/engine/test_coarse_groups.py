@@ -314,11 +314,12 @@ def _roll(jump: float) -> list:
 
 
 def test_coarse_rolling(tmp_path_factory) -> None:
-    """battery in a 24-h group, rolling 48 h / 24 h over 72 h: every roll has coarse rows, and the first coarse row
-    of rolls 2 and 3 hands over the previous roll's state (its bound carries roll_continue_state).  Before:
-    rolls never built the coarse frames (the battery was balanced hourly)."""
-    steps = list(_run(tmp_path_factory, "c_roll", _roll(24.0), BATTERY + ["fullYear", "dispatch_fullYear_roll"],
-                      DAILY).values())
+    """battery (bind_forward_only) in a 24-h group, rolling 48 h / 24 h over 72 h: every roll has coarse rows, and
+    the first coarse row of rolls 2 and 3 hands over the previous roll's state (its bound carries
+    roll_continue_state).  Before: rolls never built the coarse frames (the battery was balanced hourly).  A cyclic
+    battery takes no carry (#119, tests/engine/test_rolling_cyclic_storage.py)."""
+    steps = list(_run(tmp_path_factory, "c_roll", _roll(24.0),
+                      BATTERY + ["bind_battery_forward", "fullYear", "dispatch_fullYear_roll"], DAILY).values())
     assert len(steps) == 3
     for i, step in enumerate(steps):
         fd = step.flex_data
@@ -336,7 +337,12 @@ def test_coarse_rolling(tmp_path_factory) -> None:
         assert lo == pytest.approx(-float(inflow["value"].sum()) - carried)
         terms = row_terms(pb, "nodeBalanceCoarse_eq", f"battery,p2020,{first}")[
             f"nodeBalanceCoarse_eq[battery,p2020,{first}]"]
-        assert terms[f"v_state[battery,p2020,{first}]"] < -su * 0.99
+        # The state terms telescope to −state_unitsize (end of the coarse step; the start is the carry in the
+        # bound) plus the self-discharge, and there is no wrap: only states of the coarse step itself.
+        states = {c: v for c, v in terms.items() if c.startswith("v_state[")}
+        assert sum(states.values()) < -su * 0.99
+        in_step = set(utf8(fd.node_coarse_step).filter((pl.col("n") == "battery") & (pl.col("b_first") == first))["t"])
+        assert {c.rstrip("]").split(",")[-1] for c in states} <= in_step
         prev = steps[i - 1]
         last_realized = utf8(prev.flex_data.realized_dispatch)["step"][-1]
         state = utf8(prev.solution.value("v_state")).filter((pl.col("n") == "battery")

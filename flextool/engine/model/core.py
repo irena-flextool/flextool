@@ -1139,7 +1139,7 @@ def _eq_node_balance(b: _Build) -> None:
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
     #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n]
     #   − v_state[n,d,t]·self_discharge[n]·state_unitsize[n]
-    #   + first-step start terms
+    #   + start terms of open-start nodes (fix_start in the first solve, the roll carry in continuation solves)
     #   = −inflow[n,d,t]
     #   ∀ (n,d,t) ∈ nodeBalance_dt, n ∉ nodeStateBlock ∪ nodeCoarse;   Δt = step_duration[d,t]
     #   slope[p,d,t] = (1/eta − min_load/eta_min) / (1 − min_load)
@@ -1212,7 +1212,7 @@ def _eq_node_balance_coarse(b: _Build) -> None:
     #   + back-flow terms of two-way one-variable and DC arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
     #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n] − v_state[n,d,t]·self_discharge[n]·state_unitsize[n]
-    #   + first-step start terms + roll-continuation terms ]
+    #   + start terms of open-start nodes ]
     #   = − Σ_{t ∈ b} inflow[n,d,t]
     #   ∀ n ∈ nodeCoarse, (n,d,b) ∈ node_coarse_step;   t ∈ b: (n,d,b,t) ∈ node_coarse_step;   Δt = step_duration[d,t]
     #   t⁻, start and roll terms per storage_binding_method exactly as in nodeBalance_eq
@@ -1339,8 +1339,32 @@ def _state_lag_cross_period(v_state: Var, lag_frame: pl.DataFrame):
     return Sum(Where(v_state_back, lag), over=("d_back", "t_back"))
 
 
+def _node_union(frames) -> "pl.DataFrame | None":
+    """The nodes (n) of the frames that have rows, or None."""
+    parts = [f.select("n") for f in frames if _has_rows(f)]
+    if not parts:
+        return None
+    return pl.concat(parts, how="vertical").unique(maintain_order=True)
+
+
+def _cyclic_nodes(b: _Build) -> "pl.DataFrame | None":
+    """Storage nodes whose chain closes on itself within the solve (n): bind_within_timeblock,
+    bind_within_period, bind_within_solve and bind_intraperiod_blocks (a rolling solve with a
+    bind_intraperiod_blocks node stops with an error).  Their first step wraps to a later step of the solve, so
+    they take neither a start term nor the roll carry."""
+    d = b.d
+    return _node_union((d.storage_bind_within_timeblock, d.storage_bind_within_period,
+                        d.storage_bind_within_solve, d.nodeStateBlock))
+
+
+def _open_start_nodes(b: _Build) -> "pl.DataFrame | None":
+    """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only.  Their first step
+    starts from the fix_start state in the first solve and from the roll carry in a continuation solve."""
+    return _node_union((b.d.storage_bind_forward_only,))
+
+
 def _fix_start_terms(b: _Build) -> dict:
-    """nodeBalance_eq start terms of bind_forward_only nodes with fix_start.
+    """nodeBalance_eq start terms of open-start nodes (_open_start_nodes) with fix_start.
 
     At the first step of the first solve, where the state change is
     omitted:  − v_state·su + state_start·(existing + Σ v_invest_n·su − Σ v_divest_n·su),
@@ -1348,15 +1372,16 @@ def _fix_start_terms(b: _Build) -> dict:
     nodes are pinned by storage_state_start_binding.
     """
     d = b.d
+    open_start = _open_start_nodes(b)
     if not (b.is_solve_first
-            and _has_rows(d.storage_bind_forward_only)
+            and open_start is not None
             and _has_rows(d.storage_fix_start)
             and d.p_state_start is not None
             and d.p_state_existing_capacity is not None
             and d.p_state_unitsize is not None
             and d.nodeState_first_dt is not None):
         return {}
-    nodes = d.storage_bind_forward_only.join(d.storage_fix_start, on="n", how="inner")
+    nodes = open_start.join(d.storage_fix_start, on="n", how="inner")
     if nodes.height == 0:
         return {}
     first = d.nodeState_first_dt.join(nodes, on="n", how="inner")
@@ -1391,12 +1416,13 @@ def _fix_start_terms(b: _Build) -> dict:
 
 
 def _roll_continue_terms(b: _Build) -> dict:
-    """nodeBalance_eq start terms of continuation solves in a chain.
-
-    At the first step, for every storage node:  − v_state·su + roll_continue_state,
-    which hands over the final state of the previous solve.  It adds to the
-    node's own state-change term (su = state_unitsize).
-    """
+    """nodeBalance_eq start terms of continuation solves in a chain (the carry of the previous solve)."""
+    # ─── roll-continuation terms (in nodeBalance_eq) ─────────────────────────
+    #   − v_state[n,d,t]·state_unitsize[n] + roll_continue_state[n]
+    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∉ cyclic nodes, continuation solves only
+    # The state handed over by the previous roll starts the roll's chain (roll_continue_state is in MWh).  A
+    # cyclic node (_cyclic_nodes) cycles within the roll and takes no carry (how_to.md rolling notes).  The term
+    # adds to the node's own state-change term.
     d = b.d
     if (b.is_solve_first
             or d.p_state_unitsize is None
@@ -1404,6 +1430,9 @@ def _roll_continue_terms(b: _Build) -> dict:
             or d.p_roll_continue_state is None):
         return {}
     first = d.nodeState_first_dt
+    cyclic = _cyclic_nodes(b)
+    if cyclic is not None:
+        first = first.join(cyclic, on="n", how="anti")
     if first.height == 0:
         return {}
     terms: dict = {"roll_continue_state": -(Where(b.v_state, first)

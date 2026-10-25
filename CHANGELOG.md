@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Cyclic storage in rolling solves.** In the second and later rolls of a
+  rolling solve, the first step of a *bind_within_timeblock*,
+  *bind_within_period* or *bind_within_solve* storage node mixed the cycle with
+  the storage level carried over from the previous roll (the start state was
+  forced halfway between the two). Each roll now cycles on its own, as
+  documented, and the carried level is not used for these methods. Results of
+  rolling solves with these methods change (the `fullYear_roll` test model:
+  total cost −1.1 %).
+
 - **Blended-weights storage in solves without representative periods.** A
   solve without representative periods treats a `*_blended_weights` node as
   the plain method (e.g. *bind_within_solve_blended_weights* as
