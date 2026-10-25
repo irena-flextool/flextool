@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **Blended-weights storage in solves without representative periods.** A
+  solve without representative periods treats a `*_blended_weights` node as
+  the plain method (e.g. *bind_within_solve_blended_weights* as
+  *bind_within_solve*). When another node used the plain method in the
+  database, the converted nodes lost their storage chain (their energy could
+  appear or vanish freely). They now keep it.
+
 - **`bind_within_period` storage works.** A storage node with
   `storage_binding_method` *bind_within_period* had no state-change term at
   all (its energy could appear or vanish freely) and no error was raised; the

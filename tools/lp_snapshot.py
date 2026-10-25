@@ -1071,6 +1071,19 @@ def _patch_bind_within_period_2p(data: dict) -> dict:
                     values=[["node", "battery", "storage_binding_method", "bind_within_period"]])
 
 
+def _patch_rp_downgrade_within_solve(data: dict) -> dict:
+    """lh2_three_region_rp_invest on the plain week168 timeset (no representative periods): the lh2 nodes'
+    bind_within_solve_blended_weights is downgraded to bind_within_solve next to the plain bind_within_solve
+    batteries; the downgraded nodes keep their state chain (item 127)."""
+    sfx = "__lh2_three_region_rp_invest"
+    return _overlay(data, name="rp_downgrade_within_solve", base="lh2_three_region_rp_invest", values=[
+        ["solve", "lh2_rp_invest" + sfx, "period_timeset",
+         {"type": "map", "index_type": "str", "index_name": "period", "rank": 1,
+          "data": [["y2030", "week168"], ["y2040", "week168"]]}]]
+        + [["node", n, "storage_binding_method", "bind_within_solve_blended_weights"]
+           for n in ("lh2_A", "lh2_B", "lh2_C")])
+
+
 def _patch_coarse_stoch(data: dict) -> dict:
     """stochastic 2-day dispatch with hydro_reservoir in a 24-h group: coarse rows in every period incl.
     the forecast branches."""
@@ -1387,6 +1400,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "coarse_nested_fix_price": _patch_coarse_nested_fix_price,
     "coarse_stoch": _patch_coarse_stoch,
     "bind_within_period_2p": _patch_bind_within_period_2p,
+    "rp_downgrade_within_solve": _patch_rp_downgrade_within_solve,
 }
 
 
@@ -1563,6 +1577,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("coarse_nested_fix_price", _T),
     ("coarse_stoch", _F + "stochastics.json"),
     ("bind_within_period_2p", _T),
+    ("rp_downgrade_within_solve", _F + "lh2_three_region_rp_invest.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (
