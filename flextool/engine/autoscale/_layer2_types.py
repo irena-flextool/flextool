@@ -125,6 +125,9 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     "v_shutdown_linear": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
     # flextool/engine/model/_online.py add_variables
     "v_online_integer": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    # flextool/engine/model/_exact.py add_variables: the direction switch of an exact connection (binary, a
+    # direction, not a capacity: no unitsize multiplier).
+    "v_exact_forward": VarFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/_online.py add_variables
     "v_startup_integer": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
     # flextool/engine/model/_online.py add_variables
@@ -248,6 +251,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # Reverse-flow capacity cap on v_flow_back for method_2way_1var_off
     # arcs (DC + non-DC).  flextool/engine/model/core.py (maxFlow_back).
     "maxFlow_back": CstrFamily(QuantityType.DIMENSIONLESS),
+    # Direction switch of exact connections, flextool/engine/model/_exact.py.  Explicit: the "maxFlow" prefix
+    # would otherwise resolve them silently.
+    "maxFlow_exact_forward": CstrFamily(QuantityType.DIMENSIONLESS),
+    "maxFlow_exact_reverse": CstrFamily(QuantityType.DIMENSIONLESS),
     # Indirect-unit capacity on the SUM of output flows (+ its neg-cap
     # ``≥`` twin).  flextool/engine/model/core.py (_eq_max_output_sum).
     "maxOutputSum": CstrFamily(QuantityType.DIMENSIONLESS),

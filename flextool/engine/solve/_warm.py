@@ -105,7 +105,7 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "process_source_sink_ramp_limit_source_up",
     "process_source_sink_ramp_limit_source_down",
     # Online / UC.
-    "process_online", "process_online_linear", "process_online_integer",
+    "process_online", "process_online_linear", "process_online_integer", "process_exact",
     "process_minload", "process_min_load_eff",
     "p_online_dt", "pdt_online_linear", "pdt_online_integer",
     "pdt_uptime_set", "pdt_downtime_set",

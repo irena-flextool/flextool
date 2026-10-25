@@ -96,7 +96,7 @@ COVERAGE_SOURCES = (
     "model/_cumulative_invest.py", "model/_delay.py",
     "model/_commodity_ladder.py", "model/_dc_power_flow.py",
     "model/_online.py", "model/_unit_floors.py",
-    "model/_non_anticipativity.py",
+    "model/_non_anticipativity.py", "model/_exact.py",
 )
 
 

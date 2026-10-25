@@ -25,6 +25,7 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
   vq_reserve[r,ud,g,d,t]               reserve shortfall, fraction of the requirement scale   [_reserve]
   v_reserve_total[r,ud,g,d,t]          total reserve of a group with n-1 rows, MW             [_reserve]
   v_flow_back[p,source,sink,d,t]       reverse flow of 2-way 1-var and DC arcs; × unitsize = MW
+  v_exact_forward[p,d,t]               exact connection set to its forward direction, binary   [_exact]
   v_angle[n,d,t]                       voltage angle, rad in [−π, π]                          [_dc_power_flow]
   v_trade[c,n,d,i]                     commodity bought in tier i; × commodity unitsize = MWh [_commodity_ladder]
   vq_capacity_margin[g,d], vq_inertia[g,d,t], vq_non_synchronous[g,d,t]
@@ -39,6 +40,7 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Units               max{Online,Startup,Shutdown}, online__{startup,shutdown}, maxFlow_online[_shutdown],
                       maxFlow_back_online, maxOutputSum_online, maxInputFlow_online[_shutdown],
                       minimum_{uptime,downtime}, online_fix_eq [_online];
+                      maxFlow_exact_{forward,reverse} (exact connections) [_exact];
                       minFlow_{minload,output_floor,reserve,reserve_arc} [_unit_floors];
                       ramp_{sink,source}_{up,down}_constraint
   Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n]
@@ -69,6 +71,7 @@ from flextool.engine.model import _commodity_ladder
 from flextool.engine.model import _cumulative_invest
 from flextool.engine.model import _dc_power_flow
 from flextool.engine.model import _delay
+from flextool.engine.model import _exact
 from flextool.engine.model import _group_slack
 from flextool.engine.model import _non_anticipativity
 from flextool.engine.model import _online
@@ -288,6 +291,8 @@ class _Build:
     v_invest_n: Var | None = None
     v_divest_n: Var | None = None
     v_flow_back: Var | None = None
+    v_exact_forward: Var | None = None
+    exact_arcs: pl.DataFrame | None = None       # (p, source, sink, forward) of the exact connections
     v_reserve: Var | None = None
     vq_reserve: Var | None = None
     v_reserve_total: Var | None = None
@@ -345,6 +350,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_max_output_sum,
         _dc_power_flow.add_constraints,
         _online.add_constraints,         # incl. online_fix_eq
+        _exact.add_constraints,
         _unit_floors.add_constraints,
         _eq_ramp,
         _eq_invest_max_units,
@@ -722,8 +728,9 @@ def _declare_variables(b: _Build) -> None:
         if back_idx.height > 0:
             b.v_flow_back = m.add_var("v_flow_back", ("p", "source", "sink", "d", "t"), back_idx, lower=0.0)
 
-    # DC power-flow angles (v_angle) and commodity-ladder trades (v_trade):
-    # declared by their feature modules.
+    # Direction switch of exact connections (v_exact_forward), DC power-flow angles (v_angle) and
+    # commodity-ladder trades (v_trade): declared by their feature modules.
+    _exact.add_variables(b)
     _dc_power_flow.add_variables(b)
     _commodity_ladder.add_variables(b)
 

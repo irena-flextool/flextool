@@ -176,6 +176,7 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
     "process_online_integer": ("solve_data", "process_online_integer.csv",
                                 {"p": "process"}),
     "process_minload": ("solve_data", "process_minload.csv", {"p": "process"}),
+    "process_exact": ("solve_data", "process_exact.csv", {"p": "process"}),
     # ─── Storage ──────────────────────────────────────────────────────
     "nodeState": ("solve_data", "nodeState.csv", {"n": "node"}),
     "nodeStateBlock": ("solve_data", "nodeStateBlock.csv", {"n": "node"}),

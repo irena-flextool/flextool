@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **`exact` connections flow in one direction at a time.** The `exact`
+  transfer method now has a direction switch (one binary variable per
+  connection and time step), as documented. Before it only added an online
+  integer that did not stop simultaneous flow in both directions, so a lossy
+  `exact` connection could still burn a surplus through its losses, and an
+  invested `exact` connection could lose capacity to the unit count.
+
 - **Online connections.** A connection's `startup_method` works again, for
   one-way and two-way connections: the connection gets online capacity that
   limits its flow in both directions, `startup_cost` is charged, and new

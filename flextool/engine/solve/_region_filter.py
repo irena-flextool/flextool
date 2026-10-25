@@ -1050,6 +1050,7 @@ def _build_region_data(
             _is_in_keep("n", keep_nodes)
         )
     new.process_unit = _filter_frame(src.process_unit, "p", keep_procs)
+    new.process_exact = _filter_frame(getattr(src, "process_exact", None), "p", keep_procs)
 
     # ---- Master-hosted mode: scrub master entities from the frames the
     # splitter otherwise carries through whole (invest/annuity/cost,

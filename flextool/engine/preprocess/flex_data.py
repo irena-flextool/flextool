@@ -658,6 +658,9 @@ class FlexData:
     process_online: pl.DataFrame | None = None              # set: (p,)
     process_online_linear: pl.DataFrame | None = None        # set: (p,)
     process_online_integer: pl.DataFrame | None = None       # set: (p,)
+    # Connections with the ``exact`` transfer method (internal method_2way_2var_MIP_exclude, override-aware):
+    # their direction switch v_exact_forward (model/_exact.py).
+    process_exact: pl.DataFrame | None = None                 # set: (p,)
     process_minload: pl.DataFrame | None = None              # set: (p,)
     process_min_load_eff: pl.DataFrame | None = None  # (p,) where ct_method=min_load_efficiency
     p_online_dt: pl.DataFrame | None = None                  # set: (p, d, t) — UC var domain
@@ -2397,6 +2400,24 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         dt_ramp_carry = dt_ramp_carry,
         p_roll_continue_flow = p_roll_continue_flow,
     )
+
+
+def _read_process_exact(inp: Path, sd: Path, *, provider: "object | None" = None) -> "pl.DataFrame | None":
+    """``process_exact`` (p,): the processes whose internal method is ``method_2way_2var_MIP_exclude`` (the
+    ``exact`` transfer method, group overrides applied) in ``input/process_method``; a CSV dump's
+    ``solve_data/process_exact.csv`` wins.  None when there is none."""
+    path = sd / "process_exact.csv"
+    if _provider_has(provider, "solve_data/process_exact", path):
+        df = _provider_read(provider, "solve_data/process_exact", path).pipe(rename_to_axis, {"process": "p"})
+        return df.select("p") if df.height > 0 else None
+    path = inp / "process_method.csv"
+    if not _provider_has(provider, "input/process_method", path):
+        return None
+    pm = _provider_read(provider, "input/process_method", path)
+    ex = (pm.filter(pl.col("method").cast(pl.Utf8) == "method_2way_2var_MIP_exclude")
+          .select(pl.col("process").cast(pl.Utf8)).unique(maintain_order=True)
+          .pipe(rename_to_axis, {"process": "p"}))
+    return ex if ex.height > 0 else None
 
 
 def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
@@ -4734,6 +4755,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         online = _load_online(inp, sd, dt, proc["pss"], source=db_reader,
                               provider=provider)
+        online["process_exact"] = _read_process_exact(inp, sd, provider=provider)
         ramp = _load_ramp(inp, sd, proc["pss"], dt=dt, provider=provider)
         invest = _load_invest(sd, dt, inp, proc["pss"], db_reader=db_reader,
                               provider=provider)
