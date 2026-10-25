@@ -181,6 +181,34 @@ def emit_step_jump(
                    derive_step_jump(step_lengths))
 
 
+def derive_roll_first_step_link(
+    active_time_list: dict,
+    complete_step_lengths: list[tuple[str, ...]],
+) -> pl.DataFrame:
+    """The complete solve's ``step_previous`` rows (7 Utf8 columns) of the first step of each period of
+    ``active_time_list`` (period -> steps with ``.timestep``), in period order.  Periods (or first steps)
+    that the complete solve does not have (stochastic branch periods) have no row."""
+    by_key = {(row[0], row[1]): row for row in complete_step_lengths}
+    rows = []
+    for period, steps in active_time_list.items():
+        if not steps:
+            continue
+        row = by_key.get((period, steps[0].timestep))
+        if row is not None:
+            rows.append(row)
+    return _to_utf8_frame(_STEP_JUMP_HEADERS, rows)
+
+
+def emit_roll_first_step_link(
+    active_time_list: dict,
+    complete_step_lengths: list[tuple[str, ...]],
+    *, provider,
+) -> None:
+    """Emit ``roll_first_step_link`` (the adjacency gate of the ramp carry-in) to the Provider."""
+    _emit(provider, "solve_data/roll_first_step_link.csv",
+          derive_roll_first_step_link(active_time_list, complete_step_lengths))
+
+
 def derive_period_block_time(
     period_block_time: list[tuple],
 ) -> pl.DataFrame:

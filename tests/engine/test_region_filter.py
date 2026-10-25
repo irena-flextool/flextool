@@ -315,3 +315,18 @@ class TestEdgeCases:
         # cross-region — so pipe_BC stays in B's frames intact.
         assert ("pipe_BC", "export") not in flat_pipes
         assert ("pipe_BC", "import") not in flat_pipes
+
+
+def test_region_ramp_sets_keep_only_region_arcs(lh2_data) -> None:
+    """Ramp-limit sets of other regions' units do not reach a region's FlexData (the region LP would get
+    ramp rows for arcs without v_flow)."""
+    import copy
+
+    pss = lh2_data.process_source_sink
+    coal = pss.filter(pl.col("p").cast(pl.Utf8).is_in(["coal_A", "coal_B"]))
+    assert coal["p"].cast(pl.Utf8).unique().sort().to_list() == ["coal_A", "coal_B"]
+    data = copy.copy(lh2_data)   # keeps the axis enums attached to the loaded FlexData
+    data.process_source_sink_ramp_limit_sink_up = coal.select("p", "source", "sink")
+    sA = split(data, regions=["region_A", "region_B", "region_C"])[0]
+    kept = sA.data.process_source_sink_ramp_limit_sink_up["p"].cast(pl.Utf8).unique().to_list()
+    assert kept == ["coal_A"]

@@ -731,6 +731,133 @@ def _patch_rp_multi_base_solve(data: dict) -> dict:
         "lh2_C": "bind_within_solve_blended_weights"})
 
 
+_RAMP_COAL = [
+    ["unit__outputNode", ["coal_plant", "west"], "ramp_method", "ramp_limit"],
+    ["unit__outputNode", ["coal_plant", "west"], "ramp_speed_up", 0.002],
+    ["unit__outputNode", ["coal_plant", "west"], "ramp_speed_down", 0.002],
+]
+
+
+def _ramp_on(cls: str, rel: list, speed: float) -> list:
+    return [[cls, rel, "ramp_method", "ramp_limit"],
+            [cls, rel, "ramp_speed_up", speed],
+            [cls, rel, "ramp_speed_down", speed]]
+
+
+def _patch_ramp_step_duration(data: dict) -> dict:
+    """coal ramp 0.002/min with 2-hour steps t0001-t0024 and 1-hour steps
+    t0025-t0048: the ramp room scales with the step length."""
+    vals = {f"t{i:04d}": (2.0 if i <= 24 else 1.0) for i in range(1, 49)}
+    return _overlay(data, name="ramp_step_duration", base=["init", "west", "coal"],
+                    values=_RAMP_COAL + [["timeline", "y2020", "timestep_duration", _pmap(vals, "time")]])
+
+
+def _patch_ramp_blocks(data: dict) -> dict:
+    """coal ramp on the 5weeks timeset (blocks with gaps in the timeline,
+    two periods)."""
+    return _overlay(data, name="ramp_blocks", base=["init", "west", "coal", "coal_ramp", "5weeks"],
+                    values=_RAMP_COAL)
+
+
+def _patch_ramp_reserve_online(data: dict) -> dict:
+    """coal_plant (linear online, min_load 0.3, ramp 0.005/min) with upward
+    and downward reserve at west; e_boiler (direct, linear online, min_load
+    0.2) with a ramp on its input arc and downward reserve at west (consume
+    more): reserve in the ramp rows and the startup / shutdown capacity
+    reduction."""
+    eu, vu = _reserve("ru", "up", "electricity", [("unit", "coal_plant", "west")], penalty=5000.0,
+                      reservation=40.0)
+    ed, vd = _reserve("rd", "down", "electricity", [("unit", "coal_plant", "west"), ("unit", "e_boiler", "west")],
+                      penalty=5000.0, reservation=40.0)
+    return _overlay(
+        data, name="ramp_reserve_online", base=["init", "west", "coal", "coal_chp", "heat"],
+        entities=_E_BOILER + eu + ed,
+        values=_E_BOILER_VALUES + vu + vd
+        + _ramp_on("unit__outputNode", ["coal_plant", "west"], 0.005)
+        + _ramp_on("unit__inputNode", ["e_boiler", "west"], 0.002) + [
+            ["unit", "e_boiler", "conversion_method", "constant_efficiency"],
+            ["constraint", "coal_chp_fix", "is_enabled", "no"],
+            ["node", "west", "inflow", -250.0],
+            ["unit", "coal_plant", "startup_method", "linear"],
+            ["unit", "coal_plant", "min_load", 0.3],
+            ["unit", "e_boiler", "startup_method", "linear"],
+            ["unit", "e_boiler", "min_load", 0.2],
+            ["unit", "coal_plant", "startup_cost", 20.0],
+            ["unit", "e_boiler", "startup_cost", 5.0]])
+
+
+def _two_period_values() -> list:
+    return [
+        ["timeset", "ta", "timeline", "y2020"],
+        ["timeset", "tb", "timeline", "y2020"],
+        ["timeset", "ta", "timeset_duration", _pmap({"t0001": 24.0}, "time")],
+        ["timeset", "tb", "timeset_duration", _pmap({"t0025": 24.0}, "time")],
+        ["solve", "y2020_2day_dispatch", "period_timeset", _pmap({"p2020": "ta", "p2025": "tb"})],
+        ["solve", "y2020_2day_dispatch", "realized_periods",
+         {"type": "array", "value_type": "str", "data": ["p2020", "p2025"]}],
+    ]
+
+
+def _patch_ramp_two_periods(data: dict) -> dict:
+    """p2020 = t0001-t0024 and p2025 = t0025-t0048 of one timeline: the
+    second period continues the first, so its first step ramps from
+    p2020's last step."""
+    return _overlay(data, name="ramp_two_periods", base=["init", "west", "coal"],
+                    entities=[["timeset", "ta"], ["timeset", "tb"]],
+                    values=_RAMP_COAL + _two_period_values())
+
+
+def _patch_ramp_rolling(data: dict) -> dict:
+    """coal ramp in the rolling fullYear dispatch with horizon 36 and jump
+    24: every continuation roll ramps from the previous roll's flow."""
+    return _overlay(data, name="ramp_rolling",
+                    base=["init", "west", "battery", "wind", "coal", "fullYear", "dispatch_fullYear_roll"],
+                    values=_RAMP_COAL + [
+                        ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", 36.0],
+                        ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", 24.0]])
+
+
+def _patch_ramp_chp_integer(data: dict) -> dict:
+    """chp_floor_integer with ramp limits on coal_chp's fuel input and its
+    electricity output: integer startup / shutdown capacity reduction on an
+    output arc and on an indirect unit's input arc."""
+    data = _chp_floor(data, "ramp_chp_integer", "binary")
+    vals = (_ramp_on("unit__inputNode", ["coal_chp", "coal_market"], 0.002)
+            + _ramp_on("unit__outputNode", ["coal_chp", "west"], 0.002))
+    for cls, ent, param, val in vals:
+        data["parameter_values"].append([cls, ent, param, _pack(val), "ramp_chp_integer"])
+    return data
+
+
+def _patch_ramp_rp(data: dict) -> dict:
+    """coal ramp on a representative-period timeset whose two 24-step blocks
+    (t0001, t0025) are adjacent on the timeline: no ramp row links them."""
+    rpw = {"type": "map", "index_type": "str", "index_name": "base_period", "rank": 1,
+           "data": [["t0001", {"type": "map", "index_type": "str", "index_name": "representative_period",
+                               "rank": 1, "data": [["t0001", 0.5], ["t0025", 0.5]]}]]}
+    return _overlay(data, name="ramp_rp", base=["init", "west", "coal"],
+                    entities=[["timeset", "rp2"]],
+                    values=_RAMP_COAL + [
+                        ["timeset", "rp2", "timeline", "y2020"],
+                        ["timeset", "rp2", "timeset_duration", _pmap({"t0001": 24.0, "t0025": 24.0}, "time")],
+                        ["timeset", "rp2", "representative_period_weights", rpw],
+                        ["solve", "y2020_2day_dispatch", "period_timeset", _pmap({"p2020": "rp2"})]])
+
+
+def _patch_ramp_midhorizon(data: dict) -> dict:
+    """Ramp on the invested unit of the mid-horizon stochastic fixture: the
+    p2040 branches continue from p2035's last step."""
+    return _overlay(data, name="ramp_midhorizon", base="midhorizon",
+                    values=_ramp_on("unit__outputNode", ["base", "elec"], 0.002))
+
+
+def _patch_ramp_stoch_rolling(data: dict) -> dict:
+    """Ramp on coal_plant in the rolling stochastic 1-week fixture: every
+    forecast branch of a continuation roll ramps from the realized flow."""
+    return _overlay(data, name="ramp_stoch_rolling", base="1_week_rolling_wind",
+                    values=_ramp_on("unit__outputNode", ["coal_plant", "demand_node"], 0.002))
+
+
 PATCHES: dict[str, Callable[[dict], dict]] = {
     "none": _no_patch,
     "invest_limits": _patch_invest_limits,
@@ -756,6 +883,15 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "nested_fix_price": _patch_nested_fix_price,
     "rp_multi_base_period": _patch_rp_multi_base_period,
     "rp_multi_base_solve": _patch_rp_multi_base_solve,
+    "ramp_step_duration": _patch_ramp_step_duration,
+    "ramp_blocks": _patch_ramp_blocks,
+    "ramp_reserve_online": _patch_ramp_reserve_online,
+    "ramp_two_periods": _patch_ramp_two_periods,
+    "ramp_rolling": _patch_ramp_rolling,
+    "ramp_chp_integer": _patch_ramp_chp_integer,
+    "ramp_rp": _patch_ramp_rp,
+    "ramp_midhorizon": _patch_ramp_midhorizon,
+    "ramp_stoch_rolling": _patch_ramp_stoch_rolling,
 }
 
 
@@ -881,6 +1017,15 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("nested_fix_price", _T),
     ("rp_multi_base_period", _F + "lh2_three_region_rp_invest.json"),
     ("rp_multi_base_solve", _F + "lh2_three_region_rp_invest.json"),
+    ("ramp_step_duration", _T),
+    ("ramp_blocks", _T),
+    ("ramp_reserve_online", _T),
+    ("ramp_two_periods", _T),
+    ("ramp_rolling", _T),
+    ("ramp_chp_integer", _T),
+    ("ramp_rp", _T),
+    ("ramp_midhorizon", _F + "stoch_two_period_midhorizon_nreal0.json"),
+    ("ramp_stoch_rolling", _F + "stochastics.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

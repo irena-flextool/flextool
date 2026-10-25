@@ -51,6 +51,9 @@ without changing semantics.
 from __future__ import annotations
 
 
+# The complete (un-rolled) solve's step_previous rows of the first step of each period of the current
+# sub-solve (_run_model): the adjacency gate of the ramp carry-in.
+SOLVE_DATA_ROLL_FIRST_STEP_LINK = "solve_data/roll_first_step_link"
 SOLVE_DATA_FIX_STORAGE_QUANTITY = "solve_data/fix_storage_quantity"
 SOLVE_DATA_FIX_STORAGE_PRICE = "solve_data/fix_storage_price"
 SOLVE_DATA_FIX_STORAGE_USAGE = "solve_data/fix_storage_usage"
@@ -143,6 +146,8 @@ HANDOFF_DIVEST_CUMULATIVE = "handoff/divest_cumulative"
 HANDOFF_ROLL_END_STATE = "handoff/roll_end_state"
 HANDOFF_UPWARD_ROLL_END_STATE = "handoff/upward_roll_end_state"
 HANDOFF_ROLL_END_ONLINE = "handoff/roll_end_online"
+# The previous roll's v_flow of the ramp-limited arcs at its last realized step (ramp carry-in).
+HANDOFF_ROLL_END_FLOW = "handoff/roll_end_flow"
 HANDOFF_ONLINE_HISTORY = "handoff/online_history"
 # OC1 #1 sub-slice (b) — separate_dispatch parent's committed v_online over
 # the jump, pinned into the realized-dispatch sibling.
@@ -172,6 +177,7 @@ OVERRIDE_DIVEST_CUMULATIVE = "override/divest_cumulative"
 OVERRIDE_ROLL_END_STATE = "override/roll_end_state"
 OVERRIDE_UPWARD_ROLL_END_STATE = "override/upward_roll_end_state"
 OVERRIDE_ROLL_END_ONLINE = "override/roll_end_online"
+OVERRIDE_ROLL_END_FLOW = "override/roll_end_flow"
 OVERRIDE_ONLINE_HISTORY = "override/online_history"
 OVERRIDE_CUMULATIVE_CO2 = "override/cumulative_co2"
 OVERRIDE_CUMULATIVE_COMMODITY = "override/cumulative_commodity"

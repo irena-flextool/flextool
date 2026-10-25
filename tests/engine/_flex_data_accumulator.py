@@ -241,6 +241,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "steps_in_use.csv",
     "steps_complete_solve.csv",
     "step_previous.csv",
+    "roll_first_step_link.csv",
     "period_block_time.csv",
     "period_block_succ.csv",
     "p_years_represented.csv",

@@ -74,6 +74,7 @@ from flextool.engine.solve._recursive_solve import (
 from flextool.engine.solve._stochastic import StochasticSolver
 from flextool.engine.input._timeline import (
     get_active_time,
+    make_step_jump,
     make_period_block,
     separate_period_and_timeseries_data,
 )
@@ -606,6 +607,7 @@ def native_run_model(state, solver) -> int:
     previous_complete_solve = None
     last_captured_solve: str | None = None
     cached_complete_active_time_lists: dict = {}
+    cached_complete_step_jumps: dict = {}
 
     # Pre-compute per-iter level keys.  Same-key consecutive iters are
     # rolling continuations of one base solve; a key change marks a
@@ -714,6 +716,14 @@ def native_run_model(state, solver) -> int:
                 state.timeline.timesets__timeline,
             )
         complete_active_time_lists = cached_complete_active_time_lists[cs]
+        if cs not in cached_complete_step_jumps:
+            # The un-rolled solve's own step_previous (every period an anchor): which step precedes the
+            # first step of each roll's periods, and whether it is adjacent (ramp carry-in gate).
+            cached_complete_step_jumps[cs] = make_step_jump(
+                complete_active_time_lists,
+                [(p, p) for p in complete_active_time_lists],
+                [],
+            )
 
         # Combined period/timeset list including history periods.
         period__timesets_with_history = list(
@@ -805,6 +815,11 @@ def native_run_model(state, solver) -> int:
         )
         solve_writers.emit_step_jump(
             jump_lists[solve],
+            provider=sub_solve_provider,
+        )
+        solve_writers.emit_roll_first_step_link(
+            active_time_lists[solve],
+            cached_complete_step_jumps[cs],
             provider=sub_solve_provider,
         )
         pb_time, pb_succ = make_period_block(active_time_lists[solve])

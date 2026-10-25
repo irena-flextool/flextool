@@ -3,8 +3,8 @@
 
 Fixture: ``work_coal_ramp_limit`` — exercises sink-up ramp limits on
 ``coal_plant``.  The .mod runs the ramp constraint once per
-``process_source_sink_ramp_limit_sink_up × dt`` tuple.  We assert the
-LP row count = ``|process_source_sink_ramp_limit_sink_up| × |dt|`` for
+``process_source_sink_ramp_limit_sink_up × dt`` tuple with a predecessor.  We assert the
+LP row count = ``|process_source_sink_ramp_limit_sink_up| × |dt_ramp_link|`` for
 each emitted ramp family that is wired by this fixture (only
 ``sink_up`` here; the other three ramp families have empty index sets).
 
@@ -41,7 +41,11 @@ def test_ramp_sink_up_emits_correct_rows(scenario_workdir)-> None:
     )
     assert data.dt is not None and data.dt.height > 0
 
-    expected = idx.height * data.dt.height
+    # One row per ramp arc and step with an adjacent predecessor (dt_ramp_link): the first step of the
+    # solve has none.
+    assert data.dt_ramp_link is not None
+    expected = idx.height * data.dt_ramp_link.height
+    assert data.dt_ramp_link.height == data.dt.height - 1
     assert_cstr_row_count(pb, "ramp_sink_up_constraint", expected)
     assert_cstr_present(pb, "ramp_sink_up_constraint")
 

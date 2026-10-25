@@ -202,6 +202,9 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     s.dtt = s.dtt.droplevel('solve')
     dtt_pt = s.dtt.droplevel('t_previous')
     s.dtt = s.dtt[dtt_pt.isin(s.dt_realize_dispatch) & ~dtt_pt.duplicated(keep='last')]
+    s.ramp_link = s.ramp_link.droplevel('solve')
+    ramp_pt = s.ramp_link.droplevel(['period_previous', 'time_previous'])
+    s.ramp_link = s.ramp_link[ramp_pt.isin(s.dt_realize_dispatch) & ~ramp_pt.duplicated(keep='last')]
     s.dtttdt = s.dtttdt.droplevel('solve')
     dtttdt_pt = s.dtttdt.droplevel(['t_previous', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve'])
     s.dtttdt = s.dtttdt[dtttdt_pt.isin(s.dt_realize_dispatch) & ~dtttdt_pt.duplicated(keep='last')]

@@ -59,10 +59,16 @@ def _add_ramp_sink_up(data: FlexData, *, p: str, source: str, sink: str,
     idx = pl.DataFrame({"p": [p], "source": [source], "sink": [sink]})
     speed_param = Param(("p", "sink"),
         pl.DataFrame({"p": [p], "sink": [sink], "value": [speed]}))
+    link = data.dt_ramp_link
+    if link is None:
+        # Ramp predecessors: t02 ← t01, t03 ← t02 (t01 is the first step of the solve).
+        link = pl.DataFrame({"d": ["d1", "d1"], "t": ["t02", "t03"],
+                             "d_previous": ["d1", "d1"], "t_previous": ["t01", "t02"]})
     return dataclasses.replace(
         data,
         process_source_sink_ramp_limit_sink_up=idx,
         p_ramp_speed_up_sink=speed_param,
+        dt_ramp_link=link,
     )
 
 
@@ -89,24 +95,14 @@ def test_ramp_sink_up_with_uc_startup_tightening(toy_uc_3t):
     p_inflow = Param(("n", "d", "t"), nb_dt.with_columns(
         value=pl.when(pl.col("t") == "t01").then(0.0).otherwise(-40.0)
     ).select("n", "d", "t", "value"))
-    # Make t01 acyclic on the prev-edge: t_previous_within_solve[t01] = t01
-    # so ramp_diff[t01] = 0 (eliminates spurious cyclic ramp from t03 → t01).
-    dtttdt = pl.DataFrame({
-        "d": ["d1"]*3,
-        "t": ["t01", "t02", "t03"],
-        "t_previous": ["t01", "t01", "t02"],
-        "t_previous_within_timeset": ["t01", "t01", "t02"],
-        "d_previous": ["d1"]*3,
-        "t_previous_within_solve": ["t01", "t01", "t02"],
-    })
-    data = dataclasses.replace(d, p_inflow=p_inflow, dtttdt=dtttdt)
+    data = dataclasses.replace(d, p_inflow=p_inflow)
     data = _add_ramp_sink_up(data, p="u", source="FUEL_n", sink="n", speed=0.001)
     pb, sol = _solve(data)
     assert sol.optimal
     cstr = set(pb.cstr_names())
     assert "ramp_sink_up_constraint" in cstr
-    # 1 ramp arc × 1 period × 3 steps = 3 rows.
-    assert pb.cstr_row_count("ramp_sink_up_constraint") == 3
+    # 1 ramp arc × the 2 steps with a predecessor.
+    assert pb.cstr_row_count("ramp_sink_up_constraint") == 2
     # Hand-calc: v_flow = [0, 0.4, 0.4] (no slack burnt).
     v_flow = sol.value("v_flow").sort("t")["value"].to_list()
     assert v_flow[0] == pytest.approx(0.0, abs=1e-7)

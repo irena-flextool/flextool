@@ -646,6 +646,13 @@ class FlexData:
     p_ramp_speed_down_sink: Param | None = None
     p_ramp_speed_up_source:   Param | None = None  # (p, source)
     p_ramp_speed_down_source: Param | None = None
+    # (d, t, d_previous, t_previous), Utf8: the steps whose predecessor in the un-rolled solve is adjacent on the
+    # timeline (jump == 1), without the first steps of representative blocks (see params._ramp_links).
+    dt_ramp_link: pl.DataFrame | None = None
+    # (d, t, d_previous, t_previous, duration_previous): first steps of a continuation roll that ramp from the
+    # previous roll's realized flow at (d_previous, t_previous); p_roll_continue_flow holds that flow.
+    dt_ramp_carry: pl.DataFrame | None = None
+    p_roll_continue_flow: Param | None = None  # (p, source, sink, d, t) Utf8 keys, units of unitsize
 
     # ─── Online / min_load (unit commitment) ──────────────────────────────
     process_online: pl.DataFrame | None = None              # set: (p,)
@@ -2269,11 +2276,71 @@ def _read_p_process_side(path: Path, side_col: str,
     )
 
 
+def _read_ramp_link(sd: Path, *, provider: "object | None" = None) -> "pl.DataFrame | None":
+    """``dt_ramp_link`` from ``solve_data/step_previous`` (its ``jump`` column) and
+    ``solve_data/rp_block_first``; ``None`` without ``step_previous``.  ``apply_derived_e`` replaces it with
+    the same frame built from the source timeline."""
+    from flextool.engine.preprocess.params._ramp_links import ramp_link_from_jump
+
+    name = "solve_data/step_previous"
+    path = sd / "step_previous.csv"
+    if not _provider_has(provider, name, path):
+        return None
+    df = _provider_read(provider, name, path)
+    if "jump" not in df.columns:
+        return None
+    steps = df.rename({"period": "d", "time": "t", "previous_period": "d_previous",
+                       "previous_within_solve": "t_previous_within_solve"})
+    return ramp_link_from_jump(steps, _read_rp_block_first_utf8(sd, provider=provider))
+
+
+def _read_rp_block_first_utf8(sd: Path, *, provider: "object | None" = None) -> "pl.DataFrame | None":
+    """``solve_data/rp_block_first`` as Utf8 ``(d, t)``; ``None`` when absent or empty."""
+    from flextool.engine.preprocess import _provider_keys as K
+
+    path = sd / "rp_block_first.csv"
+    if not _provider_has(provider, K.SOLVE_DATA_RP_BLOCK_FIRST, path):
+        return None
+    df = _provider_read(provider, K.SOLVE_DATA_RP_BLOCK_FIRST, path)
+    if df.height == 0:
+        return None
+    return df.select(pl.col("period").cast(pl.Utf8).alias("d"), pl.col("step").cast(pl.Utf8).alias("t"))
+
+
+def _load_ramp_carry(sd: Path, dt: "pl.DataFrame | None", *,
+                     provider: "object | None" = None) -> "tuple[pl.DataFrame | None, Param | None]":
+    """``(dt_ramp_carry, p_roll_continue_flow)`` of a continuation roll (``params._ramp_links.ramp_roll_carry``)
+    from the previous roll's ``handoff/roll_end_flow``, the complete solve's ``solve_data/roll_first_step_link``
+    and ``solve_data/period__branch``; ``(None, None)`` otherwise."""
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
+    from flextool.engine.preprocess.params._ramp_links import ramp_roll_carry
+
+    carry = read_handoff_frame(provider, K.HANDOFF_ROLL_END_FLOW)
+    if carry is None or carry.height == 0:
+        return None, None
+    link_path = sd / "roll_first_step_link.csv"
+    if not _provider_has(provider, K.SOLVE_DATA_ROLL_FIRST_STEP_LINK, link_path):
+        return None, None
+    link = _provider_read(provider, K.SOLVE_DATA_ROLL_FIRST_STEP_LINK, link_path)
+    pb = None
+    pb_path = sd / "period__branch.csv"
+    if _provider_has(provider, "solve_data/period__branch", pb_path):
+        pb = _provider_read(provider, "solve_data/period__branch", pb_path)
+    rows, flows = ramp_roll_carry(dt, carry, link, pb)
+    if rows is None:
+        return None, None
+    flows = flows.pipe(rename_to_axis, {"p": "p", "source": "source", "sink": "sink", "d": "d", "t": "t"})
+    return rows, Param(("p", "source", "sink", "d", "t"), flows)
+
+
 def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
                 *,
+                dt: "pl.DataFrame | None" = None,
                 provider: "object | None" = None) -> dict:
-    """Load ramp-limit sets and ramp_speed params.  Empty when no
-    process_source_sink_ramp_limit_* row is populated."""
+    """Load ramp-limit sets and ramp_speed params, the ramp predecessor links (``dt_ramp_link``) and, on a
+    continuation roll, the previous roll's flow (``dt_ramp_carry``, ``p_roll_continue_flow``).  The sets and
+    the carry are empty when no process_source_sink_ramp_limit_* row is populated."""
     blank = dict(
         process_source_sink_ramp_limit_sink_up=None,
         process_source_sink_ramp_limit_sink_down=None,
@@ -2283,6 +2350,9 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         p_ramp_speed_down_sink=None,
         p_ramp_speed_up_source=None,
         p_ramp_speed_down_source=None,
+        dt_ramp_link=_read_ramp_link(sd, provider=provider),
+        dt_ramp_carry=None,
+        p_roll_continue_flow=None,
     )
     if pss is None:
         return blank
@@ -2309,12 +2379,16 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
     # ``p_process_source.csv`` are removed).  The four ramp-limit set
     # frames above remain CSV-loaded — apply_projection_params doesn't
     # cover those set partitions today.
+    dt_ramp_carry, p_roll_continue_flow = _load_ramp_carry(sd, dt, provider=provider)
     return dict(
         **sets,
         p_ramp_speed_up_sink   = None,
         p_ramp_speed_down_sink = None,
         p_ramp_speed_up_source = None,
         p_ramp_speed_down_source = None,
+        dt_ramp_link = blank["dt_ramp_link"],
+        dt_ramp_carry = dt_ramp_carry,
+        p_roll_continue_flow = p_roll_continue_flow,
     )
 
 
@@ -4653,7 +4727,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         online = _load_online(inp, sd, dt, proc["pss"], source=db_reader,
                               provider=provider)
-        ramp = _load_ramp(inp, sd, proc["pss"], provider=provider)
+        ramp = _load_ramp(inp, sd, proc["pss"], dt=dt, provider=provider)
         invest = _load_invest(sd, dt, inp, proc["pss"], db_reader=db_reader,
                               provider=provider)
         varcost = _load_varcost(sd, proc["pss"], provider=provider)
@@ -6102,6 +6176,63 @@ def _extract_cumulative_commodity(
     )
 
 
+def _last_realized_step(realized: "pl.DataFrame | None",
+                        flex_data: "FlexData | None") -> "tuple[str, str] | None":
+    """The last realized ``(d, t)`` of a solve in its own step order (the order of ``flex_data.dt``; the
+    ``(d, t)`` sort only when ``dt`` is unavailable — Enum or string order need not be chronological)."""
+    if realized is None or realized.height == 0:
+        return None
+    cols = realized.columns
+    d_col = "period" if "period" in cols else "d"
+    t_col = "step" if "step" in cols else "t"
+    pairs = realized.select(pl.col(d_col).cast(pl.Utf8).alias("d"), pl.col(t_col).cast(pl.Utf8).alias("t")).unique()
+    dt = getattr(flex_data, "dt", None) if flex_data is not None else None
+    if dt is not None and dt.height > 0:
+        order = (dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+                 .with_row_index("__i").unique(subset=["d", "t"], keep="first"))
+        ranked = pairs.join(order, on=["d", "t"], how="inner").sort("__i")
+        if ranked.height > 0:
+            return ranked["d"][-1], ranked["t"][-1]
+    pairs = pairs.sort(["d", "t"])
+    return pairs["d"][-1], pairs["t"][-1]
+
+
+def _roll_end_flow(sol, flex_data: "FlexData | None", realized: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """``[process, source, sink, period, step, duration, value]``: ``v_flow`` of the ramp-limited arcs at the
+    solve's last realized step; ``None`` without ramp limits, realized steps or ``v_flow``."""
+    if flex_data is None or "v_flow" not in sol._vars:
+        return None
+    sets = [getattr(flex_data, f"process_source_sink_ramp_limit_{k}", None)
+            for k in ("sink_up", "sink_down", "source_up", "source_down")]
+    sets = [x.select(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")) for x in sets
+            if x is not None and x.height > 0]
+    if not sets:
+        return None
+    last = _last_realized_step(realized, flex_data)
+    if last is None:
+        return None
+    arcs = pl.concat(sets).unique()
+    v = sol._vars["v_flow"]
+    frame = v.frame.filter((pl.col("d").cast(pl.Utf8) == last[0]) & (pl.col("t").cast(pl.Utf8) == last[1]))
+    if frame.height == 0:
+        return None
+    vals = sol.col_value[frame["col_id"].to_numpy()]
+    rows = (frame.select(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink"))
+            .with_columns(value=pl.Series(vals, dtype=pl.Float64))
+            .join(arcs, on=["p", "source", "sink"], how="semi"))
+    if rows.height == 0:
+        return None
+    dur = 1.0
+    sd_param = getattr(flex_data, "p_step_duration", None)
+    if sd_param is not None:
+        hit = sd_param.frame.filter((pl.col("d").cast(pl.Utf8) == last[0]) & (pl.col("t").cast(pl.Utf8) == last[1]))
+        if hit.height > 0:
+            dur = float(hit["value"][0])
+    return rows.select(pl.col("p").alias("process"), "source", "sink",
+                       pl.lit(last[0]).alias("period"), pl.lit(last[1]).alias("step"),
+                       pl.lit(dur, dtype=pl.Float64).alias("duration"), "value")
+
+
 def build_handoff_from_solution(
     sol, work_folder: Path, solve_name: str,
     prior_handoff=None,
@@ -6501,6 +6632,12 @@ def build_handoff_from_solution(
             if rco_rows:
                 roll_end_online_df = pl.DataFrame(
                     rco_rows, schema=["process", "value"], orient="row")
+
+    # ---- roll_end_flow: v_flow of the ramp-limited arcs at the last realized step ----
+    # The next roll's first step ramps from this flow (``_load_ramp_carry``; the next roll applies it only
+    # where the complete solve's predecessor of its first step is this step and adjacent).  Units of
+    # unitsize, like v_flow.  ``duration`` = this step's length (the ramp room uses both step lengths).
+    roll_end_flow_df = _roll_end_flow(sol, flex_data, last_pairs_on)
 
     # ---- fix_online: committed v_online over the JUMP for the sibling ----
     # OC1 #1 sub-slice (b).  For a separate_dispatch PARENT (its name is a
@@ -7312,6 +7449,7 @@ def build_handoff_from_solution(
         roll_end_state=roll_end_state_df,
         upward_roll_end_state=upward_roll_end_state_df,
         roll_end_online=roll_end_online_df,
+        roll_end_flow=roll_end_flow_df,
         online_history=online_history_df,
         fix_online=fix_online_df,
         fix_storage_quantity=fix_storage_quantity_df,

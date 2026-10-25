@@ -27,6 +27,7 @@ carriers, named metric columns for multi-value):
     divest_cumulative      [entity, value]
     roll_end_state         [node, value]
     roll_end_online        [process, value]
+    roll_end_flow          [process, source, sink, period, step, duration, value]
     online_history         [process, period, step, startup, shutdown, duration]
     fix_storage_quantity   [node, period, step, p_fix_storage_quantity]
     fix_storage_price      [node, period, step, p_fix_storage_price]
@@ -132,6 +133,13 @@ class SolveHandoff:
     # Schema: ``[process, value]``.  No file equivalent (in-memory only).
     roll_end_online: pl.DataFrame | None = None
 
+    # End-of-roll flow for the ramp carry-in: v_flow (units of unitsize) of every ramp-limited arc at the
+    # roll's last realized step, with that step and its duration.  The next roll's first step of a period
+    # ramps from it when that step precedes it, adjacent, in the un-rolled solve (``_load_ramp_carry``).
+    # Producer: ``flex_data._roll_end_flow``.  Consumer: next roll's ``p_roll_continue_flow`` /
+    # ``dt_ramp_carry`` (``model.core._eq_ramp``).  In-memory only.
+    roll_end_flow: pl.DataFrame | None = None
+
     # OC1 Carrier 2 — trailing realized committed-commitment window for
     # cross-roll-boundary min_uptime / min_downtime continuity.  Unlike
     # ``roll_end_online`` (a single jump-end ``v_online`` scalar per
@@ -194,7 +202,7 @@ class SolveHandoff:
 
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
-        "roll_end_state", "upward_roll_end_state", "roll_end_online",
+        "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
         "online_history", "fix_online",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",

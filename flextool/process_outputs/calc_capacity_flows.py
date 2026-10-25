@@ -85,15 +85,17 @@ def compute_capacity_and_flows(par, s, v, r) -> None:
                 flow_val = flow_val.add(r.process_online_dt[p] * section[p] * unitsize[p], axis=0)
         r.flow_dt[p, always_source, always_sink] = flow_val
 
-    # ramp_dtt
-    current_idx = s.dtt.droplevel('t_previous')
-    previous_idx = s.dtt.droplevel('time')
-    r.ramp_dtt = pd.DataFrame(
-        r.flow_dt.reindex(current_idx).values - r.flow_dt.reindex(previous_idx).values,
-        index=s.dtt,
-        columns=r.flow_dt.columns,
-        dtype=float
-    )
+    # ramp_dt: flow change from the step each step's ramp is measured from (s.ramp_link: the adjacent
+    # predecessor, or the previous roll's last realized step at a roll boundary) — on the realized flows, so
+    # the change is in the reported flow's own units.  Empty (NaN) at steps without one.
+    r.ramp_dt = pd.DataFrame(index=r.flow_dt.index, columns=r.flow_dt.columns, dtype=float)
+    if len(s.ramp_link) > 0:
+        current_idx = s.ramp_link.droplevel(['period_previous', 'time_previous'])
+        previous_idx = s.ramp_link.droplevel(['period', 'time']).set_names(['period', 'time'])
+        change = pd.DataFrame(
+            r.flow_dt.reindex(current_idx).values - r.flow_dt.reindex(previous_idx).values,
+            index=current_idx, columns=r.flow_dt.columns, dtype=float)
+        r.ramp_dt = change.reindex(r.flow_dt.index)
 
     # flow_d (with step_duration), process_source_flow_d, process_sink_flow_d
     r.flow_d = r.flow_dt.mul(step_duration, axis=0).groupby('period').sum()

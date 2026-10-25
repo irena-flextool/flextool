@@ -149,7 +149,7 @@ MIN_LOAD: tuple[str, ...] = ("p_min_load",)
 MINLOAD_EFF: tuple[str, ...] = ("process_min_load_eff", "p_section")
 STARTUP_COST_LINEAR: tuple[str, ...] = ("p_startup_cost", "pdt_online_linear")
 STARTUP_COST_INTEGER: tuple[str, ...] = ("p_startup_cost", "pdt_online_integer")
-RAMP: tuple[str, ...] = ("dtttdt", "p_step_duration", "p_process_existing_count")
+RAMP: tuple[str, ...] = ("dt_ramp_link", "p_step_duration", "p_process_existing_count")
 # Checked whenever a group has capacity_margin_method = manual: without period_invest or the group scaling the
 # capacity margin would be skipped without a word.
 CAPACITY_MARGIN: tuple[str, ...] = ("period_invest", "p_inv_group_cap")
@@ -1772,21 +1772,35 @@ def _eq_ramp(b: _Build) -> None:
         return
     m, d = b.m, b.d
     v_flow = b.v_flow
-    v_flow_prev = Lag(v_flow, d.dtttdt, "t", "t_previous")
+    link, carry = ramp_step_links(d)
 
     # ─── EQ. ─── ramp_{sink,source}_{up,down}_constraint ─────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # step_duration[d,t] · (v_flow[p,s,k,d,t] − v_flow[p,s,k,d,t_prev])
-    #   ≤ +R · (existing_count[p,d] + Σ_{d′} v_invest_p[p,d′] − Σ_{d′} v_divest_p[p,d′]) + v_startup[p,d,t]   (up)
-    #   ≥ −R · (existing_count[p,d] + Σ_{d′} v_invest_p[p,d′] − Σ_{d′} v_divest_p[p,d′]) − v_shutdown[p,d,t]  (down)
-    #   R = ramp_speed_{dir}_{side}[p,s,k] · 60 · step_duration[d,t] · c[p,s,k,d,t]
-    #   ∀ (p,s,k) ∈ process_source_sink_ramp_limit_{side}_{dir}, (d,t) ∈ dt;   t_prev from dtttdt
-    # Limits the change of a flow between steps by its ramp speed (share of capacity per minute).
-    # c scales the limit as the arc's capacity is scaled: capacity_max_coeff[p,k] on the sink side; on the
-    # source side input_share_max[p,s], or on an indirect unit's input arc its input limit per unit of
-    # capacity (p_indirect_input_cap = input_share_max · full-load input).  v_flow is in units of unitsize,
-    # so existing_count = existing / unitsize.  v_startup / v_shutdown are the linear and integer UC
-    # variables where the process has them.  Arcs with conversion_flow_coeff = 0 get no row.
+    # v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′]
+    #   ≤ +ρ · c[p,s,k,d,t] · (existing_count[p,d] + Σ_{d″} v_invest_p[p,d″] − Σ_{d″} v_divest_p[p,d″])
+    #     + v_startup[p,d,t]                                                                           (up)
+    #   ≥ −ρ · c[p,s,k,d,t] · (existing_count[p,d] + Σ v_invest_p − Σ v_divest_p) − v_shutdown[p,d,t]    (down)
+    #   ρ = ramp_speed_{dir}_{side}[p,node] · 60 · (step_duration[d′,t′] + step_duration[d,t]) / 2
+    #   ∀ (p,s,k) ∈ process_source_sink_ramp_limit_{side}_{dir}, (d,t,d′,t′) ∈ dt_ramp_link;
+    #     on a link inside one period (d′ = d) only where ρ < 1
+    # On a continuation roll the first step of a period ramps from the previous roll's realized flow
+    #   (dt_ramp_carry): v_flow[p,s,k,d′,t′] → f̂[p,s,k,d,t] (p_roll_continue_flow, a constant on the RHS) and
+    #   step_duration[d′,t′] → its carried duration.
+    # Limits the change of a flow between two consecutive steps to its ramp room: ramp_speed is a share of
+    # capacity per minute and flows are step averages, so the room between two step averages is the speed × the
+    # distance between the two step centres (a valid bound for every trajectory that obeys the speed; it is the
+    # tight one for a linear ramp).  A step has a predecessor (dt_ramp_link) only where it is adjacent on the
+    # timeline in the un-rolled solve: no cyclic wrap at the first step of a solve or of a period that does not
+    # continue the previous one, no row across a gap or at the start of a representative block.  Rows inside one
+    # period with ρ ≥ 1 cannot bind and are not built: the arc's capacity row (maxFlow*, coefficient M ≤ c,
+    # availability ≤ 1) gives v_flow[t] ≤ c·cap and v_flow[t′] ≥ 0, and v_flow[t] ≥ 0, v_flow[t′] ≤ c·cap, with
+    # the same built capacity at both steps.  Cross-period and carried rows are always built (the capacity can
+    # differ).  c scales the room as the arc's capacity is scaled: capacity_max_coeff[p,k] on the sink side; on
+    # the source side input_share_max[p,s], or on an indirect unit's input arc p_indirect_input_cap.  v_flow is in
+    # units of unitsize, existing_count = existing / unitsize.  v_startup / v_shutdown are the linear and integer
+    # UC variables where the process has them: units starting (stopping) in a step add to its upward (downward)
+    # ramp room.  Arcs with conversion_flow_coeff = 0 get no row.
+    keys = ["p", "source", "sink"]
     for side, dir_, idx_set, ramp_speed in (
         ("sink",   "up",   d.process_source_sink_ramp_limit_sink_up,     d.p_ramp_speed_up_sink),
         ("sink",   "down", d.process_source_sink_ramp_limit_sink_down,   d.p_ramp_speed_down_sink),
@@ -1798,9 +1812,27 @@ def _eq_ramp(b: _Build) -> None:
         idx_set = _drop_uncapped(d, idx_set)
         if idx_set.height == 0:
             continue
-        sign = 1.0 if dir_ == "up" else -1.0
-        flow_diff = (Where(v_flow, idx_set) - Where(v_flow_prev, idx_set)) * d.p_step_duration
-        rate = ramp_speed * 60.0 * d.p_step_duration
+        up = dir_ == "up"
+        sign = 1.0 if up else -1.0
+        rows = _ramp_rows(d, idx_set, ramp_speed, side, dir_, link, carry)
+        if rows.height == 0:
+            continue
+        over = rows.select(*keys, "d", "t")
+        flow_rows = rows.filter(pl.col("__kind") != "reserve").select(*keys, "d", "t")
+        linked = rows.filter(pl.col("__kind") == "link")
+        carried = rows.filter(pl.col("__kind") == "carry")
+
+        lhs: dict = {}
+        if flow_rows.height > 0:
+            lhs["flow"] = Where(v_flow, flow_rows)
+        if linked.height > 0:
+            prev = _var_view(v_flow, "__ramp_prev", {"d": "d_previous", "t": "t_previous"}, to_axis=True)
+            pairs = linked.select(*keys, "d", "t",
+                                  pl.col("__d_prev").cast(prev.frame.schema["d_previous"]).alias("d_previous"),
+                                  pl.col("__t_prev").cast(prev.frame.schema["t_previous"]).alias("t_previous"))
+            lhs["flow_prev"] = -Sum(Where(prev, pairs), over=("d_previous", "t_previous"))
+
+        rate = Param(("p", "source", "sink", "d", "t"), rows.select(*keys, "d", "t", value=pl.col("__room")))
         if side == "sink":
             if d.p_process_sink_max_capacity_coef is not None:
                 rate = rate * _coef_factor(idx_set, d.p_process_sink_max_capacity_coef, ["p", "sink"])
@@ -1813,23 +1845,87 @@ def _eq_ramp(b: _Build) -> None:
             rhs["invest"] = (b.invest_in_dispatch_p * rate) * sign
         if b.has_divest_p:
             rhs["divest"] = (b.divest_in_dispatch_p * rate) * (-sign)
-        if dir_ == "up":
-            if b.has_online_lin:
-                rhs["startup_lin"] = Where(b.v_startup_linear, idx_set)
-            if b.has_online_int:
-                rhs["startup_int"] = Where(b.v_startup_integer, idx_set)
-        else:
-            if b.has_online_lin:
-                rhs["shutdown_lin"] = -Where(b.v_shutdown_linear, idx_set)
-            if b.has_online_int:
-                rhs["shutdown_int"] = -Where(b.v_shutdown_integer, idx_set)
+        if flow_rows.height > 0:
+            for kind, has in (("linear", b.has_online_lin), ("integer", b.has_online_int)):
+                if not has:
+                    continue
+                if up:
+                    rhs[f"startup_{kind}"] = Where(getattr(b, f"v_startup_{kind}"), flow_rows)
+                else:
+                    rhs[f"shutdown_{kind}"] = -Where(getattr(b, f"v_shutdown_{kind}"), flow_rows)
+        if carried.height > 0:
+            rhs["roll_continue_flow"] = Param(("p", "source", "sink", "d", "t"),
+                                              carried.select(*keys, "d", "t", value=pl.col("__f_hat")))
         m.add_cstr(
             f"ramp_{side}_{dir_}_constraint",
-            over      = idx_set.join(d.dt, how="cross"),
-            sense     = "<=" if dir_ == "up" else ">=",
-            lhs_terms = {"flow_diff": flow_diff},
+            over      = over,
+            sense     = "<=" if up else ">=",
+            lhs_terms = lhs,
             rhs_terms = rhs,
         )
+
+
+def ramp_step_links(d) -> "tuple[pl.DataFrame, pl.DataFrame]":
+    """The ramp predecessors of the steps of ``dt``, Utf8 keys ``_d, _t``.
+
+    ``link``: ``(_d, _t, __d_prev, __t_prev, __dur, __dur_prev)`` from ``dt_ramp_link`` (both steps in dt).
+    ``carry``: ``(_d, _t, __d_prev, __t_prev, __dur, __dur_prev)`` from ``dt_ramp_carry`` (the predecessor is
+    the previous roll's step; its duration is carried), without steps that also have a link.
+    """
+    dur = d.p_step_duration.frame.select(pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
+                                         pl.col("value").cast(pl.Float64).alias("__dur"))
+    schema = {"_d": pl.Utf8, "_t": pl.Utf8, "__d_prev": pl.Utf8, "__t_prev": pl.Utf8,
+              "__dur": pl.Float64, "__dur_prev": pl.Float64}
+    link = pl.DataFrame(schema=schema)
+    raw = getattr(d, "dt_ramp_link", None)
+    if raw is not None and raw.height > 0:
+        link = (raw.select(pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
+                           pl.col("d_previous").cast(pl.Utf8).alias("__d_prev"),
+                           pl.col("t_previous").cast(pl.Utf8).alias("__t_prev"))
+                .join(dur, on=["_d", "_t"], how="inner")
+                .join(dur.rename({"_d": "__d_prev", "_t": "__t_prev", "__dur": "__dur_prev"}),
+                      on=["__d_prev", "__t_prev"], how="inner")
+                .select(list(schema)))
+    carry = pl.DataFrame(schema=schema)
+    raw_c = getattr(d, "dt_ramp_carry", None)
+    if raw_c is not None and raw_c.height > 0 and getattr(d, "p_roll_continue_flow", None) is not None:
+        carry = (raw_c.select(pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
+                              pl.col("d_previous").cast(pl.Utf8).alias("__d_prev"),
+                              pl.col("t_previous").cast(pl.Utf8).alias("__t_prev"),
+                              pl.col("duration_previous").cast(pl.Float64).alias("__dur_prev"))
+                 .join(dur, on=["_d", "_t"], how="inner")
+                 .join(link.select("_d", "_t"), on=["_d", "_t"], how="anti")
+                 .select(list(schema)))
+    return link, carry
+
+
+def _ramp_rows(d, idx_set: pl.DataFrame, ramp_speed: Param, side: str, dir_: str,
+               link: pl.DataFrame, carry: pl.DataFrame) -> pl.DataFrame:
+    """The rows of one ramp family: ``(p, source, sink, d, t)`` in the dtypes of ``idx_set`` / ``dt`` with
+    ``__kind`` (``link`` / ``carry`` / ``reserve``), ``__room`` (ρ), ``__d_prev`` / ``__t_prev`` (Utf8) and
+    ``__f_hat`` (the carried flow of ``carry`` rows).  See the EQ. header of :func:`_eq_ramp`."""
+    keys = ["p", "source", "sink"]
+    speed = ramp_speed.frame.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col(side).cast(pl.Utf8).alias("_n"),
+                                    pl.col("value").cast(pl.Float64).alias("__speed"))
+    base = (_utf8_keys(idx_set.select(keys).unique(maintain_order=True).join(d.dt.select("d", "t"), how="cross")
+                       .lazy(), keys + ["d", "t"])
+            .with_columns(pl.col(f"_{side}").alias("_n"))
+            .join(speed.lazy(), on=["_p", "_n"], how="inner"))
+    with_link = (base.join(link.lazy(), on=["_d", "_t"], how="inner")
+                 .with_columns(__kind=pl.lit("link"), __f_hat=pl.lit(None, pl.Float64)))
+    parts = [with_link.filter((pl.col("__d_prev") != pl.col("_d"))
+                              | (pl.col("__speed") * 60.0 * (pl.col("__dur") + pl.col("__dur_prev")) / 2.0 < 1.0))]
+    if carry.height > 0:
+        f_hat = d.p_roll_continue_flow.frame.select(
+            pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("source").cast(pl.Utf8).alias("_source"),
+            pl.col("sink").cast(pl.Utf8).alias("_sink"), pl.col("d").cast(pl.Utf8).alias("_d"),
+            pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias("__f_hat"))
+        parts.append(base.join(carry.lazy(), on=["_d", "_t"], how="inner")
+                     .join(f_hat.lazy(), on=["_p", "_source", "_sink", "_d", "_t"], how="inner")
+                     .with_columns(__kind=pl.lit("carry")))
+    cols = [*keys, "d", "t", "__kind", "__d_prev", "__t_prev", "__f_hat",
+            (pl.col("__speed") * 60.0 * (pl.col("__dur") + pl.col("__dur_prev")) / 2.0).alias("__room")]
+    return pl.concat([p.select(cols) for p in parts]).collect()
 
 
 def _source_ramp_factor(d, idx_set: "pl.DataFrame") -> "Param | None":

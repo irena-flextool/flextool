@@ -1,5 +1,19 @@
 ## Unreleased
 
+- **Ramp limits scale with the time step.** A ramp speed is a share of
+  capacity per minute; the change allowed between two time steps is now that
+  speed × the average length of the two steps, so 2-hour steps allow twice
+  the change of 1-hour steps (it was one hour's change whatever the step
+  length). The first step of a solve, of a period that does not continue the
+  previous one, after a gap in the timeline or of a representative period is
+  no longer ramp-limited against an unrelated step (it was tied to the last
+  step of the period, or of the look-ahead in a rolling window); a period that
+  continues the timeline, and a stochastic branch, ramps from the step before
+  it; a rolling window ramps from the flow realized by the previous window.
+  Models with different time steps per period lose a hidden cap on the first
+  step's output. The reported ramp (`unit_ramp__*Node__dt`) is empty where
+  there is no previous step.
+
 - **Dynamic and large-failure reserves without a timeseries reservation.**
   A reserve with only a `dynamic` or `large_failure` requirement did nothing
   unless some group of the same reserve also had a `reservation`. It now

@@ -562,3 +562,16 @@ Before the fix the reserve was inert (no `v_reserve`, no n-1 row); now coal's fa
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate network_coal_wind_reserve_n_1`
 and `--regenerate all`.
+
+## 2026-10-25 — `coal_ramp_limit/unit_ramp__outputNode__dt.csv` (cycle c14a, ramp predecessors #34)
+
+**Context.** Ramp limits now apply only between a step and its adjacent predecessor in the un-rolled solve; the
+first step of a solve has none (it used to wrap to the last step of the period).  The reported ramp follows the
+same link (`s.ramp_link`), and is empty where there is no predecessor.
+
+- Only change: `t0001` `0` → empty.  It was `flow[t0001] − flow[t0048]` (500 − 500, the cyclic wrap).
+- Objective unchanged (1145.123625): the removed `ramp_sink_up_constraint[…,t0001]` row was slack (LP snapshot:
+  the only diff of the fixture).  `unit__outputNode__dt.csv` is unchanged (verified; the regen rewrote it with the
+  same values, so its committed text was kept).
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate coal_ramp_limit`.

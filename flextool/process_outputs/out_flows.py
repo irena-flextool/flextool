@@ -254,21 +254,21 @@ def unit_VRE_curtailment_and_potential(par, s, v, r, debug):
 def unit_ramps(par, s, v, r, debug):
     """Unit ramps by input and output nodes for timesteps"""
     results = []
-    if r.ramp_dtt.empty:
+    if r.ramp_dt.empty:
         return results
 
     # Output node ramps
     process_sink_ramp_output = s.process_sink[s.process_sink.get_level_values(0).isin(s.process_unit)]
-    pss_ramp_output = r.ramp_dtt.columns[r.ramp_dtt.columns.droplevel(1).isin(process_sink_ramp_output)]
-    ramp_output = r.ramp_dtt[pss_ramp_output].droplevel('t_previous')
+    pss_ramp_output = r.ramp_dt.columns[r.ramp_dt.columns.droplevel(1).isin(process_sink_ramp_output)]
+    ramp_output = r.ramp_dt[pss_ramp_output]
     ramp_output.columns = ramp_output.columns.droplevel(1)  # Remove 'source' from (process, source, sink) to get (unit, source)
     ramp_output.columns.names = ['unit', 'sink']
     results.append((ramp_output, 'unit_ramp_outputs_dt_ee'))
 
     # Input node ramps
     process_source_ramp_input = s.process_source[s.process_source.get_level_values(0).isin(s.process_unit)]
-    pss_ramp_input = r.ramp_dtt.columns[r.ramp_dtt.columns.droplevel(2).isin(process_source_ramp_input)]
-    ramp_input = r.ramp_dtt[pss_ramp_input].droplevel('t_previous')
+    pss_ramp_input = r.ramp_dt.columns[r.ramp_dt.columns.droplevel(2).isin(process_source_ramp_input)]
+    ramp_input = r.ramp_dt[pss_ramp_input]
     ramp_input.columns = ramp_input.columns.droplevel(2)  # Remove 'sink' from (process, source, sink) to get (unit, source)
     ramp_input.columns.names = ['unit', 'source']
     results.append((ramp_input, 'unit_ramp_inputs_dt_ee'))

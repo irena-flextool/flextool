@@ -7384,6 +7384,22 @@ def _dt_period_active_steps(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
+def _rp_block_first_utf8(workdir: "Path | None", provider: "object | None") -> "pl.DataFrame | None":
+    """``solve_data/rp_block_first`` as Utf8 ``(d, t)``; ``None`` when absent or empty."""
+    if workdir is None:
+        return None
+    path = Path(workdir) / "solve_data" / "rp_block_first.csv"
+    if not _provider_has_key(provider, path):
+        return None
+    try:
+        df = _provider_read(provider, path)
+    except Exception:
+        return None
+    if df.height == 0:
+        return None
+    return df.select(pl.col("period").cast(pl.Utf8).alias("d"), pl.col("step").cast(pl.Utf8).alias("t"))
+
+
 def dtttdt_from_source(source: "InputSource",
                           active_solve: str | None,
                           workdir: Path | None = None,
@@ -7391,6 +7407,18 @@ def dtttdt_from_source(source: "InputSource",
                           ctx: "SolveContext | None" = None,
                           provider: "object | None" = None,
                           ) -> pl.DataFrame | None:
+    """The ``dtttdt`` lag frame of :func:`dtttdt_with_jump_from_source` without its ``jump`` column."""
+    df = dtttdt_with_jump_from_source(source, active_solve, workdir, ctx=ctx, provider=provider)
+    return None if df is None else df.drop("jump")
+
+
+def dtttdt_with_jump_from_source(source: "InputSource",
+                                 active_solve: str | None,
+                                 workdir: Path | None = None,
+                                 *,
+                                 ctx: "SolveContext | None" = None,
+                                 provider: "object | None" = None,
+                                 ) -> pl.DataFrame | None:
     """Build the canonical ``(d, t, t_previous, t_previous_within_timeset,
     d_previous, t_previous_within_solve)`` dispatch-step lag frame.
 
@@ -7405,6 +7433,9 @@ def dtttdt_from_source(source: "InputSource",
         block's last step.
       * Within-period predecessor: previous step in the same period
         cyclically (first wraps to block_last of the period).
+
+    The extra ``jump`` column is ``make_step_jump``'s: the timeline rank of the step minus the rank of its
+    ``(d_previous, t_previous_within_solve)`` (1 = adjacent; ≤ 0 at a cyclic wrap; > 1 across a gap).
     """
     info = _dt_period_active_steps(source, active_solve, workdir, ctx=ctx, provider=provider)
     if info is None:
@@ -7592,6 +7623,7 @@ def dtttdt_from_source(source: "InputSource",
                 prev_within_ts = steps[bli0][0]
                 prev_within_solve = prev_solve_last_t
                 d_prev = prev_p
+                jump = rk_cur - prev_p_steps[-1][1] if prev_p_steps else 0
             else:
                 t_prev, rk_prev = steps[j - 1]
                 prev_t = t_prev
@@ -7611,13 +7643,13 @@ def dtttdt_from_source(source: "InputSource",
                 d_prev = period
                 prev_within_solve = t_prev
             out_rows.append((period, t_cur, prev_t, prev_within_ts,
-                              d_prev, prev_within_solve))
+                              d_prev, prev_within_solve, jump))
     if not out_rows:
         return None
     df = pl.DataFrame(
         out_rows,
         schema=["d", "t", "t_previous", "t_previous_within_timeset",
-                  "d_previous", "t_previous_within_solve"],
+                  "d_previous", "t_previous_within_solve", "jump"],
         orient="row",
     )
     return df.sort("d", "t")
@@ -8763,9 +8795,14 @@ def apply_derived_e(
     # because fixtures genuinely lacking timeline data on the source AND
     # the workdir CSV (very rare; not present in the engine
     # corpus) still need to fall through to the seed-loaded value.
-    dtttdt_db = dtttdt_from_source(source, active_solve, workdir, ctx=ctx, provider=provider)
+    dtttdt_jump = dtttdt_with_jump_from_source(source, active_solve, workdir, ctx=ctx, provider=provider)
+    dtttdt_db = None if dtttdt_jump is None else dtttdt_jump.drop("jump")
     if dtttdt_db is not None:
         flex_data.dtttdt = dtttdt_db
+        # Ramp predecessors: the adjacent (jump == 1) rows, without representative-block starts.
+        from flextool.engine.preprocess.params._ramp_links import ramp_link_from_jump
+        flex_data.dt_ramp_link = ramp_link_from_jump(
+            dtttdt_jump, _rp_block_first_utf8(workdir, provider))
 
     # 2. period_block family (storage-only). --------------------------
     pb_family = None

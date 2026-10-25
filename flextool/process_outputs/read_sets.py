@@ -708,6 +708,25 @@ def read_sets(
             ["solve", "period", "time", "t_previous"]
         )
 
+    # ramp_link — (solve, period, time, period_previous, time_previous): the step each step's ramp is
+    # measured from — the adjacent predecessor of the solve (dt_ramp_link) or, at the first step of a
+    # continuation roll, the previous roll's last realized step (dt_ramp_carry).  Steps without one have
+    # no ramp.
+    link_parts = [f.select(pl.col(c).cast(pl.Utf8) for c in ("d", "t", "d_previous", "t_previous"))
+                  for f in (getattr(flex_data, "dt_ramp_link", None), getattr(flex_data, "dt_ramp_carry", None))
+                  if f is not None and f.height > 0]
+    if link_parts:
+        pdf = (pl.concat(link_parts)
+               .unique()
+               .with_columns(pl.lit(solve_name).alias("solve"))
+               .select("solve", "d", "t", "d_previous", "t_previous")
+               .sort(["solve", "d", "t"])
+               .to_pandas())
+        s.ramp_link = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "period", "time", "period_previous", "time_previous"])
+    else:
+        s.ramp_link = empty_multi_index(["solve", "period", "time", "period_previous", "time_previous"])
+
     s.period__time_first = empty_multi_index(["solve", "period", "time"])
     s.period_first_of_solve = empty_multi_index(["solve", "period"])
     s.period_in_use = (

@@ -326,16 +326,17 @@ def test_min_coeff_floor_scales_with_invested_capacity(tmp_path_factory):
 
 # ── ramp limits scale with coefficient and invested capacity ────────────
 def test_ramp_limit_follows_invested_capacity(tmp_path_factory):
-    """Greenfield ``coal_plant`` with a (non-binding for built capacity)
-    ramp limit follows the west demand series.  Before the fix the ramp
-    RHS used the existing count only (0), freezing the flow."""
+    """Greenfield ``coal_plant`` with a ramp limit of 0.3 of capacity per
+    hour (ramp_speed 0.005: a room below 1 per step, so the rows are built)
+    follows the west demand series.  Before the fix the ramp RHS used the
+    existing count only (0), freezing the flow."""
     step = _solve(tmp_path_factory, alt="ramp_invest",
                   base_chain=PLANT_CHAIN + ["coal_ramp"],
                   values=_greenfield(PLANT) + [
                       ["unit__outputNode", [PLANT, "west"],
-                       "ramp_speed_up", _b64(0.5, "float")],
+                       "ramp_speed_up", _b64(0.005, "float")],
                       ["unit__outputNode", [PLANT, "west"],
-                       "ramp_speed_down", _b64(0.5, "float")]])
+                       "ramp_speed_down", _b64(0.005, "float")]])
     flow = _flow(step, PLANT, "coal_market", "west")
     assert flow.n_unique() > 1, "ramp limit froze the invested unit"
     assert _invested(step, PLANT) == pytest.approx(float(flow.max()),
@@ -355,8 +356,8 @@ def test_ramp_limit_scales_with_capacity_max_coeff(tmp_path_factory):
                        "capacity_max_coeff", _b64(0.5, "float")]])
     flow = _flow(step, PLANT, "coal_market", "west")
     steps = flow.to_list()
-    # cyclic within the timeset: t0001 follows the last step.
-    rises = [b - a for a, b in zip([steps[-1]] + steps[:-1], steps)]
+    # between consecutive steps (the first step has no predecessor).
+    rises = [b - a for a, b in zip(steps[:-1], steps[1:])]
     assert max(rises) == pytest.approx(30.0, rel=1e-6)
 
 

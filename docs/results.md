@@ -204,7 +204,7 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 
 ## Ramps
 
-- `unit__node` entity `ramp_t` parameter — [MW] ramp of the unit input or output flow at each timestep (one table per direction: `unit_ramp__inputNode__dt`, `unit_ramp__outputNode__dt`)
+- `unit__node` entity `ramp_t` parameter — [MW] ramp of the unit input or output flow at each timestep: the change from the previous step (one table per direction: `unit_ramp__inputNode__dt`, `unit_ramp__outputNode__dt`). The ramp at a step with no previous step in the solve (the first step, the first step after a gap in the timeline, the first step of a representative period) is empty; at the first step of a rolling window it is measured from the previous window's last step.
 
 The "ramp room" envelope on the `node` entity (additional headroom for upward / downward ramps from non-VRE units, VRE units, and connections) is currently not emitted by the new pipeline — it is on the roadmap for re-exposure once the corresponding post-processing is ported.
 
