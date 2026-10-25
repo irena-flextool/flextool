@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **`fix_start` of a *bind_within_solve* storage in a solve with several
+  periods.** The start state was pinned at the last step of the first
+  period, i.e. in the middle of the solve. It is now pinned at the step the
+  solve's first step starts from: the last step of the solve (in a
+  stochastic solve, the end of each forecast branch the first step wraps
+  to).
+
 - **Storage self-discharge is exact for any time-step length.** The storage
   content now decays continuously at ln(1 + `self_discharge_loss`) per hour,
   whatever the step length, with the energy charged or discharged within a
@@ -51,7 +58,7 @@
   period: blocks chain inside the period and the period's first step
   continues from its own last step, also in rolling, stochastic and coarse
   (`new_stepduration`) solves. With `fix_start` the start state is pinned at
-  the last step of the first period, as for *bind_within_solve*.
+  the last step of the first period (the step the first period wraps to).
   `use_reference_value` does not pin the end state of a *bind_within_period*
   node (nor of a blended-weights node a solve without representative periods
   turns into *bind_within_period* / *bind_within_solve*), as already for

@@ -77,7 +77,10 @@ _REGIONS = ["region_A", "region_B", "region_C"]
 # Derived from a real cascade+monolith solve of the regenerated fixture
 # (``tests/fixtures/lh2_three_region_rp_invest.json``); see
 # ``regen_lh2_three_region._build_rp_invest_overlay``.
-_M_RP_EXPECTED = 9.0265500853e9
+# c15e1 FA-3 (item 15): the fix_start pin of the bind_within_solve batteries moved from the end of y2030 (mid-
+# horizon) to the end of y2040, the state the solve's first step starts from: 9.0265500853e9 -> 9.4374669527e9
+# (+4.6 %, lh2_C's y2040 shortfall 35.6 -> 77.5: the batteries no longer start y2030 full from a free y2040 end).
+_M_RP_EXPECTED = 9.4374669527e9
 # The Benders runs use the production objective scale: with c15b's coarse-group
 # fix the region duals carry the real (penalty-level) H2 prices, and at s = 1.0
 # the master's cut coefficients span ~1e10 — HiGHS returns kUnknown mid-loop

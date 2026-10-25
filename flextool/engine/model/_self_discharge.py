@@ -256,7 +256,7 @@ def is_solve_first(d) -> bool:
     return d.p_nested_solve_first is None or d.p_nested_solve_first is True
 
 
-def _node_union(frames) -> "pl.DataFrame | None":
+def node_union(frames) -> "pl.DataFrame | None":
     """The nodes (n) of the frames that have rows, or None."""
     parts = [f.select("n") for f in frames if _has_rows(f)]
     if not parts:
@@ -269,14 +269,14 @@ def cyclic_nodes(d) -> "pl.DataFrame | None":
     bind_within_period, bind_within_solve and bind_intraperiod_blocks (a rolling solve with a
     bind_intraperiod_blocks node stops with an error).  Their first step wraps to a later step of the solve, so
     they take neither a start term nor the roll carry."""
-    return _node_union((d.storage_bind_within_timeblock, d.storage_bind_within_period,
+    return node_union((d.storage_bind_within_timeblock, d.storage_bind_within_period,
                         d.storage_bind_within_solve, getattr(d, "nodeStateBlock", None)))
 
 
 def open_start_nodes(d) -> "pl.DataFrame | None":
     """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only.  Their first step
     starts from the fix_start state in the first solve and from the roll carry in a continuation solve."""
-    return _node_union((d.storage_bind_forward_only,))
+    return node_union((d.storage_bind_forward_only,))
 
 
 def fix_start_first(d, first_solve: bool) -> "pl.DataFrame | None":
