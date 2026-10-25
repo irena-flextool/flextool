@@ -1,4 +1,4 @@
-"""Benders split guards for connections between regions (cycle c14b critique change 4).
+"""Benders split guards for connections between regions.
 
 A connection between two regions (or a region and the master) is replaced by half-flows in each region, so its
 own rows are gone: online variables or an exact direction switch would be free columns without flow rows, and

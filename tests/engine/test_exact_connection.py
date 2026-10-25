@@ -4,8 +4,8 @@ docs/how_to.md: "*Exact* method does not allow flow in both directions at the sa
 variable".  The engine mapped ``exact`` to an online integer that capped both arcs (v_flow ≤ cap·v_online_integer)
 but did not stop simultaneous flow, so a lossy exact line could dissipate a surplus by flowing both ways, and it
 got free "startups".  Now one binary per connection and step, v_exact_forward, switches the direction:
-``forward ≤ Ū·y``, ``reverse ≤ Ū·(1 − y)``, Ū the arc's structural upper bound (critique change 1: GMPL's integer
-unit count fails when the built capacity is not a whole number of units, e.g. after a continuous investment).
+``forward ≤ Ū·y``, ``reverse ≤ Ū·(1 − y)``, Ū the arc's structural upper bound (GMPL's integer unit count
+fails when the built capacity is not a whole number of units, e.g. after a continuous investment).
 
 Fixtures: ``tests.json`` lossless_2way (ll 200 MW, lw ↔ le, two steps) and the network chain, from JSON.
 """
@@ -149,3 +149,54 @@ def test_process_exact_csv_round_trip(tmp_path_factory) -> None:
     assert (out / "solve_data" / "process_exact.csv").exists()
     redo = load_flextool(out)
     assert set(utf8(redo.process_exact)["p"].to_list()) == {"ll"}
+
+
+def _no_simultaneous(step, conn: str, a: str, b: str) -> int:
+    rows = {}
+    for p, s, k, d, t, x in utf8(step.solution.value("v_flow")).filter(pl.col("p") == conn).rows():
+        rows.setdefault((d, t), {})[(s, k)] = x
+    for key, f in rows.items():
+        assert min(f.get((a, b), 0.0), f.get((b, a), 0.0)) <= TOL, key
+    return len(rows)
+
+
+def test_exact_rolling(tmp_path_factory) -> None:
+    """Every roll of the rolling fullYear dispatch has the direction rows of the exact west_east over its steps
+    (no inter-temporal link, nothing carried) and its solution never flows both ways."""
+    steps = list(run(tmp_path_factory, *make_db(
+        tmp_path_factory, alt="ex_roll",
+        values=[["connection", "west_east", "transfer_method", b64("exact", "str")],
+                ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", b64(36.0, "float")],
+                ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", b64(24.0, "float")]],
+        base_chain=["init", "west", "battery", "wind", "coal", "network", "fullYear",
+                    "dispatch_fullYear_roll"])).values())
+    assert len(steps) > 1
+    for s in steps:
+        n = s.flex_data.dt.height
+        pb = build(s.flex_data)
+        assert len(row_terms(pb, "maxFlow_exact_forward", "west_east,west,east,")) == n
+        assert len(row_terms(pb, "maxFlow_exact_reverse", "west_east,east,west,")) == n
+        assert _no_simultaneous(s, "west_east", "west", "east") == n
+
+
+def test_exact_stochastic(tmp_path_factory) -> None:
+    """Stochastic 2-day dispatch with an exact connection demand_node ↔ north: direction rows in every period of
+    the trunk and the forecast branches, and no simultaneous flow in any of them."""
+    from tests.engine._unit_db import FLEXTOOL_ROOT
+
+    ents = [["node", "north", None], ["connection", "dn_x", None],
+            ["connection__node__node", ["dn_x", "demand_node", "north"], None]]
+    vals = [["node", "north", "node_type", b64("balance", "str")], ["node", "north", "inflow", b64(-150.0, "float")],
+            ["node", "north", "penalty_up", b64(5000.0, "float")],
+            ["node", "north", "penalty_down", b64(5000.0, "float")],
+            ["connection", "dn_x", "transfer_method", b64("exact", "str")],
+            ["connection", "dn_x", "existing", b64(200.0, "float")],
+            ["connection", "dn_x", "efficiency", b64(0.9, "float")]]
+    url, scen = make_db(tmp_path_factory, alt="ex_stoch", values=vals, base_chain=["base", "init", "system", "2day"],
+                        entities=ents, fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json")
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    pb = build(step.flex_data)
+    fwd = row_terms(pb, "maxFlow_exact_forward", "dn_x,demand_node,north,")
+    assert len(fwd) == step.flex_data.dt.height
+    assert len({r.split(",")[-2] for r in fwd}) > 1
+    assert _no_simultaneous(step, "dn_x", "demand_node", "north") == step.flex_data.dt.height

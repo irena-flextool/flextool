@@ -138,7 +138,7 @@ def test_storage_reserve_through_reverse_flow(tmp_path_factory) -> None:
 
 
 # ---------------------------------------------------------------------------
-# (2) Connection reserve limited by its net position (connection_reserve_* rows, Q-c13-A recommended rule)
+# (2) Connection reserve limited by its net position (connection_reserve_* rows)
 
 UNI = ["init", "west", "coal", "wind", "network", "unidirectional"]
 WE = "west_east"

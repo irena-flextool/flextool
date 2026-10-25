@@ -2000,8 +2000,8 @@ def _group_transfer_method_overrides(source: "InputSource") -> "pl.LazyFrame | N
     ``transfer_method`` is not ``use_connection_transfer_methods`` overrides the method of each connection with
     both endpoints (``connection__node__node``) among the group's nodes; ``dc_power_flow_with_angles`` becomes
     ``no_losses_no_variable_cost`` (the DC lines carry one signed flow) and skips the ``is_DC = yes``
-    connections.  A connection matched by several groups takes the override of the last group in name order.
-    The process key is the Utf8 column ``_pk``.  None when no group overrides anything.
+    connections.  A connection matched by several groups with different overrides raises (as the input
+    derivation does).  The process key is the Utf8 column ``_pk``.  None when no group overrides anything.
     """
     gtm = _try_param(source, "group", "transfer_method")
     gn = _try_entities(source, "group__node")
@@ -2025,11 +2025,21 @@ def _group_transfer_method_overrides(source: "InputSource") -> "pl.LazyFrame | N
             matched.filter(pl.col("method") != "dc_power_flow_with_angles"),
             matched.filter(pl.col("method") == "dc_power_flow_with_angles").join(dc, on="p", how="anti"),
         ])
-    out = (matched
+    matched = matched.collect()
+    n_methods = matched.group_by("p").agg(pl.col("method").n_unique().alias("n"))
+    bad = n_methods.filter(pl.col("n") > 1)["p"].to_list()
+    if bad:
+        from flextool.input_derivation._dc_power_flow import (
+            conflicting_overrides_message, group_override_conflicts,
+        )
+        sources: dict[str, dict[str, str]] = {}
+        for p, g, m in matched.filter(pl.col("p").is_in(bad)).select("p", "g", "method").rows():
+            sources.setdefault(p, {})[g] = m
+        raise FlexToolConfigError(conflicting_overrides_message(group_override_conflicts(sources)))
+    out = (matched.lazy()
            .with_columns(ct_override=pl.when(pl.col("method") == "dc_power_flow_with_angles")
                          .then(pl.lit("no_losses_no_variable_cost")).otherwise(pl.col("method")))
-           .sort("p", "g")
-           .group_by("p", maintain_order=True).agg(pl.col("ct_override").last())
+           .group_by("p", maintain_order=True).agg(pl.col("ct_override").first())
            .collect())
     if out.height == 0:
         return None

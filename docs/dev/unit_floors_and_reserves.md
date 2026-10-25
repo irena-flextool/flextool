@@ -42,12 +42,19 @@ Upward reserve held at a node a process delivers into (`b.reserve_up_to_sink`,
 the capacity rows, with coefficient 1 (`v_flow` and `v_reserve` are both in
 output units of unitsize):
 
-* built capacity, every process: `maxFlow` (per arc) and `maxOutputSum`
+* built capacity, units: `maxFlow` (per arc) and `maxOutputSum`
   (sum of an indirect unit's outputs);
-* online capacity, processes with online variables (`_online.py`):
+* online capacity, units with online variables (`_online.py`):
   `maxFlow_online_<kind>`: `v_flow + Σ_r Rup ≤ v_online·avail·cap_max_coeff`
   per capped arc, and `maxOutputSum_online_<kind>`:
   `Σ_k v_flow + Σ_k Σ_r Rup ≤ v_online·avail`.
+
+`maxFlow` / `maxFlow_negCap` / `maxFlow_online_*` read the units-only
+aggregate `b.reserve_up_to_sink_units`; a connection's reserve is limited
+by its own rows (`connection_reserve_*`, "Connections and reserve"
+below). `profile_flow_upper_limit` keeps the term for every process
+(`b.reserve_up_to_sink`). Hand-built data without `process_unit` keeps
+the process-generic coupling.
 
 So an offline unit holds no upward reserve (spinning reserve). The
 built-capacity rows keep their term for online processes too (redundant
@@ -261,8 +268,7 @@ At a reserve node n a connection p has at most one *in-channel* (a flow variable
 `v_flow[p,m,n]`, or `v_flow_back[p,n,m]` of a one-variable / DC arc) and at most one *out-channel*
 (`v_flow[p,n,m]` drawing `slope·v_flow` on an efficiency arc, or `v_flow_back[p,m,n]`); more raises.
 Flows are measured where they arrive; `s_out` is the power drawn at n per unit of the out-channel.
-Net-position rule (owner question Q-c13-A, recommended rule; the c14b commit implementing it is the
-switch — reverting it restores the old coupling):
+Net-position rule:
 
 ```
 R↑_n ≤ (C_in − x_in) + s_out·x_out        R↓_n ≤ x_in + s_out·(C_out − x_out)

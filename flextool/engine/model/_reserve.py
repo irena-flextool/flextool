@@ -901,7 +901,7 @@ def _connection_channels(b: "_Build", pn: pl.DataFrame) -> dict:
     DC arc), ``eff`` True for a v_flow arc in process_source_sink_eff (its flow is measured at the sink and draws
     slope × flow at the source).  In-channels deliver into n (v_flow arcs with sink n, v_flow_back of arcs with
     source n), out-channels draw from n (v_flow arcs with source n, v_flow_back of arcs with sink n).  Raises when a
-    (p, n) has more than one channel of a kind (critique change 2: the rows hold one channel's capacity).
+    (p, n) has more than one channel of a kind (the rows hold one channel's capacity).
     """
     d = b.d
     keys = ["p", "source", "sink"]
@@ -1034,9 +1034,9 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
     #   same LHS − Ū · v_exact_forward[p,d,t]  ≤  0     when that channel is the exact connection's forward arc
     #   same LHS + Ū · v_exact_forward[p,d,t]  ≤  Ū     when it is the reverse arc
     #   ∀ rows above with p ∈ process_exact;  Ū = p_flow_upper · capacity_max_coeff · availability of the arc
-    # A connection's reserve at a node is limited by its net position there (owner question Q-c13-A, recommended
-    # rule): upward reserve by the free capacity into n plus the flow out of n it can stop, downward reserve by the
-    # flow into n it can stop plus the free capacity out of n (converted to power at n by the efficiency).  One row
+    # A connection's reserve at a node is limited by its net position there: upward reserve by the free capacity
+    # into n plus the flow out of n it can stop, downward reserve by the flow into n it can stop plus the free
+    # capacity out of n (converted to power at n by the efficiency).  One row
     # per capacity bound (built, online, exact direction) of the channel whose capacity the reserve uses, so each
     # row holds one channel's capacity.  A one-way connection gets a floor at its sending node (upward reserve ≤
     # what it draws there) and its old capacity row at the receiving node; a one-variable connection's rows bound

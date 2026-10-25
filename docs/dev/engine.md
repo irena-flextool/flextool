@@ -155,8 +155,9 @@ lives in its own module, exposing the parts of the interface it needs —
 reserve headroom), `_reserve`, `_group_slack` (capacity margin, inertia,
 non-synchronous share), `_cumulative_invest` (investment floors and
 group / cumulative / flow-group limits), `_commodity_ladder`,
-`_dc_power_flow`, `_delay` (delayed inputs, used by
-`conversion_indirect`) and `_non_anticipativity` (stochastic ties).
+`_dc_power_flow`, `_exact` (direction switch of `exact` connections),
+`_delay` (delayed inputs, used by `conversion_indirect`) and
+`_non_anticipativity` (stochastic ties).
 Small helpers shared by these live in `_common`.
 
 **Emit order is part of the LP.** Row and column order decide which

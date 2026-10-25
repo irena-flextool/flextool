@@ -84,3 +84,35 @@ def test_unidirectional_override_is_one_way(cases) -> None:
     _url, _scen, step = cases["unidirectional"]
     pss = utf8(step.flex_data.process_source_sink).filter(pl.col("p") == "west_east")
     assert pss.select("source", "sink").rows() == [("west", "east")]
+
+
+def _two_groups(m1: str, m2: str) -> tuple[list, list]:
+    ents, vals = [], []
+    for g, m in (("gwe", m1), ("gwe2", m2)):
+        ents += [["group", g, None], ["group__node", [g, "west"], None], ["group__node", [g, "east"], None]]
+        vals.append(["group", g, "transfer_method", b64(m, "str")])
+    return ents, vals
+
+
+def test_conflicting_group_overrides_raise(tmp_path_factory) -> None:
+    """Two groups over west and east with different overrides: both the input derivation (the run) and the engine
+    classifier raise, naming the connection and the groups."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    from flextool.engine.input._spinedb_reader import SpineDbReader
+    from flextool.engine.preprocess.params._derived import _classify_process_method
+
+    ents, vals = _two_groups("unidirectional", "exact")
+    url, scen = make_db(tmp_path_factory, alt="gto_conflict", values=vals, base_chain=NET, entities=ents)
+    with pytest.raises(FlexToolConfigError, match=r"west_east \(gwe: unidirectional, gwe2: exact\)"):
+        _classify_process_method(SpineDbReader(url, scen))
+    with pytest.raises(FlexToolConfigError, match="west_east"):
+        run(tmp_path_factory, url, scen)
+
+
+def test_equal_group_overrides_agree(tmp_path_factory) -> None:
+    """Two groups with the same override are no conflict: one arc, as with a single group."""
+    ents, vals = _two_groups("unidirectional", "unidirectional")
+    url, scen = make_db(tmp_path_factory, alt="gto_same", values=vals, base_chain=NET, entities=ents)
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    engine, derived = _connection_methods(step, url, scen)
+    assert engine == derived and engine["west_east"] == "method_1way_1var_off"

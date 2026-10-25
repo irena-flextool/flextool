@@ -9,7 +9,7 @@ GMPL mapped one-way connections with a startup method to online methods; the eng
 * the DB-path online projections read ``unit.startup_method`` only and filtered on ``"integer"`` (the schema value is
   ``binary``); a non-empty projection replaced the CSV seed, so a one-way online connection lost its online
   variables as soon as a unit had ``startup_method = linear``, a binary unit next to a linear one left
-  ``process_online`` (inertia counted twice, item 105), and a unit online only through ``minimum_time_method`` lost
+  ``process_online`` (inertia counted twice), and a unit online only through ``minimum_time_method`` lost
   its online variables and min up / down rows next to a linear unit;
 * a connection's ``startup_cost`` never reached the objective on the DB path;
 * a DC power-flow line with a startup method would need line switching: rejected.
@@ -198,7 +198,7 @@ def test_dc_connection_online_rejected_by_model(tmp_path_factory) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Online sets of units (item 105)
+# Online sets of units
 
 
 @pytest.fixture(scope="module")
@@ -269,7 +269,7 @@ def mixed(tmp_path_factory):
 
 def test_online_projection_equals_emit(mixed) -> None:
     """A7: the DB-path online sets (projection, used by the model) equal the CSV seed the solve_data frames are
-    built from, and the seed-derived fields agree with them (critique 8e): p_online_dt covers exactly
+    built from, and the seed-derived fields agree with them: p_online_dt covers exactly
     process_online, pdt_online_* the online processes of each class with a startup cost, p_startup_cost has the
     authored costs (connections included; coal_plant has none in this chain).  exact without a startup method is
     in neither set."""
@@ -416,9 +416,35 @@ def test_startup_cost_constant_vs_period_map(tmp_path_factory, uni_online, rolli
 # Outputs
 
 
+def _time_map(fn) -> list:
+    return b64({"index_type": "str", "index_name": "time", "data": [[f"t{i:04d}", fn(i)] for i in range(1, 49)]},
+               "map")
+
+
+_TWO_PERIODS_ENTS = [["timeset", "ta", None], ["timeset", "tb", None]]
+
+
+def _two_periods() -> list:
+    pmap = {"index_type": "str", "index_name": "period", "data": [["p2020", "ta"], ["p2025", "tb"]]}
+    periods = {"value_type": "str", "data": ["p2020", "p2025"]}
+    return [["timeset", "ta", "timeline", b64("y2020", "str")], ["timeset", "tb", "timeline", b64("y2020", "str")],
+            ["timeset", "ta", "timeset_duration", b64({"index_type": "str", "index_name": "time",
+                                                       "data": [["t0001", 24.0]]}, "map")],
+            ["timeset", "tb", "timeset_duration", b64({"index_type": "str", "index_name": "time",
+                                                       "data": [["t0025", 24.0]]}, "map")],
+            ["solve", "y2020_2day_dispatch", "period_timeset", b64(pmap, "map")],
+            ["solve", "y2020_2day_dispatch", "realized_periods", b64(periods, "array")],
+            ["solve", "y2020_2day_dispatch", "invest_periods", b64(periods, "array")],
+            ["solve", "y2020_2day_dispatch", "realized_invest_periods", b64(periods, "array")]]
+
+
 def test_connection_online_outputs(tmp_path_factory) -> None:
-    """E: write_outputs reports connection_online__dt, connection_online__d_average and connection_startup__d for
-    the online connection, and the unit outputs only for units."""
+    """E: write_outputs reports the connection's online status, startups and startup cost as the LP solved them.
+    Fixture: two continuing periods (p2020 t0001–24, p2025 t0025–48), west_east (one-way, linear online, startup
+    cost 3) without existing capacity and with investment; east has demand only in p2025, so west_east invests
+    and starts up (in p2020 for west's spill, more in p2025).  connection_online__dt = v_online; connection_startup__d
+    = Σ_t v_startup / period share of the year (24 / 8760); costs__dt "starts" = v_startup × unitsize × 3 per step.
+    Unit outputs list units only."""
     import pandas as pd
 
     from flextool._resources import package_data_path
@@ -426,8 +452,14 @@ def test_connection_online_outputs(tmp_path_factory) -> None:
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from flextool.process_outputs.write_outputs import write_outputs
 
-    url, scen = make_db(tmp_path_factory, alt="oc_out", values=_startup(WE, "linear"),
-                        base_chain=UNI + ["coal_min_load"])
+    vals = _two_periods() + _startup(WE, "linear") + [
+        ["connection", WE, "existing", b64(0.0, "float")],
+        ["connection", WE, "invest_method", b64("invest_no_limit", "str")],
+        ["connection", WE, "invest_cost", b64(1.0, "float")],
+        ["connection", WE, "lifetime", b64(20.0, "float")],
+        ["connection", WE, "discount_rate", b64(0.05, "float")],
+        ["node", "east", "inflow", _time_map(lambda i: 0.0 if i <= 24 else -300.0)]]
+    url, scen = make_db(tmp_path_factory, alt="oc_out", values=vals, base_chain=UNI, entities=_TWO_PERIODS_ENTS)
     work = tmp_path_factory.mktemp("oc_out_w")
     cwd = os.getcwd()
     try:
@@ -443,9 +475,26 @@ def test_connection_online_outputs(tmp_path_factory) -> None:
     finally:
         os.chdir(cwd)
     out = work / "output_csv" / scen
+    us = float(utf8(last.flex_data.p_unitsize.frame).filter(pl.col("p") == WE)["value"][0])
+    lp_on = {(d, t): x for p, d, t, x in utf8(last.solution.value("v_online_linear")).rows() if p == WE}
+    lp_su = {(d, t): x for p, d, t, x in utf8(last.solution.value("v_startup_linear")).rows() if p == WE}
+    assert sum(lp_su.values()) > 0.1   # the fixture starts the connection
+
     on = pd.read_csv(out / "connection_online__dt.csv")
-    assert WE in on.columns and on[WE].notna().all()
+    got_on = {(r.period, r.time): r.west_east for r in on.itertuples()}
+    assert got_on.keys() == lp_on.keys()
+    for k, x in lp_on.items():
+        assert got_on[k] == pytest.approx(x, abs=1e-9), k
+
+    starts = pd.read_csv(out / "connection_startup__d.csv")
+    for r in starts.itertuples():
+        want = sum(x for (d, _t), x in lp_su.items() if d == r.period) / (24.0 / 8760.0)
+        assert r.west_east == pytest.approx(want, rel=1e-9), r.period
+    assert starts["west_east"].sum() > 0.0
+
+    costs = pd.read_csv(out / "costs__dt.csv")
+    for r in costs.itertuples():
+        assert r.starts == pytest.approx(lp_su[(r.period, r.time)] * us * 3.0, rel=1e-9, abs=1e-9)
     assert WE in pd.read_csv(out / "connection_online__d_average.csv").columns
-    assert WE in pd.read_csv(out / "connection_startup__d.csv").columns
-    unit_on = pd.read_csv(out / "unit_online__dt.csv")
-    assert "coal_plant" in unit_on.columns and WE not in unit_on.columns
+    unit_on = out / "unit_online__dt.csv"
+    assert not unit_on.exists() or WE not in pd.read_csv(unit_on).columns

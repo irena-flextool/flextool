@@ -308,9 +308,10 @@ its flag is off. Required-field lists are module-level tuples in
 | `has_cumulative_invest` | `_cumulative_invest.has_feature` | — | `_cumulative_invest`. |
 | `has_ladder` | `_commodity_ladder.has_feature` | — | `_commodity_ladder`. |
 
-The DC power-flow, delay and non-anticipativity modules gate on their own
-data (`_dc_power_flow.has_feature`, `_delay.has_feature`,
-`period_branch_full` / `pd_non_anticipativity`).
+The DC power-flow, exact-connection, delay and non-anticipativity modules
+gate on their own data (`_dc_power_flow.has_feature`, `_exact.has_feature`
+(`process_exact`), `_delay.has_feature`, `period_branch_full` /
+`pd_non_anticipativity`).
 
 If a switch is set but a required field is missing, `build_flextool` raises
 `ValueError` rather than silently degrading.

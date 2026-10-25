@@ -29,6 +29,22 @@ import logging
 
 import polars as pl
 
+from flextool.engine.input._solve_state import FlexToolConfigError
+
+
+def group_override_conflicts(override_sources: "dict[str, dict[str, str]]") -> "dict[str, dict[str, str]]":
+    """The connections whose matching groups set different ``transfer_method`` overrides
+    (``{connection: {group: method}}`` of the input, restricted to the conflicting connections)."""
+    return {c: g for c, g in sorted(override_sources.items()) if len(set(g.values())) > 1}
+
+
+def conflicting_overrides_message(conflicts: "dict[str, dict[str, str]]") -> str:
+    """The error for connections with conflicting group ``transfer_method`` overrides."""
+    parts = [f"{c} ({', '.join(f'{g}: {m}' for g, m in sorted(gm.items()))})" for c, gm in conflicts.items()]
+    return ("Connection(s) with both endpoints in several groups that set different transfer_method overrides: "
+            + "; ".join(parts) + ".  A connection can take its transfer_method from one group only: set the same "
+            "transfer_method on these groups, or use_connection_transfer_methods on all but one of them.")
+
 
 def derive_dc_power_flow(
     backend,
@@ -108,6 +124,7 @@ def derive_dc_power_flow(
 
     # --- Apply group transfer_method overrides for ALL groups ---
     dc_pf_groups: list[str] = []
+    override_sources: dict[str, dict[str, str]] = {}  # connection -> {group: method}
     for group_name, method in group_transfer_methods.items():
         if method == "use_connection_transfer_methods":
             continue
@@ -125,11 +142,16 @@ def derive_dc_power_flow(
                 # For dc_power_flow_with_angles: exclude is_DC=yes connections
                 if is_dc_pf and conn_name in is_dc_connections:
                     continue
+                override_sources.setdefault(conn_name, {})[group_name] = method
                 if is_dc_pf:
                     # DC PF connections use no_losses_no_variable_cost internally
                     ct_method_overrides[conn_name] = "no_losses_no_variable_cost"
                 else:
                     ct_method_overrides[conn_name] = method
+
+    conflicts = group_override_conflicts(override_sources)
+    if conflicts:
+        raise FlexToolConfigError(conflicting_overrides_message(conflicts))
 
     # --- DC power flow specific processing ---
     dc_pf_nodes: set[str] = set()

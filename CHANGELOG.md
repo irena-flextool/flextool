@@ -45,7 +45,8 @@
   power-flow lines kept an unconstrained reverse flow next to the one set by
   the voltage angles, and a group `unidirectional` override left its
   connections two-way. The group's method now decides the connections' flows
-  everywhere.
+  everywhere. A connection in several groups with different overrides is
+  now an error (the result depended on the database order).
 
 - **Startup and shutdown capacity reduction.** As documented in the how-to,
   a unit with online variables and ramp limits can no longer run at full
