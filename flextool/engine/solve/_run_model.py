@@ -597,6 +597,7 @@ def native_run_model(state, solver) -> int:
     solve_writers.emit_timesets(
         state.solve.timesets_used_by_solves,
         state.timeline.timesets__timeline,
+        state.timeline.original_timeline,
         provider=cascade_input_provider,
     )
 

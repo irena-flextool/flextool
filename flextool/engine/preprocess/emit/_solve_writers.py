@@ -762,22 +762,37 @@ def derive_timesets_in_use(
 
 def derive_timesets__timeline(
     timeset__timeline: dict[str, str],
+    original_timeline: dict[str, str] | None = None,
 ) -> pl.DataFrame:
-    """Build the ``timesets__timeline`` frame (timesets, timeline)."""
-    rows = [(ts, tl) for ts, tl in timeset__timeline.items()]
-    return _to_utf8_frame(("timesets", "timeline"), rows)
+    """Build the ``timesets__timeline`` frame (timesets, timeline, original_timeline).
+
+    ``original_timeline`` is the unaggregated timeline a solve-level
+    ``new_stepduration`` timeline was built from (``TimelineConfig.original_timeline``),
+    else the timeline itself."""
+    original_timeline = original_timeline or {}
+
+    def _original(tl: str) -> str:
+        seen: set[str] = set()
+        while tl in original_timeline and tl not in seen:
+            seen.add(tl)
+            tl = original_timeline[tl]
+        return tl
+
+    rows = [(ts, tl, _original(tl)) for ts, tl in timeset__timeline.items()]
+    return _to_utf8_frame(("timesets", "timeline", "original_timeline"), rows)
 
 
 def emit_timesets(
     timesets_used_by_solves: dict[str, list[tuple[str, str]]],
     timeset__timeline: dict[str, str],
+    original_timeline: dict[str, str] | None = None,
     *, provider,
 ) -> None:
     """Emit ``timesets`` to the Provider."""
     _emit(provider, "input/timesets_in_use.csv",
                    derive_timesets_in_use(timesets_used_by_solves))
     _emit(provider, "input/timesets__timeline.csv",
-                   derive_timesets__timeline(timeset__timeline))
+                   derive_timesets__timeline(timeset__timeline, original_timeline))
 
 
 # ---------------------------------------------------------------------------

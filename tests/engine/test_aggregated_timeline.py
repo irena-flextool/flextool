@@ -285,6 +285,23 @@ def test_step_space_ranks(tmp_path_factory) -> None:
     assert [rk for _t, rk in per_period["p2020"]] == [1, 2, 5, 6, 7, 8, 13, 14, 19, 20]
 
 
+def test_scale_in_proportion_equals_unaggregated(tmp_path_factory) -> None:
+    """west scaled with scale_in_proportion on 5weeks: the inflow multiplier with Δ 2 equals the hourly solve's
+    (both normalise over the whole timeline).  Before: the aggregated solve summed the inflow over the block
+    hours only, against the aggregated timeline's (block-only) duration."""
+    vals = [["node", "west", "inflow_method", b64("scale_in_proportion", "str")],
+            ["node", "west", "annual_flow", _pmap({"p2020": 5.0e6, "p2025": 5.0e6})]]
+    mult = {}
+    for alt, extra in (("sip_1h", []), ("sip_2h", STEP_2H_5W)):
+        step = _last(_run(tmp_path_factory, alt, vals + extra, BATTERY + ["5weeks"]))
+        df = step.flex_data_provider.get("solve_data/period_flow_proportional_multiplier")
+        assert df is not None and df.height > 0
+        mult[alt] = sorted(utf8(df).rows())
+    assert [r[:2] for r in mult["sip_1h"]] == [r[:2] for r in mult["sip_2h"]]
+    for a, b in zip(mult["sip_1h"], mult["sip_2h"]):
+        assert float(a[-1]) == pytest.approx(float(b[-1]), rel=1e-9)
+
+
 def test_rp_blocks_with_step(tmp_path_factory) -> None:
     """Representative timeset rpg (rep blocks t0001, t0049 of 24 h; base periods t0001, t0025, t0049) with a
     bind_within_period_blended_weights battery and Δ 2: rp_block_first = {t0001, t0049}, the blocks' last steps

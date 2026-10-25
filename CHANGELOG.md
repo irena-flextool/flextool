@@ -10,7 +10,8 @@
   representative blocks keep their order. When several timesets of the solve
   share a timeline (one per period, or a stochastic trunk period before the
   branches), every period keeps its time steps; before, only the last
-  timeset's period survived. A
+  timeset's period survived. `scale_in_proportion` inflow scaling now also
+  works with `new_stepduration` and scales as the unaggregated solve does. A
   timeset shared by a solve with `new_stepduration` and a solve without it is
   now an error.
 

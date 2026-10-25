@@ -308,10 +308,16 @@ def emit_per_solve_sets(
                     ["solve", "period", "timeset"], provider=provider)
     cur_solve = _read_csv(solve_data_dir / "solve_current.csv", ["solve"], provider=provider)
     cur_solve_set = frozenset(v for v in cur_solve["solve"].to_list() if v)
+    # period__timeline_set names the ORIGINAL timeline (the one input/timeline.csv, p_timeline_duration_in_years
+    # and the time set use) also when a solve-level new_stepduration re-pointed the timeset to an aggregated one.
     tt = _read_csv(input_dir / "timesets__timeline.csv",
-                   ["timeset", "timeline"], provider=provider)
+                   ["timeset", "timeline", "original_timeline"], provider=provider)
+    if tt.height == 0:
+        tt = _read_csv(input_dir / "timesets__timeline.csv",
+                       ["timeset", "timeline"], provider=provider).with_columns(
+                           pl.col("timeline").alias("original_timeline"))
     tb_to_tl: dict[str, list[str]] = {}
-    for ts, tl in zip(tt["timeset"].to_list(), tt["timeline"].to_list()):
+    for ts, tl in zip(tt["timeset"].to_list(), tt["original_timeline"].to_list()):
         if ts and tl:
             tb_to_tl.setdefault(ts, []).append(tl)
     pt_seen: dict[tuple[str, str], None] = {}
