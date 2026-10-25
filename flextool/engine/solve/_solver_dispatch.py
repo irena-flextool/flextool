@@ -117,8 +117,12 @@ def _resolve_effective_highs_options(
     highs_opt_path: Path | None,
     cli_overrides: Mapping[str, Any] | None,
     baseline: Mapping[str, Any] | None = None,
+    solver_config: SolverConfig | None = None,
 ) -> dict[str, Any]:
     """Resolve the effective HiGHS solver options for one solve.
+
+    This is the one option set every HiGHS solve receives: warm, cold,
+    ``--save-memory`` / subprocess and the Benders master and regions.
 
     Precedence (lowest → highest):
 
@@ -131,11 +135,15 @@ def _resolve_effective_highs_options(
        via :func:`_parse_highs_opt_file`.  Project-level defaults the
        user has committed to disk.  Solution-file keys are dropped from
        this layer (:func:`_drop_solution_file_options`).
-    3. ``solver_arguments`` — the 1d-map authored on the active
-       solve's ``solver_arguments`` parameter (Batch C.1+).
-    4. ``cli_overrides`` — keys injected by CLI flags
+    3. ``solver_config`` — the convenience knobs of the active solve
+       (``solve.solver_mip_gap`` → ``mip_rel_gap``; ``time_limit`` /
+       ``threads`` when set), translated through :data:`_PARAM_MAP`.
+    4. ``solver_arguments`` — the 1d-map authored on the active
+       solve's ``solver_arguments`` parameter (Batch C.1+).  Raw
+       options win over the convenience knobs.
+    5. ``cli_overrides`` — keys injected by CLI flags
        (``--highs-threads``, ``--solver-time-limit``, …) via
-       :func:`flextool.engine.solve._orchestration._finalise_highs_options`.
+       :func:`flextool.engine.solve._orchestration._cli_highs_overrides`.
        Highest precedence; the operator's command-line intent is
        authoritative.
 
@@ -156,6 +164,10 @@ def _resolve_effective_highs_options(
         Optional engine-pinned floor below all other layers.  When
         ``None`` an empty dict is used (callers that want the
         determinism + scale floor pass it explicitly).
+    solver_config
+        The active solve's :class:`SolverConfig`; only its ``time_limit``
+        / ``mip_gap`` / ``threads`` knobs are read (``None`` values and a
+        ``None`` config skip the layer).
 
     Returns
     -------
@@ -169,6 +181,12 @@ def _resolve_effective_highs_options(
             _parse_highs_opt_file(highs_opt_path), highs_opt_path
         )
     )
+    if solver_config is not None:
+        knobs = _PARAM_MAP["highs"]
+        for knob in ("time_limit", "mip_gap", "threads"):
+            value = getattr(solver_config, knob)
+            if value is not None:
+                options[knobs[knob]] = value
     if solver_arguments_map:
         for key, value in solver_arguments_map.items():
             options[str(key)] = value
@@ -205,18 +223,6 @@ _PARAM_MAP: dict[str, dict[str, str]] = {
     "xpress": {"time_limit": "maxtime",    "mip_gap": "miprelstop",            "threads": "threads"},
     "copt":   {"time_limit": "TimeLimit",  "mip_gap": "RelGap",                "threads": "Threads"},
 }
-
-
-def apply_data_solver_options(problem: "Problem", data: Any) -> None:
-    """Store the HiGHS options carried by the data on ``problem``.
-
-    ``data.solver_options`` holds the HiGHS rows of ``solve_mode.csv`` for the
-    active solve (see ``flex_data._load_solver_options``); ``None`` or empty keeps
-    whatever ``problem`` already holds.  Called right after ``build_flextool``
-    on every path that builds a Problem for solving.
-    """
-    if getattr(data, "solver_options", None):
-        problem.set_solver_options(data.solver_options)
 
 
 def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
@@ -298,10 +304,13 @@ def run_one_solve(
 ):
     """Dispatch *problem* to the chosen solver.
 
-    The default HiGHS path is byte-identical to the pre-Phase-3 code: a
-    direct call to ``problem.solve(keep_solver=True)`` preserves
-    streaming, the live ``Solution.highs`` (consumed by the output
-    writer adapter), and the established option-resolution chain.
+    The in-process HiGHS path is a direct call to
+    ``problem.solve(keep_solver=True)``, which preserves streaming and the
+    live ``Solution.highs`` (consumed by the output writer adapter).  Both
+    HiGHS paths (in-process and ``save_memory`` subprocess) solve with the
+    options already stored on *problem* (``set_solver_options`` with the
+    resolved set, then autoscale Layer 3); *solver_config* selects the
+    solver only.
 
     The commercial path (gurobi / cplex / xpress / copt) routes through
     :func:`flextool.engine.solve._subprocess_solve.solve_via_subprocess`,
@@ -361,30 +370,22 @@ def run_one_solve(
         license check fails, or the solver returns a model-level error.
     """
     if solver_config.name == "highs":
-        # Default path: keep ``Problem.solve()`` (preserves streaming +
-        # ``Solution.highs`` for the output writer adapter).  Forward
-        # ``solver_arguments`` and the convenience-knob translations so
-        # HiGHS-side users get the same surface as commercial users —
-        # ``problem.solve(options=...)`` accepts a dict and routes each
-        # key to HiGHS via ``setOptionValue`` (polar-high engine.py).
-        highs_options = build_solver_options(solver_config) or None
+        # HiGHS: the Problem already holds the one resolved option set
+        # (engine baseline < highs.opt < solve.solver_mip_gap <
+        # solver_arguments < CLI flags, ``_resolve_effective_highs_options``)
+        # plus the autoscale Layer-3 keys merged on top, so both branches
+        # below use ``problem._solver_options`` and never re-derive a
+        # partial set from ``solver_config``.
         if save_memory:
             # Subprocess path: write MPS via Problem.write_mps directly
             # from polars frames, spawn flextool.cli.cmd_solve_mps, read
-            # solution back.  The effective options are forwarded to the
-            # subprocess through the .opt file written by solve_via_
-            # subprocess (write_mps itself runs no solver and takes no
-            # options).  Source: convenience-knob-translated options
-            # when present, else whatever was already stored on the
-            # Problem via ``set_solver_options`` upstream (autoscale
-            # Layer 3 may have mutated those).
+            # solution back.  The options reach the subprocess through the
+            # .opt file written by solve_via_subprocess (write_mps itself
+            # runs no solver and takes no options).
             from flextool.engine.solve._subprocess_solve import (
                 solve_via_subprocess,
             )
-            effective_opts = (
-                highs_options if highs_options is not None
-                else dict(getattr(problem, "_solver_options", {}) or {})
-            )
+            effective_opts = dict(getattr(problem, "_solver_options", None) or {})
             return solve_via_subprocess(
                 problem,
                 "highs",
@@ -393,10 +394,7 @@ def run_one_solve(
                 logger=logger,
                 work_folder=work_folder,
             )
-        return problem.solve(
-            options=highs_options,
-            keep_solver=True,
-        )
+        return problem.solve(keep_solver=True)
 
     # Commercial path.  Always subprocess: write MPS via the cheap
     # ``Problem.write_mps`` (polars→MPS, no LpView), spawn the solver's
@@ -567,7 +565,6 @@ __all__ = [
     "FlexToolUserError",
     "_parse_highs_opt_file",
     "_resolve_effective_highs_options",
-    "apply_data_solver_options",
     "build_solver_options",
     "probe_solver_licenses",
     "run_one_solve",

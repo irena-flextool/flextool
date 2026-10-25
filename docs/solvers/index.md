@@ -148,6 +148,10 @@ via the per-solver mechanism:
 3. Translated convenience knobs (`solver_mip_gap`).
 4. The baseline file under `solver_config/<solver>.opt`.
 
+For HiGHS every solve receives this one layered set: warm and cold solves,
+`--save-memory` and the subprocess solve of `warm=False` alike. FlexTool's own
+determinism defaults sit below the baseline file.
+
 Override `solver_config/` location with the `FLEXTOOL_SOLVER_CONFIG_DIR`
 environment variable when running outside the standard project layout
 (for example in CI).
@@ -175,6 +179,17 @@ This is an upstream constraint in polar-high: the Benders master is a
 persistent `WarmProblem`, and warm-LP machinery is HiGHS-only by design.
 Lifting the restriction is tracked separately; in the meantime FlexTool
 fails loudly rather than silently running on HiGHS.
+
+The layered options above also reach the Benders master and every region
+subproblem. Benders' own settings stay on top of them: the region
+subproblems always run crossover (or the interior-point settings of the
+experimental interior-dual mode), and the per-solve HiGHS log is silenced.
+While the regions are solved in parallel (more than one worker), `threads`
+and `parallel` (`--highs-threads`) apply to the master only; the regions stay
+single-threaded so that the result does not depend on the worker count. A
+time limit (`--solver-time-limit`, or `time_limit` in `solver_arguments`)
+applies to each master and region solve separately, not to the whole
+decomposition.
 
 ## Verifying which solvers are installed
 

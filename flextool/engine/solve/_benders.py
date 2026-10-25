@@ -115,7 +115,6 @@ from flextool.engine.autoscale import (
 )
 from flextool.engine.solve._region_filter import HalfFlow, RegionSplit
 from flextool.engine.input._solve_state import FlexToolConfigError
-from flextool.engine.solve._solver_dispatch import apply_data_solver_options
 from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
 )
@@ -862,8 +861,13 @@ class _BendersMaster:
                  regions: list[str], eta_floor: float,
                  *, master: str = "flextool", obj_scale: float = 1.0,
                  master_hosted_nodes: frozenset[str] = frozenset(),
-                 region_membership: dict | None = None):
+                 region_membership: dict | None = None,
+                 solver_options: dict | None = None):
         self.arcs = arcs
+        # The solve's resolved user HiGHS options (highs.opt < solver_mip_gap <
+        # solver_arguments < CLI flags), set on the master Problem before its
+        # WarmProblem is built; log silencing stays on top.
+        self._solver_options = dict(solver_options) if solver_options else {}
         self.regions = list(regions)
         self._eta_floor = eta_floor
         self._master_kind = master
@@ -948,7 +952,8 @@ class _BendersMaster:
         # cut validity is preserved (an exact monotone re-expression).  For the
         # small fixtures s=1.0 ⇒ byte-identical to the un-scaled build.
         _build_flextool(m, reduced, scale_the_objective=self._obj_scale)
-        apply_data_solver_options(m, reduced)
+        if self._solver_options:
+            m.set_solver_options(self._solver_options)
 
         self._m = m
         self._wp = WarmProblem(m)
@@ -1171,6 +1176,8 @@ class _BendersMaster:
             ),
         )
         m.set_objective(Sum(C * cost_param) + Sum(eta))
+        if self._solver_options:
+            m.set_solver_options(self._solver_options)
 
         self._m = m
         self._wp = WarmProblem(m)
@@ -1972,6 +1979,7 @@ def solve_benders(
     progress_callback: Callable[[dict], None] | None = None,
     subsolve_callback: Callable[[dict], None] | None = None,
     workers: int | None = None,
+    solver_options: dict | None = None,
 ) -> BendersResult:
     """Run the multi-cut Benders loop on the regional decomposition of
     ``data``.
@@ -2043,6 +2051,17 @@ def solve_benders(
         DETERMINISTIC — bit-identical ``(cost_r, cut slopes)`` and therefore
         identical LB/UB/iteration-count to ``workers=1`` (see the
         determinism gate test).
+    solver_options
+        The solve's resolved user HiGHS options (``solver_config/highs.opt``
+        < ``solve.solver_mip_gap`` < ``solver_arguments`` < CLI flags; no
+        engine baseline).  Merged into the master and every region Problem
+        before the region autoscale and the Benders pins (``run_crossover``,
+        the ``interior`` IPM settings, log silencing), which stay on top.
+        While the region pass runs on more than one worker, ``threads`` /
+        ``parallel`` reach the master only: the regions stay single-threaded
+        so the parallel pass stays deterministic.  A time limit applies to
+        each sub-solve, not to the whole decomposition.  ``None`` = HiGHS
+        defaults (tests).
 
     Returns
     -------
@@ -2063,7 +2082,6 @@ def solve_benders(
     if build_problem is None:
         def build_problem(pb, d):
             _build_flextool(pb, d, scale_the_objective=scale_the_objective)
-            apply_data_solver_options(pb, d)
 
     _data_enums = getattr(data, "_axis_enums", None)
     _enums_token = None
@@ -2077,6 +2095,7 @@ def solve_benders(
             in_out_weight=in_out_weight,
             progress_callback=progress_callback,
             subsolve_callback=subsolve_callback, workers=workers,
+            solver_options=solver_options,
         )
     finally:
         if _enums_token is not None:
@@ -2268,7 +2287,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                          obj_scale: float = 1.0,
                          in_out_weight: float = 0.0,
                          progress_callback=None, subsolve_callback=None,
-                         workers=None) -> BendersResult:
+                         workers=None, solver_options=None) -> BendersResult:
     # --- master-hosted node set (plan §3 membership rule): every balance/
     # state node in NO region group is hosted natively in the MASTER.
     # Empty on every all-nodes-grouped model ⇒ every branch below keyed on
@@ -2312,9 +2331,26 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # the cut math.  ``resolve_scaling_config(None)`` reads ``FLEXTOOL_SCALING``
     # from the environment (same cascade-internal convention the monolith uses).
     _scale_cfg = resolve_scaling_config(None)
+    # ``_resolve_benders_workers`` applies the machine-local env override and clamps to ``[1, n]`` (one region
+    # per split).  Resolved before the region build: with more than one worker the region subproblems keep
+    # HiGHS single-threaded (no user ``threads`` / ``parallel``) so the parallel pass stays deterministic.
+    eff_workers = _resolve_benders_workers(len(splits), workers)
+    region_options = dict(solver_options) if solver_options else {}
+    if eff_workers > 1 and ({"threads", "parallel"} & set(region_options)):
+        _logger.info(
+            "Benders: the region subproblems run on %d workers and stay single-threaded; the HiGHS threads / "
+            "parallel options (%s) apply to the master only",
+            eff_workers, ", ".join(f"{k}={region_options[k]}" for k in ("threads", "parallel")
+                                   if k in region_options),
+        )
+        region_options.pop("threads", None)
+        region_options.pop("parallel", None)
     region_plans: list[Layer2Plan | None] = []
     for s, pb in zip(splits, subproblems):
         build_problem(pb, s.data)
+        # The solve's user options, merged (set_solver_option) under the region autoscale and the pins below.
+        for key, value in region_options.items():
+            pb.set_solver_option(key, value)
         region_plans.append(_apply_region_autoscale(pb, _scale_cfg, s.region))
         # PIN ``run_crossover=on`` on every region subproblem.  The Benders cut
         # slope is the reduced cost of the pinned boundary-flow column, which is
@@ -2542,6 +2578,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         master=master_kind, obj_scale=obj_scale,
         master_hosted_nodes=master_hosted,
         region_membership=region_membership,
+        solver_options=solver_options,
     )
     # Re-bind the region-meta forward tuples to the master-rewritten f col-ids.
     for rm in regions_meta:
@@ -2563,11 +2600,9 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # already ran SEQUENTIALLY above (the ``for w in warm: w.solve()`` loop),
     # so only WARM re-solves are parallelized and the per-region
     # ``(cost_r, slopes)`` are bit-identical to the sequential path.
-    # ``_resolve_benders_workers`` applies the machine-local env override and
-    # clamps to ``[1, n]``; the coordinator's own ``resolve_worker_count`` is
-    # a fixed point on the resolved value, so the effective count is
-    # identical.
-    eff_workers = _resolve_benders_workers(len(regions_meta), workers)
+    # ``eff_workers`` was resolved before the region build; the coordinator's
+    # own ``resolve_worker_count`` is a fixed point on the resolved value, so
+    # the effective count is identical.
     _logger.info(
         "Benders: region recourse pass over %d region(s) with %d worker(s)",
         len(regions_meta), eff_workers,

@@ -487,8 +487,8 @@ def _build_warm_problem(
         Multiplier applied to the objective inside ``build_flextool``.
     solver_options
         HiGHS options to apply via ``pb.set_solver_options`` BEFORE
-        wrapping in :class:`WarmProblem`.  Typically the dict returned
-        by :func:`flextool.engine.scaling.recommended_highs_options`.
+        wrapping in :class:`WarmProblem`.  The orchestrator passes None
+        and sets the resolved set on the inner Problem afterwards.
 
     No Param is declared mutable: the warm path pushes no updates, so the
     build skips polar-high's per-cell tracking pass.
@@ -496,12 +496,10 @@ def _build_warm_problem(
     Late-imports ``build_flextool`` to avoid a build-time cycle between
     this module and ``model/core.py``.
     """
-    from flextool.engine.solve._solver_dispatch import apply_data_solver_options
     from flextool.engine.model.core import build_flextool
 
     pb = Problem()
     build_flextool(pb, data, scale_the_objective=scale_the_objective)
-    apply_data_solver_options(pb, data)
     if solver_options:
         pb.set_solver_options(solver_options)
     return WarmProblem(pb)

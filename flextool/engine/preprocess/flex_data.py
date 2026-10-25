@@ -1057,16 +1057,6 @@ class FlexData:
     period__time_last: pl.DataFrame | None = None         # (period, step)
     node__storage_nested_fix_method: pl.DataFrame | None = None  # (node, method)
 
-    # ─── HiGHS solver options (read from input/solve_mode.csv) ───────────
-    # Maps HiGHS option name → value (str / int / float / bool).  flextool
-    # writes ``highs_method``, ``highs_parallel``, ``highs_presolve`` rows
-    # keyed on ``solve``; load_flextool picks the row for the active solve
-    # (solve_data/solve_current.csv) and renames keys to HiGHS canonical
-    # option names (``solver``, ``parallel``, ``presolve``).  Applied in
-    # ``Problem.solve()`` via ``Highs.setOptionValue``.  ``None`` means no
-    # CSV / no rows for the active solve → HiGHS defaults.
-    solver_options: dict | None = None
-
     def dump_csvs(self,
                    workdir: "Path | str",
                    *,
@@ -3859,110 +3849,6 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
     return out
 
 
-# ---------------------------------------------------------------------------
-# HiGHS solver options (input/solve_mode.csv)
-#
-# flextool's ``solve_mode.csv`` is keyed (param, solve, value).  As of
-# Batches C.3-C.5 none of the three legacy ``highs_*`` string
-# shortcuts (``highs_method`` / ``highs_parallel`` / ``highs_presolve``)
-# exist any longer — those overrides are now authored on
-# ``solver_arguments`` and routed through
-# :func:`flextool.engine.solve._solver_dispatch._resolve_effective_highs_options`.
-# Only a forward-compatibility set of numeric / boolean HiGHS option
-# rows would still be picked up here (table below).  When the CSV
-# carries none of those rows the loader returns ``None`` and HiGHS
-# defaults stand.
-# Other ``param`` rows (notably ``solve_mode``) describe the flextool
-# solve framework, not HiGHS, and are ignored here.
-#
-# When the file lists multiple solves, we pick the row whose ``solve``
-# matches ``solve_data/solve_current.csv``.  If ``solve_current`` is
-# absent or the row is missing for that solve, we silently fall back to
-# HiGHS defaults (``solver_options=None``) — current behavior.
-
-# flextool param → HiGHS canonical option name + coercion
-_HIGHS_PARAM_MAP: dict[str, tuple[str, type]] = {
-    # Numeric / boolean HiGHS options that flextool *may* emit in the
-    # future — wire them up so they Just Work when they appear.
-    "highs_time_limit":                 ("time_limit",                 float),
-    "highs_mip_rel_gap":                ("mip_rel_gap",                float),
-    "highs_mip_abs_gap":                ("mip_abs_gap",                float),
-    "highs_threads":                    ("threads",                    int),
-    "highs_random_seed":                ("random_seed",                int),
-    "highs_output_flag":                ("output_flag",                bool),
-    "highs_primal_feasibility_tolerance":
-        ("primal_feasibility_tolerance", float),
-    "highs_dual_feasibility_tolerance":
-        ("dual_feasibility_tolerance",   float),
-}
-
-
-def _coerce_bool(v: str) -> bool:
-    s = str(v).strip().lower()
-    if s in ("true", "yes", "on", "1"):
-        return True
-    if s in ("false", "no", "off", "0"):
-        return False
-    raise ValueError(f"cannot coerce {v!r} to bool")
-
-
-def _load_solver_options(sd: Path,
-                          *,
-                          provider: "object | None" = None) -> dict | None:
-    p = sd.parent / "input" / "solve_mode.csv"
-    key = "input/solve_mode"
-    if not _provider_has(provider, key, p):
-        # Fixtures sometimes drop the CSV under solve_data/ instead of input/.
-        p = sd / "solve_mode.csv"
-        key = "solve_data/solve_mode"
-        if not _provider_has(provider, key, p):
-            return None
-    df = _provider_read(provider, key, p)
-    if df.height == 0 or "param" not in df.columns or "value" not in df.columns:
-        return None
-
-    # Pick the active solve.  ``solve_current.csv`` has a single ``solve``
-    # column with one row.  If multiple HiGHS rows exist for a single
-    # ``param`` across solves and we can't disambiguate, prefer the
-    # solve_current match; otherwise (single-solve fixtures) take whatever's
-    # there.
-    cur_path = sd / "solve_current.csv"
-    cur_solve: str | None = None
-    if _provider_has(provider, "solve_data/solve_current", cur_path):
-        cur_df = _provider_read(provider, "solve_data/solve_current", cur_path)
-        if cur_df.height > 0 and "solve" in cur_df.columns:
-            cur_solve = str(cur_df["solve"][0])
-
-    if cur_solve is not None and "solve" in df.columns:
-        df_active = df.filter(pl.col("solve") == cur_solve)
-        if df_active.height == 0:
-            df_active = df  # fall back: no rows for current solve
-    else:
-        df_active = df
-
-    out: dict = {}
-    for row in df_active.iter_rows(named=True):
-        param = str(row["param"]).strip()
-        if param not in _HIGHS_PARAM_MAP:
-            continue
-        opt_name, opt_type = _HIGHS_PARAM_MAP[param]
-        raw = row["value"]
-        try:
-            if opt_type is bool:
-                val = _coerce_bool(raw)
-            elif opt_type is int:
-                val = int(float(raw))   # tolerate "1.0"
-            elif opt_type is float:
-                val = float(raw)
-            else:
-                val = str(raw).strip()
-        except (TypeError, ValueError):
-            # Don't crash on a malformed cell — let HiGHS defaults stand.
-            continue
-        out[opt_name] = val
-    return out or None
-
-
 def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
                        *,
                        provider: "object | None" = None) -> dict:
@@ -4851,7 +4737,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
             **ladder_data,
             **stoch_data,
             period_invest=_load_period_invest(sd, provider=provider),
-            solver_options = _load_solver_options(sd, provider=provider),
             # The per-solve BlockLayout loaded above (node -> group, group steps); the coarse-step frames are
             # derived from it at the end of the load (``_apply_coarse_frames``).
             block_layout = block_layout,

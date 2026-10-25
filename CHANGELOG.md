@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Solver options reach every solve.** `solver_mip_gap` was ignored on the
+  default (warm) HiGHS path; it is now honoured. A solve with
+  `solver_arguments` or `solver_mip_gap` that runs cold (`warm=False`,
+  `--save-memory`) no longer loses `solver_config/highs.opt`, the CLI flags
+  (`--highs-threads`, `--solver-time-limit`, …), the determinism defaults and
+  the automatic scaling options; every HiGHS solve now gets the same layered
+  set. Benders decomposition now uses these options too (master and region
+  subproblems; see the solver docs for the details).
+
 - **Stochastic storage tie counts every flow into the node.** The tie that
   keeps the net flow into a stochastic storage node equal in all forecasts
   before the reveal now also counts the reverse flow of two-way connections

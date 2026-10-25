@@ -112,8 +112,9 @@ def _format_solver_args_line(
     Emitted just before HiGHS' own "Running HiGHS …" banner so the run
     log shows exactly the options the solver received — the full merged,
     post-precedence set of everything the operator touched:
-    ``solver_config/highs.opt`` (project floor) ∪ the DB-authored
-    ``solver_arguments`` ∪ the CLI-flag overrides.  Engine-pinned
+    ``solver_config/highs.opt`` (project floor) ∪ the solve's
+    ``solver_mip_gap`` ∪ the DB-authored ``solver_arguments`` ∪ the
+    CLI-flag overrides.  Engine-pinned
     *baseline* options (determinism keys + the Curtis-Reid scale) are
     deliberately excluded — they are internal and always present, so
     listing them would bury the operator's intent.  Pass
@@ -231,6 +232,104 @@ def _baseline_highs_options(
             n = _USER_BOUND_SCALE_MIN
         options["user_bound_scale"] = n
     return options
+
+
+def _cli_highs_overrides() -> dict[str, object]:
+    """HiGHS options from the CLI flags, read from their env vars at call time.
+
+    The top layer of :func:`_solve_highs_options`:
+
+    * ``--solver-time-limit S`` (``FLEXTOOL_HIGHS_TIME_LIMIT``) → ``time_limit``
+    * ``--solver-mip-gap GAP`` (``FLEXTOOL_HIGHS_MIP_GAP``) → ``mip_rel_gap``
+      (only bites MIP solves)
+    * ``--presolve {on,off,choose}`` (``FLEXTOOL_HIGHS_PRESOLVE``) → ``presolve``
+    * ``--highs-threads N`` (``FLEXTOOL_HIGHS_THREADS``): N > 1 → ``threads=N``
+      and ``parallel=on`` (trades determinism for wall-clock speed); N ≤ 1
+      keeps the deterministic DETERMINISM_OPTIONS pins.  Every Highs instance
+      of a sub-solve sees the same value, which sidesteps HiGHS' "global
+      scheduler already initialised" rejection.
+    * ``--solver-log-level {silent,normal,verbose}``
+      (``FLEXTOOL_SOLVER_LOG_LEVEL``): ``silent`` → ``output_flag=False``,
+      ``verbose`` → ``output_flag=True`` + ``log_dev_level=2``, ``normal`` →
+      ``output_flag=True``; anything else leaves the HiGHS default.
+
+    Malformed numeric values are ignored.
+    """
+    cli: dict[str, object] = {}
+    tlim = os.environ.get("FLEXTOOL_HIGHS_TIME_LIMIT")
+    if tlim:
+        try:
+            cli["time_limit"] = float(tlim)
+        except ValueError:
+            pass
+    mip_gap = os.environ.get("FLEXTOOL_HIGHS_MIP_GAP")
+    if mip_gap:
+        try:
+            cli["mip_rel_gap"] = float(mip_gap)
+        except ValueError:
+            pass
+    presolve = os.environ.get("FLEXTOOL_HIGHS_PRESOLVE")
+    if presolve in ("on", "off", "choose"):
+        cli["presolve"] = presolve
+    threads = os.environ.get("FLEXTOOL_HIGHS_THREADS")
+    if threads is not None:
+        try:
+            n = int(threads)
+        except ValueError:
+            n = 1
+        if n > 1:
+            cli["threads"] = n
+            # HiGHS needs ``parallel="on"`` before it uses the threads.
+            cli["parallel"] = "on"
+    log_level = os.environ.get("FLEXTOOL_SOLVER_LOG_LEVEL")
+    if log_level == "silent":
+        cli["output_flag"] = False
+    elif log_level == "verbose":
+        cli["output_flag"] = True
+        cli["log_dev_level"] = 2
+    elif log_level == "normal":
+        cli["output_flag"] = True
+    return cli
+
+
+def _solve_highs_options(
+    state: "RunnerState",
+    complete_solve_name: str,
+    *,
+    baseline: "Mapping[str, Any] | None",
+) -> dict[str, object]:
+    """The HiGHS option set of one sub-solve, the same on every solve path.
+
+    Layers, lowest → highest (:func:`_resolve_effective_highs_options`):
+    ``baseline`` (engine determinism pins + scale; ``None`` for the echoed
+    "Solver args" line and for Benders) < ``solver_config/highs.opt`` <
+    the solve's convenience knobs (``solve.solver_mip_gap``) < the solve's
+    ``solver_arguments`` < the CLI flags (:func:`_cli_highs_overrides`).
+    ``run_chain_from_db`` seeds ``state.paths.solver_config_dir`` to the
+    work-folder ``solver_config`` copy; a bare ``PathConfig`` leaves it
+    None and the highs.opt layer is empty.
+    """
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import (
+        _resolve_effective_highs_options,
+    )
+
+    highs_opt_path = (
+        state.paths.solver_config_dir / "highs.opt"
+        if state.paths.solver_config_dir is not None
+        else None
+    )
+    return _resolve_effective_highs_options(
+        solver_arguments_map=state.solve.solver_settings.arguments.get(
+            complete_solve_name, {}
+        ),
+        highs_opt_path=highs_opt_path,
+        cli_overrides=_cli_highs_overrides(),
+        baseline=baseline,
+        solver_config=state.solve.solver_configs.get(
+            complete_solve_name, SolverConfig()
+        ),
+    )
 
 
 def _autoscale_emit_layer1(
@@ -2115,7 +2214,6 @@ def _drive_cascade(
         load_flextool,
     )
     from flextool.engine.model.core import build_flextool
-    from flextool.engine.solve._solver_dispatch import apply_data_solver_options
     from flextool.engine.output._writer import (
         OutputWriterState,
         write_outputs_for_solve,
@@ -2560,6 +2658,12 @@ def _drive_cascade(
                 in_out_weight=in_out_weight_db,
                 progress_callback=_on_iteration,
                 subsolve_callback=_on_subsolve,
+                # The user layers of the solve's HiGHS options (highs.opt <
+                # solver_mip_gap < solver_arguments < CLI flags).  No engine
+                # baseline: Benders keeps its own validated pins.
+                solver_options=_solve_highs_options(
+                    state, complete_solve_name, baseline=None,
+                ),
             )
 
             # Final summary — convergence + the valid LB/UB sandwich that
@@ -2889,94 +2993,11 @@ def _drive_cascade(
             _scaling_cfg = _autoscale_resolve_config(None)
             _scaling_mode = _scaling_cfg.mode
 
-            # HiGHS solver options.  ``simplex_scale_strategy`` =
-            # advanced (Curtis-Reid) is always-on; ``user_bound_scale``
-            # is only emitted when explicitly requested via
-            # ``--user-bound-scale`` CLI / DB override (see priority
-            # block above).  Default: HiGHS does its own scaling.
-            # Cap solve time via env var if the operator requested it.
-            _diag_tlim = os.environ.get("FLEXTOOL_HIGHS_TIME_LIMIT")
-            # Allow operator to override HiGHS ``mip_rel_gap`` via
-            # ``--solver-mip-gap GAP`` CLI flag (env-var-plumbed).  Only
-            # bites MIP solves; pure-LP solves ignore it.
-            _cli_mip_gap = os.environ.get("FLEXTOOL_HIGHS_MIP_GAP")
-            # Allow operator to override HiGHS ``presolve`` via
-            # ``--presolve {on,off,choose}`` CLI flag (env-var-plumbed).
-            _cli_presolve = os.environ.get("FLEXTOOL_HIGHS_PRESOLVE")
-            # Allow operator to override HiGHS ``threads`` via
-            # ``--highs-threads N`` CLI flag (env-var-plumbed).  N > 1
-            # flips ``parallel`` to ``on`` and trades determinism for
-            # wall-clock speedup; N == 1 keeps the DETERMINISM_OPTIONS
-            # pinning intact.  Resolving once per ``_finalise_highs_options``
-            # call (= once per sub-solve) ensures every Highs instance in
-            # the process sees the same value, sidestepping HiGHS'
-            # "global scheduler already initialised" rejection path.
-            _cli_threads = os.environ.get("FLEXTOOL_HIGHS_THREADS")
-            # ``--solver-log-level {silent,normal,verbose}`` CLI flag,
-            # env-var-plumbed.  Replaces the v55-era ``solve.solver_log_level``
-            # DB knob removed in Batch C.7.  ``silent`` flips HiGHS'
-            # ``output_flag`` off; ``verbose`` additionally bumps
-            # ``log_dev_level=2`` for per-iteration solver telemetry.
-            _cli_log_level = os.environ.get("FLEXTOOL_SOLVER_LOG_LEVEL")
-
-            def _build_cli_overrides() -> dict[str, object]:
-                """Translate CLI env-var-plumbed flags into a HiGHS
-                options dict that the effective-options resolver layers
-                on top of ``solver_arguments`` and ``highs.opt``.
-                """
-                cli: dict[str, object] = {}
-                if _diag_tlim:
-                    try:
-                        cli["time_limit"] = float(_diag_tlim)
-                    except ValueError:
-                        pass
-                if _cli_mip_gap:
-                    try:
-                        cli["mip_rel_gap"] = float(_cli_mip_gap)
-                    except ValueError:
-                        pass
-                if _cli_presolve in ("on", "off", "choose"):
-                    cli["presolve"] = _cli_presolve
-                if _cli_threads is not None:
-                    try:
-                        n = int(_cli_threads)
-                    except ValueError:
-                        n = 1
-                    if n > 1:
-                        cli["threads"] = n
-                        # User opted out of the determinism pin; HiGHS
-                        # needs ``parallel="on"`` before it will actually
-                        # use the threads.
-                        cli["parallel"] = "on"
-                    # n == 1 (or n <= 0) keeps the deterministic defaults
-                    # from DETERMINISM_OPTIONS — no override needed.
-                if _cli_log_level == "silent":
-                    cli["output_flag"] = False
-                elif _cli_log_level == "verbose":
-                    cli["output_flag"] = True
-                    cli["log_dev_level"] = 2
-                elif _cli_log_level == "normal":
-                    cli["output_flag"] = True
-                # Anything else (None, unknown) leaves HiGHS defaults
-                # standing — same as the pre-C.7 behaviour where the
-                # DB-side knob fed nothing.
-                return cli
-
-            # Per-solve ``solver_arguments`` 1d-map (Batch C.1).  Empty
-            # dict when no entry authored on the active solve.
+            # Per-solve ``solver_arguments`` 1d-map (Batch C.1), listed first
+            # in the echoed "Solver args" line.  The full option set of this
+            # sub-solve comes from ``_solve_highs_options``.
             _solver_args_map = state.solve.solver_settings.arguments.get(
                 complete_solve_name, {}
-            )
-            # ``solver_config/highs.opt`` floor parsed by the resolver.
-            # ``run_chain_from_db`` seeds ``state.paths.solver_config_dir``
-            # to the work-folder ``solver_config`` copy, so the CLI path
-            # reads the floor; direct native callers that build a bare
-            # ``PathConfig`` leave it None and the resolver treats that as
-            # an empty floor.
-            _highs_opt_path = (
-                state.paths.solver_config_dir / "highs.opt"
-                if state.paths.solver_config_dir is not None
-                else None
             )
 
             # --- LP build & solve ------------------------------------------
@@ -3076,18 +3097,13 @@ def _drive_cascade(
             )
             if warm_active:
                 fp = _fingerprint(data)
-                from flextool.engine.solve._solver_dispatch import (
-                    _resolve_effective_highs_options,
-                )
                 # Solver configuration of this sub-solve, resolved BEFORE the
                 # reuse decision: a reused LP keeps the options, autoscale
                 # mode and objective scale of its build, so a sub-solve with
                 # other settings must build a new LP.  ``highs_options`` is
                 # also what the fresh-build branch below applies.
-                highs_options = _resolve_effective_highs_options(
-                    solver_arguments_map=_solver_args_map,
-                    highs_opt_path=_highs_opt_path,
-                    cli_overrides=_build_cli_overrides(),
+                highs_options = _solve_highs_options(
+                    state, complete_solve_name,
                     baseline=_baseline_highs_options(
                         user_bound_scale_override=user_bound_scale_override,
                         scaling_mode=_scaling_mode,
@@ -3374,8 +3390,8 @@ def _drive_cascade(
                 print("", flush=True)
                 # Echo the effective solver options right before HiGHS'
                 # own banner: the full merged, post-precedence set the
-                # solver actually received (``highs.opt`` floor ∪ DB
-                # ``solver_arguments`` ∪ CLI overrides), so the run is
+                # solver actually received (``highs.opt`` floor ∪
+                # ``solver_mip_gap`` ∪ DB ``solver_arguments`` ∪ CLI overrides), so the run is
                 # replicable from the log alone.  Resolved with
                 # ``baseline=None`` so the engine-internal determinism /
                 # scale keys are excluded — only what the operator
@@ -3383,15 +3399,7 @@ def _drive_cascade(
                 # sit in the same stdout stream as the blank separator
                 # above and HiGHS' native banner below — the GUI's
                 # ``execution_window`` parses these printed markers.
-                from flextool.engine.solve._solver_dispatch import (
-                    _resolve_effective_highs_options,
-                )
-                _eff_touched = _resolve_effective_highs_options(
-                    solver_arguments_map=_solver_args_map,
-                    highs_opt_path=_highs_opt_path,
-                    cli_overrides=_build_cli_overrides(),
-                    baseline=None,
-                )
+                _eff_touched = _solve_highs_options(state, complete_solve_name, baseline=None)
                 _sa_line = _format_solver_args_line(
                     _eff_touched, prefer_first=list(_solver_args_map or {}),
                 )
@@ -3505,20 +3513,14 @@ def _drive_cascade(
                 pb = Problem()
                 _phase_prof("build_start")
                 build_flextool(pb, data, scale_the_objective=effective_obj_scale)
-                apply_data_solver_options(pb, data)
                 _phase_prof("build_done")
                 if _memrec_local is not None and _emit_phase:
                     _memrec_local.checkpoint(
                         "lp_build_end", self.state.logger,
                         user_label="Matrix built by polar-high",
                     )
-                from flextool.engine.solve._solver_dispatch import (
-                    _resolve_effective_highs_options,
-                )
-                highs_options = _resolve_effective_highs_options(
-                    solver_arguments_map=_solver_args_map,
-                    highs_opt_path=_highs_opt_path,
-                    cli_overrides=_build_cli_overrides(),
+                highs_options = _solve_highs_options(
+                    state, complete_solve_name,
                     baseline=_baseline_highs_options(
                         user_bound_scale_override=user_bound_scale_override,
                         scaling_mode=_scaling_mode,
@@ -3742,8 +3744,8 @@ def _drive_cascade(
                 print("", flush=True)
                 # Echo the effective solver options right before HiGHS'
                 # own banner: the full merged, post-precedence set the
-                # solver actually received (``highs.opt`` floor ∪ DB
-                # ``solver_arguments`` ∪ CLI overrides), so the run is
+                # solver actually received (``highs.opt`` floor ∪
+                # ``solver_mip_gap`` ∪ DB ``solver_arguments`` ∪ CLI overrides), so the run is
                 # replicable from the log alone.  Resolved with
                 # ``baseline=None`` so the engine-internal determinism /
                 # scale keys are excluded — only what the operator
@@ -3751,12 +3753,7 @@ def _drive_cascade(
                 # sit in the same stdout stream as the blank separator
                 # above and HiGHS' native banner below — the GUI's
                 # ``execution_window`` parses these printed markers.
-                _eff_touched = _resolve_effective_highs_options(
-                    solver_arguments_map=_solver_args_map,
-                    highs_opt_path=_highs_opt_path,
-                    cli_overrides=_build_cli_overrides(),
-                    baseline=None,
-                )
+                _eff_touched = _solve_highs_options(state, complete_solve_name, baseline=None)
                 _sa_line = _format_solver_args_line(
                     _eff_touched, prefer_first=list(_solver_args_map or {}),
                 )
