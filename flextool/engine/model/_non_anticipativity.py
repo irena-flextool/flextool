@@ -10,9 +10,9 @@ import logging
 from typing import TYPE_CHECKING
 
 import polars as pl
-from polar_high import Param, Sum, Where
 
-from flextool.engine.input._axis_enums import cast_dim, rename_to_axis
+from flextool.engine.input._axis_enums import cast_dim
+from flextool.engine.model import _balance_terms
 from flextool.engine.model._common import _has_rows, _var_view
 
 if TYPE_CHECKING:
@@ -83,7 +83,7 @@ def add_dispatch_constraints(b: "_Build") -> None:
     if star is None:
         return
     m = b.m
-    v_flow, v_state = b.v_flow, b.v_state
+    v_state = b.v_state
     v_online_integer, v_online_linear = b.v_online_integer, b.v_online_linear
     v_reserve = b.v_reserve
     has_tie_dt = _has_rows(tie_dt)
@@ -105,59 +105,30 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # ─── EQ. ─── non_anticipativity_storage_use ──────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # net[n,d,t] − net[n,b,t] = 0
-    #   net[n,d,t] = Σ_{(p,s,n) ∈ process_source_sink} v_flow[p,s,n,d,t] · unitsize[p] · Δt[d,t]
-    #              − Σ_{(p,n,k) ∈ process_source_sink_eff}   v_flow[p,n,k,d,t] · unitsize[p] · slope[p,d,t] · Δt[d,t]
-    #              − Σ_{(p,n,k) ∈ process_source_sink_noEff} v_flow[p,n,k,d,t] · unitsize[p] · Δt[d,t]
+    #   net[n,d,t] = Σ_{(p,s,n) ∈ flow_to_n} v_flow[p,s,n,d,t] · unitsize[p] · Δt[d,t]
+    #              − Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff}
+    #                  (v_flow[p,n,k,d,t] · slope[p,d,t] + v_online[p,d,t] · section[p,d,t]) · unitsize[p] · Δt[d,t]
+    #              − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t] · unitsize[p] · Δt[d,t]
+    #              − Σ_{(p,s,n) ∈ twoway1var_arcs} v_flow_back[p,s,n,d,t] · unitsize[p] · Δt[d,t]
+    #              + Σ_{(p,n,k) ∈ twoway1var_arcs} v_flow_back[p,n,k,d,t] · unitsize[p] · Δt[d,t]
     #   ∀ n ∈ nodes of groupStochastic, (d,b) ∈ forecast star, (d,t) ∈ tied steps
-    # The net flow into a stochastic node is the same in every forecast over
-    # the tied steps.  It ties the flows, not v_state: the balance slacks of
-    # the node could otherwise absorb a flow difference.
-    if has_tie_dt and v_flow is not None and stoch_nodes is not None and d.p_unitsize is not None \
-            and d.p_step_duration is not None and _has_rows(d.process_source_sink):
-        v_flow_at_b = _var_view(v_flow, "__nab", {"d": "b"})
-        step_dur_at_b = Param(("b", "t"), d.p_step_duration.frame.rename({"d": "b"}))
-        sink_idx = (d.process_source_sink
-                    .join(stoch_nodes.pipe(rename_to_axis, {"n": "sink"}), on="sink", how="inner")
-                    .with_columns(n=pl.col("sink")))
-        src_eff_idx = None
-        if d.process_source_sink_eff is not None:
-            src_eff_idx = (d.process_source_sink_eff
-                           .join(stoch_nodes.pipe(rename_to_axis, {"n": "source"}), on="source", how="inner")
-                           .with_columns(n=pl.col("source")))
-        src_noEff_idx = None
-        if d.process_source_sink_noEff is not None:
-            src_noEff_idx = (d.process_source_sink_noEff
-                             .join(stoch_nodes.pipe(rename_to_axis, {"n": "source"}), on="source", how="inner")
-                             .with_columns(n=pl.col("source")))
-        has_eff = _has_rows(src_eff_idx) and d.p_slope is not None
-        arcs = ("p", "source", "sink")
-
-        lhs_d = []
-        if sink_idx.height > 0:
-            lhs_d.append(Sum(Where(v_flow * d.p_unitsize, sink_idx) * d.p_step_duration, over=arcs))
-        if has_eff:
-            lhs_d.append(-Sum(Where(v_flow * d.p_unitsize * d.p_slope, src_eff_idx) * d.p_step_duration, over=arcs))
-        if _has_rows(src_noEff_idx):
-            lhs_d.append(-Sum(Where(v_flow * d.p_unitsize, src_noEff_idx) * d.p_step_duration, over=arcs))
-
-        lhs_b = []
-        if sink_idx.height > 0:
-            lhs_b.append(-Sum(Where(v_flow_at_b * d.p_unitsize, sink_idx) * step_dur_at_b, over=arcs))
-        if has_eff:
-            slope_at_b = Param(("p", "b", "t"), d.p_slope.frame.rename({"d": "b"}))
-            lhs_b.append(Sum(Where(v_flow_at_b * d.p_unitsize * slope_at_b, src_eff_idx) * step_dur_at_b,
-                             over=arcs))
-        if _has_rows(src_noEff_idx):
-            lhs_b.append(Sum(Where(v_flow_at_b * d.p_unitsize, src_noEff_idx) * step_dur_at_b, over=arcs))
-
-        if lhs_d and lhs_b:
+    #   section only for p ∈ process_min_load_eff (v_online = v_online_linear or v_online_integer)
+    # The net flow into a stochastic node is the same in every forecast over the tied steps: exactly the flow
+    # terms of nodeBalance_eq, built by the same helper (_balance_terms.balance_flow_terms).  It ties the flows,
+    # not v_state, and leaves out the balance slacks: they could otherwise absorb a flow difference.  The
+    # section input counts because efficiency and min_load may differ between forecasts.
+    if has_tie_dt and b.v_flow is not None and stoch_nodes is not None and d.p_unitsize is not None \
+            and d.p_step_duration is not None:
+        flow_d = _balance_terms.balance_flow_terms(b, nodes=stoch_nodes)
+        flow_b = _balance_terms.balance_flow_terms(b, at_branch=True, nodes=stoch_nodes)
+        if flow_d and flow_b:
             over = (stoch_nodes
                     .join(star, how="cross")
                     .join(tie_dt, on="d", how="inner")
                     .select("n", "d", "b", "t").unique())
             if over.height > 0:
-                lhs_terms = {f"d_{i}": e for i, e in enumerate(lhs_d)}
-                lhs_terms.update({f"b_{i}": e for i, e in enumerate(lhs_b)})
+                lhs_terms = {f"d_{k}": e for k, e in flow_d.items()}
+                lhs_terms.update({f"b_{k}": -e for k, e in flow_b.items()})
                 m.add_cstr(
                     "non_anticipativity_storage_use",
                     over      = over,

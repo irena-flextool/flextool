@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Stochastic storage tie counts every flow into the node.** The tie that
+  keeps the net flow into a stochastic storage node equal in all forecasts
+  before the reveal now also counts the reverse flow of two-way connections
+  that use one flow variable (`no_losses_no_variable_cost`) and of DC
+  power-flow lines, and the part-load (minimum load) input of
+  `min_load_efficiency` units. Before, forecasts could move energy in or out
+  of the node through those flows differently, i.e. use knowledge of the
+  future.
+
 - **Prices are in currency per MWh.** `price_t` is now the cost of one more
   MWh of demand at the node and step (positive when more demand costs more).
   Before, node prices were negated and multiplied by the period's share of

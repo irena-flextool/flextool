@@ -69,6 +69,7 @@ import polars as pl
 from polar_high import Sum, Where, Lag, Param
 from polar_high.engine import Expr, Var
 
+from flextool.engine.model import _balance_terms
 from flextool.engine.model import _commodity_ladder
 from flextool.engine.model import _cumulative_invest
 from flextool.engine.model import _dc_power_flow
@@ -1227,46 +1228,13 @@ def _eq_node_balance_coarse(b: _Build) -> None:
 def _node_balance_flow_terms(b: _Build) -> dict:
     """Flow and slack terms of nodeBalance_eq, (n, d, t) in MWh.
 
-    Shared with nodeBalancePeriod_eq: period nodes are never storage, so
-    they take only these terms.
+    The flow terms come from ``_balance_terms.balance_flow_terms``, which the non-anticipativity storage tie
+    shares.  Also used by nodeBalancePeriod_eq: period nodes are never storage, so they take only these terms.
     """
     d = b.d
     terms: dict = {"slack_up": b.vq_state_up * d.p_step_duration,
                    "slack_down": -b.vq_state_down * d.p_step_duration}
-    if not b.has_proc:
-        return terms
-    v_flow = b.v_flow
-    terms["sink_flow"] = Sum(
-        Where(v_flow * d.p_unitsize, d.flow_to_n) * d.p_step_duration,
-        over=("p", "source", "sink"))
-    # A unit with an efficiency draws flow · slope from its source node; a
-    # min_load_efficiency unit also draws its section input per online unit.
-    from_eff = d.flow_from_nodeBalance_eff
-    if _has_rows(from_eff):
-        terms["source_eff"] = -Sum(
-            Where(v_flow * d.p_unitsize * d.p_slope, from_eff) * d.p_step_duration,
-            over=("p", "source", "sink"))
-        if b.has_minload_eff and d.p_section is not None:
-            section_idx = from_eff.join(d.process_min_load_eff, on="p", how="inner")
-            if section_idx.height > 0:
-                for key, v_online in (("source_section_lin", b.v_online_linear),
-                                      ("source_section_int", b.v_online_integer)):
-                    if v_online is None:
-                        continue
-                    terms[key] = -Sum(
-                        Where(Where(v_online, d.process_min_load_eff)
-                              * d.p_section * d.p_unitsize,
-                              section_idx) * d.p_step_duration,
-                        over=("p", "source", "sink"))
-    from_noEff = d.flow_from_nodeBalance_noEff
-    if _has_rows(from_noEff):
-        terms["source_noEff"] = -Sum(
-            Where(v_flow * d.p_unitsize, from_noEff) * d.p_step_duration,
-            over=("p", "source", "sink"))
-    # v_flow_back adds to the source node and takes from the sink node.
-    if b.v_flow_back is not None and b.twoway1var_arcs is not None:
-        terms.update(_dc_power_flow.nodeBalance_back_flow_terms(
-            b.twoway1var_arcs, b.v_flow_back, d.p_unitsize, d.p_step_duration))
+    terms.update(_balance_terms.balance_flow_terms(b))
     return terms
 
 
