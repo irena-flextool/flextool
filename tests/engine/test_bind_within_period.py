@@ -13,6 +13,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from flextool.engine.model import _self_discharge
+from flextool.engine.model._pdt_join import compute_nodeState_dt
 from flextool.engine.preprocess.flex_data import _within_period_lag
 from tests.engine import _rp_hourly_ref as H
 from tests.engine._lp_rows import row_terms
@@ -97,15 +99,17 @@ def two_period(tmp_path_factory):
 def test_state_change_wraps_and_chains_within_each_period(two_period):
     step, pb, _ = two_period
     su = float(step.flex_data.p_state_unitsize.frame["value"][0])
+    # The previous state carries su·(1 − β) (its self-discharge weight; hourly steps, one β for every step).
+    beta = float(_self_discharge.loss_coefficients(step.flex_data, compute_nodeState_dt(step.flex_data)).frame["beta"].max())
     for d in ("p2020", "p2025"):
         rows = row_terms(pb, "nodeBalance_eq", f"battery,{d},")
         # First step of the period: the state change from the period's own last step.
         first = _state_cols(rows[f"nodeBalance_eq[battery,{d},t0001]"])
-        assert first[f"v_state[battery,{d},t0040]"] == pytest.approx(su)
+        assert first[f"v_state[battery,{d},t0040]"] == pytest.approx(su * (1 - beta), rel=1e-12)
         assert first[f"v_state[battery,{d},t0001]"] < 0
         # A block boundary: the previous block's last step (blocks chain inside the period).
         boundary = _state_cols(rows[f"nodeBalance_eq[battery,{d},t0009]"])
-        assert boundary[f"v_state[battery,{d},t0004]"] == pytest.approx(su)
+        assert boundary[f"v_state[battery,{d},t0004]"] == pytest.approx(su * (1 - beta), rel=1e-12)
         # No lag into the other period.
         for row, cols in rows.items():
             assert all(f",{d}," in c for c in _state_cols(cols)), (row, cols)

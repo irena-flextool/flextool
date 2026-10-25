@@ -21,6 +21,8 @@ import polars as pl
 import pytest
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.model import _self_discharge
+from flextool.engine.model._pdt_join import compute_nodeState_dt
 from tests.engine._lp_rows import coef, row_bounds, row_terms
 from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, make_db, run, utf8
 
@@ -313,6 +315,15 @@ def _roll(jump: float) -> list:
             ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(jump)]]
 
 
+def _alpha_beta_of_step(fd, node: str, d: str, b_first: str) -> tuple[float, float]:
+    """(α_b, β_b) of the self-discharge of a coarse step: α summed over its fine steps, β at its first step."""
+    frame = _self_discharge.loss_coefficients(fd, compute_nodeState_dt(fd)).frame.with_columns(
+        pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+    steps = utf8(fd.node_coarse_step).filter((pl.col("n") == node) & (pl.col("d") == d) & (pl.col("b_first") == b_first))
+    rows = frame.join(steps.select("n", "d", "t"), on=["n", "d", "t"], how="inner")
+    return float(rows["alpha"].sum()), float(rows.filter(pl.col("t") == b_first)["beta"][0])
+
+
 def test_coarse_rolling(tmp_path_factory) -> None:
     """battery (bind_forward_only) in a 24-h group, rolling 48 h / 24 h over 72 h: every roll has coarse rows, and
     the first coarse row of rolls 2 and 3 hands over the previous roll's state (its bound carries
@@ -334,7 +345,9 @@ def test_coarse_rolling(tmp_path_factory) -> None:
         inflow = (utf8(fd.p_inflow.frame).filter(pl.col("n") == "battery")
                   .join(utf8(fd.node_coarse_step).filter(pl.col("b_first") == first), on=["n", "d", "t"]))
         lo, _hi = rows[f"nodeBalanceCoarse_eq[battery,p2020,{first}]"]
-        assert lo == pytest.approx(-float(inflow["value"].sum()) - carried)
+        # The carry is the coarse step's previous state: weighted by (1 − β_b) of its self-discharge.
+        _alpha, beta = _alpha_beta_of_step(fd, "battery", "p2020", first)
+        assert lo == pytest.approx(-float(inflow["value"].sum()) - (1 - beta) * carried)
         terms = row_terms(pb, "nodeBalanceCoarse_eq", f"battery,p2020,{first}")[
             f"nodeBalanceCoarse_eq[battery,p2020,{first}]"]
         # The state terms telescope to −state_unitsize (end of the coarse step; the start is the carry in the
@@ -411,10 +424,11 @@ def test_coarse_storage_binding(tmp_path_factory) -> None:
     first = rows["nodeBalanceCoarse_eq[battery,p2020,t0001]"]
     states = {c: v for c, v in first.items() if c.startswith("v_state[")}
     # No wrap: only p2020 states; telescoped they leave −state_unitsize on the day (start − end of the day), plus
-    # the self-discharge of the 24 hours.
+    # the self-discharge α_b of the day on its state (the start is the fix_start energy in the bound).
     assert all(c.startswith("v_state[battery,p2020,") for c in states)
-    sd = float(utf8(fd.p_state_self_discharge.frame).filter(pl.col("n") == "battery")["value"][0])
-    assert sum(states.values()) == pytest.approx(-su - 24 * sd * su, rel=1e-9)
+    alpha, beta = _alpha_beta_of_step(fd, "battery", "p2020", "t0001")
+    assert alpha > 0
+    assert sum(states.values()) == pytest.approx(-su * (1 + alpha), rel=1e-9)
     # fix_start: the start energy state_start × existing is in the bound (the summed −inflow minus it).
     lo, hi = row_bounds(pb, "nodeBalanceCoarse_eq", "battery,p2020,t0001")["nodeBalanceCoarse_eq[battery,p2020,t0001]"]
     inflow = (float(utf8(fd.p_inflow.frame).filter((pl.col("n") == "battery") & (pl.col("d") == "p2020"))
@@ -422,10 +436,11 @@ def test_coarse_storage_binding(tmp_path_factory) -> None:
     start = float(utf8((fd.p_state_start * fd.p_state_existing_capacity).frame)
                   .filter((pl.col("n") == "battery") & (pl.col("d") == "p2020"))["value"][0])
     assert start > 0
-    assert lo == pytest.approx(-inflow - start, rel=1e-9) and hi == pytest.approx(lo)
-    # p2025 starts from p2020's last state (forward chain), +state_unitsize.
+    assert lo == pytest.approx(-inflow - (1 - beta) * start, rel=1e-9) and hi == pytest.approx(lo)
+    # p2025 starts from p2020's last state (forward chain), +state_unitsize·(1 − β_b).
     second = rows["nodeBalanceCoarse_eq[battery,p2025,t0025]"]
-    assert second["v_state[battery,p2020,t0024]"] == pytest.approx(su)
+    _a2, beta2 = _alpha_beta_of_step(fd, "battery", "p2025", "t0025")
+    assert second["v_state[battery,p2020,t0024]"] == pytest.approx(su * (1 - beta2))
 
 
 def test_two_coarse_groups(tmp_path_factory) -> None:

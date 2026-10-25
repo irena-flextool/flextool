@@ -1784,6 +1784,112 @@ def write_v_dual_node_balance(
     return path
 
 
+def _solution_frame(names: Sequence[str], values, var: str, dims: tuple[str, ...]) -> pl.DataFrame:
+    """``(*dims, value)`` (Utf8 keys) of every column ``var[…]`` of the solved LP."""
+    prefix = f"{var}["
+    rows = [tuple(p.strip("'") for p in name[len(prefix):-1].split(",")) + (float(v),)
+            for name, v in zip(names, values) if name.startswith(prefix)]
+    rows = [r for r in rows if len(r) == len(dims) + 1]
+    return pl.DataFrame(rows, schema={**{c: pl.Utf8 for c in dims}, "value": pl.Float64}, orient="row")
+
+
+def write_v_self_discharge(
+    h: "highspy.Highs",
+    *,
+    solve_name: str,
+    output_dir: Path | str,
+    flex_data: "FlexData | None",
+    realized_dispatch_csv: Path | str | None = None,
+    realized_periods_csv: Path | str | None = None,
+    provider: "object | None" = None,
+    col_names_cache: Sequence[str] | None = None,
+    col_value: "object | None" = None,
+) -> "Path | None":
+    """Write ``v_self_discharge__{solve}.parquet``: the self-discharge of each storage node, MWh per step.
+
+    # ─── OUTPUT. ─── v_self_discharge ─────────────────────────────────────────
+    # loss[n,d,t] = (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n]
+    #   α, β, S⁻ as in nodeBalance_eq (flextool.engine.model._self_discharge); coarse steps / blocks: the step's
+    #   total spread over its fine steps by Δt/Δ_b
+    # The loss the solve's balance rows used, computed from the solve's own solution (S⁻ can be a look-ahead state
+    # of the same solve, the carry or the invested start state, which the realized union of the outputs cannot
+    # rebuild).  Rows: the realized (d, t) of v_state; columns: the storage nodes with a self_discharge_loss.
+
+    None (no file) without FlexData or without such a node.
+    """
+    from flextool.engine.model import _self_discharge as sd
+
+    if flex_data is None or flex_data.p_state_self_discharge is None or flex_data.nodeState is None:
+        return None
+    fd = flex_data
+    storage = {str(x) for x in fd.nodeState["n"].cast(pl.Utf8).to_list()}
+    nodes = sorted({str(x) for x in fd.p_state_self_discharge.frame["n"].cast(pl.Utf8).to_list()} & storage)
+    if not nodes:
+        return None
+    names = col_names_cache if col_names_cache is not None else h.allVariableNames()
+    values = col_value if col_value is not None else h.getSolution().col_value
+    state = _solution_frame(names, values, "v_state", ("n", "d", "t"))
+    first_solve = sd.is_solve_first(fd)
+
+    def at(frame: "pl.DataFrame | None") -> "pl.DataFrame | None":
+        return None if frame is None else frame.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+
+    rp_start = None
+    if fd.nodeState_rp is not None and fd.nodeState_rp.height > 0:
+        rp_start = _solution_frame(names, values, "v_state_rp_start", ("n", "d", "t"))
+    start = None
+    fix_first = at(sd.fix_start_first(fd, first_solve))
+    if fix_first is not None:
+        su = fd.p_state_unitsize.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("su"))
+        cap = (fd.p_state_existing_capacity.frame
+               .select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("value").alias("cap")))
+        built = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8, "built": pl.Float64})
+        for var, frame, ent, d_col, sign in (("v_invest", fd.edd_invest_set, "e", "d_invest", 1.0),
+                                             ("v_divest", fd.edd_divest_active, "p", "d_divest", -1.0)):
+            if frame is None or frame.height == 0:
+                continue
+            chosen = _solution_frame(names, values, var, ("n", d_col))
+            alive = frame.select(pl.col(ent).cast(pl.Utf8).alias("n"), pl.col(d_col).cast(pl.Utf8),
+                                 pl.col("d").cast(pl.Utf8))
+            part = (alive.join(chosen, on=["n", d_col], how="inner").group_by("n", "d")
+                    .agg((pl.col("value").sum() * sign).alias("built")))
+            built = pl.concat([built, part], how="vertical")
+        built = built.group_by("n", "d").agg(pl.col("built").sum())
+        start = (fix_first
+                 .join(fd.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("ss")),
+                       on="n", how="inner")
+                 .join(cap, on=["n", "d"], how="left").join(su, on="n", how="left")
+                 .join(built, on=["n", "d"], how="left")
+                 .select("n", "d", "t", value=pl.col("ss") * (pl.col("cap").fill_null(0.0)
+                                                              + pl.col("built").fill_null(0.0) * pl.col("su"))))
+    carry = None
+    roll = at(sd.roll_first(fd, first_solve))
+    open_start = sd.open_start_nodes(fd)
+    if roll is not None and open_start is not None:
+        carry = (roll.join(open_start.select(pl.col("n").cast(pl.Utf8)), on="n", how="semi")
+                 .join(fd.p_roll_continue_state.frame.select(pl.col("n").cast(pl.Utf8), "value"), on="n",
+                       how="inner"))
+    energy = sd.self_discharge_energy(fd, state=state, rp_start=rp_start, start=start, carry=carry,
+                                      open_first=at(sd.open_first(fd, first_solve)))
+
+    # Rows and their order: those of the v_state output of this solve.
+    state_df = extract_variable(h, "v_state", ("node",), solve_name=solve_name, has_time=True,
+                                realized_dispatch_csv=realized_dispatch_csv,
+                                realized_periods_csv=realized_periods_csv, flex_data=flex_data, provider=provider,
+                                col_names_cache=names, col_value=values)
+    rows = [(str(d), str(t)) for _s, d, t in state_df.index]
+    out = pd.DataFrame(0.0, index=state_df.index, columns=pd.Index(nodes, name="node"))
+    if energy is not None and len(rows) > 0:
+        wide = (energy.filter(pl.col("n").is_in(nodes)).to_pandas()
+                .pivot_table(index=["d", "t"], columns="n", values="value", aggfunc="first"))
+        wide = wide.reindex(index=pd.MultiIndex.from_tuples(rows, names=["d", "t"]), columns=nodes)
+        out = pd.DataFrame(wide.to_numpy(dtype=float), index=state_df.index,
+                           columns=pd.Index(nodes, name="node")).fillna(0.0)
+    path = Path(output_dir) / f"v_self_discharge__{solve_name}.parquet"
+    write_lean_parquet(out, path)
+    return path
+
+
 def _dynamic_only_reserve_groups(work_folder: Path, flex_data: "FlexData | None" = None,
                                  ) -> set[tuple[str, str, str]]:
     """``(r, ud, g)`` of the reserve groups whose ``reserve_method`` is ``dynamic_only``.
@@ -2049,6 +2155,15 @@ def write_all_variables(
             flex_data=flex_data,
             scale_the_objective=scale_the_objective,
         )),
+        ("v_self_discharge", lambda: write_v_self_discharge(
+            h, solve_name=solve_name, output_dir=output_dir,
+            flex_data=flex_data,
+            realized_dispatch_csv=realized_dispatch_csv,
+            realized_periods_csv=realized_periods_csv,
+            provider=provider,
+            col_names_cache=col_names_cache,
+            col_value=col_value,
+        )),
         ("v_dual_reserve_balance", lambda: write_v_dual_reserve_balance(
             h, solve_name=solve_name, output_dir=output_dir,
             realized_dispatch_csv=realized_dispatch_csv,
@@ -2065,7 +2180,7 @@ def write_all_variables(
             result = fn()
             if isinstance(result, list):
                 written.extend(result)
-            else:
+            elif result is not None:
                 written.append(result)
         except Exception as exc:
             _logger.warning(

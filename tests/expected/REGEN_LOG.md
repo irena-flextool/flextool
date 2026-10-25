@@ -654,3 +654,48 @@ start state.
 - LP snapshot: only `5weeks_battery_intraperiod_blocks` and `agg_intraperiod` change.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate 5weeks_battery_intraperiod_blocks`.
+
+## 2026-10-26 — 11 goldens with self-discharging storage (cycle c15e1, FA-1 / item 3: exact self-discharge)
+
+**Context.** Owner decision FA-1 option (a): the self-discharge of a step is `(α·S_t + β·S⁻)·su` with
+h = Δt·ln(1 + loss), α = h/(1 − e^{−h}) − 1, β = 1 − h/(e^h − 1) (coarse steps / blocks: h of the whole step),
+which is exact for idle storage and for flows spread evenly over the step at any step length.  Before: `loss·S_t`
+per step whatever its length.  The tests.json batteries lose 1e-4 per hour: the loss moves from `1e-4·S_t` to
+≈ `0.5e-4·(S_t + S_{t−1})`, so states shift by up to 0.0025 MWh (= 50 MWh · 5e-5) and degenerate battery /
+connection schedules move at the 1e-5 level; nested chains with the 6-h storage solve shift more (the loss itself
+grows with Δt).  Numbers: old golden vs regenerated, counted with the test tolerance (round 4, rtol = atol = 1e-4).
+
+- `wind_battery`: `node_state__dt` 9 / 48 cells (≤ 0.0025 MWh); `costs__dt` 1 / 528 (2.12 of 191 258).
+- `network_coal_wind_battery_co2_fullYear_availability`: `node_state__dt` 5 / 72, `connection__dt` 4 / 288
+  (≤ 0.0025).
+- `network_wind_coal_battery_fullYear_invest`: `node_state__dt` 6 / 72, `connection__dt` 5 / 288 (≤ 0.0025).
+- `multi_fullYear_battery_nested_24h_invest_one_solve`: `node_state__dt` 32 / 288 (≤ 0.0051),
+  `unit__outputNode__dt` 10 / 576 (≤ 0.0077), `costs__dt` 11 / 3168 (≤ 1.10 of 2 648), `costs_discounted`
+  1 / 18 (1.3e-5 rel), `cost_node_discounted__d` 1 / 48.
+- `multi_fullYear_battery_nested_multi_invest`: `node_state__dt` 13 / 288, `unit__outputNode__dt` 3 / 576,
+  `costs__dt` 3 / 3168.
+- `multi_fullYear_battery_nested_sample_invest_one_solve`: `node_state__dt` 16 / 288.
+- `5weeks_battery_intraperiod_blocks` (on top of item 117): objective 1 843.37775 → 1 843.37962 (+1.0e-6; the block
+  loss is now the exact block form), `node_state__dt` 4 / 20 (≤ 0.0043 MWh), `node__dt` 2 / 160.
+- `fullYear_roll`, `multi_year_wind_no_investment`, `multi_year_wind_growth_cap`: `summary_solve.csv` text only
+  (compared as exact text; totals equal to 2e-8 relative).
+- `test_a_lot` (not in the design's probe table — explained here): `costs_discounted` upward slack 15 185.603 →
+  15 185.605 (the battery loss, +1.056 slack at p2020/t0002); in p2035 the solver swaps two equal-cost blocks of a
+  degenerate optimum: 300 MW of upward slack (30 000) and 300 MW of coal (−10 000 commodity, −8 500 CO2 per step)
+  move from t0038 / t0040 to t0010 / t0013 (and 1 244.93 slack / 414.98 coal between t0026 and t0011); the column
+  sums of `costs__dt` are unchanged except the +1.056 slack.  `costs__dt` 18 / 880, `node__dt` 12 / 3 200,
+  `unit__outputNode__dt` 18 / 560 (the moved 300 MW; `wind_plant` west 950.66 ↔ 1 100.66 at the swapped steps).
+- No golden carries the reported self-discharge column (checked in the design), so the new output writer changes
+  no golden by itself.
+- LP snapshot: exactly the 37 fixtures with a lossy storage change (v_state coefficients of the balance rows; the
+  downstream solves of nested / chained fixtures also through the changed upstream solution: maxFlow /
+  profile_flow RHS = invested capacity, nested usage targets).
+
+The other CSVs of these scenarios are rewritten by `--regenerate` in the current number formatting (`0.0` for `0`
+etc.) with no value change at the test tolerance.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` for each of the 11 scenarios.  Pins
+re-captured in the same commit (fixtures with a lossy storage): `tests/engine/test_benders_trajectory_pin.py` (13-process
+procedure, worst relative deviation 3.6e-16; M 1.22178785e10 → 1.22178811e10, still 2 iterations) and the
+`bind_within_period_blended_weights` cost pin of `tests/engine/test_rp_multi_period.py` (16 367 662 856 →
+16 367 709 994, +2.9e-6).

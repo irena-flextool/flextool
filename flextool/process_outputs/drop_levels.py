@@ -5,7 +5,7 @@ import pandas as pd
 
 # Variables: droplevel('solve') only
 _V_DROP = [
-    'flow', 'ramp', 'reserve', 'state',
+    'flow', 'ramp', 'reserve', 'state', 'self_discharge',
     'online_linear', 'startup_linear', 'shutdown_linear',
     'online_integer', 'startup_integer', 'shutdown_integer',
     'q_state_up', 'q_state_down', 'q_reserve',

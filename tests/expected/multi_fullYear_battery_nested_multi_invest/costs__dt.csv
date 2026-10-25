@@ -1,5 +1,5 @@
 solve,period,time,commodity_cost,commodity_sales,co2,other operational,starts,upward slack penalty,downward slack penalty,inertia slack penalty,non-synchronous slack penalty,upward reserve slack penalty,downward reserve slack penalty
-dispatch_fullYear_roll_roll_0,p2020,t0001,10942.026,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_0,p2020,t0001,10942.038,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_0,p2020,t0002,6488.9678,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_0,p2020,t0003,2442.4175,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_0,p2020,t0004,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -71,7 +71,7 @@ dispatch_fullYear_roll_roll_17,p2020,t0069,10838.495,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_17,p2020,t0070,6561.1903,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_17,p2020,t0071,3802.3412,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_17,p2020,t0072,6497.273,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll_roll_18,p2025,t0001,15433.447,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_18,p2025,t0001,15433.459,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_18,p2025,t0002,10462.642,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_18,p2025,t0003,6066.5142,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_18,p2025,t0004,2179.2012,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -104,7 +104,7 @@ dispatch_fullYear_roll_roll_25,p2025,t0030,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0
 dispatch_fullYear_roll_roll_25,p2025,t0031,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_25,p2025,t0032,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_26,p2025,t0033,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll_roll_26,p2025,t0034,846.5334,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_26,p2025,t0034,846.4146,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_26,p2025,t0035,2690.2723,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_26,p2025,t0036,1868.4589,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_27,p2025,t0037,1017.6298,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -143,7 +143,7 @@ dispatch_fullYear_roll_roll_35,p2025,t0069,16880.703,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_35,p2025,t0070,11840.021,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_35,p2025,t0071,8458.5495,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_35,p2025,t0072,11157.637,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll_roll_36,p2030,t0001,17362.628,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_36,p2030,t0001,17362.64,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_36,p2030,t0002,11739.223,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_36,p2030,t0003,6791.2348,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_36,p2030,t0004,2415.6638,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -176,7 +176,7 @@ dispatch_fullYear_roll_roll_43,p2030,t0030,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0
 dispatch_fullYear_roll_roll_43,p2030,t0031,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_43,p2030,t0032,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_44,p2030,t0033,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll_roll_44,p2030,t0034,904.5701,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_44,p2030,t0034,904.4513,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_44,p2030,t0035,2967.9625,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_44,p2030,t0036,2040.2975,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_45,p2030,t0037,1144.8336,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -215,7 +215,7 @@ dispatch_fullYear_roll_roll_53,p2030,t0069,18944.697,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_53,p2030,t0070,13275.492,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_53,p2030,t0071,9473.6807,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_53,p2030,t0072,12514.06,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll_roll_54,p2035,t0001,19291.808,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_54,p2035,t0001,19291.82,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_54,p2035,t0002,13015.803,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_54,p2035,t0003,7515.9553,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_54,p2035,t0004,2652.1265,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -248,7 +248,7 @@ dispatch_fullYear_roll_roll_61,p2035,t0030,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0
 dispatch_fullYear_roll_roll_61,p2035,t0031,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_61,p2035,t0032,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_62,p2035,t0033,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll_roll_62,p2035,t0034,962.6068,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_62,p2035,t0034,962.488,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_62,p2035,t0035,3245.6528,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_62,p2035,t0036,2212.1361,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_63,p2035,t0037,1272.0373,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0

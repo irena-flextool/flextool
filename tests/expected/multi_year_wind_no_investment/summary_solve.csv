@@ -1,11 +1,11 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-05-15 00:28:30.201521+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-10-25 22:23:50.927949+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
-y2020_2035_5week,5107.69783289
-"Total cost (calculated) full horizon (M CUR)",5800.67122518,"Annualized operational, penalty and investment costs"
-"Total cost (calculated) realized periods (M CUR)",5800.67122518
-"Operational costs for realized periods (M CUR)",1780.85937921
+y2020_2035_5week,5107.69783288
+"Total cost (calculated) full horizon (M CUR)",5800.67122517,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",5800.67122517
+"Operational costs for realized periods (M CUR)",1780.8593792
 "Investment costs for realized periods (M CUR)",1300.98715339
 "Retirement costs / salvage revenue for realized periods (M CUR)",0
 "Fixed costs for pre-existing entities (M CUR)",692.973392291

@@ -122,7 +122,7 @@ These are period-level tables only — there are no per-timestep per-entity cost
 ## Energy balance in nodes
 
 - `node` entity `balance` parameter — [MWh] annualized period sum of all balance contributions: *From units*, *From connections*, *To units*, *To connections*, *Self discharge*, *Loss of load* (upward slack), *Excess load* (downward slack), *Inflow*
-- `node` entity `balance_t` parameter — [MW] same categories per timestep
+- `node` entity `balance_t` parameter — [MW] same categories per timestep. *Self discharge* is the energy the storage lost in the step (the loss the optimisation used) divided by the step length; the loss of a coarse step (`new_stepduration` group) or of a `bind_intraperiod_blocks` block is spread evenly over its time steps.
 - `node` entity `state_t` parameter — [MWh] storage state of the node at each timestep (state nodes only; multiplied by `entity_unitsize` so the value is in storage MWh, not the scaled LP variable)
 
 ## Unit online and startup

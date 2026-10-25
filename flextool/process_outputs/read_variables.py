@@ -332,6 +332,9 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
     v.ramp = _read("v_ramp", ("process", "source", "sink"))
     v.reserve = _read("v_reserve", ("process", "reserve", "updown", "node"))
     v.state = _read("v_state", ("node",))
+    # Self-discharge per step (MWh) as the balance rows used it (engine writer write_v_self_discharge); empty
+    # frame without the parquet.
+    v.self_discharge = _read("v_self_discharge", ("node",))
     v.online_linear = _read("v_online_linear", ("process",))
     v.startup_linear = _read("v_startup_linear", ("process",))
     v.shutdown_linear = _read("v_shutdown_linear", ("process",))
@@ -404,6 +407,9 @@ def _read_from_csv(output_path: Path, input_path: Path) -> SimpleNamespace:
     v.ramp = pd.read_csv(output_path / 'v_ramp.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
     v.reserve = pd.read_csv(output_path / 'v_reserve.csv', header=[0, 1, 2, 3], index_col=[0, 1, 2]).astype(float)
     v.state = pd.read_csv(output_path / 'v_state.csv', index_col=[0, 1, 2]).astype(float)
+    # The self-discharge the balance rows used is written by the engine writer only (parquet pathway); the legacy
+    # CSV layout has none, so the self-discharge outputs are empty here.
+    v.self_discharge = pd.DataFrame(index=v.state.index, columns=pd.Index([], name='node'), dtype=float)
     v.online_linear = pd.read_csv(output_path / 'v_online_linear.csv', index_col=[0, 1, 2]).astype(float)
     v.startup_linear = pd.read_csv(output_path / 'v_startup_linear.csv', index_col=[0, 1, 2]).astype(float)
     v.shutdown_linear = pd.read_csv(output_path / 'v_shutdown_linear.csv', index_col=[0, 1, 2]).astype(float)
@@ -461,6 +467,7 @@ def _read_from_csv(output_path: Path, input_path: Path) -> SimpleNamespace:
     v.ramp.index.names = ['solve', 'period', 'time']
     v.reserve.index.names = ['solve', 'period', 'time']
     v.state.index.names = ['solve', 'period', 'time']
+    v.self_discharge.index.names = ['solve', 'period', 'time']
     v.online_linear.index.names = ['solve', 'period', 'time']
     v.startup_linear.index.names = ['solve', 'period', 'time']
     v.shutdown_linear.index.names = ['solve', 'period', 'time']

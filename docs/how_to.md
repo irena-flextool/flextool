@@ -199,7 +199,7 @@ To make a storage node one the required parameters are:
 
 Additional parameters:
 
-- `self_discharge_loss` The fraction of energy loss in each hour.
+- `self_discharge_loss` The fraction of energy lost in each hour (0.01: the content shrinks by 1/1.01 per hour). It is applied continuously, so it is exact for time steps of any length; energy charged within a step is treated as spread evenly over the step.
 
 Storage states can be tied to a value. For this three methods are introduced:
 

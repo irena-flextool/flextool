@@ -1,7 +1,11 @@
+import logging
+
 import numpy as np
 import pandas as pd
 
 from flextool.process_outputs._annualize import annualize_dt_to_d
+
+_logger = logging.getLogger(__name__)
 
 
 def compute_storage_and_vre(par, s, v, r) -> None:
@@ -89,42 +93,24 @@ def compute_storage_and_vre(par, s, v, r) -> None:
     r.node_state_change_dt = r_state_change
     r.node_state_change_d = r.node_state_change_dt.groupby(level='period').sum()
 
-    # self_discharge_loss
-    # par.node_self_discharge_loss broadcasts the authored
-    # ``state_self_discharge`` param across every node that carries it,
-    # including supply-curve / commodity nodes that have no ``v_state``
-    # LP variable.  Self-discharge is only meaningful on storage nodes,
-    # so restrict to the intersection with ``v.state.columns`` before
-    # multiplying — otherwise pandas raises ``KeyError: None of [...] are
-    # in the [columns]`` on real scenarios with non-storage authored
-    # values.
-    #
-    # In rolling / multi-solve scenarios ``par.node_self_discharge_loss``
-    # is built from the last sub-solve's ``flex_data.dt`` only, whereas
-    # ``v.state`` is concatenated across every sub-solve's parquet.
-    # Their (period, time) row indices then differ, and pandas raises
-    # ``TypeError: Join on level between two MultiIndex objects is
-    # ambiguous`` on the broadcast-multiply.  The underlying
-    # ``p_state_self_discharge`` is dimensioned ``(n,)`` (one constant
-    # value per node — see ``read_parameters.py``), so collapse the
-    # per-(d, t) repeats to a per-node Series before broadcasting; the
-    # mul then aligns the Series's ``node`` axis against
-    # ``v.state.columns`` regardless of row index.
-    loss_cols = par.node_self_discharge_loss.columns.intersection(
-        v.state.columns
-    )
-    if len(loss_cols) > 0:
-        per_node_loss = par.node_self_discharge_loss[loss_cols].iloc[0]
-        r.self_discharge_loss_dt = (
-            v.state[loss_cols]
-            .mul(per_node_loss, axis='columns')
-            .mul(unitsize[loss_cols], axis='columns', level=0)
-        )
+    # self_discharge_loss — the loss the balance rows used, per step in MWh (v.self_discharge, written by the
+    # engine writer write_v_self_discharge from each solve's own solution).  The dt column is MW (÷ step
+    # duration; a coarse step's / block's loss is spread evenly over its steps); the period value is the plain
+    # sum over the period's steps (MWh, not annualised).
+    sd = getattr(v, "self_discharge", None)
+    sd_cols = sd.columns.intersection(v.state.columns) if sd is not None else pd.Index([])
+    if len(sd_cols) > 0:
+        energy = sd[sd_cols].reindex(v.state.index).fillna(0.0)
+        r.self_discharge_loss_dt = energy.div(step_duration, axis=0)
+        r.self_discharge_loss_d = energy.groupby('period').sum()
     else:
-        r.self_discharge_loss_dt = pd.DataFrame(
-            0.0, index=v.state.index, columns=[],
-        )
-    r.self_discharge_loss_d = r.self_discharge_loss_dt.mul(step_duration, axis=0).groupby('period').sum()
+        lossy = par.node_self_discharge_loss.columns.intersection(v.state.columns)
+        if len(lossy) > 0 and (par.node_self_discharge_loss[lossy] != 0).any().any():
+            _logger.warning(
+                "self-discharge outputs are empty: no v_self_discharge output was written for nodes %s",
+                ", ".join(str(c) for c in lossy))
+        r.self_discharge_loss_dt = pd.DataFrame(0.0, index=v.state.index, columns=[])
+        r.self_discharge_loss_d = r.self_discharge_loss_dt.groupby('period').sum()
 
     # node_inflow_d — weight each (d, t) by par.timestep_weight (=1.0 with
     # no/uniform timeset_weights → byte-identical) before the period sum,

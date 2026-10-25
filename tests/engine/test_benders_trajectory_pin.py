@@ -64,44 +64,49 @@ _PINNED_ENV = [
 # nothing): M = 1.2218e10 (was 8.544e9), converged in 2 iterations (was 4).
 # Same 13-process procedure (3 random + PYTHONHASHSEED 0-9): worst relative
 # deviation 7.2e-16.
+# Re-captured after c15e1's exact self-discharge (FA-1, item 3; the fixture's
+# batteries have self_discharge_loss 1e-4): M 1.22178785e10 -> 1.22178811e10
+# (+2.2e-7), still 2 iterations.  Same 13-process procedure: worst relative
+# deviation 3.6e-16 (the converged gap, a difference of near-equal bounds,
+# wobbles by 1.6e-16 absolute, inside _ATOL).
 # Per-iteration ``progress_callback`` payloads: iter and converged are exact;
 # lower_bound / upper_bound / best_upper_bound / gap / region_costs values
 # are rtol=1e-12; region_costs key sets are exact.
 _EXPECTED_TRAJECTORY = [
     {
         "iter": 1,
-        "lower_bound": -200298186840.3396,
-        "upper_bound": 457336484688.3605,
-        "best_upper_bound": 457336484688.3605,
-        "gap": 1.43796677839256,
+        "lower_bound": -200298184177.43353,
+        "upper_bound": 457336487520.2136,
+        "best_upper_bound": 457336487520.2136,
+        "gap": 1.4379667698580045,
         "converged": False,
         "region_costs": {
-            "region_A": 231849757146.90088,
-            "region_B": 216633051074.54956,
-            "region_C": 8850128844.045115,
+            "region_A": 231849759806.85568,
+            "region_B": 216633051246.72162,
+            "region_C": 8850128843.771381,
         },
     },
     {
         "iter": 2,
-        "lower_bound": 12217874732.717266,
-        "upper_bound": 12217878473.892557,
-        "best_upper_bound": 12217878473.892557,
-        "gap": 3.0620498469154285e-07,
+        "lower_bound": 12217877391.52521,
+        "upper_bound": 12217881132.513472,
+        "best_upper_bound": 12217881132.513472,
+        "gap": 3.061896102607535e-07,
         "converged": True,
         "region_costs": {
-            "region_A": 2046651665.9673576,
-            "region_B": 1321086834.2867208,
-            "region_C": 8850128844.045115,
+            "region_A": 2046654330.1666317,
+            "region_B": 1321086828.9820256,
+            "region_C": 8850128843.771381,
         },
     },
 ]
 
 # Final ``BendersResult`` fields (real units, s=1.0).
 _EXPECTED_ITERATIONS = 2
-_EXPECTED_LOWER_BOUND = 12217874732.717266
-_EXPECTED_UPPER_BOUND = 12217878473.892557
-_EXPECTED_TOTAL_OBJECTIVE = 12217878473.892557
-_EXPECTED_GAP = 3.0620498469154285e-07
+_EXPECTED_LOWER_BOUND = 12217877391.52521
+_EXPECTED_UPPER_BOUND = 12217881132.513472
+_EXPECTED_TOTAL_OBJECTIVE = 12217881132.513472
+_EXPECTED_GAP = 3.061896102607535e-07
 
 _RTOL = 1e-12
 # Absolute floor so a value pinned at exactly 0.0 (e.g. a converged gap) doesn't

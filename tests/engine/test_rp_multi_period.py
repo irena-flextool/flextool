@@ -166,7 +166,9 @@ def test_variant_order_on_two_periods(tmp_path_factory):
         cost[key] = _total_cost(steps[SOLVE])
     assert cost["fo"] <= cost["ws"] * (1 + 1e-9)
     assert cost["ws"] <= cost["wp"] * (1 + 1e-9)
-    assert cost["wp"] == pytest.approx(16_367_662_856.0, rel=1e-6)
+    # 16 367 662 856 before c15e1's exact self-discharge (FA-1: the fixture's batteries lose 1e-4 per hour, now
+    # on the weighted start/end state of each step): +2.9e-6.
+    assert cost["wp"] == pytest.approx(16_367_709_994.0, rel=1e-6)
 
 
 def test_mixed_variants_in_one_solve(tmp_path_factory):

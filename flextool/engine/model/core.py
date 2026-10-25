@@ -79,6 +79,7 @@ from flextool.engine.model import _group_slack
 from flextool.engine.model import _non_anticipativity
 from flextool.engine.model import _online
 from flextool.engine.model import _reserve
+from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
 from flextool.engine.input._axis_enums import alias_to_axis, rename_to_axis
 from flextool.engine.model._common import (
@@ -320,6 +321,7 @@ class _Build:
     invest_in_dispatch_p: Any = None        # Σ v_invest_p alive in d, (p, d)
     divest_in_dispatch_p: Any = None        # Σ v_divest_p active in d, (p, d)
     op_factor: Any = None                   # weight of operational cost terms, (d, t)
+    self_discharge: Any = None              # _self_discharge.LossCoefficients, None without a loss
 
 
 def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
@@ -466,8 +468,7 @@ def _prepare(b: _Build) -> None:
     b.has_cumulative_invest = _cumulative_invest.has_feature(d)
     # p_nested_solve_first: None for a single solve, else True on the first
     # solve of a chain.
-    b.is_solve_first = (d.p_nested_solve_first is None
-                        or d.p_nested_solve_first is True)
+    b.is_solve_first = _self_discharge.is_solve_first(d)
 
     # ── required data of the active features ──
     if b.has_proc:
@@ -525,6 +526,7 @@ def _prepare(b: _Build) -> None:
     b.nodeBalance_dt = compute_nodeBalance_dt(d)
     _validate_has_balance(d, b.nodeBalance_dt)
     b.nodeState_dt = compute_nodeState_dt(d) if b.has_storage else None
+    b.self_discharge = _self_discharge.loss_coefficients(d, b.nodeState_dt) if b.has_storage else None
     b.process_indirect_dt = (compute_process_indirect_dt(d)
                              if b.has_indirect else None)
     _validate_storage_binding_disjoint(d)
@@ -1138,7 +1140,11 @@ def _eq_node_balance(b: _Build) -> None:
     #   + back-flow terms of two-way one-variable arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
     #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n]
-    #   − v_state[n,d,t]·self_discharge[n]·state_unitsize[n]
+    #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n]
+    #   h = Δt·ln(1 + self_discharge_loss[n]),  α = h/(1 − e^{−h}) − 1,  β = 1 − h/(e^{h} − 1)
+    #   S⁻ = the state the step starts from: v_state[n,d′,t⁻] by the binding method, v_state_rp_start at a
+    #        representative block's first step, the fix_start start state / the roll carry at an open chain's
+    #        first step, v_state[n,d,t] where the chain is open with neither
     #   + start terms of open-start nodes (fix_start in the first solve, the roll carry in continuation solves)
     #   = −inflow[n,d,t]
     #   ∀ (n,d,t) ∈ nodeBalance_dt, n ∉ nodeStateBlock ∪ nodeCoarse;   Δt = step_duration[d,t]
@@ -1151,8 +1157,12 @@ def _eq_node_balance(b: _Build) -> None:
     # nodeStateBlock nodes are balanced per timeset block (nodeBalanceBlock_eq),
     # nodeCoarse nodes per coarse step (nodeBalanceCoarse_eq).
     # The section term exists for min_load_efficiency units only.  The flow
-    # and slack terms are b.node_balance_flow_terms.  Self-discharge applies
-    # the per-step loss rate without step_duration (exact for 1 h steps).
+    # and slack terms are b.node_balance_flow_terms.  Self-discharge: the
+    # content decays continuously at ln(1 + loss) per hour; flows within a
+    # step are spread evenly over the step.  Exact for any step length (the
+    # decay is applied to a weighted average of the start and the end state,
+    # model/_self_discharge.py); the model folds it into the state change as
+    # (S⁻·(1 − β) − S·(1 + α))·state_unitsize.
     over = b.nodeBalance_dt
     if b.has_nsb:
         over = over.join(d.nodeStateBlock, on="n", how="anti")
@@ -1169,16 +1179,14 @@ def _eq_node_balance(b: _Build) -> None:
 
 def _node_balance_terms(b: _Build) -> dict:
     """Every LHS term of nodeBalance_eq, (n, d, t) in MWh: flows, slacks and, for storage nodes, the state
-    change, start / roll-continuation terms and self-discharge.  nodeBalanceCoarse_eq sums them over each coarse
-    step."""
-    d = b.d
+    change with its self-discharge, and the start / roll-continuation terms.  nodeBalanceCoarse_eq and
+    nodeBalanceBlock_eq sum them over each coarse step / block."""
     terms = dict(b.node_balance_flow_terms)
     if b.has_storage:
         terms.update(_state_change_terms(b))
         terms.update(_fix_start_terms(b))
         terms.update(_roll_continue_terms(b))
-        if d.p_state_self_discharge is not None:
-            terms["self_discharge"] = -b.v_state * d.p_state_self_discharge * d.p_state_unitsize
+        terms.update(_open_start_loss_terms(b))
     return terms
 
 
@@ -1211,11 +1219,13 @@ def _eq_node_balance_coarse(b: _Build) -> None:
     #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·Δt
     #   + back-flow terms of two-way one-variable and DC arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
-    #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n] − v_state[n,d,t]·self_discharge[n]·state_unitsize[n]
+    #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n] − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·su[n]
     #   + start terms of open-start nodes ]
     #   = − Σ_{t ∈ b} inflow[n,d,t]
     #   ∀ n ∈ nodeCoarse, (n,d,b) ∈ node_coarse_step;   t ∈ b: (n,d,b,t) ∈ node_coarse_step;   Δt = step_duration[d,t]
     #   t⁻, start and roll terms per storage_binding_method exactly as in nodeBalance_eq
+    #   α, β, S⁻ as in nodeBalance_eq with h = Δ_b·ln(1 + loss), Δ_b = Σ_{t∈b} Δt: α spread over the fine steps by
+    #   Δt/Δ_b, β at the first fine step only (the decay of the coarse step's own state over the coarse step)
     # nodeBalance_eq summed over the fine steps of each coarse step of the node's group: every flow stays on the
     # solve's steps and each coarse leg sums its fine flows, so an arc between a fine and a coarse node, or
     # between two coarse nodes, conserves energy at both ends.  The node may shift energy freely within a coarse
@@ -1268,75 +1278,44 @@ def _node_balance_flow_terms(b: _Build) -> dict:
 
 
 def _state_change_terms(b: _Build) -> dict:
-    """State-change terms of nodeBalance_eq, one per storage_binding_method."""
+    """State-change terms of nodeBalance_eq, one per storage_binding_method, with the self-discharge folded in
+    (_weighted_change).
+
+    The balance reads (state[t⁻] − state[t]) + sink − source = −inflow, i.e. state[t] − state[t⁻] = sink − source +
+    inflow.  The branches and their lags are _self_discharge.state_links (each node is in one binding set only,
+    _validate_storage_binding_disjoint): bind_within_timeblock wraps within the timeblock, bind_forward_only crosses
+    period boundaries and has no state change at the solve's first step, bind_within_solve wraps the solve's first
+    step to its last, bind_within_period wraps each period's first step to the period's own last step,
+    bind_intraperiod_blocks (nodeStateBlock) follows dtttdt_block_lag (these terms reach nodeBalanceBlock_eq only,
+    which sums them over each block), and the blended-weights nodes chain inside each representative block whose
+    first step starts from the free state v_state_rp_start.
+    """
     d, v_state = b.d, b.v_state
-    su = d.p_state_unitsize
     terms: dict = {}
-    # The balance reads (state[t⁻] − state[t]) + sink − source = −inflow,
-    # i.e. state[t] − state[t⁻] = sink − source + inflow.  Each node is in
-    # one binding set only (_validate_storage_binding_disjoint).
-
-    # bind_within_timeblock: t⁻ wraps around within the timeblock.
-    if d.storage_bind_within_timeblock is not None:
-        nodes = d.storage_bind_within_timeblock
-        now = Where(v_state, nodes)
-        prev = Where(Lag(v_state, d.dtttdt, "t", "t_previous_within_timeset"), nodes)
-        terms["state_change"] = (prev - now) * su
-
-    # bind_forward_only: t⁻ crosses period boundaries; the first step of the
-    # solve has no state change (dtttdt_forward_only omits it, so both parts
-    # of the term are dropped there).
-    if _has_rows(d.storage_bind_forward_only) and _has_rows(d.dtttdt_forward_only):
-        nodes = d.storage_bind_forward_only
-        steps = d.dtttdt_forward_only.select("d", "t").unique()
-        now = Where(Where(v_state, steps), nodes)
-        prev = Where(_state_lag_cross_period(v_state, d.dtttdt_forward_only), nodes)
-        terms["state_change_fo"] = (prev - now) * su
-
-    # bind_within_solve: t⁻ crosses period boundaries and the first step of
-    # the solve wraps to the last one.
-    if _has_rows(d.storage_bind_within_solve):
-        nodes = d.storage_bind_within_solve
-        now = Where(v_state, nodes)
-        prev = Where(_state_lag_cross_period(v_state, d.dtttdt), nodes)
-        terms["state_change_ws"] = (prev - now) * su
-
-    # bind_within_period: t⁻ is the previous step of the period (blocks
-    # chain inside the period); the first step of each period wraps to the
-    # period's own last step, so the state cycles within every period.
-    if _has_rows(d.storage_bind_within_period) and _has_rows(d.dtttdt_within_period):
-        nodes = d.storage_bind_within_period
-        now = Where(v_state, nodes)
-        prev = Where(Lag(v_state, d.dtttdt_within_period, "t", "t_previous_within_period"), nodes)
-        terms["state_change_wp"] = (prev - now) * su
-
-    # bind_intraperiod_blocks (nodeStateBlock): t⁻ from dtttdt_block_lag — the previous step of the period, the
-    # period's first step continuing from the period's last step (the blocks of a period form a loop).  These
-    # terms reach nodeBalanceBlock_eq only (nodeBalance_eq and nodeBalanceCoarse_eq skip block nodes), which sums
-    # them over each block: with the state constant within a block they telescope to v_state[b⁻] − v_state[b].
-    if b.has_nsb and _has_rows(d.dtttdt_block_lag):
-        nodes = d.nodeStateBlock
-        steps = d.dtttdt_block_lag.select("d", "t").unique()
-        now = Where(Where(v_state, steps), nodes)
-        prev = Where(_state_lag_cross_period(v_state, d.dtttdt_block_lag), nodes)
-        terms["state_change_block"] = (prev - now) * su
-
-    # Blended weights (nodeState_rp, all three variants): t⁻ is the previous
-    # step inside a representative block; the first step of each block
-    # starts from the free state v_state_rp_start.
+    for link in _self_discharge.state_links(d, has_rp=b.has_rp, has_nsb=b.has_nsb):
+        if link.cross_period:
+            prev = _state_lag_cross_period(v_state, link.lag)
+        else:
+            prev = Lag(v_state, link.lag, "t", link.col)
+        now = v_state if link.all_steps else Where(v_state, link.lag.select("d", "t").unique())
+        terms[link.key] = _weighted_change(b, Where(prev, link.nodes), Where(now, link.nodes))
     if b.has_rp:
         nodes = d.nodeState_rp
-        interior = d.dtttdt.join(d.rp_block_first.select("d", "t"),
-                                 on=["d", "t"], how="anti")
-        interior_dt = interior.select("d", "t").unique()
-        now = Where(Where(v_state, interior_dt), nodes)
-        prev = Where(Lag(v_state, interior, "t", "t_previous_within_timeset"), nodes)
-        terms["state_change_rp_interior"] = (prev - now) * su
         first_dt = d.rp_block_first.select("d", "t").unique()
         now = Where(Where(v_state, first_dt), nodes)
         start = Where(b.v_state_rp_start, nodes)
-        terms["state_change_rp_start"] = (start - now) * su
+        terms["state_change_rp_start"] = _weighted_change(b, start, now)
     return terms
+
+
+def _weighted_change(b: _Build, prev, now):
+    """(prev·(1 − β) − now·(1 + α))·state_unitsize: the state change of a step with its self-discharge
+    (_self_discharge); (prev − now)·state_unitsize when no storage node has a loss."""
+    su = b.d.p_state_unitsize
+    loss = b.self_discharge
+    if loss is None:
+        return (prev - now) * su
+    return (prev * loss.keep_prev - now * loss.keep_now) * su
 
 
 def _state_lag_cross_period(v_state: Var, lag_frame: pl.DataFrame):
@@ -1350,110 +1329,121 @@ def _state_lag_cross_period(v_state: Var, lag_frame: pl.DataFrame):
     return Sum(Where(v_state_back, lag), over=("d_back", "t_back"))
 
 
-def _node_union(frames) -> "pl.DataFrame | None":
-    """The nodes (n) of the frames that have rows, or None."""
-    parts = [f.select("n") for f in frames if _has_rows(f)]
-    if not parts:
-        return None
-    return pl.concat(parts, how="vertical").unique(maintain_order=True)
-
-
 def _cyclic_nodes(b: _Build) -> "pl.DataFrame | None":
-    """Storage nodes whose chain closes on itself within the solve (n): bind_within_timeblock,
-    bind_within_period, bind_within_solve and bind_intraperiod_blocks (a rolling solve with a
-    bind_intraperiod_blocks node stops with an error).  Their first step wraps to a later step of the solve, so
-    they take neither a start term nor the roll carry."""
-    d = b.d
-    return _node_union((d.storage_bind_within_timeblock, d.storage_bind_within_period,
-                        d.storage_bind_within_solve, d.nodeStateBlock))
+    """Storage nodes whose chain closes on itself within the solve (_self_discharge.cyclic_nodes)."""
+    return _self_discharge.cyclic_nodes(b.d)
 
 
 def _open_start_nodes(b: _Build) -> "pl.DataFrame | None":
-    """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only.  Their first step
-    starts from the fix_start state in the first solve and from the roll carry in a continuation solve."""
-    return _node_union((b.d.storage_bind_forward_only,))
+    """Storage nodes whose chain starts open at the solve's first step (_self_discharge.open_start_nodes)."""
+    return _self_discharge.open_start_nodes(b.d)
+
+
+def _keep_prev_values(b: _Build, frame: pl.DataFrame) -> pl.DataFrame:
+    """``frame`` (n, d, t, value) × (1 − β) of its step: a start energy weighted as the step's previous state."""
+    loss = b.self_discharge
+    if loss is None:
+        return frame
+    return (frame.join(loss.keep_prev.frame.rename({"value": "_keep"}), on=["n", "d", "t"], how="left")
+            .with_columns(value=pl.col("value") * pl.col("_keep").fill_null(1.0))
+            .select("n", "d", "t", "value"))
 
 
 def _fix_start_terms(b: _Build) -> dict:
-    """nodeBalance_eq start terms of open-start nodes (_open_start_nodes) with fix_start.
-
-    At the first step of the first solve, where the state change is
-    omitted:  − v_state·su + state_start·(existing + Σ v_invest_n·su − Σ v_divest_n·su),
-    the change from the start state (su = state_unitsize).  Other fix_start
-    nodes are pinned by storage_state_start_binding.
-    """
+    """nodeBalance_eq start terms of open-start nodes (_open_start_nodes) with fix_start."""
+    # ─── fix_start terms (in nodeBalance_eq) ─────────────────────────────────
+    #   − v_state[n,d,t]·(1 + α[n,d,t])·state_unitsize[n]
+    #   + (1 − β[n,d,t])·state_start[n]·(existing[n,d] + Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]·su[n]
+    #                                    − Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]·su[n])
+    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ open-start nodes ∩ storage_fix_start, first solve only
+    # The first step of the first solve, where the state change is omitted, starts from the start state (MWh);
+    # α, β: the self-discharge weights (_self_discharge, 0 without a loss).  Other fix_start nodes are pinned by
+    # storage_state_start_binding / storage_state_start_binding_cyclic_period.
     d = b.d
-    open_start = _open_start_nodes(b)
-    if not (b.is_solve_first
-            and open_start is not None
-            and _has_rows(d.storage_fix_start)
-            and d.p_state_start is not None
-            and d.p_state_existing_capacity is not None
-            and d.p_state_unitsize is not None
-            and d.nodeState_first_dt is not None):
+    first = _self_discharge.fix_start_first(d, b.is_solve_first)
+    if first is None:
         return {}
-    nodes = open_start.join(d.storage_fix_start, on="n", how="inner")
-    if nodes.height == 0:
-        return {}
-    first = d.nodeState_first_dt.join(nodes, on="n", how="inner")
-    if first.height == 0:
-        return {}
+    nodes = first.select("n").unique()
     start, su = d.p_state_start, d.p_state_unitsize
-    terms: dict = {"fwd_fix_state": -(Where(b.v_state, first) * su)}
+    loss = b.self_discharge
+    state = Where(b.v_state, first)
+    terms: dict = {"fwd_fix_state": -(state * su) if loss is None else -(state * loss.keep_now * su)}
     # A sparse Param term combines with the dense −inflow by outer join with
     # 0-fill, so rows outside ``first`` keep their balance.
     start_energy = ((start * d.p_state_existing_capacity).frame
                     .join(first, on=["n", "d"], how="inner")
                     .select("n", "d", "t", "value"))
     if start_energy.height > 0:
-        terms["fwd_fix_existing_pos"] = Param(("n", "d", "t"), start_energy)
+        terms["fwd_fix_existing_pos"] = Param(("n", "d", "t"), _keep_prev_values(b, start_energy))
     if b.has_invest_n and d.edd_invest_set is not None:
         invested = _var_view(b.v_invest_n, "__at_fwd_fix", {"d": "d_invest"},
                              to_axis=True)
         alive = (_entity_rows(d.edd_invest_set, "e", nodes, "n")
                  .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
         if alive.height > 0:
-            terms["fwd_fix_invest_pos"] = Sum(
-                Where(invested * start * su, alive), over=("d_invest",))
+            term = Sum(Where(invested * start * su, alive), over=("d_invest",))
+            terms["fwd_fix_invest_pos"] = term if loss is None else term * loss.keep_prev
     if b.has_divest_n and d.edd_divest_active is not None:
         divested = _var_view(b.v_divest_n, "__at_fwd_fix", {"d": "d_divest"},
                              to_axis=True)
         active = (_entity_rows(d.edd_divest_active, "p", nodes, "n")
                   .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
         if active.height > 0:
-            terms["fwd_fix_divest_neg"] = -Sum(
-                Where(divested * start * su, active), over=("d_divest",))
+            term = Sum(Where(divested * start * su, active), over=("d_divest",))
+            terms["fwd_fix_divest_neg"] = -(term if loss is None else term * loss.keep_prev)
     return terms
 
 
 def _roll_continue_terms(b: _Build) -> dict:
     """nodeBalance_eq start terms of continuation solves in a chain (the carry of the previous solve)."""
     # ─── roll-continuation terms (in nodeBalance_eq) ─────────────────────────
-    #   − v_state[n,d,t]·state_unitsize[n] + roll_continue_state[n]
+    #   − v_state[n,d,t]·(1 + α[n,d,t])·state_unitsize[n] + (1 − β[n,d,t])·roll_continue_state[n]
     #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∉ cyclic nodes, continuation solves only
-    # The state handed over by the previous roll starts the roll's chain (roll_continue_state is in MWh).  A
-    # cyclic node (_cyclic_nodes) cycles within the roll and takes no carry (how_to.md rolling notes).  The term
-    # adds to the node's own state-change term.
+    # The state handed over by the previous roll starts the roll's chain (roll_continue_state is in MWh); α, β: the
+    # self-discharge weights of an open-start node (_self_discharge).  A cyclic node (_cyclic_nodes) cycles within
+    # the roll and takes no carry (how_to.md rolling notes).  A blended-weights node keeps the unweighted form: its
+    # first step also starts from v_state_rp_start (item 130; not reachable, rolling solves with such nodes are an
+    # error).
     d = b.d
-    if (b.is_solve_first
-            or d.p_state_unitsize is None
-            or d.nodeState_first_dt is None
-            or d.p_roll_continue_state is None):
+    first = _self_discharge.roll_first(d, b.is_solve_first)
+    if first is None:
         return {}
-    first = d.nodeState_first_dt
-    cyclic = _cyclic_nodes(b)
-    if cyclic is not None:
-        first = first.join(cyclic, on="n", how="anti")
-    if first.height == 0:
-        return {}
-    terms: dict = {"roll_continue_state": -(Where(b.v_state, first)
-                                            * d.p_state_unitsize)}
+    su = d.p_state_unitsize
+    loss = b.self_discharge
     handed_over = (d.p_roll_continue_state.frame
                    .join(first, on="n", how="inner")
                    .select("n", "d", "t", "value"))
+    open_start = _open_start_nodes(b)
+    if loss is None or open_start is None:
+        terms: dict = {"roll_continue_state": -(Where(b.v_state, first) * su)}
+        if handed_over.height > 0:
+            terms["roll_continue_value"] = Param(("n", "d", "t"), handed_over)
+        return terms
+    weighted = first.join(open_start, on="n", how="semi")
+    plain = first.join(open_start, on="n", how="anti")
+    terms = {}
+    if weighted.height > 0:
+        terms["roll_continue_state"] = -(Where(b.v_state, weighted) * loss.keep_now * su)
+    if plain.height > 0:
+        terms["roll_continue_state_rp"] = -(Where(b.v_state, plain) * su)
     if handed_over.height > 0:
-        terms["roll_continue_value"] = Param(("n", "d", "t"), handed_over)
+        value = pl.concat([_keep_prev_values(b, handed_over.join(weighted.select("n"), on="n", how="semi")),
+                           handed_over.join(weighted.select("n"), on="n", how="anti")], how="vertical")
+        terms["roll_continue_value"] = Param(("n", "d", "t"), value)
     return terms
+
+
+def _open_start_loss_terms(b: _Build) -> dict:
+    """nodeBalance_eq self-discharge of an open chain's first step that starts from neither fix_start nor the
+    carry (_self_discharge.open_first): the step has no state change, its state is constant over the step, so the
+    loss is h·v_state·su (h = α + β)."""
+    loss = b.self_discharge
+    if loss is None:
+        return {}
+    first = _self_discharge.open_first(b.d, b.is_solve_first)
+    if first is None:
+        return {}
+    return {"self_discharge_open": -(Where(b.v_state, first) * loss.h * b.d.p_state_unitsize)}
 
 
 def _eq_node_balance_period(b: _Build) -> None:
@@ -1669,17 +1659,17 @@ def _eq_block_coupling(b: _Build) -> None:
     #   + back-flow terms of two-way one-variable and DC arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
     #   + (v_state[n,d′,t⁻] − v_state[n,d,t])·state_unitsize[n]   ((d′,t⁻) of (d,t) in dtttdt_block_lag)
-    #   − v_state[n,d,t]·self_discharge[n]·state_unitsize[n]·Δt ]
+    #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n] ]
     #   = − Σ_{t ∈ b} inflow[n,d,t]
     #   ∀ n ∈ nodeStateBlock, (d,b) ∈ period_block;   t ∈ b by period_block_time;   Δt = step_duration[d,t]
+    #   α, β, S⁻ as in nodeBalanceCoarse_eq with the block b (h = Δ_b·ln(1 + loss)); S⁻ at the block's first step is
+    #   the previous block's state
     # nodeBalance_eq summed over each timeset block of a bind_intraperiod_blocks node.  The state is constant within
     # a block (stateConstantWithinBlock_eq), so the state terms telescope to v_state[b⁻] − v_state[b]: v_state of a
     # block is its state at the end of the block.  b⁻ is the previous block of the period, the first block of a
     # period continuing from the period's last block (the blocks of a period form a loop).  Same orientation and
     # units as nodeBalance_eq: its dual is the node's price (currency/MWh) over the block.
     terms = _node_balance_terms(b)
-    if d.p_state_self_discharge is not None:
-        terms["self_discharge"] = -(v_state * d.p_state_self_discharge * d.p_state_unitsize) * d.p_step_duration
     step_of = (nsb.select("n").join(d.period_block_time.select("d", "b_first", "t"), how="cross")
                .select("n", "d", "b_first", "t"))
     lhs = {key: _sum_over_coarse_step(term, step_of) for key, term in terms.items()}

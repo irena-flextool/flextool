@@ -1,5 +1,5 @@
 solve,period,time,commodity_cost,commodity_sales,co2,other operational,starts,upward slack penalty,downward slack penalty,inertia slack penalty,non-synchronous slack penalty,upward reserve slack penalty,downward reserve slack penalty
-dispatch_fullYear_roll_roll_0,p2020,t0001,10942.026,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll_roll_0,p2020,t0001,10942.038,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_0,p2020,t0002,6488.9678,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_0,p2020,t0003,2442.4175,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 dispatch_fullYear_roll_roll_0,p2020,t0004,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0

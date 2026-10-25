@@ -1,0 +1,324 @@
+"""Storage self-discharge: one construction of the loss for the balance rows and for the outputs.
+
+  # ─── self-discharge (in nodeBalance_eq, nodeBalanceCoarse_eq, nodeBalanceBlock_eq) ──
+  #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n]
+  #   h = Δt·ln(1 + self_discharge_loss[n]),  α = h/(1 − e^{−h}) − 1,  β = 1 − h/(e^{h} − 1)   (α + β = h)
+  #   S⁻ = the state the step starts from: v_state[n,d′,t⁻] by the binding method, v_state_rp_start at a
+  #        representative block's first step, the fix_start start state / the roll carry at an open chain's first
+  #        step, v_state[n,d,t] where the chain is open with neither (the step has no state change)
+  #   coarse steps / blocks b: h = Δ_b·ln(1 + loss), Δ_b = Σ_{t∈b} Δt; α spread over the fine steps by Δt/Δ_b, β at
+  #        the first fine step only
+  # The content decays continuously at ln(1 + loss) per hour and the flows of a step are spread evenly over the
+  # step: with this loss the balance row gives S_t = e^{−h}·S⁻ + (1 − e^{−h})/h · E_t/su (E_t the net energy into
+  # the storage in the step), exact for every modelled step whatever its length.  α, β ≥ 0.
+
+The model folds the loss into each state-change term: ``(S⁻·(1 − β) − S·(1 + α))·su`` (``keep_prev`` /
+``keep_now``), so the β weight is always on the state the step's state change starts from.  The output writer
+(``process_outputs.read_highs_solution.write_v_self_discharge``) computes the same loss from the solve's own
+solution with :func:`self_discharge_energy`, on the lags of :func:`state_links` — the lags the model's state
+change uses (``model.core._state_change_terms``).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+import polars as pl
+from polar_high import Param
+
+from flextool.engine.model._common import _has_rows
+
+# Below this h the closed forms lose digits to cancellation; the series is used instead (truncation < 1e-19
+# relative at h = 1e-2).
+_SERIES_BELOW = 1e-2
+
+
+def alpha_beta(h: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``(α, β)`` of the decay ``h`` (≥ 0) of a step: α = h/(1 − e^{−h}) − 1, β = h − α."""
+    h = np.asarray(h, dtype=float)
+    alpha = np.zeros_like(h)
+    small = h < _SERIES_BELOW
+    hs = h[small]
+    alpha[small] = hs / 2 + hs ** 2 / 12 - hs ** 4 / 720 + hs ** 6 / 30240
+    hl = h[~small]
+    alpha[~small] = hl / (-np.expm1(-hl)) - 1.0
+    return alpha, h - alpha
+
+
+@dataclass(frozen=True)
+class LossCoefficients:
+    """Self-discharge weights over (n, d, t) of every storage node (1 / 0 for nodes without a loss)."""
+    frame: pl.DataFrame        # (n, d, t, alpha, beta)
+    keep_now: Param            # 1 + α
+    keep_prev: Param           # 1 − β
+    h: Param                   # α + β: the loss of a step whose state is constant over it (open first step)
+
+
+def _grouped_steps(d) -> "pl.DataFrame | None":
+    """``(_n, _d, _t, _b)`` (Utf8) of the storage nodes balanced per coarse step or per timeset block."""
+    parts = []
+    coarse = getattr(d, "node_coarse_step", None)
+    if _has_rows(coarse):
+        parts.append(coarse.select(pl.col("n").cast(pl.Utf8).alias("_n"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                                   pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("b_first").cast(pl.Utf8).alias("_b")))
+    nsb, pbt = getattr(d, "nodeStateBlock", None), getattr(d, "period_block_time", None)
+    if _has_rows(nsb) and _has_rows(pbt):
+        parts.append(nsb.select(pl.col("n").cast(pl.Utf8).alias("_n"))
+                     .join(pbt.select(pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
+                                      pl.col("b_first").cast(pl.Utf8).alias("_b")), how="cross"))
+    if not parts:
+        return None
+    return pl.concat(parts, how="vertical").unique(subset=["_n", "_d", "_t"], keep="first")
+
+
+def loss_coefficients(d, state_dt: "pl.DataFrame | None") -> "LossCoefficients | None":
+    """α, β over ``state_dt`` (the (n, d, t) of v_state); None when no storage node has a positive loss."""
+    loss = d.p_state_self_discharge
+    dur = d.p_step_duration
+    if loss is None or dur is None or not _has_rows(state_dt):
+        return None
+    loss_frame = loss.frame.select(pl.col("n").cast(pl.Utf8).alias("_n"), pl.col("value").cast(pl.Float64)
+                                   .alias("loss"))
+    if loss_frame.filter(pl.col("loss") > 0.0).height == 0:
+        return None
+    base = (state_dt.select("n", "d", "t")
+            .with_columns(_n=pl.col("n").cast(pl.Utf8), _d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
+            .join(loss_frame, on="_n", how="left")
+            .join(dur.frame.select(pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
+                                   pl.col("value").cast(pl.Float64).alias("dur")), on=["_d", "_t"], how="left")
+            .with_columns(pl.col("loss").fill_null(0.0))
+            .sort("_n", "_d", "_t"))
+    if base["dur"].null_count() > 0:
+        raise ValueError("self-discharge: step_duration is missing for some storage steps")
+    lam = np.log1p(base["loss"].to_numpy())
+    dur_np = base["dur"].to_numpy()
+    alpha, beta = alpha_beta(dur_np * lam)
+    base = base.with_columns(alpha=pl.Series(alpha), beta=pl.Series(beta))
+    grouped = _grouped_steps(d)
+    if grouped is not None:
+        g = base.join(grouped, on=["_n", "_d", "_t"], how="inner")
+        if g.height > 0:
+            g = (g.with_columns(span=pl.col("dur").sum().over("_n", "_d", "_b"))
+                 .sort("_n", "_d", "_b", "_t"))
+            ag, bg = alpha_beta(g["span"].to_numpy() * np.log1p(g["loss"].to_numpy()))
+            g = g.with_columns(
+                alpha=pl.Series(ag) * pl.col("dur") / pl.col("span"),
+                beta=pl.when(pl.col("_t") == pl.col("_b")).then(pl.Series(bg)).otherwise(0.0))
+            base = (base.join(g.select("_n", "_d", "_t", pl.col("alpha").alias("_ga"), pl.col("beta").alias("_gb")),
+                              on=["_n", "_d", "_t"], how="left")
+                    .with_columns(alpha=pl.coalesce("_ga", "alpha"), beta=pl.coalesce("_gb", "beta"))
+                    .drop("_ga", "_gb"))
+    frame = base.select("n", "d", "t", "alpha", "beta")
+    keys = ("n", "d", "t")
+    return LossCoefficients(
+        frame=frame,
+        keep_now=Param(keys, frame.select("n", "d", "t", value=1.0 + pl.col("alpha"))),
+        keep_prev=Param(keys, frame.select("n", "d", "t", value=1.0 - pl.col("beta"))),
+        h=Param(keys, frame.select("n", "d", "t", value=pl.col("alpha") + pl.col("beta"))),
+    )
+
+
+# ---------------------------------------------------------------------------
+# The previous state of each storage step (shared by the model's state change and the output writer)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StateLink:
+    """One state-change branch: the nodes of a binding method and where their steps' previous state lies.
+
+    ``lag`` is the lag frame and ``col`` its previous-step column: with ``cross_period`` the previous step is
+    ``(d_previous, t_previous_within_solve)`` of ``lag`` (it may lie in another period), else ``(d, col)``.
+    ``all_steps``: every step of the solve has a lag row (the model then takes the current state unrestricted).
+    """
+    key: str
+    nodes: pl.DataFrame
+    lag: pl.DataFrame
+    col: str
+    cross_period: bool
+    all_steps: bool
+
+
+def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
+    """The state-change branches of ``model.core._state_change_terms``, one per storage_binding_method; each node
+    is in one branch only (``_validate_storage_binding_disjoint``)."""
+    links: list[StateLink] = []
+    if d.storage_bind_within_timeblock is not None:
+        # bind_within_timeblock: t⁻ wraps around within the timeblock.
+        links.append(StateLink("state_change", d.storage_bind_within_timeblock, d.dtttdt,
+                               "t_previous_within_timeset", False, True))
+    if _has_rows(d.storage_bind_forward_only) and _has_rows(d.dtttdt_forward_only):
+        # bind_forward_only: t⁻ crosses period boundaries; the first step of the solve has no state change
+        # (dtttdt_forward_only omits it).
+        links.append(StateLink("state_change_fo", d.storage_bind_forward_only, d.dtttdt_forward_only,
+                               "t_previous_within_solve", True, False))
+    if _has_rows(d.storage_bind_within_solve):
+        # bind_within_solve: t⁻ crosses period boundaries and the first step of the solve wraps to the last one.
+        links.append(StateLink("state_change_ws", d.storage_bind_within_solve, d.dtttdt,
+                               "t_previous_within_solve", True, True))
+    if _has_rows(d.storage_bind_within_period) and _has_rows(d.dtttdt_within_period):
+        # bind_within_period: t⁻ is the previous step of the period; the first step of each period wraps to the
+        # period's own last step.
+        links.append(StateLink("state_change_wp", d.storage_bind_within_period, d.dtttdt_within_period,
+                               "t_previous_within_period", False, True))
+    if has_nsb and _has_rows(d.dtttdt_block_lag):
+        # bind_intraperiod_blocks: t⁻ from dtttdt_block_lag (the blocks of a period form a loop).
+        links.append(StateLink("state_change_block", d.nodeStateBlock, d.dtttdt_block_lag,
+                               "t_previous_within_solve", True, False))
+    if has_rp:
+        # Blended weights: t⁻ is the previous step inside a representative block; the block's first step starts
+        # from v_state_rp_start (rp_start_steps).
+        interior = d.dtttdt.join(d.rp_block_first.select("d", "t"), on=["d", "t"], how="anti")
+        links.append(StateLink("state_change_rp_interior", d.nodeState_rp, interior,
+                               "t_previous_within_timeset", False, False))
+    return links
+
+
+def previous_steps(links: list[StateLink]) -> pl.DataFrame:
+    """``(n, d, t, d_prev, t_prev)`` (Utf8): the step whose state each linked storage step starts from."""
+    parts = []
+    for link in links:
+        lag = link.lag
+        d_prev = pl.col("d_previous") if link.cross_period else pl.col("d")
+        frame = lag.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                           d_prev.cast(pl.Utf8).alias("d_prev"), pl.col(link.col).cast(pl.Utf8).alias("t_prev"))
+        parts.append(link.nodes.select(pl.col("n").cast(pl.Utf8)).join(frame, how="cross"))
+    if not parts:
+        return pl.DataFrame(schema={c: pl.Utf8 for c in ("n", "d", "t", "d_prev", "t_prev")})
+    return pl.concat(parts, how="vertical").select("n", "d", "t", "d_prev", "t_prev")
+
+
+def self_discharge_energy(d, *, state: pl.DataFrame, rp_start: "pl.DataFrame | None", start: "pl.DataFrame | None",
+                          carry: "pl.DataFrame | None", open_first: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """The self-discharge of every storage step of a solved solve, MWh per step: ``(n, d, t, value)``.
+
+    ``state``: the solve's v_state ``(n, d, t, value)`` (state units).  The previous state S⁻ of a step: the
+    linked step's state (:func:`state_links`), ``rp_start`` ``(n, d, t, value)`` (v_state_rp_start at the
+    representative blocks' first steps), ``start`` / ``carry`` ``(n, d, t, value)`` (start energy / carried
+    state in MWh at an open chain's first step), ``open_first`` ``(n, d, t)`` (an open first step: S⁻ = S).
+    Coarse-step and block totals are spread over their fine steps by Δt/Δ_b (a constant rate within the step).
+    None when no storage node has a positive loss.
+    """
+    def utf8(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.with_columns([pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t") if c in frame.columns])
+
+    state = utf8(state)
+    coef = loss_coefficients(d, state.select("n", "d", "t"))
+    if coef is None:
+        return None
+    su = utf8(d.p_state_unitsize.frame).select("n", pl.col("value").alias("su"))
+    w = utf8(coef.frame).join(state.rename({"value": "S"}), on=["n", "d", "t"], how="left").join(su, on="n")
+    links = state_links(d, has_rp=_has_rows(getattr(d, "nodeState_rp", None)),
+                        has_nsb=_has_rows(getattr(d, "nodeStateBlock", None)))
+    prev = (previous_steps(links)
+            .join(state.select(pl.col("n"), pl.col("d").alias("d_prev"), pl.col("t").alias("t_prev"),
+                               pl.col("value").alias("S_prev")), on=["n", "d_prev", "t_prev"], how="left")
+            .select("n", "d", "t", (pl.col("S_prev")).alias("prev_state")))
+    pieces = [prev]
+    if rp_start is not None and rp_start.height > 0:
+        pieces.append(utf8(rp_start).select("n", "d", "t", pl.col("value").alias("prev_state")))
+    if open_first is not None and open_first.height > 0:
+        pieces.append(utf8(open_first).select("n", "d", "t")
+                      .join(state, on=["n", "d", "t"], how="left").select("n", "d", "t",
+                                                                          pl.col("value").alias("prev_state")))
+    prev_state = pl.concat(pieces, how="vertical")
+    energy_pieces = [c for c in (start, carry) if c is not None and c.height > 0]
+    prev_energy = (pl.concat([utf8(c).select("n", "d", "t", pl.col("value").alias("prev_energy"))
+                              for c in energy_pieces], how="vertical")
+                   if energy_pieces else pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8,
+                                                              "prev_energy": pl.Float64}))
+    w = (w.join(prev_state, on=["n", "d", "t"], how="left")
+         .join(prev_energy, on=["n", "d", "t"], how="left")
+         .with_columns(prev=pl.coalesce(pl.col("prev_state") * pl.col("su"), pl.col("prev_energy"), pl.lit(0.0)))
+         .with_columns(value=pl.col("alpha") * pl.col("S") * pl.col("su") + pl.col("beta") * pl.col("prev")))
+    grouped = _grouped_steps(d)
+    if grouped is not None:
+        dur = d.p_step_duration.frame.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                                             pl.col("value").alias("dur"))
+        g = (grouped.rename({"_n": "n", "_d": "d", "_t": "t", "_b": "b"})
+             .join(w.select("n", "d", "t", "value"), on=["n", "d", "t"], how="inner")
+             .join(dur, on=["d", "t"], how="left")
+             .sort("n", "d", "b", "t")
+             .with_columns(spread=pl.col("value").sum().over("n", "d", "b") * pl.col("dur")
+                           / pl.col("dur").sum().over("n", "d", "b")))
+        w = (w.join(g.select("n", "d", "t", "spread"), on=["n", "d", "t"], how="left")
+             .with_columns(value=pl.coalesce("spread", "value")))
+    return w.select("n", "d", "t", "value").sort("n", "d", "t")
+
+
+# ---------------------------------------------------------------------------
+# Where a storage chain starts (shared by the model's start terms and the output writer)
+# ---------------------------------------------------------------------------
+
+
+def is_solve_first(d) -> bool:
+    """True in the first solve of a chain and in a single solve (``p_nested_solve_first`` None or True)."""
+    return d.p_nested_solve_first is None or d.p_nested_solve_first is True
+
+
+def _node_union(frames) -> "pl.DataFrame | None":
+    """The nodes (n) of the frames that have rows, or None."""
+    parts = [f.select("n") for f in frames if _has_rows(f)]
+    if not parts:
+        return None
+    return pl.concat(parts, how="vertical").unique(maintain_order=True)
+
+
+def cyclic_nodes(d) -> "pl.DataFrame | None":
+    """Storage nodes whose chain closes on itself within the solve (n): bind_within_timeblock,
+    bind_within_period, bind_within_solve and bind_intraperiod_blocks (a rolling solve with a
+    bind_intraperiod_blocks node stops with an error).  Their first step wraps to a later step of the solve, so
+    they take neither a start term nor the roll carry."""
+    return _node_union((d.storage_bind_within_timeblock, d.storage_bind_within_period,
+                        d.storage_bind_within_solve, getattr(d, "nodeStateBlock", None)))
+
+
+def open_start_nodes(d) -> "pl.DataFrame | None":
+    """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only.  Their first step
+    starts from the fix_start state in the first solve and from the roll carry in a continuation solve."""
+    return _node_union((d.storage_bind_forward_only,))
+
+
+def fix_start_first(d, first_solve: bool) -> "pl.DataFrame | None":
+    """``(n, d, t)``: the first steps that start from the fix_start state (open-start fix_start nodes, first
+    solve); None when there are none."""
+    open_start = open_start_nodes(d)
+    if not (first_solve
+            and open_start is not None
+            and _has_rows(d.storage_fix_start)
+            and d.p_state_start is not None
+            and d.p_state_existing_capacity is not None
+            and d.p_state_unitsize is not None
+            and d.nodeState_first_dt is not None):
+        return None
+    nodes = open_start.join(d.storage_fix_start, on="n", how="inner")
+    first = d.nodeState_first_dt.join(nodes, on="n", how="inner")
+    return first if first.height > 0 else None
+
+
+def roll_first(d, first_solve: bool) -> "pl.DataFrame | None":
+    """``(n, d, t)``: the first steps that start from the roll carry (every storage node but the cyclic ones, in a
+    continuation solve); None when there are none."""
+    if (first_solve
+            or d.p_state_unitsize is None
+            or d.nodeState_first_dt is None
+            or d.p_roll_continue_state is None):
+        return None
+    first = d.nodeState_first_dt
+    cyclic = cyclic_nodes(d)
+    if cyclic is not None:
+        first = first.join(cyclic, on="n", how="anti")
+    return first if first.height > 0 else None
+
+
+def open_first(d, first_solve: bool) -> "pl.DataFrame | None":
+    """``(n, d, t)``: first steps of open-start nodes that start from neither the fix_start state nor the carry
+    (the step has no state change: its state is constant over the step)."""
+    open_start = open_start_nodes(d)
+    if open_start is None or d.nodeState_first_dt is None:
+        return None
+    first = d.nodeState_first_dt.join(open_start, on="n", how="inner")
+    for covered in (fix_start_first(d, first_solve), roll_first(d, first_solve)):
+        if covered is not None:
+            first = first.join(covered.select("n", "d", "t"), on=["n", "d", "t"], how="anti")
+    return first if first.height > 0 else None

@@ -1,5 +1,20 @@
 ## Unreleased
 
+- **Storage self-discharge is exact for any time-step length.** The storage
+  content now decays continuously at ln(1 + `self_discharge_loss`) per hour,
+  whatever the step length, with the energy charged or discharged within a
+  step spread evenly over the step. Before, a step lost `self_discharge_loss`
+  once whatever its length (a 24 h step lost one hour's worth, so storages
+  with self-discharge on steps longer than one hour kept far too much
+  energy), coarse (`new_stepduration`) groups and `bind_intraperiod_blocks`
+  blocks used a linear `loss × hours` that under-decays stored energy, and
+  energy charged within a step was decayed for the whole step. Results with
+  self-discharge change, slightly also at 1 h steps (the test battery's
+  states by up to 0.0025 MWh). The reported self-discharge (`balance_t`
+  *Self discharge*) now equals the loss the optimisation used; before it was
+  `state × loss` per hour, which differed for steps other than 1 h, coarse
+  nodes and blocks.
+
 - **`bind_intraperiod_blocks` storage balance.** The balance of such a node
   over each timeset block is now exactly its per-step energy balance summed
   over the block. Before, it left out the reverse flow of two-way connections
