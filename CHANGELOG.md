@@ -1,5 +1,19 @@
 ## Unreleased
 
+- **Prices are in currency per MWh.** `price_t` is now the cost of one more
+  MWh of demand at the node and step (positive when more demand costs more).
+  Before, node prices were negated and multiplied by the period's share of
+  the year, by the timestep weight and, in stochastic solves, by the branch
+  probability (e.g. −164 250 instead of 900 for an unserved-energy step).
+  Reserve prices (`reserve_price_t`) were a million times too small and are
+  now per MW of reserve held for one hour, also with the step length and
+  weights removed. In a stochastic solve each forecast branch now reports
+  its own price, and a step the objective does not weigh (the trunk period
+  at the branch steps) has no price. The nested `fix_price` storage handoff
+  passed the dispatch solve a price a million times too small (and weighted);
+  it now passes the storage solve's `price_t`, also for
+  `bind_intraperiod_blocks` storage nodes.
+
 - **Nodes in a `new_stepduration` group sum their flows over each coarse
   step.** A node of a group whose `new_stepduration` is longer than the
   solve's time step is now balanced once per coarse step by summing all its
@@ -25,11 +39,9 @@
   handling was silently dropped). Coarse nodes now report a price (the dual
   of their coarse-step balance) with the same sign convention as every other
   node, and `bind_intraperiod_blocks` storage nodes now also use that
-  convention (before, their sign was the opposite of the other nodes'). Note:
-  the sign and scale of all node prices are still being corrected (they are
-  currently reported negated and divided by the period's share of the year);
-  that fix follows separately. Outputs no longer copy a coarse step's value
-  to its other time steps. Listing a unit
+  convention (before, their sign was the opposite of the other nodes').
+  Outputs no longer copy a coarse step's value to its other time steps.
+  Listing a unit
   or connection in a coarse group has no effect on time resolution (a
   warning names those that touch a node outside the group). Benders
   decomposition now allows a boundary between nodes of different time

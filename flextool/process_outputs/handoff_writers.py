@@ -1,26 +1,28 @@
 """
 Solve-to-solve handoff CSV writers.
 
-These writers produce the six CSVs carrying state from the previous
+These writers produce the five CSVs carrying state from the previous
 solve, written from the live ``Highs`` instance + the input /
 parameter data.
 
-The six handoff files (per ``ARCHITECTURE.md`` "Solve-to-solve
+The five handoff files (per ``ARCHITECTURE.md`` "Solve-to-solve
 handoff"):
 
     1. solve_data/p_entity_period_existing_capacity.csv
     2. solve_data/p_entity_divested.csv
     3. solve_data/fix_storage_quantity.csv
-    4. solve_data/fix_storage_price.csv
-    5. solve_data/fix_storage_usage.csv
-    6. solve_data/p_roll_continue_state.csv
+    4. solve_data/fix_storage_usage.csv
+    5. solve_data/p_roll_continue_state.csv
 
-All six are implemented.  #5 (``fix_storage_usage``) uses a simplified
-``v_flow × unitsize`` formula that is exact for ``method_nvar`` and for
-``method_1var_per_way`` with trivial coefficients / no min_load_efficiency
-— enough for the typical battery / inverter topology.  See
-:func:`write_fix_storage_usage` for the caveat on more exotic process
-methods.
+The nested ``fix_price`` carrier is built in memory by
+``flextool.engine.preprocess.flex_data.build_handoff_from_solution`` (the
+same price definition as the node price output,
+``flextool.engine.output._prices``); there is no CSV for it.
+``fix_storage_usage`` uses a simplified ``v_flow × unitsize`` formula that
+is exact for ``method_nvar`` and for ``method_1var_per_way`` with trivial
+coefficients / no min_load_efficiency — enough for the typical battery /
+inverter topology.  See :func:`write_fix_storage_usage` for the caveat on
+more exotic process methods.
 
 Sourcing strategy
 -----------------
@@ -57,13 +59,6 @@ if TYPE_CHECKING:
     from flextool.engine.output._writer import OutputWriterState
 
 _logger = logging.getLogger(__name__)
-
-# Fallback inverse of scale_the_objective (multiply duals by 1e6 to
-# undo a 1e-6 scaling).  The live per-solve value is read via
-# :func:`flextool.process_outputs.read_highs_solution._resolve_inv_scale_the_objective`
-# — this constant only applies when the CSV can't be read.
-_INV_SCALE_THE_OBJECTIVE = 1e6
-
 
 # ---------------------------------------------------------------------------
 # Provider-aware lookup helper — Provider-first, then ``None`` (caller
@@ -318,35 +313,6 @@ def _load_realized_period_time_last(
     ]
 
 
-def _load_complete_period_share_of_year(
-    work_folder: Path,
-) -> dict[str, float]:
-    """Return ``{period: share_of_year}`` from
-    ``solve_data/complete_period_share_of_year.csv``."""
-    path = work_folder / "solve_data" / "complete_period_share_of_year.csv"
-    if not path.exists():
-        return {}
-    df = pd.read_csv(path)
-    # Expected layout: solve,period,value or period,value
-    period_col = "period"
-    value_col = [c for c in df.columns if c not in ("solve", "period")][0]
-    return dict(zip(df[period_col].astype(str), df[value_col].astype(float)))
-
-
-def _load_inflation_factor_operations_yearly(
-    work_folder: Path,
-) -> dict[str, float]:
-    """Return ``{period: inflation_factor}`` from
-    ``solve_data/solve__p_inflation_factor_operations_yearly.csv``."""
-    path = work_folder / "solve_data" / "solve__p_inflation_factor_operations_yearly.csv"
-    if not path.exists():
-        return {}
-    df = pd.read_csv(path)
-    period_col = "period"
-    value_col = [c for c in df.columns if c not in ("solve", "period")][0]
-    return dict(zip(df[period_col].astype(str), df[value_col].astype(float)))
-
-
 def _load_step_duration(work_folder: Path) -> dict[tuple[str, str], float]:
     """Return ``{(period, time): step_duration}`` from ``solve_data/steps_in_use.csv``."""
     path = work_folder / "solve_data" / "steps_in_use.csv"
@@ -542,48 +508,6 @@ def _resolve_realized_period_time_last(
         except Exception:  # noqa: BLE001
             pass
     return _load_realized_period_time_last(work_folder)
-
-
-def _resolve_complete_period_share_of_year(
-    work_folder: Path, flex_data: "FlexData | None" = None,
-) -> dict[str, float]:
-    """``{period: share_of_year}`` from ``flex_data.p_period_share``.
-    Phase G trusts the in-memory carrier when supplied."""
-    if flex_data is not None:
-        param = getattr(flex_data, "p_period_share", None)
-        if param is None:
-            return {}
-        try:
-            f = param.frame
-            period_col = f.columns[0]
-            return dict(zip(
-                f[period_col].cast(str).to_list(),
-                f["value"].cast(float).to_list(),
-            ))
-        except Exception:  # noqa: BLE001
-            pass
-    return _load_complete_period_share_of_year(work_folder)
-
-
-def _resolve_inflation_factor_operations_yearly(
-    work_folder: Path, flex_data: "FlexData | None" = None,
-) -> dict[str, float]:
-    """``{period: inflation_factor}`` from ``flex_data.p_inflation_op``.
-    Phase G trusts the in-memory carrier when supplied."""
-    if flex_data is not None:
-        param = getattr(flex_data, "p_inflation_op", None)
-        if param is None:
-            return {}
-        try:
-            f = param.frame
-            period_col = f.columns[0]
-            return dict(zip(
-                f[period_col].cast(str).to_list(),
-                f["value"].cast(float).to_list(),
-            ))
-        except Exception:  # noqa: BLE001
-            pass
-    return _load_inflation_factor_operations_yearly(work_folder)
 
 
 def _resolve_step_duration(
@@ -914,113 +838,6 @@ def write_p_entity_period_existing_capacity(
     return out_path
 
 
-def write_fix_storage_price(
-    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
-    flex_data: "FlexData | None" = None,
-    is_first_solve: bool | None = None,
-    scale_the_objective: float | None = None,
-) -> Path:
-    """Write ``solve_data/fix_storage_price.csv``.
-
-    For each ``n`` with method ``fix_price`` and each
-    ``(d, t) in dt_fix_storage_timesteps``::
-
-        price = -nodeBalance_eq[c, n, d, t, ...].dual
-                / p_inflation_factor_operations_yearly[d]
-                * complete_period_share_of_year[d]
-                / scale_the_objective
-
-    The ``nodeBalance_eq`` constraint is indexed by 8 fields
-    ``(solve, node, period, time, t_prev, t_prev_within_timeset,
-    d_prev, t_prev_within_solve)``.  We accept rows for any value of
-    the four "previous" indices — exactly one constraint exists per
-    ``(c, n, d, t)`` so the dual is well-defined.
-    """
-    from flextool.process_outputs.read_highs_solution import (
-        _resolve_inv_scale_the_objective,
-    )
-    out_path = work_folder / "solve_data" / "fix_storage_price.csv"
-
-    target_nodes = _resolve_storage_fix_methods(work_folder, "fix_price", flex_data)
-    fix_steps = _load_realized_set(
-        work_folder / "solve_data" / "fix_storage_timesteps.csv"
-    )
-    inflation = _resolve_inflation_factor_operations_yearly(work_folder, flex_data)
-    period_share = _resolve_complete_period_share_of_year(work_folder, flex_data)
-    # Agent 12: resolve live scale_the_objective from the per-solve CSV.
-    # Phase G: cascade-supplied ``scale_the_objective`` kwarg short-
-    # circuits the CSV read entirely.
-    inv_scale = _resolve_inv_scale_the_objective(
-        work_folder, scale_the_objective=scale_the_objective,
-    )
-
-    # Empty short-circuit — most scenarios have no fix_price nodes.
-    if not target_nodes or not fix_steps:
-        if _resolve_is_first_solve(work_folder, is_first_solve) and not out_path.exists():
-            out_path.write_text("period,step,node,p_fix_storage_price\n")
-            _logger.info("wrote %s (header only — first solve)", out_path)
-        else:
-            _logger.debug("skipped %s (empty; preserving prior content)", out_path)
-        return out_path
-
-    # nodeBalance_eq has 9 indices (Agent 1.4 added ``bn`` between
-    # ``node`` and ``period``).  Use the generic extractor with 7
-    # col_names so the trailing two stay the (period, time) row index;
-    # then filter rows to fix_steps and entity-name match to
-    # target_nodes (col_names[1] == 'node').  In degenerate mode bn is
-    # always 'default'.
-    df = extract_variable(
-        h, "nodeBalance_eq",
-        col_names=("c", "node", "bn"),
-        solve_name=solve_name,
-        has_time=True,
-        source="row_dual",
-        value_scale=1.0,  # we apply the full transform manually below
-        trailing_col_names=("t_prev", "t_prev_within_timeset",
-                            "d_prev", "t_prev_within_solve"),
-    )
-
-    if df.empty:
-        # Same preserve-prior semantics as the empty short-circuit above.
-        if _resolve_is_first_solve(work_folder, is_first_solve) and not out_path.exists():
-            out_path.write_text("period,step,node,p_fix_storage_price\n")
-        return out_path
-
-    rows: list[tuple[str, str, str, float]] = []
-    # df: row index (solve, period, time); columns MultiIndex
-    # (c, node, t_prev, t_prev_within_timeset, d_prev, t_prev_within_solve).
-    # The constraint uses ``c in solve_current`` so c == solve_name; pick
-    # the only matching slice.  For each (period, time) ∈ fix_steps and
-    # each node ∈ target_nodes, sum the duals across the (typically
-    # single) "previous" combinations.
-    for (_s, period, time), row in df.iterrows():
-        if (period, time) not in fix_steps:
-            continue
-        for col, dual_val in row.items():
-            node = col[1]
-            if node not in target_nodes:
-                continue
-            scale = (
-                -1.0
-                / inflation.get(period, 1.0)
-                * period_share.get(period, 1.0)
-                * inv_scale
-            )
-            rows.append((period, time, node, float(dual_val) * scale))
-
-    if not rows:
-        if _resolve_is_first_solve(work_folder, is_first_solve) and not out_path.exists():
-            out_path.write_text("period,step,node,p_fix_storage_price\n")
-        else:
-            _logger.debug("skipped %s (empty; preserving prior content)", out_path)
-        return out_path
-
-    out = pd.DataFrame(rows, columns=["period", "step", "node", "p_fix_storage_price"])
-    out.to_csv(out_path, index=False, float_format="%.8g")
-    _logger.info("wrote %s (%d rows)", out_path, len(out))
-    return out_path
-
-
 def write_fix_storage_usage(
     h: "highspy.Highs", *, solve_name: str, work_folder: Path,
     flex_data: "FlexData | None" = None,
@@ -1250,11 +1067,10 @@ def write_all_handoffs(
     flex_data: "FlexData | None" = None,
     is_first_solve: bool | None = None,
     writer_state: "OutputWriterState | None" = None,
-    scale_the_objective: float | None = None,
     provider: "object | None" = None,
     csv_dump: bool = False,
 ) -> list[Path]:
-    """Write all six handoff files.
+    """Write the handoff files.
 
     Each writer is independent — failure on one is logged and does not
     abort the rest, mirroring :func:`write_all_variables`.
@@ -1293,8 +1109,6 @@ def write_all_handoffs(
         (write_p_entity_period_existing_capacity,
          {**fd_kwargs, "prior_handoff": prior_handoff, "provider": provider,
           "csv_dump": csv_dump}),
-        (write_fix_storage_price,
-         {**fd_kwargs, "scale_the_objective": scale_the_objective}),
         (write_fix_storage_usage, fd_kwargs),
     ]
     for fn, extra in dispatch:

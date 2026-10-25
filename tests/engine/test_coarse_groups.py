@@ -511,8 +511,10 @@ def test_intraperiod_price_sign(tmp_path_factory) -> None:
 def test_nested_fix_price_from_coarse_parent(tmp_path_factory) -> None:
     """Nested invest (24 h) -> storage (6 h) -> rolling dispatch with battery fix_price and the battery in a 12-h
     group (not coarse in the 24-h solve, coarse in the 6-h one): the storage solve hands the dispatch the battery
-    price of each fix step = its coarse row's dual / inflation × period share (critique 7).  Before: the storage
-    solve had no nodeBalance_eq row for the battery, so no price reached the child."""
+    price of each fix step = its coarse row's dual / s / (tw · inflation / period share) (critique 7; tw = 1
+    and no branches here).  Before: the storage solve had no nodeBalance_eq row for the battery, so no price
+    reached the child."""
+    from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE as s_obj
     vals = [["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(36.0)],
             ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(24.0)],
             ["node", "battery", "storage_nested_fix_method", _s("fix_price")],
@@ -533,7 +535,7 @@ def test_nested_fix_price_from_coarse_parent(tmp_path_factory) -> None:
     for n, d, t, v in price.filter(pl.col("node") == "battery").select(
             "node", "period", "step", "p_fix_storage_price").iter_rows():
         b = step_of[(n, d, t)]
-        assert v == pytest.approx(dual[(n, d, b)] / infl[d] * share[d], rel=1e-9, abs=1e-15)
+        assert v == pytest.approx(dual[(n, d, b)] / s_obj / infl[d] * share[d], rel=1e-9, abs=1e-9)
         nonzero += abs(v) > 0
     assert nonzero > 0
 

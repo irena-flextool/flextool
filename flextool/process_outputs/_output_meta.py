@@ -182,7 +182,11 @@ PRICE_ENERGY = Transform(
     "Nodal energy price (shadow price of the node balance constraint).",
     description="Nodal energy price — the shadow price (dual) of the node "
                 "balance constraint: the marginal system cost of one more unit "
-                "of the commodity at that node and timestep. For a storage "
+                "of the commodity at that node and timestep, in CUR/MWh in the "
+                "price base of the cost inputs (inflation and the years the "
+                "period represents removed; not weighted by timestep weight or "
+                "branch probability; empty where the objective does not weigh "
+                "the step). For a storage "
                 "node this is the marginal value of stored energy (the "
                 "\"water value\"): a well-defined intertemporal price, but "
                 "treat it with care — it can be non-unique when storage sits "
@@ -191,7 +195,7 @@ PRICE_ENERGY = Transform(
                 "charge and discharge sides by the round-trip efficiency, and "
                 "be shifted by end-of-horizon, rolling and inter-period "
                 "(blended-weight) storage linking.",
-    algebra="dual(node_balance)",
+    algebra="σ·dual(node_balance) / s / (timestep_weight · inflation / period_share · branch_weight)",
 )
 EMISSION_MT = Transform(
     "Mt", Semantics.HORIZON,
@@ -217,13 +221,14 @@ YEARS = Transform(
 PRICE_RESERVE = Transform(
     "CUR/MW", Semantics.PRICE,
     "Reserve price (dual of the reserve balance) — CUR per MW of reserve held "
-    "(= CUR/MWh held for one hour).",
-    algebra="dual(reserve_balance)",
+    "for one hour (CUR/MWh).",
+    algebra="dual(reserve_balance) / s / (step_duration · timestep_weight · inflation / period_share "
+            "· branch_weight)",
 )
 PRICE_CO2 = Transform(
     "CUR/t", Semantics.PRICE,
     "CO2 price (shadow price of the CO2 cap).",
-    algebra="dual(co2_cap) / 1000",
+    algebra="−dual(co2_max_period) / s / inflation",
 )
 # Investment duals carry the same convention as invest_cost: CUR/kW for
 # units & connections (CUR/kWh for storage nodes).

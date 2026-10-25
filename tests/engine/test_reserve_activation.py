@@ -144,14 +144,12 @@ def test_dynamic_only_without_reservation_is_active(dynamic_only) -> None:
 
 def test_dynamic_only_reports_reserve_price(dynamic_only) -> None:
     """The dynamic_only group's reserve_price_t is the dual of its reserveBalance_dynamic_eq row (one row per
-    group and step), after the period scaling the timeseries price gets."""
+    group and step), per MW held for one hour: dual / s / (Δt · tw · inflation / period_share · bw)."""
+    from flextool.engine.output._prices import price_weight_dt
+    from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE
     from flextool.lean_parquet import read_lean_parquet
 
     step, wf = dynamic_only
-    from flextool.process_outputs.read_highs_solution import (
-        _load_complete_period_share_of_year, _load_inflation_factor,
-    )
-
     duals = step.solution.constraint_dual("reserveBalance_dynamic_eq")
     duals = (duals.with_columns(pl.col("key").str.split(",").alias("__k"))
              .with_columns(pl.col("__k").list.get(0).alias("r"), pl.col("__k").list.get(3).alias("d"),
@@ -164,12 +162,11 @@ def test_dynamic_only_reports_reserve_price(dynamic_only) -> None:
     price = read_lean_parquet(files[0])
     cols = [c for c in price.columns if tuple(str(x) for x in c) == ("dyn", "up", "electricity")]
     assert len(cols) == 1, price.columns
-    share = _load_complete_period_share_of_year(Path(wf), flex_data=step.flex_data)
-    infl = _load_inflation_factor(Path(wf), flex_data=step.flex_data)
+    weight = {(d, t): w for d, t, w in price_weight_dt(step.flex_data, per_hour=True).iter_rows()}
     got = {(str(idx[1]), str(idx[2])): float(v) for idx, v in price[cols[0]].items()}
     for d, t, dual in duals.select("d", "t", "dual").iter_rows():
-        expected = dual * share.get(d, 1.0) / infl.get(d, 1.0)
-        assert got[(d, t)] == pytest.approx(expected, rel=1e-9, abs=1e-12), (d, t)
+        expected = dual / _LEGACY_DEFAULT_OBJECTIVE_SCALE / weight[(d, t)]
+        assert got[(d, t)] == pytest.approx(expected, rel=1e-9, abs=1e-9), (d, t)
 
 
 # ---------------------------------------------------------------------------

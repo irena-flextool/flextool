@@ -199,3 +199,36 @@ def test_fix_price_round_trip_raises_terminal_state(tmp_path):
     assert state_hi > state_zero + 0.5, (
         f"Terminal state must respond upward to the coarse water value: "
         f"state(high)={state_hi} should exceed state(zero)={state_zero}")
+
+
+def test_fix_price_divides_out_scale_and_weights(tmp_path):
+    """Built at scale_the_objective 1e-6 with step duration 2, timestep weight 0.5, inflation 3, period share
+    0.25 and branch weight 0.4: the slack-served storage node's energy is worth its penalty C per MWh, so the
+    handed price is C.  The dual is s · C · tw · inflation / share · bw (the row is per MWh, no Δt), and the
+    producer divides exactly that out (item 116).  Before: the provider's header-only scale CSV left s = 1 and
+    tw · bw stayed in, so the price was 1e-6 · C · 0.5 · 0.4."""
+    C = 40.0
+    s_obj = 1e-6
+    data = _parent_with_water_value(C)
+    dt = data.dt
+    data.p_step_duration = Param(("d", "t"), dt.with_columns(value=pl.lit(2.0)))
+    data.p_timestep_weight = Param(("d", "t"), dt.with_columns(value=pl.lit(0.5)))
+    data.p_inflation_op = Param(("d",), pl.DataFrame({"d": ["d1"], "value": [3.0]}))
+    data.p_period_share = Param(("d",), pl.DataFrame({"d": ["d1"], "value": [0.25]}))
+    data.pdt_branch_weight = Param(("d", "t"), dt.with_columns(value=pl.lit(0.4)))
+    pb = Problem()
+    build_flextool(pb, data, scale_the_objective=s_obj)
+    sol = pb.solve(options=solver_options())
+    assert sol.optimal
+    raw = sol.constraint_dual("nodeBalance_eq").filter(pl.col("key") == "s,d1,t02")["dual"][0]
+    assert raw == pytest.approx(s_obj * C * 0.5 * 3.0 / 0.25 * 0.4, rel=1e-6)
+    parent_handoff = SolveHandoff()
+    parent_handoff.fix_storage_timesteps = pl.DataFrame(
+        {"period": ["d1"], "step": ["t02"]})  # type: ignore[attr-defined]
+    (tmp_path / "solve_data").mkdir(parents=True, exist_ok=True)
+    handoff = build_handoff_from_solution(
+        sol, tmp_path, "parent_solve", flex_data=data, parent_handoff=parent_handoff,
+        scale_the_objective=s_obj)
+    fp = handoff.fix_storage_price.filter((pl.col("node") == "s") & (pl.col("step") == "t02"))
+    assert fp.height == 1
+    assert float(fp["p_fix_storage_price"][0]) == pytest.approx(C, rel=1e-6)

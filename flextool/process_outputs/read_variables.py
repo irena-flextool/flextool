@@ -50,7 +50,7 @@ def read_variables(output_dir):
     return _read_from_csv(output_path, input_path)
 
 
-def _stream_concat_parts(parts: list[Path]) -> pd.DataFrame:
+def _stream_concat_parts(parts: list[Path], *, zero_fill: bool = True) -> pd.DataFrame:
     """Concatenate per-solve parquet *parts* without materialising them
     all at once.
 
@@ -267,7 +267,8 @@ def _stream_concat_parts(parts: list[Path]) -> pd.DataFrame:
             [c[0] for c in df.columns], name=df.columns.names[0],
         )
 
-    return df.fillna(0.0)
+    # Prices keep their empty cells (a step the objective does not weigh has no price): ``zero_fill=False``.
+    return df.fillna(0.0) if zero_fill else df
 
 
 def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
@@ -294,6 +295,7 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
         *,
         has_period: bool = True,
         has_time: bool = True,
+        zero_fill: bool = True,
     ) -> pd.DataFrame:
         # Parquet carries full float64 precision; no rounding — that
         # belongs only at the final user-facing CSV write boundary.
@@ -319,7 +321,7 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
         # unchanged: the public return is still a ``pd.DataFrame`` with
         # the same row order, column union, MultiIndex/columns-name
         # semantics, and zero-filled missing cells.
-        return _stream_concat_parts(parts)
+        return _stream_concat_parts(parts, zero_fill=zero_fill)
 
     v.obj = _read("v_obj", ("objective",), has_period=False, has_time=False)
     v.flow = _read("v_flow", ("process", "source", "sink"))
@@ -345,10 +347,11 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
     v.q_capacity_margin = _read("vq_capacity_margin", ("group",), has_time=False)
     v.invest = _read("v_invest", ("entity",), has_time=False)
     v.divest = _read("v_divest", ("entity",), has_time=False)
-    v.dual_node_balance = _read("v_dual_node_balance", ("node",))
+    v.dual_node_balance = _read("v_dual_node_balance", ("node",), zero_fill=False)
     v.dual_reserve_balance = _read(
         "v_dual_reserve__upDown__group__period__t",
         ("reserve", "updown", "node_group"),
+        zero_fill=False,
     )
     v.angle = _read("v_angle", ("node",))
     v.dual_invest_unit = _read("v_dual_invest_unit", ("unit",), has_time=False)

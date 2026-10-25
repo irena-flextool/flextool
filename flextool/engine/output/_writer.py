@@ -349,7 +349,6 @@ def write_outputs_for_solve(
             flex_data=flex_data,
             writer_state=writer_state,
             is_first_solve=is_first_solve,
-            scale_the_objective=scale_the_objective,
             provider=provider,
             csv_dump=csv_dump,
         )

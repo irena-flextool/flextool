@@ -81,8 +81,9 @@ def test_coarse_node_dual_broadcast(scenario_workdir):
 
     from flextool.process_outputs.read_highs_solution import (
         extract_variable, write_v_dual_node_balance,
-        _resolve_inv_scale_the_objective, _divide_by_inflation_and_row_scaler,
+        _resolve_inv_scale_the_objective,
     )
+    from flextool.engine.output._prices import price_weight_dt
     from flextool.process_outputs.read_sets import read_sets
 
     out = work / "output_raw"
@@ -103,15 +104,13 @@ def test_coarse_node_dual_broadcast(scenario_workdir):
     missing = [n for n in coarse_nodes if n not in cols]
     assert not missing, f"coarse nodes missing from dual: {missing}"
 
-    # Independent re-derivation: map each coarse row's dual to its t's, per node.
-    inv = _resolve_inv_scale_the_objective(sd)
+    # Independent re-derivation: map each coarse row's dual to its t's, per node, then ÷ the step weight
+    # tw · inflation / period_share (+dual: the coarse row has the orientation of nodeBalance_eq).
+    inv = _resolve_inv_scale_the_objective(work)
     raw = extract_variable(
         h, "nodeBalanceCoarse_eq", ("node",), solve_name=solve,
-        has_time=True, source="row_dual", value_scale=-inv,
+        has_time=True, source="row_dual", value_scale=inv,
         realized_dispatch_csv=rd, flex_data=data,
-    )
-    raw = _divide_by_inflation_and_row_scaler(
-        raw, wf=sd, solve_name=solve, flex_data=data,
     )
     ncs = data.node_coarse_step.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "b_first", "t")).to_pandas()
     long = raw.stack(future_stack=True).rename("v").reset_index()
@@ -122,6 +121,8 @@ def test_coarse_node_dual_broadcast(scenario_workdir):
                      values="v", aggfunc="first")
     )
     exp.index = exp.index.set_names(["solve", "period", "time"])
+    w = {(d, t): v for d, t, v in price_weight_dt(data).iter_rows()}
+    exp = exp.div(pd.Series([w[(d, t)] for _s, d, t in exp.index], index=exp.index), axis=0)
 
     a = dual[coarse_nodes].sort_index()
     b = exp[coarse_nodes].reindex(a.index)

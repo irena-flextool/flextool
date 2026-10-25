@@ -960,7 +960,7 @@ The investment decisions with less information are always less optimal than with
 The long term storage solve can be implemented using a lower resolution solve. The storage state behaviour from the storage solve is used as a target for the dispatch solve. There are three options for doing this: 
 - *fix_quantity* creates a constraint that forces the end storage state to be the same as in the storage solve at this timestep.
 - *fix_usage* does the same but not taking into account the inflow or slacks. Forces the summed usage of the storage during the dispatch solve to be the same as during the same time span in the storage solve. This avoids infeasibilities when modelling inflow stochastics in comparison to the *fix_quantity*.
-- *fix_price* takes the dual marginal price from the storage solve at the end timestep of the dispatch solve and uses it in the objective function to give a value to the stored energy at the end of the horizon. 
+- *fix_price* takes the storage node's price (`price_t`, the value of one more MWh of stored energy) from the storage solve at the end timestep of the dispatch solve and uses it in the objective function to give a value to the stored energy at the end of the horizon. 
 
 The `rolling_jump` and `rolling_horizon` in the storage solve have to be longer than in the dispatch solve. You can set which storages are included as "long term storages" whose value will be transferred to the dispatch solve.
 

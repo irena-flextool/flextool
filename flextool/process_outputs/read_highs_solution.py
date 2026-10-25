@@ -1595,36 +1595,88 @@ def write_v_dual_invest_by_class(
     return paths
 
 
-def _divide_by_inflation_and_row_scaler(
+def _read_weight_csv(path: Path, keys: Sequence[str]) -> pl.DataFrame | None:
+    """A weight component from a ``solve_data`` CSV (``period[, time], value``), as ``(d[, t], value)``; None
+    when absent.  CSV fallback of :func:`_price_weight` for callers without FlexData."""
+    if not path.exists():
+        return None
+    df = pd.read_csv(path, dtype=str)
+    names = {"d": ("period", "d"), "t": ("time", "step", "t")}
+    rename: dict[str, str] = {}
+    for key in keys:
+        col = next((c for c in names[key] if c in df.columns), None)
+        if col is None:
+            return None
+        rename[col] = key
+    values = [c for c in df.columns if c not in rename and c != "solve"]
+    if df.empty or not values:
+        return None
+    out = df.rename(columns={**rename, values[-1]: "value"})[list(keys) + ["value"]]
+    out["value"] = pd.to_numeric(out["value"], errors="coerce")
+    return pl.from_pandas(out)
+
+
+def _price_weight(wf: Path, flex_data: "FlexData | None", *, per_hour: bool = False,
+                  rows: "pd.Index | None" = None) -> pl.DataFrame:
+    """``(d, t, w)``, the objective weight of one unit of a per-(d,t) balance quantity
+    (:func:`flextool.engine.output._prices.price_weight_dt`).  Without FlexData it is built from the
+    ``solve_data`` CSVs when present (each absent component counts as 1) over the ``(solve, period, time)``
+    ``rows`` of the duals."""
+    from flextool.engine.output._prices import price_weight_dt, price_weight_from_components
+
+    if flex_data is not None:
+        return price_weight_dt(flex_data, per_hour=per_hour)
+    sd = wf / "solve_data"
+
+    def _per_period(values: dict[str, float]) -> pl.DataFrame | None:
+        if not values:
+            return None
+        return pl.DataFrame({"d": list(values), "value": [float(v) for v in values.values()]})
+
+    return price_weight_from_components(
+        timestep_weight=_read_weight_csv(sd / "timestep_weight.csv", ("d", "t")),
+        inflation_op=_per_period(_load_inflation_factor(wf)),
+        period_share=_per_period(_load_complete_period_share_of_year(wf)),
+        branch_weight=_read_weight_csv(sd / "pdt_branch_weight.csv", ("d", "t")),
+        step_duration=_read_weight_csv(sd / "p_step_duration.csv", ("d", "t")) if per_hour else None,
+        domain=(pl.DataFrame({"d": [str(r[1]) for r in rows], "t": [str(r[2]) for r in rows]},
+                             schema={"d": pl.Utf8, "t": pl.Utf8})
+                if rows is not None and len(rows) > 0 else None),
+    )
+
+
+def _wide_to_price(df: "pd.DataFrame", weight: pl.DataFrame, *, sign: float, inv_scale: float) -> "pd.DataFrame":
+    """Apply :func:`flextool.engine.output._prices.to_price` to a wide ``(solve, period, time)`` × columns frame
+    of raw duals; the row and column order of ``df`` is kept (a null price becomes NaN)."""
+    from flextool.engine.output._prices import to_price
+
+    if df.empty:
+        return df
+    flat = df.copy()
+    flat.columns = range(df.shape[1])
+    long = flat.stack(future_stack=True).rename("dual").reset_index()
+    long.columns = ["solve", "d", "t", "__col", "dual"]
+    long[["solve", "d", "t"]] = long[["solve", "d", "t"]].astype(str)
+    priced = to_price(pl.from_pandas(long), weight, sign=sign, inv_scale=inv_scale).sort("__col", "solve", "d", "t")
+    values = priced.to_pandas().pivot(index=["solve", "d", "t"], columns="__col", values="price")
+    index = pd.MultiIndex.from_tuples([tuple(str(x) for x in i) for i in df.index], names=df.index.names)
+    out = values.reindex(index=index, columns=range(df.shape[1]))
+    out.index = df.index
+    out.columns = df.columns
+    return out.astype(float)
+
+
+def _divide_by_row_scaler(
     df: "pd.DataFrame",
     *,
     wf: "Path",
     solve_name: str,
     flex_data: "FlexData | None",
 ) -> "pd.DataFrame":
-    """Un-discount and un-row-scale a nodal-dual frame in place-equivalent.
-
-    Divides each ``(solve, period, time)`` row by its period's
-    ``inflation_factor_operations_yearly`` (recover nominal currency) and
-    each ``(period, node)`` cell by ``node_capacity_for_scaling`` (Mode A:
-    scaler ≡ 1 → no effect).  Shared verbatim by the per-(d,t)
-    ``nodeBalance_eq`` path and the per-step ``nodeBalanceCoarse_eq`` /
-    ``nodeBalanceBlock_eq`` paths so all report user-facing currency/MWh
-    under the same convention.
-    """
+    """Divide each ``(period, node)`` cell by ``node_capacity_for_scaling`` (1 for every solve today: the DB-level
+    row scaling was removed, so this is a no-op kept for the parameter's contract)."""
     if df.empty:
         return df
-    inflation = _load_inflation_factor(wf, flex_data=flex_data)
-    if inflation:
-        # Divide each row by its period's inflation factor.  Rows whose
-        # period isn't in the dict keep a unity divisor.
-        periods = df.index.get_level_values("period")
-        divisors = pd.Series(
-            [inflation.get(str(p), 1.0) for p in periods],
-            index=df.index,
-            dtype=float,
-        )
-        df = df.div(divisors, axis=0)
     scaler = _load_row_scaler(wf, "node", solve_name, flex_data=flex_data)
     if scaler is not None and not scaler.empty:
         scaler_by_period = (
@@ -1643,89 +1695,14 @@ def _divide_by_inflation_and_row_scaler(
     return df
 
 
-def _broadcast_step_duals(
-    h: "highspy.Highs",
-    family: str,
-    steps: "pl.DataFrame",
-    *,
-    value_scale: float,
-    solve_name: str,
-    realized_dispatch_csv: "Path | str | None",
-    flex_data: "FlexData | None",
-    wf: "Path",
-) -> "pd.DataFrame | None":
-    """Per-(d,t) prices from the rows of ``family`` (``[node, period, b_first]``), each broadcast to the fine
-    steps ``steps`` maps it to: ``(n, d, b_first, t)`` (per node) or ``(d, b_first, t)`` (every node).
-
-    The row's RHS is the node's energy over the whole step in MWh, so its dual is already currency/MWh, the unit
-    of the per-step ``nodeBalance_eq`` dual (no step-length factor).  ``value_scale`` carries the row's
-    orientation.  Returns a ``(solve, period, time)`` × node DataFrame, or ``None`` without rows."""
-    raw = extract_variable(
-        h, family, ("node",),
-        solve_name=solve_name, has_time=True, source="row_dual",
-        value_scale=value_scale,
-        realized_dispatch_csv=realized_dispatch_csv,
-        flex_data=flex_data,
-    )
-    if raw.empty or raw.shape[1] == 0:
-        return None
-    # Same un-discount / un-row-scale convention as nodeBalance_eq.  The raw extract places each row's dual on
-    # its ``b_first`` row (0 on the other canonical rows); inflation and the row scaler are per period, so
-    # applying them before the broadcast equals applying them after.
-    raw = _divide_by_inflation_and_row_scaler(raw, wf=wf, solve_name=solve_name, flex_data=flex_data)
-    long = raw.stack(future_stack=True).rename("value").reset_index()  # solve, period, time, node, value
-    cols = [c for c in ("n", "d", "b_first", "t") if c in steps.columns]
-    m = steps.select([pl.col(c).cast(pl.Utf8) for c in cols]).to_pandas()
-    left = ["period", "time"] + (["node"] if "n" in cols else [])
-    right = ["d", "b_first"] + (["n"] if "n" in cols else [])
-    long["period"] = long["period"].astype(str)
-    long["time"] = long["time"].astype(str)
-    long["node"] = long["node"].astype(str)
-    merged = long.merge(m, left_on=left, right_on=right, how="inner")
-    if merged.empty:
-        return None
-    wide = merged.pivot_table(index=["solve", "period", "t"], columns="node", values="value", aggfunc="first")
-    wide.index = wide.index.set_names(["solve", "period", "time"])
-    wide.columns.name = "node"
-    return wide
-
-
-def _broadcast_block_node_duals(
-    h: "highspy.Highs",
-    *,
-    solve_name: str,
-    inv_scale: float,
-    realized_dispatch_csv: "Path | str | None",
-    flex_data: "FlexData | None",
-    wf: "Path",
-) -> "list[pd.DataFrame]":
-    """Per-(d,t) nodal prices of the nodes without a per-step ``nodeBalance_eq``.
-
-    * coarse new_stepduration group nodes (``nodeCoarse``): ``nodeBalanceCoarse_eq[n, d, b_first]`` has the
-      orientation of ``nodeBalance_eq`` (``value_scale = −inv_scale``) and is broadcast per node through
-      ``node_coarse_step``;
-    * ``bind_intraperiod_blocks`` nodes (``nodeStateBlock``): ``nodeBalanceBlock_eq[n, d, b_first]`` is written
-      as the negation of ``nodeBalance_eq`` (state change − flows = inflow), so its price is
-      ``+dual`` (``value_scale = +inv_scale``), broadcast through ``period_block_time``.
-
-    The price is constant within each coarse step / block.
-    """
-    out: list[pd.DataFrame] = []
-    if flex_data is None:
-        return out
-    kw = dict(solve_name=solve_name, realized_dispatch_csv=realized_dispatch_csv, flex_data=flex_data, wf=wf)
-    coarse = getattr(flex_data, "node_coarse_step", None)
-    if coarse is not None and coarse.height > 0:
-        df = _broadcast_step_duals(h, "nodeBalanceCoarse_eq", coarse, value_scale=-inv_scale, **kw)
-        if df is not None:
-            out.append(df)
-    block_set = getattr(flex_data, "nodeStateBlock", None)
-    pbt = getattr(flex_data, "period_block_time", None)
-    if block_set is not None and block_set.height > 0 and pbt is not None and pbt.height > 0:
-        df = _broadcast_step_duals(h, "nodeBalanceBlock_eq", pbt, value_scale=inv_scale, **kw)
-        if df is not None:
-            out.append(df)
-    return out
+def _long_duals(df: "pd.DataFrame", step_col: str) -> pl.DataFrame:
+    """A wide ``(solve, period, time)`` × node dual frame → ``(n, d, <step_col>, dual)`` (Utf8 keys)."""
+    if df.empty:
+        return pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8, step_col: pl.Utf8, "dual": pl.Float64})
+    long = df.stack(future_stack=True).rename("dual").reset_index()
+    long = long.rename(columns={"period": "d", "time": step_col, "node": "n"})[["n", "d", step_col, "dual"]]
+    long[["n", "d", step_col]] = long[["n", "d", step_col]].astype(str)
+    return pl.from_pandas(long)
 
 
 def write_v_dual_node_balance(
@@ -1738,75 +1715,71 @@ def write_v_dual_node_balance(
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
 ) -> Path:
-    """Write ``v_dual_node_balance__{solve}.parquet``.
+    """Write ``v_dual_node_balance__{solve}.parquet`` (``price_t``).
 
-    Model formula (for n not in nodeStateBlock ∪ nodeCoarse)::
+    # ─── PRICE. ─── price_t (v_dual_node_balance) ──────────────────────────────
+    # price[n,d,t] = σ_row · dual[row(n,d,t)] / s / w[d,t]
+    #   w[d,t] = timestep_weight[d,t] · inflation_op[d] / period_share[d] · branch_weight[d,t]
+    #   row(n,d,t) = nodeBalance_eq[n,d,t]                      σ = +1
+    #              | nodeBalanceCoarse_eq[n,d,b], t ∈ b         σ = +1   (node_coarse_step)
+    #              | nodeBalanceBlock_eq[n,d,b],  t ∈ b         σ = −1   (period_block_time; row written negated)
+    #   s = scale_the_objective (live, per solve);   price = null where w = 0
+    #   then ÷ node_capacity_for_scaling[n,d] (1 today)
+    # The cost of one more MWh of demand at (n,d,t), in CUR/MWh in the price base of the cost inputs (inflation
+    # and the years the period represents removed), not weighted by the timestep weight or by the branch
+    # probability.  Definition: :mod:`flextool.engine.output._prices`.
 
-        -nodeBalance_eq[n, d, t].dual
-         / p_inflation_factor_operations_yearly[d]
-         / scale_the_objective
-
-    Equivalently, raw-dual × (−1e6 / inflation[d]).  Nodes of coarse
-    new_stepduration groups (``nodeCoarse``) are balanced per coarse step by
-    ``nodeBalanceCoarse_eq`` and ``bind_intraperiod_blocks`` nodes per
-    timeset block by ``nodeBalanceBlock_eq``; their per-step dual, in the
-    same currency/MWh units, is **broadcast** to every ``(d, t)`` of the
-    step (constant within it); see :func:`_broadcast_block_node_duals`.
-    Without this those nodes would have no dual column and the
-    ``node_prices_dt_e`` output would raise a KeyError indexing them.
-
-    The polars LP emits ``nodeBalance_eq`` with arity-3
-    ``(node, period, time)``; this writer reads that arity directly.
+    Nodes of coarse new_stepduration groups (``nodeCoarse``) and ``bind_intraperiod_blocks`` nodes
+    (``nodeStateBlock``) have no per-step row; their coarse-step / block dual is broadcast to every ``(d, t)`` of
+    the step (without them those nodes would have no column and ``node_prices_dt_e`` would raise a KeyError).
+    The rows are the realized ``(d, t)`` of the solve in canonical order.
     """
+    from flextool.engine.output._prices import node_prices
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     wf = Path(work_folder) if work_folder is not None else output_dir.parent
+    inv_scale = _resolve_inv_scale_the_objective(wf, scale_the_objective=scale_the_objective)
+    kw = dict(solve_name=solve_name, has_time=True, source="row_dual", value_scale=1.0,
+              realized_dispatch_csv=realized_dispatch_csv, flex_data=flex_data)
 
-    # Raw duals × -(1 / scale_the_objective); per-period inflation
-    # division applied after.  Agent 12: resolve the live scalar so a
-    # non-default scale_the_objective propagates.
-    inv_scale = _resolve_inv_scale_the_objective(
-        wf, scale_the_objective=scale_the_objective,
-    )
-    df = extract_variable(
-        h, "nodeBalance_eq", ("node",),
-        solve_name=solve_name, has_time=True, source="row_dual",
-        value_scale=-inv_scale,
-        realized_dispatch_csv=realized_dispatch_csv,
-        flex_data=flex_data,
-    )
+    # Raw duals of the per-step rows: (solve, period, time) × node, in the canonical realized row order.
+    df = extract_variable(h, "nodeBalance_eq", ("node",), **kw)
+    duals: dict[str, pl.DataFrame | None] = {"nodeBalance_eq": _long_duals(df, "t")}
+    block_cols: list[str] = []
+    if flex_data is not None:
+        coarse = getattr(flex_data, "node_coarse_step", None)
+        if coarse is not None and coarse.height > 0:
+            raw = extract_variable(h, "nodeBalanceCoarse_eq", ("node",), **kw)
+            duals["nodeBalanceCoarse_eq"] = _long_duals(raw, "b_first")
+            block_cols += [str(c) for c in raw.columns]
+        nsb = getattr(flex_data, "nodeStateBlock", None)
+        pbt = getattr(flex_data, "period_block_time", None)
+        if nsb is not None and nsb.height > 0 and pbt is not None and pbt.height > 0:
+            raw = extract_variable(h, "nodeBalanceBlock_eq", ("node",), **kw)
+            duals["nodeBalanceBlock_eq"] = _long_duals(raw, "b_first")
+            block_cols += [str(c) for c in raw.columns]
 
-    # Per-(d,t) ``nodeBalance_eq`` duals (storage + per-step balance nodes),
-    # un-discounted and un-row-scaled to user-facing currency/MWh.
-    df = _divide_by_inflation_and_row_scaler(
-        df, wf=wf, solve_name=solve_name, flex_data=flex_data,
-    )
-
-    # Coarse-step (``nodeBalanceCoarse_eq``) and timeset-block (``nodeBalanceBlock_eq``) duals of the nodes
-    # without a per-step row, broadcast to per-(d,t) and merged in.  Without them these nodes have no dual
-    # column and ``node_prices_dt_e`` (out_node) raises a KeyError indexing them.  Empty when every node has
-    # per-step rows → the other outputs are byte-identical.
-    for block_prices in _broadcast_block_node_duals(
-        h, solve_name=solve_name, inv_scale=inv_scale,
-        realized_dispatch_csv=realized_dispatch_csv,
-        flex_data=flex_data, wf=wf,
-    ):
-        if block_prices.empty:
-            continue
-        if df.empty:
-            df = block_prices
-        else:
-            block_prices = block_prices.reindex(df.index)
-            df = pd.concat([df, block_prices], axis=1)
-        # Deterministic node-column order once both families are present.
-        df = df.reindex(sorted(df.columns.astype(str)), axis=1)
-        df.columns.name = "node"
+    prices = node_prices(duals, flex_data, inv_scale=inv_scale, weight=_price_weight(wf, flex_data, rows=df.index))
+    nodes = [str(c) for c in df.columns]
+    nodes += [c for c in block_cols if c not in set(nodes)]
+    if block_cols:
+        nodes = sorted(nodes)              # deterministic node-column order once several families are present
+    if nodes and prices.height > 0 and len(df.index) > 0:
+        wide = (prices.to_pandas()
+                .pivot_table(index=["d", "t"], columns="n", values="price", aggfunc="first", dropna=False))
+        rows = [(str(d), str(t)) for _s, d, t in df.index]
+        wide = wide.reindex(index=pd.MultiIndex.from_tuples(rows, names=["d", "t"]), columns=nodes)
+        out = pd.DataFrame(wide.to_numpy(dtype=float), index=df.index, columns=pd.Index(nodes, name="node"))
+        out = _divide_by_row_scaler(out, wf=wf, solve_name=solve_name, flex_data=flex_data)
+    else:
+        out = df
 
     path = output_dir / f"v_dual_node_balance__{solve_name}.parquet"
-    write_lean_parquet(df, path)
+    write_lean_parquet(out, path)
     _logger.debug(
         "Wrote v_dual_node_balance for solve '%s' -> %s (shape %s)",
-        solve_name, path, df.shape,
+        solve_name, path, out.shape,
     )
     return path
 
@@ -1842,11 +1815,17 @@ def write_v_dual_reserve_balance(
     realized_dispatch_csv: Path | str | None = None,
     work_folder: Path | str | None = None,
     flex_data: "FlexData | None" = None,
+    scale_the_objective: float | None = None,
 ) -> Path:
     """Write ``v_dual_reserve__upDown__group__period__t__{solve}.parquet`` (``reserve_price_t``).
 
-    The price of a group is the dual of its requirement row, after period scaling
-    ``× complete_period_share_of_year[d] / p_inflation_factor_operations_yearly[d]``:
+    # ─── PRICE. ─── reserve_price_t ─────────────────────────────────────────────
+    # reserve_price[r,ud,g,d,t] = dual[reserveBalance_timeseries_eq | reserveBalance_dynamic_eq (dynamic_only)]
+    #                              / s / (Δt[d,t] · w[d,t])
+    #   w[d,t] = timestep_weight[d,t] · inflation_op[d] / period_share[d] · branch_weight[d,t];   null where w = 0
+    # CUR per MW held for one hour (= CUR/MWh).  Definition: :mod:`flextool.engine.output._prices`.
+
+    The price of a group is the dual of its requirement row:
 
     * groups with a timeseries requirement: ``reserveBalance_timeseries_eq``;
     * groups whose only requirement is dynamic (``reserve_method = dynamic_only``):
@@ -1906,18 +1885,11 @@ def write_v_dual_reserve_balance(
         )
         return out_path
 
-    # Apply × period_share / inflation per period.
-    inflation = _load_inflation_factor(wf, flex_data=flex_data)
-    period_share = _load_complete_period_share_of_year(wf, flex_data=flex_data)
-    periods = df.index.get_level_values("period")
-    factor = pd.Series(
-        [
-            period_share.get(str(p), 1.0) / inflation.get(str(p), 1.0)
-            for p in periods
-        ],
-        index=df.index, dtype=float,
-    )
-    df = df.mul(factor, axis=0)
+    # Raw duals (the dynamic_only ∪ timeseries union above, 0.0 where a group has no row) → price per MW held for
+    # one hour; a zero-weight step stays empty.
+    inv_scale = _resolve_inv_scale_the_objective(wf, scale_the_objective=scale_the_objective)
+    df = _wide_to_price(df, _price_weight(wf, flex_data, per_hour=True, rows=df.index), sign=1.0,
+                        inv_scale=inv_scale)
 
     write_lean_parquet(df, out_path)
     _logger.debug(
@@ -2081,6 +2053,7 @@ def write_all_variables(
             h, solve_name=solve_name, output_dir=output_dir,
             realized_dispatch_csv=realized_dispatch_csv,
             flex_data=flex_data,
+            scale_the_objective=scale_the_objective,
         )),
         # ``entity_all_capacity`` moved to ``handoff_writers.py`` — it's
         # conceptually a solve-to-solve handoff (accumulates across

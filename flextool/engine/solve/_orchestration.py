@@ -2647,6 +2647,7 @@ def _drive_cascade(
                     provider=getattr(
                         self.state, "current_provider", None,
                     ),
+                    scale_the_objective=obj_scale,
                 )
                 # Deposit so the next solve's load picks it up via the
                 # ``last_captured_solve`` translation in _run_model
@@ -4006,6 +4007,7 @@ def _drive_cascade(
                     getattr(self.state.solve, "realized_dispatch_parent", {})
                     .values()
                 ),
+                scale_the_objective=effective_obj_scale,
             )
             _phase_prof("build_handoff_done")
             if _phase_timing:

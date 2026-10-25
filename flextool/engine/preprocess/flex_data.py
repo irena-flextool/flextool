@@ -6168,6 +6168,7 @@ def build_handoff_from_solution(
     parent_handoff=None,
     provider: "object | None" = None,
     realized_dispatch_parents: "set[str] | None" = None,
+    scale_the_objective: float | None = None,
 ):
     """Build a ``SolveHandoff`` from a polar_high ``Solution`` + the work
     folder's per-solve metadata, mirroring flextool's post-solve
@@ -6198,6 +6199,9 @@ def build_handoff_from_solution(
     ``_writer.OutputWriterState`` since it's a writer-side
     emission gate, not a solver handoff carrier.  The on-disk source
     ``solve_data/period_capacity.csv`` is unchanged.)
+
+    ``scale_the_objective`` is the objective scale this solve was built with (None = 1.0, as
+    ``build_flextool``); the ``fix_price`` carrier divides it out of the duals.
 
     The work folder must already have completed flextool's per-solve
     preprocessing for ``solve_name`` (so ``solve_data/`` carries
@@ -6936,38 +6940,20 @@ def build_handoff_from_solution(
         if parent_handoff.fix_storage_usage is not None:
             fix_storage_usage_df = parent_handoff.fix_storage_usage
 
-    # ── deferred-B Phase B2: fix_storage_price from nodeBalance_eq duals ─
-    # For each storage node n with
-    #   node__storage_nested_fix_method[n] == 'fix_price'
-    # and each (period, step) in fix_storage_timesteps, take the row
-    # dual of ``nodeBalance_eq[n, d, t]`` (a coarse node: of its coarse
-    # step's ``nodeBalanceCoarse_eq[n, d, b]``) and normalize:
+    # ── deferred-B Phase B2: fix_storage_price from the node balance duals ─
+    # For each storage node n with node__storage_nested_fix_method[n] == 'fix_price' and each (period, step) in
+    # fix_storage_timesteps, the price handed to the child is this solve's node price there (price_t, the same
+    # definition, flextool.engine.output._prices):
     #
-    #   p_fix_storage_price[n, d, t]
-    #     = +dual / p_inflation_op[d]
-    #              * p_period_share[d]
-    #              / scale_the_objective
+    #   p_fix_storage_price[n,d,t] = σ_row · dual[row(n,d,t)] / s / (tw[d,t] · inflation_op[d] / period_share[d]
+    #                                · branch_weight[d,t])
+    #     row = nodeBalance_eq[n,d,t] (σ +1) | nodeBalanceCoarse_eq[n,d,b ∋ t] (σ +1) | nodeBalanceBlock_eq (σ −1)
+    #     s = scale_the_objective of this solve (the ``scale_the_objective`` argument; None = 1, as build_flextool)
     #
-    # SIGN (bug fix — critique BLOCKER).  The reference AMPL model
-    # (flextool.mod ~L3827) writes ``-nodeBalance_eq[...].dual / ...``
-    # because GLPK/AMPL returns the equality-balance dual with the
-    # OPPOSITE sign to HiGHS.  polar_high's ``constraint_dual`` returns
-    # the HiGHS shadow price ∂obj/∂rhs directly, so for a storage node
-    # whose marginal energy value (water value) is +C the dual is +C
-    # (verified empirically).  The child objective's §10.1 reference-
-    # price term is a REVENUE term (``obj -= p_ref * v_state * ...``), so
-    # a high coarse water value must yield a POSITIVE reference price to
-    # reward keeping the child's terminal storage full.  Porting the
-    # AMPL ``-dual`` verbatim inverted this (negative price → the child
-    # was penalised for holding storage), so we take ``+dual`` here to
-    # match the HiGHS dual sign.  The legacy ``write_fix_storage_price``
-    # (handoff_writers.py) is fed an AMPL-convention dual and is not on
-    # the native solve path, so it is unchanged.
-    # ``scale_the_objective`` comes from
-    # ``solve_data/scale_the_objective.csv`` (emitted by the native
-    # input writer; defaults to 1.0 when absent/unreadable).  This
-    # overrides the parent passthrough above whenever this solve has
-    # any fix_price node × fix-step pair with extractable duals.
+    # CUR/MWh, as the child's storage_reference_price term (_obj_storage_reference_price) uses it with its own
+    # weights.  polar_high's ``constraint_dual`` is the HiGHS shadow price ∂obj/∂rhs, so a storage node whose
+    # energy is worth +C has dual +C·s·w and price +C.  A step with zero weight has no price (dropped).  This
+    # overrides the parent passthrough above whenever this solve has a fix_price node with a price at a fix step.
     fp_nodes: set[str] = set()
     if nsfm_df is not None and nsfm_df.height > 0 and "method" in nsfm_df.columns:
         fp_nodes = set(
@@ -6980,10 +6966,11 @@ def build_handoff_from_solution(
             and {"period", "step"}.issubset(fs_steps_df.columns)
             and sol is not None
             and flex_data is not None):
-        def _node_step_duals(family: str) -> "pl.DataFrame | None":
-            # Row names are formatted as ``"<family>[n,d,t]"`` — ``constraint_dual`` strips the prefix /
-            # brackets and exposes the comma-joined dims as a single ``key`` string column.  Split into
-            # (n, d, t), all Utf8.
+        from flextool.engine.output._prices import node_prices
+
+        def _node_step_duals(family: str, step_col: str) -> "pl.DataFrame | None":
+            # Row names are ``"<family>[n,d,t]"``; ``constraint_dual`` exposes the comma-joined dims as one
+            # ``key`` column.  Split into (n, d, <step_col>), all Utf8.
             try:
                 raw = sol.constraint_dual(family)
             except KeyError:
@@ -6991,96 +6978,36 @@ def build_handoff_from_solution(
             if raw is None or raw.height == 0 or "key" not in raw.columns:
                 return None
             raw = raw.with_columns(pl.col("key").str.split_exact(",", 2).alias("_parts"))
-            return raw.with_columns(
+            return raw.select(
                 n=pl.col("_parts").struct.field("field_0").cast(pl.Utf8),
                 d=pl.col("_parts").struct.field("field_1").cast(pl.Utf8),
-                t=pl.col("_parts").struct.field("field_2").cast(pl.Utf8),
-            ).drop(["_parts", "key"]).select("n", "d", "t", "dual")
-
-        parts = []
-        duals_df = _node_step_duals("nodeBalance_eq")
-        if duals_df is not None:
-            parts.append(duals_df)
-        # A coarse storage node (nodeCoarse) has one balance row per coarse step, nodeBalanceCoarse_eq[n,d,b_first],
-        # with the orientation of nodeBalance_eq; its dual is the price (per MWh) at every fine step of the coarse
-        # step (same sign convention as the per-step rows).
-        coarse_steps = getattr(flex_data, "node_coarse_step", None)
-        coarse_df = _node_step_duals("nodeBalanceCoarse_eq") if coarse_steps is not None else None
-        if coarse_df is not None and coarse_steps.height > 0:
-            parts.append(coarse_df.rename({"t": "b_first"})
-                         .join(coarse_steps.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "b_first", "t")),
-                               on=["n", "d", "b_first"], how="inner")
-                         .select("n", "d", "t", "dual"))
-        duals_df = pl.concat(parts, how="vertical") if parts else None
-        if duals_df is not None and duals_df.height > 0:
-            parsed = duals_df
-
-            fs_steps_fp = (fs_steps_df
-                .select(alias_to_axis("period", "d"),
-                         alias_to_axis("step", "t"))
-                .unique())
-            fp_node_df = pl.DataFrame(
-                {"n": sorted(fp_nodes)},
-                schema={"n": pl.Utf8},
+                **{step_col: pl.col("_parts").struct.field("field_2").cast(pl.Utf8)},
+                dual=pl.col("dual"),
             )
 
-            picked = (parsed
-                .with_columns(
-                    pl.col("n").cast(pl.Utf8),
-                    pl.col("d").cast(pl.Utf8),
-                    pl.col("t").cast(pl.Utf8),
-                )
-                .join(fp_node_df, on="n", how="inner")
-                .join(fs_steps_fp.with_columns(
-                          pl.col("d").cast(pl.Utf8),
-                          pl.col("t").cast(pl.Utf8),
-                      ),
-                      on=["d", "t"], how="inner"))
-
-            if picked.height > 0:
-                # Per-period inflation_op / period_share dictionaries.
-                infl_frame = flex_data.p_inflation_op.frame.select(
-                    "d", pl.col("value").alias("infl"),
-                ).with_columns(pl.col("d").cast(pl.Utf8))
-                share_frame = flex_data.p_period_share.frame.select(
-                    "d", pl.col("value").alias("share"),
-                ).with_columns(pl.col("d").cast(pl.Utf8))
-
-                scale_val = 1.0
-                scale_path = sd / "scale_the_objective.csv"
-                if _provider_has(provider, _provider_key(scale_path), scale_path):
-                    try:
-                        scale_df = _provider_read(
-                            provider, _provider_key(scale_path), scale_path,
-                        )
-                        if scale_df.height > 0 and "value" in scale_df.columns:
-                            v0 = scale_df["value"][0]
-                            if v0 is not None and float(v0) > 0:
-                                scale_val = float(v0)
-                    except Exception:
-                        scale_val = 1.0
-
-                normalized = (picked
-                    .join(infl_frame, on="d", how="left")
-                    .join(share_frame, on="d", how="left")
-                    .with_columns(
-                        infl=pl.col("infl").fill_null(1.0),
-                        share=pl.col("share").fill_null(1.0),
-                    )
-                    .with_columns(
-                        p_fix_storage_price=(
-                            pl.col("dual") / pl.col("infl")
-                            * pl.col("share") / pl.lit(scale_val)
-                        ),
-                    )
-                    .select(
-                        alias_to_axis("n", "node"),
-                        alias_to_axis("d", "period"),
-                        alias_to_axis("t", "step"),
-                        pl.col("p_fix_storage_price"),
-                    ))
-                if normalized.height > 0:
-                    fix_storage_price_df = normalized
+        duals = {"nodeBalance_eq": _node_step_duals("nodeBalance_eq", "t")}
+        coarse_steps = getattr(flex_data, "node_coarse_step", None)
+        if coarse_steps is not None and coarse_steps.height > 0:
+            duals["nodeBalanceCoarse_eq"] = _node_step_duals("nodeBalanceCoarse_eq", "b_first")
+        block_time = getattr(flex_data, "period_block_time", None)
+        if block_time is not None and block_time.height > 0:
+            duals["nodeBalanceBlock_eq"] = _node_step_duals("nodeBalanceBlock_eq", "b_first")
+        s_obj = 1.0 if scale_the_objective is None else float(scale_the_objective)
+        prices = node_prices(duals, flex_data, inv_scale=1.0 / s_obj)
+        fs_steps_fp = (fs_steps_df
+                       .select(pl.col("period").cast(pl.Utf8).alias("d"), pl.col("step").cast(pl.Utf8).alias("t"))
+                       .unique())
+        picked = (prices
+                  .filter(pl.col("n").is_in(sorted(fp_nodes)) & pl.col("price").is_not_null())
+                  .join(fs_steps_fp, on=["d", "t"], how="inner")
+                  .sort("n", "d", "t"))
+        if picked.height > 0:
+            fix_storage_price_df = picked.select(
+                alias_to_axis("n", "node"),
+                alias_to_axis("d", "period"),
+                alias_to_axis("t", "step"),
+                pl.col("price").alias("p_fix_storage_price"),
+            )
 
     # ── deferred-B Phase B3: fix_storage_usage from v_flow primals ──────
     # For each storage node n with
