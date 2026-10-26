@@ -93,18 +93,35 @@ following steps in order:
 
 1. **Sequential handoff translation.** The previous sub-solve's
    `SolveHandoff` is fanned into `handoff/*` Provider keys
-   (`translate_handoff_to_provider`).
+   (`translate_handoff_to_provider`). A realised-dispatch roll takes
+   only `PIN_FIELDS` from its UC roll and `ROLL_FORWARD_FIELDS` from the
+   previous dispatch roll.
 2. **Parent handoff translation.** In nested cascades, the parent's
-   handoff is translated next.
-3. **Override callable.** If `state.override_provider` is non-`None`,
+   handoff is translated next, `PIN_FIELDS` only (realised investment /
+   existing / divest, fixed online, the nested storage fixes).
+3. **Routed carriers.** The carriers tied to the realised end — the
+   storage state (`handoff/roll_end_state`, `handoff/upward_roll_end_state`)
+   and the step carriers (online state, last flow, last step, online
+   history) — are written by the carry router (`solve/_carry_routing.py`):
+   the latest state realised before this sub-solve at its nesting level or
+   deeper, or empty when the sub-solve is the first of its level. The
+   running totals (`cumulative_*`, `cum_sim_hours`) are not routed: every
+   sub-solve passes them on, so they come from the sequential predecessor.
+4. **Override callable.** If `state.override_provider` is non-`None`,
    it is invoked. The returned dict is fanned into the parallel
    `override/*` Provider keys
    (`translate_overrides_to_provider`).
-4. **Preprocessing.** Per-solve preprocessing reads handoff values via
+5. **Preprocessing.** Per-solve preprocessing reads handoff values via
    `read_handoff_frame`, which checks the `override/*` slot first and
    falls back to `handoff/*`. Consumers stay key-stable.
-5. **Solve.** The LP is built (cold) or updated (warm) and dispatched
+6. **Solve.** The LP is built (cold) or updated (warm) and dispatched
    to the solver.
+7. **Produced handoff.** After the solve, the sub-solve's own
+   `SolveHandoff` is written under `produced_handoff/*`
+   (`translate_produced_handoff_to_provider`). The `handoff/*` keys keep
+   the values the solve consumed, so a LP rebuilt from the post-solve
+   provider is the LP that was solved; read `produced_handoff/*` for what
+   the solve passes on (e.g. a roll's final running totals).
 
 The callable is invoked **on every iteration** including the first.
 Return `{}` whenever no override applies — that iteration falls through

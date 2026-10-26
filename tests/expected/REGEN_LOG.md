@@ -770,11 +770,36 @@ Objectives (sum over the scenario's solves, M CUR, before → after) and the cel
 - `network_coal_wind_battery_co2_fullYear_availability` 2 259.6910 → 2 259.6199 (−0.003 %): battery state t0001
   5 → 15, t0072 (the wrap) 0 → 5; three slack / connection cells at t0001, t0002, t0072.
 - `network_wind_coal_battery_fullYear_invest` 584.6455 → 584.6454: battery t0001 5 → 0 and two inverter / slack cells
-  at t0001–t0002 (an equal-cost reshuffle of the first two steps).
+  at t0001–t0002 (an equal-cost reshuffle of the first two steps), and `connection__dt` t0068 −0.9587 → −0.9592: the
+  wrap target t0072 is now pinned at exactly 5 (before 5.0005), so the self-discharge top-up before the block end
+  (battery t0068–t0072 5.0025…5.0005 → 5.002…5.0) moves by 5e-4.
 - `wind_battery_invest`, `multi_year_one_solve_battery`, `network_coal_wind_battery_invest_cumulative`: objective
   unchanged to 1e-9; one or two battery state / inverter cells at t0001 / t0004 (the first timeblock t0001–t0004 of the
   5-week timeset; the pinned state moved from t0001 to t0004), and one upward-slack cell in `wind_battery_invest`
   (19 800 → 19 815.8 at t0004, an equal-cost move inside the block).
+
+**Direction vs the design (c15f design §7.3).**  The design predicted `all` −0.27 % and
+`test_a_lot_but_not_multi_year` −0.03 %; the objectives above rise (+0.015 %, +0.016 %).  This is not a sign flip:
+the design's table compares "Total cost (calculated) full horizon" of `summary_solve.csv`, this entry the solve
+objective, and N8 moves the two in opposite directions.  Re-run on `git archive` exports of 8a6ac407^ and 8a6ac407
+(both metrics from the same runs):
+- `all`: objective 12 140.4899 → 12 142.2482 (+1.758 M, +0.015 %); calculated full horizon 8 106.3154 → 8 084.7481
+  (−0.27 %): operational 5 450.13 → 5 441.52, investment 72.14 → 25.49, penalty 584.05 → 617.74.
+- `test_a_lot_but_not_multi_year`: objective 15 030.4657 → 15 032.7895 (+2.324 M, +0.016 %); calculated full horizon
+  9 075.9825 → 9 073.4647 (−0.028 %): operational 904.72 → 914.20, investment 2 119.39 → 2 107.39, penalty unchanged.
+The calculated figure is recomputed from annualised costs of the realised periods and follows the investment-timing
+shift (the battery / storage built later, see above), so it falls while the LP objective, which the moved pin
+constrains, rises.  The design's own runs on 2320ad67 show the same: objective 12 140.4899 → 12 142.2481 and
+15 030.4655 → 15 032.7894 with the prototype.  The commits between the design's base and N8 (2320ad67..8a6ac407^:
+FA-1 exact self-discharge, FA-3, #133 start half, FA-2, time-varying self-discharge, #113, #118) move these two
+objectives by < 2e-8 relative (`all` 12 140.4898695 at 2320ad67 vs 12 140.4898693 at 8a6ac407^), so the whole change
+is N8's: the pin moves from the end of step 1 to the wrap target.
+
+**Sub-tolerance cells.**  Regenerating rewrote whole files, so the 14 scenarios' goldens also take the within-
+tolerance drift of earlier commits (several had not been regenerated since the orphan root; mainly the exact
+self-discharge, FA-1), e.g. 818 `costs__dt` cells and node_state p2025–p2035 t0028 / t0037 / t0039 / t0040 (~5e-4) in
+`multi_year_one_solve_battery`, 792 cells in `network_coal_wind_battery_invest_cumulative`, ~800 cells in each
+`wind_battery_invest_lifetime_*` file.  The cells beyond the test tolerance are only the ones listed above.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` for each of the 14 scenarios; the full
 `tests/test_scenarios.py` run before regenerating failed exactly these 14 (52 passed).

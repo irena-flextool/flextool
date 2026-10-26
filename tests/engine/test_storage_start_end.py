@@ -428,11 +428,13 @@ def _rp_sequence(tmp_path_factory, alt: str, second_rp: bool) -> list:
     return steps
 
 
-def test_representative_period_node_takes_neither_carry_nor_pin(tmp_path_factory):
+def test_representative_period_node_takes_no_carry_term_nor_pin(tmp_path_factory):
     """rp → rp: in y2025 the battery is a representative-period node again.  Its state at y2020's last realised step
-    is a state inside a representative block, not a chronological level, so it is not carried; and since a state
-    was realised before y2025, fix_start does not re-pin it either: each block starts from v_state_rp_start, free.
-    Before, y2025 was re-pinned (storage_state_start_binding at its first step)."""
+    (a state inside a representative block, not a chronological level) is handed over: it marks the node as
+    continuing, and a later solve that downgrades the node starts from it (``…_downgraded_later_continues``).  But
+    the rp LP takes no carry term for it, and since a state was realised before y2025, fix_start does not re-pin it
+    either: each block starts from v_state_rp_start, free.  Before, y2025 was re-pinned
+    (storage_state_start_binding at its first step)."""
     steps = _rp_sequence(tmp_path_factory, "sse_rp_rp", second_rp=True)
     fd = steps[1].flex_data
     assert "battery" in utf8(fd.nodeState_rp)["n"].to_list()
@@ -507,6 +509,10 @@ def _close(a: list[tuple], b: list[tuple]) -> bool:
     return True
 
 
+def _hours(frame) -> dict[str, float]:
+    return {str(d): float(h) for d, h in frame.select("period", "p_ladder_cum_sim_hours").rows()}
+
+
 @pytest.mark.parametrize("parent", ["single", "rolling"])
 def test_nested_dispatch_rolls_continue_commitment_ramps_and_totals(tmp_path_factory, parent):
     """Nested invest → storage (single, or rolling 48 h / 24 h) → dispatch with coal unit commitment (linear,
@@ -515,7 +521,11 @@ def test_nested_dispatch_rolls_continue_commitment_ramps_and_totals(tmp_path_fac
     that roll's last flow (when the steps are adjacent) and the min up time history.  Before, the parent solve's
     handoff (a storage solve realises no dispatch) was translated over these carriers in every nested dispatch roll,
     so each roll ≥ 1 restarted the commitment from its own cyclic wrap, ramped from nothing and forgot the min up time
-    history."""
+    history.
+
+    The running totals are not routed but passed on by every sub-solve (non-realising ones pass through): the
+    ``cum_sim_hours`` a dispatch roll produces is the previous dispatch roll's produced total plus the hours the roll
+    realises itself, also across the storage solve(s) in between."""
     vals = [["unit", "coal_plant", "startup_method", _s("linear")],
             ["unit", "coal_plant", "min_load", _f(0.4)],
             ["unit", "coal_plant", "min_uptime", _f(8.0)],
@@ -554,6 +564,19 @@ def test_nested_dispatch_rolls_continue_commitment_ramps_and_totals(tmp_path_fac
                 pytest.approx(flow, abs=1e-12)
             ramp_checked += 1
     assert online_checked == 7 and ramp_checked >= 4
+    for prev_name, name in zip(rolls, rolls[1:]):
+        fd = steps[name].flex_data
+        realised = utf8(fd.realized_dispatch).select(pl.col("period").alias("d"), pl.col("step").alias("t"))
+        own = (utf8(fd.p_step_duration.frame).join(realised, on=["d", "t"], how="inner")
+               .group_by("d").agg(pl.col("value").sum()).rows())
+        assert own and all(h > 0 for _d, h in own), name
+        prior = _hours(steps[prev_name].handoff.cum_sim_hours)
+        assert prior and all(h > 0 for h in prior.values()), prev_name
+        want = dict(prior)
+        for d, h in own:
+            want[d] = want.get(d, 0.0) + h
+        got = _hours(steps[name].handoff.cum_sim_hours)
+        assert got == pytest.approx(want, abs=1e-9), name
     assert any(steps[r].handoff.online_history is not None for r in rolls)
     if parent == "rolling":
         # The first roll under storage roll 1 and storage roll 1 itself (upward) continue from dispatch roll 3.
@@ -997,6 +1020,31 @@ def test_fix_start_end_mapping_rewrites_only_fix_start_end_nodes():
                    "d": "bind_forward_only_blended_weights", "e": "bind_forward_only_blended_weights",
                    "f": "bind_forward_only", "g": "bind_intraperiod_blocks", "h": "bind_within_solve",
                    "i": "bind_within_solve"}
+
+
+def test_fix_start_end_blocks_line_is_logged_once_per_solve(caplog):
+    """The rolls of one solve share the binding-method frame: the cyclic mapping is logged once (the frame is then
+    mapped), and the bind_intraperiod_blocks line, whose method stays, is also logged once per complete solve and
+    node, not once per roll."""
+    import logging
+
+    from flextool.engine.solve._run_model import _fix_start_end_chains_forward
+
+    provider = _Provider({
+        "input/node__storage_binding_method": pl.DataFrame({"node": ["a", "g"], "storage_binding_method": [
+            "bind_within_solve", "bind_intraperiod_blocks"]}),
+        "input/node__storage_start_end_method": pl.DataFrame({"node": ["a", "g"], "storage_start_end_method": [
+            "fix_start_end", "fix_start_end"]})})
+    logged: set = set()
+    with caplog.at_level(logging.INFO, logger="test"):
+        for k in range(3):
+            _fix_start_end_chains_forward(solve=f"d_roll_{k}", provider=provider, logger=logging.getLogger("test"),
+                                          complete_solve_name="d", logged=logged)
+        _fix_start_end_chains_forward(solve="other", provider=provider, logger=logging.getLogger("test"),
+                                      complete_solve_name="other", logged=logged)
+    lines = [r.getMessage() for r in caplog.records]
+    assert sum("'a'" in m for m in lines) == 1
+    assert [m.split("'")[1] for m in lines if "'g'" in m] == ["d_roll_0", "other"]
 
 
 # ---------------------------------------------------------------------------

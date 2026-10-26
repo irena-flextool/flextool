@@ -339,7 +339,8 @@ _FIX_START_END_FORWARD: dict[str, str] = {
 }
 
 
-def _fix_start_end_chains_forward(*, solve: str, provider, logger) -> None:
+def _fix_start_end_chains_forward(*, solve: str, provider, logger, complete_solve_name: str | None = None,
+                                  logged: set | None = None) -> None:
     """Map the cyclic storage_binding_method of fix_start_end nodes to its forward-only equivalent, per solve.
 
     With ``storage_start_end_method`` *fix_start_end* the binding method is ignored (exception bind_forward_only,
@@ -349,7 +350,9 @@ def _fix_start_end_chains_forward(*, solve: str, provider, logger) -> None:
     :func:`_downgrade_rp_methods_for_non_rp_solve`, after it (a blended node of a solve without representative
     periods: blended → plain → forward-only).  Every ``storage_bind_*`` set of the solve comes from that frame.
     ``bind_intraperiod_blocks`` stays: it is a time aggregation, not a cycle scope; such a node keeps its blocks and
-    the model chains them forward (``model._self_discharge.block_forward_nodes``).  One info line per mapping.
+    the model chains them forward (``model._self_discharge.block_forward_nodes``).  One info line per mapping (the
+    shared frame is mapped once, so later rolls log nothing); the bind_intraperiod_blocks line keeps its method, so
+    it is logged once per (complete solve, node) through ``logged``.
     """
     sbm_key, sse_key = "input/node__storage_binding_method", "input/node__storage_start_end_method"
     if not (provider.has(sbm_key) and provider.has(sse_key)):
@@ -380,6 +383,11 @@ def _fix_start_end_chains_forward(*, solve: str, provider, logger) -> None:
     blocks = (sbm.filter(pl.col("node").cast(pl.Utf8).is_in(nodes) & (pl.col(sbm_col) == "bind_intraperiod_blocks"))
               ["node"].cast(pl.Utf8).unique().sort().to_list())
     for node in blocks:
+        if logged is not None:
+            key = (complete_solve_name or solve, node)
+            if key in logged:
+                continue
+            logged.add(key)
         logger.info(f"Solve '{solve}': storage node '{node}' has storage_start_end_method fix_start_end, so its "
                     "bind_intraperiod_blocks blocks chain forward instead of looping within each period.")
 
@@ -842,6 +850,7 @@ def native_run_model(state, solver) -> int:
     cached_complete_active_time_lists: dict = {}
     cached_complete_step_jumps: dict = {}
     _warned_rolling_blocks: set = set()
+    _logged_fix_start_end_blocks: set = set()
 
     # Pre-compute per-iter level keys.  Same-key consecutive iters are
     # rolling continuations of one base solve; a key change marks a
@@ -1382,7 +1391,8 @@ def native_run_model(state, solver) -> int:
             logger=state.logger,
         )
         # fix_start_end ignores a cyclic binding method: after the downgrade, on the same frame.
-        _fix_start_end_chains_forward(solve=solve, provider=sub_solve_provider, logger=state.logger)
+        _fix_start_end_chains_forward(solve=solve, provider=sub_solve_provider, logger=state.logger,
+                                      complete_solve_name=complete_solve[solve], logged=_logged_fix_start_end_blocks)
         for ts_name in active_timeset_names:
             if (
                 ts_name in state.timeline.rp_weights

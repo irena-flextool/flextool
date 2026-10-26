@@ -898,6 +898,9 @@ def write_fix_storage_usage(
             if sink in per_node:
                 per_node[sink] -= float(v) * us  # inflow to node
         for node, net in per_node.items():
+            # Legacy file only: no engine code reads it.  The engine's source is ``handoff/fix_storage_usage``
+            # (flex_data.build_handoff_from_solution), which keeps zero usages (a zero window still caps, item
+            # 150), so this file can differ from it.
             if net == 0.0:
                 continue
             rows.append((period, time, node, net * dt))
