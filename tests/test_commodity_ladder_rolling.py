@@ -356,12 +356,12 @@ def _run(
 def _ladder_csv_path(workdir: Path, filename: str) -> Path:
     """Locate a ladder-accumulator CSV after a native-cascade run.
 
-    Phase 4.1a of ``specs/provider_consolidation.md`` moved the cross-
-    sub-solve accumulator carriers to the handoff translator's
-    ``handoff/cumulative_commodity`` and ``handoff/cum_sim_hours``
-    Provider keys (no ``solve_data/`` indirection).
-    ``snapshot_processed_inputs`` materialises those at
-    ``workdir/handoff/<basename>.csv``.  The legacy bare /
+    The final accumulators (after the last roll) are the last solve's
+    produced handoff: ``produced_handoff/cumulative_commodity`` and
+    ``produced_handoff/cum_sim_hours`` Provider keys, which
+    ``snapshot_processed_inputs`` materialises at
+    ``workdir/produced_handoff/<basename>.csv``.  (``handoff/*`` holds
+    what the last roll consumed: the totals before it.)  The legacy bare /
     ``solve_data/`` locations are retained as fallbacks for fixtures
     that pre-seed the old keys directly.
     """
@@ -370,7 +370,7 @@ def _ladder_csv_path(workdir: Path, filename: str) -> Path:
         "ladder_cum_sim_hours.csv": "cum_sim_hours.csv",
     }.get(filename)
     if handoff_basename is not None:
-        handoff_path = workdir / "handoff" / handoff_basename
+        handoff_path = workdir / "produced_handoff" / handoff_basename
         if handoff_path.exists():
             return handoff_path
     bare = workdir / filename

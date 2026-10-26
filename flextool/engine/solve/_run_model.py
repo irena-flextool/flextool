@@ -1694,19 +1694,14 @@ def native_run_model(state, solver) -> int:
             last_captured_solve = complete_solve[solve]
             state.last_captured_solve = last_captured_solve
             carry_router.record(solve, state.handoffs.get(last_captured_solve))
-            # Phase 4.1a — refresh ``handoff/*`` Provider keys from the
-            # post-solve ``SolveHandoff`` so the current iteration's
-            # Provider exposes the FINAL cumulative state of this roll
-            # (not just the prior-roll state seeded at iteration start).
-            # ``csv_dump`` snapshots the Provider after the last roll;
-            # without this refresh the on-disk
-            # ``handoff/cumulative_commodity.csv`` would reflect the
-            # second-to-last roll instead of the final one.  The next
-            # iteration's iteration-start translator is unaffected: it
-            # reads from ``state.handoffs[last_captured_solve]`` directly.
+            # The solve's own (produced) handoff goes to the ``produced_handoff/*`` keys: the ``handoff/*`` keys
+            # keep the carriers this solve consumed, so a LP rebuilt from the post-solve Provider (or from its csv
+            # dump) is the LP that was solved — not one that starts from the solve's own end state.  The dump still
+            # shows the final cumulative totals of the roll (``produced_handoff/cumulative_commodity.csv``).  The
+            # next iteration's translator reads ``state.handoffs`` directly.
             _latest_handoff = state.handoffs.get(last_captured_solve)
             if _latest_handoff is not None:
-                _provider_translators.translate_handoff_to_provider(
+                _provider_translators.translate_produced_handoff_to_provider(
                     _latest_handoff, sub_solve_provider,
                 )
 

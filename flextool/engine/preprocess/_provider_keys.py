@@ -172,6 +172,18 @@ HANDOFF_FIX_STORAGE_QUANTITY = "handoff/fix_storage_quantity"
 HANDOFF_FIX_STORAGE_PRICE = "handoff/fix_storage_price"
 HANDOFF_FIX_STORAGE_USAGE = "handoff/fix_storage_usage"
 
+# produced_handoff/ keys — the solve's own SolveHandoff, written after the solve
+# (``_provider_translators.translate_produced_handoff_to_provider``) beside the
+# consumed ``handoff/*`` keys, which stay what the solve was built from.  Read by
+# nothing in the cascade; the csv dump materialises them as
+# ``produced_handoff/<field>.csv`` (e.g. the final cumulative totals of a roll).
+PRODUCED_HANDOFF_PREFIX = "produced_handoff/"
+
+
+def produced_handoff_key(handoff_key: str) -> str:
+    """``handoff/<field>`` → ``produced_handoff/<field>``."""
+    return PRODUCED_HANDOFF_PREFIX + handoff_key.split("/", 1)[1]
+
 
 # ---------------------------------------------------------------------------
 # override/ keys — parallel to handoff/* and populated by

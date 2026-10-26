@@ -917,3 +917,70 @@ def test_fix_start_end_mapping_rewrites_only_fix_start_end_nodes():
                    "d": "bind_forward_only_blended_weights", "e": "bind_forward_only_blended_weights",
                    "f": "bind_forward_only", "g": "bind_intraperiod_blocks", "h": "bind_within_solve",
                    "i": "bind_within_solve"}
+
+
+# ---------------------------------------------------------------------------
+# A LP rebuilt after the solve is the LP that was solved (item 149)
+# ---------------------------------------------------------------------------
+
+
+def _run_keeping_workdir(tmp_path_factory, url: str, scen: str) -> tuple[list, Path]:
+    """Run the chain in a ``work_<scenario>`` folder next to a copy of the database (the layout ``load_flextool``
+    expects for a reload) and return ``(steps, work_folder)``."""
+    import shutil
+    from urllib.parse import urlparse
+
+    from flextool.engine import run_chain_from_db
+
+    wf = tmp_path_factory.mktemp(f"{scen}_root") / f"work_{scen}"
+    wf.mkdir()
+    steps = list(run_chain_from_db(url, scen, work_folder=wf, keep_solutions=True).values())
+    shutil.copy(urlparse(url).path, wf / "tests.sqlite")
+    return steps, wf
+
+
+@pytest.mark.parametrize("chain", ["single", "sequence"])
+def test_rebuild_from_the_post_solve_provider_is_the_solved_lp(tmp_path_factory, chain):
+    """After a solve the Provider keeps the carriers the solve consumed (``handoff/*``) and exposes its own end state
+    beside them (``produced_handoff/*``).  ``load_flextool(work_folder, provider=<post-solve provider>)`` then rebuilds
+    the last solve's LP: the same carry (none in a single solve, which starts from fix_start 0.1·50 = 5 MWh; the
+    previous solve's realised end in the 4-solve sequence) and the same optimum; the csv dump holds the same carry in
+    ``handoff/roll_end_state.csv`` and the solve's own end in ``produced_handoff/roll_end_state.csv``.  Before, the
+    post-solve provider held the solve's own realised end as ``handoff/roll_end_state``, so the rebuild started from
+    it (single: no fix_start, carry = its own end)."""
+    values = [["node", "battery", "storage_binding_method", _s("bind_forward_only")],
+              ["node", "battery", "storage_solve_horizon_method", _s("free")], NO_LOSS]
+    url, scen = make_db(tmp_path_factory, alt=f"sse_rebuild_{chain}",
+                        base_chain=SEQ if chain == "sequence" else WIND_BATTERY, values=values)
+    steps, wf = _run_keeping_workdir(tmp_path_factory, url, scen)
+    last = steps[-1]
+    want_carry = _realised_end(steps[-2]) if chain == "sequence" else None
+    own_end = _realised_end(last)
+    assert want_carry is None or abs(want_carry - own_end) > 1.0, "the test needs a carry that differs from the end"
+
+    def _as_carry(value: "float | None"):
+        return pytest.approx(value, abs=1e-9) if value is not None else None
+
+    assert _carry(last.flex_data) == _as_carry(want_carry)
+
+    from polar_high import Problem
+
+    from flextool.engine import build_flextool, load_flextool
+    from flextool.engine.preprocess import _provider_keys as K
+
+    provider = last.flex_data_provider
+    rebuilt = load_flextool(wf, provider=provider)
+    assert _carry(rebuilt) == _as_carry(want_carry)
+    pb = Problem()
+    build_flextool(pb, rebuilt)
+    sol = pb.solve()
+    assert sol.optimal
+    assert sol.obj == pytest.approx(last.solution.obj, rel=1e-9)
+
+    provider.snapshot_processed_inputs(wf)
+    for folder, want in (("handoff", want_carry), ("produced_handoff", own_end)):
+        dumped = pl.read_csv(wf / folder / "roll_end_state.csv").filter(pl.col("node") == "battery")
+        got = float(dumped["value"][0]) if dumped.height else None
+        assert got == _as_carry(want), folder
+    produced = utf8(provider.get(K.produced_handoff_key(K.HANDOFF_ROLL_END_STATE))).filter(pl.col("node") == "battery")
+    assert float(produced["value"][0]) == pytest.approx(own_end, abs=1e-9)

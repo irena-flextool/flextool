@@ -623,6 +623,15 @@ Provider's `HANDOFF_*` keys (see
 the `solve_data/<solve>/*.csv` mirrors only exist under
 `csv_dump=True` and are not load-bearing for any downstream phase.
 
+After a solve the `handoff/*` keys keep what that solve **consumed** (the
+translated and routed carriers), so `load_flextool(work_folder,
+provider=<post-solve provider>)`, or a reload of the provider's csv dump,
+rebuilds the LP that was solved.  The solve's own (**produced**)
+`SolveHandoff` is written beside them under `produced_handoff/*`
+(`translate_produced_handoff_to_provider`; e.g. the final
+`produced_handoff/cumulative_commodity.csv` of a rolling ladder); nothing
+in the cascade reads those keys.
+
 The handoff flows back into the next solve through the override
 translator + `_apply_db_overrides` chain in `flex_data.py`, which reads
 the `HANDOFF_*` Provider keys and translates each carrier into the

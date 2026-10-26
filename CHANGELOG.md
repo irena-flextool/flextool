@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **The csv dump shows what each solve was built from.** With `csv_dump`,
+  `handoff/*.csv` now holds the carriers the last solve consumed (its
+  starting storage state, running totals, …), so the dump and a model
+  rebuilt from the run match the solved model; the solve's own end state
+  and final totals are in `produced_handoff/*.csv`.
+
 - **`fix_start_end` ignores the storage binding method.** As documented, a
   storage node with `storage_start_end_method` *fix_start_end* now chains
   forward like *bind_forward_only* whatever its `storage_binding_method`.

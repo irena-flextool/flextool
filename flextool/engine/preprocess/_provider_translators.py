@@ -80,6 +80,27 @@ PIN_FIELDS: frozenset = frozenset((
 ))
 
 
+# SolveHandoff field → its ``handoff/<field>`` Provider key.
+_FIELD_TO_KEY: tuple[tuple[str, str], ...] = (
+    ("realized_invest",     K.HANDOFF_REALIZED_INVEST),
+    ("realized_existing",   K.HANDOFF_REALIZED_EXISTING),
+    ("divest_cumulative",   K.HANDOFF_DIVEST_CUMULATIVE),
+    ("roll_end_state",      K.HANDOFF_ROLL_END_STATE),
+    ("upward_roll_end_state", K.HANDOFF_UPWARD_ROLL_END_STATE),
+    ("roll_end_online",     K.HANDOFF_ROLL_END_ONLINE),
+    ("roll_end_flow",       K.HANDOFF_ROLL_END_FLOW),
+    ("roll_end_step",       K.HANDOFF_ROLL_END_STEP),
+    ("online_history",      K.HANDOFF_ONLINE_HISTORY),
+    ("fix_online",          K.HANDOFF_FIX_ONLINE),
+    ("cumulative_co2",      K.HANDOFF_CUMULATIVE_CO2),
+    ("cumulative_commodity", K.HANDOFF_CUMULATIVE_COMMODITY),
+    ("cum_sim_hours",       K.HANDOFF_CUM_SIM_HOURS),
+    ("fix_storage_quantity", K.HANDOFF_FIX_STORAGE_QUANTITY),
+    ("fix_storage_price",    K.HANDOFF_FIX_STORAGE_PRICE),
+    ("fix_storage_usage",    K.HANDOFF_FIX_STORAGE_USAGE),
+)
+
+
 def translate_handoff_to_provider(
     handoff: "SolveHandoff | None", provider,
     fields: "frozenset | set | None" = None,
@@ -103,31 +124,29 @@ def translate_handoff_to_provider(
     ``flextool.engine.preprocess._provider_keys`` under the ``HANDOFF_*``
     constants.  See :data:`_HANDOFF_EMPTY_SCHEMAS` for column shapes.
     """
-    field_to_key = (
-        ("realized_invest",     K.HANDOFF_REALIZED_INVEST),
-        ("realized_existing",   K.HANDOFF_REALIZED_EXISTING),
-        ("divest_cumulative",   K.HANDOFF_DIVEST_CUMULATIVE),
-        ("roll_end_state",      K.HANDOFF_ROLL_END_STATE),
-        ("upward_roll_end_state", K.HANDOFF_UPWARD_ROLL_END_STATE),
-        ("roll_end_online",     K.HANDOFF_ROLL_END_ONLINE),
-        ("roll_end_flow",       K.HANDOFF_ROLL_END_FLOW),
-        ("roll_end_step",       K.HANDOFF_ROLL_END_STEP),
-        ("online_history",      K.HANDOFF_ONLINE_HISTORY),
-        ("fix_online",          K.HANDOFF_FIX_ONLINE),
-        ("cumulative_co2",      K.HANDOFF_CUMULATIVE_CO2),
-        ("cumulative_commodity", K.HANDOFF_CUMULATIVE_COMMODITY),
-        ("cum_sim_hours",       K.HANDOFF_CUM_SIM_HOURS),
-        ("fix_storage_quantity", K.HANDOFF_FIX_STORAGE_QUANTITY),
-        ("fix_storage_price",    K.HANDOFF_FIX_STORAGE_PRICE),
-        ("fix_storage_usage",    K.HANDOFF_FIX_STORAGE_USAGE),
-    )
-    for field_name, key in field_to_key:
+    for field_name, key in _FIELD_TO_KEY:
         if fields is not None and field_name not in fields:
             continue
         frame = getattr(handoff, field_name, None) if handoff is not None else None
         if frame is None:
             frame = _empty_handoff_frame(key)
         provider.put(key, frame)
+
+
+def translate_produced_handoff_to_provider(handoff: "SolveHandoff", provider) -> None:
+    """Write the solve's own (produced) ``SolveHandoff`` under the ``produced_handoff/<field>`` keys.
+
+    Called after the solve.  The ``handoff/<field>`` keys keep what the solve consumed (the carriers translated and
+    routed at iteration start), so a LP rebuilt from the post-solve Provider, or from its csv dump, is the LP that was
+    solved; the produced carriers (the final cumulative totals, the realised end state) are exposed beside them for
+    the dump and for inspection.  No cascade consumer reads the produced keys: the next sub-solve takes its carriers
+    from ``state.handoffs`` through :func:`translate_handoff_to_provider`.
+    """
+    for field_name, key in _FIELD_TO_KEY:
+        frame = getattr(handoff, field_name, None)
+        if frame is None:
+            frame = _empty_handoff_frame(key)
+        provider.put(K.produced_handoff_key(key), frame)
 
 
 # Mapping from user-facing handoff Provider keys to their override
@@ -262,6 +281,7 @@ def dump_provider_sources(
 
 __all__ = [
     "translate_handoff_to_provider",
+    "translate_produced_handoff_to_provider",
     "translate_overrides_to_provider",
     "read_handoff_frame",
     "dump_provider_sources",
