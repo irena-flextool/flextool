@@ -29,15 +29,13 @@ were deleted with the subgradient module; the Benders equivalents live in
 """
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 import polars as pl
 import pytest
 
-from flextool.engine import load_flextool
+from tests._support.load import load_scenario, run_scenario
 
 
 FLEXTOOL_ROOT = Path(__file__).resolve().parents[2]
@@ -90,39 +88,21 @@ def _set_single_solve(db_url: str, solve: str) -> None:
 
 
 @pytest.fixture(scope="module")
-def invest_solve_data(tmp_path_factory):
-    """FlexData for the ``lh2_invest`` solve, loaded from a workdir where
-    the chain ran only that solve (so the snapshot carries the invest
-    sets).  Returns ``(data, work_folder)``.
+def invest_solve_data(tmp_path_factory, test_solver_config_dir):
+    """FlexData for the ``lh2_invest`` solve, rebuilt with the production
+    loader call from a run where the chain ran only that solve (so the
+    step's provider carries the invest sets).  Returns ``(data, work_folder)``.
     """
-    from flextool.engine.solve._orchestration import run_chain_from_db
-
     tmp_path = tmp_path_factory.mktemp("lh2_invest_solve")
     url = _build_invest_db(tmp_path)
     _set_single_solve(url, "lh2_invest")
 
     parent = tmp_path_factory.mktemp("_root_invest_solve")
-    wf = parent / f"work_{INVEST_SCENARIO}"
-    wf.mkdir()
-    steps = run_chain_from_db(
-        input_db_url=url,
-        scenario_name=INVEST_SCENARIO,
-        work_folder=wf,
-        csv_dump=True,
-        keep_solutions=True,
+    run = run_scenario(
+        url, INVEST_SCENARIO, parent / f"work_{INVEST_SCENARIO}",
+        solver_config_dir=test_solver_config_dir,
     )
-    # Copy the SQLite + snapshot the last (only) sub-solve so
-    # ``load_flextool(wf)`` reconstructs the invest solve's FlexData.
-    sqlite_src = urlparse(url).path
-    if len(sqlite_src) >= 3 and sqlite_src[0] == "/" and sqlite_src[2] == ":":
-        sqlite_src = sqlite_src[1:]  # Windows '/C:/...' -> 'C:/...'
-    shutil.copy(sqlite_src, wf / "tests.sqlite")
-    last_step = next(reversed(list(steps.values())))
-    provider = getattr(last_step, "flex_data_provider", None)
-    if provider is not None:
-        provider.snapshot_processed_inputs(wf)
-    data = load_flextool(wf)
-    return data, wf
+    return load_scenario(run), run.work_folder
 
 
 # ---------------------------------------------------------------------------

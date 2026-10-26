@@ -58,13 +58,12 @@ parity suite).
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import polars as pl
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.input._param_shapes import promote_param_to_dt
+from tests._support.load import ScenarioRun, load_scenario
 
 
 # ---------------------------------------------------------------------------
@@ -196,12 +195,12 @@ def _capacity_margin_slack_term(d, sol) -> float:
     return float(df["c"].sum())
 
 
-def _solve(work: Path):
-    data = load_flextool(work)
+def _solve(run: ScenarioRun):
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
-    assert sol.optimal, f"{work.name} did not solve to optimality"
+    assert sol.optimal, f"{run.scenario} did not solve to optimality"
     return data, sol
 
 
@@ -216,8 +215,8 @@ class TestPurePenaltyBase:
     and ``test_hand_derived_penalty_matches``.
     """
 
-    def test_obj_equals_state_slack_decomposition(self, scenario_workdir) -> None:
-        d, sol = _solve(scenario_workdir("base"))
+    def test_obj_equals_state_slack_decomposition(self, scenario_run) -> None:
+        d, sol = _solve(scenario_run("base"))
         slack_up = _state_slack_term(d, sol, side="up")
         slack_dn = _state_slack_term(d, sol, side="down")
         decomposition = slack_up + slack_dn
@@ -227,14 +226,14 @@ class TestPurePenaltyBase:
             f"sol.obj {sol.obj}, rel={rel} (residual={sol.obj - decomposition})"
         )
 
-    def test_hand_derived_penalty_matches(self, scenario_workdir) -> None:
+    def test_hand_derived_penalty_matches(self, scenario_run) -> None:
         """For ``base``: penalty = Σ |inflow| * pen_up * dur * rpcw * infl
         / psh.  Exact closed-form re-evaluation from inputs (LP value of
         vq_state_up = max(-inflow, 0) since slack is pinned by
         nodeBalance_eq).  Mirrors flextool's
         ``test_hand_derived_penalty_matches``.
         """
-        d, sol = _solve(scenario_workdir("base"))
+        d, sol = _solve(scenario_run("base"))
         df = (
             d.p_inflow.frame.rename({"value": "inflow"})
             .join(d.p_penalty_up.frame.rename({"value": "pen_up"}),
@@ -282,8 +281,8 @@ class TestTimestepWeightFactor:
     P3b bug).
     """
 
-    def test_obj_equals_decomposition(self, scenario_workdir) -> None:
-        d, sol = _solve(scenario_workdir("base_weighted"))
+    def test_obj_equals_decomposition(self, scenario_run) -> None:
+        d, sol = _solve(scenario_run("base_weighted"))
         decomp = (_state_slack_term(d, sol, side="up")
                   + _state_slack_term(d, sol, side="down"))
         rel = abs(decomp - sol.obj) / max(1.0, abs(sol.obj))
@@ -291,12 +290,12 @@ class TestTimestepWeightFactor:
             f"base_weighted: decomposition {decomp} vs obj {sol.obj}, rel={rel}"
         )
 
-    def test_timestep_weight_factor_is_non_trivial(self, scenario_workdir) -> None:
+    def test_timestep_weight_factor_is_non_trivial(self, scenario_run) -> None:
         """Positive control: re-compute the slack-up term with rpcw≡1 and
         verify it differs materially from obj.  This proves the rpcw
         factor is actively scaling the cost — not silently ignored.
         """
-        d, sol = _solve(scenario_workdir("base_weighted"))
+        d, sol = _solve(scenario_run("base_weighted"))
         rpcw_unique = sorted(d.p_timestep_weight.frame["value"].unique().to_list())
         assert len(rpcw_unique) > 1, (
             "fixture invariant: work_base_weighted must have non-uniform "
@@ -346,8 +345,8 @@ class TestCapacityMarginPeriodOnly:
     semantics.
     """
 
-    def test_decomposition_matches_obj(self, scenario_workdir) -> None:
-        d, sol = _solve(scenario_workdir("capacity_margin"))
+    def test_decomposition_matches_obj(self, scenario_run) -> None:
+        d, sol = _solve(scenario_run("capacity_margin"))
         slack_up = _state_slack_term(d, sol, side="up")
         slack_dn = _state_slack_term(d, sol, side="down")
         cap_margin = _capacity_margin_slack_term(d, sol)
@@ -359,18 +358,18 @@ class TestCapacityMarginPeriodOnly:
             f"cap_margin={cap_margin})"
         )
 
-    def test_capacity_margin_term_is_non_zero(self, scenario_workdir) -> None:
+    def test_capacity_margin_term_is_non_zero(self, scenario_run) -> None:
         """Positive control: cap-margin slack must contribute non-trivially
         in this scenario (otherwise the period-only factor set is not
         being exercised)."""
-        d, sol = _solve(scenario_workdir("capacity_margin"))
+        d, sol = _solve(scenario_run("capacity_margin"))
         cm = _capacity_margin_slack_term(d, sol)
         assert cm > 0.0, (
             f"capacity_margin slack is zero — fixture not exercising "
             f"vq_capacity_margin; cm={cm}"
         )
 
-    def test_capacity_margin_does_NOT_use_step_duration(self, scenario_workdir) -> None:
+    def test_capacity_margin_does_NOT_use_step_duration(self, scenario_run) -> None:
         """Negative control: rebuild the cap-margin term using the FULL
         (state-slack-style) factor set including step_duration /
         timestep_weight / period_share, and verify it gives a *different*
@@ -379,7 +378,7 @@ class TestCapacityMarginPeriodOnly:
         (CUR/kW → CUR/MW) so the ratio cleanly isolates the
         step_duration / period_share factor.
         """
-        d, sol = _solve(scenario_workdir("capacity_margin"))
+        d, sol = _solve(scenario_run("capacity_margin"))
         df = (
             sol.value("vq_capacity_margin").rename({"value": "vq"})
             .join(d.p_group_capacity_for_scaling.frame.rename({"value": "gcs"}),
@@ -410,8 +409,8 @@ class TestCapacityMarginPeriodOnly:
 class TestCommodityBucket:
     """``coal`` — commodity-buy term + state-slack add to the objective."""
 
-    def test_decomposition_matches_obj(self, scenario_workdir) -> None:
-        d, sol = _solve(scenario_workdir("coal"))
+    def test_decomposition_matches_obj(self, scenario_run) -> None:
+        d, sol = _solve(scenario_run("coal"))
         slack_up = _state_slack_term(d, sol, side="up")
         slack_dn = _state_slack_term(d, sol, side="down")
         commodity = _commodity_buy_eff_term(d, sol)
@@ -423,8 +422,8 @@ class TestCommodityBucket:
             f"commodity={commodity})"
         )
 
-    def test_commodity_term_is_non_zero(self, scenario_workdir) -> None:
-        d, sol = _solve(scenario_workdir("coal"))
+    def test_commodity_term_is_non_zero(self, scenario_run) -> None:
+        d, sol = _solve(scenario_run("coal"))
         c = _commodity_buy_eff_term(d, sol)
         assert c > 0.0, (
             f"commodity-buy term is zero — fixture not exercising the "
@@ -436,8 +435,8 @@ class TestCO2PriceBucket:
     """``coal_co2_price`` — CO2-price term carries both ``co2_content`` and
     ``co2_price`` factors in addition to the usual op_factor."""
 
-    def test_decomposition_matches_obj(self, scenario_workdir) -> None:
-        d, sol = _solve(scenario_workdir("coal_co2_price"))
+    def test_decomposition_matches_obj(self, scenario_run) -> None:
+        d, sol = _solve(scenario_run("coal_co2_price"))
         slack_up = _state_slack_term(d, sol, side="up")
         slack_dn = _state_slack_term(d, sol, side="down")
         commodity = _commodity_buy_eff_term(d, sol)
@@ -450,8 +449,8 @@ class TestCO2PriceBucket:
             f"commodity={commodity}, co2={co2})"
         )
 
-    def test_co2_term_is_non_zero(self, scenario_workdir) -> None:
-        d, sol = _solve(scenario_workdir("coal_co2_price"))
+    def test_co2_term_is_non_zero(self, scenario_run) -> None:
+        d, sol = _solve(scenario_run("coal_co2_price"))
         c = _co2_price_term(d, sol)
         assert c > 0.0, (
             f"co2 price term is zero — fixture not exercising the "

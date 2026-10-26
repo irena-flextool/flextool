@@ -1,7 +1,8 @@
 """Cascade-vs-seed parity diagnostic and step_duration > 1 guard.
 
 The cascade in ``apply_derived_a/b/c/...`` overrides FlexData fields
-that ``_load_*`` already seeded from ``solve_data/*.csv``.  On the
+that ``_load_*`` already seeded from the provider's ``solve_data/*``
+frames.  On the
 ``lt_rp`` model with ``step_duration = 8760`` the ``p_inflow``
 override produced a wrong LP (the cascade joined raw per-hour source
 data against ``dt`` without scaling by ``step_duration``); the
@@ -43,7 +44,6 @@ requires running both paths and comparing.
 """
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import polars as pl
@@ -51,7 +51,9 @@ import pytest
 
 from polar_high import Problem
 from flextool.engine import build_flextool, load_flextool
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess.flex_data import _cascade_gate
+from tests._support.load import ScenarioRun, clone_provider, load_scenario
 
 
 pytestmark = pytest.mark.solver
@@ -77,17 +79,33 @@ _FIXTURES: list[tuple[str, str, str, bool]] = [
 ]
 
 
-def _solve(workdir: Path, *, gated: bool) -> float:
-    if gated:
-        with _cascade_gate():
-            data = load_flextool(workdir)
-    else:
-        data = load_flextool(workdir)
+def _solve_data(data, label: str) -> float:
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
-    assert sol.optimal, f"solve not optimal for {workdir} (gated={gated})"
+    assert sol.optimal, f"solve not optimal for {label}"
     return float(sol.obj)
+
+
+def _solve(run: ScenarioRun, *, gated: bool) -> float:
+    """Rebuild the run's last solve with the production loader call and solve it."""
+    if gated:
+        with _cascade_gate():
+            data = load_scenario(run)
+    else:
+        data = load_scenario(run)
+    return _solve_data(data, f"{run.scenario} (gated={gated})")
+
+
+def _solve_csv_folder(workdir: Path) -> float:
+    """Load a hand-written CSV folder (no DB, no provider) and solve it.
+
+    Only the two ``*_handcomputed`` tests use it: their folders
+    (``data/work_step_duration_{1,3}``) are gitignored hand-written CSV
+    inputs, so these are CSV-reload tests, not production-path loads; they
+    skip wherever the folders are absent.
+    """
+    return _solve_data(load_flextool(workdir), str(workdir))
 
 
 @pytest.mark.parametrize(
@@ -97,19 +115,19 @@ def _solve(workdir: Path, *, gated: bool) -> float:
 )
 def test_cascade_matches_flextool_reference(
         fixture: str, scenario: str, solve: str,
-        seed_stale: bool, scenario_workdir):
+        seed_stale: bool, scenario_run):
     """The cascade-path LP objective matches flextool's reference.
 
     Always asserts cascade ≡ flextool; this catches the ``p_inflow``
     lt_rp bug class (cascade override produces a wrong model).
     """
-    workdir = scenario_workdir(scenario)
-    ref_path = workdir / "output_raw" / f"v_obj__{solve}.parquet"
+    run = scenario_run(scenario)
+    ref_path = run.work_folder / "output_raw" / f"v_obj__{solve}.parquet"
     if not ref_path.exists():
         pytest.skip(f"no flextool reference at {ref_path}")
 
     ref = float(pl.read_parquet(ref_path)["objective"][0])
-    obj = _solve(workdir, gated=False)
+    obj = _solve(run, gated=False)
     rel = abs(obj - ref) / max(1.0, abs(ref))
     assert rel < 1e-6, (
         f"cascade-path objective drifts from flextool reference on "
@@ -119,80 +137,73 @@ def test_cascade_matches_flextool_reference(
 
 
 
-def _build_step_duration_fixture(src: Path, dst: Path, scale: float) -> None:
-    """Clone ``src`` into ``dst`` with every step_duration scaled by
-    ``scale`` and every per-step inflow scaled by ``scale`` to match.
+_STEP_DURATION_KEYS = ("solve_data/steps_in_use", "solve_data/block_step_duration")
+_INFLOW_KEY = "solve_data/pdtNodeInflow"
+
+
+def _scale_value_column(p: FlexDataProvider, key: str, col: str, scale: float) -> None:
+    """Multiply ``col`` of provider frame ``key`` by ``scale``, keeping the frame's schema (the dtype the
+    loader reads; the snapshot frames carry String value columns)."""
+    frame = p.get(key)
+    p.put(key, frame.with_columns(
+        (pl.col(col).cast(pl.Float64) * scale).cast(frame.schema[col]).alias(col)))
+
+
+def _step_duration_provider(run: ScenarioRun, scale: float) -> FlexDataProvider:
+    """A clone of ``run``'s last provider with every step_duration scaled by ``scale`` and every per-step
+    inflow scaled by ``scale`` to match.
 
     The transformation keeps the LP internally consistent: each
     timestep now covers ``scale`` hours and the demand booked in
-    ``pdtNodeInflow.csv`` (MWh-per-step) is multiplied accordingly.
+    ``pdtNodeInflow`` (MWh-per-step) is multiplied accordingly.
     Steady-state instantaneous power is unchanged; total demand
     across the horizon multiplies by ``scale``.
 
-    Only the seed-side CSVs are modified — the upstream
-    ``tests.sqlite`` (Spine DB) is copied verbatim.  Under the
-    ``p_inflow`` cascade disable this means ``flex_data.p_inflow``
-    carries the ×``scale`` values.  If a future regression re-enables
-    the override and reads raw per-hour values from the DB, the seed
-    survives only at 1× and the ``test_step_duration_3_…`` assertion
-    below fails.
+    Only the provider's seed frames are modified — the DB the load
+    reads is the run's own.  Under the ``p_inflow`` cascade disable
+    this means ``flex_data.p_inflow`` carries the ×``scale`` values.
+    If a future regression re-enables the override and reads raw
+    per-hour values from the DB, the seed survives only at 1× and the
+    ``test_step_duration_3_…`` assertion below fails.
     """
-    shutil.copytree(src, dst)
-    sd = dst / "solve_data"
-
-    # step_duration files — value is in the rightmost float column.
-    for fname in (
-        "steps_in_use.csv",
-        "p_step_duration.csv",
-        "block_step_duration.csv",
-    ):
-        path = sd / fname
-        if not path.exists():
-            continue
-        df = pl.read_csv(path)
-        # rightmost column is the duration value
-        value_col = df.columns[-1]
-        df = df.with_columns(
-            (pl.col(value_col).cast(pl.Float64) * scale).alias(value_col)
-        )
-        df.write_csv(path)
-
-    # pdtNodeInflow.csv — MWh-per-step scales with step_duration.
-    inflow_path = sd / "pdtNodeInflow.csv"
-    if inflow_path.exists():
-        df = pl.read_csv(inflow_path)
-        df = df.with_columns(
-            (pl.col("value").cast(pl.Float64) * scale).alias("value")
-        )
-        df.write_csv(inflow_path)
+    p = clone_provider(run.last.provider)
+    for key in _STEP_DURATION_KEYS:
+        assert p.has(key), f"{run.scenario}: provider has no {key}"
+        _scale_value_column(p, key, "step_duration", scale)
+    assert p.has(_INFLOW_KEY), f"{run.scenario}: provider has no {_INFLOW_KEY}"
+    _scale_value_column(p, _INFLOW_KEY, "value", scale)
+    return p
 
 
-def test_step_duration_3_keeps_seed_intact(
-        tmp_path: Path, scenario_workdir):
-    """``step_duration > 1`` regression guard.
+def _sum(frame: pl.DataFrame) -> float:
+    return float(frame["value"].cast(pl.Float64).sum())
 
-    Build a copy of ``work_base`` with ``step_duration = 3`` and a
-    consistently-scaled ``pdtNodeInflow.csv``.  Under the current
+
+def test_step_duration_3_keeps_seed_intact(scenario_run):
+    """``step_duration > 1`` regression guard for the ``p_inflow`` seed.
+
+    Rebuild ``base`` from a provider with ``step_duration = 3`` and a
+    consistently-scaled ``pdtNodeInflow``.  Under the current
     code (``p_inflow`` override disabled), the seed survives and
     ``flex_data.p_inflow`` carries the ×3 scaled values verbatim.
 
     If a future change re-enables the cascade override path and the
     override is still ``step_duration``-unaware (the lt_rp bug
     class), it will silently replace the seed's ×3 values with the
-    raw per-hour values from ``tests.sqlite`` — i.e. divide demand
+    raw per-hour values from the DB — i.e. divide demand
     by 3.  The assertion below catches that.
     """
-    src = scenario_workdir("base")
-    workdir = tmp_path / "work_base_step3"
-    _build_step_duration_fixture(src, workdir, scale=3.0)
+    run = scenario_run("base")
+    unscaled_sum = _sum(run.last.provider.get(_INFLOW_KEY))
+    provider = _step_duration_provider(run, scale=3.0)
 
-    # The seed CSV after scaling
-    scaled_seed = pl.read_csv(workdir / "solve_data" / "pdtNodeInflow.csv")
-    scaled_sum = float(scaled_seed["value"].cast(pl.Float64).sum())
-    assert scaled_sum != 0.0, "seed CSV must have non-zero rows for this test"
+    # The seed frame after scaling
+    scaled_sum = _sum(provider.get(_INFLOW_KEY))
+    assert scaled_sum != 0.0, "seed frame must have non-zero rows for this test"
+    assert scaled_sum == pytest.approx(3.0 * unscaled_sum, rel=1e-12)
 
     # Load and confirm the seed survived end-to-end
-    d = load_flextool(workdir)
+    d = load_scenario(run, provider=provider)
     fr = d.p_inflow.frame if hasattr(d.p_inflow, "frame") else d.p_inflow
     loaded_sum = float(fr["value"].sum())
 
@@ -205,11 +216,17 @@ def test_step_duration_3_keeps_seed_intact(
         f"see specs/native_inflow_pathway_disabled.md."
     )
 
-    # Also confirm p_step_duration came through scaled
-    sd = d.p_step_duration.frame
-    sd_max = float(sd["value"].max())
-    assert sd_max == pytest.approx(3.0), (
-        f"p_step_duration scaling lost in load — got max={sd_max}"
+    # p_step_duration is NOT the scaled seed on the production path: with a DB reader,
+    # ``apply_derived`` (params/_derived.py, the dt / step-duration override) replaces it with the DB
+    # timeline's durations unless ``solve.new_stepduration`` is set.  Only the old reader-less CSV reload
+    # kept the scaled ``steps_in_use`` seed (reload gap, c24 stage 1 S1-5), so the rebuild carries the
+    # solved FlexData's step durations; the p_inflow guard above is unaffected (the bug class it catches
+    # replaces the ×3 seed with the DB's ×1 values).
+    def _sorted(param) -> pl.DataFrame:
+        return param.frame.select("d", "t", "value").cast({"d": pl.Utf8, "t": pl.Utf8}).sort("d", "t")
+
+    assert _sorted(d.p_step_duration).equals(_sorted(run.last_flex_data.p_step_duration)), (
+        "p_step_duration must be the DB timeline's (the solved FlexData's) on the production path"
     )
 
 
@@ -226,7 +243,7 @@ def test_step_duration_1_handcomputed():
     workdir = _DATA / "work_step_duration_1"
     if not workdir.exists():
         pytest.skip(f"fixture missing: {workdir}")
-    obj = _solve(workdir, gated=False)
+    obj = _solve_csv_folder(workdir)
     assert obj == pytest.approx(2000.0, rel=1e-9), (
         f"baseline single-step LP did not match hand-computed "
         f"objective: got {obj}, expected 2000.0"
@@ -247,7 +264,7 @@ def test_step_duration_3_handcomputed():
     workdir = _DATA / "work_step_duration_3"
     if not workdir.exists():
         pytest.skip(f"fixture missing: {workdir}")
-    obj = _solve(workdir, gated=False)
+    obj = _solve_csv_folder(workdir)
     assert obj == pytest.approx(6000.0, rel=1e-9), (
         f"step_duration=3 LP did not match hand-computed objective: "
         f"got {obj}, expected 6000.0.  This is the p_inflow lt_rp "
@@ -255,30 +272,28 @@ def test_step_duration_3_handcomputed():
     )
 
 
-def test_inflow_seed_survives_under_cascade(scenario_workdir):
+def test_inflow_seed_survives_under_cascade(scenario_run):
     """Regression guard for the ``p_inflow`` lt_rp bug.
 
     The native ``p_inflow`` override in ``apply_derived_a`` is
     hard-disabled (see ``specs/native_inflow_pathway_disabled.md``);
     this test confirms the disable holds by checking that loading
     a fixture without the gate still leaves ``flex_data.p_inflow``
-    equal to the seed CSV's row count.  If a future patch re-enables
-    the override and it diverges from the seed, this test catches it.
+    equal to the provider's ``pdtNodeInflow`` seed (its sum).  If a
+    future patch re-enables the override and it diverges from the
+    seed, this test catches it.
     """
-    workdir = scenario_workdir("coal_ladder_cumulative")
-    seed_csv = workdir / "solve_data" / "pdtNodeInflow.csv"
-    if not seed_csv.exists():
-        pytest.skip(f"no pdtNodeInflow.csv on {workdir}")
-    seed_rows = pl.read_csv(seed_csv)
-    seed_sum = float(seed_rows["value"].cast(pl.Float64).sum())
+    run = scenario_run("coal_ladder_cumulative")
+    assert run.last.provider.has(_INFLOW_KEY), f"no {_INFLOW_KEY} in the coal_ladder_cumulative provider"
+    seed_sum = _sum(run.last.provider.get(_INFLOW_KEY))
 
-    d = load_flextool(workdir)
+    d = load_scenario(run)
     fr = d.p_inflow.frame if hasattr(d.p_inflow, "frame") else d.p_inflow
     loaded_sum = float(fr["value"].sum())
 
     rel = abs(loaded_sum - seed_sum) / max(1.0, abs(seed_sum) or 1.0)
     assert rel < 1e-9, (
-        f"p_inflow diverged from seed CSV: seed_sum={seed_sum}, "
+        f"p_inflow diverged from the seed: seed_sum={seed_sum}, "
         f"loaded_sum={loaded_sum}, rel={rel:.3e}.  This means the "
         f"native cascade override re-entered apply_derived_a — see "
         f"specs/native_inflow_pathway_disabled.md")

@@ -46,8 +46,9 @@ import polars as pl
 import pytest
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.preprocess.flex_data import build_handoff_from_solution
+from tests._support.load import clone_provider, load_scenario
 
 pytestmark = pytest.mark.solver
 
@@ -57,36 +58,38 @@ SCENARIO = "coal_ladder_cumulative"
 
 
 @pytest.fixture(scope="module")
-def _fixture(scenario_workdir):
+def _fixture(scenario_run):
     """Solve ``coal_ladder_cumulative`` once and return
-    ``(sol, handoff, work, data)``.
+    ``(sol, handoff, run, data, provider)``.
 
     The same scenario is used by ``test_flex_commodity_ladder_cumulative``
     for objective-level parity; here we focus on the carrier extraction.
 
-    Pass ``flex_data=`` to ``build_handoff_from_solution`` so the
-    cumulative-commodity / cum_sim_hours carrier extraction picks up
-    ``p_step_duration`` from the in-memory frame.  The cascade does not
-    emit ``solve_data/p_step_duration.csv`` (it's a derived value, not
-    a writer output), so the disk-only fallback would return None on
-    these tmp workdirs.
+    The production call pair: the FlexData is rebuilt with the step's
+    provider (a clone, so the session-cached provider is never touched) and
+    the handoff is built from the same provider, with ``flex_data=`` (the
+    carrier extraction reads ``p_step_duration`` from the in-memory frame),
+    as the cascade passes them.  ``work_folder`` is the run's empty load
+    folder: the builder reads its inputs from the provider.
     """
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+    run = scenario_run(SCENARIO)
+    provider = clone_provider(run.last.provider)
+    data = load_scenario(run, provider=provider)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
     assert sol.optimal, "LP must be optimal for the carrier extraction"
     handoff = build_handoff_from_solution(
-        sol, work, "y2020_2day_dispatch", flex_data=data,
+        sol, run.load_folder, "y2020_2day_dispatch",
+        prior_handoff=run.last.prior_handoff, flex_data=data, provider=provider,
     )
-    return sol, handoff, work, data
+    return sol, handoff, run, data, provider
 
 
 def test_cum_sim_hours_extracted_from_workdir(_fixture):
     """``cum_sim_hours[p2020] == 48`` (Σ step_duration over realized
     timesteps)."""
-    _sol, handoff, _work, _data = _fixture
+    _sol, handoff, _run, _data, _provider = _fixture
     carrier = handoff.cum_sim_hours
     assert carrier is not None, (
         "cum_sim_hours must be populated for a fixture with "
@@ -113,7 +116,7 @@ def test_cumulative_commodity_extracted_from_v_trade(_fixture):
     defaults to 0 for unspecified ``(c, i, d)`` triples so infinite
     tiers are silently 0 anyway — the on-disk byte parity stays intact.
     """
-    sol, handoff, _work, _data = _fixture
+    sol, handoff, _run, _data, _provider = _fixture
     carrier = handoff.cumulative_commodity
     assert carrier is not None, (
         "cumulative_commodity must be populated for a fixture with "
@@ -167,7 +170,7 @@ def test_cumulative_carriers_propagate_with_prior_handoff(_fixture):
     ``cum_sim_hours`` and ``cumulative_commodity`` carriers; the
     extractor must add this-roll's contribution on top.
     """
-    sol, _handoff, work, data = _fixture
+    sol, _handoff, run, data, provider = _fixture
     # Prior carries 100 simulated hours in p2019 and 12 mwh on (coal, 1, p2019).
     from flextool.engine.solve._handoff import SolveHandoff
     prior = SolveHandoff(
@@ -178,8 +181,8 @@ def test_cumulative_carriers_propagate_with_prior_handoff(_fixture):
             schema=["commodity", "tier", "period", "p_ladder_cum_realized_mwh"], orient="row"),
     )
     handoff2 = build_handoff_from_solution(
-        sol, work, "y2020_2day_dispatch",
-        prior_handoff=prior, flex_data=data)
+        sol, run.load_folder, "y2020_2day_dispatch",
+        prior_handoff=prior, flex_data=data, provider=provider)
     # cum_sim_hours: prior p2019=100 carried; this-roll p2020=48 added.
     csh = {r["period"]: float(r["p_ladder_cum_sim_hours"])
               for r in handoff2.cum_sim_hours.iter_rows(named=True)}

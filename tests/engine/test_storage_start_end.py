@@ -1208,35 +1208,35 @@ def test_fix_start_end_blocks_line_is_logged_once_per_solve(caplog):
 # ---------------------------------------------------------------------------
 
 
-def _run_keeping_workdir(tmp_path_factory, url: str, scen: str) -> tuple[list, Path]:
-    """Run the chain in a ``work_<scenario>`` folder next to a copy of the database (the layout ``load_flextool``
-    expects for a reload) and return ``(steps, work_folder)``."""
-    import shutil
-    from urllib.parse import urlparse
-
+def _run_keeping_workdir(tmp_path_factory, url: str, scen: str) -> tuple[list, Path, Path]:
+    """Run the chain in a ``work_<scenario>`` folder and return ``(steps, work_folder, load_folder)``; ``load_folder``
+    is an empty sibling folder for the rebuild (an empty folder has no ``tests.sqlite`` and no CSV for the loader's
+    disk fallbacks, as production's work folder)."""
     from flextool.engine import run_chain_from_db
 
-    wf = tmp_path_factory.mktemp(f"{scen}_root") / f"work_{scen}"
+    root = tmp_path_factory.mktemp(f"{scen}_root")
+    wf = root / f"work_{scen}"
     wf.mkdir()
+    load_folder = root / f"load_{scen}"
+    load_folder.mkdir()
     steps = list(run_chain_from_db(url, scen, work_folder=wf, keep_solutions=True).values())
-    shutil.copy(urlparse(url).path, wf / "tests.sqlite")
-    return steps, wf
+    return steps, wf, load_folder
 
 
 @pytest.mark.parametrize("chain", ["single", "sequence"])
 def test_rebuild_from_the_post_solve_provider_is_the_solved_lp(tmp_path_factory, chain):
     """After a solve the Provider keeps the carriers the solve consumed (``handoff/*``) and exposes its own end state
-    beside them (``produced_handoff/*``).  ``load_flextool(work_folder, provider=<post-solve provider>)`` then rebuilds
-    the last solve's LP: the same carry (none in a single solve, which starts from fix_start 0.1·50 = 5 MWh; the
-    previous solve's realised end in the 4-solve sequence) and the same optimum; the csv dump holds the same carry in
-    ``handoff/roll_end_state.csv`` and the solve's own end in ``produced_handoff/roll_end_state.csv``.  Before, the
+    beside them (``produced_handoff/*``).  ``load_flextool(<empty folder>, provider=<post-solve provider>, db_reader=…)``
+    (no ``handoff=``) then rebuilds the last solve's LP: the same carry (none in a single solve, which starts from
+    fix_start 0.1·50 = 5 MWh; the previous solve's realised end in the 4-solve sequence) and the same optimum; the csv
+    dump holds the same carry in ``handoff/roll_end_state.csv`` and the solve's own end in ``produced_handoff/roll_end_state.csv``.  Before, the
     post-solve provider held the solve's own realised end as ``handoff/roll_end_state``, so the rebuild started from
     it (single: no fix_start, carry = its own end)."""
     values = [["node", "battery", "storage_binding_method", _s("bind_forward_only")],
               ["node", "battery", "storage_solve_horizon_method", _s("free")], NO_LOSS]
     url, scen = make_db(tmp_path_factory, alt=f"sse_rebuild_{chain}",
                         base_chain=SEQ if chain == "sequence" else WIND_BATTERY, values=values)
-    steps, wf = _run_keeping_workdir(tmp_path_factory, url, scen)
+    steps, wf, load_folder = _run_keeping_workdir(tmp_path_factory, url, scen)
     last = steps[-1]
     want_carry = _realised_end(steps[-2]) if chain == "sequence" else None
     own_end = _realised_end(last)
@@ -1250,10 +1250,16 @@ def test_rebuild_from_the_post_solve_provider_is_the_solved_lp(tmp_path_factory,
     from polar_high import Problem
 
     from flextool.engine import build_flextool, load_flextool
+    from flextool.engine.input._spinedb_reader import SpineDbReader
     from flextool.engine.preprocess import _provider_keys as K
+    from tests._support.load import clone_provider
 
+    # The production loader call minus ``handoff=``: the post-solve provider alone must carry the consumed carry.
+    # A clone and an empty load folder, so the load cannot build axis Enums onto the step's provider.
     provider = last.flex_data_provider
-    rebuilt = load_flextool(wf, provider=provider)
+    assert not any(load_folder.iterdir())
+    rebuilt = load_flextool(load_folder, provider=clone_provider(provider), db_reader=SpineDbReader(url, scenario=scen))
+    assert provider.axis_enums is None
     assert _carry(rebuilt) == _as_carry(want_carry)
     pb = Problem()
     build_flextool(pb, rebuilt)

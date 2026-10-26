@@ -16,23 +16,20 @@ and skips the CO2 cost term.  The LP build proceeds and the solve
 completes; the only behavioural difference is that CO2 emissions are
 no longer priced in the objective.
 
-Fixture strategy: build a fresh workdir from ``tests/fixtures/tests.json``
-by running the input-prep half of the cascade.  Tolerate a failure during
-the model-build half — the inputs are already on disk by then, which is
-all we need to re-call ``load_flextool`` + ``build_flextool`` with
-hand-controlled FlexData state.  Pattern mirrors
-``test_pbt_node_inflow._prepare_workdir``.
+Fixture: the session-cached ``coal_co2_price`` cascade run (built from
+``tests/fixtures/tests.json``).  Each test rebuilds the solve's FlexData
+with the production loader call (``load_scenario``), clears one field and
+calls ``build_flextool`` on it.
 """
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
 
 import pytest
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from tests._support.load import ScenarioRun, load_scenario
 
 
 pytestmark = pytest.mark.solver
@@ -41,58 +38,17 @@ SCENARIO = "coal_co2_price"
 
 
 @pytest.fixture(scope="module")
-def workdir_with_co2_price(tmp_path_factory: pytest.TempPathFactory,
-                            test_db_url: str) -> Path:
-    """Materialise a workdir for the ``coal_co2_price`` scenario.
-
-    Drives ``run_chain_from_db`` through the input-prep phase; tolerates
-    a later failure (e.g. polar_high API drift in the orchestrator) since
-    we only need the ``solve_data/`` CSVs that get written before the LP
-    build kicks in.  Module-scoped so the three tests below share the
-    one cascade run.
-    """
-    from flextool.engine import run_chain_from_db
-
-    workdir = tmp_path_factory.mktemp("co2_price_warning_work")
-    cwd = os.getcwd()
-    try:
-        os.chdir(workdir)
-        try:
-            run_chain_from_db(
-                test_db_url, SCENARIO, work_folder=workdir,
-                keep_solutions=True,
-            )
-        except Exception:
-            # Preprocessing has written solve_data/ by now; downstream
-            # build failures are fine — we re-build below.
-            pass
-    finally:
-        os.chdir(cwd)
-    # Sanity: input prep produced the canonical CSVs that load_flextool
-    # needs.  Modern in-memory cascades (Provider pattern) keep most
-    # solve_data in RAM and only snapshot to disk after a successful
-    # build.  When the build itself fails (e.g. polar_high API drift),
-    # the on-disk solve_data is incomplete — we can't drive the
-    # warning gate from this fixture, so skip gracefully.
-    sd = workdir / "solve_data"
-    steps_csv = sd / "steps_in_use.csv"
-    if not steps_csv.exists():
-        pytest.skip(
-            f"workdir setup did not populate {steps_csv!s} — the cascade "
-            "failed before snapshotting in-memory inputs (typically an "
-            "orchestration/polar_high API drift).  This test exercises "
-            "the model/core.py CO2 gate; it can only run when the input-prep "
-            "+ snapshot half of the cascade completes successfully."
-        )
-    return workdir
+def co2_price_run(scenario_run) -> ScenarioRun:
+    """The ``coal_co2_price`` cascade run (one cascade, shared by the three tests)."""
+    return scenario_run(SCENARIO)
 
 
 def test_missing_p_co2_price_warns_and_builds(
-    workdir_with_co2_price: Path, caplog,
+    co2_price_run: ScenarioRun, caplog,
 ) -> None:
     """Clear ``p_co2_price`` after loading; build_flextool must warn
     and still produce a solvable LP (with the CO2 term omitted)."""
-    data = load_flextool(workdir_with_co2_price)
+    data = load_scenario(co2_price_run)
     # Fixture sanity: the topology activates co2_price.
     assert data.flow_from_co2_priced is not None
     assert data.flow_from_co2_priced.height > 0
@@ -124,11 +80,11 @@ def test_missing_p_co2_price_warns_and_builds(
 
 
 def test_missing_p_co2_content_warns_and_builds(
-    workdir_with_co2_price: Path, caplog,
+    co2_price_run: ScenarioRun, caplog,
 ) -> None:
     """Symmetric: clearing ``p_co2_content`` instead of ``p_co2_price``
     also triggers the warning + skip (the CO2 term needs both)."""
-    data = load_flextool(workdir_with_co2_price)
+    data = load_scenario(co2_price_run)
     assert data.p_co2_content is not None
     data.p_co2_content = None
 
@@ -147,20 +103,20 @@ def test_missing_p_co2_content_warns_and_builds(
 
 
 def test_objective_drops_co2_term_when_price_missing(
-    workdir_with_co2_price: Path,
+    co2_price_run: ScenarioRun,
 ) -> None:
     """When p_co2_price is missing, the objective EXCLUDES the CO2 cost
     contribution.  Compare against the fully-priced baseline: the
     missing-price objective is strictly smaller (no CO2 cost)."""
     # Baseline with CO2 price.
-    data_full = load_flextool(workdir_with_co2_price)
+    data_full = load_scenario(co2_price_run)
     pb_full = Problem()
     build_flextool(pb_full, data_full)
     sol_full = pb_full.solve()
     assert sol_full.optimal
 
     # Same model, p_co2_price cleared.
-    data_nop = load_flextool(workdir_with_co2_price)
+    data_nop = load_scenario(co2_price_run)
     data_nop.p_co2_price = None
     pb_nop = Problem()
     build_flextool(pb_nop, data_nop)

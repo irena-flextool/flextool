@@ -33,6 +33,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine.preprocess.flex_data import load_flextool
+from tests._support.load import load_scenario
 
 
 def _all_dim_dtypes(flex_data) -> list[tuple[str, str, pl.DataType]]:
@@ -113,9 +114,7 @@ def test_load_flextool_threads_axis_enums(
     assert len(p_enum.categories) > 0
 
 
-def test_load_flextool_emits_enum_typed_dim_columns(
-    tmp_path: Path, scenario_workdir,
-) -> None:
+def test_load_flextool_emits_enum_typed_dim_columns(scenario_run) -> None:
     """Phase 4.6 activation contract: every FlexData dim column is Enum.
 
     With ``set_global_axis_enums`` flipped on in ``load_flextool`` and
@@ -125,14 +124,12 @@ def test_load_flextool_emits_enum_typed_dim_columns(
     dim column is a missed cast site — surface it loudly so the next
     sweep can target it directly instead of letting the contract
     silently regress.
+
+    Production loads without axis Enums; this test activates them
+    (``axis_enums=True``: the scenario's vocabulary on a provider clone
+    and on the reader) because it tests the Enum activation itself.
     """
-    import shutil
-
-    fixture = scenario_workdir("base")
-    work = tmp_path / "work_base"
-    shutil.copytree(fixture, work)
-
-    flex_data = load_flextool(work)
+    flex_data = load_scenario(scenario_run("base"), axis_enums=True)
 
     dim_dtypes = _all_dim_dtypes(flex_data)
     assert dim_dtypes, "load_flextool produced no dim columns at all"
