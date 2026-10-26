@@ -1021,9 +1021,9 @@ def _derive_conversion_trio(
     section as the single solve and slope + section = 1/eta (#140):
 
         conv_rate = 1/eta
-        slope     = (1/eta − min_load/eta_min) / (1 − min_load)   (min_load_efficiency; min_load 0 → 1/eta)
-                  = conv_rate                                       (other processes)
-        section   = 1/eta − slope                                   (min_load_efficiency only)
+        section   = min_load · (1/eta_min − 1/eta) / (1 − min_load)  (min_load_efficiency only; min_load 0 → 0)
+        slope     = 1/eta − section                                  (min_load_efficiency)
+                  = conv_rate                                        (other processes)
 
     The slope and section values are computed for the second frame; we share
     the intermediate dicts here so the work isn't duplicated across three independent
@@ -1096,11 +1096,10 @@ def _derive_conversion_trio(
             # no usable efficiency): the efficiency (a flat curve, section 0), as ``_derived._mle_eta_min``.
             em = eff_min.get((p, d, t)) or eff.get((p, d, t), 0.0)
             denom = 1.0 - ml
-            # The float operations of ``_derived._mle_slope`` in its order (byte parity with the single solve).
-            at_min = (ml / em if em else 0.0) if ml != 0.0 else 0.0
-            sl = (cr - at_min) / denom if denom else 0.0
-            v = cr - sl
-            mle_slope[(p, d, t)] = sl
+            # The float operations of ``_derived._mle_section`` / ``_mle_slope`` in their order (byte parity with
+            # the single solve); a flat curve (em = eff) gives a section of exactly 0.
+            v = ml * ((1.0 / em if em else 0.0) - cr) / denom if (ml != 0.0 and denom) else 0.0
+            mle_slope[(p, d, t)] = cr - v
             sec_p.append(p)
             sec_d.append(d)
             sec_t.append(t)

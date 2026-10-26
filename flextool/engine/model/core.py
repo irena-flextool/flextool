@@ -1146,8 +1146,8 @@ def _eq_node_balance(b: _Build) -> None:
     #   + start terms of open-start nodes (fix_start in the first solve, the roll carry in continuation solves)
     #   = −inflow[n,d,t]
     #   ∀ (n,d,t) ∈ nodeBalance_dt, n ∉ nodeStateBlock ∪ nodeCoarse;   Δt = step_duration[d,t]
-    #   slope[p,d,t] = (1/eta − min_load/eta_min) / (1 − min_load)
-    #   section[p,d,t] ≈ min_load·(1/eta_min − 1/eta) / (1 − min_load)
+    #   section[p,d,t] = min_load·(1/eta_min − 1/eta) / (1 − min_load)
+    #   slope[p,d,t] = 1/eta − section[p,d,t]   (= (1/eta − min_load/eta_min) / (1 − min_load))
     #     for min_load_efficiency units (eta = efficiency, default 1; min_load = 0 where not authored;
     #     eta_min = efficiency_at_min_load, else efficiency); slope = 1/eta and no section for the other units
     # Energy conservation per node and time step, in MWh.  Storage nodes add
@@ -2367,8 +2367,8 @@ def _eq_conversion(b: _Build) -> None:
     #   = Σ_{k ∈ out(p)} v_flow[p,p,k,d,t] · unitsize[p] · slope[p,d,t] · conv_out[p,k]
     #     + v_online[p,d,t] · section[p,d,t] · unitsize[p]
     #   ∀ (p,d,t) ∈ process_indirect_dt
-    #   slope[p,d,t] = (1/eta − min_load/eta_min) / (1 − min_load)
-    #   section[p,d,t] ≈ min_load·(1/eta_min − 1/eta) / (1 − min_load)
+    #   section[p,d,t] = min_load·(1/eta_min − 1/eta) / (1 − min_load)
+    #   slope[p,d,t] = 1/eta − section[p,d,t]   (= (1/eta − min_load/eta_min) / (1 − min_load))
     #     for min_load_efficiency units (eta = efficiency, default 1; min_load = 0 where not authored;
     #     eta_min = efficiency_at_min_load, else efficiency); slope = 1/eta and no section for the other units
     # Energy balance of an indirect (multi-flow) unit: weighted input equals weighted output times the slope.

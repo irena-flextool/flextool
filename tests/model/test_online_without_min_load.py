@@ -3,8 +3,8 @@
 ``min_load`` is the minimum-load floor's parameter: no value means 0 (no floor).  An online unit needs no
 ``min_load``, and a ``min_load_efficiency`` unit reads
 
-    slope[p,d,t]   = (1/eta − min_load/eta_min) / (1 − min_load)
-    section[p,d,t] = round(1/eta, 6) − round((round(1/eta, 6) − min_load/eta_min) / (1 − min_load), 6)
+    section[p,d,t] = min_load · (1/eta_min − 1/eta) / (1 − min_load)   (0 for a flat curve, eta_min = eta)
+    slope[p,d,t]   = 1/eta − section = (1/eta − min_load/eta_min) / (1 − min_load)
     eta = efficiency (default 1);  min_load = 0 where not authored;
     eta_min = efficiency_at_min_load where given, else efficiency (a flat curve)
 
@@ -280,7 +280,10 @@ def test_min_load_efficiency_without_efficiency_at_min_load_is_flat(tmp_path_fac
         fd = st.flex_data
         slope = _unit_rows(fd.p_slope, u)
         assert slope.height == fd.dt.height, name
-        assert slope["value"].to_list() == pytest.approx([1.0 / EFF[veh]] * slope.height, rel=1e-5), name
+        # A flat curve is exact: slope 1/efficiency and section 0 to the bit (a float residue of the section,
+        # -2.2e-16 for efficiency 0.9, reached the objective as a 16-decade cost range and HiGHS failed, #140).
+        assert slope["value"].to_list() == [1.0 / EFF[veh]] * slope.height, name
+        assert _unit_rows(fd.p_section, u)["value"].to_list() == [0.0] * fd.dt.height, name
         assert _floor_rows(st, u) == fd.dt.height, name
         _assert_floor_holds(st, u, 0.3)
     if veh == "stoch":

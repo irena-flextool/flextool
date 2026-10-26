@@ -2814,16 +2814,31 @@ def _mle_eta_min(eta_min: pl.Expr, eta: pl.Expr) -> pl.Expr:
     return pl.coalesce(eta_min, eta)
 
 
+def _mle_section(eta: pl.Expr, eta_min: pl.Expr, min_load: pl.Expr) -> pl.Expr:
+    """Section (input per online unit) of a min_load_efficiency cell, the curve through (min_load, eta_min) and
+    (1, eta):
+
+        section = min_load · (1/eta_min − 1/eta) / (1 − min_load)    (min_load 0 → 0 whatever eta_min is)
+
+    Unrounded.  Algebraically 1/eta − (1/eta − min_load/eta_min)/(1 − min_load), but written as a product of
+    the efficiency difference so that a flat curve (eta_min = eta) gives exactly 0: the difference form left a
+    float residue (−2.2e-16 for eta 0.9, min_load 0.3) on v_online that reached the objective as a ~1e-17 cost,
+    a 16-decade cost range that autoscale centred with a 2^25 objective scale and HiGHS' dual simplex then failed
+    on (excessive dual values, no model status).  The rolling emit seed
+    ``_period_params._derive_conversion_trio`` evaluates the same float operations in the same order."""
+    return (pl.when(min_load == 0.0).then(0.0)
+            .otherwise(min_load * (1.0 / eta_min - 1.0 / eta) / (1.0 - min_load)))
+
+
 def _mle_slope(eta: pl.Expr, eta_min: pl.Expr, min_load: pl.Expr) -> pl.Expr:
-    """Slope of input over output of a min_load_efficiency cell, between (min_load, eta_min) and (1, eta):
+    """Slope of input over output of a min_load_efficiency cell:
 
-        slope = (1/eta − min_load/eta_min) / (1 − min_load)    (min_load 0 → 1/eta whatever eta_min is)
+        slope = 1/eta − section      (= (1/eta − min_load/eta_min) / (1 − min_load);  section 0 → 1/eta)
 
-    Unrounded.  Shared by ``p_slope_from_source`` and ``p_section_from_source`` so that slope + section = 1/eta
-    on every cell; the rolling emit seed ``_period_params._derive_conversion_trio`` evaluates the same float
-    operations in the same order, so every path reads identical values."""
-    return ((1.0 / eta - pl.when(min_load == 0.0).then(0.0).otherwise(min_load / eta_min))
-            / (1.0 - min_load))
+    Shared by ``p_slope_from_source`` and ``p_section_from_source`` (via ``_mle_section``) so that
+    slope + section = 1/eta on every cell and every path (single, rolling, nested, stochastic) reads identical
+    values."""
+    return 1.0 / eta - _mle_section(eta, eta_min, min_load)
 
 
 def _mle_curve_inputs(source: "InputSource", dt: pl.DataFrame, base: pl.LazyFrame) -> pl.LazyFrame:
@@ -2930,7 +2945,7 @@ def p_slope_from_source(source: "InputSource",
     base = eff_lf  # already has p, d, t, ct, klass, eta
 
     # min_load_efficiency rows: the slope of input over output between (min_load, eta_min) and (1, eta):
-    #   slope[p,d,t] = (1/eta − min_load/eta_min) / (1 − min_load)
+    #   slope[p,d,t] = 1/eta − section,  section = min_load·(1/eta_min − 1/eta) / (1 − min_load)  (_mle_slope)
     #   eta = efficiency (default 1.0);  min_load = 0 where not authored;
     #   eta_min = efficiency_at_min_load, else efficiency (_mle_eta_min: a flat curve, slope = 1/eta)
     # A min_load of 0 gives the constant-efficiency slope 1/eta whatever eta_min is.
@@ -4596,13 +4611,13 @@ def p_section_from_source(source: "InputSource",
     """Section term (y-intercept) of the ``min_load_efficiency`` linearisation, one row per
     min_load_efficiency unit × (d, t):
 
-        section = 1/eta − slope,   slope = (1/eta − min_load/eta_min) / (1 − min_load)   (_mle_slope)
+        section = min_load · (1/eta_min − 1/eta) / (1 − min_load)   (_mle_section)
         eta = efficiency (default 1.0);  min_load = 0 where not authored (section 0);
-        eta_min = efficiency_at_min_load, else efficiency (_mle_eta_min: a flat curve, section 0)
+        eta_min = efficiency_at_min_load, else efficiency (_mle_eta_min: a flat curve, section exactly 0)
 
-    i.e. min_load · (1/eta_min − 1/eta) / (1 − min_load).  Unrounded, and from the same slope expression as
-    ``p_slope_from_source``, so the full-load input slope + section is 1/eta (the old flextool rounding of 1/eta
-    and of the slope to 6 decimals left slope + section ≠ 1/eta, #140).  Other ct_methods → no section row; None
+    i.e. 1/eta − slope.  Unrounded, and the term ``p_slope_from_source`` subtracts from 1/eta, so the full-load
+    input slope + section is 1/eta (the old flextool rounding of 1/eta and of the slope to 6 decimals left
+    slope + section ≠ 1/eta, #140).  Other ct_methods → no section row; None
     when there is no min_load_efficiency unit.
     """
     if dt is None or dt.height == 0:
@@ -4628,8 +4643,7 @@ def p_section_from_source(source: "InputSource",
             else base.with_columns(eta=pl.lit(None).cast(pl.Float64)))
     base = _mle_curve_inputs(source, dt, base.with_columns(eta=pl.col("eta").fill_null(1.0)))
     out = (base
-                .with_columns(section=1.0 / pl.col("eta")
-                              - _mle_slope(pl.col("eta"), pl.col("eta_min"), pl.col("min_load")))
+                .with_columns(section=_mle_section(pl.col("eta"), pl.col("eta_min"), pl.col("min_load")))
                 .select("p", "d", "t", pl.col("section").alias("value"))
                 .sort("p", "d", "t")
                 .collect())
