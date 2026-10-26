@@ -11,8 +11,7 @@ is immediately localised.
 
 import pytest
 
-from flextool.engine import load_flextool
-
+from tests._support.load import load_scenario
 from tests.engine.decomposition._components import total_decomposed_obj
 from tests.engine.perturbation._harness import solve_full
 
@@ -20,9 +19,9 @@ from tests.engine.perturbation._harness import solve_full
 SCENARIO = "coal"
 
 
-def test_obj_decomposition_coal(scenario_workdir):
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+def test_obj_decomposition_coal(scenario_run):
+    run = scenario_run(SCENARIO)
+    data = load_scenario(run)
     pb, sol = solve_full(data)
     assert sol.optimal, "LP did not solve to optimality"
 

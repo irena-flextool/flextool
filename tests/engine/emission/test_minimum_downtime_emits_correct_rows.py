@@ -20,8 +20,8 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_minimum_downtime_emits_correct_rows(scenario_workdir)-> None:
-    pb, data = build(scenario_workdir("coal_wind_min_uptime"))
+def test_minimum_downtime_emits_correct_rows(scenario_run)-> None:
+    pb, data = build(scenario_run("coal_wind_min_uptime"))
 
     assert data.pdt_downtime_set is not None and data.pdt_downtime_set.height > 0, (
         "fixture invariant: pdt_downtime_set must be non-empty for this test"

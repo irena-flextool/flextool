@@ -34,7 +34,7 @@ for the term.
 import polars as pl
 import pytest
 
-from flextool.engine import load_flextool
+from tests._support.load import load_scenario
 
 from tests.engine.perturbation._harness import (
     scale_param,
@@ -47,12 +47,12 @@ SCENARIO = "coal_retire"
 
 
 @pytest.fixture(scope="module")
-def work(scenario_workdir):
-    return scenario_workdir(SCENARIO)
+def run(scenario_run):
+    return scenario_run(SCENARIO)
 
 @pytest.fixture(scope="module")
-def retire_data(work):
-    return load_flextool(work)
+def retire_data(run):
+    return load_scenario(run)
 
 
 def _existing_fixed_cost_constant(d) -> float:

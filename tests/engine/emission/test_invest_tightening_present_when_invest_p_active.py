@@ -31,8 +31,8 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_invest_tightening_present_when_invest_p_active(scenario_workdir)-> None:
-    pb, data = build(scenario_workdir("wind_battery_invest"))
+def test_invest_tightening_present_when_invest_p_active(scenario_run)-> None:
+    pb, data = build(scenario_run("wind_battery_invest"))
 
     # Invest is active in this fixture.
     assert data.pd_invest_set is not None and data.pd_invest_set.height > 0, (

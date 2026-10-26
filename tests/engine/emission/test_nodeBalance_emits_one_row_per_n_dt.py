@@ -30,9 +30,8 @@ SCENARIO = "coal"
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_nodeBalance_emits_one_row_per_n_dt(scenario_workdir) -> None:
-    work = scenario_workdir(SCENARIO)
-    pb, data = build(work)
+def test_nodeBalance_emits_one_row_per_n_dt(scenario_run) -> None:
+    pb, data = build(scenario_run(SCENARIO))
 
     assert data.nodeBalance is not None and data.nodeBalance.height > 0, (
         "fixture invariant: nodeBalance must be non-empty"

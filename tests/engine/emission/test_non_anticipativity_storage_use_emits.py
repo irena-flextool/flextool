@@ -36,10 +36,10 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.emission
 def test_non_anticipativity_storage_use_emits_full_shape(
-    scenario_workdir,
+    scenario_run,
 ) -> None:
     pb, data = build(
-        scenario_workdir(
+        scenario_run(
             "2_day_stochastic_dispatch", db_fixture="stochastic"
         )
     )

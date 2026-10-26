@@ -24,8 +24,8 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_storage_state_start_binding_emits_only_in_period_first(scenario_workdir)-> None:
-    pb, data = build(scenario_workdir("wind_battery"))
+def test_storage_state_start_binding_emits_only_in_period_first(scenario_run)-> None:
+    pb, data = build(scenario_run("wind_battery"))
 
     assert data.storage_fix_start is not None and data.storage_fix_start.height > 0, (
         "fixture invariant: storage_fix_start must be non-empty"

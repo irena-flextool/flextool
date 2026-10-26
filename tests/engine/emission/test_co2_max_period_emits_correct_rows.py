@@ -34,8 +34,8 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_co2_max_period_emits_correct_rows(scenario_workdir)-> None:
-    pb, data = build(scenario_workdir("coal_co2_limit"))
+def test_co2_max_period_emits_correct_rows(scenario_run)-> None:
+    pb, data = build(scenario_run("coal_co2_limit"))
 
     assert data.flow_from_co2_capped is not None and data.flow_from_co2_capped.height > 0, (
         "fixture invariant: flow_from_co2_capped must be non-empty (would "

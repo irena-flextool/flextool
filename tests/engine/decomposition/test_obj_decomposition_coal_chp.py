@@ -11,17 +11,16 @@ double-count immediately.
 
 import pytest
 
-from flextool.engine import load_flextool
-
+from tests._support.load import load_scenario
 from tests.engine.decomposition._components import total_decomposed_obj
 from tests.engine.perturbation._harness import solve_full
 
 
 SCENARIO = "coal_chp"
 
-def test_obj_decomposition_coal_chp(scenario_workdir):
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+def test_obj_decomposition_coal_chp(scenario_run):
+    run = scenario_run(SCENARIO)
+    data = load_scenario(run)
     assert data.process_indirect is not None, (
         "coal_chp fixture should carry an indirect process")
     pb, sol = solve_full(data)

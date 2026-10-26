@@ -31,8 +31,8 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_ramp_sink_up_emits_correct_rows(scenario_workdir)-> None:
-    pb, data = build(scenario_workdir("coal_ramp_limit"))
+def test_ramp_sink_up_emits_correct_rows(scenario_run)-> None:
+    pb, data = build(scenario_run("coal_ramp_limit"))
 
     idx = data.process_source_sink_ramp_limit_sink_up
     assert idx is not None and idx.height > 0, (

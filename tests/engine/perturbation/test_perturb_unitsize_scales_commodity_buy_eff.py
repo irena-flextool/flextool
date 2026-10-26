@@ -33,9 +33,9 @@ the §2.2 term.
 import polars as pl
 import pytest
 
-from flextool.engine import load_flextool
 from flextool.engine.input._param_shapes import promote_param_to_dt
 
+from tests._support.load import load_scenario
 from tests.engine.perturbation._harness import (
     scale_param,
     solve_full,
@@ -47,12 +47,12 @@ SCENARIO = "coal"
 
 
 @pytest.fixture(scope="module")
-def work(scenario_workdir):
-    return scenario_workdir(SCENARIO)
+def run(scenario_run):
+    return scenario_run(SCENARIO)
 
 @pytest.fixture(scope="module")
-def coal_data(work):
-    return load_flextool(work)
+def coal_data(run):
+    return load_scenario(run)
 
 
 def _commodity_buy_eff_term(d, sol) -> float:

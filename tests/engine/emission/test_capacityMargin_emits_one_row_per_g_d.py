@@ -25,8 +25,8 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_capacityMargin_emits_one_row_per_g_d(scenario_workdir)-> None:
-    pb, data = build(scenario_workdir("capacity_margin"))
+def test_capacityMargin_emits_one_row_per_g_d(scenario_run)-> None:
+    pb, data = build(scenario_run("capacity_margin"))
 
     assert data.groupCapacityMargin is not None, (
         "fixture invariant: groupCapacityMargin set must be present"

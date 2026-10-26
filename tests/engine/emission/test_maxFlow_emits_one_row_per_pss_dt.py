@@ -23,8 +23,8 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_maxFlow_emits_one_row_per_pss_dt(scenario_workdir)-> None:
-    pb, data = build(scenario_workdir("coal"))
+def test_maxFlow_emits_one_row_per_pss_dt(scenario_run)-> None:
+    pb, data = build(scenario_run("coal"))
 
     pss_dt = compute_pss_dt(data)
     assert pss_dt is not None and pss_dt.height > 0, (

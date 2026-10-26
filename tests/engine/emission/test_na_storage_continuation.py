@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import base64
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -74,13 +73,14 @@ def _nested(pairs):
 
 
 @pytest.fixture(scope="module")
-def storage_variant_workdir(tmp_path_factory, test_solver_config_dir):
+def storage_variant_run(tmp_path_factory, test_solver_config_dir):
     """Build + cascade-run the storage-bearing variant's ``stoch``
-    scenario; returns the fully-preprocessed workdir."""
+    scenario; returns the finished run (:class:`tests._support.load.ScenarioRun`)."""
     from db_utils import json_to_db
 
-    from flextool.engine.solve._orchestration import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
+
+    from tests._support.load import run_scenario
 
     spec = json.loads(
         (TESTS_DIR / "fixtures" / "stoch_two_period.json").read_text()
@@ -144,30 +144,17 @@ def storage_variant_workdir(tmp_path_factory, test_solver_config_dir):
     url = json_to_db(json_path, db_path)
     migrate_database(url)
 
-    wf = root / "work_stoch"
-    wf.mkdir()
-    steps = run_chain_from_db(
-        input_db_url=url,
-        scenario_name="stoch",
-        work_folder=wf,
+    return run_scenario(
+        url, "stoch", root / "work_stoch",
         solver_config_dir=test_solver_config_dir,
-        csv_dump=True,
-        keep_solutions=True,
     )
-    shutil.copy(db_path, wf / "tests.sqlite")
-    if steps:
-        last_step = next(reversed(list(steps.values())))
-        provider = getattr(last_step, "flex_data_provider", None)
-        if provider is not None:
-            provider.snapshot_processed_inputs(wf)
-    return wf
 
 
 @pytest.mark.emission
 def test_na_storage_use_composes_with_continuation_cohorts(
-    storage_variant_workdir,
+    storage_variant_run,
 ) -> None:
-    pb, data = build(storage_variant_workdir)
+    pb, data = build(storage_variant_run)
 
     # Fixture invariants — the continuation structures are populated.
     assert data.dt_non_anticipativity is not None

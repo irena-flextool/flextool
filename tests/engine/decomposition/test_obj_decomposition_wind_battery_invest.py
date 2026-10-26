@@ -13,17 +13,16 @@ term that's small in dispatch fixtures but large under invest.
 
 import pytest
 
-from flextool.engine import load_flextool
-
+from tests._support.load import load_scenario
 from tests.engine.decomposition._components import total_decomposed_obj
 from tests.engine.perturbation._harness import solve_full
 
 
 SCENARIO = "wind_battery_invest"
 
-def test_obj_decomposition_wind_battery_invest(scenario_workdir):
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+def test_obj_decomposition_wind_battery_invest(scenario_run):
+    run = scenario_run(SCENARIO)
+    data = load_scenario(run)
     assert data.nd_invest_set is not None and data.nd_invest_set.height > 0, (
         "wind_battery_invest fixture should carry node-side invest")
     pb, sol = solve_full(data)

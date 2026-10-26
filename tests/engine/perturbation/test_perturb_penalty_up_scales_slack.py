@@ -34,7 +34,7 @@ asserting ``expected_delta == base_obj``).
 import polars as pl
 import pytest
 
-from flextool.engine import load_flextool
+from tests._support.load import load_scenario
 
 from tests.engine.perturbation._harness import (
     scale_param,
@@ -47,12 +47,12 @@ SCENARIO = "coal"
 
 
 @pytest.fixture(scope="module")
-def work(scenario_workdir):
-    return scenario_workdir(SCENARIO)
+def run(scenario_run):
+    return scenario_run(SCENARIO)
 
 @pytest.fixture(scope="module")
-def coal_data(work):
-    return load_flextool(work)
+def coal_data(run):
+    return load_scenario(run)
 
 
 def _slack_up_term(d, sol) -> float:

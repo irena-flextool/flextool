@@ -33,8 +33,8 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_profile_flow_upper_emits_correct_rows(scenario_workdir)-> None:
-    pb, data = build(scenario_workdir("wind"))
+def test_profile_flow_upper_emits_correct_rows(scenario_run)-> None:
+    pb, data = build(scenario_run("wind"))
 
     idx = data.process_profile_upper
     assert idx is not None and idx.height > 0, (

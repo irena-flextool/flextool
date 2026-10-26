@@ -33,8 +33,8 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_user_constraint_equal_emits_correct_rows(scenario_workdir)-> None:
-    pb, data = build(scenario_workdir("coal_chp"))
+def test_user_constraint_equal_emits_correct_rows(scenario_run)-> None:
+    pb, data = build(scenario_run("coal_chp"))
 
     assert data.cdt_eq is not None and data.cdt_eq.height > 0, (
         "fixture invariant: cdt_eq must be non-empty"

@@ -34,9 +34,9 @@ from tests.engine.emission._helpers import (
 
 @pytest.mark.smoke
 @pytest.mark.emission
-def test_cumulative_capacity_emits_correct_rows(scenario_workdir)-> None:
+def test_cumulative_capacity_emits_correct_rows(scenario_run)-> None:
     pb, data = build(
-        scenario_workdir("network_coal_wind_battery_invest_cumulative")
+        scenario_run("network_coal_wind_battery_invest_cumulative")
     )
 
     assert data.ed_invest_cumulative is not None, (

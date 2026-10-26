@@ -18,7 +18,7 @@ the §1.1 / §1.2 slack obj terms in ``flextool/model/core.py``.
 
 import pytest
 
-from flextool.engine import load_flextool
+from tests._support.load import load_scenario
 
 from tests.engine.perturbation._harness import (
     scale_param,
@@ -31,12 +31,12 @@ SCENARIO = "base"
 
 
 @pytest.fixture(scope="module")
-def work(scenario_workdir):
-    return scenario_workdir(SCENARIO)
+def run(scenario_run):
+    return scenario_run(SCENARIO)
 
 @pytest.fixture(scope="module")
-def base_data(work):
-    return load_flextool(work)
+def base_data(run):
+    return load_scenario(run)
 
 
 @pytest.mark.perturbation

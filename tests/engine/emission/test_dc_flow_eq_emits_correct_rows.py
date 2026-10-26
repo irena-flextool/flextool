@@ -27,8 +27,8 @@ from tests.engine.emission._helpers import (
 
 
 @pytest.mark.emission
-def test_dc_flow_eq_emits_one_row_per_dc_arc_dt(scenario_workdir) -> None:
-    pb, data = build(scenario_workdir("dc_opf_test", db_fixture="case14"))
+def test_dc_flow_eq_emits_one_row_per_dc_arc_dt(scenario_run) -> None:
+    pb, data = build(scenario_run("dc_opf_test", db_fixture="case14"))
 
     # Fixture invariants — the loader populated DC PF data.
     assert data.node_dc_power_flow is not None
