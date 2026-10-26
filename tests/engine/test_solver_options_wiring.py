@@ -243,10 +243,10 @@ def test_benders_problems_receive_user_options(benders_db, tmp_path, monkeypatch
 
 
 @pytest.fixture(scope="module")
-def ti_data(scenario_workdir):
-    from flextool.engine import load_flextool
+def ti_data(scenario_run):
+    from tests._support.load import load_scenario
 
-    return load_flextool(scenario_workdir("lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"))
+    return load_scenario(scenario_run("lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"))
 
 
 def test_benders_regions_stay_single_threaded_with_parallel_workers(ti_data, monkeypatch) -> None:

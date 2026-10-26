@@ -7,7 +7,7 @@ them.  A region subproblem with integer columns (binary online status, exact swi
 from MIP duals are not valid.
 
 Fixture: ``lh2_three_region_trade_invest`` (regions A / B / C, pipes pipe_AB and pipe_BC between them), built
-from JSON by the ``scenario_workdir`` fixture; online / exact / reserve membership set on the loaded FlexData.
+from JSON by the ``scenario_run`` fixture; online / exact / reserve membership set on the loaded FlexData.
 """
 from __future__ import annotations
 
@@ -17,16 +17,16 @@ import logging
 import polars as pl
 import pytest
 
-from flextool.engine import load_flextool
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.solve._region_filter import split
+from tests._support.load import load_scenario
 
 REGIONS = ["region_A", "region_B", "region_C"]
 
 
 @pytest.fixture(scope="module")
-def data(scenario_workdir):
-    return load_flextool(scenario_workdir("lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"))
+def data(scenario_run):
+    return load_scenario(scenario_run("lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"))
 
 
 def _replace(data, **fields):

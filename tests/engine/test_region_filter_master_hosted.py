@@ -44,7 +44,7 @@ import pytest
 
 from polar_high import Param, Problem
 
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.model._pdt_join import compute_pss_dt
 from flextool.engine.solve._region_filter import (
     _BENDERS_UNCAP_SENTINEL,
@@ -62,6 +62,7 @@ from flextool.engine.solve._region_filter import (
     master_network_data,
     split,
 )
+from tests._support.load import load_scenario
 
 
 REGIONS = ["region_A", "region_B", "region_C"]
@@ -88,42 +89,50 @@ MASTER_ALL6 = frozenset(
 
 
 # ---------------------------------------------------------------------------
-# Fixtures.  Both cascade workdirs are built BEFORE any load_flextool
-# call (the ``_workdirs`` indirection): interleaving a load with a later
-# same-process cascade build is a known pre-existing global-axis-enum
-# hazard (documented at ``_region_filter.py`` "Base the widening ...").
+# Fixtures.  Every cascade runs BEFORE any FlexData load (the ``_runs``
+# indirection): interleaving a load with a later same-process cascade
+# build is a known pre-existing global-axis-enum hazard (documented at
+# ``_region_filter.py`` "Base the widening ...").
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def _workdirs(scenario_workdir):
-    lh2 = scenario_workdir("lh2_three_region", db_fixture="lh2")
-    ti = scenario_workdir(
+def _runs(scenario_run):
+    lh2 = scenario_run("lh2_three_region", db_fixture="lh2")
+    ti = scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"
     )
-    mb = scenario_workdir(
+    mb = scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_master_build"
     )
     return lh2, ti, mb
 
 
 @pytest.fixture(scope="module")
-def lh2_data(_workdirs):
-    return load_flextool(_workdirs[0])
+def lh2_data(_runs):
+    return load_scenario(_runs[0])
 
 
 @pytest.fixture(scope="module")
-def ti_data(_workdirs):
-    return load_flextool(_workdirs[1])
+def lh2_enum_data(_runs):
+    """lh2 data loaded WITH the scenario-filtered axis Enums, for
+    :class:`TestAllMasterContentPartition`: its constraint-vocabulary
+    widening pins the Enum filter path (c24 critique item 1)."""
+    return load_scenario(_runs[0], axis_enums=True)
 
 
 @pytest.fixture(scope="module")
-def mb_data(_workdirs):
+def ti_data(_runs):
+    return load_scenario(_runs[1])
+
+
+@pytest.fixture(scope="module")
+def mb_data(_runs):
     """Build-through fixture data: trade-invest sibling with node invest
     on ``lh2_B``, unit invest on ``liquefier_B`` and a second
     ``liquefier_B`` output arc (⇒ INDIRECT nvar unit).  See
     ``lh2_master_build_db_url`` in ``tests/conftest.py``."""
-    return load_flextool(_workdirs[2])
+    return load_scenario(_runs[2])
 
 
 def _membership_without(data, master_nodes: frozenset[str]):
@@ -766,14 +775,14 @@ class TestAllMasterContentPartition:
     """All-master user constraints / feature groups / CO2 caps live in
     the MASTER and vanish from every region (the C6 residual)."""
 
-    def _cstr_data(self, lh2_data):
+    def _cstr_data(self, lh2_enum_data):
         """lh2 data + an all-master user constraint (both referenced
         nodes in MASTER_BIG) spanning coefficient, constant and cdt
         frames.  Widens the (empty) constraint-axis vocabulary so the
         Enum filters run the production path."""
-        d0 = lh2_data.dt.row(0, named=True)
+        d0 = lh2_enum_data.dt.row(0, named=True)
         data2 = _copy_with(
-            lh2_data,
+            lh2_enum_data,
             p_node_constraint_state_coeff=Param(
                 ("n", "cn"),
                 pl.DataFrame({
@@ -793,15 +802,17 @@ class TestAllMasterContentPartition:
                 "d": [d0["d"]], "t": [d0["t"]],
             }),
         )
-        enums = dict(getattr(lh2_data, "_axis_enums", None) or {})
-        if "constraint" in enums:
-            enums["constraint"] = pl.Enum(
-                list(enums["constraint"].categories) + ["master_cstr"])
-            data2._axis_enums = enums
+        enums = dict(getattr(lh2_enum_data, "_axis_enums", None) or {})
+        # The fixture loads with axis_enums=True, so the widening must
+        # run (a missing vocabulary would silently test the Utf8 path).
+        assert "constraint" in enums, sorted(enums)
+        enums["constraint"] = pl.Enum(
+            list(enums["constraint"].categories) + ["master_cstr"])
+        data2._axis_enums = enums
         return data2
 
-    def test_all_master_constraint_kept_in_master(self, lh2_data) -> None:
-        data2 = self._cstr_data(lh2_data)
+    def test_all_master_constraint_kept_in_master(self, lh2_enum_data) -> None:
+        data2 = self._cstr_data(lh2_enum_data)
         md = _master(data2, MASTER_BIG)
         assert _col_values(
             md.p_node_constraint_state_coeff.frame, "cn"
@@ -812,11 +823,11 @@ class TestAllMasterContentPartition:
         assert _col_values(md.cdt_eq, "cn") == {"master_cstr"}
 
     def test_all_master_constraint_dropped_from_regions(
-        self, lh2_data
+        self, lh2_enum_data
     ) -> None:
         """The C6 residual: the cn-only frames (constant, cdt) must not
         leave a degenerate ``0 == constant`` copy in any region."""
-        data2 = self._cstr_data(lh2_data)
+        data2 = self._cstr_data(lh2_enum_data)
         splits = split(
             data2,
             regions=REGIONS,
@@ -830,11 +841,11 @@ class TestAllMasterContentPartition:
                 leaked = _col_values(frame, "cn") & {"master_cstr"}
                 assert not leaked, f"{s.region}: {name} carries {leaked}"
 
-    def test_all_master_feature_group_partition(self, lh2_data) -> None:
+    def test_all_master_feature_group_partition(self, lh2_enum_data) -> None:
         """Under MASTER_ALL6 ``daily_group`` is all-master: the master
         keeps its feature row, every region drops it."""
         data2 = _copy_with(
-            lh2_data,
+            lh2_enum_data,
             groupCapacityMargin=pl.DataFrame({"g": ["daily_group"]}),
         )
         md = _master(data2, MASTER_ALL6)
@@ -850,7 +861,7 @@ class TestAllMasterContentPartition:
             assert gcm is None or "daily_group" not in _col_values(gcm, "g"), \
                 s.region
 
-    def test_all_master_co2_cap_partition(self, lh2_data) -> None:
+    def test_all_master_co2_cap_partition(self, lh2_enum_data) -> None:
         """Under MASTER_ALL6 a cap over the pipe flows is all-master:
         the master keeps the cap rows, every region drops them."""
         capped = pl.DataFrame({
@@ -861,7 +872,7 @@ class TestAllMasterContentPartition:
             "g": ["daily_group", "daily_group"],
         })
         data2 = _copy_with(
-            lh2_data,
+            lh2_enum_data,
             flow_from_co2_capped=capped,
             group_co2_max_period=pl.DataFrame({"g": ["daily_group"]}),
         )

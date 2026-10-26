@@ -18,7 +18,6 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine import load_flextool
 from flextool.engine.model._pdt_join import compute_pss_dt
 from flextool.engine.solve._region_filter import (
     discover_regions,
@@ -26,11 +25,19 @@ from flextool.engine.solve._region_filter import (
     load_region_membership,
     split,
 )
+from tests._support.load import load_scenario
 
 
 @pytest.fixture(scope="module")
-def lh2_workdir(scenario_workdir):
-    return scenario_workdir("lh2_three_region", db_fixture="lh2")
+def lh2_run(scenario_run):
+    return scenario_run("lh2_three_region", db_fixture="lh2")
+
+
+@pytest.fixture(scope="module")
+def lh2_workdir(lh2_run):
+    """The cascade's work folder: the discovery tests read the snapshot's
+    ``input/p_group_decomposition.csv`` through the helpers' work_dir arm."""
+    return lh2_run.work_folder
 
 
 # ---------------------------------------------------------------------------
@@ -57,8 +64,8 @@ class TestDiscovery:
         meth = load_decomposition_method(tmp_path)
         assert meth == {}
 
-    def test_region_membership_lh2(self, lh2_workdir) -> None:
-        data = load_flextool(lh2_workdir)
+    def test_region_membership_lh2(self, lh2_data) -> None:
+        data = lh2_data
         mem = load_region_membership(
             data, ["region_A", "region_B", "region_C"]
         )
@@ -74,8 +81,8 @@ class TestDiscovery:
 
 
 @pytest.fixture(scope="module")
-def lh2_data(lh2_workdir):
-    return load_flextool(lh2_workdir)
+def lh2_data(lh2_run):
+    return load_scenario(lh2_run)
 
 
 @pytest.fixture(scope="module")

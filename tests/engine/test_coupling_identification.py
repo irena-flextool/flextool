@@ -17,9 +17,10 @@ import pytest
 
 from polar_high import Problem, WarmProblem
 
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.solve._benders import _identify_coupling_cols
 from flextool.engine.solve._region_filter import split as region_split
+from tests._support.load import load_scenario
 
 
 # ---------------------------------------------------------------------------
@@ -28,13 +29,13 @@ from flextool.engine.solve._region_filter import split as region_split
 
 
 @pytest.fixture(scope="module")
-def lh2_workdir(scenario_workdir):
-    return scenario_workdir("lh2_three_region", db_fixture="lh2")
+def lh2_run(scenario_run):
+    return scenario_run("lh2_three_region", db_fixture="lh2")
 
 
 @pytest.fixture(scope="module")
-def lh2_data(lh2_workdir):
-    return load_flextool(lh2_workdir)
+def lh2_data(lh2_run):
+    return load_scenario(lh2_run)
 
 
 @pytest.fixture(scope="module")
