@@ -94,8 +94,9 @@ def test_stochastic_within_solve_pins_the_wrap_of_the_first_step(tmp_path_factor
     assert want
     got = set(row_terms(build(fd), PIN, "hydro_reservoir,"))
     assert got == want
-    # Here the solve's first step (the trunk) wraps to the last step of every forecast branch: the start state is
-    # pinned there, not at the end of the trunk period (the old location).
+    # Here every forecast branch's first step wraps to that branch's own last step, and the trunk's first step wraps
+    # to the last step of one branch (period1_mid): the start state is pinned at those wrap targets, one per branch
+    # end, not at the end of the trunk period (the old location).
     periods = utf8(fd.dt)["d"].unique(maintain_order=True).to_list()
     assert all(f",{periods[0]}," not in name for name in got), (sorted(got), periods)
 

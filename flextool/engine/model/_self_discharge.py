@@ -278,7 +278,14 @@ def self_discharge_energy(d, *, state: pl.DataFrame, rp_start: "pl.DataFrame | N
                            / pl.col("dur").sum().over("n", "d", "b")))
         w = (w.join(g.select("n", "d", "t", "spread"), on=["n", "d", "t"], how="left")
              .with_columns(value=pl.coalesce("spread", "value")))
-    return w.select("n", "d", "t", "value").sort("n", "d", "t")
+    out = w.select("n", "d", "t", "value").sort("n", "d", "t")
+    # One loss per storage step: a step given two previous states (two links, a link and an rp start, a start and a
+    # carry) would otherwise be reported once by the writer and silently differ from the LP's row.
+    dup = out.group_by("n", "d", "t").len().filter(pl.col("len") > 1)
+    if dup.height > 0:
+        raise ValueError(f"self-discharge output: {dup.height} storage step(s) have more than one previous state, "
+                         f"e.g. {dup.select('n', 'd', 't').row(0)}")
+    return out
 
 
 # ---------------------------------------------------------------------------

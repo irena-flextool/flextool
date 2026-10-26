@@ -168,7 +168,8 @@ def test_variant_order_on_two_periods(tmp_path_factory):
     assert cost["ws"] <= cost["wp"] * (1 + 1e-9)
     # 16 367 662 856 before c15e1: FA-1 (exact self-discharge of the fixture's 1e-4/h batteries) +2.9e-6 →
     # 16 367 709 994; FA-3 (the bind_within_solve batteries' fix_start pin moved from the end of y2030, mid-horizon,
-    # to the end of y2040, the state the first step starts from) +2.8 %.
+    # to the end of y2040, the state the first step starts from) +2.8 %: the batteries now end y2040 at the pin and
+    # refill there, competing with y2040's H2 shortfall (the same mechanism as the RP Benders M_rp pin).
     assert cost["wp"] == pytest.approx(16_820_838_994.0, rel=1e-6)
 
 

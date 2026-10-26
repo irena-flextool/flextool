@@ -455,7 +455,9 @@ def _guard_links_match_lp(fd) -> int:
 def test_output_stochastic(tmp_path_factory):
     """Stochastic 2-day dispatch with a lossy hydro reservoir: v_self_discharge has exactly the row keys of the
     v_state output (the realized and branch (d, t) the state output writes) and non-zero values; the model's
-    previous-state columns are the writer's links."""
+    previous-state columns are the writer's links.  The reservoir is bind_forward_only + fix_start, whose branch
+    first-step rows take both a self-wrap and the start (item 137, pre-existing): no value check here, the values
+    are compared on sound rows in test_output_stochastic_values."""
     from flextool.engine import run_chain_from_db
     from flextool.lean_parquet import read_lean_parquet
     from flextool.update_flextool.db_migration import migrate_database
@@ -668,3 +670,51 @@ def test_duplicate_loss_keys_raise():
         {"n": ["s", "s", "s"], "d": ["p1", "p1", "p1"], "t": ["t1", "t1", "t2"], "value": [0.01, 0.01, 0.01]}))
     with pytest.raises(FlexToolConfigError, match="s"):
         _self_discharge.loss_coefficients(d, dt.with_columns(n=pl.lit("s")).select("n", "d", "t"))
+
+
+@pytest.mark.parametrize("method", ["bind_within_solve", "bind_within_period"])
+def test_output_stochastic_values(tmp_path_factory, method):
+    """Stochastic 2-day dispatch, lossy hydro_reservoir with a sound previous state per row (bind_within_solve /
+    bind_within_period): every written loss equals the loss the LP row implies, read from the row's own state
+    coefficients and the solution: (Σ_{positive} S⁻ − S)·su − Σ coef·S."""
+    from flextool.lean_parquet import read_lean_parquet
+
+    steps = _run_json(tmp_path_factory, STOCH_JSON, "2_day_stochastic_dispatch", [
+        ["node", "hydro_reservoir", "storage_binding_method", method],
+        ["node", "hydro_reservoir", "self_discharge_loss", 0.01]], "sdo_sv")
+    compared = 0
+    for step in steps:
+        fd = step.flex_data
+        rows = row_terms(build(fd), "nodeBalance_eq", "hydro_reservoir,")
+        sol = utf8(step.solution.value("v_state")).filter(pl.col("n") == "hydro_reservoir")
+        S = {f"v_state[hydro_reservoir,{d},{t}]": v for d, t, v in sol.select("d", "t", "value").iter_rows()}
+        su = float(utf8(fd.p_state_unitsize.frame).filter(pl.col("n") == "hydro_reservoir")["value"][0])
+        sd = read_lean_parquet(_WORK[id(steps[-1])] / "output_raw" / f"v_self_discharge__{step.solve_name}.parquet")
+        assert sd.index.is_unique
+        rep = {(str(d), str(t)): float(v) for (_s, d, t), v in sd["hydro_reservoir"].items()}
+        for name, cols in rows.items():
+            _n, d, t = name[name.index("[") + 1:-1].split(",")
+            if (d, t) not in rep:
+                continue
+            vs = {c: v for c, v in cols.items() if c.startswith("v_state[")}
+            pos = [c for c, v in vs.items() if v > 0]
+            assert len(pos) == 1, (name, vs)
+            lp_loss = (S[pos[0]] - S[f"v_state[hydro_reservoir,{d},{t}]"]) * su - sum(v * S[c] for c, v in vs.items())
+            assert rep[(d, t)] == pytest.approx(lp_loss, rel=1e-9, abs=1e-9), name
+            compared += 1
+    assert compared > 0
+
+
+def test_output_duplicate_previous_state_raises(tmp_path_factory):
+    """The writer's energy frame is unique on (n, d, t): a step given a second previous state (here an rp start on
+    top of a linked step) raises instead of being reported once (the pandas pivot used to keep the first)."""
+    step = _solve(tmp_path_factory, "sd_dup", _values(0.01))
+    fd = step.flex_data
+    state = utf8(step.solution.value("v_state")).select("n", "d", "t", "value")
+    energy = _self_discharge.self_discharge_energy(fd, state=state, rp_start=None, start=None, carry=None,
+                                                   open_first=None)
+    assert energy.group_by("n", "d", "t").len()["len"].max() == 1
+    linked = state.filter(pl.col("t") == "t0010")
+    with pytest.raises(ValueError, match="more than one previous state"):
+        _self_discharge.self_discharge_energy(fd, state=state, rp_start=linked, start=None, carry=None,
+                                              open_first=None)

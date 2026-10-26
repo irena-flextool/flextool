@@ -699,3 +699,25 @@ re-captured in the same commit (fixtures with a lossy storage): `tests/engine/te
 procedure, worst relative deviation 3.6e-16; M 1.22178785e10 → 1.22178811e10, still 2 iterations) and the
 `bind_within_period_blended_weights` cost pin of `tests/engine/test_rp_multi_period.py` (16 367 662 856 →
 16 367 709 994, +2.9e-6).
+
+## 2026-10-26 — two re-captured pins on the rp lh2 fixtures (cycle c15e1, FA-3 / item 15: cyclic fix_start at the wrap)
+
+No golden CSV changed; this records two test pins re-captured in commit ed4927ed.
+
+**Context.** `storage_state_start_binding_cyclic_period` pinned every cyclic `fix_start` node at the last step of the
+first period.  For a `bind_within_solve` node in a multi-period solve that is mid-horizon.  Since FA-3 the pin is on
+the step the node's first step starts from (its own state-change lag): for `bind_within_solve` the solve's last step.
+
+- `tests/engine/test_benders_phase3b_rp_loop.py` (`lh2_three_region_rp_invest`, RP Benders): `_M_RP_EXPECTED`
+  9 026 550 085.3 → 9 437 466 952.7 (+4.6 %).
+- `tests/engine/test_rp_multi_period.py::test_variant_order_on_two_periods`, `bind_within_period_blended_weights`
+  cost: 16 367 709 994 → 16 820 838 994 (+2.8 %).
+
+**Mechanism** (probe outputs `c15e/impl1/probe_fa3_{old4,new4}`).  The batteries (200 MWh, `fix_start` 0.5, no
+battery investment) swap their schedules between the two periods.  Before: y2030 ended at the 0.5 pin and y2040
+ended full (B, C at 1.0), so y2030 started full through the wrap.  Now: y2040's end (the wrap target of the model
+start) is pinned at 0.5 and y2030 ends full.  Ending y2040 at 0.5 means refilling the batteries during y2040, the
+period in which lh2_C is already short of energy: lh2_C's upward slack grows 35.65 → 77.48, and that penalty accounts
+for the M_rp rise.  The rp within_period cost rises for the same reason on the same batteries.  The lh2 rp nodes'
+own pins (`storage_state_start_binding[lh2_*,y2030,t0001]`) are unchanged in the LP snapshot, so no pin was lost; the
+change follows from pinning the right step.

@@ -1881,7 +1881,7 @@ def write_v_self_discharge(
     out = pd.DataFrame(0.0, index=state_df.index, columns=pd.Index(nodes, name="node"))
     if energy is not None and len(rows) > 0:
         wide = (energy.filter(pl.col("n").is_in(nodes)).to_pandas()
-                .pivot_table(index=["d", "t"], columns="n", values="value", aggfunc="first"))
+                .pivot(index=["d", "t"], columns="n", values="value"))   # (n, d, t) unique: self_discharge_energy
         wide = wide.reindex(index=pd.MultiIndex.from_tuples(rows, names=["d", "t"]), columns=nodes)
         out = pd.DataFrame(wide.to_numpy(dtype=float), index=state_df.index,
                            columns=pd.Index(nodes, name="node")).fillna(0.0)
