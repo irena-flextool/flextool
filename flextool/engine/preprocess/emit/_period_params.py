@@ -1015,9 +1015,18 @@ def _derive_conversion_trio(
     """Build the three ``pdtConversion_rate`` / ``pdtProcess_section`` /
     ``pdtProcess_slope`` frames in a single pass.
 
-    The slope formula reuses the ``conv_rate`` and ``section`` values
-    computed for the first two frames; we share the intermediate dicts
-    here so the work isn't duplicated across three independent
+    Unrounded and in the float operations of the single-solve producers
+    (``_derived.p_slope_from_source`` / ``p_section_from_source`` via
+    ``_derived._mle_slope``), so a rolling sub-solve reads the same slope and
+    section as the single solve and slope + section = 1/eta (#140):
+
+        conv_rate = 1/eta
+        slope     = (1/eta − min_load/eta_min) / (1 − min_load)   (min_load_efficiency; min_load 0 → 1/eta)
+                  = conv_rate                                       (other processes)
+        section   = 1/eta − slope                                   (min_load_efficiency only)
+
+    The slope and section values are computed for the second frame; we share
+    the intermediate dicts here so the work isn't duplicated across three independent
     ``derive_*`` calls.
     """
     processes = _read_singles(input_dir / "process.csv", provider=provider)
@@ -1061,7 +1070,7 @@ def _derive_conversion_trio(
     for p in processes:
         for (d, t) in dt:
             e = eff.get((p, d, t), 0.0)
-            v = round(1.0 / e, 6) if e else 0.0
+            v = 1.0 / e if e else 0.0
             conv_rate[(p, d, t)] = v
             cr_p.append(p)
             cr_d.append(d)
@@ -1071,8 +1080,8 @@ def _derive_conversion_trio(
         "process": cr_p, "period": cr_d, "time": cr_t, "value": cr_v,
     })
 
-    # pdtProcess_section + intermediate section dict.
-    section: dict[tuple[str, str, str], float] = {}
+    # pdtProcess_section + intermediate slope dict (min_load_efficiency cells).
+    mle_slope: dict[tuple[str, str, str], float] = {}
     sec_p: list[str] = []
     sec_d: list[str] = []
     sec_t: list[str] = []
@@ -1086,11 +1095,12 @@ def _derive_conversion_trio(
             # No efficiency_at_min_load in this cell (pdtProcess resolves an unauthored one to 0, and 0 is
             # no usable efficiency): the efficiency (a flat curve, section 0), as ``_derived._mle_eta_min``.
             em = eff_min.get((p, d, t)) or eff.get((p, d, t), 0.0)
-            inv_em = (1.0 / em) if em else 0.0
             denom = 1.0 - ml
-            rounded = round((cr - ml * inv_em) / denom, 6) if denom else 0.0
-            v = cr - rounded
-            section[(p, d, t)] = v
+            # The float operations of ``_derived._mle_slope`` in its order (byte parity with the single solve).
+            at_min = (ml / em if em else 0.0) if ml != 0.0 else 0.0
+            sl = (cr - at_min) / denom if denom else 0.0
+            v = cr - sl
+            mle_slope[(p, d, t)] = sl
             sec_p.append(p)
             sec_d.append(d)
             sec_t.append(t)
@@ -1108,8 +1118,7 @@ def _derive_conversion_trio(
         in_min = p in process_minload
         for (d, t) in dt:
             cr = conv_rate.get((p, d, t), 0.0)
-            sec = section.get((p, d, t), 0.0) if in_min else 0.0
-            v = cr - sec
+            v = mle_slope.get((p, d, t), cr) if in_min else cr
             sl_p.append(p)
             sl_d.append(d)
             sl_t.append(t)

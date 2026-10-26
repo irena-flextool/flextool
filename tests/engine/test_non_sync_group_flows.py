@@ -120,9 +120,8 @@ def test_rolling_rows_equal_single_solve(tmp_path_factory, variant: str) -> None
         for row, terms in rows.items():
             assert terms.keys() == ref[row].keys(), (name, row)
             for col, v in terms.items():
-                # rel 1e-6: the roll sub-solves read p_slope rounded to 7 digits (1.111111 for 1 / 0.9), a separate
-                # issue that touches every slope row, not only this one
-                assert v == pytest.approx(ref[row][col], rel=1e-6), (name, row, col)
+                # the roll sub-solves read the single solve's unrounded p_slope (1 / 0.9, #140)
+                assert v == pytest.approx(ref[row][col], rel=1e-12), (name, row, col)
 
 
 # ---------------------------------------------------------------------------

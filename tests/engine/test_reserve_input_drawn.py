@@ -135,7 +135,9 @@ def test_scale_uses_full_load_input(eff) -> None:
 def test_section_counts_in_requirement(tmp_path_factory) -> None:
     """A min_load_efficiency e_boiler with linear online variables draws v_online · section · unitsize too:
     the dynamic and n-1-down rows carry v_online_linear[e_boiler] with the coefficient nodeBalance_eq has
-    (× ratio 1), and the scales use slope + section."""
+    (× ratio 1), and the scales use slope + section.  The full-load input per unit of capacity is slope +
+    section = 1/efficiency (docs/how_to.md: the input is linear from min_load/efficiency_at_min_load to
+    1/efficiency), so the full-load input is unitsize / 0.5 (#140: slope and section from one unrounded slope)."""
     ents, vals = _reserves()
     step = solve(tmp_path_factory, alt="drawn_sec", base_chain=BASE, entities=EB_ENTS + ents,
                  values=_eb_values("min_load_efficiency") + vals + [
@@ -161,7 +163,7 @@ def test_section_counts_in_requirement(tmp_path_factory) -> None:
     full += -(_coef(next(iter(bal.values())), f"v_online_linear[{EB},"))
     sc = utf8(reserve_shortfall_scale(step.flex_data).frame)
     n1d = sc.filter(pl.col("r") == "n1d")["value"]
-    assert full > us * 2.0  # section adds to the full-load input
+    assert full == pytest.approx(us / 0.5, rel=1e-12)  # the section is part of the 1/efficiency full-load input
     assert n1d.to_list() == pytest.approx([full] * len(n1d), rel=1e-9)
 
 

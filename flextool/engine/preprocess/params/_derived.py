@@ -2814,6 +2814,18 @@ def _mle_eta_min(eta_min: pl.Expr, eta: pl.Expr) -> pl.Expr:
     return pl.coalesce(eta_min, eta)
 
 
+def _mle_slope(eta: pl.Expr, eta_min: pl.Expr, min_load: pl.Expr) -> pl.Expr:
+    """Slope of input over output of a min_load_efficiency cell, between (min_load, eta_min) and (1, eta):
+
+        slope = (1/eta − min_load/eta_min) / (1 − min_load)    (min_load 0 → 1/eta whatever eta_min is)
+
+    Unrounded.  Shared by ``p_slope_from_source`` and ``p_section_from_source`` so that slope + section = 1/eta
+    on every cell; the rolling emit seed ``_period_params._derive_conversion_trio`` evaluates the same float
+    operations in the same order, so every path reads identical values."""
+    return ((1.0 / eta - pl.when(min_load == 0.0).then(0.0).otherwise(min_load / eta_min))
+            / (1.0 - min_load))
+
+
 def _mle_curve_inputs(source: "InputSource", dt: pl.DataFrame, base: pl.LazyFrame) -> pl.LazyFrame:
     """``base`` (p, d, t, …, eta) with ``eta_min`` and ``min_load`` added for the min_load_efficiency curve.
 
@@ -2931,12 +2943,7 @@ def p_slope_from_source(source: "InputSource",
     # slope expression: branch on ct.
     base = base.with_columns(
         slope=pl.when(pl.col("ct") == "min_load_efficiency")
-                .then(
-                    (1.0 / pl.col("eta")
-                       - pl.when(pl.col("min_load") == 0.0).then(0.0)
-                           .otherwise(pl.col("min_load") / pl.col("eta_min")))
-                    / (1.0 - pl.col("min_load"))
-                )
+                .then(_mle_slope(pl.col("eta"), pl.col("eta_min"), pl.col("min_load")))
               .otherwise(1.0 / pl.col("eta"))
     )
     out = (base.select("p", "d", "t", pl.col("slope").alias("value"))
@@ -4589,14 +4596,14 @@ def p_section_from_source(source: "InputSource",
     """Section term (y-intercept) of the ``min_load_efficiency`` linearisation, one row per
     min_load_efficiency unit × (d, t):
 
-        cr      = round(1/eta, 6)
-        section = cr − round((cr − min_load / eta_min) / (1 − min_load), 6)
+        section = 1/eta − slope,   slope = (1/eta − min_load/eta_min) / (1 − min_load)   (_mle_slope)
         eta = efficiency (default 1.0);  min_load = 0 where not authored (section 0);
         eta_min = efficiency_at_min_load, else efficiency (_mle_eta_min: a flat curve, section 0)
 
-    i.e. ≈ min_load · (1/eta_min − 1/eta) / (1 − min_load), with flextool's rounding
-    (entity_period_calc_params.py:1283-1291).  Other ct_methods → no section row; None when there is no
-    min_load_efficiency unit.
+    i.e. min_load · (1/eta_min − 1/eta) / (1 − min_load).  Unrounded, and from the same slope expression as
+    ``p_slope_from_source``, so the full-load input slope + section is 1/eta (the old flextool rounding of 1/eta
+    and of the slope to 6 decimals left slope + section ≠ 1/eta, #140).  Other ct_methods → no section row; None
+    when there is no min_load_efficiency unit.
     """
     if dt is None or dt.height == 0:
         return None
@@ -4621,17 +4628,8 @@ def p_section_from_source(source: "InputSource",
             else base.with_columns(eta=pl.lit(None).cast(pl.Float64)))
     base = _mle_curve_inputs(source, dt, base.with_columns(eta=pl.col("eta").fill_null(1.0)))
     out = (base
-                .with_columns(
-                    cr=(1.0 / pl.col("eta")).round(6),
-                    inv_em=1.0 / pl.col("eta_min"),
-                    denom=1.0 - pl.col("min_load"),
-                )
-                .with_columns(
-                    rounded=((pl.col("cr") - pl.col("min_load")
-                                 * pl.col("inv_em"))
-                              / pl.col("denom")).round(6)
-                )
-                .with_columns(section=pl.col("cr") - pl.col("rounded"))
+                .with_columns(section=1.0 / pl.col("eta")
+                              - _mle_slope(pl.col("eta"), pl.col("eta_min"), pl.col("min_load")))
                 .select("p", "d", "t", pl.col("section").alias("value"))
                 .sort("p", "d", "t")
                 .collect())

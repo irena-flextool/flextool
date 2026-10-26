@@ -831,3 +831,32 @@ levels' first solves were already first, and roll k's carry was already roll k�
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`; the full `tests/test_scenarios.py` run
 before regenerating failed exactly these two (64 passed).
+
+## 2026-10-26 — `coal_min_load`, `coal_min_load_wind`, `fullYear_roll` (cycle c15f, #140: unrounded conversion slope and section)
+
+**Context.** The min_load_efficiency section was `round(1/η, 6) − round(slope, 6)` while the unrounded slope
+multiplied `v_flow`, so slope + section ≠ 1/η (2.0000003 instead of 2 for η 0.5); and the rolling sub-solves read
+`p_slope` from the emitted `pdtProcess_slope` seed, which used `round(1/η, 6)` (1.052632 for η 0.95), while single
+solves used 1/η.  Now slope = (1/η − min_load/η_min)/(1 − min_load), section = 1/η − slope and the constant-efficiency
+slope = 1/η, unrounded and identical on every path.  The rounding bought no solver benefit: HiGHS works on doubles,
+where 1.785714 has a 53-bit mantissa just like 1.7857142857…; polar-high only floors |coef| < small_number_threshold
+and scales by powers of two.  Re-solving the before/after MPS of 7 fixtures (test_a_lot, all, network_all_tech MIP,
+co2_cap_minload, reserve_dynamic_demand, coal_wind_min_uptime_MIP, stochastic_1_week_rolling_wind) gave the same
+simplex / IPM iteration and MIP node counts (±1 iteration).  LP coefficients move ≤ 1.3e-6 relative (section terms,
+reserve scales) and ≤ 4e-7 (rolled 1/η costs and balances).
+
+- `coal_min_load` (`unit_online__dt`): an exact tie.  The objective moves 1145.7410541 → 1145.7410833 (2.5e-8 rel,
+  the section rounding).  The old vertex (online 1.0 at t0004–t0009 and t0024–t0029) has exactly the new LP's optimal
+  cost, and it is feasible in it: the fixture's numbers make "stay fully online" and "go to online 0.964 / 0.938 and
+  pay a 0.036 / 0.062 start-up later" cost the same, and the rounded section broke the tie.  HiGHS now picks the
+  partial-online vertex.  Output flows unchanged (the file was rewritten in the regen format only).
+- `coal_min_load_wind` (`costs__dt`, `unit__outputNode__dt`, `unit_online__dt`): the same tie.  Total cost 157 199.999
+  → 157 200.0: commodity cost −1 200 (t0045–t0048 run at online 0.156 instead of 0.18, coal 39 instead of 45 MW at
+  t0047–t0048, wind +6 MW) and start-ups +1 200 at t0001.  The old cells 4 099.9999 / 2 999.9997 were the rounding
+  artefact itself; the new ones are 3 900 / 2 800 / 2 600.
+- `fullYear_roll` (`summary_solve`): the rolls now read the battery inverter's exact 1/0.95 instead of 1.052632; roll
+  objectives move ≤ 1.3e-8 relative (e.g. roll 5 483.173353846 → 483.173347607), the total 5 985.18193796 →
+  5 985.18185996 M CUR.  This file is compared as text, so any digit change fails it.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`; the golden subset with min_load_efficiency,
+rolling, nested and multi-solve scenarios (22) failed exactly these three before regenerating (19 passed).
