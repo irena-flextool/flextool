@@ -107,3 +107,80 @@ def test_env_override_resolves(ti_data, monkeypatch) -> None:
     assert env.total_objective == seq.total_objective
     assert env.lower_bound == seq.lower_bound
     assert env.iterations == seq.iterations
+
+
+# ---------------------------------------------------------------------------
+# Cross-PROCESS determinism (#153): the same model must give the same region
+# LPs and the same Benders trajectory in every Python process, whatever its
+# PYTHONHASHSEED.  ``split`` widens the axis Enum vocabularies with the
+# virtual half-flow tokens, and the Enum category order is the sort key of
+# every LP domain frame; appended in ``set`` order, the region subproblem's
+# column / row order (and so the simplex path, the last bits of the cut
+# coefficients and, on a marginal master, kUnknown vs kOptimal) changed with
+# the hash seed.  An in-process check cannot see this — one process has one
+# seed — so each seed runs in its own interpreter.
+# ---------------------------------------------------------------------------
+
+_HASHSEED_PROBE = r"""
+import hashlib, json, sys
+from polar_high import Problem
+from flextool.engine import build_flextool, load_flextool
+from flextool.engine.solve import _region_filter
+from flextool.engine.solve._benders import solve_benders
+from flextool.engine.input._axis_enums import set_global_axis_enums
+
+data = load_flextool(sys.argv[1])
+regions = ["region_A", "region_B", "region_C"]
+if getattr(data, "_axis_enums", None) is not None:
+    set_global_axis_enums(data._axis_enums)
+lps = {}
+for s in _region_filter.split(data, regions=regions, benders_uncap_cross_region=True):
+    pb = Problem()
+    build_flextool(pb, s.data)
+    sol = pb.solve()
+    lps[s.region] = hashlib.sha256(
+        "\n".join(list(sol.col_names) + list(sol.row_names)).encode()).hexdigest()
+out = {"lps": lps}
+for master in ("hand", "flextool"):
+    res = solve_benders(data, regions, max_iters=20, tol=1e-4, master=master)
+    out[master] = {
+        "iterations": res.iterations, "lb": repr(res.lower_bound), "ub": repr(res.upper_bound),
+        "invest": {k: repr(v) for k, v in sorted(res.invest.items())},
+    }
+print("PROBE" + json.dumps(out))
+"""
+
+
+@pytest.fixture(scope="module")
+def ti_retuned_workdir(scenario_workdir):
+    return scenario_workdir(
+        "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest_retuned"
+    )
+
+
+def test_region_lps_and_trajectory_independent_of_hash_seed(ti_retuned_workdir) -> None:
+    import json
+    import os
+    import subprocess
+    import sys
+
+    outs = {}
+    # Seeds 0 and 2 ordered the half-flow tokens differently before the fix
+    # (seed 2 then also failed the hand master with kUnknown).
+    for seed in ("0", "1", "2", "3"):
+        env = dict(os.environ, PYTHONHASHSEED=seed)
+        proc = subprocess.run(
+            [sys.executable, "-c", _HASHSEED_PROBE, str(ti_retuned_workdir)],
+            env=env, capture_output=True, text=True, timeout=600,
+        )
+        assert proc.returncode == 0, (
+            f"PYTHONHASHSEED={seed}: probe failed\n{proc.stderr[-4000:]}"
+        )
+        line = [ln for ln in proc.stdout.splitlines() if ln.startswith("PROBE")][-1]
+        outs[seed] = json.loads(line[len("PROBE"):])
+    ref = outs["0"]
+    for seed, got in outs.items():
+        assert got["lps"] == ref["lps"], (
+            f"region LP column/row order differs between PYTHONHASHSEED=0 and {seed}"
+        )
+        assert got == ref, f"Benders trajectory differs: seed 0 {ref} vs seed {seed} {got}"

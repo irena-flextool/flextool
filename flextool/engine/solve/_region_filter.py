@@ -2373,7 +2373,14 @@ def split(
                 continue
             _existing_cats = list(_existing.categories)
             _existing_set = set(_existing_cats)
-            _add = [t for t in _new_toks if t not in _existing_set]
+            # SORTED, never in set order: the Enum category order is the
+            # sort key of every LP domain frame (add_var / add_cstr sort
+            # before assigning col / row ids), so a set-ordered append made
+            # the region subproblem's column / row order depend on the
+            # process' PYTHONHASHSEED — a different simplex path, last-bit
+            # different cut coefficients and, on a marginal master, a
+            # kUnknown in one process but not the next (#153).
+            _add = sorted(t for t in _new_toks if t not in _existing_set)
             if _add:
                 _ext[_axis_name] = pl.Enum(_existing_cats + _add)
         _enums_token = set_global_axis_enums(_ext)
