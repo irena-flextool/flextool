@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **`use_reference_value` counts invested storage.** The end state of a
+  storage with `storage_solve_horizon_method` *use_reference_value* was
+  pinned to `storage_state_reference_value` × the existing capacity only, so
+  newly built storage had to end (nearly) empty. It is now that share of the
+  built capacity (existing + invested − divested), as for the start state and
+  the storage capacity limit.
+
 - **`fix_start_end` fixes the start state.** A storage node with
   `storage_start_end_method` *fix_start_end* got no start condition at all
   (it could start with free energy); its start is now fixed like

@@ -2858,24 +2858,38 @@ def _eq_storage_reference_value(b: _Build) -> None:
 
     # ─── EQ. ─── storage_state_solve_horizon_reference_value ─────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state[n,d,t] = reference_value[n,d,t] · existing[n,d] / state_unitsize[n]
+    # v_state[n,d,t] − reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
+    #   + reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
+    #   = reference_value[n,d,t] · existing[n,d] / state_unitsize[n]
     #   ∀ n ∈ storage_use_reference_value, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last
-    # Pins the state at the end of the solve horizon to the reference share of the existing storage
-    # capacity (state units).  Invested and divested capacity is not included (known limitation).  Nodes
-    # with a competing end condition are not in storage_use_reference_value.
-    target = (promote_param_to_dt(d.p_storage_state_reference_value, d.dt)
-              .rename({"value": "rv"})
+    # Pins the state at the end of the solve horizon to the reference share of the built storage capacity
+    # (state units), as maxState and the start pins count it.  Nodes with a competing end condition are not in
+    # storage_use_reference_value.
+    # reference_value on the pinned rows only: as a coefficient of the invest / divest sums it would otherwise span
+    # every (n, d_invest, d, t) of the solve.
+    rv = (promote_param_to_dt(d.p_storage_state_reference_value, d.dt)
+          .join(over.lazy(), on=["n", "d", "t"], how="inner")
+          .select("n", "d", "t", "value")
+          .collect())
+    target = (rv.lazy().rename({"value": "rv"})
               .join(d.p_state_existing_capacity.frame.lazy().rename({"value": "exist"}),
                     on=["n", "d"], how="inner")
               .join(d.p_state_unitsize.frame.lazy().rename({"value": "us"}), on="n", how="inner")
               .with_columns(value=pl.col("rv") * pl.col("exist") / pl.col("us"))
               .select("n", "d", "t", "value")
               .collect())
+    lhs: dict = {"state": Where(b.v_state, over)}
+    invested, divested = _node_in_service(b, d.storage_use_reference_value, "_ref_value",
+                                          coef=Param(("n", "d", "t"), rv))
+    if invested is not None:
+        lhs["invest_neg"] = -invested
+    if divested is not None:
+        lhs["divest"] = divested
     m.add_cstr(
         "storage_state_solve_horizon_reference_value",
         over      = over,
         sense     = "==",
-        lhs_terms = {"state": Where(b.v_state, over)},
+        lhs_terms = lhs,
         rhs_terms = {"target": Param(("n", "d", "t"), target)},
     )
 
