@@ -104,7 +104,9 @@ def test_synthetic_subsolve_gets_blocks(tmp_path_factory) -> None:
         assert n_blocks == len(expected) * len(periods)
         pb = build(fd)
         assert len(row_terms(pb, "nodeBalanceBlock_eq", "battery,")) == n_blocks, name
-        assert len(row_terms(pb, "stateConstantWithinBlock_eq", "battery,")) > 0, name
+        # One stateConstantWithinBlock_eq row per interior step of the Spine solve's blocks in these periods.
+        ref_interior = utf8(spine[base].flex_data.dtttdt_block_interior).filter(pl.col("d").is_in(periods))
+        assert len(row_terms(pb, "stateConstantWithinBlock_eq", "battery,")) == ref_interior.height > 0, name
         assert len(row_terms(pb, "nodeBalance_eq", "battery,")) == 0, name
 
 
