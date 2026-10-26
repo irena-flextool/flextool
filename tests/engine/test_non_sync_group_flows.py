@@ -251,3 +251,18 @@ def test_two_groups_joined_by_a_line(tmp_path_factory, dc: bool) -> None:
             for row, terms in rows.items():
                 t = row.split(",")[-1].rstrip("]")
                 assert [c for c in terms if c.startswith("v_flow[wind_plant,") and c.endswith(f",west,p2020,{t}]")]
+
+
+def test_dc_power_flow_line_crossing_warning(tmp_path_factory, caplog) -> None:
+    """west_north is a line of a dc_power_flow_with_angles group {west, north} (classified one-variable through
+    the group override) and crosses {west, east}: one warning names the line and the group and the loophole,
+    without recommending exact (a DC power-flow line has no exact option)."""
+    ents, vals = _ns_group("gwe", ["west", "east"], 0.3)
+    ents += [["group", "gdc", None], ["group__node", ["gdc", "west"], None], ["group__node", ["gdc", "north"], None]]
+    vals = vals + WIND + [["group", "gdc", "transfer_method", b64("dc_power_flow_with_angles", "str")]]
+    with caplog.at_level(logging.WARNING):
+        _steps(tmp_path_factory, "ns_w_dcpf", ents, vals, NET)
+    hits = [r.getMessage() for r in caplog.records if _WARN in r.getMessage()]
+    assert len(hits) == 1, hits
+    assert hits[0].startswith("DC power-flow line 'west_north'") and "'gwe'" in hits[0]
+    assert "exact" not in hits[0]
