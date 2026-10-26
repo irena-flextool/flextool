@@ -106,6 +106,14 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 
 _LOG = logging.getLogger(__name__)
 
+# Objective cutoff relative to the largest |cost| (polar-high
+# ``Problem.obj_coef_zero_rel_threshold``, owner decision Q-gate-A).  About 100
+# machine epsilons: it removes float residue (a 1e-17 cost next to O(1) costs)
+# while the widest legitimate cost spread in the LP-snapshot fixtures is
+# min/max = 1.4e-12 (11.8 decades).  Relative, not ``small_number_threshold``:
+# real costs go down to 4e-5 (slack penalties) and the objective may be scaled.
+OBJ_COEF_ZERO_REL_THRESHOLD: float = 1e-14
+
 
 def _build_prof(label: str) -> None:
     """Env-gated (FLEXTOOL_BUILD_PROFILE=1) RSS print to stderr. No-op otherwise."""
@@ -424,6 +432,11 @@ def _prepare(b: _Build) -> None:
     # Matrix coefficients and RHS terms with |value| < threshold become 0
     # (model.small_number_threshold, schema default 1e-4; 0 disables).
     m.coef_zero_threshold = float(getattr(d, "small_number_threshold", 0.0001))
+    # Objective coefficients are not covered by that floor.  A summed cost below
+    # 2**floor(log2(OBJ_COEF_ZERO_REL_THRESHOLD · max|cost|)) becomes 0 (judged before
+    # autoscale), so a float residue cannot stretch the cost range that autoscale
+    # Layer 3 centres the objective on (docs/dev/scaling.md "Tiny cost coefficients").
+    m.obj_coef_zero_rel_threshold = OBJ_COEF_ZERO_REL_THRESHOLD
 
     _check(d, ALWAYS, "always")
 

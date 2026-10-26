@@ -123,6 +123,38 @@ The autoscaler is a numerical tool, not a model fixer. Some things it
   Layer 2 leaves those columns alone — the YAML records that the
   scaler was clamped.
 
+## Small coefficients rounded to zero
+
+Two cutoffs remove near-zero coefficients before any scaling (both are
+judged on the coefficient's own, unscaled value):
+
+- **Matrix and right-hand side** — `model.small_number_threshold`
+  (default `1e-4`; polar-high `Problem.coef_zero_threshold`). A
+  constraint coefficient or RHS term with `|value| < threshold`
+  becomes 0. It does not apply to the objective.
+- **Tiny cost coefficients (objective)** — polar-high
+  `Problem.obj_coef_zero_rel_threshold`, which FlexTool sets to
+  `OBJ_COEF_ZERO_REL_THRESHOLD = 1e-14` (`flextool/engine/model/core.py`,
+  not a database parameter). A variable's total cost coefficient below
+  `2**floor(log2(1e-14 · max|cost|))` becomes 0. Layer 3 centres the
+  objective on the cost range `[min|c|, max|c|]`; one float leftover
+  such as a `1e-17` cost (from an algebraic cancellation) stretched
+  that range to 17 decades, Layer 3 then scaled the objective by
+  `2**25` and HiGHS' dual simplex failed with "excessive dual values"
+  (#140). The cutoff is applied to the cost vector the solver gets,
+  the pre-solve range readout that Layer 3 uses, and the warm-start
+  cost updates.
+
+  The cutoff is **relative** to the largest cost on purpose. Costs
+  legitimately span many decades. Across the LP-snapshot fixtures the
+  smallest real cost is `4.1e-5` (slack penalties of
+  `rolling_separate_dispatch`), so reusing `small_number_threshold`
+  (`1e-4`) would delete real costs. The widest real spread is
+  min/max = `1.4e-12` (11.8 decades). `1e-14` is about 100 machine
+  epsilons below the largest cost: below every real spread, above
+  cancellation residue. Being relative, it also scales with
+  `scale_the_objective`. It changes none of the snapshot LPs.
+
 ## Legacy LP row-scaling
 
 Separate from the autoscale package, FlexTool still ships an LP
