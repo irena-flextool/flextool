@@ -59,7 +59,7 @@ import pytest
 
 from polar_high import Problem, WarmProblem
 
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.solve import _region_filter
 from flextool.engine.input._axis_enums import (
     get_global_axis_enums,
@@ -71,6 +71,7 @@ from flextool.engine.solve._benders import (
     _reverse_cols,
     solve_benders,
 )
+from tests._support.load import load_scenario
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 # RP-weighted monolith optimum of the (non-degenerate, 4-day) base scenario.
@@ -98,65 +99,16 @@ _IMPORT_REGION = "region_B"
 
 
 @pytest.fixture(scope="module")
-def rp_workdir_and_provider(
-    tmp_path_factory, lh2_rp_invest_db_url, test_solver_config_dir
-):
-    """Run the full cascade for the RP-invest fixture and return
-    ``(workdir, provider)``.
-
-    Production threads the live in-memory sub-solve Provider into every
-    re-solve (``_orchestration.py`` ``load_flextool(work_folder, ...,
-    provider=_sub_solve_provider)``); the Benders decomposition sub-solves
-    do exactly that.  Building the workdir here (rather than via the
-    shared session ``scenario_workdir`` factory, which discards the
-    Provider after snapshotting to disk) lets the Benders tests exercise
-    that SAME in-memory Provider path instead of a bare-Path CSV reload —
-    ``keep_solutions=True`` keeps the Provider alive for the reload.
-    """
-    import shutil
-    from urllib.parse import urlparse
-
-    from flextool.engine.solve._orchestration import run_chain_from_db
-
-    parent = tmp_path_factory.mktemp("_root_rp_invest_benders")
-    wf = parent / "work_lh2_three_region_rp_invest"
-    wf.mkdir()
-    steps = run_chain_from_db(
-        input_db_url=lh2_rp_invest_db_url,
-        scenario_name="lh2_three_region_rp_invest",
-        work_folder=wf,
-        solver_config_dir=test_solver_config_dir,
-        csv_dump=True,
-        keep_solutions=True,
-    )
-    _src = urlparse(lh2_rp_invest_db_url).path
-    if len(_src) >= 3 and _src[0] == "/" and _src[2] == ":":
-        _src = _src[1:]  # Windows '/C:/...' -> 'C:/...'
-    shutil.copy(_src, wf / "tests.sqlite")
-    last_step = next(reversed(list(steps.values())))
-    provider = getattr(last_step, "flex_data_provider", None)
-    assert provider is not None, "cascade did not retain a sub-solve Provider"
-    provider.snapshot_processed_inputs(wf)
-    return wf, provider
-
-
-@pytest.fixture(scope="module")
-def rp_workdir(rp_workdir_and_provider):
-    return rp_workdir_and_provider[0]
-
-
-@pytest.fixture(scope="module")
-def rp_data(rp_workdir_and_provider):
-    # Thread the in-memory Provider (production path) rather than a
-    # bare-Path CSV reload — see ``rp_workdir_and_provider``.
-    wf, provider = rp_workdir_and_provider
-    return load_flextool(wf, provider=provider)
+def rp_data(scenario_run):
+    """The RP-invest fixture's FlexData, rebuilt from the cascade's in-memory
+    sub-solve provider with the production loader call (``load_scenario``)."""
+    return load_scenario(scenario_run("lh2_three_region_rp_invest", db_fixture="lh2_rp_invest"))
 
 
 @pytest.fixture(scope="module")
 def monolith(rp_data):
-    """Solve the whole RP fixture once (cascade-emitted workdir → the
-    `timestep_weight.csv` round-trip that the RP-weight fix repairs)."""
+    """Solve the whole RP fixture once (the non-unit ``p_timestep_weight``
+    that the RP-weight fix repairs reaches the objective)."""
     pb = Problem()
     build_flextool(pb, rp_data)
     sol = pb.solve()

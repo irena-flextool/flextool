@@ -33,10 +33,8 @@ CLAUDE.md "JSON-fixture single source of truth" invariant.
 """
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 import numpy as np
 import polars as pl
@@ -44,9 +42,10 @@ import pytest
 
 from polar_high import Problem, WarmProblem
 
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.solve import _region_filter
 from flextool.engine.solve._benders import solve_benders
+from tests._support.load import load_scenario, run_scenario
 
 
 FLEXTOOL_ROOT = Path(__file__).resolve().parents[2]
@@ -114,9 +113,8 @@ def _autarky_cost(data) -> float:
 
 
 @pytest.fixture(scope="module")
-def base_data(scenario_workdir):
-    work = scenario_workdir("lh2_three_region", db_fixture="lh2")
-    return load_flextool(work)
+def base_data(scenario_run):
+    return load_scenario(scenario_run("lh2_three_region", db_fixture="lh2"))
 
 
 @pytest.fixture(scope="module")
@@ -240,34 +238,20 @@ def _set_single_solve(db_url: str, solve: str) -> None:
 
 
 @pytest.fixture(scope="module")
-def invest_solve_data(tmp_path_factory):
+def invest_solve_data(tmp_path_factory, test_solver_config_dir):
     """FlexData for the ``lh2_invest`` solve (the Benders invest solve over
-    fixed-capacity pipes), snapshotted from a single-solve chain run."""
-    from flextool.engine.solve._orchestration import run_chain_from_db
-
+    fixed-capacity pipes), rebuilt from a single-solve chain run through the
+    production loader call."""
     tmp_path = tmp_path_factory.mktemp("lh2_benders_invest_solve")
     url = _build_invest_db(tmp_path)
     _set_single_solve(url, "lh2_invest")
 
     parent = tmp_path_factory.mktemp("_root_benders_invest_solve")
-    wf = parent / f"work_{INVEST_SCENARIO}"
-    wf.mkdir()
-    steps = run_chain_from_db(
-        input_db_url=url,
-        scenario_name=INVEST_SCENARIO,
-        work_folder=wf,
-        csv_dump=True,
-        keep_solutions=True,
+    run = run_scenario(
+        url, INVEST_SCENARIO, parent / f"work_{INVEST_SCENARIO}",
+        solver_config_dir=test_solver_config_dir,
     )
-    _src = urlparse(url).path
-    if len(_src) >= 3 and _src[0] == "/" and _src[2] == ":":
-        _src = _src[1:]  # Windows '/C:/...' -> 'C:/...'
-    shutil.copy(_src, wf / "tests.sqlite")
-    last_step = next(reversed(list(steps.values())))
-    provider = getattr(last_step, "flex_data_provider", None)
-    if provider is not None:
-        provider.snapshot_processed_inputs(wf)
-    return load_flextool(wf)
+    return load_scenario(run)
 
 
 @pytest.mark.solver

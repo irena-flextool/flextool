@@ -13,6 +13,8 @@ provider-only state, and builds axis Enums that production never builds).  This 
   handoff the step consumed (:class:`ScenarioRun`).
 * :func:`load_scenario` repeats the production load for one step of that run.
 * :func:`clone_provider` gives a test its own provider to change.
+* :func:`save_provider` / :func:`load_saved` carry a provider to a child process (which cannot receive
+  the in-memory object) as parquet files, and repeat the production load there.
 
 Loads happen in ``run.load_folder``, an empty sibling of the work folder.  Until the loader's disk
 fallbacks are removed, a load in the work folder (which holds the provider snapshot CSVs and a
@@ -25,10 +27,13 @@ shared by every test that uses the (session-cached) run.  Never mutate them; clo
 """
 from __future__ import annotations
 
+import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
+
+import polars as pl
 
 from flextool.engine.input._spinedb_reader import SpineDbReader
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
@@ -39,8 +44,11 @@ __all__ = [
     "ScenarioRun",
     "StepInputs",
     "clone_provider",
+    "load_saved",
     "load_scenario",
+    "read_saved_provider",
     "run_scenario",
+    "save_provider",
     "sqlite_path_from_url",
 ]
 
@@ -227,25 +235,101 @@ def load_scenario(
             f"scenario {run.scenario!r}: step {target.solve_name!r} shares its provider with later step(s) "
             f"{sharing}; the provider holds the last of them, so step {target.solve_name!r} cannot be rebuilt"
         )
-    leftovers = sorted(p.name for p in run.load_folder.iterdir()) if run.load_folder.exists() else None
+    p = clone_provider(target.provider) if provider is None else provider
+    return _production_load(
+        run.load_folder, p, run.db_url, run.scenario, handoff=target.prior_handoff, axis_enums=axis_enums,
+    )
+
+
+def _production_load(
+    load_folder: Path,
+    p: FlexDataProvider,
+    db_url: str,
+    scenario: str,
+    *,
+    handoff: object | None,
+    axis_enums: bool,
+) -> FlexData:
+    """``load_flextool(load_folder, provider=p, db_reader=SpineDbReader(db_url, scenario), handoff=handoff)``.
+
+    Refuses a missing or non-empty ``load_folder`` (a file there would feed the loader's disk fallbacks).
+    ``axis_enums=True`` sets the scenario's Enum vocabulary on ``p`` (which must be the caller's own
+    provider, never a cached one) and on the reader; ``False`` refuses a provider that carries Enums.
+    """
+    leftovers = sorted(f.name for f in load_folder.iterdir()) if load_folder.exists() else None
     if leftovers is None:
-        raise FileNotFoundError(f"load folder {run.load_folder} is missing")
+        raise FileNotFoundError(f"load folder {load_folder} is missing")
     if leftovers:
         raise RuntimeError(
-            f"load folder {run.load_folder} is not empty ({leftovers[:5]}); a file there would feed the "
+            f"load folder {load_folder} is not empty ({leftovers[:5]}); a file there would feed the "
             f"loader's disk fallbacks for every later load of this run"
         )
-    p = clone_provider(target.provider) if provider is None else provider
     if axis_enums:
-        enums, contract = _scenario_axis_enums(run.db_url, run.scenario)
+        enums, contract = _scenario_axis_enums(db_url, scenario)
         p.axis_enums = enums
         p.contract = contract
-        reader = SpineDbReader(run.db_url, scenario=run.scenario, axis_enums=enums, contract=contract)
+        reader = SpineDbReader(db_url, scenario=scenario, axis_enums=enums, contract=contract)
     else:
         if p.axis_enums is not None:
             raise ValueError(
                 "load_scenario: the provider carries axis Enums but axis_enums=False; production loads "
                 "without them.  Pass axis_enums=True or a provider without Enums."
             )
-        reader = run.reader()
-    return load_flextool(run.load_folder, provider=p, db_reader=reader, handoff=target.prior_handoff)
+        reader = SpineDbReader(db_url, scenario=scenario)
+    return load_flextool(load_folder, provider=p, db_reader=reader, handoff=handoff)
+
+
+_MANIFEST = "manifest.json"
+
+
+def save_provider(p: FlexDataProvider, folder: Path) -> None:
+    """Write ``p``'s frames to ``folder`` so :func:`read_saved_provider` can rebuild it in another process.
+
+    One parquet file per key (parquet keeps the dtypes; a CSV would not), plus ``manifest.json`` with the
+    key → file map and the source tags.  ``folder`` must be missing or empty.  Raises for a provider
+    with evicted frames or axis Enums: neither survives the files (the child builds Enums itself with
+    ``load_saved(..., axis_enums=True)``).
+    """
+    if p._evicted:
+        raise ValueError(f"save_provider: the provider has evicted frames ({sorted(p._evicted)[:5]}…)")
+    if p.axis_enums is not None:
+        raise ValueError("save_provider: the provider carries axis Enums, which are not saved")
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    if any(folder.iterdir()):
+        raise RuntimeError(f"save_provider: {folder} is not empty")
+    frames: dict[str, str] = {}
+    for i, (key, frame) in enumerate(p._frames.items()):
+        name = f"{i:05d}.parquet"
+        frame.write_parquet(folder / name)
+        frames[key] = name
+    (folder / _MANIFEST).write_text(json.dumps({"frames": frames, "sources": p._sources}, indent=1))
+
+
+def read_saved_provider(folder: Path) -> FlexDataProvider:
+    """The provider :func:`save_provider` wrote to ``folder`` (same keys, frames and source tags)."""
+    folder = Path(folder)
+    manifest = json.loads((folder / _MANIFEST).read_text())
+    q = FlexDataProvider(retain_all=True)
+    q._frames = {key: pl.read_parquet(folder / name) for key, name in manifest["frames"].items()}
+    q._sources = dict(manifest["sources"])
+    return q
+
+
+def load_saved(
+    folder: Path,
+    db_url: str,
+    scenario: str,
+    load_folder: Path,
+    *,
+    axis_enums: bool = False,
+) -> FlexData:
+    """The production loader call on a provider saved with :func:`save_provider` (for a child process).
+
+    ``load_flextool(load_folder, provider=read_saved_provider(folder), db_reader=SpineDbReader(db_url,
+    scenario))``.  No handoff is passed, so save only a step that consumed none (``prior_handoff is
+    None``: a single-solve run or the first step).  ``load_folder`` must exist and be empty;
+    ``axis_enums`` as in :func:`load_scenario`.
+    """
+    p = read_saved_provider(folder)
+    return _production_load(Path(load_folder), p, db_url, scenario, handoff=None, axis_enums=axis_enums)

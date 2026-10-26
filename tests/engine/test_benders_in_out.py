@@ -27,13 +27,14 @@ import pytest
 
 from polar_high import Problem
 
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.solve._benders import (
     _BENDERS_IN_OUT_WEIGHT_ENV,
     _cut_separates,
     _resolve_benders_in_out_weight,
     solve_benders,
 )
+from tests._support.load import load_scenario
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 
@@ -183,15 +184,15 @@ def test_cut_separates_verbatim_out_step_never_separates_at_zero_gap():
 
 
 @pytest.fixture(scope="module")
-def ti_workdir(scenario_workdir):
-    return scenario_workdir(
+def ti_run(scenario_run):
+    return scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"
     )
 
 
 @pytest.fixture(scope="module")
-def ti_data(ti_workdir):
-    return load_flextool(ti_workdir)
+def ti_data(ti_run):
+    return load_scenario(ti_run)
 
 
 @pytest.fixture(scope="module")
@@ -255,8 +256,8 @@ def test_weight_zero_converges_to_monolith(ti_data, monolith_obj, monkeypatch):
 
 
 @pytest.fixture(scope="module")
-def retuned_data(scenario_workdir):
-    return load_flextool(scenario_workdir(
+def retuned_data(scenario_run):
+    return load_scenario(scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest_retuned"))
 
 

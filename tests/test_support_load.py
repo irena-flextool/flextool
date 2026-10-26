@@ -13,7 +13,15 @@ from polar_high import Problem
 
 from flextool.engine import build_flextool
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from tests._support.load import clone_provider, load_scenario
+from polar_high import Param
+
+from tests._support.load import (
+    clone_provider,
+    load_saved,
+    load_scenario,
+    read_saved_provider,
+    save_provider,
+)
 
 pytestmark = pytest.mark.solver
 
@@ -138,3 +146,59 @@ def test_enum_provider_needs_axis_enums_flag(scenario_run):
     p.axis_enums = {"node": pl.Enum(["n"])}
     with pytest.raises(ValueError, match="carries axis Enums"):
         load_scenario(run, provider=p)
+
+
+def _same_field(a, b) -> bool:
+    if isinstance(a, Param) and isinstance(b, Param):
+        return a.dims == b.dims and a.frame.schema == b.frame.schema and a.frame.equals(b.frame)
+    if isinstance(a, pl.DataFrame) and isinstance(b, pl.DataFrame):
+        return a.schema == b.schema and a.equals(b)
+    if a is None or b is None or isinstance(a, (bool, int, float, str)):
+        return a == b
+    return type(a) is type(b)
+
+
+def test_saved_provider_round_trips_and_loads_like_load_scenario(scenario_run, tmp_path):
+    """``save_provider`` → ``read_saved_provider`` gives back every key, dtype, frame and source tag, and
+    ``load_saved`` (the child-process load) builds the same FlexData as ``load_scenario``."""
+    run = scenario_run("base")
+    original = run.last.provider
+    assert run.last.prior_handoff is None
+    saved = tmp_path / "provider"
+    save_provider(original, saved)
+
+    back = read_saved_provider(saved)
+    assert back.keys() == original.keys()
+    for key in original.keys():
+        a, b = original.get(key), back.get(key)
+        assert a.schema == b.schema, key
+        assert a.equals(b), key
+    assert back._sources == original._sources
+
+    load_folder = tmp_path / "load"
+    load_folder.mkdir()
+    via_saved = load_saved(saved, run.db_url, run.scenario, load_folder)
+    direct = load_scenario(run)
+    differing = [
+        f.name for f in dataclasses.fields(direct)
+        if not _same_field(getattr(direct, f.name), getattr(via_saved, f.name))
+    ]
+    assert differing == []
+    assert via_saved._axis_enums is None
+    assert list(load_folder.iterdir()) == []
+
+    with_enums = load_saved(saved, run.db_url, run.scenario, load_folder, axis_enums=True)
+    assert isinstance(with_enums.p_inflow.frame.schema["n"], pl.Enum)
+
+
+def test_save_provider_refuses_what_it_cannot_carry(scenario_run, tmp_path):
+    """Axis Enums and a non-empty target folder are refused instead of being silently lost or mixed."""
+    run = scenario_run("base")
+    p = clone_provider(run.last.provider)
+    p.axis_enums = {"node": pl.Enum(["n"])}
+    with pytest.raises(ValueError, match="axis Enums"):
+        save_provider(p, tmp_path / "enums")
+    (tmp_path / "used").mkdir()
+    (tmp_path / "used" / "x").write_text("")
+    with pytest.raises(RuntimeError, match="is not empty"):
+        save_provider(run.last.provider, tmp_path / "used")

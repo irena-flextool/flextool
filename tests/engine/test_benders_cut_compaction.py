@@ -24,7 +24,6 @@ import logging
 import numpy as np
 import pytest
 
-from flextool.engine import load_flextool
 from flextool.engine.solve._benders import (
     _BendersMaster,
     _BENDERS_CUT_COMPACT_AT_ENV,
@@ -36,6 +35,7 @@ from flextool.engine.solve._benders import (
     _resolve_benders_cut_window,
     solve_benders,
 )
+from tests._support.load import load_scenario
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 
@@ -116,11 +116,11 @@ def test_cut_window_non_integer_ignored_with_warning(monkeypatch, caplog):
 # Fixture for the e2e test.
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
-def ti_data(scenario_workdir):
-    wd = scenario_workdir(
+def ti_data(scenario_run):
+    run = scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"
     )
-    return load_flextool(wd)
+    return load_scenario(run)
 
 
 #: The e2e compaction run needs a multi-iteration solve: the representative-
@@ -131,11 +131,11 @@ _OBJ_SCALE = 1e-6
 
 
 @pytest.fixture(scope="module")
-def rp_data(scenario_workdir):
-    wd = scenario_workdir(
+def rp_data(scenario_run):
+    run = scenario_run(
         "lh2_three_region_rp_invest", db_fixture="lh2_rp_invest"
     )
-    return load_flextool(wd)
+    return load_scenario(run)
 
 
 # ---------------------------------------------------------------------------

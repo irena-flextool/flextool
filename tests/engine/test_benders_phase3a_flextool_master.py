@@ -36,9 +36,10 @@ import pytest
 
 from polar_high import Problem
 
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.solve import _region_filter
 from flextool.engine.solve._benders import solve_benders
+from tests._support.load import load_scenario
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 # Monolith optimum of the re-tuned trade-invest sibling (``lh2_trade_invest_retuned``,
@@ -47,15 +48,15 @@ _M_EXPECTED = 4.6054965e9
 
 
 @pytest.fixture(scope="module")
-def ti_workdir(scenario_workdir):
-    return scenario_workdir(
+def ti_run(scenario_run):
+    return scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest_retuned"
     )
 
 
 @pytest.fixture(scope="module")
-def ti_data(ti_workdir):
-    return load_flextool(ti_workdir)
+def ti_data(ti_run):
+    return load_scenario(ti_run)
 
 
 @pytest.fixture(scope="module")

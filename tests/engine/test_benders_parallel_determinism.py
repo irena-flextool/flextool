@@ -15,20 +15,22 @@ ship.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from flextool.engine import load_flextool
 from flextool.engine.solve._benders import solve_benders
+from tests._support.load import load_scenario, save_provider
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 
 
 @pytest.fixture(scope="module")
-def ti_data(scenario_workdir):
-    workdir = scenario_workdir(
+def ti_data(scenario_run):
+    run = scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"
     )
-    return load_flextool(workdir)
+    return load_scenario(run)
 
 
 def _run(ti_data, workers):
@@ -119,17 +121,28 @@ def test_env_override_resolves(ti_data, monkeypatch) -> None:
 # coefficients and, on a marginal master, kUnknown vs kOptimal) changed with
 # the hash seed.  An in-process check cannot see this — one process has one
 # seed — so each seed runs in its own interpreter.
+#
+# The child cannot receive the in-memory provider, so the parent saves the
+# run's provider as parquet (``save_provider``) and the child repeats the
+# production load on it (``load_saved``).  The child builds the axis Enums
+# (``axis_enums=True``): #153 is an Enum category-order bug, so this probe is
+# one of the tests of the Enum activation itself (production loads without
+# Enums).
 # ---------------------------------------------------------------------------
 
 _HASHSEED_PROBE = r"""
 import hashlib, json, sys
+sys.path.insert(0, sys.argv[1])
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.solve import _region_filter
 from flextool.engine.solve._benders import solve_benders
 from flextool.engine.input._axis_enums import set_global_axis_enums
+from tests._support.load import load_saved
 
-data = load_flextool(sys.argv[1])
+saved, db_url, scenario, load_folder = sys.argv[2:6]
+data = load_saved(saved, db_url, scenario, load_folder, axis_enums=True)
+assert data._axis_enums is not None, "the probe must run with axis Enums (#153)"
 regions = ["region_A", "region_B", "region_C"]
 if getattr(data, "_axis_enums", None) is not None:
     set_global_axis_enums(data._axis_enums)
@@ -152,25 +165,34 @@ print("PROBE" + json.dumps(out))
 
 
 @pytest.fixture(scope="module")
-def ti_retuned_workdir(scenario_workdir):
-    return scenario_workdir(
+def ti_retuned_run(scenario_run):
+    return scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest_retuned"
     )
 
 
-def test_region_lps_and_trajectory_independent_of_hash_seed(ti_retuned_workdir) -> None:
+def test_region_lps_and_trajectory_independent_of_hash_seed(ti_retuned_run, tmp_path) -> None:
     import json
     import os
     import subprocess
     import sys
 
+    run = ti_retuned_run
+    # ``load_saved`` passes no handoff: the run must be one step that consumed none.
+    assert [s.prior_handoff for s in run.steps] == [None], [s.solve_name for s in run.steps]
+    saved = tmp_path / "provider"
+    save_provider(run.last.provider, saved)
+    repo_root = Path(__file__).resolve().parents[2]
     outs = {}
     # Seeds 0 and 2 ordered the half-flow tokens differently before the fix
     # (seed 2 then also failed the hand master with kUnknown).
     for seed in ("0", "1", "2", "3"):
         env = dict(os.environ, PYTHONHASHSEED=seed)
+        load_folder = tmp_path / f"load_seed{seed}"
+        load_folder.mkdir()
         proc = subprocess.run(
-            [sys.executable, "-c", _HASHSEED_PROBE, str(ti_retuned_workdir)],
+            [sys.executable, "-c", _HASHSEED_PROBE, str(repo_root), str(saved), run.db_url,
+             run.scenario, str(load_folder)],
             env=env, capture_output=True, text=True, timeout=600,
         )
         assert proc.returncode == 0, (

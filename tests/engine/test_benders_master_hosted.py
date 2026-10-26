@@ -41,7 +41,7 @@ import polar_high.benders as ph_benders
 from polar_high import Param, Problem, WarmProblem
 
 import flextool.engine.solve._benders as fx_benders
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.solve._benders import (
     _assert_finite_boundary_penalties,
     _master_autarky_cost,
@@ -52,6 +52,7 @@ from flextool.engine.solve._region_filter import (
     load_region_membership,
     split,
 )
+from tests._support.load import load_scenario
 
 #: The 2-region driver configuration: region B's subsystem is hosted.
 REGIONS_AC = ["region_A", "region_C"]
@@ -78,26 +79,25 @@ OBJ_SCALE = 1e-6
 
 
 @pytest.fixture(scope="module")
-def _workdirs(scenario_workdir):
-    """Build every cascade workdir BEFORE any load_flextool call (the
-    known same-process global-axis-enum interleave hazard, cf.
-    test_region_filter_master_hosted)."""
-    mh = scenario_workdir(
+def _runs(scenario_run):
+    """Run every cascade BEFORE any FlexData load (the known same-process
+    global-axis-enum interleave hazard, cf. test_region_filter_master_hosted)."""
+    mh = scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_master_hourly"
     )
-    ti = scenario_workdir(
+    ti = scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"
     )
-    mb = scenario_workdir(
+    mb = scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_master_build"
     )
     return mh, ti, mb
 
 
 @pytest.fixture(scope="module")
-def mh_data(_workdirs):
+def mh_data(_runs):
     """All-hourly master-hosted driver fixture (see module docstring)."""
-    return load_flextool(_workdirs[0])
+    return load_scenario(_runs[0])
 
 
 def _copy_with(data, **field_overrides):
@@ -357,14 +357,14 @@ def test_stall_reference_includes_master_autarky(
 
 
 def test_all_grouped_never_solves_master_autarky(
-    _workdirs, monkeypatch
+    _runs, monkeypatch
 ) -> None:
     """Byte-parity gate: with EVERY node grouped the driver must pass
     ``extra_reference_cost=None`` — no autarky pin, no extra master
     solve.  (The all-grouped trajectory itself is pinned bit-for-bit by
     ``test_benders_trajectory_pin.py``.)  Runs on the plain trade-invest
     fixture — the phase-2-proven all-grouped configuration."""
-    ti_data = load_flextool(_workdirs[1])
+    ti_data = load_scenario(_runs[1])
 
     def _boom(master):
         raise AssertionError(
@@ -609,7 +609,7 @@ def test_straddling_unit_raises_through_driver(mh_data) -> None:
         solve_benders(data, REGIONS_ABC, max_iters=5, tol=1e-4)
 
 
-def test_mixed_resolution_coupling_brackets_monolith(_workdirs, tmp_path, monkeypatch) -> None:
+def test_mixed_resolution_coupling_brackets_monolith(_runs, tmp_path, monkeypatch) -> None:
     """On the DAILY-group sibling (``lh2_master_build``), hosting the A/B
     carrier chains makes every electrolyser coupling arc join an hourly
     node (elec) to a daily node (h2).  Every flow lives on the hourly
@@ -629,7 +629,7 @@ def test_mixed_resolution_coupling_brackets_monolith(_workdirs, tmp_path, monkey
     convergence smoke test: the 2 × 48 hourly electrolyser coupling columns
     make plain Benders slow here (gap 1.2e-2 after 300 iterations); in-out
     stabilization (λ = 0.7) closes it to ~1e-2 in 80 iterations."""
-    mb_data = load_flextool(_workdirs[2])
+    mb_data = load_scenario(_runs[2])
     data = _host_nodes(
         mb_data, frozenset({"h2_A", "lh2_A", "h2_B", "lh2_B"}), REGIONS_ABC
     )

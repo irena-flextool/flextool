@@ -76,13 +76,14 @@ import pytest
 
 from polar_high import Param, Problem, WarmProblem
 
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
 from flextool.engine.solve import _region_filter
 from flextool.engine.input._axis_enums import (
     get_global_axis_enums,
     reset_global_axis_enums,
     set_global_axis_enums,
 )
+from tests._support.load import load_scenario
 
 # Raw HiGHS duals are in objective-scaled units; the user-facing price is
 # ``raw_dual × (−_INV_SCALE_THE_OBJECTIVE / inflation[d])``.  Here we only
@@ -104,15 +105,15 @@ _ATOL = 1e-3
 
 
 @pytest.fixture(scope="module")
-def ti_workdir(scenario_workdir):
-    return scenario_workdir(
+def ti_run(scenario_run):
+    return scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"
     )
 
 
 @pytest.fixture(scope="module")
-def ti_data(ti_workdir):
-    return load_flextool(ti_workdir)
+def ti_data(ti_run):
+    return load_scenario(ti_run)
 
 
 @pytest.fixture(scope="module")

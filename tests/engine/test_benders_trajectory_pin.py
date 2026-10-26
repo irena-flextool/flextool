@@ -39,8 +39,8 @@ import os
 
 import pytest
 
-from flextool.engine import load_flextool
 from flextool.engine.solve._benders import solve_benders
+from tests._support.load import load_scenario
 
 _REGIONS = ["region_A", "region_B", "region_C"]
 
@@ -131,11 +131,11 @@ def _pinned_environment():
 
 
 @pytest.fixture(scope="module")
-def ti_data(scenario_workdir):
-    work = scenario_workdir(
+def ti_data(scenario_run):
+    run = scenario_run(
         "lh2_three_region_trade_invest", db_fixture="lh2_trade_invest"
     )
-    return load_flextool(work)
+    return load_scenario(run)
 
 
 def _assert_close(actual: float, expected: float, what: str) -> None:
