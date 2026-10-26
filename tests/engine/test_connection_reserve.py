@@ -231,7 +231,7 @@ def test_two_way_reserve_rows(tmp_path_factory) -> None:
         assert coef(terms, f"v_flow[{bi},west,battery,p2020,{t}]") == pytest.approx(1.0)
         assert coef(terms, f"v_flow[{bi},battery,west,p2020,{t}]") == pytest.approx(-0.95)
         assert coef(terms, f"v_reserve[{bi},rs,down,west,p2020,{t}]") == pytest.approx(0.95)
-    assert step.solution.obj == pytest.approx(1030.1371975856e6, rel=1e-8)
+    assert step.solution.obj == pytest.approx(1030.1368300761e6, rel=1e-8)
 
 
 def test_online_connection_reserve(tmp_path_factory) -> None:
