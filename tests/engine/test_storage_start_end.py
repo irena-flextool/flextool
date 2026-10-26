@@ -5,6 +5,8 @@
 * Later solves and rolls continue from the realised state; fix_start only where a level first appears.
 * ``fix_end`` / ``fix_start_end`` pin the end of the last sub-solve of each nesting level; an upper-level nested
   fix_quantity / fix_usage at that step wins.  The horizon-end reference value yields to any nested fix.
+* ``fix_start_end`` ignores the storage_binding_method: a cyclic node chains forward, a bind_intraperiod_blocks node
+  keeps its blocks and chains them forward.
 
 Databases: ``tests/fixtures/tests.json`` / ``stochastics.json`` plus an override alternative (never a checked-in
 sqlite).
@@ -772,3 +774,146 @@ def test_storage_solve_last_per_level():
     got = dict(zip(solves, _storage_solve_last(solves, level.__getitem__, siblings)))
     assert got == {"inv": False, "sto_0": False, "d_0": False, "d_1": False, "sto_1": True, "d_2": False,
                    "d_3": True, "uc_0": False, "rd_0": False, "uc_1": True, "rd_1": True}
+
+
+# ---------------------------------------------------------------------------
+# fix_start_end ignores the storage_binding_method (N12)
+# ---------------------------------------------------------------------------
+
+FIVE_WEEKS = ["init", "west", "wind", "battery", "5weeks"]
+
+
+def _n12_state(method: str, d: str, t: str) -> float:
+    """The forward chain of the N12 fixture (MWh): 10 at the start, 20 from t0003 of p2020, 30 from t0003 of p2025.
+    A block node's state is the state at the end of its block (t0001–t0004, t0009–t0016, t0025–t0028,
+    t0037–t0040), so 20 in every p2020 block and 30 in every p2025 block."""
+    if d == "p2020":
+        return 20.0 if method == "bind_intraperiod_blocks" or t >= "t0003" else 10.0
+    return 30.0 if method == "bind_intraperiod_blocks" or t >= "t0003" else 20.0
+
+
+@pytest.mark.parametrize("method", ["bind_within_solve", "bind_within_timeblock", "bind_within_period",
+                                    "bind_within_period_blended_weights", "bind_intraperiod_blocks"])
+def test_fix_start_end_cyclic_chains_forward(tmp_path_factory, method):
+    """y2020_5week (p2020, p2025; steps t0001–t0004, t0009–t0016, t0025–t0028, t0037–t0040 in each), battery
+    fix_start_end with storage_state_start 0.25 and storage_state_end 0.5, existing 40 MWh in p2020 and 60 MWh in
+    p2025, no self-discharge, inverter capacity 0 (no flows), inflow +10 MWh at t0003 of each period.  With
+    fix_start_end the binding method is ignored (reference.md), so the chain runs forward through both periods: it
+    starts from 0.25·40 = 10 MWh, holds 10 + 10 = 20 from t0003 of p2020, continues into p2025 at 20, holds
+    20 + 10 = 30 from its t0003 and ends at 30 = 0.5·60 MWh, the end pin, with no slack (_n12_state).  Both periods
+    end at t0040, so period_last holds both and p2020 is also pinned at its end: 20 = 0.5·40 (the existing
+    capacities are chosen so that the chain meets both pins).  A bind_intraperiod_blocks node keeps its blocks.  The
+    blended method has no representative periods here: blended → plain (downgrade) → forward-only.  Before, each
+    cycle needed a net inflow of 0 (each period has +10: slack), and with bind_within_solve the start and end pins
+    sat on one state."""
+    from flextool.engine.model import _self_discharge
+
+    url, scen = make_db(tmp_path_factory, alt=f"sse_n12_{method[5:]}", base_chain=FIVE_WEEKS, values=[
+        ["node", "battery", "storage_binding_method", _s(method)],
+        ["node", "battery", "storage_start_end_method", _s("fix_start_end")],
+        ["node", "battery", "storage_state_start", _f(0.25)],
+        ["node", "battery", "storage_state_end", _f(0.5)], NO_LOSS,
+        ["node", "battery", "existing", b64({"index_type": "str", "index_name": "period",
+                                             "data": [["p2020", 40.0], ["p2025", 60.0]]}, "map")],
+        ["node", "battery", "inflow", time_map({"t0003": 10.0}, 0.0)],
+        ["connection", "battery_inverter", "existing", _f(0.0)]])
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    assert step.solution.optimal
+    fd = step.flex_data
+    existing = {d: _existing(fd, "battery", d) for d in ("p2020", "p2025")}
+    assert existing == {"p2020": pytest.approx(40.0), "p2025": pytest.approx(60.0)}
+    for cyclic in ("storage_bind_within_solve", "storage_bind_within_timeblock", "storage_bind_within_period",
+                   "storage_bind_within_period_blended_weights"):
+        frame = getattr(fd, cyclic)
+        assert frame is None or "battery" not in utf8(frame)["n"].to_list(), cyclic
+    if method == "bind_intraperiod_blocks":
+        assert "battery" in utf8(fd.nodeStateBlock)["n"].to_list()
+        assert utf8(_self_discharge.block_forward_nodes(fd))["n"].to_list() == ["battery"]
+        assert _self_discharge.block_cyclic_nodes(fd) is None
+    else:
+        assert "battery" in utf8(fd.storage_bind_forward_only)["n"].to_list()
+    pb = build(fd)
+    assert not row_terms(pb, PIN, "battery,") and not _bare(pb, "battery")
+    su = _su(fd)
+    last = _last_steps(fd)
+    assert ("p2025", "t0040") in last
+    ends = row_bounds(pb, END, "battery,")
+    assert set(ends) == {f"{END}[battery,{d},{t}]" for d, t in last}
+    for d, t in last:
+        lo, hi = ends[f"{END}[battery,{d},{t}]"]
+        assert lo == pytest.approx(0.5 * existing[d] / su) and hi == pytest.approx(lo)
+    rows = utf8(step.solution.value("v_state")).filter(pl.col("n") == "battery")
+    assert rows.height == 40
+    for d, t, v in rows.select("d", "t", "value").iter_rows():
+        assert v * su == pytest.approx(_n12_state(method, d, t), abs=1e-6), (d, t, v * su)
+    for slack in ("vq_state_up", "vq_state_down"):
+        hit = utf8(step.solution.value(slack)).filter(pl.col("n") == "battery")
+        assert hit.height == 0 or hit["value"].abs().max() == pytest.approx(0.0, abs=1e-9), slack
+
+
+def test_fix_start_end_blocks_continue_between_solves(tmp_path_factory):
+    """The manual 4-solve sequence (y2020 → y2035, one period each), battery bind_intraperiod_blocks + fix_start_end
+    (start 0.1, end 0.3), no self-discharge, no inflow on the battery.  The blocks chain forward, so the node is not
+    cyclic: each later solve continues from the state its predecessor realised (the first block's balance holds
+    −carry, as a forward-only node's first step), no solve has the wrap-target pin, and only the last solve has the
+    end pin.  Before, the blocks looped in each solve: no carry in the balance (bound 0)."""
+    url, scen = make_db(tmp_path_factory, alt="sse_n12_seq_blocks", base_chain=SEQ, values=[
+        ["node", "battery", "storage_binding_method", _s("bind_intraperiod_blocks")],
+        ["node", "battery", "storage_start_end_method", _s("fix_start_end")], NO_LOSS])
+    steps = list(run(tmp_path_factory, url, scen).values())
+    assert [s.solve_name for s in steps] == ["y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week"]
+    assert all(s.solution.optimal for s in steps)
+    assert _carry(steps[0].flex_data) is None
+    for i, step in enumerate(steps):
+        fd = step.flex_data
+        pb = build(fd)
+        assert not row_terms(pb, PIN, "battery,"), step.solve_name
+        assert bool(row_terms(pb, END, "battery,")) == (i == len(steps) - 1), step.solve_name
+        if i == 0:
+            continue
+        want = _realised_end(steps[i - 1])
+        assert _carry(fd) == pytest.approx(want, abs=1e-9)
+        d, t = utf8(fd.nodeState_first_dt).filter(pl.col("n") == "battery").select("d", "t").row(0)
+        name = f"nodeBalanceBlock_eq[battery,{d},{t}]"
+        lo, hi = row_bounds(pb, "nodeBalanceBlock_eq", f"battery,{d},{t}")[name]
+        assert lo == pytest.approx(-want, abs=1e-9) and hi == pytest.approx(lo), step.solve_name
+
+
+class _Provider:
+    def __init__(self, frames: dict):
+        self.frames = dict(frames)
+
+    def has(self, key: str) -> bool:
+        return key in self.frames
+
+    def get(self, key: str):
+        return self.frames[key]
+
+    def put(self, key: str, frame) -> None:
+        self.frames[key] = frame
+
+
+def test_fix_start_end_mapping_rewrites_only_fix_start_end_nodes():
+    """The per-solve mapping: a fix_start_end node's cyclic method becomes its forward-only equivalent (blended →
+    forward-only blended); bind_forward_only, bind_intraperiod_blocks (the model chains its blocks forward) and the
+    nodes of the other start / end methods keep their method."""
+    import logging
+
+    from flextool.engine.solve._run_model import _fix_start_end_chains_forward
+
+    methods = {"a": "bind_within_solve", "b": "bind_within_timeblock", "c": "bind_within_period",
+               "d": "bind_within_solve_blended_weights", "e": "bind_within_period_blended_weights",
+               "f": "bind_forward_only", "g": "bind_intraperiod_blocks", "h": "bind_within_solve",
+               "i": "bind_within_solve"}
+    start_end = {n: "fix_start_end" for n in "abcdefg"} | {"h": "fix_start", "i": "fix_end"}
+    provider = _Provider({
+        "input/node__storage_binding_method": pl.DataFrame({"node": list(methods),
+                                                            "storage_binding_method": list(methods.values())}),
+        "input/node__storage_start_end_method": pl.DataFrame({"node": list(start_end),
+                                                              "storage_start_end_method": list(start_end.values())})})
+    _fix_start_end_chains_forward(solve="s", provider=provider, logger=logging.getLogger("test"))
+    got = dict(provider.get("input/node__storage_binding_method").iter_rows())
+    assert got == {"a": "bind_forward_only", "b": "bind_forward_only", "c": "bind_forward_only",
+                   "d": "bind_forward_only_blended_weights", "e": "bind_forward_only_blended_weights",
+                   "f": "bind_forward_only", "g": "bind_intraperiod_blocks", "h": "bind_within_solve",
+                   "i": "bind_within_solve"}

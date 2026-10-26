@@ -1121,6 +1121,25 @@ def _patch_nested_fix_quantity_reference(data: dict) -> dict:
                     values=[["node", "battery", "storage_solve_horizon_method", "use_reference_value"]])
 
 
+def _patch_storage_fix_start_end_blocks(data: dict) -> dict:
+    """5weeks_battery_intraperiod_blocks with the battery fix_start_end (start 0.1, end 0.3): the binding method's loop
+    is ignored, so the blocks chain forward from p2020 into p2025, the start is in the first block's balance and the
+    end pin is on the last block of each period_last period."""
+    return _overlay(data, name="storage_fix_start_end_blocks", base="5weeks_battery_intraperiod_blocks",
+                    values=[["node", "battery", "storage_start_end_method", "fix_start_end"],
+                            ["node", "battery", "storage_state_end", 0.3]])
+
+
+def _patch_storage_fix_start_end_within_solve(data: dict) -> dict:
+    """wind_battery_invest_lifetime_renew_4solve with the battery bind_within_solve + fix_start_end (start 0.1, end
+    0.3): the solve ignores the cyclic method (bind_forward_only), so y2020 starts from fix_start, the later solves
+    continue from the realised state and only y2035 has the end pin."""
+    return _overlay(data, name="storage_fix_start_end_within_solve", base="wind_battery_invest_lifetime_renew_4solve",
+                    values=[["node", "battery", "storage_binding_method", "bind_within_solve"],
+                            ["node", "battery", "storage_start_end_method", "fix_start_end"],
+                            ["node", "battery", "storage_state_end", 0.3]])
+
+
 def _patch_rolling_intraperiod_blocks(data: dict) -> dict:
     """battery bind_intraperiod_blocks in the rolling fullYear dispatch over p2020 + p2025 (72 h each, horizon 96 h,
     jump 48 h): roll 0 holds p2020 whole (loops, cut at its realized end t0048) and chains into p2025; roll 1 starts
@@ -1457,6 +1476,8 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "nested_rolling_storage_uc": _patch_nested_rolling_storage_uc,
     "storage_sequence_start_end": _patch_storage_sequence_start_end,
     "nested_fix_quantity_reference": _patch_nested_fix_quantity_reference,
+    "storage_fix_start_end_blocks": _patch_storage_fix_start_end_blocks,
+    "storage_fix_start_end_within_solve": _patch_storage_fix_start_end_within_solve,
 }
 
 
@@ -1638,6 +1659,8 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("nested_rolling_storage_uc", _T),
     ("storage_sequence_start_end", _T),
     ("nested_fix_quantity_reference", _T),
+    ("storage_fix_start_end_blocks", _T),
+    ("storage_fix_start_end_within_solve", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

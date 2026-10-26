@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **`fix_start_end` ignores the storage binding method.** As documented, a
+  storage node with `storage_start_end_method` *fix_start_end* now chains
+  forward like *bind_forward_only* whatever its `storage_binding_method`.
+  Before, a cyclic method (*bind_within_timeblock*, *bind_within_period*,
+  *bind_within_solve* and their *_blended_weights* forms) kept cycling, so
+  the start and the end were tied together, and with different
+  `storage_state_start` and `storage_state_end` the solve needed slack or
+  ended away from `storage_state_end`. A *bind_intraperiod_blocks* node
+  keeps its blocks, which now chain forward from period to period instead
+  of looping within each period.
+
 - **`fix_end` / `fix_start_end` fix the end of the storage.** The
   `storage_state_end` of a *fix_end* or *fix_start_end* storage was never
   applied: the storage ended wherever the model chose. The end state is now

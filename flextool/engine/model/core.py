@@ -1719,7 +1719,8 @@ def _eq_block_coupling(b: _Build) -> None:
     #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·Δt
     #   + back-flow terms of two-way one-variable and DC arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
-    #   + (v_state[n,d′,t⁻] − v_state[n,d,t])·state_unitsize[n]   ((d′,t⁻) of (d,t) in dtttdt_block_lag)
+    #   + (v_state[n,d′,t⁻] − v_state[n,d,t])·state_unitsize[n]   ((d′,t⁻) of (d,t) in dtttdt_block_lag; for a
+    #     fix_start_end node in block_forward_lag)
     #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n]
     #   + start terms of open-start nodes (fix_start in the first solve, the roll carry in a continuation solve) ]
     #   = − Σ_{t ∈ b} inflow[n,d,t]
@@ -1733,8 +1734,10 @@ def _eq_block_coupling(b: _Build) -> None:
     # blocks also end at the roll's realized end; a period the roll holds whole loops as above, while in a period
     # the roll holds only in part (period_block_chain) the blocks chain forward: the period's first block continues
     # from the previous step of the solve, and at the solve's first step the chain starts from fix_start (first
-    # roll), the carried level (later rolls) or, with neither, with no state change.  Same orientation and units as
-    # nodeBalance_eq: its dual is the node's price (currency/MWh) over the block.
+    # roll), the carried level (later rolls) or, with neither, with no state change.  A fix_start_end node ignores
+    # the loop (its start and end are pinned separately): its blocks chain forward in every period like that
+    # (_self_discharge.block_forward_nodes / block_forward_lag).  Same orientation and units as nodeBalance_eq: its
+    # dual is the node's price (currency/MWh) over the block.
     terms = _node_balance_terms(b)
     step_of = (nsb.select("n").join(d.period_block_time.select("d", "b_first", "t"), how="cross")
                .select("n", "d", "b_first", "t"))
@@ -2852,10 +2855,10 @@ def _eq_storage_start_binding(b: _Build) -> None:
     )
 
 
-def _cyclic_start_pin_steps(b: _Build, *, log: bool) -> "pl.DataFrame | None":
+def _cyclic_start_pin_steps(b: _Build) -> "pl.DataFrame | None":
     """``(n, d, t)``: the steps storage_state_start_binding_cyclic_period pins (the wrap targets of the cyclic
-    fix_start nodes' first steps, less the steps an upper-level solve fixes); None when there are none.  ``log``:
-    report the wrap targets that yield to an upper-level fix."""
+    fix_start nodes' first steps, less the steps an upper-level solve fixes, which are logged); None when there are
+    none."""
     d = b.d
     if not (b.has_storage
             and _has_rows(d.storage_fix_start)
@@ -2887,10 +2890,8 @@ def _cyclic_start_pin_steps(b: _Build, *, log: bool) -> "pl.DataFrame | None":
                              pl.col("t").cast(pl.Utf8).alias("_t"))
         clash = wrap.rename({"n": "_n", "d": "_d", "t": "_t"}).join(fixed, on=["_n", "_d", "_t"], how="semi")
         if clash.height > 0:
-            if log:
-                _LOG.info("storage fix_start not pinned where the upper-level solve fixes the state at the same "
-                          "step: %s",
-                          ", ".join(f"{n} {dd} {tt}" for n, dd, tt in clash.sort("_n", "_d", "_t").iter_rows()))
+            _LOG.info("storage fix_start not pinned where the upper-level solve fixes the state at the same step: %s",
+                      ", ".join(f"{n} {dd} {tt}" for n, dd, tt in clash.sort("_n", "_d", "_t").iter_rows()))
             wrap = wrap.join(clash.rename({"_n": "n", "_d": "d", "_t": "t"}), on=["n", "d", "t"], how="anti")
     over = (b.nodeState_dt
             .with_columns(_n=pl.col("n").cast(pl.Utf8), _d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
@@ -2902,7 +2903,7 @@ def _cyclic_start_pin_steps(b: _Build, *, log: bool) -> "pl.DataFrame | None":
 def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     """Start state of fix_start storage nodes whose first step wraps to a later step of the solve."""
     d = b.d
-    over = _cyclic_start_pin_steps(b, log=True)
+    over = _cyclic_start_pin_steps(b)
     if over is None:
         return
     m = b.m
@@ -2922,8 +2923,9 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     # realised before this solve (the first solve of the model and of each nested level); a later solve neither
     # pins nor carries a cyclic node (it cycles within the solve).  Where an
     # upper-level solve fixes the state at the wrap target the upper value wins (the two equalities would sit on
-    # one variable).  A bind_intraperiod_blocks node of a roll that holds its first period only in part chains
-    # forward: its start is in nodeBalanceBlock_eq (_fix_start_terms).
+    # one variable).  A bind_intraperiod_blocks node that chains forward (fix_start_end, or a roll that holds its
+    # first period only in part) has its start in nodeBalanceBlock_eq (_fix_start_terms); fix_start_end nodes of the
+    # other cyclic methods are forward-only in the solve (_run_model._fix_start_end_chains_forward).
     lhs: dict = {"state": b.v_state}
     invested, divested = _node_in_service(b, d.nodeState, "_cyclic", coef=d.p_state_start)
     if invested is not None:
@@ -2958,18 +2960,6 @@ def _eq_storage_end_binding(b: _Build) -> None:
     # An upper-level storage fix at the step wins (fix_quantity: a second equality on the same state; fix_usage: with
     # the end pinned the usage cap can be infeasible).  A nested fix_price does not conflict and keeps the pin.
     over = _without_steps(over, _nested_fixed_end(b, with_price=False))
-    # A cyclic fix_start_end node whose first step wraps to its end step: the start pin already sits on that state
-    # (the end of a cycle is its start), and two equalities would sit on one variable.  The start pin wins.
-    start_pins = _cyclic_start_pin_steps(b, log=False)
-    if start_pins is not None:
-        start_pins = start_pins.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
-                                       pl.col("t").cast(pl.Utf8))
-        clash = (over.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
-                 .join(start_pins, on=["n", "d", "t"], how="semi"))
-        if clash.height > 0:
-            _LOG.info("storage fix_end not pinned where the cyclic fix_start pin sits on the same state: %s",
-                      ", ".join(f"{n} {dd} {tt}" for n, dd, tt in clash.sort("n", "d", "t").iter_rows()))
-            over = _without_steps(over, start_pins)
     over = over.sort("n", "d", "t")
     if over.height == 0:
         return
@@ -2980,14 +2970,14 @@ def _eq_storage_end_binding(b: _Build) -> None:
     #   + state_end[n]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   = state_end[n] · existing[n,d] / state_unitsize[n]
     #   ∀ n ∈ storage_fix_end, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last, storage_solve_last,
-    #     (n,d,t) ∉ the steps node_balance_fix_quantity_eq_lower / node_storage_usage_fix_le fix,
-    #     (n,d,t) ∉ the steps storage_state_start_binding_cyclic_period pins
+    #     (n,d,t) ∉ the steps node_balance_fix_quantity_eq_lower / node_storage_usage_fix_le fix
     # Pins the state at the end of the last step of the last sub-solve of the node's nesting level (the last roll
     # of the level) to the share state_end of the built storage capacity (state units); each last period (each
     # terminal branch of a stochastic solve) ends there.  storage_fix_end = fix_end ∪ fix_start_end.  Where an
     # upper-level solve fixes the quantity or caps the usage at that step the upper value wins; a nested fix_price
-    # steers the end through the objective and keeps the pin.  Where the end step is also the wrap target a cyclic
-    # fix_start_end node's start pin sits on (bind_within_solve, a single timeblock or period), the start pin wins.
+    # steers the end through the objective and keeps the pin.  A fix_start_end node chains forward whatever its
+    # storage_binding_method (_run_model._fix_start_end_chains_forward, _self_discharge.block_forward_nodes), so its
+    # start is in the first step's balance and never on this state; a cyclic node is pinned here by fix_end only.
     m = b.m
     lhs: dict = {"state": Where(b.v_state, over)}
     invested, divested = _node_in_service(b, d.storage_fix_end, "_end", coef=d.p_state_end)

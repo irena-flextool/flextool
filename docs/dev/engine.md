@@ -751,9 +751,27 @@ second equality on the same state) and `fix_usage`
 for `fix_price` (an objective term).  The horizon-end reference value
 (`storage_state_solve_horizon_reference_value`) yields to all three,
 `fix_price` included (`ndt_fix_storage_price`, the steps of
-`handoff/fix_storage_price`).  The end pin also yields where a cyclic
-`fix_start_end` node's start pin (`storage_state_start_binding_cyclic_period`)
-sits on the same state.
+`handoff/fix_storage_price`).
+
+A `fix_start_end` node ignores its `storage_binding_method` (reference.md,
+exception `bind_forward_only`): `_run_model._fix_start_end_chains_forward`
+rewrites the per-solve `input/node__storage_binding_method` frame right
+after `_downgrade_rp_methods_for_non_rp_solve` (so a blended node of a
+solve without representative periods goes blended → plain →
+forward-only), mapping `bind_within_timeblock` / `_period` / `_solve` to
+`bind_forward_only` and the `*_blended_weights` cycles to
+`bind_forward_only_blended_weights`.  Every `storage_bind_*` set of the
+solve comes from that frame, and every sub-solve (rolling, nested,
+stochastic, the Benders region subproblems built from the solve's
+FlexData) passes that site.  `bind_intraperiod_blocks` stays (it is an
+aggregation, not a cycle scope): `model._self_discharge.block_forward_nodes`
+(`nodeStateBlock ∩ storage_fix_start ∩ storage_fix_end`) chain their
+blocks forward in every period on `block_forward_lag` (the
+`bind_forward_only` lag on the block steps, the construction a rolling
+roll uses in a period it holds in part), with the start in the first
+block's balance and the end pin on the last block.  So the start pin and
+the end pin never sit on one state: a cyclic node is pinned at its wrap
+target by `fix_start` only, and at its end by `fix_end` only.
 
 ## Output-writer shape adaptation
 

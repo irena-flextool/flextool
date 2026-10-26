@@ -328,6 +328,62 @@ def _downgrade_rp_methods_for_non_rp_solve(
         )
 
 
+# With storage_start_end_method fix_start_end the storage_binding_method is ignored, except bind_forward_only
+# (reference.md, "Meaning"): a cyclic method chains forward instead.  Used by :func:`_fix_start_end_chains_forward`.
+_FIX_START_END_FORWARD: dict[str, str] = {
+    "bind_within_timeblock":              "bind_forward_only",
+    "bind_within_period":                 "bind_forward_only",
+    "bind_within_solve":                  "bind_forward_only",
+    "bind_within_solve_blended_weights":  "bind_forward_only_blended_weights",
+    "bind_within_period_blended_weights": "bind_forward_only_blended_weights",
+}
+
+
+def _fix_start_end_chains_forward(*, solve: str, provider, logger) -> None:
+    """Map the cyclic storage_binding_method of fix_start_end nodes to its forward-only equivalent, per solve.
+
+    With ``storage_start_end_method`` *fix_start_end* the binding method is ignored (exception bind_forward_only,
+    reference.md): the start and the end are pinned separately, so the chain must not close on itself (a cycle's
+    start is its end, and with storage_state_start ≠ storage_state_end the two pins would conflict).  Rewrites the
+    per-solve ``input/node__storage_binding_method`` frame in place (see :data:`_FIX_START_END_FORWARD`), like
+    :func:`_downgrade_rp_methods_for_non_rp_solve`, after it (a blended node of a solve without representative
+    periods: blended → plain → forward-only).  Every ``storage_bind_*`` set of the solve comes from that frame.
+    ``bind_intraperiod_blocks`` stays: it is a time aggregation, not a cycle scope; such a node keeps its blocks and
+    the model chains them forward (``model._self_discharge.block_forward_nodes``).  One info line per mapping.
+    """
+    sbm_key, sse_key = "input/node__storage_binding_method", "input/node__storage_start_end_method"
+    if not (provider.has(sbm_key) and provider.has(sse_key)):
+        return
+    sbm, sse = provider.get(sbm_key), provider.get(sse_key)
+    if sbm.height == 0 or sse.height == 0:
+        return
+    sbm_col = "storage_binding_method" if "storage_binding_method" in sbm.columns else "method"
+    sse_col = "storage_start_end_method" if "storage_start_end_method" in sse.columns else "method"
+    if sbm_col not in sbm.columns or sse_col not in sse.columns:
+        return  # malformed frame; let the downstream loaders surface it
+    nodes = sorted(str(n) for n in sse.filter(pl.col(sse_col) == "fix_start_end")["node"].unique().to_list())
+    if not nodes:
+        return
+    hit = (sbm.filter(pl.col("node").cast(pl.Utf8).is_in(nodes) & pl.col(sbm_col).is_in(list(_FIX_START_END_FORWARD)))
+           .select(pl.col("node").cast(pl.Utf8), pl.col(sbm_col).cast(pl.Utf8)).unique().sort("node"))
+    if hit.height > 0:
+        is_hit = pl.col("node").cast(pl.Utf8).is_in(hit["node"].to_list())
+        provider.put(sbm_key, sbm.with_columns(
+            pl.when(is_hit)
+            .then(pl.col(sbm_col).replace_strict(_FIX_START_END_FORWARD, default=pl.col(sbm_col)))
+            .otherwise(pl.col(sbm_col))
+            .alias(sbm_col)))
+        for node, method in hit.iter_rows():
+            logger.info(f"Solve '{solve}': storage node '{node}' has storage_start_end_method fix_start_end, so its "
+                        f"storage_binding_method {method} is ignored; it chains forward "
+                        f"({_FIX_START_END_FORWARD[method]}).")
+    blocks = (sbm.filter(pl.col("node").cast(pl.Utf8).is_in(nodes) & (pl.col(sbm_col) == "bind_intraperiod_blocks"))
+              ["node"].cast(pl.Utf8).unique().sort().to_list())
+    for node in blocks:
+        logger.info(f"Solve '{solve}': storage node '{node}' has storage_start_end_method fix_start_end, so its "
+                    "bind_intraperiod_blocks blocks chain forward instead of looping within each period.")
+
+
 def project_realized_branch_time_branch_rows(
     parent_time_branch_list: list[tuple[str, str]],
     parent_period_branch_list: list[tuple[str, str]],
@@ -1325,6 +1381,8 @@ def native_run_model(state, solver) -> int:
             provider=sub_solve_provider,
             logger=state.logger,
         )
+        # fix_start_end ignores a cyclic binding method: after the downgrade, on the same frame.
+        _fix_start_end_chains_forward(solve=solve, provider=sub_solve_provider, logger=state.logger)
         for ts_name in active_timeset_names:
             if (
                 ts_name in state.timeline.rp_weights

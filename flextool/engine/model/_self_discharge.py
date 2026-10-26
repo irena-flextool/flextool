@@ -199,8 +199,16 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
     if has_nsb and _has_rows(d.dtttdt_block_lag):
         # bind_intraperiod_blocks: t⁻ from dtttdt_block_lag (the blocks of a period form a loop; in a rolling solve
         # the blocks of a period the roll holds only in part chain forward, with no row at the solve's first step).
-        links.append(StateLink("state_change_block", d.nodeStateBlock, d.dtttdt_block_lag,
-                               "t_previous_within_solve", True, False))
+        # The fix_start_end block nodes chain forward in every period (block_forward_lag).
+        forward = block_forward_nodes(d)
+        looping = without_nodes(d.nodeStateBlock, forward)
+        if looping is not None:
+            links.append(StateLink("state_change_block", looping, d.dtttdt_block_lag,
+                                   "t_previous_within_solve", True, False))
+        forward_lag = block_forward_lag(d) if forward is not None else None
+        if forward_lag is not None:
+            links.append(StateLink("state_change_block_forward", forward, forward_lag,
+                                   "t_previous_within_solve", True, False))
     if has_rp:
         # Blended weights: t⁻ is the previous step inside a representative block; the block's first step starts
         # from v_state_rp_start (rp_start_steps).
@@ -322,18 +330,50 @@ def node_union(frames) -> "pl.DataFrame | None":
     return pl.concat(parts, how="vertical").unique(maintain_order=True)
 
 
-def block_open_nodes(d) -> "pl.DataFrame | None":
-    """bind_intraperiod_blocks nodes (n) whose blocks chain forward from the solve's first step: in a rolling solve,
-    when the roll holds the period of its first step only in part (``period_block_chain``).  None when there are
-    none (every block node then loops in the period of the first step)."""
-    nsb, chain, first = getattr(d, "nodeStateBlock", None), getattr(d, "period_block_chain", None), d.nodeState_first_dt
-    if not (_has_rows(nsb) and _has_rows(chain) and _has_rows(first)):
+def block_forward_nodes(d) -> "pl.DataFrame | None":
+    """bind_intraperiod_blocks nodes (n) with storage_start_end_method fix_start_end: the binding method's loop is
+    ignored (reference.md), so their blocks chain forward in every period of the solve (:func:`block_forward_lag`).
+    A node has one storage_start_end_method, so storage_fix_start ∩ storage_fix_end is the fix_start_end set.  None
+    when there are none."""
+    nsb = getattr(d, "nodeStateBlock", None)
+    fix_start, fix_end = getattr(d, "storage_fix_start", None), getattr(d, "storage_fix_end", None)
+    if not (_has_rows(nsb) and _has_rows(fix_start) and _has_rows(fix_end)):
         return None
+    out = (nsb.select(pl.col("n").cast(pl.Utf8))
+           .join(fix_start.select(pl.col("n").cast(pl.Utf8)), on="n", how="semi")
+           .join(fix_end.select(pl.col("n").cast(pl.Utf8)), on="n", how="semi")
+           .select(pl.col("n").cast(nsb.schema["n"], strict=False))
+           .unique(maintain_order=True))
+    return out if out.height > 0 else None
+
+
+def block_forward_lag(d) -> "pl.DataFrame | None":
+    """``(d, t, d_previous, t_previous_within_solve)``: the block state lag of :func:`block_forward_nodes`, every
+    period chained forward (``dtttdt_block_lag`` with every period of the blocks in the chained set: the
+    bind_forward_only lag on the block steps, so a period's first block continues from the previous step of the
+    solve and the solve's first step has no row)."""
+    from flextool.engine.preprocess.params._derived import dtttdt_block_lag_from_dtttdt
+
+    pbt = getattr(d, "period_block_time", None)
+    if not (_has_rows(getattr(d, "dtttdt", None)) and _has_rows(pbt)):
+        return None
+    return dtttdt_block_lag_from_dtttdt(d.dtttdt, pbt, pbt.select("d").unique(maintain_order=True))
+
+
+def block_open_nodes(d) -> "pl.DataFrame | None":
+    """bind_intraperiod_blocks nodes (n) whose blocks chain forward from the solve's first step: the fix_start_end
+    block nodes (:func:`block_forward_nodes`) and, in a rolling solve, the block nodes of a roll that holds the period
+    of its first step only in part (``period_block_chain``).  None when there are none (every block node then loops
+    in the period of the first step)."""
+    nsb, chain, first = getattr(d, "nodeStateBlock", None), getattr(d, "period_block_chain", None), d.nodeState_first_dt
+    forward = block_forward_nodes(d)
+    if not (_has_rows(nsb) and _has_rows(chain) and _has_rows(first)):
+        return forward
     names = [str(x) for x in chain["d"].to_list()]
     out = (first.join(nsb.select("n"), on="n", how="semi")
            .filter(pl.col("d").cast(pl.Utf8).is_in(names))
            .select("n").unique(maintain_order=True))
-    return out if out.height > 0 else None
+    return node_union((forward, out))
 
 
 def block_cyclic_nodes(d) -> "pl.DataFrame | None":
@@ -358,7 +398,8 @@ def cyclic_nodes(d) -> "pl.DataFrame | None":
 
 def open_start_nodes(d) -> "pl.DataFrame | None":
     """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only and the
-    bind_intraperiod_blocks nodes of a roll that holds its first period only in part (:func:`block_open_nodes`).
+    bind_intraperiod_blocks nodes that chain forward from it (:func:`block_open_nodes`: fix_start_end, or a roll
+    that holds its first period only in part).
     Their first step starts from the fix_start state in the first solve and from the roll carry in a continuation
     solve."""
     return node_union((d.storage_bind_forward_only, block_open_nodes(d)))

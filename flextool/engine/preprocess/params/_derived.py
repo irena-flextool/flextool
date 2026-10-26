@@ -8594,10 +8594,14 @@ def apply_derived_e(
     if has_state:
         fwd = dtttdt_forward_only_from_dtttdt(dtttdt_db)
         if fwd is not None:
+            # The per-solve forward-only set counts too: it holds the fix_start_end nodes whose cyclic method the
+            # solve ignores (_run_model._fix_start_end_chains_forward), which the DB does not call forward-only.
             sbm_full = _node_storage_binding_method_with_fallback(source)
-            if (sbm_full is not None
+            per_solve_fo = getattr(flex_data, "storage_bind_forward_only", None)
+            if ((sbm_full is not None
                     and sbm_full.filter(
-                        pl.col("method") == "bind_forward_only").height > 0):
+                        pl.col("method") == "bind_forward_only").height > 0)
+                    or (per_solve_fo is not None and per_solve_fo.height > 0)):
                 flex_data.dtttdt_forward_only = fwd
         flex_data.dtttdt_block_interior = dtttdt_block_interior_from_dtttdt(
             dtttdt_db, period_block_time_for_arc)

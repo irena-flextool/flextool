@@ -101,22 +101,21 @@ def test_stochastic_within_solve_pins_the_wrap_of_the_first_step(tmp_path_factor
     assert all(f",{periods[0]}," not in name for name in got), (sorted(got), periods)
 
 
-@pytest.mark.parametrize("method,family", [("bind_forward_only", None),
-                                            ("bind_within_solve", PIN),
-                                            ("bind_within_timeblock", PIN)])
-def test_fix_start_end_pins_the_start(tmp_path_factory, method, family):
+@pytest.mark.parametrize("method", ["bind_forward_only", "bind_within_solve", "bind_within_timeblock"])
+def test_fix_start_end_pins_the_start(tmp_path_factory, method):
     """``storage_start_end_method`` *fix_start_end* fixes the start like *fix_start* (the schema: "fix start and
-    end"; the end half is item 133): the node is in storage_fix_start and gets its start term / pin.  Before it was
-    in neither, so the storage started from free energy."""
+    end"): the node is in storage_fix_start and its first step starts from the start energy.  With fix_start_end the
+    storage_binding_method is ignored (reference.md), so a cyclic node chains forward: the start energy is in the
+    first step's balance, not on a wrap target.  Before (item 133) it was in neither set, so the storage started
+    from free energy; later a cyclic node got the wrap-target pin (and, with the end pin, two pins on one state)."""
     url, scen = make_db(tmp_path_factory, alt=f"cfse_{method[5:12]}", base_chain=CHAIN, values=[
         ["node", "battery", "storage_binding_method", b64(method, "str")],
         ["node", "battery", "storage_start_end_method", b64("fix_start_end", "str")]])
     fd = list(run(tmp_path_factory, url, scen).values())[-1].flex_data
     assert "battery" in utf8(fd.storage_fix_start)["n"].to_list()
+    assert "battery" in utf8(fd.storage_bind_forward_only)["n"].to_list()
     pb = build(fd)
-    if family is not None:
-        assert row_terms(pb, family, "battery,"), family
-        return
+    assert not row_terms(pb, PIN, "battery,")
     d0, t0 = utf8(fd.dt).sort("d", "t").row(0)
     name = f"nodeBalance_eq[battery,{d0},{t0}]"
     lo, _hi = row_bounds(pb, "nodeBalance_eq", "battery,")[name]
