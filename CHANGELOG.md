@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **A nested *fix_usage* caps windows with no storage use.** With
+  `storage_nested_fix_method` *fix_usage*, a dispatch period whose matching
+  storage-solve window had zero storage usage got no usage cap at all
+  (and, with *use_reference_value*, the reference end value instead). It
+  is now capped at zero usage like any other window.
+
 - **Only the last period of a solve ends its horizon.** In a solve with
   several periods that share a timeset, the end of every period was
   treated as the end of the solve: `storage_solve_horizon_method`

@@ -731,7 +731,10 @@ def test_reference_value_yields_to_a_nested_fix(tmp_path_factory, method):
     no dispatch roll has the reference row (how_to.md: the fixed storage value overrides the horizon end value); the
     fix sits at each roll end instead.  Without a nested fix (control) every roll end has the reference row.  The
     invest and storage solves have no upper fix and keep their reference rows; every solve is optimal.  Before, roll 0
-    had both the fix row and the reference row on v_state[t0036] (20 vs the storage state) and was infeasible."""
+    had both the fix row and the reference row on v_state[t0036] (20 vs the storage state) and was infeasible.  With
+    fix_usage the storage solve leaves the battery idle in some windows (early p2025); those rolls still get the usage
+    row, capped at 0 (how_to.md: the summed usage equals the storage solve's over the same span) — before item 150 the
+    handoff dropped zero usages, so those rolls had no cap and kept the reference row."""
     url, scen = make_db(tmp_path_factory, alt=f"sse_ref_{method}", base_chain=NESTED, values=[
         ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(36.0)],
         ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(24.0)],
@@ -741,7 +744,7 @@ def test_reference_value_yields_to_a_nested_fix(tmp_path_factory, method):
     assert all(s.solution.optimal for s in steps.values())
     rolls = [k for k in steps if k.startswith("dispatch_fullYear_roll_roll_")]
     assert len(rolls) > 3
-    fixed_rolls = 0
+    fixed_rolls = zero_caps = 0
     for name in rolls:
         fd = steps[name].flex_data
         pb = build(fd)
@@ -756,15 +759,19 @@ def test_reference_value_yields_to_a_nested_fix(tmp_path_factory, method):
             assert fd.ndt_fix_storage_price is not None, name
             fixed_rolls += 1
             continue
-        # Each roll end has either the upper fix or (where the upper solve sets none there) the reference row, never
-        # both.  A fix_usage window whose upper usage is 0 has no cap row (the handoff drops zero usages, item 150),
-        # so that roll end keeps the reference row.
+        # Every roll end has the upper fix and no reference row.  A fix_usage window in which the storage solve did
+        # not use the battery still caps the roll's usage (at 0, item 150).
         fam = FIX_Q if method == "fix_quantity" else FIX_U
         fixed = {r.split("[", 1)[1][:-1] for r in row_terms(pb, fam, "battery,")}
-        assert not (refs & fixed) and refs | fixed == ends, (name, refs, fixed)
-        fixed_rolls += bool(fixed)
+        assert fixed == ends and not refs, (name, refs, fixed)
+        fixed_rolls += 1
+        if method == "fix_usage":
+            zero_caps += sum(hi == 0.0 for _lo, hi in row_bounds(pb, FIX_U, "battery,").values())
     if method != "fix_nothing":
-        assert fixed_rolls >= len(rolls) // 2, (fixed_rolls, len(rolls))
+        assert fixed_rolls == len(rolls), (fixed_rolls, len(rolls))
+    if method == "fix_usage":
+        # The storage solve idles the battery in some windows (early p2025): those rolls are capped at 0.
+        assert zero_caps > 0
     for name in ("invest_24h", "storage_fullYear_6h"):
         fd = steps[name].flex_data
         assert {r.split("[", 1)[1][:-1] for r in row_terms(build(fd), REF, "battery,")} == {

@@ -7221,7 +7221,7 @@ def build_handoff_from_solution(
                     .with_columns(
                         p_fix_storage_usage=pl.col("net") * pl.col("dur"),
                     )
-                    .filter(pl.col("p_fix_storage_usage") != 0.0)
+                    # A window with zero usage stays: it caps the lower solve's usage at 0 (item 150).
                     .select(
                         alias_to_axis("n", "node"),
                         alias_to_axis("d", "period"),
