@@ -334,3 +334,88 @@ def test_connection_reserve_with_investment(tmp_path_factory) -> None:
         mf_inv = {c: v for c, v in mf[f"maxFlow[battery_inverter,battery,west,{d},{t}]"].items()
                   if c.startswith("v_invest_p[battery_inverter,")}
         assert inv and inv == pytest.approx(mf_inv)
+
+
+# ---------------------------------------------------------------------------
+# (3) The net-position headroom reaches 2 × capacity summed over the products (Q-c13-A)
+
+ONE_VAR = "no_losses_no_variable_cost"
+
+
+def _swing(mw: float, tm: str, products: list[tuple[str, str, str, str, float]]) -> tuple[list, list]:
+    """ll (200 MW, transfer_method ``tm``) exports ``mw`` from lw at t0001 and imports ``mw`` into lw at t0002;
+    timeseries ``products`` [(reserve, upDown, group, node, reservation)] offered by ll alone (max_share 1)."""
+    ents = _group("gw", "lw") + _group("ge", "le")
+    vals = [["node", "lw", "inflow", b64({"index_type": "str", "data": [["t0001", mw], ["t0002", -mw]]}, "map")],
+            ["node", "le", "inflow", b64({"index_type": "str", "data": [["t0001", -mw], ["t0002", mw]]}, "map")],
+            ["connection", "ll", "transfer_method", b64(tm, "str")]]
+    for r, ud, g, n, res in products:
+        e, v = _reserve(r, ud, g, [("ll", n)], reservation=res)
+        ents, vals = ents + e, vals + v
+    return ents, vals
+
+
+def _units(step, r: str) -> dict[str, float]:
+    return _vals(step, "v_reserve", p="ll", r=r)
+
+
+@pytest.mark.parametrize("tm", [ONE_VAR, "regular"])
+@pytest.mark.parametrize("mw", [200.0, 100.0])
+def test_net_position_two_products_reach_twice_capacity(tmp_path_factory, tm: str, mw: float) -> None:
+    """Two up products r1, r2 and two down products d1, d2 at lw, two down products e1, e2 at le, 200 MW each.
+    The headroom is capacity − net signed flow, linear in the flow and summed over the products: exporting mw
+    from lw, lw's up headroom is 200 + mw MW (stop exporting, then import) and its down headroom 200 − mw; le
+    (importing mw) has a down headroom of 200 + mw.  At full export (mw = 200) that is 2 × capacity up at lw
+    and down at le, and nothing down at lw; t0002 is the mirror.  Rows: ``capacity_in − net flow + Σ R ≤ 1``
+    (one-variable: ``−v_flow + v_flow_back``; regular: ``−v_flow[lw→le] + v_flow[le→lw]``)."""
+    prods = [("r1", "up", "gw", "lw", 200.0), ("r2", "up", "gw", "lw", 200.0),
+             ("d1", "down", "gw", "lw", 200.0), ("d2", "down", "gw", "lw", 200.0),
+             ("e1", "down", "ge", "le", 200.0), ("e2", "down", "ge", "le", 200.0)]
+    ents, vals = _swing(mw, tm, prods)
+    step = _steps(tmp_path_factory, f"cr_2x_{tm[:3]}_{int(mw)}", ents, vals)[-1]
+    u = {r: _units(step, r) for r, *_ in prods}
+    share = mw / 200.0
+    expect = {"t0001": {"up_lw": 1.0 + share, "down_lw": 1.0 - share, "down_le": 1.0 + share},
+              "t0002": {"up_lw": 1.0 - share, "down_lw": 1.0 + share, "down_le": 1.0 - share}}
+    for t, e in expect.items():
+        assert u["r1"][t] + u["r2"][t] == pytest.approx(e["up_lw"], abs=TOL), t
+        assert u["d1"][t] + u["d2"][t] == pytest.approx(e["down_lw"], abs=TOL), t
+        assert u["e1"][t] + u["e2"][t] == pytest.approx(e["down_le"], abs=TOL), t
+        for r in u:
+            assert u[r][t] <= 1.0 + TOL, (r, t)      # each product ≤ max_share × capacity
+    pb = build(step.flex_data)
+    back_in = "v_flow_back[ll,lw,le,p2020,{t}]" if tm == ONE_VAR else "v_flow[ll,le,lw,p2020,{t}]"
+    for fam, node, sign, rs in (("connection_reserve_up", "lw", 1.0, ("r1", "r2")),
+                                ("connection_reserve_down", "lw", -1.0, ("d1", "d2")),
+                                ("connection_reserve_down", "le", 1.0, ("e1", "e2"))):
+        rows = row_terms(pb, fam, f"ll,{node},")
+        assert len(rows) == 2, (fam, node)
+        for row, terms in rows.items():
+            t = row.split(",")[-1].rstrip("]")
+            assert coef(terms, back_in.format(t=t)) == pytest.approx(sign)
+            assert coef(terms, f"v_flow[ll,lw,le,p2020,{t}]") == pytest.approx(-sign)
+            ud = "up" if fam.endswith("up") else "down"
+            for r in rs:
+                assert coef(terms, f"v_reserve[ll,{r},{ud},{node},p2020,{t}]") == pytest.approx(1.0)
+
+
+def test_net_position_single_product_capped_by_max_share(tmp_path_factory) -> None:
+    """One up product r3 and one down product d3 at lw, 400 MW each, ll swinging 200 MW: a single product stays
+    at most max_share × capacity (1 unit = 200 MW; ``max_share`` is a share of the provider's capacity), so half
+    of r3 is short at t0001 (full export) and half of d3 at t0002 (full import).  The owner's 2 × capacity rule is
+    about the sum over products (test above)."""
+    prods = [("r3", "up", "gw", "lw", 400.0), ("d3", "down", "gw", "lw", 400.0)]
+    ents, vals = _swing(200.0, ONE_VAR, prods)
+    step = _steps(tmp_path_factory, "cr_2x_one", ents, vals)[-1]
+    r3, d3 = _units(step, "r3"), _units(step, "d3")
+    q3 = _vals(step, "vq_reserve", r="r3")
+    qd = _vals(step, "vq_reserve", r="d3")
+    assert r3["t0001"] == pytest.approx(1.0, abs=TOL) and q3["t0001"] == pytest.approx(0.5, abs=TOL)
+    assert d3["t0002"] == pytest.approx(1.0, abs=TOL) and qd["t0002"] == pytest.approx(0.5, abs=TOL)
+    pb = build(step.flex_data)
+    for fam, r in (("reserve_process_upward", "r3"), ("reserve_process_downward", "d3")):
+        rows = row_terms(pb, fam, f"ll,{r},")
+        assert rows, fam
+        for row, terms in rows.items():
+            t = row.split(",")[-1].rstrip("]")
+            assert coef(terms, f"v_reserve[ll,{r},") == pytest.approx(1.0), (row, t)
