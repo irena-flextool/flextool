@@ -38,6 +38,8 @@ import os
 import polars as pl
 import pytest
 
+from tests._support.load import load_scenario
+
 # Hand-calc constants (design §5.2).
 STOCH_OBJECTIVE = 70_080_000.0
 DET_OBJECTIVE = 43_800_000.0
@@ -123,19 +125,25 @@ EXPECTED_DTTTDT = [
 
 
 @pytest.fixture(scope="module")
-def stoch_wf(scenario_workdir):
-    """The ``stoch`` scenario workdir, cascade run under
+def stoch_run(scenario_run):
+    """The ``stoch`` scenario run, cascade run under
     ``FLEXTOOL_AUTOSCALE_STRICT=1`` (design §5.3: one scenario run
     executes strict so an autoscale-registry gap would be loud)."""
     prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
     os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
     try:
-        return scenario_workdir("stoch", db_fixture="stoch_two_period")
+        return scenario_run("stoch", db_fixture="stoch_two_period")
     finally:
         if prev is None:
             os.environ.pop("FLEXTOOL_AUTOSCALE_STRICT", None)
         else:
             os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = prev
+
+
+@pytest.fixture(scope="module")
+def stoch_wf(stoch_run):
+    """The ``stoch`` cascade's work folder (emitted CSVs + ``output_raw``)."""
+    return stoch_run.work_folder
 
 
 @pytest.fixture(scope="module")
@@ -257,14 +265,12 @@ def test_stoch_step_previous_continuation_linkage(stoch_wf) -> None:
     assert first == EXPECTED_STEP_PREVIOUS_FIRST_ROWS
 
 
-def test_stoch_model_side_dtttdt(stoch_wf) -> None:
+def test_stoch_model_side_dtttdt(stoch_run) -> None:
     """§5.5 model-side (review blocker 2): the LIVE lag frame
     ``flex_data.dtttdt`` — not just the CSV — carries the §4 rows.
     The fixture has no storage/ramps, so the objective cannot catch a
     wrong lag frame; assert it directly."""
-    from flextool.engine import load_flextool
-
-    data = load_flextool(stoch_wf)
+    data = load_scenario(stoch_run)
     d = data.dtttdt
     assert d is not None
     rows = sorted(
@@ -277,16 +283,14 @@ def test_stoch_model_side_dtttdt(stoch_wf) -> None:
     assert rows == sorted(EXPECTED_DTTTDT)
 
 
-def test_stoch_csv_dtttdt_parity_guard(stoch_wf) -> None:
+def test_stoch_csv_dtttdt_parity_guard(stoch_run, stoch_wf) -> None:
     """§5.5 parity guard (scoped per design §3.3): dtttdt's
     ``d_previous`` / ``t_previous_within_solve`` equal
     step_previous.csv's ``previous_period`` / ``previous_within_solve``
     for ALL 12 rows, and full 6-column equality holds for the 8
     interior rows.  (Full-frame equality is impossible: ``t_previous``
     vs ``previous`` legitimately differ on first-of-period rows.)"""
-    from flextool.engine import load_flextool
-
-    data = load_flextool(stoch_wf)
+    data = load_scenario(stoch_run)
     dtttdt = {
         (str(r["d"]), str(r["t"])): r
         for r in data.dtttdt.rows(named=True)

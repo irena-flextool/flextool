@@ -33,6 +33,8 @@ import os
 import polars as pl
 import pytest
 
+from tests._support.load import load_scenario
+
 SOLVE = "stoch_2p_hedge"
 
 RP = 173_250.0    # main mode (window = [p2035]) — shared first stage
@@ -45,11 +47,11 @@ EVPI = RP - WS    # = 15 750
 # ---------------------------------------------------------------------------
 
 
-def _strict(scenario_workdir, name):
+def _strict(scenario_run, name):
     prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
     os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
     try:
-        return scenario_workdir(name, db_fixture="stoch_two_period_hedge")
+        return scenario_run(name, db_fixture="stoch_two_period_hedge")
     finally:
         if prev is None:
             os.environ.pop("FLEXTOOL_AUTOSCALE_STRICT", None)
@@ -58,33 +60,46 @@ def _strict(scenario_workdir, name):
 
 
 @pytest.fixture(scope="module")
-def na_window_wf(scenario_workdir):
-    return _strict(scenario_workdir, "hedge_na_window")
+def na_window_run(scenario_run):
+    return _strict(scenario_run, "hedge_na_window")
 
 
 @pytest.fixture(scope="module")
-def na_ws_wf(scenario_workdir):
-    return scenario_workdir("hedge_ws", db_fixture="stoch_two_period_hedge")
+def na_ws_run(scenario_run):
+    return scenario_run("hedge_ws", db_fixture="stoch_two_period_hedge")
 
 
 @pytest.fixture(scope="module")
-def na_divest_wf(scenario_workdir):
-    return _strict(scenario_workdir, "hedge_na_divest")
+def na_divest_run(scenario_run):
+    return _strict(scenario_run, "hedge_na_divest")
 
 
 @pytest.fixture(scope="module")
-def na_none_wf(scenario_workdir):
-    return _strict(scenario_workdir, "hedge_na_none")
+def na_none_run(scenario_run):
+    return _strict(scenario_run, "hedge_na_none")
 
 
-def _resolve(wf):
-    """In-process re-solve off the snapshot workdir — gives the branch
-    v_invest / v_divest columns the committed parquet omits."""
+@pytest.fixture(scope="module")
+def na_window_wf(na_window_run):
+    """The cascade's work folder (``output_raw`` parquets)."""
+    return na_window_run.work_folder
+
+
+@pytest.fixture(scope="module")
+def na_ws_wf(na_ws_run):
+    """The cascade's work folder (``output_raw`` parquets)."""
+    return na_ws_run.work_folder
+
+
+def _resolve(run):
+    """In-process re-solve of the run's last sub-solve, loaded through the
+    production provider path — gives the branch v_invest / v_divest
+    columns the committed parquet omits."""
     from polar_high import Problem
 
-    from flextool.engine import build_flextool, load_flextool
+    from flextool.engine import build_flextool
 
-    data = load_flextool(wf)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -93,13 +108,13 @@ def _resolve(wf):
 
 
 @pytest.fixture(scope="module")
-def na_window_resolved(na_window_wf):
-    return _resolve(na_window_wf)
+def na_window_resolved(na_window_run):
+    return _resolve(na_window_run)
 
 
 @pytest.fixture(scope="module")
-def na_divest_resolved(na_divest_wf):
-    return _resolve(na_divest_wf)
+def na_divest_resolved(na_divest_run):
+    return _resolve(na_divest_run)
 
 
 # --- T-Main / T-WS: the hand-calc gate (§9.2, §9.4) ------------------------
@@ -173,12 +188,10 @@ def test_frame_window_membership(na_window_resolved) -> None:
     assert pairs == {("p2035", "p2035_high"), ("p2035", "p2035_low")}
 
 
-def test_frame_empty_when_window_unset(na_ws_wf) -> None:
+def test_frame_empty_when_window_unset(na_ws_run) -> None:
     """T-Frame / T-P (§6.4): with the window unset the frame is EMPTY
     (byte-parity legacy path) — no CSV emitted, tie_periods None."""
-    from flextool.engine import load_flextool
-
-    data = load_flextool(na_ws_wf)
+    data = load_scenario(na_ws_run)
     pdna = data.pd_non_anticipativity
     assert pdna is None or pdna.height == 0
 
@@ -257,16 +270,16 @@ def test_divest_net_capacity_equal_across_branches(na_divest_resolved) -> None:
 
 
 @pytest.mark.solver
-def test_none_graceful_noop(na_none_wf) -> None:
+def test_none_graceful_noop(na_none_run) -> None:
     """T-None (§4.5): the window set on a stochastic_invest_method=none
     solve emits ZERO non_anticipativity_invest_* rows (investment is
     already shared across all periods — the domain guard / recourse gate
     makes it inert)."""
     from polar_high import Problem
 
-    from flextool.engine import build_flextool, load_flextool
+    from flextool.engine import build_flextool
 
-    data = load_flextool(na_none_wf)
+    data = load_scenario(na_none_run)
     pb = Problem()
     build_flextool(pb, data)
     invest_na = [n for n in pb.cstr_names()

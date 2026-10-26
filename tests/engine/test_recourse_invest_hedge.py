@@ -40,6 +40,7 @@ from flextool.engine.input._solve_state import (
 )
 from flextool.engine.solve._stochastic import StochasticSolver
 from flextool.engine.input._timeline import make_step_jump
+from tests._support.load import load_scenario
 
 SOLVE = "stoch_2p_hedge"
 
@@ -246,17 +247,15 @@ def test_step_jump_fan_at_first_self_cycles_control() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Workdir fixtures (full cascade) + load_flextool structural tests
+# Cascade-run fixtures (full cascade) + production-load structural tests
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def hedge_wf(scenario_workdir):
+def _strict(scenario_run, name):
     prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
     os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
     try:
-        return scenario_workdir("hedge",
-                                db_fixture="stoch_two_period_hedge")
+        return scenario_run(name, db_fixture="stoch_two_period_hedge")
     finally:
         if prev is None:
             os.environ.pop("FLEXTOOL_AUTOSCALE_STRICT", None)
@@ -265,40 +264,52 @@ def hedge_wf(scenario_workdir):
 
 
 @pytest.fixture(scope="module")
-def hedge_ws_wf(scenario_workdir):
-    return scenario_workdir("hedge_ws", db_fixture="stoch_two_period_hedge")
+def hedge_run(scenario_run):
+    return _strict(scenario_run, "hedge")
 
 
 @pytest.fixture(scope="module")
-def hedge_storage_wf(scenario_workdir):
-    prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
-    os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
-    try:
-        return scenario_workdir("hedge_storage",
-                                db_fixture="stoch_two_period_hedge")
-    finally:
-        if prev is None:
-            os.environ.pop("FLEXTOOL_AUTOSCALE_STRICT", None)
-        else:
-            os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = prev
+def hedge_ws_run(scenario_run):
+    return scenario_run("hedge_ws", db_fixture="stoch_two_period_hedge")
 
 
 @pytest.fixture(scope="module")
-def hedge_resolved(hedge_wf):
-    """In-process re-solve off the snapshot workdir (gives the branch
-    v_invest columns the committed parquet omits)."""
+def hedge_storage_run(scenario_run):
+    return _strict(scenario_run, "hedge_storage")
+
+
+@pytest.fixture(scope="module")
+def hedge_wf(hedge_run):
+    """The cascade's work folder (emitted CSVs + ``output_raw``)."""
+    return hedge_run.work_folder
+
+
+@pytest.fixture(scope="module")
+def hedge_ws_wf(hedge_ws_run):
+    """The cascade's work folder (``output_raw`` parquets)."""
+    return hedge_ws_run.work_folder
+
+
+@pytest.fixture(scope="module")
+def hedge_storage_wf(hedge_storage_run):
+    """The cascade's work folder (emitted CSVs)."""
+    return hedge_storage_run.work_folder
+
+
+@pytest.fixture(scope="module")
+def hedge_resolved(hedge_run):
+    """In-process re-solve of the last sub-solve, loaded through the
+    production provider path (gives the branch v_invest columns the
+    committed parquet omits)."""
     from polar_high import Problem
-    from flextool.engine import build_flextool, load_flextool
+    from flextool.engine import build_flextool
 
-    data = load_flextool(hedge_wf)
+    data = load_scenario(hedge_run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
     assert sol.optimal
     return data, sol, pb
-
-
-# --- T-RP / T-WS / T-EEV: the hedging gate ---------------------------------
 
 
 @pytest.mark.solver
@@ -459,7 +470,7 @@ def test_committed_output_realized_only(hedge_wf) -> None:
 
 @pytest.mark.solver
 def test_storage_na_forecast_star_on_two_forecast_reveal(
-        hedge_storage_wf) -> None:
+        hedge_storage_run) -> None:
     """T-S (§5.1, §9.1), R3 re-grounded: the hedge fixture is now a genuine
     2-forecast fan (``high``, ``low``; n_real = 0) revealing at p2040, so
     under the forecasts-only model the storage non-anticipativity family
@@ -469,9 +480,9 @@ def test_storage_na_forecast_star_on_two_forecast_reveal(
     trunk ``p2040`` (the realised/reference trunk is never an NA hub); the
     star is the forecast pair only."""
     from polar_high import Problem
-    from flextool.engine import build_flextool, load_flextool
+    from flextool.engine import build_flextool
 
-    data = load_flextool(hedge_storage_wf)
+    data = load_scenario(hedge_storage_run)
     pb = Problem()
     build_flextool(pb, data)
     names = pb.cstr_names()
@@ -498,14 +509,12 @@ def test_storage_branch_copy_predecessor_is_shared_trunk(
     assert row["previous_within_solve"] == "t0003"
 
 
-def test_make_step_jump_dtttdt_parity_midhorizon(hedge_wf) -> None:
+def test_make_step_jump_dtttdt_parity_midhorizon(hedge_run, hedge_wf) -> None:
     """T-S (§5.2, parity guard): the CSV step_previous and the live model
     lag frame ``dtttdt`` agree on d_previous / t_previous_within_solve for
     every first-of-period row (the mid-horizon predecessor linkage is the
     same in both derivations)."""
-    from flextool.engine import load_flextool
-
-    data = load_flextool(hedge_wf)
+    data = load_scenario(hedge_run)
     dtttdt = {(str(r["d"]), str(r["t"])): r
               for r in data.dtttdt.rows(named=True)}
     sp = pl.read_csv(hedge_wf / "solve_data" / "step_previous.csv")

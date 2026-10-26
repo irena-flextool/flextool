@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import dataclasses
 import re
-import shutil
 
 import polars as pl
 import pytest
@@ -30,6 +29,7 @@ from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic,
     synthetic_branch_tokens,
 )
+from tests._support.load import clone_provider, load_scenario
 
 
 # ---------------------------------------------------------------------------
@@ -226,44 +226,68 @@ def test_g2_none_frames_degrade_false():
 
 SCENARIO = "coal_ladder_cumulative"
 SOLVE_NAME = "y2020_2day_dispatch"
-REALIZE_CSV = "solve_data/realized_invest_periods_of_current_solve.csv"
+REALIZE_KEY = "solve_data/realized_invest_periods_of_current_solve"
 
 
 @pytest.fixture(scope="module")
-def _solved(scenario_workdir):
+def _solved(scenario_run):
+    """Solve the last sub-solve, loaded through the production provider
+    path; the handoff builder then gets the arguments the cascade passes
+    (the step's provider, the prior handoff, the load folder)."""
     from polar_high import Problem
-    from flextool.engine import build_flextool, load_flextool
-    from flextool.engine.preprocess.flex_data import build_handoff_from_solution
+    from flextool.engine import build_flextool
 
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+    run = scenario_run(SCENARIO)
+    assert run.last.solve_name == SOLVE_NAME
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
     assert sol.optimal
-    return sol, work, data, build_handoff_from_solution
+    return sol, run, data
+
+
+def _build_handoff(sol, run, flex_data, provider):
+    from flextool.engine.preprocess.flex_data import build_handoff_from_solution
+
+    return build_handoff_from_solution(
+        sol, run.load_folder, SOLVE_NAME,
+        prior_handoff=run.last.prior_handoff, flex_data=flex_data,
+        provider=provider)
+
+
+def _provider_realizing(run, period: str):
+    """A clone of the step's provider whose realize-invest key lists only
+    *period* (dtype kept from the cascade's frame)."""
+    from flextool.engine.preprocess.flex_data import _read_realize_invest_periods
+
+    provider = clone_provider(run.last.provider)
+    orig = provider.get(REALIZE_KEY)
+    assert orig is not None and orig.columns == ["period"]
+    assert period not in _read_realize_invest_periods(
+        run.load_folder / f"{REALIZE_KEY}.csv", provider=provider)
+    provider.put(REALIZE_KEY, pl.DataFrame({"period": [period]}).cast(orig.schema))
+    # The handoff builder reads the overlaid key (not a disk file).
+    assert _read_realize_invest_periods(
+        run.load_folder / f"{REALIZE_KEY}.csv", provider=provider) == {period}
+    return provider
 
 
 @pytest.mark.solver
 def test_g3_clean_real_names_no_raise(_solved):
     """The happy path — a deterministic (real-named) flex_data commits no
     synthetic period, so the guard is inert."""
-    sol, work, data, build_handoff = _solved
-    handoff = build_handoff(sol, work, SOLVE_NAME, flex_data=data)
+    sol, run, data = _solved
+    handoff = _build_handoff(sol, run, data, clone_provider(run.last.provider))
     assert handoff is not None
 
 
 @pytest.mark.solver
-def test_g3_config_level_synthetic_in_realize_invest_raises(
-        _solved, tmp_path):
+def test_g3_config_level_synthetic_in_realize_invest_raises(_solved):
     """realized_invest_periods listing a synthetic branch token → config
     raise (case a)."""
-    sol, work, data, build_handoff = _solved
-    twork = tmp_path / "work_g3a"
-    shutil.copytree(work, twork)
-    csv = twork / REALIZE_CSV
-    csv.parent.mkdir(parents=True, exist_ok=True)
-    csv.write_text("period\np2020_low\n")
+    sol, run, data = _solved
+    provider = _provider_realizing(run, "p2020_low")
     # flex_data whose period_branch_full marks p2020_low as a synthetic
     # fan member of the real anchor p2020.
     bad = dataclasses.replace(
@@ -272,22 +296,18 @@ def test_g3_config_level_synthetic_in_realize_invest_raises(
                                  ("p2020", "p2020_low")], enum=True),
     )
     with pytest.raises(FlexToolConfigError) as exc:
-        build_handoff(sol, twork, SOLVE_NAME, flex_data=bad)
+        _build_handoff(sol, run, bad, provider)
     assert "p2020_low" in str(exc.value)
 
 
 @pytest.mark.solver
-def test_g3_none_frame_degrades_no_raise(_solved, tmp_path):
+def test_g3_none_frame_degrades_no_raise(_solved):
     """period_branch_full unavailable → the guard is a no-op even when the
-    realize CSV carries a synthetic token (the documented None-degrade;
+    realize key carries a synthetic token (the documented None-degrade;
     Guard 2 covers that path's stochastic case)."""
-    sol, work, data, build_handoff = _solved
-    twork = tmp_path / "work_g3n"
-    shutil.copytree(work, twork)
-    csv = twork / REALIZE_CSV
-    csv.parent.mkdir(parents=True, exist_ok=True)
-    csv.write_text("period\np2020_low\n")
+    sol, run, data = _solved
+    provider = _provider_realizing(run, "p2020_low")
     degraded = dataclasses.replace(data, period_branch_full=None)
     # No raise — synthetic_branch_tokens(None) is empty, guard skipped.
-    handoff = build_handoff(sol, twork, SOLVE_NAME, flex_data=degraded)
+    handoff = _build_handoff(sol, run, degraded, provider)
     assert handoff is not None

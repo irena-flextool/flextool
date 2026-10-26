@@ -28,6 +28,8 @@ import os
 
 import pytest
 
+from tests._support.load import load_scenario
+
 # The base (phantom) period names that must never appear in an NA tie.
 BASE_PERIODS = {"p2035", "p2040"}
 # Expected per-group reference forecasts (lexicographically smallest).
@@ -37,12 +39,12 @@ EXPECTED_B = {"p2035_mid", "p2035_up", "p2040_mid", "p2040_up"}
 
 
 @pytest.fixture(scope="module")
-def nreal0_wf(scenario_workdir):
+def nreal0_run(scenario_run):
     prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
     os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
     try:
-        return scenario_workdir("nreal0",
-                                db_fixture="stoch_two_period_nreal0")
+        return scenario_run("nreal0",
+                            db_fixture="stoch_two_period_nreal0")
     finally:
         if prev is None:
             os.environ.pop("FLEXTOOL_AUTOSCALE_STRICT", None)
@@ -51,12 +53,12 @@ def nreal0_wf(scenario_workdir):
 
 
 @pytest.fixture(scope="module")
-def nreal0_resolved(nreal0_wf):
+def nreal0_resolved(nreal0_run):
     from polar_high import Problem
 
-    from flextool.engine import build_flextool, load_flextool
+    from flextool.engine import build_flextool
 
-    data = load_flextool(nreal0_wf)
+    data = load_scenario(nreal0_run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()

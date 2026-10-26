@@ -28,6 +28,7 @@ from flextool.engine.preprocess.params._branch import (
     pd_non_anticipativity_df,
 )
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+from tests._support.load import load_scenario
 
 
 # ---------------------------------------------------------------------------
@@ -400,28 +401,42 @@ def test_t9_region_filter_pass_through(tmp_path):
 
 
 @pytest.fixture(scope="module")
-def stoch_wf(scenario_workdir):
-    return scenario_workdir("stoch", db_fixture="stoch_two_period")
+def stoch_run(scenario_run):
+    return scenario_run("stoch", db_fixture="stoch_two_period")
 
 
 @pytest.fixture(scope="module")
-def det_wf(scenario_workdir):
-    return scenario_workdir("det", db_fixture="stoch_two_period")
+def stoch_wf(stoch_run):
+    """The cascade's work folder (T12 copies its metadata into the dump)."""
+    return stoch_run.work_folder
 
 
 @pytest.fixture(scope="module")
-def stoch_data(stoch_wf):
-    from flextool.engine import load_flextool
+def det_run(scenario_run):
+    return scenario_run("det", db_fixture="stoch_two_period")
 
-    return load_flextool(stoch_wf)
+
+@pytest.fixture(scope="module")
+def stoch_data(stoch_run):
+    """The last sub-solve's FlexData, loaded as production loads it (axis
+    Enums OFF: dim columns are Utf8)."""
+    return load_scenario(stoch_run)
+
+
+@pytest.fixture(scope="module")
+def stoch_enum_data(stoch_run):
+    """The same load with the axis-Enum vocabulary activated — only for
+    T11, which pins the Enum mechanism itself (production builds no Enums)."""
+    return load_scenario(stoch_run, axis_enums=True)
 
 
 def test_t10_integration_stoch(stoch_data):
     """T10: end-to-end ``load_flextool`` on the stoch workdir — the
     §4.1 table for the genuine {high, low} fan (12 rows: realized/reference
     trunk + both forecast paths), pd-NA empty (pins provider seeding +
-    apply_derived_g wiring including enum activation, i.e. the §3.1.1
-    null-guard actually engages)."""
+    apply_derived_g wiring on the production (Utf8) load; T11 covers the
+    same frames under enum activation, where the §3.1.1 null-guard
+    engages)."""
     dd = stoch_data.dd_same_scenario
     assert dd is not None
     assert _rows(dd) == DD_41_STOCH
@@ -431,21 +446,22 @@ def test_t10_integration_stoch(stoch_data):
     assert pd_na.height == 0
 
 
-def test_t10_integration_det(det_wf):
+def test_t10_integration_det(det_run):
     """T10 (det control): the §4.3 all-pairs table."""
-    from flextool.engine import load_flextool
-
-    data = load_flextool(det_wf)
+    data = load_scenario(det_run)
     assert _rows(data.dd_same_scenario) == DD_43
     assert data.pd_non_anticipativity.height == 0
 
 
-def test_t11_enum_hygiene(stoch_data):
+def test_t11_enum_hygiene(stoch_enum_data):
     """T11: under ``load_flextool`` activation the d/d_other columns
     carry the d-axis Enum (same dtype as ``period_in_use_set``'s d),
     ``b`` carries the branch Enum (same as ``period_branch_full``'s
     b), with zero nulls — pins the 4.0.4 continuation-token vocabulary
-    splice against regression."""
+    splice against regression.  Loads with ``axis_enums=True``:
+    production builds no axis Enums, so this pins the Enum mechanism
+    itself."""
+    stoch_data = stoch_enum_data
     dd = stoch_data.dd_same_scenario
     d_dtype = stoch_data.period_in_use_set.schema["d"]
     assert isinstance(d_dtype, pl.Enum)

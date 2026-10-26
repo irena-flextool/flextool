@@ -16,16 +16,18 @@ import os
 
 import pytest
 
+from tests._support.load import load_scenario
+
 SOLVE = "2day_dispatch"
 
 
 @pytest.fixture(scope="module")
-def na_wf(scenario_workdir):
+def na_run(scenario_run):
     prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
     os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
     try:
-        return scenario_workdir("recourse_na",
-                                db_fixture="stoch_two_period_invest_na")
+        return scenario_run("recourse_na",
+                            db_fixture="stoch_two_period_invest_na")
     finally:
         if prev is None:
             os.environ.pop("FLEXTOOL_AUTOSCALE_STRICT", None)
@@ -34,11 +36,11 @@ def na_wf(scenario_workdir):
 
 
 @pytest.fixture(scope="module")
-def _built(na_wf):
+def _built(na_run):
     from polar_high import Problem
-    from flextool.engine import build_flextool, load_flextool
+    from flextool.engine import build_flextool
 
-    data = load_flextool(na_wf)
+    data = load_scenario(na_run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()

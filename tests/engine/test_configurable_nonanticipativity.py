@@ -47,6 +47,8 @@ import os
 import polars as pl
 import pytest
 
+from tests._support.load import load_scenario
+
 SOLVE = "stoch_2p_free"
 
 # Deterministic LP reference objectives (see the fixture builder).
@@ -55,17 +57,15 @@ FREE_OBJ = 764_954.1
 
 
 # ---------------------------------------------------------------------------
-# Work-folder fixtures (full cascade + snapshot, AUTOSCALE_STRICT on)
+# Cascade-run fixtures (full cascade + snapshot, AUTOSCALE_STRICT on)
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def free_ops_wf(scenario_workdir):
+def _strict_run(scenario_run, name):
     prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
     os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
     try:
-        return scenario_workdir("free_ops",
-                                db_fixture="stoch_two_period_free_ops")
+        return scenario_run(name, db_fixture="stoch_two_period_free_ops")
     finally:
         if prev is None:
             os.environ.pop("FLEXTOOL_AUTOSCALE_STRICT", None)
@@ -74,26 +74,34 @@ def free_ops_wf(scenario_workdir):
 
 
 @pytest.fixture(scope="module")
-def pinned_ops_wf(scenario_workdir):
-    prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
-    os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
-    try:
-        return scenario_workdir("pinned_ops",
-                                db_fixture="stoch_two_period_free_ops")
-    finally:
-        if prev is None:
-            os.environ.pop("FLEXTOOL_AUTOSCALE_STRICT", None)
-        else:
-            os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = prev
+def free_ops_run(scenario_run):
+    return _strict_run(scenario_run, "free_ops")
 
 
-def _resolve(wf):
-    """In-process build+solve off the snapshot workdir; returns
-    ``(data, sol, pb)``."""
+@pytest.fixture(scope="module")
+def pinned_ops_run(scenario_run):
+    return _strict_run(scenario_run, "pinned_ops")
+
+
+@pytest.fixture(scope="module")
+def free_ops_wf(free_ops_run):
+    """The cascade's work folder (emitted CSVs + ``output_raw``)."""
+    return free_ops_run.work_folder
+
+
+@pytest.fixture(scope="module")
+def pinned_ops_wf(pinned_ops_run):
+    """The cascade's work folder (emitted CSVs + ``output_raw``)."""
+    return pinned_ops_run.work_folder
+
+
+def _resolve(run):
+    """In-process build+solve of the run's last sub-solve, loaded through
+    the production provider path; returns ``(data, sol, pb)``."""
     from polar_high import Problem
-    from flextool.engine import build_flextool, load_flextool
+    from flextool.engine import build_flextool
 
-    data = load_flextool(wf)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -102,13 +110,13 @@ def _resolve(wf):
 
 
 @pytest.fixture(scope="module")
-def free_ops_resolved(free_ops_wf):
-    return _resolve(free_ops_wf)
+def free_ops_resolved(free_ops_run):
+    return _resolve(free_ops_run)
 
 
 @pytest.fixture(scope="module")
-def pinned_ops_resolved(pinned_ops_wf):
-    return _resolve(pinned_ops_wf)
+def pinned_ops_resolved(pinned_ops_run):
+    return _resolve(pinned_ops_run)
 
 
 def _v_state_by_branch(sol, period_prefix: str) -> dict[str, list[float]]:

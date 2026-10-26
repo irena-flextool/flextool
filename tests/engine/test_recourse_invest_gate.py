@@ -31,6 +31,8 @@ import os
 import polars as pl
 import pytest
 
+from tests._support.load import clone_provider, load_scenario
+
 OBJECTIVE = 196_875.0
 SOLVE = "stoch_2p_inv"
 
@@ -64,14 +66,14 @@ EXPECTED_INVEST = {
 
 
 @pytest.fixture(scope="module")
-def recourse_wf(scenario_workdir):
+def recourse_run(scenario_run):
     """Cascade run of the recourse fixture under STRICT autoscale (a
     missing registry row would be loud — CLAUDE.md invariant 1)."""
     prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
     os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
     try:
-        return scenario_workdir("recourse",
-                                db_fixture="stoch_two_period_invest")
+        return scenario_run("recourse",
+                            db_fixture="stoch_two_period_invest")
     finally:
         if prev is None:
             os.environ.pop("FLEXTOOL_AUTOSCALE_STRICT", None)
@@ -80,14 +82,21 @@ def recourse_wf(scenario_workdir):
 
 
 @pytest.fixture(scope="module")
-def _resolved(recourse_wf):
-    """In-process re-solve off the snapshot workdir: flex_data + solution
-    (gives the BRANCH v_invest columns, which the committed parquet
-    correctly omits per design §11.1)."""
-    from polar_high import Problem
-    from flextool.engine import build_flextool, load_flextool
+def recourse_wf(recourse_run):
+    """The cascade's work folder (``output_raw`` parquets)."""
+    return recourse_run.work_folder
 
-    data = load_flextool(recourse_wf)
+
+@pytest.fixture(scope="module")
+def _resolved(recourse_run):
+    """In-process re-solve of the last sub-solve, loaded through the
+    production provider path: flex_data + solution (gives the BRANCH
+    v_invest columns, which the committed parquet correctly omits per
+    design §11.1)."""
+    from polar_high import Problem
+    from flextool.engine import build_flextool
+
+    data = load_scenario(recourse_run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -246,7 +255,7 @@ def test_recourse_per_path_cap_two_leaf_rows(_resolved):
 
 
 @pytest.mark.solver
-def test_recourse_handoff_drops_non_realized(_resolved, recourse_wf, caplog):
+def test_recourse_handoff_drops_non_realized(_resolved, recourse_run, caplog):
     """§10.1 (D7), R3 re-grounded (forecasts-only fan): the handoff
     pre-filter drops ALL branch-named v_invest rows (both forecasts) BEFORE
     the commit loop, debug-logging the dropped mass (high 60+30 + low 80+40
@@ -260,10 +269,17 @@ def test_recourse_handoff_drops_non_realized(_resolved, recourse_wf, caplog):
     data, sol = _resolved
     from flextool.engine.preprocess.flex_data import build_handoff_from_solution
 
+    # The handoff reads its per-solve metadata from the step's provider,
+    # as the cascade passes it (no work-folder disk read).
+    last = recourse_run.last
+    assert last.solve_name == SOLVE
+    provider = clone_provider(last.provider)
     with caplog.at_level(logging.DEBUG,
                          logger="flextool.engine.preprocess.flex_data"):
         handoff = build_handoff_from_solution(
-            sol, recourse_wf, SOLVE, flex_data=data)
+            sol, recourse_run.load_folder, SOLVE,
+            prior_handoff=last.prior_handoff, flex_data=data,
+            provider=provider)
     assert handoff is not None
     ri = handoff.realized_invest
     periods = {str(r["period"]) for r in ri.iter_rows(named=True)}

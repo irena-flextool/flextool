@@ -37,6 +37,7 @@ import pytest
 
 from flextool.engine.input._solve_state import ActiveTimeEntry
 from flextool.engine.solve._stochastic import StochasticSolver
+from tests._support.load import load_scenario
 
 
 # ---------------------------------------------------------------------------
@@ -122,13 +123,13 @@ EXPECTED_PRE_REVEAL_BASE_DISPATCH = 60.0
 
 
 @pytest.fixture(scope="module")
-def midhorizon_wf(scenario_workdir):
+def midhorizon_run(scenario_run):
     import os
 
     prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
     os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
     try:
-        return scenario_workdir(
+        return scenario_run(
             "midhorizon", db_fixture="stoch_two_period_midhorizon_nreal0")
     finally:
         if prev is None:
@@ -138,15 +139,18 @@ def midhorizon_wf(scenario_workdir):
 
 
 @pytest.fixture(scope="module")
-def midhorizon_outputs(midhorizon_wf):
-    """Re-solve from the workdir and return (optimal, v_flow, v_invest, sbtb)."""
+def midhorizon_outputs(midhorizon_run):
+    """Re-solve the last sub-solve (loaded through the production provider
+    path) and return (optimal, v_flow, v_invest, sbtb) — the last three
+    read from the cascade's work folder."""
     import polars as pl
 
     from polar_high import Problem
 
-    from flextool.engine import build_flextool, load_flextool
+    from flextool.engine import build_flextool
 
-    data = load_flextool(midhorizon_wf)
+    midhorizon_wf = midhorizon_run.work_folder
+    data = load_scenario(midhorizon_run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
