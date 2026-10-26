@@ -1,9 +1,8 @@
 """Γ.8.E — override-chain parity for the CSV-retirement Step 3 surface.
 
-Validates that ``load_flextool(workdir, db_reader=SpineDbReader(...))``
-produces a ``FlexData`` whose LP solves to the same objective as the
-default CSV path.  This is the gating contract for CSV retirement
-Step 3 — when ``load_flextool`` auto-constructs a SpineDbReader, the
+Validates that the production loader call (``load_flextool(folder,
+provider=..., db_reader=SpineDbReader(...), handoff=...)``) produces a
+``FlexData`` whose LP solves to the cascade's own objective.  The
 DB-direct apply chain (``apply_direct_params → apply_projection_params
 → apply_derived_a..g``) must populate every load-bearing field
 correctly so the LP doesn't regress.
@@ -25,20 +24,20 @@ The Γ.6.D handoff (``audit/handoff_csv_retirement.md``) and the
 * ``ce180421`` p_timestep_weight wires to timeset_weights.
 * ``151109e6`` p_inflation_op handles multi-year-per-period.
 
-This test loops the regression fixtures and asserts CSV-path obj ==
-DB-path obj at ``rel < 1e-6``.  Adding a fixture here is a one-line
-extension to ``REGRESSION_FIXTURES``.
+This test loops the regression fixtures and asserts that the LP rebuilt
+from the post-solve provider through the production loader call solves
+to the cascade's own objective at ``rel 1e-9``.  (It used to compare a
+CSV load with a DB-direct load of the same, DB-derived snapshot, which
+could no longer fail.)  Adding a fixture here is a one-line extension
+to ``REGRESSION_SCENARIOS``.
 """
 from __future__ import annotations
 
 import pytest
 
 from polar_high import Problem
-from flextool.engine import (
-    SpineDbReader,
-    build_flextool,
-    load_flextool,
-)
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 
 
 REGRESSION_SCENARIOS: list[str] = [
@@ -56,39 +55,28 @@ REGRESSION_SCENARIOS: list[str] = [
 
 @pytest.mark.parametrize("scenario", REGRESSION_SCENARIOS)
 def test_override_chain_db_reader_solve_parity(
-    scenario: str, scenario_workdir,
+    scenario: str, scenario_run,
 ) -> None:
-    """``load_flextool(workdir, db_reader=...)`` solves to the same obj
-    as the default CSV path.  Regression guard for the override-chain
-    helpers used by CSV-retirement Step 3.
+    """The LP rebuilt from the last step's post-solve provider through the
+    production loader call (``load_scenario``: provider + DB reader +
+    prior handoff) solves to the cascade's own objective (rel 1e-9).
+    Regression guard for the override-chain helpers on the fixtures that
+    once regressed.
     """
-    work = scenario_workdir(scenario)
-    sqlite = work / "tests.sqlite"
-
-    # Path A — the default CSV loader.
-    data_csv = load_flextool(work)
-    pb_csv = Problem()
-    build_flextool(pb_csv, data_csv)
-    sol_csv = pb_csv.solve()
-    assert sol_csv.optimal, f"{scenario}: CSV-path LP not optimal"
-
-    # Path B — load via DB-direct override (Step 3 surface).
-    reader = SpineDbReader(f"sqlite:///{sqlite}", scenario)
-    data_db = load_flextool(work, db_reader=reader)
-    pb_db = Problem()
-    build_flextool(pb_db, data_db)
-    sol_db = pb_db.solve()
-    assert sol_db.optimal, f"{scenario}: DB-path LP not optimal"
-
-    rel = abs(sol_csv.obj - sol_db.obj) / max(1.0, abs(sol_csv.obj))
-    assert rel < 1e-6, (
-        f"{scenario}: CSV={sol_csv.obj}, DB={sol_db.obj}, "
-        f"rel={rel} — override-chain regression"
+    run = scenario_run(scenario)
+    data = load_scenario(run)
+    pb = Problem()
+    build_flextool(pb, data)
+    sol = pb.solve()
+    assert sol.optimal, f"{scenario}: rebuilt LP not optimal"
+    assert run.last_obj is not None, f"{scenario}: the cascade recorded no objective"
+    assert sol.obj == pytest.approx(run.last_obj, rel=1e-9, abs=1e-9), (
+        f"{scenario}: rebuilt={sol.obj}, cascade={run.last_obj} — override-chain regression"
     )
 
 
 def test_p_timestep_weight_non_trivial_on_base_weighted(
-    scenario_workdir,
+    scenario_run,
 ) -> None:
     """Direct unit test on the helper: ``p_timestep_weight_from_source``
     must produce non-uniform weights for ``work_base_weighted``.
@@ -101,10 +89,9 @@ def test_p_timestep_weight_non_trivial_on_base_weighted(
     from flextool.engine.preprocess.params._derived import (
         p_timestep_weight_from_source,
     )
-    work = scenario_workdir("base_weighted")
-    sqlite = work / "tests.sqlite"
-    reader = SpineDbReader(f"sqlite:///{sqlite}", "base_weighted")
-    data = load_flextool(work)
+    run = scenario_run("base_weighted")
+    reader = run.reader()
+    data = load_scenario(run)
     rp = p_timestep_weight_from_source(reader, data.dt, "y2020_2day_dispatch")
     assert rp is not None
     uniques = sorted(rp.frame["value"].unique().to_list())
@@ -115,7 +102,7 @@ def test_p_timestep_weight_non_trivial_on_base_weighted(
     )
 
 
-def test_p_inflation_op_uses_years_represented(scenario_workdir) -> None:
+def test_p_inflation_op_uses_years_represented(scenario_run) -> None:
     """Direct unit test on the helper: ``p_inflation_op_from_source``
     must read ``solve.years_represented`` when ``inflation_rate=0``,
     not return the trivial 1.0.  Specifically: rolling-solve fixtures
@@ -125,11 +112,10 @@ def test_p_inflation_op_uses_years_represented(scenario_workdir) -> None:
     from flextool.engine.preprocess.params._derived import (
         p_inflation_op_from_source,
     )
-    work = scenario_workdir("fullYear_roll")
-    sqlite = work / "tests.sqlite"
-    reader = SpineDbReader(f"sqlite:///{sqlite}", "fullYear_roll")
-    data = load_flextool(work)
-    # The active solve in the workdir is the per-roll name.
+    run = scenario_run("fullYear_roll")
+    reader = run.reader()
+    data = load_scenario(run)
+    # The active solve of the last step is the per-roll name.
     infl = p_inflation_op_from_source(
         reader, data.dt, "dispatch_fullYear_roll_roll_71",
     )

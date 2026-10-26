@@ -10,8 +10,9 @@ The tests salvaged here have ongoing value:
 
 * ``test_db_direct_solve_parity_with_derived_a..g`` and
   ``test_db_direct_solve_parity_with_projections`` — end-to-end LP solve
-  through ``load_flextool(workdir, db_reader=...)`` checked against the
-  recorded ``v_obj__*.parquet`` objective.  Guards the DB-direct overlay
+  through the production loader call (``tests._support.load.load_scenario``:
+  post-solve provider + DB reader) checked against the recorded
+  ``v_obj__*.parquet`` objective.  Guards the DB-direct overlay
   cascade against silent value regressions.
 
 * ``test_inmemory_reader_*`` — unit tests for the
@@ -31,29 +32,30 @@ The tests salvaged here have ongoing value:
   ``test_lifetime_no_investment_filters_ed_invest_set``,
   ``test_lifetime_choice_truncates_p_entity_all_existing``,
   ``test_multi_solve_handoff_p_entity_all_existing_chain``,
-  ``test_dispatch_only_gate_blanks_invest_cascade``) that pin literal
-  expected values for invest-cascade / lifetime-cascade behaviour
-  against DB-direct output.
+  ``test_dispatch_only_gate_blanks_invest_cascade``) that check the
+  field of a rebuild from the post-solve provider against the FlexData
+  the cascade itself built (``run.last_flex_data``) and pin literal
+  expected values for invest-cascade / lifetime-cascade behaviour.
 
-Fixture work folders are built dynamically per session via the
-``scenario_workdir`` factory (``tests/conftest.py``).  The pre-v4.0.0
-committed ``tests/engine/data/work_*`` snapshots that this
-module used to read from disk are gone; each test now builds its
-workdir on demand from the JSON-backed SpineDB fixtures.
+Each test runs its scenario's cascade through the session-cached
+``scenario_run`` factory (``tests/conftest.py``), built from the
+JSON-backed SpineDB fixtures.
 """
 from __future__ import annotations
 
 import polars as pl
 import pytest
 
-from flextool.engine import InMemoryReader, SpineDbReader, load_flextool
+from flextool.engine import InMemoryReader, load_flextool
 from flextool.engine.preprocess.params import _direct as dp
 from polar_high import Param
+from tests._support.fields import field_diff
+from tests._support.load import clone_provider, load_scenario
 
 
 # Scenarios live across three JSON fixtures (see ``tests/conftest.py``
 # session DB fixtures).  Map each referenced scenario to the
-# ``db_fixture`` key ``scenario_workdir`` expects.  Everything else
+# ``db_fixture`` key ``scenario_run`` expects.  Everything else
 # defaults to ``"main"`` (``tests/fixtures/tests.json``).
 _DB_FIXTURE_BY_SCENARIO: dict[str, str] = {
     "lh2_three_region": "lh2",
@@ -69,78 +71,58 @@ def _db_fixture_for(scenario: str) -> str:
 # Helpers
 
 
-def _equal_after_sort(a: pl.DataFrame, b: pl.DataFrame,
-                       index_cols: list[str]) -> tuple[bool, str]:
-    """Return ``(equal, diff_repr)`` for two frames after sorting by
-    ``index_cols`` (only those present in both) and casting any
-    ``value`` column to ``Float64``.  ``diff_repr`` is empty when
-    equal.
+def _rebuild(scenario_run, scenario: str):
+    """``(run, rebuilt FlexData, cascade FlexData)`` for the scenario's last step.
+
+    The rebuild is the production loader call on the run's post-solve provider (``load_scenario``); the
+    cascade FlexData is the one the cascade itself built and solved (``run.last_flex_data``).
     """
-    cols_a = a.columns
-    cols_b = b.columns
-    keep = [c for c in index_cols if c in cols_a and c in cols_b]
-    aa = a.sort(keep) if keep else a
-    bb = b.sort(keep) if keep else b
-    if "value" in aa.columns and "value" in bb.columns:
-        aa = aa.with_columns(value=pl.col("value").cast(pl.Float64, strict=False))
-        bb = bb.with_columns(value=pl.col("value").cast(pl.Float64, strict=False))
-    if aa.equals(bb):
-        return True, ""
-    return False, f"\nA:\n{aa}\nB:\n{bb}\n"
+    run = scenario_run(scenario, db_fixture=_db_fixture_for(scenario))
+    assert run.last_flex_data is not None, f"{scenario}: the cascade kept no FlexData"
+    return run, load_scenario(run), run.last_flex_data
+
+
+def _assert_rebuild_equal(data, cascade, field: str, scenario: str) -> None:
+    diff = field_diff(getattr(data, field), getattr(cascade, field))
+    assert diff is None, f"{field}: rebuild != cascade on {scenario}: {diff}"
 
 
 # ---------------------------------------------------------------------------
 # Singletons — invest / lifetime cascade literal-value regression guards
+#
+# Each test checks the field of a rebuild from the post-solve provider against the cascade's own
+# FlexData (these used to compare a CSV load with a DB-direct load of the same, DB-derived snapshot,
+# which could no longer fail), plus the literal values the docstring pins.
 
 
-def test_p_entity_max_units_canonical_test_a_lot(scenario_workdir):
+def test_p_entity_max_units_canonical_test_a_lot(scenario_run):
     """`p_entity_max_units` mirrors flextool's
     ``entity_period_calc_params.py:1718-1761`` (max_capacity / unitsize
-    per entity × period_in_use) — verified frame-equal CSV vs DB on
-    ``test_a_lot`` after the Γ.6.C rewrite.
+    per entity × period_in_use) on ``test_a_lot`` after the Γ.6.C rewrite.
 
     Pre-fix: DB-direct emitted only entities with explicit
     ``invest_max_period`` (≈3 rows), CSV path had 56.  Post-fix:
     full per-(entity, period) coverage including the
     ``existing + invest_no_limit`` blanket cap and unitsize cascade.
     """
-    fixture = scenario_workdir("test_a_lot")
-    sqlite = fixture / "tests.sqlite"
-    csv_d = load_flextool(fixture)
-    db_d = load_flextool(fixture, db_reader=SpineDbReader(sqlite, "test_a_lot"))
-    assert csv_d.p_entity_max_units is not None
-    assert db_d.p_entity_max_units is not None
-    eq, diff = _equal_after_sort(csv_d.p_entity_max_units.frame,
-                                   db_d.p_entity_max_units.frame,
-                                   ["e", "d"])
-    assert eq, f"p_entity_max_units divergence on test_a_lot:\n{diff}"
+    _, data, cascade = _rebuild(scenario_run, "test_a_lot")
+    assert data.p_entity_max_units is not None
+    _assert_rebuild_equal(data, cascade, "p_entity_max_units", "test_a_lot")
 
 
-def test_e_invest_total_method_filter_test_a_lot(scenario_workdir):
+def test_e_invest_total_method_filter_test_a_lot(scenario_run):
     """`e_invest_total` filters ``entity__invest_method`` by the four
     INVEST_TOTAL enum values (``invest_total / invest_period_total /
     invest_retire_total / invest_retire_period_total``) — NOT by
     ``invest_max_total > 0`` as the pre-Γ.6.C projection did.  On
     ``test_a_lot`` every entity uses ``invest_no_limit``, so
-    ``e_invest_total`` is empty; loaded as ``None`` (CSV path) and
-    overridden as None in the dispatch-only gate.
+    ``e_invest_total`` is empty.
     """
-    fixture = scenario_workdir("test_a_lot")
-    sqlite = fixture / "tests.sqlite"
-    csv_d = load_flextool(fixture)
-    db_d = load_flextool(fixture, db_reader=SpineDbReader(sqlite, "test_a_lot"))
-    # Both paths must converge on the same value.
-    if csv_d.e_invest_total is None:
-        assert db_d.e_invest_total is None, (
-            "DB-direct emitted e_invest_total entities the CSV path "
-            "doesn't list (method filter regression)")
-    else:
-        assert db_d.e_invest_total is not None
-        assert (csv_d.e_invest_total.sort("e").equals(
-            db_d.e_invest_total.sort("e")))
+    _, data, cascade = _rebuild(scenario_run, "test_a_lot")
+    _assert_rebuild_equal(data, cascade, "e_invest_total", "test_a_lot")
 
 
-def test_p_entity_max_units_invest_no_limit_y2020_2029_1x10y(scenario_workdir):
+def test_p_entity_max_units_invest_no_limit_y2020_2029_1x10y(scenario_run):
     """Regression for the ``invest_no_limit`` blanket-cap branch.
 
     On ``y2020_2029_1x10y``:
@@ -152,44 +134,30 @@ def test_p_entity_max_units_invest_no_limit_y2020_2029_1x10y(scenario_workdir):
       * Both divided by their unitsize cascade values
         (100, 1000) yield 8.0 and 1001.0 — pinned in this test.
     """
-    fixture = scenario_workdir("y2020_2029_1x10y")
-    sqlite = fixture / "tests.sqlite"
-    csv_d = load_flextool(fixture)
-    db_d = load_flextool(fixture,
-                          db_reader=SpineDbReader(sqlite, "y2020_2029_1x10y"))
-    assert csv_d.p_entity_max_units is not None
-    assert db_d.p_entity_max_units is not None
-    eq, diff = _equal_after_sort(csv_d.p_entity_max_units.frame,
-                                   db_d.p_entity_max_units.frame,
-                                   ["e", "d"])
-    assert eq, f"p_entity_max_units mismatch on y2020_2029_1x10y:\n{diff}"
+    _, data, cascade = _rebuild(scenario_run, "y2020_2029_1x10y")
+    assert data.p_entity_max_units is not None
+    _assert_rebuild_equal(data, cascade, "p_entity_max_units", "y2020_2029_1x10y")
     # Pin exact values for the coal_plant / wind_plant rows.
     db_rows = {(e, d): v
-                for e, d, v in db_d.p_entity_max_units.frame.iter_rows()}
+                for e, d, v in data.p_entity_max_units.frame.iter_rows()}
     assert db_rows[("coal_plant", "p2020")] == pytest.approx(8.0)
     assert db_rows[("wind_plant", "p2020")] == pytest.approx(1001.0)
 
 
-def test_lifetime_no_investment_filters_ed_invest_set(scenario_workdir):
+def test_lifetime_no_investment_filters_ed_invest_set(scenario_run):
     """Γ.6.D — ``lifetime_method=no_investment`` entities whose lifetime
     window has expired must be anti-joined out of ``ed_invest_set``.
 
     Regression for ``multi_year_wind_no_investment``: ``wind_plant``
     has ``lifetime=10`` and ``no_investment``; with periods at years
     [0, 5, 10, 15] we need ed_invest to drop ``(wind_plant, p2030)``
-    and ``(wind_plant, p2035)``.  The CSV-loaded ed_invest already has
-    those rows filtered (via ``ed_invest_forbidden_no_investment``); the
-    DB-direct overlay must mirror this.
+    and ``(wind_plant, p2035)`` (they move to
+    ``ed_invest_forbidden_no_investment``).
     """
-    fixture = scenario_workdir("multi_year_wind_no_investment")
-    sqlite = fixture / "tests.sqlite"
-    csv_d = load_flextool(fixture)
-    db_d = load_flextool(fixture, db_reader=SpineDbReader(
-        sqlite, "multi_year_wind_no_investment"))
-    csv_set = csv_d.ed_invest_set.sort("e", "d")
-    db_set = db_d.ed_invest_set.sort("e", "d")
-    assert csv_set.equals(db_set), (
-        f"ed_invest_set mismatch:\n  csv={csv_set}\n  db={db_set}")
+    _, data, cascade = _rebuild(scenario_run, "multi_year_wind_no_investment")
+    for field in ("ed_invest_set", "ed_invest_forbidden_no_investment"):
+        _assert_rebuild_equal(data, cascade, field, "multi_year_wind_no_investment")
+    db_set = data.ed_invest_set.sort("e", "d")
     # Specifically, wind_plant must NOT appear at p2030 / p2035.
     forbidden_rows = db_set.filter(
         (pl.col("e") == "wind_plant")
@@ -198,14 +166,14 @@ def test_lifetime_no_investment_filters_ed_invest_set(scenario_workdir):
         f"wind_plant unexpectedly present in ed_invest at expired "
         f"periods: {forbidden_rows}")
     # ed_invest_forbidden_no_investment should hold those rows.
-    forb = db_d.ed_invest_forbidden_no_investment
+    forb = data.ed_invest_forbidden_no_investment
     assert forb is not None and forb.height == 2
     forb_set = set(forb.iter_rows())
     assert ("wind_plant", "p2030") in forb_set
     assert ("wind_plant", "p2035") in forb_set
 
 
-def test_lifetime_choice_truncates_p_entity_all_existing(scenario_workdir):
+def test_lifetime_choice_truncates_p_entity_all_existing(scenario_run):
     """Γ.6.D — ``lifetime_method=reinvest_choice`` truncates
     ``p_entity_all_existing`` past the lifetime expiry.
 
@@ -215,15 +183,9 @@ def test_lifetime_choice_truncates_p_entity_all_existing(scenario_workdir):
     and beyond.  This cascades through ``p_state_existing_capacity``,
     ``p_process_existing_count``, ``p_flow_upper_existing``.
     """
-    fixture = scenario_workdir("wind_battery_invest_lifetime_choice")
-    sqlite = fixture / "tests.sqlite"
-    csv_d = load_flextool(fixture)
-    db_d = load_flextool(fixture, db_reader=SpineDbReader(
-        sqlite, "wind_battery_invest_lifetime_choice"))
-    csv_pae = csv_d.p_entity_all_existing.frame.sort("e", "d")
-    db_pae = db_d.p_entity_all_existing.frame.sort("e", "d")
-    assert csv_pae.equals(db_pae), (
-        f"p_entity_all_existing mismatch:\n  csv={csv_pae}\n  db={db_pae}")
+    _, data, cascade = _rebuild(scenario_run, "wind_battery_invest_lifetime_choice")
+    _assert_rebuild_equal(data, cascade, "p_entity_all_existing", "wind_battery_invest_lifetime_choice")
+    db_pae = data.p_entity_all_existing.frame.sort("e", "d")
     # Spot-check wind_plant at expired periods.
     wp = db_pae.filter(pl.col("e") == "wind_plant").sort("d")
     wp_dict = {row["d"]: row["value"] for row in wp.iter_rows(named=True)}
@@ -233,10 +195,10 @@ def test_lifetime_choice_truncates_p_entity_all_existing(scenario_workdir):
             f"wind_plant at {d} expected 0, got {wp_dict.get(d)}")
 
 
-def test_multi_solve_handoff_p_entity_all_existing_chain(scenario_workdir):
-    """Γ.6.D — multi-solve handoff: when ``solve_data/p_entity_all_existing.csv``
-    is present, it carries the chained existing capacity from prior
-    solves.  DB-direct must read that CSV instead of the raw
+def test_multi_solve_handoff_p_entity_all_existing_chain(scenario_run):
+    """Γ.6.D — multi-solve handoff: the last sub-solve's
+    ``p_entity_all_existing`` carries the chained existing capacity from
+    prior solves (the post-solve provider's handoff frames), not the raw
     ``entity.existing`` (which represents only the first solve's
     pre-existing capacity).
 
@@ -246,16 +208,10 @@ def test_multi_solve_handoff_p_entity_all_existing_chain(scenario_workdir):
     — neither value is in ``entity.existing`` (raw values are 50 and
     1000 respectively).
     """
-    fixture = scenario_workdir("wind_battery_invest_lifetime_renew_4solve")
-    sqlite = fixture / "tests.sqlite"
-    csv_d = load_flextool(fixture)
-    db_d = load_flextool(fixture, db_reader=SpineDbReader(
-        sqlite, "wind_battery_invest_lifetime_renew_4solve"))
-    csv_pae = csv_d.p_entity_all_existing.frame.sort("e", "d")
-    db_pae = db_d.p_entity_all_existing.frame.sort("e", "d")
-    assert csv_pae.equals(db_pae), (
-        f"p_entity_all_existing mismatch:\n"
-        f"  csv={csv_pae}\n  db={db_pae}")
+    scenario = "wind_battery_invest_lifetime_renew_4solve"
+    _, data, cascade = _rebuild(scenario_run, scenario)
+    _assert_rebuild_equal(data, cascade, "p_entity_all_existing", scenario)
+    db_pae = data.p_entity_all_existing.frame.sort("e", "d")
     # The chained values must be read, not raw entity.existing.
     rows = {(r["e"], r["d"]): r["value"]
              for r in db_pae.iter_rows(named=True)}
@@ -265,7 +221,7 @@ def test_multi_solve_handoff_p_entity_all_existing_chain(scenario_workdir):
         "wind_plant at p2035 should be the chained ~2289, not raw 1000")
 
 
-def test_dispatch_only_gate_blanks_invest_cascade(scenario_workdir):
+def test_dispatch_only_gate_blanks_invest_cascade(scenario_run):
     """When the active solve has no ``invest_periods`` (dispatch-only),
     `_load_invest` returns blank — every invest-cascade Param is None.
     The DB-direct path's Γ.3.C overlay must mirror that: clear the
@@ -276,22 +232,16 @@ def test_dispatch_only_gate_blanks_invest_cascade(scenario_workdir):
     canonical regression: it carries an
     ``invest_max_total = 700`` for ``coal_plant`` in the DB, but the
     active ``y2020_fullYear_dispatch`` solve has empty
-    ``invest_periods`` so ed_invest is empty.  DB-direct must emit
-    ``e_invest_max_total = None`` (matching CSV) — not a 1-row frame.
+    ``invest_periods`` so ed_invest is empty.  The load must emit
+    ``e_invest_max_total = None`` — not a 1-row frame.
     """
-    fixture = scenario_workdir("5weeks_invest_fullYear_dispatch_coal_wind")
-    sqlite = fixture / "tests.sqlite"
-    csv_d = load_flextool(fixture)
-    db_d = load_flextool(fixture, db_reader=SpineDbReader(
-        sqlite, "5weeks_invest_fullYear_dispatch_coal_wind"))
-    # Both invest cascade fields should be None on dispatch-only.
+    _, data, cascade = _rebuild(scenario_run, "5weeks_invest_fullYear_dispatch_coal_wind")
+    # Every invest cascade field is None on dispatch-only, in the rebuild and in the cascade's FlexData.
     for field in ("e_invest_total", "e_invest_max_total",
                    "e_invest_min_total", "p_entity_max_units",
                    "ed_invest_set"):
-        csv_v = getattr(csv_d, field)
-        db_v = getattr(db_d, field)
-        assert csv_v is None, f"{field} CSV unexpectedly non-None"
-        assert db_v is None, f"{field} DB-direct unexpectedly non-None"
+        assert getattr(data, field) is None, f"{field} rebuild unexpectedly non-None"
+        assert getattr(cascade, field) is None, f"{field} cascade unexpectedly non-None"
 
 
 # ---------------------------------------------------------------------------
@@ -378,15 +328,12 @@ def test_inmemory_reader_none_default_skip():
 # Source-aware load_flextool — DB-direct override smoke tests
 
 
-def test_load_flextool_db_reader_override(scenario_workdir):
-    """``load_flextool(workdir, db_reader=reader)`` produces a FlexData
-    where the first-wave Direct fields have been replaced by frames
-    sourced from the SpineDB scenario — the rest of the FlexData is
-    untouched.
+def test_load_flextool_db_reader_override(scenario_run):
+    """``load_flextool(folder, provider=..., db_reader=reader)`` produces a
+    FlexData where the first-wave Direct fields have been replaced by
+    frames sourced from the SpineDB scenario.
     """
-    work = scenario_workdir("test_a_lot")
-    reader = SpineDbReader(work / "tests.sqlite", "test_a_lot")
-    db_data = load_flextool(work, db_reader=reader)
+    db_data = load_scenario(scenario_run("test_a_lot"))
     # The DB-direct override should populate p_co2_content from the
     # commodity.co2_content parameter even when the CSV path sourced
     # it via _load_co2_price's gating.
@@ -396,24 +343,23 @@ def test_load_flextool_db_reader_override(scenario_workdir):
     assert co2_frame.filter(pl.col("c") == "coal")["value"][0] == pytest.approx(0.34)
 
 
-def test_load_flextool_rejects_invalid_db_reader(scenario_workdir):
+def test_load_flextool_rejects_invalid_db_reader(scenario_run):
     """``db_reader`` arg must implement the InputSource Protocol."""
-    work = scenario_workdir("coal")
+    run = scenario_run("coal")
     with pytest.raises(TypeError):
-        load_flextool(work, db_reader=object())
+        load_flextool(run.load_folder, provider=clone_provider(run.last.provider), db_reader=object())
 
 
-def test_load_flextool_with_db_reader_solves_correctly(scenario_workdir):
-    """End-to-end smoke: loading the ``coal`` scenario via the DB-direct
-    override and solving still produces the recorded objective.  The
-    chosen first-wave Direct Params are CSV ≡ DB equal on this fixture,
-    so the solve must agree to numerical tolerance.
+def test_load_flextool_with_db_reader_solves_correctly(scenario_run):
+    """End-to-end smoke: loading the ``coal`` scenario through the
+    production loader call (provider + DB reader) and solving still
+    produces the recorded objective.
     """
     from polar_high import Problem
     from flextool.engine import build_flextool
-    work = scenario_workdir("coal")
-    reader = SpineDbReader(work / "tests.sqlite", "coal")
-    data = load_flextool(work, db_reader=reader)
+    run = scenario_run("coal")
+    work = run.work_folder
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -459,7 +405,7 @@ RESOLVED_DEFAULTS = [
                          RESOLVED_DEFAULTS,
                          ids=[f"{c}.{p}" for c, p, _ in RESOLVED_DEFAULTS])
 def test_resolved_default_landed(entity_class, param_name, expected,
-                                  scenario_workdir):
+                                  scenario_run):
     """v56 None-default policy: each historical Python-convention default
     must surface as ``None`` through ``SpineDbReader.parameter_default``,
     confirming the engine-side substitution path is still the source of
@@ -468,8 +414,7 @@ def test_resolved_default_landed(entity_class, param_name, expected,
     future JSON edit that bakes a default back into the schema breaks
     here rather than silently bypassing ``_scalar_default``'s fallback.
     """
-    work = scenario_workdir("test_a_lot")
-    reader = SpineDbReader(work / "tests.sqlite", "test_a_lot")
+    reader = scenario_run("test_a_lot").reader()
     actual = reader.parameter_default(entity_class, param_name)
     assert actual == expected, (
         f"{entity_class}.{param_name} default: expected {expected}, "
@@ -493,7 +438,7 @@ def test_resolved_default_landed(entity_class, param_name, expected,
     ids=["work_coal", "work_test_a_lot_but_not_multi_year"],
 )
 def test_db_direct_solve_parity_with_derived_a(work, sqlite, scenario, parquet,
-                                                  scenario_workdir):
+                                                  scenario_run):
     """End-to-end DB-direct solve parity through Γ.3.A overlay.
 
     Adds the Derived foundational frames (dt / step_duration / period
@@ -502,26 +447,17 @@ def test_db_direct_solve_parity_with_derived_a(work, sqlite, scenario, parquet,
     to rel < 1e-6 — same bar as the Γ.2 solve parity test, with the
     additional Derived path active.
     """
-    if work == "work_test_a_lot_but_not_multi_year":
-        pytest.skip(
-            "Γ.3.G gate-sweep surfaced upstream CSV bug: this fixture's "
-            "solve_data/e_invest_total.csv is empty even though the Spine "
-            "source has unit.invest_max_total=700 for coal_plant.  The "
-            "DB-direct path correctly applies the invest cap; flextool's "
-            "recorded objective omits it.  Fix is upstream — not "
-            "regressing on the DB-direct side.  TODO Γ.4: rebuild fixture "
-            "from a clean preprocessing run and re-enable.")
     from polar_high import Problem
     from flextool.engine import build_flextool
-    fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
+    run = scenario_run(scenario, db_fixture=_db_fixture_for(scenario))
+    fixture = run.work_folder
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
         # Some fixtures have a different obj filename — pick any.
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    reader = SpineDbReader(fixture / sqlite, scenario)
-    data = load_flextool(fixture, db_reader=reader)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -543,7 +479,7 @@ def test_db_direct_solve_parity_with_derived_a(work, sqlite, scenario, parquet,
     ids=["work_coal"],
 )
 def test_db_direct_solve_parity_with_projections(work, sqlite, scenario, parquet,
-                                                    scenario_workdir):
+                                                    scenario_run):
     """End-to-end: loading via the DB-direct override (Direct + Projection
     wave) and solving must reproduce flextool's recorded objective to
     rel < 1e-6.  Identical to ``test_load_flextool_with_db_reader_solves_correctly``
@@ -554,9 +490,9 @@ def test_db_direct_solve_parity_with_projections(work, sqlite, scenario, parquet
     """
     from polar_high import Problem
     from flextool.engine import build_flextool
-    fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
-    reader = SpineDbReader(fixture / sqlite, scenario)
-    data = load_flextool(fixture, db_reader=reader)
+    run = scenario_run(scenario, db_fixture=_db_fixture_for(scenario))
+    fixture = run.work_folder
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -588,7 +524,7 @@ def test_db_direct_solve_parity_with_projections(work, sqlite, scenario, parquet
           "work_test_a_lot_but_not_multi_year"],
 )
 def test_db_direct_solve_parity_with_derived_b(work, sqlite, scenario, parquet,
-                                                  scenario_workdir):
+                                                  scenario_run):
     """End-to-end DB-direct solve parity through Γ.3.B overlay.
 
     Adds the topology + slope + flow_constraint_coef + varCost frames
@@ -596,21 +532,16 @@ def test_db_direct_solve_parity_with_derived_b(work, sqlite, scenario, parquet,
     recorded objective to rel < 1e-6 — same bar as Γ.3.A's solve parity
     test, with the additional process-topology Derived path active.
     """
-    if work == "work_test_a_lot_but_not_multi_year":
-        pytest.skip(
-            "Γ.3.G gate-sweep surfaced upstream CSV bug "
-            "(e_invest_total mismatch between CSV and Spine).  See "
-            "test_db_direct_solve_parity_with_derived_a for diagnosis.")
     from polar_high import Problem
     from flextool.engine import build_flextool
-    fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
+    run = scenario_run(scenario, db_fixture=_db_fixture_for(scenario))
+    fixture = run.work_folder
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    reader = SpineDbReader(fixture / sqlite, scenario)
-    data = load_flextool(fixture, db_reader=reader)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -645,7 +576,7 @@ def test_db_direct_solve_parity_with_derived_b(work, sqlite, scenario, parquet,
           "work_capacity_margin", "work_wind_battery_invest"],
 )
 def test_db_direct_solve_parity_with_derived_c(work, sqlite, scenario,
-                                                  parquet, scenario_workdir):
+                                                  parquet, scenario_run):
     """End-to-end DB-direct solve parity through Γ.3.C overlay.
 
     Builds on top of the Γ.3.B chain — adds invest/divest, online/UC,
@@ -655,14 +586,14 @@ def test_db_direct_solve_parity_with_derived_c(work, sqlite, scenario,
     """
     from polar_high import Problem
     from flextool.engine import build_flextool
-    fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
+    run = scenario_run(scenario, db_fixture=_db_fixture_for(scenario))
+    fixture = run.work_folder
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    reader = SpineDbReader(fixture / sqlite, scenario)
-    data = load_flextool(fixture, db_reader=reader)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -697,7 +628,7 @@ def test_db_direct_solve_parity_with_derived_c(work, sqlite, scenario,
           "work_lh2_three_region", "work_network_coal_wind_reserve"],
 )
 def test_db_direct_solve_parity_with_derived_d(work, sqlite, scenario,
-                                                  parquet, scenario_workdir):
+                                                  parquet, scenario_run):
     """End-to-end DB-direct solve parity through Γ.3.D overlay.
 
     Reproduces flextool's recorded objective to rel < 1e-6 with the
@@ -707,14 +638,14 @@ def test_db_direct_solve_parity_with_derived_d(work, sqlite, scenario,
     """
     from polar_high import Problem
     from flextool.engine import build_flextool
-    fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
+    run = scenario_run(scenario, db_fixture=_db_fixture_for(scenario))
+    fixture = run.work_folder
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    reader = SpineDbReader(fixture / sqlite, scenario)
-    data = load_flextool(fixture, db_reader=reader)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -751,7 +682,7 @@ def test_db_direct_solve_parity_with_derived_d(work, sqlite, scenario,
           "work_2day_stochastic_dispatch_full_storage"],
 )
 def test_db_direct_solve_parity_with_derived_e(work, sqlite, scenario,
-                                                  parquet, scenario_workdir):
+                                                  parquet, scenario_run):
     """End-to-end DB-direct solve parity through Γ.3.E overlay.
 
     Reproduces flextool's recorded objective to rel < 1e-6 with the
@@ -762,14 +693,14 @@ def test_db_direct_solve_parity_with_derived_e(work, sqlite, scenario,
     """
     from polar_high import Problem
     from flextool.engine import build_flextool
-    fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
+    run = scenario_run(scenario, db_fixture=_db_fixture_for(scenario))
+    fixture = run.work_folder
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    reader = SpineDbReader(fixture / sqlite, scenario)
-    data = load_flextool(fixture, db_reader=reader)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -801,7 +732,7 @@ def test_db_direct_solve_parity_with_derived_e(work, sqlite, scenario,
           "work_wind_battery_invest_lifetime_renew"],
 )
 def test_db_direct_solve_parity_with_derived_f(work, sqlite, scenario,
-                                                  parquet, scenario_workdir):
+                                                  parquet, scenario_run):
     """End-to-end DB-direct solve parity through Γ.3.F overlay.
 
     Reproduces flextool's recorded objective to rel < 1e-6 with the
@@ -812,14 +743,14 @@ def test_db_direct_solve_parity_with_derived_f(work, sqlite, scenario,
     """
     from polar_high import Problem
     from flextool.engine import build_flextool
-    fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
+    run = scenario_run(scenario, db_fixture=_db_fixture_for(scenario))
+    fixture = run.work_folder
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    reader = SpineDbReader(fixture / sqlite, scenario)
-    data = load_flextool(fixture, db_reader=reader)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -853,7 +784,7 @@ DERIVED_G_SOLVE_FIXTURES: list[tuple[str, str, str, str]] = [
                           DERIVED_G_SOLVE_FIXTURES,
                           ids=[f[0] for f in DERIVED_G_SOLVE_FIXTURES])
 def test_db_direct_solve_parity_with_derived_g(work, sqlite, scenario,
-                                                  parquet, scenario_workdir):
+                                                  parquet, scenario_run):
     """End-to-end DB-direct solve parity through Γ.3.G overlay.
 
     Reproduces flextool's recorded objective to rel < 1e-6 with the
@@ -863,14 +794,14 @@ def test_db_direct_solve_parity_with_derived_g(work, sqlite, scenario,
     """
     from polar_high import Problem
     from flextool.engine import build_flextool
-    fixture = scenario_workdir(scenario, db_fixture=_db_fixture_for(scenario))
+    run = scenario_run(scenario, db_fixture=_db_fixture_for(scenario))
+    fixture = run.work_folder
     parquets = sorted((fixture / "output_raw").glob(parquet))
     if not parquets:
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    reader = SpineDbReader(fixture / sqlite, scenario)
-    data = load_flextool(fixture, db_reader=reader)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()

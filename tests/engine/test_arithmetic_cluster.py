@@ -6,9 +6,12 @@ cluster F helpers in :mod:`flextool.engine.preprocess.params._derived`
 (``p_slope``, ``p_section``, ``p_flow_upper_existing``, ``p_state_upper``,
 ``p_process_existing_count``).
 
-The CSV-loaded ``FlexData`` is the parity oracle — any divergence between
-the source-driven path (DB-direct) and the CSV path surfaces as a
-per-fixture failure.
+Per-fixture check: each cluster F field of a rebuild from the run's post-solve provider (the
+production loader call, ``tests._support.load.load_scenario``) equals the field of the FlexData the
+cascade itself built and solved (``run.last_flex_data``).  A difference means the rebuild path and the
+cascade build disagree on that field for that fixture.  (These tests used to compare a CSV load with a
+DB-direct load of the same snapshot; once the snapshot became DB-derived both sides took the same path
+and the comparison could no longer fail.)
 
 Cluster F coverage:
 
@@ -23,28 +26,16 @@ Cluster F coverage:
 * ``p_flow_upper_existing``     — existing/unitsize per arc.
 * ``p_state_upper``             — capacity / unitsize per (n, d).
 * ``p_process_existing_count``  — existing / unitsize per (p, d).
-
-Per the Δ.10 hand-off the ~10 % Γ.4 deferred parity gap is the long
-tail of multi-period broadcasting + multi-block fixtures.  The sweep
-is the gating oracle for those.
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import polars as pl
 import pytest
 
-from flextool.engine import (
-    InMemoryReader,
-    SpineDbReader,
-    load_flextool,
-)
+from flextool.engine import InMemoryReader
 from flextool.engine.preprocess.params import _arithmetic as ar
-
-
-HERE = Path(__file__).resolve().parent
-DATA = HERE / "data"
+from tests._support.fields import field_diff
+from tests._support.load import load_scenario
 
 
 # Phase 3d: curated parity sweep — replaces the legacy disk-discovery
@@ -54,312 +45,136 @@ from _parity_sweep import PARITY_SWEEP_CASES  # noqa: E402
 PARITY_CASES = [(legacy, scen, dbf) for legacy, scen, dbf in PARITY_SWEEP_CASES]
 
 
-# Known fixture-data divergences — fixtures where the CSV preprocessing
-# captures a parameter value that the SQLite source doesn't carry (or
-# vice versa).  These are pre-existing fixture inconsistencies surfaced
-# by Δ.10's wider parity sweep — *not* defects in the cluster F helpers.
-# The parity test xfails on the listed (fixture, field) pairs.
-#
-# Each entry: (work_name, field_name) → reason.  The fixture-data fix
-# is upstream (regenerate the work_*/input/*.csv against the canonical
-# SpineDB source); deferred until Δ.12 fixture rebuild.
-_FIXTURE_DATA_DIVERGENCES: dict[tuple[str, str], str] = {
-    ("work_delay_source_coef", "p_penalty_up"):
-        "CSV input has water_sink.penalty_up=500; SQLite has the schema "
-        "default (10000).  Fixture rebuild needed.",
-    ("work_delay_source_coef", "p_penalty_down"):
-        "CSV input has water_sink.penalty_down=500; SQLite has the schema "
-        "default (10000).  Fixture rebuild needed.",
-}
-
-
-def _maybe_skip_fixture_data_divergence(work_name: str, field: str) -> None:
-    key = (work_name, field)
-    if key in _FIXTURE_DATA_DIVERGENCES:
-        pytest.skip(
-            f"fixture-data divergence on {work_name}/{field}: "
-            f"{_FIXTURE_DATA_DIVERGENCES[key]}"
-        )
-
-
 # ---------------------------------------------------------------------------
-# Helpers
+# Per-fixture rebuild check
 # ---------------------------------------------------------------------------
 
 
-def _frames_equal(a: pl.DataFrame | None, b: pl.DataFrame | None,
-                    keys: tuple[str, ...]) -> tuple[bool, str | None]:
-    """Compare two frames for row-set equality on *keys*+ value column.
+@pytest.fixture(scope="module")
+def rebuilt(scenario_run):
+    """``(scenario, db_fixture) -> (rebuilt FlexData, cascade FlexData)``, one rebuild per scenario.
 
-    Returns ``(equal, diff_message)``.  Both ``None`` is equal.
+    The rebuild is the production loader call on the run's post-solve provider (``load_scenario``); the
+    reference is the FlexData the cascade itself built and solved for its last step
+    (``run.last_flex_data``, the step's own ``flex_data`` object, not a second load).
     """
-    if a is None and b is None:
-        return True, None
-    if a is None:
-        return False, f"left None, right {b.height} rows"
-    if b is None:
-        return False, f"left {a.height} rows, right None"
-    if set(a.columns) != set(b.columns):
-        return False, f"columns differ: left={a.columns} right={b.columns}"
-    if a.height != b.height:
-        return False, f"row counts differ: left={a.height} right={b.height}"
-    a_sorted = a.sort(by=list(keys))
-    b_sorted = b.select(a.columns).sort(by=list(keys))
-    if a_sorted.equals(b_sorted):
-        return True, None
-    val_col = next((c for c in a.columns if c not in keys), None)
-    if val_col is None:
-        return False, "no value column"
-    a_keys = a_sorted.select(list(keys))
-    b_keys = b_sorted.select(list(keys))
-    if not a_keys.equals(b_keys):
-        return False, "key sets differ"
-    av = a_sorted[val_col].cast(pl.Float64, strict=False).to_list()
-    bv = b_sorted[val_col].cast(pl.Float64, strict=False).to_list()
-    max_diff = 0.0
-    for x, y in zip(av, bv):
-        if x is None or y is None:
-            if x != y:
-                return False, f"null mismatch: {x} vs {y}"
-            continue
-        d = abs(x - y)
-        if d > max_diff:
-            max_diff = d
-    # Tolerance: 1e-6 * max(1, |value|) — same bar as
-    # ``test_db_direct_parity._frame_eq_value``.  CSV serialisation
-    # truncates to 6 significant digits; DB-direct values round-tripped
-    # through CSV can differ at ~1e-7.
-    scale = max(1.0, max((abs(x) for x in av if x is not None),
-                          default=1.0))
-    if max_diff < 1e-6 * scale:
-        return True, None
-    return False, f"max abs diff = {max_diff!r} (scale={scale})"
+    cache: dict[tuple[str, str], tuple[object, object]] = {}
+
+    def get(scenario: str, db_fixture: str) -> tuple[object, object]:
+        key = (scenario, db_fixture)
+        if key not in cache:
+            run = scenario_run(scenario, db_fixture=db_fixture)
+            assert run.last_flex_data is not None, f"{scenario}: the cascade kept no FlexData"
+            cache[key] = (load_scenario(run), run.last_flex_data)
+        return cache[key]
+
+    return get
 
 
-def _param_frame(p) -> pl.DataFrame | None:
-    if p is None:
-        return None
-    return p.frame if hasattr(p, "frame") else p
-
-
-# ---------------------------------------------------------------------------
-# Per-fixture parity sweep
-# ---------------------------------------------------------------------------
+def _check_rebuild(rebuilt, work_name: str, scenario: str, db_fixture: str, field: str) -> None:
+    """``field`` of the rebuild from the post-solve provider == the cascade's own FlexData field."""
+    data, cascade = rebuilt(scenario, db_fixture)
+    diff = field_diff(getattr(data, field), getattr(cascade, field))
+    assert diff is None, f"{field}: rebuild != cascade on {work_name}: {diff}"
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_unitsize_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for ``p_unitsize`` (cluster F)."""
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_unitsize)
-    b = _param_frame(db_data.p_unitsize)
-    ok, msg = _frames_equal(a, b, ("p",))
-    assert ok, f"p_unitsize mismatch on {work_name}: {msg}\n  csv:\n{a}\n  db:\n{b}"
+def test_p_unitsize_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_unitsize``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_unitsize")
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_state_unitsize_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for ``p_state_unitsize`` (cluster F)."""
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_state_unitsize)
-    b = _param_frame(db_data.p_state_unitsize)
-    ok, msg = _frames_equal(a, b, ("n",))
-    assert ok, (
-        f"p_state_unitsize mismatch on {work_name}: {msg}\n"
-        f"  csv:\n{a}\n  db:\n{b}"
-    )
+def test_p_state_unitsize_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_state_unitsize``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_state_unitsize")
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_penalty_up_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for ``p_penalty_up`` (cluster F)."""
-    _maybe_skip_fixture_data_divergence(work_name, "p_penalty_up")
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_penalty_up)
-    b = _param_frame(db_data.p_penalty_up)
-    ok, msg = _frames_equal(a, b, ("n", "d", "t"))
-    assert ok, (
-        f"p_penalty_up mismatch on {work_name}: {msg}"
-    )
+def test_p_penalty_up_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_penalty_up``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_penalty_up")
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_penalty_down_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for ``p_penalty_down`` (cluster F)."""
-    _maybe_skip_fixture_data_divergence(work_name, "p_penalty_down")
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_penalty_down)
-    b = _param_frame(db_data.p_penalty_down)
-    ok, msg = _frames_equal(a, b, ("n", "d", "t"))
-    assert ok, (
-        f"p_penalty_down mismatch on {work_name}: {msg}"
-    )
+def test_p_penalty_down_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_penalty_down``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_penalty_down")
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_process_source_conversion_flow_coeff_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for ``p_process_source_conversion_flow_coeff`` (cluster F)."""
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_process_source_conversion_flow_coeff)
-    b = _param_frame(db_data.p_process_source_conversion_flow_coeff)
-    ok, msg = _frames_equal(a, b, ("p", "source"))
-    assert ok, (
-        f"p_process_source_conversion_flow_coeff mismatch on {work_name}: {msg}\n"
-        f"  csv:\n{a}\n  db:\n{b}"
-    )
+def test_p_process_source_conversion_flow_coeff_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_process_source_conversion_flow_coeff``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_process_source_conversion_flow_coeff")
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_process_sink_conversion_flow_coeff_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for ``p_process_sink_conversion_flow_coeff`` (cluster F)."""
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_process_sink_conversion_flow_coeff)
-    b = _param_frame(db_data.p_process_sink_conversion_flow_coeff)
-    ok, msg = _frames_equal(a, b, ("p", "sink"))
-    assert ok, (
-        f"p_process_sink_conversion_flow_coeff mismatch on {work_name}: {msg}\n"
-        f"  csv:\n{a}\n  db:\n{b}"
-    )
+def test_p_process_sink_conversion_flow_coeff_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_process_sink_conversion_flow_coeff``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_process_sink_conversion_flow_coeff")
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_slope_full_sweep_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for the existing cluster F ``p_slope`` helper.
-
-    Δ.10 widens the parity surface to every fixture (the
-    ``test_db_direct_parity.TestDerivedBTopology`` covers a 3-fixture
-    subset only).
-    """
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_slope)
-    b = _param_frame(db_data.p_slope)
-    ok, msg = _frames_equal(a, b, ("p", "d", "t"))
-    assert ok, f"p_slope mismatch on {work_name}: {msg}"
+def test_p_slope_full_sweep_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_slope``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_slope")
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_section_full_sweep_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for the existing cluster F ``p_section`` helper."""
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_section)
-    b = _param_frame(db_data.p_section)
-    ok, msg = _frames_equal(a, b, ("p", "d", "t"))
-    assert ok, f"p_section mismatch on {work_name}: {msg}"
+def test_p_section_full_sweep_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_section``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_section")
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_flow_upper_existing_full_sweep_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for the existing cluster F
-    ``p_flow_upper_existing`` helper.
-    """
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_flow_upper_existing)
-    b = _param_frame(db_data.p_flow_upper_existing)
-    ok, msg = _frames_equal(a, b, ("p", "source", "sink", "d"))
-    assert ok, f"p_flow_upper_existing mismatch on {work_name}: {msg}"
+def test_p_flow_upper_existing_full_sweep_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_flow_upper_existing``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_flow_upper_existing")
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_state_upper_full_sweep_parity(work_name: str, scenario: str, db_fixture: str, scenario_workdir) -> None:
-    """Per-fixture parity for the existing cluster F ``p_state_upper``
-    helper.
-    """
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_state_upper)
-    b = _param_frame(db_data.p_state_upper)
-    ok, msg = _frames_equal(a, b, ("n", "d"))
-    assert ok, f"p_state_upper mismatch on {work_name}: {msg}"
+def test_p_state_upper_full_sweep_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_state_upper``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_state_upper")
 
 
 @pytest.mark.parametrize(
     "work_name,scenario,db_fixture", PARITY_CASES,
     ids=[c[0] for c in PARITY_CASES],
 )
-def test_p_process_existing_count_full_sweep_parity(
-        work_name: str, scenario: str, db_fixture: str,
-        scenario_workdir) -> None:
-    """Per-fixture parity for the existing cluster F
-    ``p_process_existing_count`` helper.
-    """
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    csv_data = load_flextool(work)
-    reader = SpineDbReader(sqlite, scenario)
-    db_data = load_flextool(work, db_reader=reader)
-    a = _param_frame(csv_data.p_process_existing_count)
-    b = _param_frame(db_data.p_process_existing_count)
-    ok, msg = _frames_equal(a, b, ("p", "d"))
-    assert ok, f"p_process_existing_count mismatch on {work_name}: {msg}"
+def test_p_process_existing_count_full_sweep_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
+    """``p_process_existing_count``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_process_existing_count")
 
 
 # ---------------------------------------------------------------------------

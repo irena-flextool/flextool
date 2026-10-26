@@ -55,13 +55,10 @@ import polars as pl
 import pytest
 
 from polar_high import Problem
-from flextool.engine import (
-    SpineDbReader,
-    build_flextool,
-    load_flextool,
-)
+from flextool.engine import build_flextool
 
 from _golden import assert_obj_within
+from tests._support.load import load_scenario
 
 pytestmark = pytest.mark.solver
 
@@ -69,10 +66,9 @@ pytestmark = pytest.mark.solver
 # ``wind_battery_invest_lifetime_renew`` with model.inflation_rate
 # patched from 0.04 to 0.02.  We now expose this as a real scenario in
 # ``tests.json`` (``wind_battery_invest_lifetime_renew_inflation_2pct``,
-# alt chain + ``inflation_2pct``).  ``scenario_workdir`` produces both
-# the workdir (CSVs + ``tests.sqlite``) and the SpineDB driver — so the
-# DB-direct tests can rebind ``SpineDbReader`` to the same DB
-# ``scenario_workdir`` copied into the workdir.
+# alt chain + ``inflation_2pct``).  ``scenario_run`` runs its cascade
+# once per session; the tests rebuild its FlexData through the
+# production loader call (``load_scenario``).
 SCENARIO = "wind_battery_invest_lifetime_renew_inflation_2pct"
 
 # ---------------------------------------------------------------------------
@@ -188,7 +184,7 @@ def _approx(actual: float, expected: float, *, abs_tol: float = 1e-9) -> bool:
 # Tests
 # ---------------------------------------------------------------------------
 
-def test_p_inflation_op_2pct_hand_derivation(scenario_workdir):
+def test_p_inflation_op_2pct_hand_derivation(scenario_run):
     """``p_inflation_op[d]`` is the per-period operations factor sum:
     Σ_y (1+r)^-(y+0.5).  Each period contributes 5 compounded terms
     (one per year in years_represented).  At rate=0.02 and offset=0.5
@@ -201,14 +197,12 @@ def test_p_inflation_op_2pct_hand_derivation(scenario_workdir):
         p2030 (years 10..14):≈ 3.90515
         p2035 (years 15..19):≈ 3.53702
 
-    Both the DB-direct and CSV paths must reproduce these values to
+    The rebuild through the production loader call must reproduce these values to
     abs_tol = 1e-9.  The expected numbers are derived live (Python
     1.02^-x = IEEE-754 oracle) so the test is bit-near identical to
     the helper's arithmetic — any drift is real, not a typo.
     """
-    work = scenario_workdir(SCENARIO)
-    reader = SpineDbReader(work / "tests.sqlite", SCENARIO)
-    data = load_flextool(work, db_reader=reader)
+    data = load_scenario(scenario_run(SCENARIO))
     p_infl = data.p_inflation_op
     assert p_infl is not None, "p_inflation_op missing on DB-direct path"
 
@@ -221,7 +215,7 @@ def test_p_inflation_op_2pct_hand_derivation(scenario_workdir):
         )
 
 
-def test_ed_entity_annual_discounted_2pct_hand_derivation(scenario_workdir):
+def test_ed_entity_annual_discounted_2pct_hand_derivation(scenario_run):
     """``ed_entity_annual_discounted[e, d]`` is the bare annuity (per
     ``_annuity()``) multiplied by an unbounded inv_factor sum across
     period_in_use for ``reinvest_automatic`` lifetime_method.
@@ -244,9 +238,7 @@ def test_ed_entity_annual_discounted_2pct_hand_derivation(scenario_workdir):
 
     Subsequent periods drop the earlier-period terms from the sum.
     """
-    work = scenario_workdir(SCENARIO)
-    reader = SpineDbReader(work / "tests.sqlite", SCENARIO)
-    data = load_flextool(work, db_reader=reader)
+    data = load_scenario(scenario_run(SCENARIO))
     ed = data.ed_entity_annual_discounted
     assert ed is not None, "ed_entity_annual_discounted missing"
 
@@ -267,21 +259,23 @@ def test_ed_entity_annual_discounted_2pct_hand_derivation(scenario_workdir):
         )
 
 
-def test_solve_parity_2pct(scenario_workdir):
-    """End-to-end CSV-path solve parity: the LP built from the
-    rate=0.02 fixture must reproduce flextool's recorded objective
-    within rel < 1e-6.
+def test_solve_parity_2pct(scenario_run):
+    """The LP rebuilt from the post-solve provider (the production loader
+    call) solves to the cascade's own objective for the rate=0.02 fixture
+    (rel 1e-9).  (This used to solve a CSV load of the DB-derived
+    snapshot, which took the same path as the DB-direct test below.)
     """
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+    run = scenario_run(SCENARIO)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
     assert sol.optimal, f"solve not optimal: {sol}"
-    assert_obj_within(sol.obj, work)
+    assert run.last_obj is not None
+    assert sol.obj == pytest.approx(run.last_obj, rel=1e-9, abs=1e-9)
 
 
-def test_solve_parity_2pct_db_direct(scenario_workdir):
+def test_solve_parity_2pct_db_direct(scenario_run):
     """End-to-end DB-direct solve parity for the rate=0.02 fixture.
 
     Γ.6 close: this previously diverged from the CSV path by ~1.1 %
@@ -292,11 +286,10 @@ def test_solve_parity_2pct_db_direct(scenario_workdir):
     so explicit-set values pass through; default-broadcast rows are
     suppressed.  See ``audit/handoff_db_direct_battery_inverter_divergence.md``.
     """
-    work = scenario_workdir(SCENARIO)
-    reader = SpineDbReader(work / "tests.sqlite", SCENARIO)
-    data = load_flextool(work, db_reader=reader)
+    run = scenario_run(SCENARIO)
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
     assert sol.optimal, f"DB-direct solve not optimal: {sol}"
-    assert_obj_within(sol.obj, work)
+    assert_obj_within(sol.obj, run.work_folder)

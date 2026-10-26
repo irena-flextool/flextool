@@ -9,9 +9,10 @@ parity-clean against flextool's CSV-side reference output (gated by
 
 Two layers of test coverage:
 
-1. **Per-fixture parity sweep** — every ``work_*`` fixture under
-   ``tests/engine/data`` runs both helpers (lazy + eager) and
-   compares the resulting Param frames row-for-row.  Any field that is
+1. **Per-fixture parity sweep** — every scenario in
+   ``_parity_sweep.PARITY_SWEEP_CASES`` runs both helpers (lazy + eager)
+   on its cascade's post-solve provider and compares the resulting
+   Param frames row-for-row.  Any field that is
    ``None`` on either side is checked symmetrically.
 
 2. **Spot tests** — hand-derived analytical oracles for the canonical
@@ -25,15 +26,9 @@ eager outputs surfaces as a per-fixture failure with a diff frame.
 from __future__ import annotations
 
 import math
-from pathlib import Path
-
 import polars as pl
 import pytest
 
-from flextool.engine import (
-    SpineDbReader,
-    load_flextool,
-)
 from flextool.engine.preprocess.params import _npv as npv
 from flextool.engine.preprocess.params._derived import (
     _read_active_solve,
@@ -42,34 +37,21 @@ from flextool.engine.preprocess.params._derived import (
     _periodAll_from_source,
     _read_period_with_history,
 )
-from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.input._input_source import seed_provider_from_dir
+from tests._support.load import ScenarioRun, clone_provider, load_scenario
 
 
-def _seed_workdir_provider(work: Path) -> FlexDataProvider:
-    """Build an in-memory ``FlexDataProvider`` seeded from a workdir.
+def _lazy_inputs(run: ScenarioRun):
+    """``(reader, provider, folder)`` for calling the lazy NPV helpers on the run's last step.
 
-    The lazy NPV helpers (``_read_active_solve`` / ``_period_in_use_set`` /
-    ``_read_period_with_history``) became Provider-required post Step 2.5
-    (the disk-fallback arm was removed).  Tests that call them directly
-    must thread a Provider; this helper builds one from
-    ``<work>/input/`` and ``<work>/solve_data/``.
+    ``provider`` is a clone of the step's post-solve provider (the frames the cascade solved with);
+    ``folder`` is the run's empty load folder, so no helper can fall back to disk.
     """
-    provider = FlexDataProvider()
-    if (work / "input").exists():
-        seed_provider_from_dir(provider, work / "input", "input")
-    if (work / "solve_data").exists():
-        seed_provider_from_dir(provider, work / "solve_data", "solve_data")
-    return provider
-
-
-HERE = Path(__file__).resolve().parent
-DATA = HERE / "data"
+    return run.reader(), clone_provider(run.last.provider), run.load_folder
 
 
 # Phase 3d: curated parity sweep — replaces the legacy disk-discovery
 # function that walked ``data/work_*/``.  Each tuple drives
-# ``scenario_workdir`` (db_fixture column) to materialise the workdir
+# ``scenario_run`` (db_fixture column) to run the scenario's cascade
 # on demand under tmp.
 from _parity_sweep import PARITY_SWEEP_CASES  # noqa: E402
 
@@ -139,7 +121,7 @@ def _param_frame(p) -> pl.DataFrame | None:
 )
 def test_npv_lazy_vs_eager_parity(
         work_name: str, scenario: str, db_fixture: str,
-        scenario_workdir) -> None:
+        scenario_run) -> None:
     """Per-fixture parity: lazy NPV helpers vs eager
     ``ed_entity_annual_family_from_source``.
 
@@ -147,12 +129,11 @@ def test_npv_lazy_vs_eager_parity(
     ``p_ed_fixed_cost``.  Both paths read the same fixture; any
     divergence indicates a bug in the lazy port.
     """
-    work = scenario_workdir(scenario, db_fixture=db_fixture)
-    sqlite = work / "tests.sqlite"
-    reader = SpineDbReader(sqlite, scenario)
-    # Build the FlexData via the canonical loader — this populates the
+    run = scenario_run(scenario, db_fixture=db_fixture)
+    reader, provider, work = _lazy_inputs(run)
+    # Build the FlexData via the production loader call — this populates the
     # eager NPV fields via the existing apply_derived_f path.
-    data_eager = load_flextool(work, db_reader=reader)
+    data_eager = load_scenario(run)
 
     # Slice D (§11.4): the eager reference
     # ``ed_entity_annual_family_from_source`` embeds its own period walk
@@ -166,7 +147,6 @@ def test_npv_lazy_vs_eager_parity(
                     "recourse (lineage-filtered windows; design §11.4)")
 
     # Re-read via the lazy entry points and compare per-field.
-    provider = _seed_workdir_provider(work)
     active_solve = _read_active_solve(work, provider=provider)
     period_in_use = _period_in_use_set(reader, active_solve, work,
                                           provider=provider)
@@ -239,7 +219,7 @@ def test_npv_lazy_vs_eager_parity(
 
 # Phase 3d: ``work_inflation_check`` rebuilt from
 # ``wind_battery_invest_lifetime_renew_inflation_2pct`` via
-# ``scenario_workdir``.
+# ``scenario_run``.
 SCENARIO_INFLATION = "wind_battery_invest_lifetime_renew_inflation_2pct"
 
 R = 0.02
@@ -296,14 +276,11 @@ def _approx(actual: float, expected: float, *, abs_tol: float = 1e-9) -> bool:
     return math.isclose(actual, expected, abs_tol=abs_tol, rel_tol=0.0)
 
 
-def test_npv_lazy_p_inflation_op_2pct(scenario_workdir):
+def test_npv_lazy_p_inflation_op_2pct(scenario_run):
     """``p_inflation_op[d]`` from the lazy helper must match the
     hand-derived 2 % oracle to 1e-9 absolute.
     """
-    work = scenario_workdir(SCENARIO_INFLATION)
-    sqlite = work / "tests.sqlite"
-    reader = SpineDbReader(sqlite, SCENARIO_INFLATION)
-    provider = _seed_workdir_provider(work)
+    reader, provider, work = _lazy_inputs(scenario_run(SCENARIO_INFLATION))
     active_solve = _read_active_solve(work, provider=provider)
     period_in_use = _period_in_use_set(reader, active_solve, work,
                                           provider=provider)
@@ -320,16 +297,12 @@ def test_npv_lazy_p_inflation_op_2pct(scenario_workdir):
         )
 
 
-def test_npv_lazy_ed_entity_annual_discounted_2pct(scenario_workdir):
+def test_npv_lazy_ed_entity_annual_discounted_2pct(scenario_run):
     """Lazy ``ed_entity_annual_discounted`` for wind+battery (both
     ``reinvest_automatic`` lifetime_method) must match the hand-derived
     annuity × inv_factor sum to 1e-9 absolute.
     """
-    work = scenario_workdir(SCENARIO_INFLATION)
-    sqlite = work / "tests.sqlite"
-    reader = SpineDbReader(sqlite, SCENARIO_INFLATION)
-    load_flextool(work, db_reader=reader)
-    provider = _seed_workdir_provider(work)
+    reader, provider, work = _lazy_inputs(scenario_run(SCENARIO_INFLATION))
     active_solve = _read_active_solve(work, provider=provider)
     period_in_use = _period_in_use_set(reader, active_solve, work,
                                           provider=provider)

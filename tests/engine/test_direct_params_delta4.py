@@ -16,32 +16,25 @@ minFlow_minload constraint (see ``specs/fix_map_reading.md`` §5).  Its
 coverage moved to ``test_min_load_pdt.py`` and the derived-producer unit test
 below.
 
-Each helper mirrors the CSV path's "explicit rows only" semantics
-via :meth:`InputSource.parameter_explicit`.  The DB-direct overlay
-runs after the CSV seed in ``load_flextool``; equality of the two
-paths is checked frame-for-frame on the existing fixture corpus.
+Each helper keeps "explicit rows only" semantics via
+:meth:`InputSource.parameter_explicit`.
 
 The tests below are deliberately narrow: they exercise the helpers
-on representative fixtures using :class:`InMemoryReader` and on a
-real-fixture overlay through ``load_flextool(workdir, db_reader=...)``.
-The wider parity sweep (CSV vs DB on every fixture) is already
-covered by ``test_override_chain_step3_parity.py``'s end-to-end
-LP-objective test.
+on representative fixtures using :class:`InMemoryReader`, and check on
+real fixtures that a rebuild from the post-solve provider (the
+production loader call) gives the same fields as the FlexData the
+cascade itself built and solved.
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import polars as pl
 import pytest
 
-from flextool.engine import (
-    InMemoryReader,
-    SpineDbReader,
-    load_flextool,
-)
+from flextool.engine import InMemoryReader
 from flextool.engine.preprocess.params import _direct as dp
 from polar_high import Param
+from tests._support.fields import field_diff
+from tests._support.load import load_scenario
 
 # ---------------------------------------------------------------------------
 # In-memory unit tests — exercise the helpers without sqlite.
@@ -217,24 +210,27 @@ def test_p_reserve_duration_inmemory_empty_rows():
 
 
 # ---------------------------------------------------------------------------
-# Fixture-driven CSV vs DB-direct frame parity.
+# Fixture-driven rebuild check: the field of a rebuild from the post-solve provider (the production
+# loader call, ``load_scenario``) == the field of the FlexData the cascade itself built and solved
+# (``run.last_flex_data``).  These used to compare a CSV load with a DB-direct load of the same,
+# DB-derived snapshot, which could no longer fail.
 
 PARITY_SCENARIOS = ["coal", "test_a_lot", "coal_min_load"]
 
 
-def _load_csv_db(work: Path, scenario: str):
-    csv = load_flextool(work)
-    reader = SpineDbReader(work / "tests.sqlite", scenario)
-    db = load_flextool(work, db_reader=reader)
-    return csv, db
+@pytest.fixture(scope="module")
+def rebuilt(scenario_run):
+    """``scenario -> (rebuilt FlexData, cascade FlexData)``, one rebuild per scenario."""
+    cache: dict[str, tuple[object, object]] = {}
 
+    def get(scenario: str) -> tuple[object, object]:
+        if scenario not in cache:
+            run = scenario_run(scenario)
+            assert run.last_flex_data is not None, f"{scenario}: the cascade kept no FlexData"
+            cache[scenario] = (load_scenario(run), run.last_flex_data)
+        return cache[scenario]
 
-def _frame(x):
-    if x is None:
-        return None
-    if hasattr(x, "frame"):
-        return x.frame
-    return x
+    return get
 
 
 @pytest.mark.parametrize("scenario", PARITY_SCENARIOS)
@@ -301,28 +297,10 @@ def _frame(x):
     "p_ladder_cum_price",
     "p_ladder_cum_quantity",
 ])
-def test_delta4_field_csv_vs_db_parity(scenario: str, field: str,
-                                          scenario_workdir):
-    """For every (fixture × field), CSV and DB-direct paths agree
-    frame-for-frame.  Skip when both paths produce ``None`` (the field
-    is unused in that fixture).
+def test_delta4_field_rebuild_vs_cascade(scenario: str, field: str, rebuilt):
+    """For every (fixture × field), the rebuild from the post-solve provider and the cascade's own
+    FlexData agree frame-for-frame (row sets; both ``None`` when the field is unused in that fixture).
     """
-    work = scenario_workdir(scenario)
-    csv, db = _load_csv_db(work, scenario)
-    a = _frame(getattr(csv, field, None))
-    b = _frame(getattr(db, field, None))
-    if a is None and b is None:
-        return
-    assert a is not None, f"{field}: CSV is None, DB is not on {scenario}"
-    assert b is not None, f"{field}: DB is None, CSV is not on {scenario}"
-    keep = sorted(a.columns)
-    aa = a.sort(keep) if keep else a
-    bb = b.sort(keep) if keep else b
-    if "value" in aa.columns and "value" in bb.columns:
-        aa = aa.with_columns(value=pl.col("value").cast(pl.Float64,
-                                                            strict=False))
-        bb = bb.with_columns(value=pl.col("value").cast(pl.Float64,
-                                                            strict=False))
-    assert aa.equals(bb), (
-        f"{field} mismatch on {scenario}:\nCSV:\n{aa}\nDB:\n{bb}"
-    )
+    data, cascade = rebuilt(scenario)
+    diff = field_diff(getattr(data, field), getattr(cascade, field))
+    assert diff is None, f"{field}: rebuild != cascade on {scenario}: {diff}"
