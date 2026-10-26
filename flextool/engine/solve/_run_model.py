@@ -28,10 +28,15 @@ from __future__ import annotations
 
 import copy
 import csv
+import logging
 import os
 import re
 import time
 from collections import defaultdict
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import polars as pl
 
 # ---------------------------------------------------------------------------
 # Imports.  Per Phase 3 scope, we depend on legacy preprocessing /
@@ -79,6 +84,9 @@ from flextool.engine.input._timeline import (
     separate_period_and_timeseries_data,
 )
 
+# Advisories that must survive the cascade's silencing of ``state.logger`` (raised to ERROR during the run).
+_MODULE_LOGGER = logging.getLogger(__name__)
+
 
 # Map from RP-flavoured storage_binding_method to its non-RP equivalent.
 # Used by :func:`_downgrade_rp_methods_for_non_rp_solve` to strip the
@@ -93,27 +101,56 @@ _RP_METHOD_DOWNGRADE: dict[str, str] = {
 }
 
 
-def _reject_rolling_intraperiod_blocks(state, complete_solve_name: str, provider) -> None:
-    """Raise when a rolling_window solve has ``bind_intraperiod_blocks`` storage nodes.
+def _roll_period_whole(active_time_list: dict, complete_active_time_list: dict,
+                       period_branch: list) -> "pl.DataFrame":
+    """``(period, whole)`` of a rolling_window sub-solve: True where the roll holds every step that the complete
+    solve has in the period (a forecast branch period is compared with the steps of the period it branches from).
 
-    How a timeset block cut by a roll window should behave (a loop per window, or the storage level carried
-    from roll to roll) is not defined yet (owner question Q-c15c-A); before this check such a node got no
-    energy balance at all in a roll.  ``solve_data/nodeStateBlock`` (the block nodes of this sub-solve) is
-    emitted by ``preprocessing_solve_time.run``, so this runs after it and before the sub-solve's data is loaded.
+    The ``bind_intraperiod_blocks`` blocks of a whole period loop within the roll, as in a solve that is not rolling;
+    the blocks of a period the roll holds in part chain forward and carry the storage level from roll to roll
+    (owner decision Q-c15e-A).
     """
-    if state.solve.solve_modes.get(complete_solve_name) != "rolling_window":
+    import polars as pl
+
+    anchor = {b: p for p, b in period_branch if b != p}
+    rows: list[tuple[str, bool]] = []
+    for period, steps in active_time_list.items():
+        full = complete_active_time_list.get(anchor.get(period, period)) or []
+        rows.append((str(period), bool(steps) and [s.timestep for s in steps] == [s.timestep for s in full]))
+    return pl.DataFrame(rows, schema={"period": pl.Utf8, "whole": pl.Boolean}, orient="row")
+
+
+def _warn_rolling_blocks_chained(state, complete_solve_name: str, solve: str, active_time_list: dict,
+                                 complete_active_time_list: dict, provider, warned: set) -> None:
+    """Warn once per rolling_window solve whose rolls start inside a period while it has ``bind_intraperiod_blocks``
+    storage nodes (its rolling_solve_jump is not a whole number of periods).
+
+    Such a period is held in part by the rolls around its inside start, so its blocks chain forward and carry the
+    storage level from roll to roll instead of looping as in a solve that is not rolling.  ``solve_data/
+    nodeStateBlock`` (the block nodes of this sub-solve) is emitted by ``preprocessing_solve_time.run``, so this runs
+    after it.  Routed through the module logger: ``state.logger`` is silenced to ERROR during the cascade.
+    """
+    if complete_solve_name in warned or state.solve.solve_modes.get(complete_solve_name) != "rolling_window":
         return
-    if not provider.has("solve_data/nodeStateBlock"):
+    if not active_time_list or not provider.has("solve_data/nodeStateBlock"):
         return
     nsb = provider.get("solve_data/nodeStateBlock")
     if nsb is None or nsb.height == 0:
         return
+    first_period = next(iter(active_time_list))
+    steps = active_time_list[first_period]
+    full = complete_active_time_list.get(first_period) or []
+    if not steps or not full or steps[0].timestep == full[0].timestep:
+        return
+    warned.add(complete_solve_name)
     col = "node" if "node" in nsb.columns else nsb.columns[0]
     names = sorted(str(n) for n in nsb[col].unique().to_list())
-    raise FlexToolConfigError(
-        f"Solve '{complete_solve_name}' is a rolling_window solve and node(s) {', '.join(names)} use "
-        "storage_binding_method bind_intraperiod_blocks. How timeset blocks cut by a roll window should behave "
-        "is not defined yet; use bind_forward_only or bind_within_timeblock for these nodes in rolling solves.")
+    _MODULE_LOGGER.warning(
+        "Solve '%s' is a rolling_window solve whose rolling_solve_jump is not a whole number of periods (roll '%s' "
+        "starts at step '%s' inside period '%s'). The bind_intraperiod_blocks storage node(s) %s loop their timeset "
+        "blocks only in the periods a roll holds whole; in a period a roll holds in part the blocks chain forward "
+        "and the storage level is carried from roll to roll.",
+        complete_solve_name, solve, steps[0].timestep, first_period, ", ".join(names))
 
 
 _BLENDED_METHODS = tuple(_RP_METHOD_DOWNGRADE)
@@ -706,6 +743,7 @@ def native_run_model(state, solver) -> int:
     last_captured_solve: str | None = None
     cached_complete_active_time_lists: dict = {}
     cached_complete_step_jumps: dict = {}
+    _warned_rolling_blocks: set = set()
 
     # Pre-compute per-iter level keys.  Same-key consecutive iters are
     # rolling continuations of one base solve; a key change marks a
@@ -920,6 +958,13 @@ def native_run_model(state, solver) -> int:
             cached_complete_step_jumps[cs],
             provider=sub_solve_provider,
         )
+        # Which periods a roll holds whole (bind_intraperiod_blocks loop there and chain elsewhere); written for
+        # every sub-solve (header-only when not rolling): the level Provider is shared by the iters of a level.
+        sub_solve_provider.put(
+            _provider_keys.SOLVE_DATA_ROLL_PERIOD_WHOLE,
+            _roll_period_whole(active_time_lists[solve], complete_active_time_lists, period__branch_lists[solve])
+            if state.solve.solve_modes.get(cs) == "rolling_window"
+            else _roll_period_whole({}, {}, []))
         pb_time, pb_succ = make_period_block(active_time_lists[solve])
         solve_writers.emit_period_block(
             pb_time, pb_succ,
@@ -1413,7 +1458,8 @@ def native_run_model(state, solver) -> int:
         if _mem_cp is not None:
             _mem_cp("prep_solve_time_dispatcher_done",
                     "prep: _solve_time.run (per-solve sets + params dispatcher) done")
-        _reject_rolling_intraperiod_blocks(state, complete_solve[solve], sub_solve_provider)
+        _warn_rolling_blocks_chained(state, complete_solve[solve], solve, active_time_lists[solve],
+                                     complete_active_time_lists, sub_solve_provider, _warned_rolling_blocks)
         # Step 1-f — Provider stash on state.  Read by
         # ``_PolarHighCascadeSolver.run`` to thread through into
         # ``load_flextool`` / ``write_outputs_for_solve`` /

@@ -1084,6 +1084,21 @@ def _patch_rp_downgrade_within_solve(data: dict) -> dict:
            for n in ("lh2_A", "lh2_B", "lh2_C")])
 
 
+def _patch_rolling_intraperiod_blocks(data: dict) -> dict:
+    """battery bind_intraperiod_blocks in the rolling fullYear dispatch over p2020 + p2025 (72 h each, horizon 96 h,
+    jump 48 h): roll 0 holds p2020 whole (loops, cut at its realized end t0048) and chains into p2025; roll 1 starts
+    from the carried level inside p2020 and holds p2025 whole (loops); roll 2 chains p2025 from the carry."""
+    return _overlay(data, name="rolling_intraperiod_blocks",
+                    base=["init", "west", "wind", "coal", "battery", "fullYear", "dispatch_fullYear_roll",
+                          "bind_battery_intraperiod_blocks"],
+                    values=[["solve", "dispatch_fullYear_roll", "period_timeset",
+                             _pmap({"p2020": "fullYear", "p2025": "fullYear"})],
+                            ["solve", "dispatch_fullYear_roll", "realized_periods",
+                             {"type": "array", "value_type": "str", "data": ["p2020", "p2025"]}],
+                            ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", 96.0],
+                            ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", 48.0]])
+
+
 def _patch_coarse_stoch(data: dict) -> dict:
     """stochastic 2-day dispatch with hydro_reservoir in a 24-h group: coarse rows in every period incl.
     the forecast branches."""
@@ -1401,6 +1416,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "coarse_stoch": _patch_coarse_stoch,
     "bind_within_period_2p": _patch_bind_within_period_2p,
     "rp_downgrade_within_solve": _patch_rp_downgrade_within_solve,
+    "rolling_intraperiod_blocks": _patch_rolling_intraperiod_blocks,
 }
 
 
@@ -1578,6 +1594,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("coarse_stoch", _F + "stochastics.json"),
     ("bind_within_period_2p", _T),
     ("rp_downgrade_within_solve", _F + "lh2_three_region_rp_invest.json"),
+    ("rolling_intraperiod_blocks", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

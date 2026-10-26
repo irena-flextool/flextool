@@ -779,7 +779,12 @@ block: every arc enters the balance of both its nodes.
 - `bind_intraperiod_blocks` storage nodes (`nodeStateBlock`) are balanced
   per timeset block by `nodeBalanceBlock_eq`: `nodeBalance_eq` summed over
   the block, the state change through `dtttdt_block_lag` (state constant
-  within the block, `v_state` of a block = its end state).
+  within the block, `v_state` of a block = its end state).  The blocks of a
+  period loop; in a rolling sub-solve the blocks are also cut at the
+  realized end, and the periods the roll holds only in part
+  (`period_block_chain`, from `solve_data/roll_period_whole`, written by
+  `_run_model`) take the `bind_forward_only` lag instead, so the node is an
+  open-start node there (`_self_discharge.block_open_nodes`).
 
 See [decomposition.md § 3](decomposition.md#3-flex-temporal-decomposition).
 

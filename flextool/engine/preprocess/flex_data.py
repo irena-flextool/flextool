@@ -834,6 +834,10 @@ class FlexData:
     period_block_time: pl.DataFrame | None = None          # set: (d, b_first, t)
     dtttdt_block_interior: pl.DataFrame | None = None      # dtttdt rows where t_previous_within_timeset == t_previous (interior-of-block jump=1)
     dtttdt_block_lag: pl.DataFrame | None = None           # (d, t, d_previous, t_previous_within_solve): block state lag
+    # Rolling sub-solve (solve_data/roll_period_whole has rows) and the periods the roll holds only in part: their
+    # bind_intraperiod_blocks blocks chain forward (dtttdt_block_lag), the blocks of the other periods loop.
+    solve_is_rolling: bool = False
+    period_block_chain: pl.DataFrame | None = None         # set: (d,)
     # ─── Coarse new_stepduration groups (params._coarse.coarse_node_frames) ─────────
     # Nodes of a group whose new_stepduration is longer than the solve's step: balanced once per coarse step
     # (nodeBalanceCoarse_eq); a coarse storage node keeps one state per coarse step (stateConstantCoarse_eq).
@@ -2728,6 +2732,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         period_block_succ = None,
         period_block_time = None,
         dtttdt_block_interior = None,
+        solve_is_rolling = False,
+        period_block_chain = None,
         nodeState_rp = None,
         rp_base_period_set = None,
         rp_base_chain = None,
@@ -2968,6 +2974,19 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         fix_end = (sse.filter(pl.col("method")=="fix_end").select("n").unique())
         fix_start_end = (sse.filter(pl.col("method")=="fix_start_end").select("n").unique())
 
+    # Rolling sub-solve: solve_data/roll_period_whole (period, whole) has a row per period of the roll
+    # (_run_model).  The bind_intraperiod_blocks blocks of a period the roll holds only in part chain forward.
+    solve_is_rolling = False
+    period_block_chain = None
+    rpw_path = sd / "roll_period_whole.csv"
+    if _provider_has(provider, "solve_data/roll_period_whole", rpw_path):
+        rpw = _provider_read(provider, "solve_data/roll_period_whole", rpw_path)
+        if rpw.height > 0:
+            solve_is_rolling = True
+            chained = rpw.filter(~pl.col("whole").cast(pl.Boolean)).pipe(rename_to_axis, {"period": "d"})
+            if chained.height > 0:
+                period_block_chain = chained.select("d").unique(maintain_order=True)
+
     # node__storage_solve_horizon_method (.mod:663): nodes with method
     # ``use_reference_value`` get a v_state pin at the last timestep of
     # the last period, equal to ``reference_value × existing/unitsize``.
@@ -2991,10 +3010,11 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         # bind_within_timeblock / bind_intraperiod_blocks.
         # ``nodeStateBlock`` is the set carrying bind_intraperiod_blocks
         # (loaded below; we look it up via the on-disk CSV here to keep
-        # ordering simple).
+        # ordering simple).  In a rolling solve a bind_intraperiod_blocks node keeps the pin: it applies where the
+        # roll's last period chains forward (model.core._eq_storage_reference_value), not where its blocks loop.
         nsb_for_excl = None
         nsb_path_local = sd / "nodeStateBlock.csv"
-        if _provider_has(provider, "solve_data/nodeStateBlock", nsb_path_local):
+        if not solve_is_rolling and _provider_has(provider, "solve_data/nodeStateBlock", nsb_path_local):
             nsb_df_local = _provider_read(provider, "solve_data/nodeStateBlock", nsb_path_local)
             if nsb_df_local.height > 0:
                 nsb_for_excl = nsb_df_local.pipe(rename_to_axis, {"node": "n"}).select("n")
@@ -3394,6 +3414,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         period_block_succ = period_block_succ,
         period_block_time = period_block_time,
         dtttdt_block_interior = dtttdt_block_interior,
+        solve_is_rolling = solve_is_rolling,
+        period_block_chain = period_block_chain,
         nodeState_rp = nodeState_rp,
         rp_base_period_set = rp_base_period_set,
         rp_base_chain = rp_base_chain,
@@ -5348,14 +5370,16 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # ``dtttdt_block_interior``) are produced only by ``apply_derived_e``, so a nested anchor sub-solve
         # (``<solve>_<period>``) had a block node without blocks — no energy balance at all.  The producer reads
         # this sub-solve's own steps (``_dt_period_active_steps`` falls back to ``steps_in_use``), so it gives
-        # what the same solve gets as a Spine solve.  Rolling solves never reach this: a rolling solve with a
-        # block node is an error (``_run_model._reject_rolling_intraperiod_blocks``).
+        # what the same solve gets as a Spine solve.  The rolls of a rolling solve are synthetic too: their blocks
+        # are also cut at the roll's realized end, and the periods a roll holds only in part chain forward
+        # (``period_block_chain``, see ``_derived.dtttdt_block_lag_from_dtttdt``).
         def _wire_blocks_for_synthetic_solve():
             nsb = getattr(flex_data, "nodeStateBlock", None)
             if nsb is None or nsb.height == 0:
                 return
             family = _drv.period_block_family_from_source(
-                db_reader, active_solve, workdir_path, ctx=ctx, provider=provider)
+                db_reader, active_solve, workdir_path, ctx=ctx, provider=provider,
+                realized=_drv._rolling_realized_steps(flex_data, workdir_path, provider))
             if family is None:
                 return
             flex_data.period_block = family["period_block"]
@@ -5364,7 +5388,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
             flex_data.dtttdt_block_interior = _drv.dtttdt_block_interior_from_dtttdt(
                 getattr(flex_data, "dtttdt", None), family["period_block_time"])
             flex_data.dtttdt_block_lag = _drv.dtttdt_block_lag_from_dtttdt(
-                getattr(flex_data, "dtttdt", None), family["period_block_time"])
+                getattr(flex_data, "dtttdt", None), family["period_block_time"],
+                getattr(flex_data, "period_block_chain", None))
         _loadflex_prof("apply_db_overrides:pass_synthetic_blocks")
         _timed("c.synth blocks", _wire_blocks_for_synthetic_solve)
         return

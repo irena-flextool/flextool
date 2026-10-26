@@ -369,7 +369,11 @@ inside the coarse step the state terms telescope to
 Same orientation and units as `nodeBalance_eq`: its dual is the node's
 price over the coarse step.  `bind_intraperiod_blocks` nodes have the
 same summed row per timeset block (`nodeBalanceBlock_eq`) with the block
-lag `dtttdt_block_lag` (the blocks of a period form a loop).
+lag `dtttdt_block_lag` (the blocks of a period form a loop; in a rolling
+solve the blocks also end at the roll's realized end, and in a period the
+roll holds only in part — `period_block_chain`, from
+`solve_data/roll_period_whole` — the lag is the `bind_forward_only` lag,
+so the blocks chain forward and the roll carry starts the chain).
 
 ### 3.5 Paths
 

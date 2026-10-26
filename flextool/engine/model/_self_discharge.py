@@ -197,7 +197,8 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
         links.append(StateLink("state_change_wp", d.storage_bind_within_period, d.dtttdt_within_period,
                                "t_previous_within_period", False, True))
     if has_nsb and _has_rows(d.dtttdt_block_lag):
-        # bind_intraperiod_blocks: t⁻ from dtttdt_block_lag (the blocks of a period form a loop).
+        # bind_intraperiod_blocks: t⁻ from dtttdt_block_lag (the blocks of a period form a loop; in a rolling solve
+        # the blocks of a period the roll holds only in part chain forward, with no row at the solve's first step).
         links.append(StateLink("state_change_block", d.nodeStateBlock, d.dtttdt_block_lag,
                                "t_previous_within_solve", True, False))
     if has_rp:
@@ -306,19 +307,46 @@ def node_union(frames) -> "pl.DataFrame | None":
     return pl.concat(parts, how="vertical").unique(maintain_order=True)
 
 
+def block_open_nodes(d) -> "pl.DataFrame | None":
+    """bind_intraperiod_blocks nodes (n) whose blocks chain forward from the solve's first step: in a rolling solve,
+    when the roll holds the period of its first step only in part (``period_block_chain``).  None when there are
+    none (every block node then loops in the period of the first step)."""
+    nsb, chain, first = getattr(d, "nodeStateBlock", None), getattr(d, "period_block_chain", None), d.nodeState_first_dt
+    if not (_has_rows(nsb) and _has_rows(chain) and _has_rows(first)):
+        return None
+    names = [str(x) for x in chain["d"].to_list()]
+    out = (first.join(nsb.select("n"), on="n", how="semi")
+           .filter(pl.col("d").cast(pl.Utf8).is_in(names))
+           .select("n").unique(maintain_order=True))
+    return out if out.height > 0 else None
+
+
+def block_cyclic_nodes(d) -> "pl.DataFrame | None":
+    """bind_intraperiod_blocks nodes (n) whose first step wraps to the end of its period (the blocks of that period
+    loop): every block node in a solve that is not rolling, and in a roll that holds the first period whole."""
+    nsb = getattr(d, "nodeStateBlock", None)
+    if not _has_rows(nsb):
+        return None
+    open_ = block_open_nodes(d)
+    out = nsb.select("n") if open_ is None else nsb.select("n").join(open_, on="n", how="anti")
+    return out if out.height > 0 else None
+
+
 def cyclic_nodes(d) -> "pl.DataFrame | None":
     """Storage nodes whose chain closes on itself within the solve (n): bind_within_timeblock,
-    bind_within_period, bind_within_solve and bind_intraperiod_blocks (a rolling solve with a
-    bind_intraperiod_blocks node stops with an error).  Their first step wraps to a later step of the solve, so
-    they take neither a start term nor the roll carry."""
+    bind_within_period, bind_within_solve and the bind_intraperiod_blocks nodes whose first period loops
+    (:func:`block_cyclic_nodes`).  Their first step wraps to a later step of the solve, so they take neither a start
+    term nor the roll carry."""
     return node_union((d.storage_bind_within_timeblock, d.storage_bind_within_period,
-                        d.storage_bind_within_solve, getattr(d, "nodeStateBlock", None)))
+                        d.storage_bind_within_solve, block_cyclic_nodes(d)))
 
 
 def open_start_nodes(d) -> "pl.DataFrame | None":
-    """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only.  Their first step
-    starts from the fix_start state in the first solve and from the roll carry in a continuation solve."""
-    return node_union((d.storage_bind_forward_only,))
+    """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only and the
+    bind_intraperiod_blocks nodes of a roll that holds its first period only in part (:func:`block_open_nodes`).
+    Their first step starts from the fix_start state in the first solve and from the roll carry in a continuation
+    solve."""
+    return node_union((d.storage_bind_forward_only, block_open_nodes(d)))
 
 
 def fix_start_first(d, first_solve: bool) -> "pl.DataFrame | None":

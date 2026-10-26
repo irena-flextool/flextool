@@ -1660,7 +1660,8 @@ def _eq_block_coupling(b: _Build) -> None:
     #   + back-flow terms of two-way one-variable and DC arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
     #   + (v_state[n,d′,t⁻] − v_state[n,d,t])·state_unitsize[n]   ((d′,t⁻) of (d,t) in dtttdt_block_lag)
-    #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n] ]
+    #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n]
+    #   + start terms of open-start nodes (fix_start in the first solve, the roll carry in a continuation solve) ]
     #   = − Σ_{t ∈ b} inflow[n,d,t]
     #   ∀ n ∈ nodeStateBlock, (d,b) ∈ period_block;   t ∈ b by period_block_time;   Δt = step_duration[d,t]
     #   α, β, S⁻ as in nodeBalanceCoarse_eq with the block b (h_b = Σ_{t∈b} Δt·ln(1 + loss[n,d,t])); S⁻ at the
@@ -1668,8 +1669,12 @@ def _eq_block_coupling(b: _Build) -> None:
     # nodeBalance_eq summed over each timeset block of a bind_intraperiod_blocks node.  The state is constant within
     # a block (stateConstantWithinBlock_eq), so the state terms telescope to v_state[b⁻] − v_state[b]: v_state of a
     # block is its state at the end of the block.  b⁻ is the previous block of the period, the first block of a
-    # period continuing from the period's last block (the blocks of a period form a loop).  Same orientation and
-    # units as nodeBalance_eq: its dual is the node's price (currency/MWh) over the block.
+    # period continuing from the period's last block (the blocks of a period form a loop).  In a rolling solve the
+    # blocks also end at the roll's realized end; a period the roll holds whole loops as above, while in a period
+    # the roll holds only in part (period_block_chain) the blocks chain forward: the period's first block continues
+    # from the previous step of the solve, and at the solve's first step the chain starts from fix_start (first
+    # roll), the carried level (later rolls) or, with neither, with no state change.  Same orientation and units as
+    # nodeBalance_eq: its dual is the node's price (currency/MWh) over the block.
     terms = _node_balance_terms(b)
     step_of = (nsb.select("n").join(d.period_block_time.select("d", "b_first", "t"), how="cross")
                .select("n", "d", "b_first", "t"))
@@ -2791,7 +2796,7 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
             and _has_rows(d.nodeState_first_dt)):
         return
     cyclic = _self_discharge.node_union((d.storage_bind_within_solve, d.storage_bind_within_period,
-                                          d.nodeStateBlock))
+                                          _self_discharge.block_cyclic_nodes(d)))
     if cyclic is None:
         return
     nodes = cyclic.join(d.storage_fix_start, on="n", how="inner")
@@ -2817,12 +2822,13 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     # v_state[n,d′,t′] − state_start[n]·Σ_{(n,d″,d′) ∈ edd_invest_set} v_invest_n[n,d″]
     #   + state_start[n]·Σ_{(n,d″,d′) ∈ edd_divest_active} v_divest_n[n,d″]
     #   = state_start[n] · existing[n,d′] / state_unitsize[n]
-    #   ∀ n ∈ storage_fix_start ∩ (bind_within_solve ∪ bind_within_period ∪ nodeStateBlock),
+    #   ∀ n ∈ storage_fix_start ∩ (bind_within_solve ∪ bind_within_period ∪ looping nodeStateBlock),
     #     (n,d,t) ∈ nodeState_first_dt, (d′,t′) = the step (d,t) starts from (the node's wrap)
     # The first step of a cyclic node starts from its wrap target, so the start state is pinned there, to the
     # share state_start of the built storage capacity (state units): the last step of the solve
     # (bind_within_solve) or of the first period (bind_within_period, bind_intraperiod_blocks).  First solve of
-    # a chain only.
+    # a chain only.  A bind_intraperiod_blocks node of a roll that holds its first period only in part chains
+    # forward: its start is in nodeBalanceBlock_eq (_fix_start_terms).
     lhs: dict = {"state": b.v_state}
     invested, divested = _node_in_service(b, d.nodeState, "_cyclic", coef=d.p_state_start)
     if invested is not None:
@@ -2854,6 +2860,12 @@ def _eq_storage_reference_value(b: _Build) -> None:
             .join(d.period_last, on="d", how="inner")
             .join(d.storage_use_reference_value, on="n", how="inner")
             .select("n", "d", "t").unique())
+    if _has_rows(d.nodeStateBlock):
+        # A bind_intraperiod_blocks node (in storage_use_reference_value in rolling solves only) is pinned where the
+        # roll holds its last period in part (period_block_chain); where its blocks loop the end is tied to the start.
+        chain = [str(x) for x in d.period_block_chain["d"].to_list()] if _has_rows(d.period_block_chain) else []
+        is_block = pl.col("n").cast(pl.Utf8).is_in([str(x) for x in d.nodeStateBlock["n"].to_list()])
+        over = over.filter(~is_block | pl.col("d").cast(pl.Utf8).is_in(chain))
     if over.height == 0:
         return
 
@@ -2862,10 +2874,12 @@ def _eq_storage_reference_value(b: _Build) -> None:
     # v_state[n,d,t] − reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   = reference_value[n,d,t] · existing[n,d] / state_unitsize[n]
-    #   ∀ n ∈ storage_use_reference_value, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last
+    #   ∀ n ∈ storage_use_reference_value, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last,
+    #     (n ∈ nodeStateBlock ⇒ d ∈ period_block_chain)
     # Pins the state at the end of the solve horizon to the reference share of the built storage capacity
     # (state units), as maxState and the start pins count it.  Nodes with a competing end condition are not in
-    # storage_use_reference_value.
+    # storage_use_reference_value; a bind_intraperiod_blocks node is, in a rolling solve, and is pinned where the
+    # roll holds its last period only in part (there its blocks chain forward instead of looping).
     # reference_value on the pinned rows only: as a coefficient of the invest / divest sums it would otherwise span
     # every (n, d_invest, d, t) of the solve.
     rv = (promote_param_to_dt(d.p_storage_state_reference_value, d.dt)

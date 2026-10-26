@@ -151,12 +151,18 @@
   it now passes the storage solve's `price_t`, also for
   `bind_intraperiod_blocks` storage nodes.
 
-- **`bind_intraperiod_blocks` storage in rolling and nested solves.** A
-  rolling solve with a `bind_intraperiod_blocks` storage node now stops with
-  an error; before, the node had no energy balance at all in a roll (energy
-  could appear from nothing). The per-period sub-solves of a nested solve
-  now get their timeset blocks, so such a node is balanced there; before, it
-  had no balance either.
+- **`bind_intraperiod_blocks` storage in rolling and nested solves.** Before,
+  such a node had no energy balance at all in a roll and in the per-period
+  sub-solves of a nested solve (energy could appear from nothing). The nested
+  sub-solves now get their timeset blocks. In a rolling solve the blocks of
+  each roll also end at the end of the roll's realized part: a period that
+  the roll holds whole loops its blocks (as in a solve that is not rolling),
+  and in a period that the roll holds only in part the blocks chain forward
+  and the storage level is carried from roll to roll, as for
+  *bind_forward_only* (`fix_start` starts the first roll, and
+  `storage_solve_horizon_method` sets the end of a roll that does not loop).
+  A `rolling_solve_jump` that is not a whole number of periods gives a
+  warning.
 
 - **Nodes in a `new_stepduration` group sum their flows over each coarse
   step.** A node of a group whose `new_stepduration` is longer than the

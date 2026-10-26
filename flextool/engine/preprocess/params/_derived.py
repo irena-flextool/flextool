@@ -7816,11 +7816,16 @@ def period_block_family_from_source(source: "InputSource",
                                        *,
                                        ctx: "SolveContext | None" = None,
                                        provider: "object | None" = None,
+                                       realized: "pl.DataFrame | None" = None,
                                        ) -> dict | None:
     """``period_block`` ``(d, b_first)``, ``period_block_succ`` ``(d, b_first, b_next)`` and
     ``period_block_time`` ``(d, b_first, t)``: the timeset blocks of each period (mirrors
     ``timeline_config.make_period_block``) for the ``bind_intraperiod_blocks`` nodes.  Per period the active
     steps are taken in rank order; a new block starts where the rank gap to the previous step exceeds 1.
+
+    *realized* ``(d, t)`` (a rolling solve's realized steps): a block also ends at the last realized step of a
+    period that continues past it, so the state the roll hands over is the end state of a block (the same cut as
+    the coarse steps, ``params._coarse.coarse_node_frames``).
 
     Returns the three frames, or None when the source is insufficient.
     """
@@ -7829,6 +7834,9 @@ def period_block_family_from_source(source: "InputSource",
         return None
     per_period = info["per_period"]
     period_order = info["period_order"]
+    realized_set: set[tuple[str, str]] = set()
+    if realized is not None and realized.height > 0:
+        realized_set = set(realized.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).iter_rows())
     pb_rows: list[tuple[str, str]] = []         # (d, b_first)
     pbs_rows: list[tuple[str, str, str]] = []   # (d, b_first, b_next)
     pbt_rows: list[tuple[str, str, str]] = []   # (d, b_first, t)
@@ -7836,10 +7844,16 @@ def period_block_family_from_source(source: "InputSource",
         steps = per_period.get(period) or []
         if not steps:
             continue
+        # Index of the period's last realized step when the period continues past it (rolling solves only).
+        cut_after = None
+        if realized_set:
+            last = max((j for j, (t, _rk) in enumerate(steps) if (str(period), str(t)) in realized_set), default=None)
+            if last is not None and last < len(steps) - 1:
+                cut_after = last
         block_firsts: list[str] = [steps[0][0]]
         cur_b = steps[0][0]
         for j, (t, rk) in enumerate(steps):
-            if j > 0 and rk - steps[j - 1][1] > 1:
+            if j > 0 and (rk - steps[j - 1][1] > 1 or j - 1 == cut_after):
                 cur_b = t
                 block_firsts.append(cur_b)
             pbt_rows.append((period, cur_b, t))
@@ -8171,6 +8185,8 @@ def p_state_upper_from_source(source: "InputSource",
 def storage_use_reference_value_from_source(source: "InputSource",
                                                   nodeStateBlock_df: pl.DataFrame
                                                     | None,
+                                                  *,
+                                                  rolling: bool = False,
                                                   ) -> pl.DataFrame | None:
     """``storage_use_reference_value`` — nodes with horizon method
     ``use_reference_value`` after multi-method exclusion.
@@ -8186,6 +8202,9 @@ def storage_use_reference_value_from_source(source: "InputSource",
         nodes of the solve's own plain cyclic sets, which hold the
         blended-weights nodes a non-RP solve downgrades to those methods
       * ``nodeStateBlock`` (synthesised + explicit).
+
+    With *rolling* (a rolling_window sub-solve) the bind_intraperiod_blocks nodes keep the pin: it applies where the
+    roll's last period chains forward (``model.core._eq_storage_reference_value``).
     """
     sshm = _try_param(source, "node", "storage_solve_horizon_method")
     if sshm is None:
@@ -8211,13 +8230,13 @@ def storage_use_reference_value_from_source(source: "InputSource",
     if sbm_full is not None:
         b = (sbm_full.lazy()
                   .filter(pl.col("method").is_in([
-                      "bind_within_solve", "bind_within_period",
-                      "bind_within_timeblock", "bind_intraperiod_blocks"]))
+                      "bind_within_solve", "bind_within_period", "bind_within_timeblock"]
+                      + ([] if rolling else ["bind_intraperiod_blocks"])))
                   .select("n")
                   .collect())
         if b.height > 0:
             excl_lists.append(b["n"].to_list())
-    if nodeStateBlock_df is not None and nodeStateBlock_df.height > 0:
+    if not rolling and nodeStateBlock_df is not None and nodeStateBlock_df.height > 0:
         excl_lists.append(nodeStateBlock_df["n"].to_list())
     excl = set()
     for lst in excl_lists:
@@ -8417,13 +8436,18 @@ def dtttdt_block_interior_from_dtttdt(dtttdt: pl.DataFrame | None,
 
 def dtttdt_block_lag_from_dtttdt(dtttdt: pl.DataFrame | None,
                                  period_block_time: pl.DataFrame | None,
+                                 chained: pl.DataFrame | None = None,
                                  ) -> pl.DataFrame | None:
     """``(d, t, d_previous, t_previous_within_solve)``: the step each step of a ``bind_intraperiod_blocks`` block
     continues from (the state change of ``nodeBalanceBlock_eq``).
 
     The blocks of a period form a loop: inside the period the previous step (across block boundaries too), and the
     period's first step continues from the period's own last step (the within-period lag of
-    ``flex_data._within_period_lag``).  Restricted to the steps of *period_block_time*.
+    ``flex_data._within_period_lag``).  The periods of *chained* ``(d)`` (in a rolling solve, the periods the roll
+    holds only in part) chain forward instead: their rows are the bind_forward_only lag
+    (:func:`dtttdt_forward_only_from_dtttdt`), so a period's first step continues from the previous step of the
+    solve and the solve's first step has no row (its start is the fix_start state or the roll carry).  Restricted to
+    the steps of *period_block_time*.
     """
     if dtttdt is None or dtttdt.height == 0 or period_block_time is None or period_block_time.height == 0:
         return None
@@ -8432,13 +8456,33 @@ def dtttdt_block_lag_from_dtttdt(dtttdt: pl.DataFrame | None,
     lag = _within_period_lag(dtttdt)
     if lag is None:
         return None
+    loop = lag.select("d", "t", pl.col("d").alias("d_previous"),
+                      pl.col("t_previous_within_period").alias("t_previous_within_solve"))
+    if chained is not None and chained.height > 0:
+        names = [str(x) for x in chained["d"].to_list()]
+        loop = loop.filter(~pl.col("d").cast(pl.Utf8).is_in(names))
+        fwd = dtttdt_forward_only_from_dtttdt(dtttdt)
+        if fwd is not None:
+            chain = (fwd.filter(pl.col("d").cast(pl.Utf8).is_in(names))
+                     .select([pl.col(c).cast(loop.schema[c], strict=False) for c in loop.columns]))
+            loop = pl.concat([loop, chain], how="vertical")
     steps = period_block_time.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique()
-    out = (lag.with_columns(_d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
+    out = (loop.with_columns(_d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
            .join(steps.rename({"d": "_d", "t": "_t"}), on=["_d", "_t"], how="semi")
-           .select("d", "t", pl.col("d").alias("d_previous"),
-                   pl.col("t_previous_within_period").alias("t_previous_within_solve"))
+           .select("d", "t", "d_previous", "t_previous_within_solve")
            .sort("d", "t"))
     return out if out.height > 0 else None
+
+
+def _rolling_realized_steps(flex_data: object, workdir: Path | None,
+                            provider: "object | None") -> pl.DataFrame | None:
+    """``(d, t)`` the solve realizes when it is a rolling sub-solve (``flex_data.solve_is_rolling``), else None:
+    where the bind_intraperiod_blocks blocks are cut (:func:`period_block_family_from_source`)."""
+    if not getattr(flex_data, "solve_is_rolling", False) or workdir is None:
+        return None
+    from flextool.engine.preprocess.flex_data import _realized_steps
+
+    return _realized_steps(Path(workdir) / "solve_data", flex_data, provider=provider)
 
 
 # ---------------------------------------------------------------------------
@@ -8537,7 +8581,8 @@ def apply_derived_e(
     pb_family = None
     if has_state:
         pb_family = period_block_family_from_source(
-            source, active_solve, workdir, ctx=ctx, provider=provider)
+            source, active_solve, workdir, ctx=ctx, provider=provider,
+            realized=_rolling_realized_steps(flex_data, workdir, provider))
     period_block_time_for_arc: pl.DataFrame | None = None
     if pb_family is not None:
         flex_data.period_block = pb_family["period_block"]
@@ -8557,7 +8602,8 @@ def apply_derived_e(
         flex_data.dtttdt_block_interior = dtttdt_block_interior_from_dtttdt(
             dtttdt_db, period_block_time_for_arc)
         flex_data.dtttdt_block_lag = dtttdt_block_lag_from_dtttdt(
-            getattr(flex_data, "dtttdt", None), period_block_time_for_arc)
+            getattr(flex_data, "dtttdt", None), period_block_time_for_arc,
+            getattr(flex_data, "period_block_chain", None))
 
     # 3. nodeStateBlock = the bind_intraperiod_blocks nodes (storage-only) -
     nsb_db = None
@@ -8601,7 +8647,8 @@ def apply_derived_e(
 
     # 6. storage_use_reference_value (storage-only) -------------------
     if has_state:
-        use_ref = storage_use_reference_value_from_source(source, nsb_db)
+        use_ref = storage_use_reference_value_from_source(
+            source, nsb_db, rolling=bool(getattr(flex_data, "solve_is_rolling", False)))
         # The solve's plain cyclic sets come from the per-solve frame, so they include the blended-weights
         # nodes this solve downgraded (no representative periods): those cycle too and get no end pin.
         for cyclic in (flex_data.storage_bind_within_solve, flex_data.storage_bind_within_period):

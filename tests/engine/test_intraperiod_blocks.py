@@ -4,9 +4,10 @@ A ``bind_intraperiod_blocks`` node (``nodeStateBlock``) is balanced once per tim
 ``nodeBalanceBlock_eq`` (``nodeBalance_eq`` skips it) and its state is constant within each block
 (``stateConstantWithinBlock_eq``).  Before, a sub-solve that is not a Spine solve (every roll, every nested anchor
 ``<solve>_<period>``) never got the block frames, so the node had no energy balance at all (energy from nothing).
-Now: a rolling solve with such a node is an error (how a block cut by a roll window should behave is an open
-modelling question, Q-c15c-A), a nested anchor sub-solve gets its blocks, and the model refuses a block node
-without blocks.
+Now: a nested anchor sub-solve gets its blocks and the model refuses a block node without blocks.  In a rolling
+solve (owner decisions Q-c15c-A option B and Q-c15e-A option (b)) the blocks of a roll are also cut at its realized
+end; a period the roll holds whole loops as in a solve that is not rolling, and in a period the roll holds only in
+part the blocks chain forward and the storage level is carried from roll to roll.
 
 Fixtures: ``tests/fixtures/tests.json`` (``5weeks`` = five 4-step blocks; ``bind_battery_intraperiod_blocks`` on the
 battery) with override alternatives, built from JSON under the pytest tmp dir.
@@ -18,8 +19,7 @@ import json
 import polars as pl
 import pytest
 
-from flextool.engine.input._solve_state import FlexToolConfigError
-from tests.engine._lp_rows import row_terms
+from tests.engine._lp_rows import row_bounds, row_terms
 from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, make_db, run, utf8
 
 pytestmark = pytest.mark.solver
@@ -39,22 +39,266 @@ def _chain(scenario: str) -> list[str]:
     return out
 
 
-def test_rolling_intraperiod_blocks_raises(tmp_path_factory) -> None:
-    """Rolling dispatch (48 h window / 24 h jump over the 72-h fullYear) with a bind_intraperiod_blocks battery
-    stops with an error naming the solve, the node and the method.  Before: the run succeeded and every roll had
-    no balance row of any family for the battery."""
-    vals = [["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", b64(48.0, "float")],
-            ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", b64(24.0, "float")],
-            ["solve", "dispatch_fullYear_roll", "period_timeset",
-             b64({"index_type": "str", "index_name": "period", "data": [["p2020", "fullYear"]]}, "map")],
-            ["solve", "dispatch_fullYear_roll", "realized_periods",
-             b64({"value_type": "str", "data": ["p2020"]}, "array")]]
-    url, scen = make_db(tmp_path_factory, alt="ib_roll", values=vals,
-                        base_chain=["init", "west", "wind", "coal", "battery", "fullYear", "dispatch_fullYear_roll",
-                                    "bind_battery_intraperiod_blocks"])
-    with pytest.raises(FlexToolConfigError, match="bind_intraperiod_blocks") as exc:
-        run(tmp_path_factory, url, scen)
-    assert "battery" in str(exc.value) and "dispatch_fullYear_roll" in str(exc.value)
+# ---------------------------------------------------------------------------
+# Rolling solves (Q-c15c-A option B, Q-c15e-A option (b))
+
+ROLL_CHAIN = ["init", "west", "wind", "coal", "battery", "fullYear", "dispatch_fullYear_roll",
+              "bind_battery_intraperiod_blocks"]
+ROLL = "dispatch_fullYear_roll"
+
+
+def _roll_values(horizon: float, jump: float, periods: tuple[str, ...] = ("p2020",), *, loss: float = 0.0) -> list:
+    return [["solve", ROLL, "rolling_solve_horizon", b64(horizon, "float")],
+            ["solve", ROLL, "rolling_solve_jump", b64(jump, "float")],
+            ["solve", ROLL, "period_timeset",
+             b64({"index_type": "str", "index_name": "period", "data": [[p, "fullYear"] for p in periods]}, "map")],
+            ["solve", ROLL, "realized_periods", b64({"value_type": "str", "data": list(periods)}, "array")],
+            ["node", "battery", "self_discharge_loss", b64(loss, "float")]]
+
+
+def _q4_values(*, loss: float = 0.0, inflow: dict | None = None, start: float = 0.0,
+               extra: list | None = None) -> list:
+    """48-h rolls jumping 24 h over the 72-h p2020 of fullYear, inverter off, 10 MWh into the battery in t0003
+    (or *inflow*), fix_start *start*, horizon free: rolls hold t0001–t0048, t0025–t0072 and t0049–t0072."""
+    from tests.engine._unit_db import time_map
+
+    return (_roll_values(48.0, 24.0, loss=loss)
+            + [["node", "battery", "storage_solve_horizon_method", b64("free", "str")],
+               ["node", "battery", "storage_state_start", b64(start, "float")],
+               ["node", "battery", "inflow", time_map(inflow if inflow is not None else {"t0003": 10.0}, 0.0)],
+               ["connection", "battery_inverter", "existing", b64(0.0, "float")]]
+            + (extra or []))
+
+
+def _rolls(tmp_path_factory, alt: str, values: list) -> list:
+    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=ROLL_CHAIN)
+    steps = run(tmp_path_factory, url, scen)
+    return [steps[k] for k in sorted((k for k in steps if k.startswith(f"{ROLL}_roll_")),
+                                     key=lambda k: int(k.rsplit("_", 1)[1]))]
+
+
+def _block_sizes(fd) -> dict[tuple[str, str], int]:
+    return {(d, b): n for d, b, n in utf8(fd.period_block_time).group_by("d", "b_first").len().iter_rows()}
+
+
+def _lag(fd) -> dict[tuple[str, str], tuple[str, str]]:
+    return {(d, t): (dp, tp) for d, t, dp, tp in utf8(fd.dtttdt_block_lag).iter_rows()}
+
+
+def _states_mwh(step) -> dict[tuple[str, str], float]:
+    v = utf8(step.solution.value("v_state")).filter(pl.col("n") == "battery")
+    return {(d, t): x * SU for d, t, x in v.select("d", "t", "value").iter_rows()}
+
+
+def _state_cols(row: dict[str, float]) -> dict[str, float]:
+    return {c: v for c, v in row.items() if c.startswith("v_state[") and abs(v) > 1e-12}
+
+
+def _carry_mwh(fd) -> float:
+    return float(utf8(fd.p_roll_continue_state.frame).filter(pl.col("n") == "battery")["value"][0])
+
+
+def test_rolling_blocks_cut_at_realized_end(tmp_path_factory) -> None:
+    """The blocks of each roll are its timeset blocks cut after the last realized step when the roll continues past
+    it: {t0001: 24, t0025: 24}, {t0025: 24, t0049: 24}, {t0049: 24}.  p2020 (72 h) is held in part by every roll, so
+    its blocks chain forward: the roll's first step has no lag row, a later block continues from the previous step.
+    Before: the run stopped with an error (c15c interim)."""
+    rolls = _rolls(tmp_path_factory, "ibr_cut", _q4_values())
+    want = [{("p2020", "t0001"): 24, ("p2020", "t0025"): 24}, {("p2020", "t0025"): 24, ("p2020", "t0049"): 24},
+            {("p2020", "t0049"): 24}]
+    assert len(rolls) == 3
+    for step, sizes in zip(rolls, want):
+        fd = step.flex_data
+        assert fd.solve_is_rolling and utf8(fd.period_block_chain)["d"].to_list() == ["p2020"]
+        assert _block_sizes(fd) == sizes
+        lag = _lag(fd)
+        firsts = sorted(b for _d, b in sizes)
+        assert ("p2020", firsts[0]) not in lag
+        for b in firsts[1:]:
+            assert lag[("p2020", b)] == ("p2020", f"t{int(b[1:]) - 1:04d}")
+
+
+@pytest.mark.parametrize("loss", [0.0, 0.01])
+def test_rolling_blocks_carry(tmp_path_factory, loss) -> None:
+    """The level is carried from roll to roll and each block decays by its own 24 h (a = e^{−24λ}, g = (1 − a)/(24λ),
+    λ = ln(1 + loss)): the realized blocks hold 10·g, 10·g·a, 10·g·a² MWh (loss 0.01: 8.8956, 7.0059, 5.5176; loss 0:
+    10 everywhere) — the trajectory of one forward chain.  Roll 1's first block row holds −su on its own state, the
+    carried level (the state at roll 0's realized end) in its bounds and no state of a later block (no loop).
+    Before: the run stopped with an error (c15c interim)."""
+    import math
+
+    rolls = _rolls(tmp_path_factory, f"ibr_carry{int(loss * 100)}", _q4_values(loss=loss))
+    h = 24 * math.log1p(loss)
+    a, g = (math.exp(-h), (1 - math.exp(-h)) / h) if loss > 0 else (1.0, 1.0)
+    for i, (step, b_first) in enumerate(zip(rolls, ("t0001", "t0025", "t0049"))):
+        s = _states_mwh(step)
+        for k in range(int(b_first[1:]), int(b_first[1:]) + 24):
+            assert s[("p2020", f"t{k:04d}")] == pytest.approx(10.0 * g * a ** i, rel=1e-7), (i, k)
+    # The carry handed to a roll is the previous roll's state at its realized end (the step before the roll's first).
+    for prev, step, first in zip(rolls, rolls[1:], (25, 49)):
+        assert _carry_mwh(step.flex_data) == pytest.approx(_states_mwh(prev)[("p2020", f"t{first - 1:04d}")],
+                                                           rel=1e-9)
+    if loss == 0.0:
+        pb = build(rolls[1].flex_data)
+        row = "nodeBalanceBlock_eq[battery,p2020,t0025]"
+        assert _state_cols(row_terms(pb, "nodeBalanceBlock_eq", "battery,")[row]) == {
+            "v_state[battery,p2020,t0048]": pytest.approx(-SU, rel=1e-12)}
+        lo, hi = row_bounds(pb, "nodeBalanceBlock_eq", "battery,")[row]
+        assert lo == hi == pytest.approx(-_carry_mwh(rolls[1].flex_data), rel=1e-12) and lo == pytest.approx(-10.0)
+
+
+@pytest.mark.parametrize("loss", [0.0, 0.01])
+def test_rolling_blocks_open_start(tmp_path_factory, loss) -> None:
+    """fix_nothing: roll 0's first block has no state change — its state columns sum to −h_b·su (0 without a loss:
+    the constant state of an open block only decays) and its bounds hold no start constant — while roll 1 starts
+    from the carried level.  No start pin of any family."""
+    import math
+    vals = _q4_values(loss=loss, inflow={"t0030": 10.0},
+                      extra=[["node", "battery", "storage_start_end_method", b64("fix_nothing", "str")]])
+    rolls = _rolls(tmp_path_factory, f"ibr_open{int(loss * 100)}", vals)
+    pb0 = build(rolls[0].flex_data)
+    row = "nodeBalanceBlock_eq[battery,p2020,t0001]"
+    h_b = 24 * math.log1p(loss)
+    assert sum(_state_cols(row_terms(pb0, "nodeBalanceBlock_eq", "battery,")[row]).values()) == pytest.approx(
+        -h_b * SU, abs=1e-9)
+    assert row_bounds(pb0, "nodeBalanceBlock_eq", "battery,")[row] == (0.0, 0.0)
+    for fam in ("storage_state_start_binding", "storage_state_start_binding_cyclic_period"):
+        assert row_terms(pb0, fam, "battery,") == {}
+    pb1 = build(rolls[1].flex_data)
+    carry = _carry_mwh(rolls[1].flex_data)
+    assert carry == pytest.approx(_states_mwh(rolls[0])[("p2020", "t0024")], abs=1e-9)
+    lo, _hi = row_bounds(pb1, "nodeBalanceBlock_eq", "battery,")["nodeBalanceBlock_eq[battery,p2020,t0025]"]
+    # The carried level enters the row weighted by 1 − β of the block (β = 1 − h_b/(e^{h_b} − 1); 0 without a loss).
+    beta = 0.0 if loss == 0 else 1 - h_b / math.expm1(h_b)
+    assert lo == pytest.approx(-(1 - beta) * carry - 10.0, abs=1e-9)
+
+
+def test_rolling_blocks_fix_start(tmp_path_factory) -> None:
+    """fix_start 0.1, no inflow, inverter off, no loss: roll 0's first block starts from 0.1 · 50 = 5 MWh (the start
+    energy in its bounds; no start pin row), and every block of every roll holds 5 MWh."""
+    vals = _q4_values(inflow={}, start=0.1)
+    rolls = _rolls(tmp_path_factory, "ibr_fix", vals)
+    pb0 = build(rolls[0].flex_data)
+    assert row_bounds(pb0, "nodeBalanceBlock_eq", "battery,")["nodeBalanceBlock_eq[battery,p2020,t0001]"] == (
+        pytest.approx(-5.0), pytest.approx(-5.0))
+    for fam in ("storage_state_start_binding", "storage_state_start_binding_cyclic_period"):
+        assert row_terms(pb0, fam, "battery,") == {}
+    for step in rolls:
+        for v in _states_mwh(step).values():
+            assert v == pytest.approx(5.0, abs=1e-9)
+
+
+def test_rolling_blocks_reference_value(tmp_path_factory) -> None:
+    """use_reference_value 0.4 (tests.json battery, inverter on): each roll's last step is pinned to 0.4 · 50 = 20 MWh
+    — the roll holds p2020 in part, so the blocks chain forward and the end is not tied to the start.  Before (in a
+    solve that is not rolling the node is excluded from the pin): the run stopped with an error."""
+    rolls = _rolls(tmp_path_factory, "ibr_ref", _roll_values(48.0, 24.0))
+    for step, last in zip(rolls, ("t0048", "t0072", "t0072")):
+        pb = build(step.flex_data)
+        rows = row_terms(pb, "storage_state_solve_horizon_reference_value", "battery,")
+        assert set(rows) == {f"storage_state_solve_horizon_reference_value[battery,p2020,{last}]"}
+        assert _states_mwh(step)[("p2020", last)] == pytest.approx(20.0, abs=1e-6)
+
+
+def test_rolling_blocks_cross_period(tmp_path_factory) -> None:
+    """p2020 + p2025 (72 h each), 48-h rolls jumping 24 h: roll 2 holds p2020 t0049–t0072 and p2025 t0001–t0024,
+    both in part, so p2025's first block continues from p2020's last step (forward chain across the period boundary,
+    no loop) and the roll's first step has no lag row."""
+    rolls = _rolls(tmp_path_factory, "ibr_cross", _roll_values(48.0, 24.0, ("p2020", "p2025")))
+    fd = rolls[2].flex_data
+    assert sorted(utf8(fd.period_block_chain)["d"].to_list()) == ["p2020", "p2025"]
+    lag = _lag(fd)
+    assert ("p2020", "t0049") not in lag
+    assert lag[("p2025", "t0001")] == ("p2020", "t0072")
+    row = row_terms(build(fd), "nodeBalanceBlock_eq", "battery,")["nodeBalanceBlock_eq[battery,p2025,t0001]"]
+    assert set(_state_cols(row)) == {"v_state[battery,p2020,t0072]", "v_state[battery,p2025,t0024]"}
+
+
+def test_rolling_whole_period_loops(tmp_path_factory, caplog) -> None:
+    """p2020 + p2025 (72 h each), 96-h rolls jumping 72 h (a whole period): roll 0 holds p2020 whole — it loops, with
+    the fix_start pin on its wrap (p2020, t0072) as in a solve that is not rolling — and p2025 in part (chained from
+    p2020's end, with the reference-value pin at the roll's end); roll 1 holds p2025 whole: it loops and takes no
+    carry although the previous roll handed one over, and has no reference-value pin.  No warning: the jump is a
+    whole period."""
+    import logging
+    caplog.set_level(logging.WARNING)
+    rolls = _rolls(tmp_path_factory, "ibr_whole", _roll_values(96.0, 72.0, ("p2020", "p2025")))
+    assert len(rolls) == 2
+    fd0, fd1 = rolls[0].flex_data, rolls[1].flex_data
+    assert utf8(fd0.period_block_chain)["d"].to_list() == ["p2025"] and fd1.period_block_chain is None
+    lag0, lag1 = _lag(fd0), _lag(fd1)
+    assert lag0[("p2020", "t0001")] == ("p2020", "t0072") and lag0[("p2025", "t0001")] == ("p2020", "t0072")
+    assert lag1[("p2025", "t0001")] == ("p2025", "t0072")
+    pb0, pb1 = build(fd0), build(fd1)
+    assert set(row_terms(pb0, "storage_state_start_binding_cyclic_period", "battery,")) == {
+        "storage_state_start_binding_cyclic_period[battery,p2020,t0072]"}
+    assert set(row_terms(pb0, "storage_state_solve_horizon_reference_value", "battery,")) == {
+        "storage_state_solve_horizon_reference_value[battery,p2025,t0024]"}
+    assert fd1.p_roll_continue_state is not None and _carry_mwh(fd1) != 0.0
+    assert row_bounds(pb1, "nodeBalanceBlock_eq", "battery,")["nodeBalanceBlock_eq[battery,p2025,t0001]"] == (0.0, 0.0)
+    assert row_terms(pb1, "storage_state_solve_horizon_reference_value", "battery,") == {}
+    assert not [r for r in caplog.records if "whole number of periods" in r.getMessage()]
+
+
+def test_rolling_jump_not_whole_periods_warns(tmp_path_factory, caplog) -> None:
+    """48-h rolls jumping 24 h over the 72-h p2020: rolls 1 and 2 start inside the period; one warning names the
+    solve, the first such roll and the node."""
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    _rolls(tmp_path_factory, "ibr_warn", _q4_values())
+    hits = [r.getMessage() for r in caplog.records if "whole number of periods" in r.getMessage()]
+    assert len(hits) == 1
+    assert f"'{ROLL}'" in hits[0] and f"'{ROLL}_roll_1'" in hits[0] and "battery" in hits[0]
+
+
+def test_rolling_single_roll_equals_single_solve(tmp_path_factory) -> None:
+    """A rolling solve with one roll over the whole p2020 holds the period whole, so its blocks loop exactly as in the
+    same solve run as single_solve: the same block rows, fix_start pin and objective (the state columns identical;
+    other coefficients to the precision the roll's per-solve inputs carry, e.g. 1/0.95 written as 1.052632)."""
+    roll = _rolls(tmp_path_factory, "ibr_one", _roll_values(72.0, 72.0))
+    assert len(roll) == 1
+    url, scen = make_db(tmp_path_factory, alt="ibr_one_single",
+                        values=_roll_values(72.0, 72.0) + [["solve", ROLL, "solve_mode", b64("single_solve", "str")]],
+                        base_chain=ROLL_CHAIN)
+    single = list(run(tmp_path_factory, url, scen).values())[-1]
+    pb_r, pb_s = build(roll[0].flex_data), build(single.flex_data)
+    for fam in ("nodeBalanceBlock_eq", "stateConstantWithinBlock_eq", "storage_state_start_binding_cyclic_period",
+                "storage_state_solve_horizon_reference_value"):
+        rows_r, rows_s = row_terms(pb_r, fam, "battery,"), row_terms(pb_s, fam, "battery,")
+        assert set(rows_r) == set(rows_s), fam
+        for row, terms in rows_s.items():
+            assert set(rows_r[row]) == set(terms), (fam, row)
+            assert _state_cols(rows_r[row]) == _state_cols(terms), (fam, row)
+            for col, v in terms.items():
+                assert rows_r[row][col] == pytest.approx(v, rel=1e-5), (fam, row, col)
+        bounds_r = row_bounds(pb_r, fam, "battery,")
+        for row, (lo, hi) in row_bounds(pb_s, fam, "battery,").items():
+            assert bounds_r[row] == (pytest.approx(lo, rel=1e-9), pytest.approx(hi, rel=1e-9)), (fam, row)
+    assert set(row_terms(pb_s, "storage_state_start_binding_cyclic_period", "battery,")) == {
+        "storage_state_start_binding_cyclic_period[battery,p2020,t0072]"}
+    assert single.obj is not None and roll[0].obj == pytest.approx(single.obj, rel=1e-5)
+
+
+def test_rolling_blocks_stochastic_follow_forward_only(tmp_path_factory) -> None:
+    """Rolling stochastic dispatch (stochastics.json ``1_week_rolling_wind``) with a bind_intraperiod_blocks
+    hydro_reservoir: the rolls hold the week in part, so every block lag row is the bind_forward_only lag of that step
+    (``dtttdt_forward_only``, whatever it links a forecast branch to — critique c15e 13: one place to change)."""
+    from flextool.engine.preprocess.params._derived import dtttdt_forward_only_from_dtttdt
+    from tests.engine.test_self_discharge import STOCH_JSON, _run_json
+
+    steps = _run_json(tmp_path_factory, STOCH_JSON, "1_week_rolling_wind",
+                      [["node", "hydro_reservoir", "storage_binding_method", "bind_intraperiod_blocks"]], "ibr_stoch")
+    assert len(steps) > 1
+    for step in steps:
+        fd = step.flex_data
+        assert fd.solve_is_rolling and fd.period_block_chain is not None
+        lag = _lag(fd)
+        fwd = {(d, t): (dp, tp) for d, t, dp, tp in utf8(dtttdt_forward_only_from_dtttdt(fd.dtttdt))
+               .select("d", "t", "d_previous", "t_previous_within_solve").iter_rows()}
+        block_steps = set(utf8(fd.period_block_time).select("d", "t").iter_rows())
+        assert lag == {k: v for k, v in fwd.items() if k in block_steps}
+        assert row_terms(build(fd), "nodeBalanceBlock_eq", "hydro_reservoir,")
 
 
 def test_synthetic_subsolve_gets_blocks(tmp_path_factory) -> None:
@@ -185,8 +429,6 @@ def test_block_row_is_summed_node_balance(tmp_path_factory) -> None:
     fd, pb = _built(tmp_path_factory, "ib117_sum", [])
     _, pb_wp = _built(tmp_path_factory, "ib117_wp",
                       [["node", "battery", "storage_binding_method", b64("bind_within_period", "str")]])
-    from tests.engine._lp_rows import row_bounds
-
     blocks = row_terms(pb, "nodeBalanceBlock_eq", "battery,")
     fine = row_terms(pb_wp, "nodeBalance_eq", "battery,")
     fine_bounds = row_bounds(pb_wp, "nodeBalance_eq", "battery,")

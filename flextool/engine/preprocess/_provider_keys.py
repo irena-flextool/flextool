@@ -64,6 +64,10 @@ SOLVE_DATA_P_ENTITY_PERIOD_EXISTING_CAPACITY = (
     "solve_data/p_entity_period_existing_capacity"
 )
 SOLVE_DATA_P_ROLL_CONTINUE_STATE = "solve_data/p_roll_continue_state"
+# (period, whole) of a rolling_window sub-solve: whether the roll holds every step the complete solve has in the
+# period (_run_model); header-only for a sub-solve that is not a roll.  The bind_intraperiod_blocks blocks of a
+# period loop when the roll holds the whole period and chain forward otherwise.
+SOLVE_DATA_ROLL_PERIOD_WHOLE = "solve_data/roll_period_whole"
 SOLVE_DATA_CO2_CUM_REALIZED_TONNES = "solve_data/co2_cum_realized_tonnes"
 SOLVE_DATA_LADDER_CUM_SIM_HOURS = "solve_data/ladder_cum_sim_hours"
 SOLVE_DATA_LADDER_CUM_REALIZED_MWH = "solve_data/ladder_cum_realized_mwh"
