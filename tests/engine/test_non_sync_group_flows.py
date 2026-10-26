@@ -219,3 +219,35 @@ def test_one_variable_crossing_warning(tmp_path_factory, caplog, case: str, expe
         assert "'west_north'" in hits[0] and "'gwe'" in hits[0] and "exact" in hits[0]
     else:
         assert not hits, hits
+
+
+# ---------------------------------------------------------------------------
+# two groups joined by a line (#128): what an export / import is in each group
+
+
+@pytest.mark.parametrize("dc", [False, True])
+def test_two_groups_joined_by_a_line(tmp_path_factory, dc: bool) -> None:
+    """{west} and {east}, each with a limit 0.3, wind flagged at west, west_east between them.  In each group
+    the line's flow out is supply (negative, × limit), its flow in is infeed only when the line is is_DC: wind
+    exported over an AC line arrives in east as synchronous (the documented semantics, #128); over a DC line it
+    is non-synchronous infeed of east (+unitsize · Δt · icap = 400)."""
+    e1, v1 = _ns_group("gw", ["west"], 0.3)
+    e2, v2 = _ns_group("ge", ["east"], 0.3)
+    extra = [["connection", "west_east", "is_DC", b64("yes", "str")]] if dc else []
+    step = list(_steps(tmp_path_factory, f"ns_two_{int(dc)}", e1 + e2, v1 + v2 + WIND + extra, NET).values())[-1]
+    pb = build(step.flex_data)
+    for g, out_arc, in_arc in (("gw", "west,east", "east,west"), ("ge", "east,west", "west,east")):
+        rows = row_terms(pb, "non_sync_constraint", f"{g},")
+        assert len(rows) == 48, g
+        for row, terms in rows.items():
+            t = row.split(",")[-1].rstrip("]")
+            assert coef(terms, f"v_flow[west_east,{out_arc},p2020,{t}]") < 0.0, (g, row)
+            infeed = [v for c, v in terms.items() if c == f"v_flow[west_east,{in_arc},p2020,{t}]"]
+            if dc:
+                assert infeed == [pytest.approx(400.0)], (g, row, terms)
+            else:
+                assert not infeed, (g, row)
+        if g == "gw":
+            for row, terms in rows.items():
+                t = row.split(",")[-1].rstrip("]")
+                assert [c for c in terms if c.startswith("v_flow[wind_plant,") and c.endswith(f",west,p2020,{t}]")]

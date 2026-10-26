@@ -752,6 +752,8 @@ Here the (wind_plant|nodeA) relation has the `is_non_synchronous` parameter and 
 
 A connection between a node of the group and a node outside it counts in both directions: its flow into the group is infeed (non-synchronous if the connection is `is_DC`), its flow out of the group is supply. A *regular* connection (at the cost of its losses) and a *no_losses_no_variable_cost* connection (at no cost) can flow both ways at the same time, which raises the supply side and so loosens the limit. Use `transfer_method`: *exact* for a synchronous connection that crosses the boundary of a group with a non-synchronous limit. FlexTool warns about a *no_losses_no_variable_cost* connection across the boundary (not when it is `is_DC`: then flowing both ways only tightens the limit).
 
+With several groups that have a non-synchronous limit, each group counts its own boundary: wind exported from one group over an AC connection arrives in the neighbouring group as synchronous infeed (it is not counted against that group's limit), while over an `is_DC` connection it counts as non-synchronous there too.
+
 If you want summary metrics per flow in the results, create a separate `flowGroup` for each flow (or collection of flows) and add `flowGroup__unit__node` entities to it. The flowGroup needs the parameter:
 
 - `flow_aggregator`: standalone_aggregator_only
