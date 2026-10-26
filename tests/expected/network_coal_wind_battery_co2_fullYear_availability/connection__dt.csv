@@ -1,6 +1,6 @@
 solve,period,time,battery_inverter,east_north,west_east,west_north
-y2020_fullYear_dispatch,p2020,t0001,5.0002,100.0,6.4595,100.0
-y2020_fullYear_dispatch,p2020,t0002,5.5276,100.0,-186.8287,100.0
+y2020_fullYear_dispatch,p2020,t0001,10.0,100.0,1.7229,100.0
+y2020_fullYear_dispatch,p2020,t0002,-4.2473,100.0,-176.7628,100.0
 y2020_fullYear_dispatch,p2020,t0003,-10.0,200.0,-97.6907,0.0
 y2020_fullYear_dispatch,p2020,t0004,10.0,100.0,27.534,100.0
 y2020_fullYear_dispatch,p2020,t0005,-9.4991,100.0,-35.1818,100.0
@@ -70,4 +70,4 @@ y2020_fullYear_dispatch,p2020,t0068,-10.0,175.9522,-101.2542,24.0478
 y2020_fullYear_dispatch,p2020,t0069,-10.0,200.0,-40.7336,0.0
 y2020_fullYear_dispatch,p2020,t0070,-10.0,124.0191,-185.0325,75.9809
 y2020_fullYear_dispatch,p2020,t0071,10.0,100.0,29.8848,100.0
-y2020_fullYear_dispatch,p2020,t0072,-9.4991,100.0,-112.1174,100.0
+y2020_fullYear_dispatch,p2020,t0072,-4.7488,100.0,-116.8676,100.0

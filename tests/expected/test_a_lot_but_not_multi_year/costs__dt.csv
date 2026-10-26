@@ -1,5 +1,5 @@
 solve,period,time,commodity_cost,commodity_sales,co2,other operational,starts,upward slack penalty,downward slack penalty,inertia slack penalty,non-synchronous slack penalty,upward reserve slack penalty,downward reserve slack penalty
-y2020_5week,p2020,t0001,21865.167,0.0,18585.392,0.0,25551.229,60636.99,20000.0,0.0,0.0,0.0,0.0
+y2020_5week,p2020,t0001,22946.974,0.0,19504.928,0.0,27880.864,60636.99,20000.0,0.0,0.0,0.0,0.0
 y2020_5week,p2020,t0002,22222.222,0.0,18888.889,0.0,0.0,13667.001,38333.333,0.0,0.0,0.0,0.0
 y2020_5week,p2020,t0003,10000.0,0.0,8500.0,-1500.0,0.0,163654.67,0.0,0.0,0.0,0.0,0.0
 y2020_5week,p2020,t0004,10000.0,0.0,8500.0,-1500.0,0.0,198733.02,0.0,0.0,0.0,0.0,0.0

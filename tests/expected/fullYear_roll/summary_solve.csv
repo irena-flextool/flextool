@@ -1,8 +1,8 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-10-25 22:25:03.349056+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-10-26 09:42:32.685306+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
-dispatch_fullYear_roll_roll_0,247.059506063
+dispatch_fullYear_roll_roll_0,252.534506063
 dispatch_fullYear_roll_roll_1,6.57
 dispatch_fullYear_roll_roll_2,0
 dispatch_fullYear_roll_roll_3,123.1875
@@ -74,15 +74,15 @@ dispatch_fullYear_roll_roll_68,0
 dispatch_fullYear_roll_roll_69,168.0825
 dispatch_fullYear_roll_roll_70,511.914556872
 dispatch_fullYear_roll_roll_71,343.2825
-"Total cost (calculated) full horizon (M CUR)",5979.70693796,"Annualized operational, penalty and investment costs"
-"Total cost (calculated) realized periods (M CUR)",5979.70693796
+"Total cost (calculated) full horizon (M CUR)",5985.18193796,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",5985.18193796
 "Operational costs for realized periods (M CUR)",0
 "Investment costs for realized periods (M CUR)",0
 "Retirement costs / salvage revenue for realized periods (M CUR)",0
 "Fixed costs for pre-existing entities (M CUR)",0
 "Fixed costs for invested entities (M CUR)",0
 "Fixed cost removal due to divested entities (M CUR)",0
-"Penalty (slack) costs for realized periods (M CUR)",5979.70693796
+"Penalty (slack) costs for realized periods (M CUR)",5985.18193796
 
 Period,p2020,p2025,p2030,p2035
 "Time in use in years",0.00821917808219,0.00821917808219,0.00821917808219,0.00821917808219
@@ -93,7 +93,7 @@ Emissions
 "CO2 [Mt]",0,"System-wide annualized CO2 emissions for realized periods"
 
 "Slack variables multiplied by timestep duration (creating or removing energy/matter, creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"
-Created, west, p2020, 2740.8
+Created, west, p2020, 2750.8
 Created, west, p2025, 2727
 Created, west, p2030, 2727
 Created, west, p2035, 2727

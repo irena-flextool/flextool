@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **`fix_start` of a *bind_within_timeblock* storage.** The start state was
+  pinned on the state at the end of the solve's first step, after that
+  step's flows, so the timeblock's cycle could start at any level and spend
+  the difference in the first step. It is now pinned at the step the first
+  step starts from, the last step of the first timeblock (in a rolling solve,
+  of the timeblock's part in the first roll), as for the other cyclic methods.
+  Where an upper-level nested solve fixes the storage state at that step
+  (a nested roll whose horizon is one timeblock), the fixed value wins.
+
 - **Time-varying `self_discharge_loss`.** A `self_discharge_loss` given as a
   time (or period) map was read as one value per map entry and every
   coefficient of the storage's balance was summed over the entries (about

@@ -1,5 +1,5 @@
 solve,period,time,battery
-y2020_fullYear_dispatch,p2020,t0001,5.0
+y2020_fullYear_dispatch,p2020,t0001,0.0
 y2020_fullYear_dispatch,p2020,t0002,0.0
 y2020_fullYear_dispatch,p2020,t0003,0.0
 y2020_fullYear_dispatch,p2020,t0004,0.0
@@ -66,8 +66,8 @@ y2020_fullYear_dispatch,p2020,t0064,17.0704
 y2020_fullYear_dispatch,p2020,t0065,27.0682
 y2020_fullYear_dispatch,p2020,t0066,16.5397
 y2020_fullYear_dispatch,p2020,t0067,6.0122
-y2020_fullYear_dispatch,p2020,t0068,5.0025
-y2020_fullYear_dispatch,p2020,t0069,5.002
-y2020_fullYear_dispatch,p2020,t0070,5.0015
-y2020_fullYear_dispatch,p2020,t0071,5.001
-y2020_fullYear_dispatch,p2020,t0072,5.0005
+y2020_fullYear_dispatch,p2020,t0068,5.002
+y2020_fullYear_dispatch,p2020,t0069,5.0015
+y2020_fullYear_dispatch,p2020,t0070,5.001
+y2020_fullYear_dispatch,p2020,t0071,5.0005
+y2020_fullYear_dispatch,p2020,t0072,5.0

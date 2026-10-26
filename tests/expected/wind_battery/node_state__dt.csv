@@ -1,5 +1,5 @@
 solve,period,time,battery
-y2020_2day_dispatch,p2020,t0001,5.0
+y2020_2day_dispatch,p2020,t0001,0.0
 y2020_2day_dispatch,p2020,t0002,0.0
 y2020_2day_dispatch,p2020,t0003,0.0
 y2020_2day_dispatch,p2020,t0004,0.0
@@ -46,4 +46,4 @@ y2020_2day_dispatch,p2020,t0044,28.9395
 y2020_2day_dispatch,p2020,t0045,18.4108
 y2020_2day_dispatch,p2020,t0046,7.8832
 y2020_2day_dispatch,p2020,t0047,0.0
-y2020_2day_dispatch,p2020,t0048,9.9995
+y2020_2day_dispatch,p2020,t0048,5.0

@@ -1,19 +1,18 @@
-"""Tier-7 #27: ``storage_state_start_binding`` only fires at first-step
-of each period for storage nodes flagged ``fix_start``.
+"""Tier-7 #27: the fix_start pin of a ``bind_within_timeblock`` node fires once per first step, at the step that
+first step starts from.
 
-Fixture: ``work_wind_battery``.  The .mod constrains
-``v_state[n, d, t_first] · unitsize  ==  state_start[n] · existing[n, d]``
-exactly once per ``(n, d)`` where ``d ∈ period_first`` and the node is
-in ``storage_fix_start``.
-
-We assert the LP row count equals ``data.nodeState_first_dt`` filtered
-to ``storage_fix_start`` — i.e. the constraint never leaks onto an
-interior timestep.  A regression that emitted the binding for every
-(d, t) (instead of only the period-first step) would fail loudly here.
+Fixture: ``work_wind_battery`` (battery bind_within_timeblock + fix_start).  The first step's state change is
+``v_state[t_first] − v_state[t_wrap]`` with ``t_wrap`` its ``t_previous_within_timeset`` (the last step of the first
+timeblock), so the start state is pinned there:
+``v_state[n, d, t_wrap] · unitsize  ==  state_start[n] · existing[n, d]``, in
+``storage_state_start_binding_cyclic_period``, exactly once per ``(n, d, t_first)`` of ``nodeState_first_dt`` ∩
+``storage_fix_start``.  The plain ``storage_state_start_binding`` (representative-period nodes only) has no row.
+A regression that emitted the binding for every (d, t), or on the first step itself, fails here.
 """
 
 from __future__ import annotations
 
+import polars as pl
 import pytest
 
 from tests.engine.emission._helpers import (
@@ -35,26 +34,23 @@ def test_storage_state_start_binding_emits_only_in_period_first(scenario_workdir
         "fixture invariant: nodeState_first_dt must be present"
     )
 
-    # The binding domain is nodeState_first_dt ∩ storage_fix_start (on n).
-    # In this fixture every storage node is fix_start and every state
-    # node has one period_first row, so the join is non-narrowing.
-    expected = (
-        data.nodeState_first_dt
-        .join(data.storage_fix_start, on="n", how="inner")
-        .height
-    )
+    # One pin per (n, d, t_first) of nodeState_first_dt ∩ storage_fix_start, at the wrap target of t_first.
+    first = data.nodeState_first_dt.join(data.storage_fix_start, on="n", how="inner")
+    expected = first.height
     assert expected > 0, "fixture invariant: at least one fix_start row"
+    wrap = (first.join(data.dtttdt, on=["d", "t"], how="inner")
+            .select("n", "d", pl.col("t_previous_within_timeset").alias("t")))
+    assert wrap.height == expected
 
-    assert_cstr_row_count(pb, "storage_state_start_binding", expected)
-    assert_cstr_present(pb, "storage_state_start_binding")
+    assert_cstr_row_count(pb, "storage_state_start_binding_cyclic_period", expected)
+    assert_cstr_present(pb, "storage_state_start_binding_cyclic_period")
+    assert not [r for r in pb.cstrs_named("storage_state_start_binding") if r.name == "storage_state_start_binding"]
 
-    # Sanity: the constraint's `over` columns include both n and the
-    # period-time index — so the constraint is not collapsed onto a
-    # plain (n,) or (n, d) shape that would silently skip rows.
-    recs = pb.cstrs_named("storage_state_start_binding")
+    # The rows sit on the wrap targets, with (n, d, t) columns (not collapsed to (n,) or (n, d)).
+    recs = [r for r in pb.cstrs_named("storage_state_start_binding_cyclic_period")
+            if r.name == "storage_state_start_binding_cyclic_period"]
     assert len(recs) == 1
-    over_cols = set(recs[0].over.columns)
-    assert {"n", "d", "t"}.issubset(over_cols), (
-        f"storage_state_start_binding `over` should carry (n, d, t); "
-        f"got {sorted(over_cols)}"
-    )
+    over = recs[0].over
+    assert {"n", "d", "t"}.issubset(set(over.columns)), sorted(over.columns)
+    as_str = [pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t")]
+    assert sorted(over.select(as_str).rows()) == sorted(wrap.select(as_str).rows())

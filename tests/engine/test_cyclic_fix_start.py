@@ -103,7 +103,7 @@ def test_stochastic_within_solve_pins_the_wrap_of_the_first_step(tmp_path_factor
 
 @pytest.mark.parametrize("method,family", [("bind_forward_only", None),
                                             ("bind_within_solve", PIN),
-                                            ("bind_within_timeblock", "storage_state_start_binding")])
+                                            ("bind_within_timeblock", PIN)])
 def test_fix_start_end_pins_the_start(tmp_path_factory, method, family):
     """``storage_start_end_method`` *fix_start_end* fixes the start like *fix_start* (the schema: "fix start and
     end"; the end half is item 133): the node is in storage_fix_start and gets its start term / pin.  Before it was
