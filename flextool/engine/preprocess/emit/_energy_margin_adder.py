@@ -74,22 +74,19 @@ Untouched rows (other nodes, non-invest (d,t) — none here since the grid
 IS the invest grid — and any row of a node that isn't an ``inflow_adder``
 node) keep their original ``value`` string verbatim.
 
-Known limitation — ``no_inflow`` nodes and group accounting
------------------------------------------------------------
+Group accounting reads the real demand
+--------------------------------------
 The core ``nodeBalance_eq`` reads ``p_inflow`` DIRECTLY from
-``pdtNodeInflow.csv`` (``model/core.py`` ~L1640), so the added demand IS
-served for every node type, including one set ``inflow_method="no_inflow"``.
-BUT the ``p_positive_inflow`` / ``p_negative_inflow`` split
-(``_period_params._derive_positive_negative_inflow``) forces
-``no_inflow`` nodes to ``0.0`` — and those two frames feed the group
-energy-slack / capacity-margin / reserve auxiliary constraints
-(``_group_slack.py``).  So an adder on a node that is BOTH explicitly
-``no_inflow`` AND a member of such a group is served by the balance yet
-invisible to that group's accounting.  This does NOT affect the
-calibrator (its targets are default ``use_original`` nodes, which flow
-through both channels consistently); fix it when ``capacity_margin``
-integration lands, where the split can be made adder-aware with full
-context.
+``pdtNodeInflow.csv`` (``model/core.py``), so the added demand IS served
+for every node type, including one set ``inflow_method="no_inflow"``.  The
+group rows — the non-synchronous limit, the capacity margin and the group
+demand of the dynamic reserve requirement (``_group_slack.py``,
+``_reserve.group_demand_requirement``) — read the real demand
+(``p_positive_inflow`` / ``p_negative_inflow`` / ``pdtNodeInflow_per_step``
+from ``solve_data/pdtNodeInflow_unmargined``, recorded here before the adder
+is applied), by design: the energy margin is an adequacy device and not
+load, so the added demand never enters them, on any node type.  A capacity
+surplus for a group is the ``capacity_margin`` parameter.
 """
 from __future__ import annotations
 

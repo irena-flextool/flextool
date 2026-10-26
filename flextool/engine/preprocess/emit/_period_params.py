@@ -1677,7 +1677,10 @@ def _derive_positive_negative_inflow(
     *, provider: "object | None" = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Build both ``p_positive_inflow`` and ``p_negative_inflow`` frames
-    from a single read of ``pdtNodeInflow.csv``."""
+    from a single read of the real inflow: ``pdtNodeInflow_unmargined.csv``
+    when an energy margin left it on the Provider (refreshed by every solve
+    before this split runs), else ``pdtNodeInflow.csv``.  The dumped CSVs use
+    the real demand, like the model's frames (no loader reads them)."""
     nodes = _read_singles(input_dir / "node.csv", provider=provider)
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
     inflow_method_pairs = frozenset(
@@ -1689,8 +1692,9 @@ def _derive_positive_negative_inflow(
     )
 
     pdt_inflow: dict[tuple[str, str, str], float] = {}
-    pdtni_path = solve_data_dir / "pdtNodeInflow.csv"
-    pdtni_df = provider.get(_provider_key(pdtni_path))
+    pdtni_df = provider.get(_provider_key(solve_data_dir / "pdtNodeInflow_unmargined.csv"))
+    if pdtni_df is None:
+        pdtni_df = provider.get(_provider_key(solve_data_dir / "pdtNodeInflow.csv"))
     if pdtni_df is not None:
         for row in pdtni_df.iter_rows():
             if len(row) < 4:

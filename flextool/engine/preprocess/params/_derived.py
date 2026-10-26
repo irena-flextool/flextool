@@ -5901,16 +5901,16 @@ def p_negative_inflow_from_inflow(p_inflow: object | None) -> "Param | None":
     return Param(("n", "d", "t"), out)
 
 
-def p_negative_inflow_unmargined_from_inflow(p_inflow_unmargined: object | None,
-                                            p_negative_inflow: "Param | None") -> "Param | None":
-    """Negative component of the inflow before the invest-solve energy margin.
+def real_inflow(p_inflow: object | None, p_inflow_unmargined: object | None) -> object | None:
+    """The node inflow before the invest-solve energy margin: the real demand.
 
-    ``p_inflow_unmargined`` is ``solve_data/pdtNodeInflow_unmargined`` (written only by the energy-margin
-    emitters); without it the solve has no margin and the result is ``p_negative_inflow`` itself.
+    ``p_inflow_unmargined`` is ``solve_data/pdtNodeInflow_unmargined``, written by the energy-margin
+    emitters whenever a solve on the Provider applies a margin and refreshed by every later solve; without
+    it no solve has a margin and the real inflow is ``p_inflow`` itself.  The group rows (non-synchronous
+    limit, capacity margin, the group demand of the dynamic reserve requirement) read the real demand: the
+    energy margin is an adequacy device and not load.
     """
-    if p_inflow_unmargined is None:
-        return p_negative_inflow
-    return p_negative_inflow_from_inflow(p_inflow_unmargined)
+    return p_inflow if p_inflow_unmargined is None else p_inflow_unmargined
 
 
 # ---------------------------------------------------------------------------
@@ -5968,7 +5968,7 @@ DERIVED_C_FIELDS = (
     "process_group_inside_nonSync",
     "p_group_capacity_for_scaling", "p_inv_group_cap",
     "p_node_capacity_for_scaling",
-    "p_positive_inflow", "p_negative_inflow", "p_negative_inflow_unmargined",
+    "p_positive_inflow", "p_negative_inflow",
     "pdtNodeInflow_per_step",
     # §3.1.3 multi-year (extends Γ.3.A)
     "p_inflation_op",
@@ -6146,15 +6146,12 @@ def apply_derived_c(
     if ncs_db is not None:
         flex_data.p_node_capacity_for_scaling = ncs_db
 
-    # Inflow derivatives — these consume the (CSV-loaded or override-set)
-    # p_inflow.  Helpers return None when p_inflow is None.
-    p_inflow_csv = getattr(flex_data, "p_inflow", None)
-    flex_data.p_positive_inflow = p_positive_inflow_from_inflow(p_inflow_csv)
-    flex_data.p_negative_inflow = p_negative_inflow_from_inflow(p_inflow_csv)
-    flex_data.p_negative_inflow_unmargined = p_negative_inflow_unmargined_from_inflow(
-        getattr(flex_data, "p_inflow_unmargined", None), flex_data.p_negative_inflow)
-    flex_data.pdtNodeInflow_per_step = pdtNodeInflow_per_step_from_inflow(
-        p_inflow_csv, sd_csv)
+    # Group-accounting inflow frames — from the real inflow (before the invest-solve energy margin; the
+    # CSV-loaded or override-set p_inflow when no solve has a margin).  Helpers return None when it is None.
+    inflow_real = real_inflow(getattr(flex_data, "p_inflow", None), getattr(flex_data, "p_inflow_unmargined", None))
+    flex_data.p_positive_inflow = p_positive_inflow_from_inflow(inflow_real)
+    flex_data.p_negative_inflow = p_negative_inflow_from_inflow(inflow_real)
+    flex_data.pdtNodeInflow_per_step = pdtNodeInflow_per_step_from_inflow(inflow_real, sd_csv)
 
     # process_group_inside_nonSync — empty for all our covered fixtures.
     flex_data.process_group_inside_nonSync = (

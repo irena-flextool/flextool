@@ -327,7 +327,7 @@ def _eq_capacity_margin(b: _Build) -> None:
     #   − Σ_{(p,s,k) ∈ use_eff(g), p ∈ process_min_load_eff} v_online[p,d,t] · section[p] · unitsize[p] · icap[g,d]
     #   − Σ_{(p,s,k) ∈ use_noEff(g)} v_flow[p,s,k,d,t] · unitsize[p] · icap[g,d]
     #   + vq_capacity_margin[g,d]
-    #   ≥ capacity_margin[g,d] · icap[g,d] − Σ_{n ∈ N(g)} inflow_per_step[n,d,t] · icap[g,d]
+    #   ≥ capacity_margin[g,d] · icap[g,d] − Σ_{n ∈ N(g)} inflow_real[n,d,t] / Δt[d,t] · icap[g,d]
     #     − Σ_{prof(g)} existing_count[p,d] · unitsize[p] · profile[f,d,t] · icap[g,d]
     #     − Σ_{cap(g)} existing_count[p,d] · unitsize[p] · icap[g,d]
     #   ∀ g ∈ groupCapacityMargin, (d,t) ∈ dt : d ∈ D_inv
@@ -338,6 +338,9 @@ def _eq_capacity_margin(b: _Build) -> None:
     #   N(g) = nodes of g without a storage state;  icap = inv_group_cap = 1 / group_capacity_for_scaling
     #   prof(g) = unit arcs into N(g) with an upper_limit or fixed profile f;  cap(g) = the other unit arcs into N(g)
     #   use_*(g) = unit arcs out of N(g);  Σ_{d′} over edd_invest_set / edd_divest_active
+    #   inflow_real = the node's inflow before the invest-solve energy margin (energy_margin_multiplier / _adder),
+    #   which is an adequacy device and not load; the margin's capacity is the capacity_margin parameter
+    #   (pdtNodeInflow_per_step = inflow_real / Δt)
     # The capacity a group's units could deliver — existing plus invested
     # minus divested, profile-limited where a profile caps the output — less
     # what its units consume covers the group's net demand plus the margin;
@@ -541,10 +544,12 @@ def _eq_non_sync(b: _Build) -> None:
     #   in_ns(g) = arcs into N(g) with (p,k) ∈ process_sink_nonSync
     #   out_*(g) = arcs out of N(g);  arcs of processes inside the group, (p,g) ∈ process_group_inside_nonSync,
     #   are left out of in_ns and out_*
+    #   positive_inflow / negative_inflow = max(inflow_real, 0) / min(inflow_real, 0);  inflow_real = the node's
+    #   inflow before the invest-solve energy margin
     # Non-synchronous infeed (flagged arcs and positive exogenous inflow,
     # which counts as non-synchronous) is at most ns_limit times the group's
     # supply, measured as the energy drawn by the processes and the demand
-    # leaving its nodes; the excess is penalised.  The slack has no icap,
+    # leaving its nodes (the real demand: an energy margin does not count); the excess is penalised.  The slack has no icap,
     # which makes it a fraction of group_capacity_for_scaling.  slope already
     # holds the sink/source coefficient ratio of multi-arc processes.
     lhs: dict = {"slack_neg": -(b.vq_non_synchronous * d.p_step_duration)}

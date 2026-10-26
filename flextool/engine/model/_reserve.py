@@ -240,17 +240,15 @@ def group_demand_requirement(d) -> "Param | None":
     for the groups of ``reserve_upDown_group_method_dynamic`` with a ``reserve__upDown__group``
     ``increase_reserve_ratio`` (``p_reserve_upDown_group_increase_reserve_ratio``).  ``inflow`` is MWh per
     step (``nodeBalance_eq``), so dividing by the step duration gives MW in the step.  The demand of each
-    node is its negative inflow (``p_negative_inflow_unmargined``: without the invest-solve energy margin,
-    which is an adequacy device and not load), clipped per node before the group sum, so a node with
+    node is its negative inflow (``p_negative_inflow``: the real demand, before the invest-solve energy
+    margin, which is an adequacy device and not load), clipped per node before the group sum, so a node with
     positive inflow neither counts nor offsets another node's demand.  Zero rows are dropped.  Shared by
     the reserveBalance_dynamic_eq row and the shortfall scale.  None when no group has a ratio.
     """
     ratio = getattr(d, "p_reserve_upDown_group_increase_reserve_ratio", None)
     method_dyn = getattr(d, "reserve_upDown_group_method_dynamic", None)
     gn = getattr(d, "group_node", None)
-    neg = getattr(d, "p_negative_inflow_unmargined", None)
-    if neg is None:
-        neg = getattr(d, "p_negative_inflow", None)
+    neg = getattr(d, "p_negative_inflow", None)
     step = getattr(d, "p_step_duration", None)
     if (ratio is None or method_dyn is None or method_dyn.height == 0 or gn is None or gn.height == 0
             or neg is None or step is None):
@@ -680,7 +678,7 @@ def add_constraints(b: "_Build") -> None:
     #   ∀ (r,ud,g) ∈ reserve_upDown_group_method_dynamic, (d,t) ∈ dt
     #   group_demand = ratio_g[r,ud,g] · Σ_{n : (g,n) ∈ group_node} max(−inflow[n,d,t], 0) / Δt[d,t]
     #   ratio_g = reserve__upDown__group.increase_reserve_ratio;  inflow in MWh per step without the
-    #             energy margin (p_negative_inflow_unmargined), so group_demand is MW in the step
+    #             energy margin (p_negative_inflow, the real demand), so group_demand is MW in the step
     #   irr_g   = process_reserve_upDown_node_increase_reserve_ratio with n ∈ group g
     #   ratio   = increase_reserve_ratio;   eff_out = process_source_sink_eff
     #   section term only for min_load_efficiency units with online variables (v_online_linear / _integer)

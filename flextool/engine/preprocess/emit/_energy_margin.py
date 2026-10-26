@@ -2,7 +2,7 @@
 
 Runs per-solve from ``_solve_time.run`` immediately AFTER
 ``emit_pdtNodeInflow`` (batch 54) and BEFORE the positive/negative inflow
-split (batch 58), so that split inherits the margin.
+split (batch 58), which reads the un-margined record (the real demand).
 
 FlexTool sign convention: DEMAND is NEGATIVE inflow (the exogenous
 outflow / ``p_negative_inflow`` term); SUPPLY / generation is POSITIVE
@@ -24,8 +24,9 @@ rows by the factor — but ONLY:
 The dispatch solves see the true (un-margined) demand.  Before applying a
 margin the emitter records the un-margined frame under
 ``solve_data/pdtNodeInflow_unmargined`` (:func:`_record_unmargined_inflow`):
-the reserve requirement of a group ``increase_reserve_ratio`` scales the real
-demand only.
+the reserve requirement (group ``increase_reserve_ratio``), the
+non-synchronous limit and the capacity margin read the real demand; only the
+node balance sees the margin.
 
 Early-return byte-parity contract
 ----------------------------------

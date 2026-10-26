@@ -941,11 +941,11 @@ class FlexData:
     pdGroup_penalty_non_synchronous: Param | None = None # (g, d)
     p_process_sink_inertia_constant: Param | None = None    # (p, sink)
     p_process_source_inertia_constant: Param | None = None  # (p, source)
+    # max(inflow, 0), min(inflow, 0) and inflow / Δt of the real inflow (before the invest-solve energy
+    # margin, p_inflow_unmargined when present): the group rows (non-synchronous limit, capacity margin,
+    # dynamic reserve group demand) read the real demand.
     p_positive_inflow: Param | None = None               # (n, d, t)
     p_negative_inflow: Param | None = None               # (n, d, t)
-    # Negative inflow without the invest-solve energy margin (= p_negative_inflow without a margin):
-    # the demand the group increase_reserve_ratio scales (_reserve.group_demand_requirement).
-    p_negative_inflow_unmargined: Param | None = None    # (n, d, t)
     p_inflow_unmargined: Param | None = None             # (n, d, t) — solve_data/pdtNodeInflow_unmargined, if any
     pdtNodeInflow_per_step: Param | None = None          # (n, d, t)
 
@@ -5272,8 +5272,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # inflow signed-split so the non_sync / capacity_margin demand budget
         # isn't silently lost.  ``apply_derived_c`` (``_derived`` §3.12)
         # builds ``p_positive_inflow`` / ``p_negative_inflow`` /
-        # ``pdtNodeInflow_per_step`` from the in-memory ``flex_data.p_inflow``
-        # (and ``flex_data.p_step_duration``), both of which are already loaded
+        # ``pdtNodeInflow_per_step`` from the real inflow (``flex_data.p_inflow_unmargined``
+        # when an energy margin left one on the Provider, else ``flex_data.p_inflow``)
+        # and ``flex_data.p_step_duration``, all of which are already loaded
         # at ``FlexData`` construction (``_load_node`` / step_dur) BEFORE this
         # early-return and are correctly sized for the synthetic sub-solve
         # (each solve emits its own ``pdtNodeInflow.csv``).  All three helpers
@@ -5285,17 +5286,12 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # demand budget — VRE pins to 0 and coal backfills.  See
         # ``specs/model_bugs.md::INFLOW-1``.
         def _wire_inflow_split_for_synthetic_solve():
-            p_inflow_csv = getattr(flex_data, "p_inflow", None)
+            inflow_real = _drv.real_inflow(getattr(flex_data, "p_inflow", None),
+                                           getattr(flex_data, "p_inflow_unmargined", None))
             sd_csv = getattr(flex_data, "p_step_duration", None)
-            flex_data.p_positive_inflow = (
-                _drv.p_positive_inflow_from_inflow(p_inflow_csv))
-            flex_data.p_negative_inflow = (
-                _drv.p_negative_inflow_from_inflow(p_inflow_csv))
-            flex_data.p_negative_inflow_unmargined = (
-                _drv.p_negative_inflow_unmargined_from_inflow(
-                    getattr(flex_data, "p_inflow_unmargined", None), flex_data.p_negative_inflow))
-            flex_data.pdtNodeInflow_per_step = (
-                _drv.pdtNodeInflow_per_step_from_inflow(p_inflow_csv, sd_csv))
+            flex_data.p_positive_inflow = _drv.p_positive_inflow_from_inflow(inflow_real)
+            flex_data.p_negative_inflow = _drv.p_negative_inflow_from_inflow(inflow_real)
+            flex_data.pdtNodeInflow_per_step = _drv.pdtNodeInflow_per_step_from_inflow(inflow_real, sd_csv)
         _loadflex_prof("apply_db_overrides:pass_synthetic_inflow")
         _timed("c.synth inflow", _wire_inflow_split_for_synthetic_solve)
 

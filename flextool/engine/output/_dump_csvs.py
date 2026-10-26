@@ -70,7 +70,7 @@ if TYPE_CHECKING:
 #
 # Set ``FLEXTOOL_DUMP_CSVS=1`` to restore the debug-oracle behaviour
 # (write the full ~50 CSVs).  When the env var is unset (default),
-# these seven files are skipped — every other file in ``DIRECT_WRITES``
+# these eight files are skipped — every other file in ``DIRECT_WRITES``
 # and every sliced / metadata file continues to be emitted.
 _HEAVY_CSV_FILES: frozenset[str] = frozenset({
     "p_flow_max.csv",
@@ -79,6 +79,7 @@ _HEAVY_CSV_FILES: frozenset[str] = frozenset({
     "pdtProcess.csv",
     "pdtNode.csv",
     "pdtNodeInflow.csv",
+    "pdtNodeInflow_unmargined.csv",
     "ptNode_inflow.csv",
 })
 
@@ -86,7 +87,7 @@ _HEAVY_CSV_FILES: frozenset[str] = frozenset({
 def _heavy_dumps_enabled() -> bool:
     """Return True iff the heavy CSV writes are gated on (debug oracle).
 
-    The default is OFF: the seven gigabyte-scale CSVs in
+    The default is OFF: the eight gigabyte-scale CSVs in
     :data:`_HEAVY_CSV_FILES` are not written by ``dump_csvs`` unless
     ``FLEXTOOL_DUMP_CSVS=1`` is set in the environment.
     """
@@ -129,6 +130,9 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
     "nodeBalance": ("solve_data", "nodeBalance.csv", {"n": "node"}),
     "p_inflow": ("solve_data", "pdtNodeInflow.csv",
                  {"n": "node", "d": "period", "t": "time", "value": "value"}),
+    # the inflow before the invest-solve energy margin (only when a margin left it on the Provider)
+    "p_inflow_unmargined": ("solve_data", "pdtNodeInflow_unmargined.csv",
+                            {"n": "node", "d": "period", "t": "time", "value": "value"}),
     # ─── Process topology ────────────────────────────────────────────
     "process_source_sink": ("solve_data", "process_source_sink.csv",
                              {"p": "process"}),
@@ -299,7 +303,7 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
         (timeline, solve list) that isn't on FlexData but is in the
         original workdir.
     include_heavy : bool, optional
-        When ``True``, force-write the seven gigabyte-scale CSVs in
+        When ``True``, force-write the eight gigabyte-scale CSVs in
         :data:`_HEAVY_CSV_FILES` regardless of the
         ``FLEXTOOL_DUMP_CSVS`` env var.  When ``False``, force-skip
         them.  When ``None`` (default), consult the env var — set to

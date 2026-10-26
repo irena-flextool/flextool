@@ -84,6 +84,19 @@
   Where an upper-level nested solve fixes the storage state at that step
   (a nested roll whose horizon is one timeblock), the fixed value wins.
 
+- **The energy margin no longer enters the non-synchronous limit and the
+  capacity margin.** An `energy_margin_multiplier` or `energy_margin_adder`
+  added its demand to the group rows of the investment solve too: the
+  non-synchronous limit allowed more non-synchronous infeed (its supply side
+  grew with the added demand) and the capacity margin asked for capacity
+  above the margined peak. Both now use the real demand, as the reserve
+  requirement already did; the margin enters only the node balance (set
+  `capacity_margin` for a capacity surplus). Models with both an energy
+  margin and one of these group limits change (in the test model the
+  tighter non-synchronous limit moves generation from wind to coal). A
+  `--csv-dump` of a solve with an energy margin now also writes
+  `pdtNodeInflow_unmargined.csv`, so a reload keeps the real demand.
+
 - **Reserve price of groups with several requirements.** `reserve_price_t`
   is now the sum of the duals of all of a group's requirement constraints at
   the step (timeseries, dynamic, and the large-failure constraint of every
