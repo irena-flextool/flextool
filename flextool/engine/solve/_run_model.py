@@ -117,32 +117,6 @@ def _roll_period_whole(active_time_list: dict, complete_active_time_list: dict,
     return pl.DataFrame(rows, schema={"period": pl.Utf8, "whole": pl.Boolean}, orient="row")
 
 
-def _storage_solve_last(solves: list, level_of, siblings: dict) -> list[bool]:
-    """Per sub-solve (by position in ``solves``): whether no later sub-solve has the same nesting level.
-
-    ``level_of``: sub-solve → nesting level (``CarryRouter.nesting_level``).  A realised-dispatch sibling
-    (``siblings``: sibling → its parent sub-solve) is not counted as a later sub-solve of the level and takes its
-    parent's value.  fix_end / fix_start_end pin the end state in the last sub-solve of each level: the last step of
-    the last roll of the level (how_to.md, nested solves).
-    """
-    last = [False] * len(solves)
-    seen: set[int] = set()
-    for i in range(len(solves) - 1, -1, -1):
-        parent = siblings.get(solves[i])
-        if parent is not None and parent != solves[i]:
-            continue
-        level = level_of(solves[i])
-        last[i] = level not in seen
-        seen.add(level)
-    for i, solve in enumerate(solves):
-        parent = siblings.get(solve)
-        if parent is not None and parent != solve:
-            # The parent is the latest sub-solve of that name before the sibling.
-            j = next((j for j in range(i - 1, -1, -1) if solves[j] == parent), None)
-            last[i] = last[j] if j is not None else True
-    return last
-
-
 def _warn_rolling_blocks_chained(state, complete_solve_name: str, solve: str, active_time_list: dict,
                                  complete_active_time_list: dict, provider, warned: set) -> None:
     """Warn once per rolling_window solve whose rolls start inside a period while it has ``bind_intraperiod_blocks``
@@ -824,22 +798,24 @@ def native_run_model(state, solver) -> int:
     # 4b. Storage carry routing (run-scoped): each sub-solve continues from the latest state realised before it at
     # its nesting level or deeper (_carry_routing).
     # ------------------------------------------------------------------
+    _time_args = dict(
+        complete_solve=complete_solve,
+        timesets_used_by_solves=state.solve.timesets_used_by_solves,
+        timesets__timeline=state.timeline.timesets__timeline,
+        timelines=state.timeline.timelines,
+        original_timeline=state.timeline.original_timeline,
+    )
+    _siblings = getattr(state.solve, "realized_dispatch_parent", {}) or {}
     carry_router = _carry_routing.CarryRouter(
         parent_roll,
-        siblings=getattr(state.solve, "realized_dispatch_parent", {}) or {},
-        position=_carry_routing.make_position(
-            all_solves, active_time_lists, period__branch_lists,
-            complete_solve=complete_solve,
-            timesets_used_by_solves=state.solve.timesets_used_by_solves,
-            timesets__timeline=state.timeline.timesets__timeline,
-            timelines=state.timeline.timelines,
-            original_timeline=state.timeline.original_timeline,
-        ),
+        siblings=_siblings,
+        position=_carry_routing.make_position(all_solves, active_time_lists, period__branch_lists, **_time_args),
     )
 
-    # The last sub-solve of each nesting level (fix_end / fix_start_end pin the end state there).
-    storage_solve_last = _storage_solve_last(
-        all_solves, carry_router.nesting_level, getattr(state.solve, "realized_dispatch_parent", {}) or {})
+    # The sub-solves whose horizon holds the last step of the entire model (fix_end / fix_start_end pin the end
+    # state in each of them, owner decision Q-c15f-D).
+    storage_solve_at_model_end = _carry_routing.reaches_model_end(
+        all_solves, active_time_lists, period__branch_lists, siblings=_siblings, **_time_args)
 
     # ------------------------------------------------------------------
     # 5. Per-solve loop.
@@ -1073,8 +1049,8 @@ def native_run_model(state, solver) -> int:
             if state.solve.solve_modes.get(cs) == "rolling_window"
             else _roll_period_whole({}, {}, []))
         # Written for every sub-solve, as the level Provider is shared by the iters of a level.
-        sub_solve_provider.put(_provider_keys.SOLVE_DATA_STORAGE_SOLVE_LAST,
-                               pl.DataFrame({"value": [storage_solve_last[i]]}, schema={"value": pl.Boolean}))
+        sub_solve_provider.put(_provider_keys.SOLVE_DATA_STORAGE_SOLVE_AT_MODEL_END,
+                               pl.DataFrame({"value": [storage_solve_at_model_end[i]]}, schema={"value": pl.Boolean}))
         pb_time, pb_succ = make_period_block(active_time_lists[solve])
         solve_writers.emit_period_block(
             pb_time, pb_succ,

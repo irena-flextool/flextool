@@ -39,10 +39,15 @@
   `storage_state_end` of a *fix_end* or *fix_start_end* storage was never
   applied: the storage ended wherever the model chose. The end state is now
   pinned to `storage_state_end` (a share of the storage capacity, invested
-  storage included) at the last step of the last solve of each nesting level
-  (the last roll of a rolling solve, each terminal branch of a stochastic
-  solve). At the end of a nested lower level, an upper-level *fix_quantity*
-  or *fix_usage* of the same step takes precedence.
+  storage included) at the last timestep of the entire model, in every
+  solve whose horizon contains it: e.g. both an investment solve and the
+  last dispatch roll when both reach the end of the model, each nested
+  level's solve that does, each terminal branch of a stochastic solve. A
+  solve or roll that ends earlier is not pinned. In a nested lower level, an
+  upper-level *fix_quantity* or *fix_usage* of the same step takes
+  precedence. `storage_start_end_method` is meant for simple models;
+  `storage_state_reference_value` with *use_reference_value* is usually the
+  better choice.
 
 - **The horizon-end reference value yields to a nested storage fix.** A
   nested dispatch solve with `storage_solve_horizon_method`

@@ -1105,8 +1105,8 @@ def _patch_nested_rolling_storage_uc(data: dict) -> dict:
 
 def _patch_storage_sequence_start_end(data: dict) -> dict:
     """The 4-solve investment sequence (y2020 -> y2035) with the battery bind_forward_only + fix_start_end (start 0.1,
-    end 0.3): y2020 starts from fix_start, y2025-y2035 continue from the realised state, and only y2035 (the last
-    solve) has storage_state_end_binding at its end."""
+    end 0.3): y2020 starts from fix_start, y2025-y2035 continue from the realised state, and the solves whose horizon
+    holds the model's last step (y2030: p2030 + p2035, and y2035) have storage_state_end_binding at p2035's end."""
     return _overlay(data, name="storage_sequence_start_end", base="wind_battery_invest_lifetime_renew_4solve",
                     values=[["node", "battery", "storage_binding_method", "bind_forward_only"],
                             ["node", "battery", "storage_start_end_method", "fix_start_end"],
@@ -1133,7 +1133,7 @@ def _patch_storage_fix_start_end_blocks(data: dict) -> dict:
 def _patch_storage_fix_start_end_within_solve(data: dict) -> dict:
     """wind_battery_invest_lifetime_renew_4solve with the battery bind_within_solve + fix_start_end (start 0.1, end
     0.3): the solve ignores the cyclic method (bind_forward_only), so y2020 starts from fix_start, the later solves
-    continue from the realised state and only y2035 has the end pin."""
+    continue from the realised state and y2030 / y2035 (whose horizons hold the model's last step) have the end pin."""
     return _overlay(data, name="storage_fix_start_end_within_solve", base="wind_battery_invest_lifetime_renew_4solve",
                     values=[["node", "battery", "storage_binding_method", "bind_within_solve"],
                             ["node", "battery", "storage_start_end_method", "fix_start_end"],

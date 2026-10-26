@@ -196,53 +196,115 @@ def _end_step(handoff) -> "tuple[str, str] | None":
     return str(step["period"][0]), str(step["step"][0])
 
 
+class _TimeIndex:
+    """Places the steps of the run's sub-solves in time: periods ranked by first appearance in the run order (a
+    stochastic branch period by the period it branches from), steps by their index in the period's base timeline
+    (the timeline before any ``new_stepduration`` aggregation, so an aggregated solve's steps and an hourly solve's
+    steps compare)."""
+
+    def __init__(self, solves: list, active_time_lists: dict, period_branch_lists: dict, *, complete_solve: dict,
+                 timesets_used_by_solves: dict, timesets__timeline: dict, timelines: dict,
+                 original_timeline: dict) -> None:
+        self._rank: dict[str, int] = {}
+        self._index: dict[tuple[str, str], int] = {}
+        self._anchor: dict[str, str] = {}
+        self._ends: dict[str, "Position | None"] = {}
+
+        def base_of(timeline: str) -> str:
+            seen: set = set()
+            while timeline in original_timeline and timeline not in seen:
+                seen.add(timeline)
+                timeline = original_timeline[timeline]
+            return timeline
+
+        base_index: dict[str, dict[str, int]] = {}
+        base_hours: dict[str, list[float]] = {}
+        for solve in solves:
+            for period, branch in period_branch_lists.get(solve, []) or []:
+                if branch != period:
+                    self._anchor.setdefault(str(branch), str(period))
+        for solve in solves:
+            timeset_of = dict(timesets_used_by_solves.get(complete_solve.get(solve, solve), []) or [])
+            ends: list[Position] = []
+            for period, steps in (active_time_lists.get(solve) or {}).items():
+                base = self._anchor.get(str(period), str(period))
+                self._rank.setdefault(base, len(self._rank))
+                timeset = timeset_of.get(period, timeset_of.get(base))
+                timeline = timesets__timeline.get(timeset) if timeset is not None else None
+                if timeline is None:
+                    continue
+                root = base_of(timeline)
+                if root not in base_index:
+                    base_index[root] = {str(name): i for i, (name, _dur) in enumerate(timelines.get(root, []))}
+                    base_hours[root] = [float(dur) for _name, dur in timelines.get(root, [])]
+                names = base_index[root]
+                for entry in steps:
+                    pos = names.get(str(entry.timestep))
+                    if pos is not None:
+                        self._index.setdefault((base, str(entry.timestep)), pos)
+                if steps:
+                    last = steps[-1]
+                    pos = names.get(str(last.timestep))
+                    if pos is not None:
+                        ends.append((self._rank[base], _covered_to(base_hours[root], pos, float(last.duration))))
+            self._ends[solve] = max(ends) if ends else None
+
+    def position(self, period: str, step: str) -> "Position | None":
+        """``(period rank, base-timeline index)`` of the start of the step; None when it cannot be placed."""
+        base = self._anchor.get(str(period), str(period))
+        if base not in self._rank or (base, str(step)) not in self._index:
+            return None
+        return self._rank[base], self._index[(base, str(step))]
+
+    def end(self, solve: str) -> "Position | None":
+        """``(period rank, base-timeline index after the solve's last step)``: where the sub-solve's horizon ends (the
+        latest end over its periods, so a stochastic solve ends with its terminal branches); None when unknown."""
+        return self._ends.get(solve)
+
+
+def _covered_to(hours: list[float], start: int, duration: float) -> int:
+    """The base-timeline index after a step that starts at base index ``start`` and lasts ``duration`` hours (an
+    aggregated step covers several base steps)."""
+    end, acc = start, 0.0
+    while end < len(hours) and acc < duration - 1e-9:
+        acc += hours[end]
+        end += 1
+    return max(end, start + 1)
+
+
 def make_position(solves: list, active_time_lists: dict, period_branch_lists: dict, *, complete_solve: dict,
                   timesets_used_by_solves: dict, timesets__timeline: dict, timelines: dict,
                   original_timeline: dict) -> Callable:
-    """``(period, step) → (period rank, step index)``: periods ranked by first appearance in the run order (a
-    stochastic branch period by the period it branches from), steps by their index in the period's base timeline
-    (the timeline before any ``new_stepduration`` aggregation, so an aggregated solve's steps and an hourly solve's
-    steps compare); None for a step that cannot be placed."""
-    rank: dict[str, int] = {}
-    index: dict[tuple[str, str], int] = {}
-    anchor: dict[str, str] = {}
-    base_index: dict[str, dict[str, int]] = {}
+    """``(period, step) → (period rank, step index)`` (:class:`_TimeIndex`); None for a step that cannot be placed."""
+    return _TimeIndex(solves, active_time_lists, period_branch_lists, complete_solve=complete_solve,
+                      timesets_used_by_solves=timesets_used_by_solves, timesets__timeline=timesets__timeline,
+                      timelines=timelines, original_timeline=original_timeline).position
 
-    def base_of(timeline: str) -> str:
-        seen: set = set()
-        while timeline in original_timeline and timeline not in seen:
-            seen.add(timeline)
-            timeline = original_timeline[timeline]
-        return timeline
 
-    for solve in solves:
-        for period, branch in period_branch_lists.get(solve, []) or []:
-            if branch != period:
-                anchor.setdefault(str(branch), str(period))
-    for solve in solves:
-        timeset_of = dict(timesets_used_by_solves.get(complete_solve.get(solve, solve), []) or [])
-        for period, steps in (active_time_lists.get(solve) or {}).items():
-            base = anchor.get(str(period), str(period))
-            rank.setdefault(base, len(rank))
-            timeset = timeset_of.get(period, timeset_of.get(base))
-            timeline = timesets__timeline.get(timeset) if timeset is not None else None
-            if timeline is None:
-                continue
-            root = base_of(timeline)
-            if root not in base_index:
-                base_index[root] = {str(name): i for i, (name, _dur) in enumerate(timelines.get(root, []))}
-            names = base_index[root]
-            for entry in steps:
-                pos = names.get(str(entry.timestep))
-                if pos is not None:
-                    index.setdefault((base, str(entry.timestep)), pos)
+def reaches_model_end(solves: list, active_time_lists: dict, period_branch_lists: dict, *, complete_solve: dict,
+                      timesets_used_by_solves: dict, timesets__timeline: dict, timelines: dict,
+                      original_timeline: dict, siblings: "dict | None" = None) -> list[bool]:
+    """Per sub-solve (by position in ``solves``): whether its horizon holds the last step of the entire model.
 
-    def position(period: str, step: str) -> "Position | None":
-        base = anchor.get(str(period), str(period))
-        if base not in rank or (base, str(step)) not in index:
-            return None
-        return rank[base], index[(base, str(step))]
-    return position
+    The model's last step is the latest end over every sub-solve of the run (:meth:`_TimeIndex.end`: base-timeline
+    position, so an aggregated solve whose last coarse step covers the last hour reaches it too).  fix_end /
+    fix_start_end pin the end state in every sub-solve that reaches it (owner decision Q-c15f-D): an investment solve
+    and the last dispatch roll of a sequence, each nested level's solve that holds it, a rolling solve's rolls whose
+    horizon (look-ahead included) runs to it.  A sub-solve that cannot be placed in time does not reach it.  When no
+    sub-solve can be placed, the last sub-solve of the run reaches it (with its realised-dispatch sibling,
+    ``siblings``: sibling → parent).
+    """
+    index = _TimeIndex(solves, active_time_lists, period_branch_lists, complete_solve=complete_solve,
+                       timesets_used_by_solves=timesets_used_by_solves, timesets__timeline=timesets__timeline,
+                       timelines=timelines, original_timeline=original_timeline)
+    ends = [index.end(solve) for solve in solves]
+    known = [e for e in ends if e is not None]
+    if known:
+        last = max(known)
+        return [e == last for e in ends]
+    siblings = siblings or {}
+    tail = next((s for s in reversed(solves) if siblings.get(s, s) == s), None)
+    return [s == tail or (siblings.get(s) == tail and tail is not None) for s in solves]
 
 
 def first_step(active_time_list: dict) -> "tuple[str, str] | None":
@@ -253,4 +315,4 @@ def first_step(active_time_list: dict) -> "tuple[str, str] | None":
     return None
 
 
-__all__ = ["STEP_FIELDS", "CarryRouter", "RealisedEntry", "RoutedCarriers", "first_step", "make_position"]
+__all__ = ["STEP_FIELDS", "CarryRouter", "RealisedEntry", "RoutedCarriers", "first_step", "make_position", "reaches_model_end"]

@@ -2942,10 +2942,11 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
 
 
 def _eq_storage_end_binding(b: _Build) -> None:
-    """End state of fix_end / fix_start_end storage nodes in the last sub-solve of their nesting level."""
+    """End state of fix_end / fix_start_end storage nodes at the last step of the entire model, in every sub-solve
+    whose horizon holds that step."""
     d = b.d
     if not (b.has_storage
-            and d.storage_solve_last
+            and d.storage_solve_at_model_end
             and _has_rows(d.storage_fix_end)
             and d.p_state_end is not None
             and _has_rows(d.nodeState_last_dt)
@@ -2969,11 +2970,13 @@ def _eq_storage_end_binding(b: _Build) -> None:
     # v_state[n,d,t] − state_end[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + state_end[n]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   = state_end[n] · existing[n,d] / state_unitsize[n]
-    #   ∀ n ∈ storage_fix_end, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last, storage_solve_last,
+    #   ∀ n ∈ storage_fix_end, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last, storage_solve_at_model_end,
     #     (n,d,t) ∉ the steps node_balance_fix_quantity_eq_lower / node_storage_usage_fix_le fix
-    # Pins the state at the end of the last step of the last sub-solve of the node's nesting level (the last roll
-    # of the level) to the share state_end of the built storage capacity (state units); each last period (each
-    # terminal branch of a stochastic solve) ends there.  storage_fix_end = fix_end ∪ fix_start_end.  Where an
+    # Pins the state at the end of the last step of the entire model to the share state_end of the built storage
+    # capacity (state units), in every sub-solve whose horizon holds that step (storage_solve_at_model_end,
+    # _carry_routing.reaches_model_end: e.g. both an investment solve and the last dispatch roll; each nested level's
+    # solve that holds it; a roll whose look-ahead runs to it); each last period (each terminal branch of a
+    # stochastic solve) ends there.  storage_fix_end = fix_end ∪ fix_start_end.  Where an
     # upper-level solve fixes the quantity or caps the usage at that step the upper value wins; a nested fix_price
     # steers the end through the objective and keeps the pin.  A fix_start_end node chains forward whatever its
     # storage_binding_method (_run_model._fix_start_end_chains_forward, _self_discharge.block_forward_nodes), so its

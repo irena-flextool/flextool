@@ -757,12 +757,20 @@ part, not last, from whose last step no block state link continues).
 `fix_end` / `fix_start_end` (`storage_fix_end`) pin the state at
 `nodeState_last_dt ∩ period_last` to `storage_state_end` of the built
 capacity (`storage_state_end_binding`, `model._eq_storage_end_binding`),
-only in the last sub-solve of each nesting level.  `_run_model`
-computes that flag per sub-solve (`_storage_solve_last`: no later
-sub-solve at the same `CarryRouter.nesting_level`; a realised-dispatch
-sibling takes its parent's flag) and emits it as
-`solve_data/storage_solve_last` (`FlexData.storage_solve_last`, default
-True for a single solve or a FlexData built without the cascade).
+in every sub-solve whose horizon holds the last step of the entire
+model (owner decision Q-c15f-D).  `_run_model` computes that flag per
+sub-solve (`_carry_routing.reaches_model_end`: the sub-solve's end — the
+base-timeline position after the last step of its periods, so an
+aggregated `new_stepduration` step covering the last hour counts and a
+stochastic solve ends with its terminal branches — equals the latest end
+over all sub-solves of the run; a sub-solve that cannot be placed in
+time does not reach it) and emits it as
+`solve_data/storage_solve_at_model_end`
+(`FlexData.storage_solve_at_model_end`, default True for a single solve
+or a FlexData built without the cascade).  So an investment solve and
+the last dispatch roll that both run to the end are both pinned, also
+a roll whose look-ahead reaches it; each realised-dispatch sibling is
+judged on its own steps.
 
 Precedence at a step where several end conditions meet
 (`model._nested_fixed_end`): an upper-level nested fix wins over the

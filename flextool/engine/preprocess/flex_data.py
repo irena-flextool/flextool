@@ -796,10 +796,11 @@ class FlexData:
     storage_bind_within_period_blended_weights: pl.DataFrame | None = None  # set: (n,)
     storage_bind_forward_only_blended_weights: pl.DataFrame | None = None   # set: (n,)
     storage_fix_start: pl.DataFrame | None = None
-    # Nodes whose end state is fixed (storage_start_end_method fix_end or fix_start_end), at the end of the last
-    # sub-solve of their nesting level (storage_solve_last; solve_data/storage_solve_last, default True).
+    # Nodes whose end state is fixed (storage_start_end_method fix_end or fix_start_end), at the last step of the
+    # entire model, in every sub-solve whose horizon holds it (storage_solve_at_model_end;
+    # solve_data/storage_solve_at_model_end, default True).
     storage_fix_end: pl.DataFrame | None = None  # set: (n,)
-    storage_solve_last: bool = True
+    storage_solve_at_model_end: bool = True
     dtttdt: pl.DataFrame | None = None           # (d, t, t_previous_*, ...)
     dtttdt_forward_only: pl.DataFrame | None = None  # dtttdt with first (d,t) per solve dropped
     # (d, t, t_previous_within_period): the previous step of t in its own period; the first step of each period
@@ -2730,7 +2731,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_bind_forward_only = None,
         storage_fix_start = None,
         storage_fix_end = None,
-        storage_solve_last = True,
+        storage_solve_at_model_end = True,
         storage_use_reference_value = None,
         p_storage_state_reference_value = None,
         p_storage_state_reference_price = None,
@@ -2984,14 +2985,14 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         if fix_end.height == 0:
             fix_end = None
 
-    # Whether this sub-solve is the last of its nesting level (_run_model): the end pin of fix_end / fix_start_end
-    # applies there only.  Default True (a single solve, a FlexData built without the cascade).
+    # Whether this sub-solve's horizon holds the last step of the entire model (_run_model): the end pin of fix_end /
+    # fix_start_end applies there only.  Default True (a single solve, a FlexData built without the cascade).
     from flextool.engine.preprocess import _provider_keys as K
-    solve_last = True
-    if _provider_has(provider, K.SOLVE_DATA_STORAGE_SOLVE_LAST, sd / "storage_solve_last.csv"):
-        ssl = _provider_read(provider, K.SOLVE_DATA_STORAGE_SOLVE_LAST, sd / "storage_solve_last.csv")
+    at_model_end = True
+    if _provider_has(provider, K.SOLVE_DATA_STORAGE_SOLVE_AT_MODEL_END, sd / "storage_solve_at_model_end.csv"):
+        ssl = _provider_read(provider, K.SOLVE_DATA_STORAGE_SOLVE_AT_MODEL_END, sd / "storage_solve_at_model_end.csv")
         if ssl.height > 0 and "value" in ssl.columns:
-            solve_last = bool(ssl["value"].cast(pl.Boolean)[0])
+            at_model_end = bool(ssl["value"].cast(pl.Boolean)[0])
 
     # Rolling sub-solve: solve_data/roll_period_whole (period, whole) has a row per period of the roll
     # (_run_model).  The bind_intraperiod_blocks blocks of a period the roll holds only in part chain forward.
@@ -3431,7 +3432,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_bind_forward_only_blended_weights = binding_forward_only_blended_weights,
         storage_fix_start = fix_start,
         storage_fix_end = fix_end,
-        storage_solve_last = solve_last,
+        storage_solve_at_model_end = at_model_end,
         storage_use_reference_value = use_reference_value,
         p_storage_state_reference_value = p_ssrv,
         p_storage_state_reference_price = p_storage_state_reference_price,
