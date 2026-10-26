@@ -174,7 +174,9 @@ def test_reserve_price_sums_requirement_duals(tmp_path_factory, method: str) -> 
     for dt in short:
         assert got[dt] == pytest.approx(PENALTY, rel=1e-7), dt
     if method == "timeseries_and_dynamic":
-        assert max(got.values()) > 1.0
+        # the requirement 0.1 · demand (42–87 MW) exceeds what the providers can hold at every step: short at all
+        # 48 steps, so the price is penalty_reserve everywhere (oracle §1)
+        assert len(short) == 48
     if rp:
         assert any(abs(w - 1.0) > 1e-6 for w in _weights(step).values()), "timestep weights must not all be 1"
 
@@ -196,7 +198,16 @@ def test_reserve_price_n_1_without_shortfall(tmp_path_factory) -> None:
     w = _weights(step)
     for dt, price in got.items():
         assert price == pytest.approx(-upper[dt] / S / w[dt], rel=1e-7, abs=1e-7), dt
-    assert max(got.values()) > 1.0
+    # Derived (oracle §1): wind (reliability 0.6) holds reserve x by curtailing x, coal (ratio 0.1, its own reserve
+    # does not count) replaces it: 0.6x ≥ 0.1 · (D − W + x) → one more MW of requirement needs 2 MW of curtailment
+    # replaced by coal at 50 CUR/MWh = 100 where demand exceeds wind; 0 where wind is already curtailed.
+    for dt, price in got.items():
+        assert min(abs(price), abs(price - 100.0)) < 1e-6, (dt, price)
+    hundred = {t for (_d, t), price in got.items() if abs(price - 100.0) < 1e-6}
+    expected = {f"t{i:04d}" for r in ((1, 5), (19, 25), (35, 37), (43, 47)) for i in range(r[0], r[1] + 1)}
+    # the oracle's step list (t1–5, t19–25, t35–37, t43–47) has 20 steps (its text says 22: a count slip); these
+    # are exactly the steps where coal runs
+    assert hundred == expected and len(hundred) == 20
 
 
 def test_reserve_price_rolling(tmp_path_factory) -> None:
@@ -253,4 +264,5 @@ def test_reserve_price_stochastic(tmp_path_factory) -> None:
     periods = {d for d, _t in got}
     assert len(periods) > 1, f"the price must cover the branch periods: {periods}"
     assert max(got.values()) > 1.0
+    assert max(got.values()) <= PENALTY + 1e-6
 

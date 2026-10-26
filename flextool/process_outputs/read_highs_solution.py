@@ -457,8 +457,8 @@ VARIABLE_SPECS: list[VariableSpec] = [
     # Not in VARIABLE_SPECS (handled by dedicated writers below):
     # * v_dual_node_balance — per-period inflation scaling needs a
     #   custom writer (see write_v_dual_node_balance below).
-    # * v_dual_reserve__upDown__group__period__t — the dual of the group's
-    #   requirement row per (r,ud,g,d,t) (see write_v_dual_reserve_balance).
+    # * v_dual_reserve__upDown__group__period__t — the sum of the duals of the
+    #   group's requirement rows per (r,ud,g,d,t) (see write_v_dual_reserve_balance).
     # * v_dual_invest_{unit,connection,node} — v_invest.dual split by
     #   entity class (see write_v_dual_invest_by_class below).
     # * v_obj — scalar, see write_v_obj below.
