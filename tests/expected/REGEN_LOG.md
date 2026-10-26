@@ -778,3 +778,31 @@ Objectives (sum over the scenario's solves, M CUR, before → after) and the cel
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` for each of the 14 scenarios; the full
 `tests/test_scenarios.py` run before regenerating failed exactly these 14 (52 passed).
+
+## 2026-10-26 — `wind_battery_invest_lifetime_renew_4solve`, `multi_fullYear_battery_nested_multi_invest` (cycle c15f, N5: later solves continue from the realised state)
+
+**Context.** Owner decision Q-c15e-B (+ the nested clarification of 2026-10-25): `fix_start` applies to the first
+step of the model and of each nested level's first appearance; every later solve or roll starts from the latest
+storage state realised before it at its level or below (`solve/_carry_routing.py`).  Before, every top-level solve
+of a sequence and every per-period instance of a nested level was "first" and re-pinned to `storage_state_start`.
+LP snapshot (`lp_c15f_n5` vs `lp_c15f_n8`): only `wind_battery_invest_lifetime_renew_4solve` y2025–y2035 change (each
+loses its `storage_state_start_binding_cyclic_period` row; the battery is cyclic, so it takes no carry either, and the
+y2030 / y2035 maxFlow RHS follow the changed wind investment); every `nested_*` fixture is byte-identical (their
+levels' first solves were already first, and roll k's carry was already roll k−1's).
+
+- `wind_battery_invest_lifetime_renew_4solve` (solve objectives, M CUR, on top of the N8 entry above): y2025 831.6442
+  → 734.5360, y2030 878.5047 → 1 011.0867, y2035 420.2032 → 457.6637 (y2020 unchanged).  Without the 0.1·capacity pin
+  at the end of each solve's first block, y2025 builds 145.71 MW of wind instead of 270.05 (y2030 253.63 instead of
+  270.05) — exactly the p2025 / p2030 builds of the single-solve `wind_battery_invest_lifetime_renew`, which pins only
+  the first period (an independent check that the sequence now follows the documented start rule).  Cells: the t0001
+  upward slack of p2025 / p2030 / p2035 (41 528 → 57 724, 55 803 → 77 613, 70 078 → 97 502) and the wind output of each
+  solve's first block (t0001–t0004, 12 cells), plus the capacities.
+- `multi_fullYear_battery_nested_multi_invest` (+0.095 % over the solve objectives): `invest_5weeks_p2025/30/35`,
+  `storage_fullYear_6h_p2025/30/35` and the first dispatch roll of each period (rolls 18 / 36 / 54) now continue from
+  the realised end of the previous period's last dispatch roll (0 MWh) instead of a re-pinned 5 MWh (0.1 × 50) of free
+  energy: those nine solves rise slightly (e.g. roll 18 16.4842 → 16.5920), and the realised cells are the first step
+  of p2025 / p2030 / p2035: coal +4.75 MW (= 5 MWh × 0.95, the inverter efficiency) at t0001, commodity cost
+  +237.49 per cell, `costs_discounted` commodity 352.6505 → 352.9198.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`; the full `tests/test_scenarios.py` run
+before regenerating failed exactly these two (64 passed).

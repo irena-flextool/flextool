@@ -605,7 +605,7 @@ the next solve's preprocessing. The dataclass is in
 | `realized_invest` | `[entity, period, value]` | Capacity built in *this* solve, in absolute units. |
 | `realized_existing` | `[entity, period, value]` | Resolved existing-capacity history per `(entity, period)`. Captures pre-existing decay + divest that `realized_invest` doesn't. |
 | `divest_cumulative` | `[entity, value]` | Cumulative divest per entity. |
-| `roll_end_state` | `[node, value]` | `v_state` at the end of this roll, pinning the next roll's first timestep. |
+| `roll_end_state` | `[node, value]` | `v_state` × unitsize at the last realised step; the start of the sub-solves that continue from it (routed, see [Storage carry routing](#storage-carry-routing-where-a-sub-solves-storage-starts)). |
 | `upward_roll_end_state` | `[node, value]` | Same shape as `roll_end_state`; dispatch→storage upward feedback in nested cascades. |
 | `fix_storage_quantity` | `[node, period, step, p_fix_storage_quantity]` | Parent-imposed storage quota (hard equality). |
 | `fix_storage_price` | `[node, period, step, p_fix_storage_price]` | Parent's storage dual fed into `p_storage_state_reference_price`. |
@@ -679,25 +679,41 @@ populated. The HANDOFF carriers
 `OVERRIDE_*` siblings let the orchestrator inject parent-imposed
 values without re-solving the parent.
 
-### Upward dispatch→storage feedback
+### Storage carry routing (where a sub-solve's storage starts)
 
-The original `SolveHandoff` carried a single `roll_end_state` that
-flowed forward in time within one solve's roll chain. In a nested
-invest+dispatch cascade the dispatch sub-solve also needs to push its
-realised end-of-horizon `v_state` *upward* to the parent storage
-solve's next roll — otherwise the parent keeps running on its own
-previously-predicted state rather than the dispatch sub-solve's
-realised state.
+`roll_end_state` is the state (MWh) at the last *realised* step of a
+sub-solve.  Which sub-solve's end state a later sub-solve continues
+from is decided in one place, `solve/_carry_routing.py`
+(`CarryRouter`, run-scoped, created in `_run_model.native_run_model`):
 
-`upward_roll_end_state` (`SolveHandoff` field added by `bb35cd54`) is
-the explicit carrier for that path. The producer at
-`build_handoff_from_solution` copies the same end-of-horizon `v_state`
-into both `roll_end_state` and `upward_roll_end_state` for every
-solve; the consumer in `flex_data.py` reads
-`HANDOFF_UPWARD_ROLL_END_STATE` first and falls back to
-`HANDOFF_ROLL_END_STATE` when the upward key is empty. The carrier is
-always-on for any storage→dispatch nesting; no opt-in flag. See
-architecture.md
+- every realised end is appended to a registry with the sub-solve's
+  nesting level (0 at the top, +1 per `contains_solve`; an auto-spawned
+  realised-dispatch sibling takes its parent's level) and the position
+  of its realised end step in time;
+- a sub-solve continues, per node, from the latest entry recorded
+  before it started at its own level or deeper whose end lies before
+  its first step.  That gives the next roll, the next solve of a
+  sequence, the upward feedback (a storage roll continues from the
+  dispatch below it), and the first dispatch roll under a later
+  storage roll.  A sibling's cut-off is its parent's start, so it never
+  takes its parent's end-of-window state;
+- a level's first appearance has no entry: the node is "first" and
+  starts from `fix_start` (or free).
+
+At iteration start `_run_model` writes the routed frame into both
+`HANDOFF_ROLL_END_STATE` and `HANDOFF_UPWARD_ROLL_END_STATE` (after
+the sequential and parent translates, before the external override
+translate, so an override still wins); `_overlay_handoff` no longer
+overlays `p_roll_continue_state`.  In the model
+(`model/_self_discharge.py`) the carried nodes are the nodes of
+`p_roll_continue_state`: they get the carry terms (except cyclic and
+representative-period nodes) and no `fix_start` pin; the others get
+`fix_start` (or the open first step).  `p_nested_solve_first` is not
+read by storage (it still gates the divest history).
+
+`upward_roll_end_state` (`SolveHandoff` field added by `bb35cd54`) stays
+as a carrier and an override key; the producer copies the same
+end-of-horizon state into both fields.  See architecture.md
 [Solve-to-solve handoff](architecture.md#solve-to-solve-handoff)
 for the carrier table.
 

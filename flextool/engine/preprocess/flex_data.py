@@ -3219,13 +3219,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # ``SolveHandoff.roll_end_state`` at iteration start; the legacy
     # ``solve_data/p_roll_continue_state`` CSV-fallback path is gone.
     #
-    # Upward feedback (specs/feature_fixes.md §1): when a dispatch sub-
-    # solve has populated ``handoff/upward_roll_end_state`` (carrying
-    # the dispatch's realized end-of-horizon v_state for parent storage
-    # consumption), prefer it over the sequential-prior roll_end_state.
-    # Per user direction: always-on for any storage→dispatch nesting;
-    # parent's next-roll initial state comes from the dispatch's
-    # realized state, not the parent's own previous prediction.
+    # The cascade routes both keys (``solve._carry_routing``): they hold the same frame, the latest state realised
+    # before this sub-solve at its nesting level or deeper (which gives the upward feedback of
+    # specs/feature_fixes.md §1: a storage roll continues from the dispatch realised below it).  An external
+    # override of either key wins (read_handoff_frame); the upward key is preferred when both are populated.
     from flextool.engine.preprocess import _provider_keys as K
     from flextool.engine.preprocess._provider_translators import read_handoff_frame
     p_roll_continue_state = None
@@ -7227,7 +7224,7 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
     """Δ.11 — internal helper used by :func:`load_flextool` to overlay an
     in-memory :class:`SolveHandoff` onto the FlexData built from disk.
 
-    Returns a NEW FlexData with the 5 carrier-derived fields replaced
+    Returns a NEW FlexData with the 4 carrier-derived fields replaced
     (uses :func:`dataclasses.replace`, original untouched).  Called from
     inside :func:`load_flextool` when ``handoff`` is supplied — there is
     no longer a public ``apply_handoff`` entry point; the construct-with-
@@ -7244,8 +7241,11 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
       ``v[e, d] = Σ_{(e, d_h, d) ∈ edd_history ∧ (e, d_h) realized}  realized_invest[(e, d_h)]``.
     * ``p_entity_invested (e,)``  ← ``realized_invest`` summed over period.
     * ``p_entity_divested (e,)``  ← ``divest_cumulative``.
-    * ``p_roll_continue_state (n,)``  ← ``roll_end_state``.
     * ``p_fix_storage_quantity (n, d, t)``  ← ``fix_storage_quantity``.
+
+    ``p_roll_continue_state`` is not overlaid: the cascade routes the storage carry (the latest realised state at
+    the sub-solve's nesting level or deeper, ``solve._carry_routing``) into ``handoff/roll_end_state``, which the
+    loader reads; the sequential predecessor's ``roll_end_state`` is not always that state.
 
     For each carrier, ``None`` on the handoff side leaves the FlexData
     field untouched (snapshot wins).  Non-None replaces the entire
@@ -7344,16 +7344,8 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
         overrides["p_entity_divested"] = (
             Param(("e",), df) if df.height > 0 else None)
 
-    # --- roll_end_state → p_roll_continue_state (n,) ---
-    if handoff.roll_end_state is not None:
-        df = (handoff.roll_end_state
-            .pipe(rename_to_axis, {"node": "n"})
-            .with_columns(value=pl.col("value").cast(pl.Float64, strict=False))
-            .select("n", "value"))
-        # The loader does NOT filter zero rows for this carrier (see
-        # flex_data.py:1996-1999) — it keeps them.  Match that behaviour.
-        overrides["p_roll_continue_state"] = (
-            Param(("n",), df) if df.height > 0 else None)
+    # ``p_roll_continue_state`` is not overlaid: the storage carry is routed by the cascade
+    # (``solve._carry_routing``) into ``handoff/roll_end_state`` and read from there (the single source).
 
     # --- fix_storage_quantity → p_fix_storage_quantity (n, d, t) ---
     # Phase 4.1k — read the canonical narrow field

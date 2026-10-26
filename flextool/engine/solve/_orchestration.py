@@ -2884,15 +2884,17 @@ def _drive_cascade(
             # solve's FlexData directly.  Replaces the previous
             # implicit dependency on flextool's per-solve preprocessing
             # rewriting ``solve_data/p_entity_*.csv`` between solves.
-            # After Δ.12 the cascade reads these five carrier-derived
+            # After Δ.12 the cascade reads these four carrier-derived
             # fields from the in-memory ``SolveHandoff`` rather than the
             # workdir CSVs:
             #
             #   * ``p_entity_invested``
             #   * ``p_entity_divested``
             #   * ``p_entity_previously_invested_capacity``
-            #   * ``p_roll_continue_state``
             #   * ``p_fix_storage_quantity``
+            #
+            # (``p_roll_continue_state`` comes from the routed
+            # ``handoff/roll_end_state`` key, ``_carry_routing``.)
             prior_for_load = (
                 self.state.handoffs.get(self.state.last_captured_solve)
                 if self.state.last_captured_solve is not None else None

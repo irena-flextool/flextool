@@ -33,10 +33,8 @@ import os
 import re
 import time
 from collections import defaultdict
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import polars as pl
+import polars as pl
 
 # ---------------------------------------------------------------------------
 # Imports.  Per Phase 3 scope, we depend on legacy preprocessing /
@@ -77,6 +75,7 @@ from flextool.engine.solve._recursive_solve import (
     RecursiveSolveBuilder,
 )
 from flextool.engine.solve._stochastic import StochasticSolver
+from flextool.engine.solve import _carry_routing
 from flextool.engine.input._timeline import (
     get_active_time,
     make_step_jump,
@@ -110,8 +109,6 @@ def _roll_period_whole(active_time_list: dict, complete_active_time_list: dict,
     the blocks of a period the roll holds in part chain forward and carry the storage level from roll to roll
     (owner decision Q-c15e-A).
     """
-    import polars as pl
-
     anchor = {b: p for p, b in period_branch if b != p}
     rows: list[tuple[str, bool]] = []
     for period, steps in active_time_list.items():
@@ -161,7 +158,6 @@ def _blended_nodes(provider) -> list[str]:
     key = "input/node__storage_binding_method"
     if not provider.has(key):
         return []
-    import polars as pl
     sbm = provider.get(key)
     if sbm.height == 0:
         return []
@@ -265,7 +261,6 @@ def _downgrade_rp_methods_for_non_rp_solve(
     key = "input/node__storage_binding_method"
     if not provider.has(key):
         return  # no per-solve binding-method frame at all → nothing to do
-    import polars as pl
     sbm = provider.get(key)
     if sbm.height == 0:
         return
@@ -736,6 +731,23 @@ def native_run_model(state, solver) -> int:
     )
 
     # ------------------------------------------------------------------
+    # 4b. Storage carry routing (run-scoped): each sub-solve continues from the latest state realised before it at
+    # its nesting level or deeper (_carry_routing).
+    # ------------------------------------------------------------------
+    carry_router = _carry_routing.CarryRouter(
+        parent_roll,
+        siblings=getattr(state.solve, "realized_dispatch_parent", {}) or {},
+        position=_carry_routing.make_position(
+            all_solves, active_time_lists, period__branch_lists,
+            complete_solve=complete_solve,
+            timesets_used_by_solves=state.solve.timesets_used_by_solves,
+            timesets__timeline=state.timeline.timesets__timeline,
+            timelines=state.timeline.timelines,
+            original_timeline=state.timeline.original_timeline,
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # 5. Per-solve loop.
     # ------------------------------------------------------------------
     first = True
@@ -1163,7 +1175,6 @@ def native_run_model(state, solver) -> int:
                 realfile.write("period,step,upper_step\n")
         # The same rows in the Provider: the fix_price reference-price derive reads the Provider only (the disk file
         # stays for the csv dump); written every iter, the level Provider being shared by the iters of a level.
-        import polars as pl
         sub_solve_provider.put(
             _provider_keys.SOLVE_DATA_TIMELINE_MATCHING_MAP,
             pl.DataFrame(matching_rows, schema={"period": pl.Utf8, "step": pl.Utf8, "upper_step": pl.Utf8},
@@ -1426,6 +1437,15 @@ def native_run_model(state, solver) -> int:
             _provider_translators.translate_handoff_to_provider(
                 parent_handoff, sub_solve_provider,
             )
+        # The storage carry is routed, not taken from the sequential / parent handoff: the latest state realised
+        # before this sub-solve at its nesting level or deeper (_carry_routing; None → the node is first and starts
+        # from fix_start).  Both keys hold the same frame; the override translate below still wins.
+        carry_router.start(solve)
+        _routed_state = carry_router.roll_end_state(solve, _carry_routing.first_step(active_time_lists[solve]))
+        for _key in (_provider_keys.HANDOFF_ROLL_END_STATE, _provider_keys.HANDOFF_UPWARD_ROLL_END_STATE):
+            sub_solve_provider.put(
+                _key, _routed_state if _routed_state is not None
+                else _provider_translators._empty_handoff_frame(_key))
         # Phase 5b — external overrides shadow handoff via the
         # ``override/*`` Provider layer.  The callable is set by
         # external code wrapping the runner (file-watch / ZeroMQ /
@@ -1580,6 +1600,7 @@ def native_run_model(state, solver) -> int:
         if state.handoffs is not None:
             last_captured_solve = complete_solve[solve]
             state.last_captured_solve = last_captured_solve
+            carry_router.record(solve, state.handoffs.get(last_captured_solve))
             # Phase 4.1a — refresh ``handoff/*`` Provider keys from the
             # post-solve ``SolveHandoff`` so the current iteration's
             # Provider exposes the FINAL cumulative state of this roll

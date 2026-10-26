@@ -261,7 +261,6 @@ class _Build:
     has_inertia: bool = False
     has_non_sync: bool = False
     has_cumulative_invest: bool = False
-    is_solve_first: bool = True          # first solve of a chain, or a single solve
 
     # ── shared index sets ──
     pss_dt: pl.DataFrame | None = None               # (p, source, sink, d, t) of v_flow
@@ -466,9 +465,6 @@ def _prepare(b: _Build) -> None:
     b.has_inertia = _group_slack.has_inertia(d)
     b.has_non_sync = _group_slack.has_non_sync(d)
     b.has_cumulative_invest = _cumulative_invest.has_feature(d)
-    # p_nested_solve_first: None for a single solve, else True on the first
-    # solve of a chain.
-    b.is_solve_first = _self_discharge.is_solve_first(d)
 
     # ── required data of the active features ──
     if b.has_proc:
@@ -1356,12 +1352,14 @@ def _fix_start_terms(b: _Build) -> dict:
     #   − v_state[n,d,t]·(1 + α[n,d,t])·state_unitsize[n]
     #   + (1 − β[n,d,t])·state_start[n]·(existing[n,d] + Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]·su[n]
     #                                    − Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]·su[n])
-    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ open-start nodes ∩ storage_fix_start, first solve only
-    # The first step of the first solve, where the state change is omitted, starts from the start state (MWh);
-    # α, β: the self-discharge weights (_self_discharge, 0 without a loss).  Other fix_start nodes are pinned by
-    # storage_state_start_binding / storage_state_start_binding_cyclic_period.
+    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ open-start nodes ∩ storage_fix_start, n ∉ carried
+    # The first step of a node with no realised state from before the solve (carried: the nodes of
+    # roll_continue_state; so the first solve of the model and of each nested level), where the state change is
+    # omitted, starts from the start state (MWh); α, β: the self-discharge weights (_self_discharge, 0 without a
+    # loss).  Other fix_start nodes are pinned by storage_state_start_binding / storage_state_start_binding_cyclic_
+    # period.
     d = b.d
-    first = _self_discharge.fix_start_first(d, b.is_solve_first)
+    first = _self_discharge.fix_start_first(d)
     if first is None:
         return {}
     nodes = first.select("n").unique()
@@ -1396,17 +1394,18 @@ def _fix_start_terms(b: _Build) -> dict:
 
 
 def _roll_continue_terms(b: _Build) -> dict:
-    """nodeBalance_eq start terms of continuation solves in a chain (the carry of the previous solve)."""
+    """nodeBalance_eq start terms of a solve that continues from a realised state (the carry)."""
     # ─── roll-continuation terms (in nodeBalance_eq) ─────────────────────────
     #   − v_state[n,d,t]·(1 + α[n,d,t])·state_unitsize[n] + (1 − β[n,d,t])·roll_continue_state[n]
-    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∉ cyclic nodes, continuation solves only
-    # The state handed over by the previous roll starts the roll's chain (roll_continue_state is in MWh); α, β: the
-    # self-discharge weights of an open-start node (_self_discharge).  A cyclic node (_cyclic_nodes) cycles within
-    # the roll and takes no carry (how_to.md rolling notes).  A blended-weights node keeps the unweighted form: its
-    # first step also starts from v_state_rp_start (item 130; not reachable, rolling solves with such nodes are an
-    # error).
+    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ carried, n ∉ cyclic nodes ∪ nodeState_rp
+    # A node continues from the latest state realised before this solve at its own or a lower nesting level (the
+    # previous roll, the previous solve of a sequence, the dispatch below a storage solve; roll_continue_state, MWh,
+    # routed by the cascade: solve._carry_routing).  α, β: the self-discharge weights of an open-start node
+    # (_self_discharge).  A cyclic node (_cyclic_nodes) cycles within the solve and takes no carry (how_to.md
+    # rolling notes); a representative-period node starts each block from v_state_rp_start (no carry).  Nodes of
+    # neither kind outside the open-start set take the unweighted form.
     d = b.d
-    first = _self_discharge.roll_first(d, b.is_solve_first)
+    first = _self_discharge.roll_first(d)
     if first is None:
         return {}
     su = d.p_state_unitsize
@@ -1441,7 +1440,7 @@ def _open_start_loss_terms(b: _Build) -> dict:
     loss = b.self_discharge
     if loss is None:
         return {}
-    first = _self_discharge.open_first(b.d, b.is_solve_first)
+    first = _self_discharge.open_first(b.d)
     if first is None:
         return {}
     return {"self_discharge_open": -(Where(b.v_state, first) * loss.h * b.d.p_state_unitsize)}
@@ -2751,7 +2750,7 @@ def _eq_state_profiles(b: _Build) -> None:
 def _eq_storage_start_binding(b: _Build) -> None:
     """Start state of fix_start storage nodes."""
     d = b.d
-    if not (b.has_storage and b.is_solve_first
+    if not (b.has_storage
             and _has_rows(d.storage_fix_start)
             and d.p_state_start is not None
             and d.p_state_existing_capacity is not None
@@ -2764,11 +2763,12 @@ def _eq_storage_start_binding(b: _Build) -> None:
     # v_state[n,d,t] − state_start[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + state_start[n]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   = state_start[n] · existing[n,d] / state_unitsize[n]
-    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ storage_fix_start,
+    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ storage_fix_start, n ∉ carried,
     #     n ∉ bind_forward_only ∪ bind_within_timeblock ∪ bind_within_solve ∪ bind_within_period ∪ nodeStateBlock
     # Pins the state at the first step to the share state_start of the built storage capacity (state
-    # units).  First solve of a chain only: continuation solves start from the state handed over by the
-    # previous solve (nodeBalance_eq).  The nodes left are the representative-period (blended weights) nodes,
+    # units).  Only where no state of the node was realised before this solve (carried: the nodes of
+    # roll_continue_state), i.e. the first solve of the model and of each nested level.  The nodes left are the
+    # representative-period (blended weights) nodes,
     # whose first step starts from v_state_rp_start.  bind_forward_only nodes get their start through
     # nodeBalance_eq (_fix_start_terms); the cyclic nodes (bind_within_timeblock, bind_within_solve,
     # bind_within_period, bind_intraperiod_blocks) are pinned by storage_state_start_binding_cyclic_period.
@@ -2777,6 +2777,9 @@ def _eq_storage_start_binding(b: _Build) -> None:
                      d.storage_bind_within_period, d.nodeStateBlock):
         if _has_rows(excluded):
             nodes = nodes.join(excluded, on="n", how="anti")
+    nodes = _self_discharge.without_nodes(nodes, _self_discharge.carried_nodes(d))
+    if nodes is None:
+        return
     over = d.nodeState_first_dt.join(nodes, on="n", how="inner")
     if over.height == 0:
         return
@@ -2799,7 +2802,7 @@ def _eq_storage_start_binding(b: _Build) -> None:
 def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     """Start state of fix_start storage nodes whose first step wraps to a later step of the solve."""
     d = b.d
-    if not (b.has_storage and b.is_solve_first
+    if not (b.has_storage
             and _has_rows(d.storage_fix_start)
             and d.p_state_start is not None
             and d.p_state_existing_capacity is not None
@@ -2811,7 +2814,8 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     if cyclic is None:
         return
     nodes = cyclic.join(d.storage_fix_start, on="n", how="inner")
-    if nodes.height == 0:
+    nodes = _self_discharge.without_nodes(nodes, _self_discharge.carried_nodes(d))
+    if nodes is None:
         return
     # The step each node's first step starts from: its wrap under the node's own lag (the lags of the state
     # change, _self_discharge.state_links).
@@ -2845,12 +2849,14 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     #   + state_start[n]·Σ_{(n,d″,d′) ∈ edd_divest_active} v_divest_n[n,d″]
     #   = state_start[n] · existing[n,d′] / state_unitsize[n]
     #   ∀ n ∈ storage_fix_start ∩ (bind_within_timeblock ∪ bind_within_solve ∪ bind_within_period
-    #     ∪ looping nodeStateBlock), (n,d,t) ∈ nodeState_first_dt, (d′,t′) = the step (d,t) starts from (the
-    #     node's wrap), (n,d′,t′) ∉ the steps node_balance_fix_quantity_eq_lower fixes
+    #     ∪ looping nodeStateBlock), n ∉ carried, (n,d,t) ∈ nodeState_first_dt, (d′,t′) = the step (d,t) starts
+    #     from (the node's wrap), (n,d′,t′) ∉ the steps node_balance_fix_quantity_eq_lower fixes
     # The first step of a cyclic node starts from its wrap target, so the start state is pinned there, to the
     # share state_start of the built storage capacity (state units): the last step of the first timeblock
     # (bind_within_timeblock; in a roll, of the timeblock's part in the roll), of the solve (bind_within_solve) or
-    # of the first period (bind_within_period, bind_intraperiod_blocks).  First solve of a chain only.  Where an
+    # of the first period (bind_within_period, bind_intraperiod_blocks).  Only where no state of the node was
+    # realised before this solve (the first solve of the model and of each nested level); a later solve neither
+    # pins nor carries a cyclic node (it cycles within the solve).  Where an
     # upper-level solve fixes the state at the wrap target the upper value wins (the two equalities would sit on
     # one variable).  A bind_intraperiod_blocks node of a roll that holds its first period only in part chains
     # forward: its start is in nodeBalanceBlock_eq (_fix_start_terms).

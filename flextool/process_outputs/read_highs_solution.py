@@ -1829,7 +1829,6 @@ def write_v_self_discharge(
     names = col_names_cache if col_names_cache is not None else h.allVariableNames()
     values = col_value if col_value is not None else h.getSolution().col_value
     state = _solution_frame(names, values, "v_state", ("n", "d", "t"))
-    first_solve = sd.is_solve_first(fd)
 
     def at(frame: "pl.DataFrame | None") -> "pl.DataFrame | None":
         return None if frame is None else frame.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
@@ -1838,7 +1837,7 @@ def write_v_self_discharge(
     if fd.nodeState_rp is not None and fd.nodeState_rp.height > 0:
         rp_start = _solution_frame(names, values, "v_state_rp_start", ("n", "d", "t"))
     start = None
-    fix_first = at(sd.fix_start_first(fd, first_solve))
+    fix_first = at(sd.fix_start_first(fd))
     if fix_first is not None:
         su = fd.p_state_unitsize.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("su"))
         cap = (fd.p_state_existing_capacity.frame
@@ -1863,14 +1862,14 @@ def write_v_self_discharge(
                  .select("n", "d", "t", value=pl.col("ss") * (pl.col("cap").fill_null(0.0)
                                                               + pl.col("built").fill_null(0.0) * pl.col("su"))))
     carry = None
-    roll = at(sd.roll_first(fd, first_solve))
+    roll = at(sd.roll_first(fd))
     open_start = sd.open_start_nodes(fd)
     if roll is not None and open_start is not None:
         carry = (roll.join(open_start.select(pl.col("n").cast(pl.Utf8)), on="n", how="semi")
                  .join(fd.p_roll_continue_state.frame.select(pl.col("n").cast(pl.Utf8), "value"), on="n",
                        how="inner"))
     energy = sd.self_discharge_energy(fd, state=state, rp_start=rp_start, start=start, carry=carry,
-                                      open_first=at(sd.open_first(fd, first_solve)))
+                                      open_first=at(sd.open_first(fd)))
 
     # Rows and their order: those of the v_state output of this solve.
     state_df = extract_variable(h, "v_state", ("node",), solve_name=solve_name, has_time=True,

@@ -1,5 +1,18 @@
 ## Unreleased
 
+- **Later solves continue from the realised storage state.** In a solve
+  sequence (e.g. one solve per investment period) every solve was pinned
+  again to `storage_state_start`, discarding the state the previous solve
+  realised, and the first dispatch roll under a later roll of a rolling
+  storage solve started with a free storage level (free energy). Now
+  `storage_start_end_method` *fix_start* applies to the first step of the
+  model and to the first appearance of each nested level; every later solve
+  or roll starts from the latest storage state realised before it at its
+  level or below (a storage or investment solve from the dispatch below it).
+  Cyclic binding methods keep cycling within each later solve without the
+  start value, and representative-period (*_blended_weights*) nodes start
+  each block free.
+
 - **`fix_start` of a *bind_within_timeblock* storage.** The start state was
   pinned on the state at the end of the solve's first step, after that
   step's flows, so the timeblock's cycle could start at any level and spend

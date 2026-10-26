@@ -207,6 +207,10 @@ def _fingerprint(data: "FlexData") -> tuple:
     # constraint family in/out — track it explicitly.
     out.append(("p_nested_solve_first",
                 getattr(data, "p_nested_solve_first", None)))
+    # The storage nodes that continue from a carried state swap their start rows (fix_start pin / carry terms).
+    carry = getattr(data, "p_roll_continue_state", None)
+    out.append(("storage_carried_nodes",
+                None if carry is None else tuple(sorted(str(n) for n in carry.frame["n"].to_list()))))
     out.extend(_time_axis_signature(data))
     return tuple(out)
 

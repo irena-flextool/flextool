@@ -167,6 +167,9 @@ def test_rolling_blocks_open_start(tmp_path_factory, loss) -> None:
     pb1 = build(rolls[1].flex_data)
     carry = _carry_mwh(rolls[1].flex_data)
     assert carry == pytest.approx(_states_mwh(rolls[0])[("p2020", "t0024")], abs=1e-9)
+    if loss > 0:
+        # The open first block has no flows (inflow only at t0030) and loses h_b·S·su = 0, so its state is 0.
+        assert carry == pytest.approx(0.0, abs=1e-9)
     lo, _hi = row_bounds(pb1, "nodeBalanceBlock_eq", "battery,")["nodeBalanceBlock_eq[battery,p2020,t0025]"]
     # The carried level enters the row weighted by 1 − β of the block (β = 1 − h_b/(e^{h_b} − 1); 0 without a loss).
     beta = 0.0 if loss == 0 else 1 - h_b / math.expm1(h_b)
@@ -186,6 +189,12 @@ def test_rolling_blocks_fix_start(tmp_path_factory) -> None:
     for step in rolls:
         for v in _states_mwh(step).values():
             assert v == pytest.approx(5.0, abs=1e-9)
+    # Later rolls chain on from the carried level (5 MWh), with no fix_start pin and no start energy.
+    for step in rolls[1:]:
+        assert _carry_mwh(step.flex_data) == pytest.approx(5.0, abs=1e-9)
+        pb = build(step.flex_data)
+        for fam in ("storage_state_start_binding", "storage_state_start_binding_cyclic_period"):
+            assert row_terms(pb, fam, "battery,") == {}
 
 
 def test_rolling_blocks_reference_value(tmp_path_factory) -> None:
@@ -234,9 +243,13 @@ def test_rolling_whole_period_loops(tmp_path_factory, caplog) -> None:
         "storage_state_start_binding_cyclic_period[battery,p2020,t0072]"}
     assert set(row_terms(pb0, "storage_state_solve_horizon_reference_value", "battery,")) == {
         "storage_state_solve_horizon_reference_value[battery,p2025,t0024]"}
-    assert fd1.p_roll_continue_state is not None and _carry_mwh(fd1) != 0.0
+    # The carry is roll 0's realized end, p2020's last step: the fix_start-pinned wrap, 0.1 · 50 = 5 MWh.
+    assert fd1.p_roll_continue_state is not None and _carry_mwh(fd1) == pytest.approx(5.0, abs=1e-9)
     assert row_bounds(pb1, "nodeBalanceBlock_eq", "battery,")["nodeBalanceBlock_eq[battery,p2025,t0001]"] == (0.0, 0.0)
     assert row_terms(pb1, "storage_state_solve_horizon_reference_value", "battery,") == {}
+    # Looping and carried (a state was realised before roll 1): neither the carry nor a fix_start pin.
+    for fam in ("storage_state_start_binding", "storage_state_start_binding_cyclic_period"):
+        assert row_terms(pb1, fam, "battery,") == {}
     assert not [r for r in caplog.records if "whole number of periods" in r.getMessage()]
 
 

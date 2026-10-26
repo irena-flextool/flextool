@@ -203,7 +203,7 @@ Additional parameters:
 
 Storage states can be tied to a value. For this three methods are introduced:
 
-- `storage_start_end_method`: Fixes start and/or end state of the storage to a chosen value. This is for the start and the end of the whole model timeline (not for individual solves in case the model is rolling forward).
+- `storage_start_end_method`: Fixes start and/or end state of the storage to a chosen value. This is for the start and the end of the whole model timeline (not for individual solves in case the model is rolling forward). A later roll or a later solve of a solve sequence starts from the storage state realised at the end of the realised part of the previous roll or solve.
     -  `storage_state_start` and `storage_state_end` set these values.
 - `storage_bind_method`: Forces the start and end values to be the same for the chosen  time interval (timeset, period or solve)
 - `storage_solve_horizon_method`: Fixes the state of the storage at the end of the solve horizon or sets a price for the stored energy at the end of the solve horizon
@@ -927,7 +927,7 @@ Considerations on storage parameters:
 - `bind_within_timeblock` does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not using whole timeblocks or its multiples as `rolling_jump`. The storage level is not carried from roll to roll for this method (nor for `bind_within_period` and `bind_within_solve`): each roll cycles on its own, so the storage level jumps at each roll start, and the reported state change at that step is that jump.
 - the same applies to the `bind_within_period` (but in relation to periods - do not use this unless you are `rolling_jump` is as long as a period or its multiples).
 - `bind_intraperiod_blocks` loops the blocks of a period only in the rolls that hold the whole period. In a period that a roll holds only in part, the blocks chain forward and the storage level is carried from roll to roll, as for `bind_forward_only`. The blocks of a roll also end at the end of its realized part. Use a `rolling_jump` of a whole number of periods to keep every realized period looping (otherwise a warning is given).
-- `storage_start_end_method` can be used to set the first timestep of the first roll and/or the last timestep of the last roll (in conjunction with `storage_state_start` and `storage_state_end`).
+- `storage_start_end_method` can be used to set the first timestep of the first roll and/or the last timestep of the last roll (in conjunction with `storage_state_start` and `storage_state_end`). Every later roll starts from the storage state realised by the previous roll.
 - `bind_within_solve` binds the start state to the end state of each *roll* not the start and end of the whole model timeline. Use with caution (and probably best not to use together with `storage_solve_horizon_method` *use_reference_value*).
 
 ## How to use Nested Rolling window solves (investments and long-term storage)
@@ -992,7 +992,7 @@ In addition, the rolling dispatch solve should be created as in the *How to use 
 The other model parameters apply to *all* of the solves. Therefore, the considerations of the storage value binding that were discussed in the [How to use a rolling window for a dispatch model](#how-to-use-a-rolling-window-for-a-dispatch-model) should be taken into account here as well.
 
 - Storage levels can be fixed with `storage_solve_horizon_method`: *use_reference_value* or *use_reference_price*, these will fix the end of each horizon not each jump.
-- `storage_start_end_method` fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll.
+- `storage_start_end_method` fixes the starts and/or ends of each solve level, meaning the first step of the first roll and the last step of the last roll. The start applies where a level appears for the first time; every later solve or roll of a level (also the first dispatch roll under a later storage roll, and the next investment or storage solve of a split investment timeline) starts from the latest storage state realised before it at that level or below (usually by the dispatch solve). The upper solves only fix the end of a lower solve's horizon (`storage_nested_fix_method`).
 - In most cases the `bind_storage_method` should be left as *bind_forward_only*
 - Do not use `bind_within_timeblock` if you are not using full timeblock or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause an infeasible problem. 
 - Do not use `bind_within_period` if you are not using full periods or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause an infeasible problem. 

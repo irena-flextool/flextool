@@ -431,7 +431,8 @@ Engine wiring:
   ``solve_roll_0, solve_roll_1, …`` with per-roll active-time and
   realized-time lists.
 - Per-roll storage carry-over rides
-  `SolveHandoff.roll_end_state` (`solve/_handoff.py`).
+  `SolveHandoff.roll_end_state` (`solve/_handoff.py`), routed to the
+  sub-solve that continues from it by `solve/_carry_routing.py`.
 - Every roll builds its own LP: the in-process `polar_high.WarmProblem`
   is reused only for an identical sub-solve (every `FlexData` field,
   labels included, and the solver configuration), and a roll's `dt`

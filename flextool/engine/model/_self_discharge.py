@@ -294,9 +294,24 @@ def self_discharge_energy(d, *, state: pl.DataFrame, rp_start: "pl.DataFrame | N
 # ---------------------------------------------------------------------------
 
 
-def is_solve_first(d) -> bool:
-    """True in the first solve of a chain and in a single solve (``p_nested_solve_first`` None or True)."""
-    return d.p_nested_solve_first is None or d.p_nested_solve_first is True
+def carried_nodes(d) -> "pl.DataFrame | None":
+    """Storage nodes (n) with a realised state from before this solve (the nodes of ``p_roll_continue_state``): they
+    continue from it and are not pinned by fix_start.  The cascade routes the carry (``solve._carry_routing``): the
+    latest state realised before the solve at its nesting level or deeper.  None in the first solve of the model and
+    of each nested level (and in a single solve)."""
+    carry = d.p_roll_continue_state
+    if carry is None or carry.frame.height == 0:
+        return None
+    return carry.frame.select("n").unique(maintain_order=True)
+
+
+def without_nodes(frame: "pl.DataFrame | None", nodes: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """``frame`` without the rows of ``nodes`` (on n); None when nothing is left."""
+    if frame is None:
+        return None
+    if _has_rows(nodes):
+        frame = frame.join(nodes.select(pl.col("n").cast(frame.schema["n"], strict=False)), on="n", how="anti")
+    return frame if frame.height > 0 else None
 
 
 def node_union(frames) -> "pl.DataFrame | None":
@@ -349,46 +364,48 @@ def open_start_nodes(d) -> "pl.DataFrame | None":
     return node_union((d.storage_bind_forward_only, block_open_nodes(d)))
 
 
-def fix_start_first(d, first_solve: bool) -> "pl.DataFrame | None":
-    """``(n, d, t)``: the first steps that start from the fix_start state (open-start fix_start nodes, first
-    solve); None when there are none."""
+def fix_start_first(d) -> "pl.DataFrame | None":
+    """``(n, d, t)``: the first steps that start from the fix_start state (open-start fix_start nodes without a
+    carry: the first solve of the model and of each nested level); None when there are none."""
     open_start = open_start_nodes(d)
-    if not (first_solve
-            and open_start is not None
+    if not (open_start is not None
             and _has_rows(d.storage_fix_start)
             and d.p_state_start is not None
             and d.p_state_existing_capacity is not None
             and d.p_state_unitsize is not None
             and d.nodeState_first_dt is not None):
         return None
-    nodes = open_start.join(d.storage_fix_start, on="n", how="inner")
+    nodes = without_nodes(open_start.join(d.storage_fix_start, on="n", how="inner"), carried_nodes(d))
+    if nodes is None:
+        return None
     first = d.nodeState_first_dt.join(nodes, on="n", how="inner")
     return first if first.height > 0 else None
 
 
-def roll_first(d, first_solve: bool) -> "pl.DataFrame | None":
-    """``(n, d, t)``: the first steps that start from the roll carry (every storage node but the cyclic ones, in a
-    continuation solve); None when there are none."""
-    if (first_solve
-            or d.p_state_unitsize is None
-            or d.nodeState_first_dt is None
-            or d.p_roll_continue_state is None):
+def roll_first(d) -> "pl.DataFrame | None":
+    """``(n, d, t)``: the first steps that start from the carried state (the carried nodes but the cyclic ones and
+    the representative-period ones); None when there are none.
+
+    A cyclic node cycles within the solve; a representative-period (blended weights) node starts each block from
+    v_state_rp_start, and its realised state is a state inside a representative block, not a chronological level to
+    continue from, so it takes no carry (and, being carried, no fix_start pin either)."""
+    carried = carried_nodes(d)
+    if carried is None or d.p_state_unitsize is None or d.nodeState_first_dt is None:
         return None
-    first = d.nodeState_first_dt
-    cyclic = cyclic_nodes(d)
-    if cyclic is not None:
-        first = first.join(cyclic, on="n", how="anti")
-    return first if first.height > 0 else None
+    first = d.nodeState_first_dt.join(carried.select(pl.col("n").cast(d.nodeState_first_dt.schema["n"],
+                                                                       strict=False)), on="n", how="semi")
+    first = without_nodes(first, cyclic_nodes(d))
+    return without_nodes(first, getattr(d, "nodeState_rp", None))
 
 
-def open_first(d, first_solve: bool) -> "pl.DataFrame | None":
+def open_first(d) -> "pl.DataFrame | None":
     """``(n, d, t)``: first steps of open-start nodes that start from neither the fix_start state nor the carry
     (the step has no state change: its state is constant over the step)."""
     open_start = open_start_nodes(d)
     if open_start is None or d.nodeState_first_dt is None:
         return None
     first = d.nodeState_first_dt.join(open_start, on="n", how="inner")
-    for covered in (fix_start_first(d, first_solve), roll_first(d, first_solve)):
+    for covered in (fix_start_first(d), roll_first(d)):
         if covered is not None:
             first = first.join(covered.select("n", "d", "t"), on=["n", "d", "t"], how="anti")
     return first if first.height > 0 else None
