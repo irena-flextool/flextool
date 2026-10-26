@@ -210,8 +210,10 @@ def test_one_way_connection_floor_and_headroom(tmp_path_factory) -> None:
 def test_two_way_reserve_rows(tmp_path_factory) -> None:
     """D3: battery_inverter (regular, η 0.95) with up and down reserve at west (reserve_duration 2): maxFlow of
     its arc into west has no v_reserve; up row (x_in 1, x_out −1/0.95, R 1), down row (x_out 1, x_in −0.95, R 0.95);
-    objective 1030.137 M (was 1027.312 M: the down reserve now needs charging headroom, the up reserve may count
-    stopping the charging)."""
+    objective 1030.991 M (was 1027.312 M: the down reserve now needs charging headroom, the up reserve may count
+    stopping the charging).  The battery is bind_within_timeblock with fix_start 0.1, so 5 MWh is pinned on the
+    wrap target v_state[t0048] (#135; 1030.137 M when it sat on the end of step 1).  Derived independently with a
+    highspy LP of the fixture (exact self-discharge, pin on the last step of the 48-step block): 1030990802.5756."""
     eu, vu = _reserve("rs", "up", "electricity", [("battery_inverter", "west")], reservation=50.0)
     ed, vd = _reserve("rs", "down", "electricity", [("battery_inverter", "west")], reservation=50.0)
     vals = vu + vd + [["reserve__upDown__group", ["rs", ud, "electricity"], "reserve_duration", b64(2.0, "float")]
@@ -231,7 +233,7 @@ def test_two_way_reserve_rows(tmp_path_factory) -> None:
         assert coef(terms, f"v_flow[{bi},west,battery,p2020,{t}]") == pytest.approx(1.0)
         assert coef(terms, f"v_flow[{bi},battery,west,p2020,{t}]") == pytest.approx(-0.95)
         assert coef(terms, f"v_reserve[{bi},rs,down,west,p2020,{t}]") == pytest.approx(0.95)
-    assert step.solution.obj == pytest.approx(1030.1368300761e6, rel=1e-8)
+    assert step.solution.obj == pytest.approx(1030.9908025756e6, rel=1e-8)
 
 
 def test_online_connection_reserve(tmp_path_factory) -> None:
