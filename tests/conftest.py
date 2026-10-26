@@ -34,7 +34,6 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 import pytest
 
@@ -804,7 +803,7 @@ def test_solver_config_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
-def scenario_workdir(
+def _scenario_run_factory(
     test_db_url,
     stochastic_db_url,
     lh2_db_url,
@@ -827,44 +826,9 @@ def scenario_workdir(
     test_solver_config_dir,
     tmp_path_factory,
 ):
-    """Factory: build a fully-preprocessed work folder for a scenario.
-
-    Returns a callable ``factory(scenario_name, db_fixture="main")`` that
-    runs the full cascade with ``csv_dump=True`` and then snapshots the
-    last sub-solve's :class:`FlexDataProvider` to disk, materialising
-    every ``_emit_*`` output as a CSV under ``<wf>/input/*`` and
-    ``<wf>/solve_data/*``.  Results are cached per ``(scenario,
-    db_fixture)`` pair for the lifetime of the test session — calling
-    ``factory("base")`` twice returns the same ``Path``.
-
-    This mirrors the canonical CLI ``--csv-dump`` flow
-    (``flextool/cli/cmd_run_flextool.py``): the cascade itself runs
-    in-memory; ``csv_dump=True`` flushes the in-memory FlexData via
-    ``data.dump_csvs`` per sub-solve, and the post-cascade
-    ``provider.snapshot_processed_inputs`` materialises the
-    parent-qualified Provider key layout.  The combination reproduces
-    what the disk-staged generator used to seed
-    ``tests/engine/data/`` produced.
-
-    The full cascade (HiGHS solve included) is required because the bulk
-    of the per-solve emitters run *inside* the cascade loop and populate
-    the live Provider; ``keep_solutions=True`` is required because that
-    Provider is otherwise slimmed away by the post-cascade memory-saver.
-
-    The ``db_fixture`` keyword selects the JSON fixture backing the DB.
-    Valid values are the keys of :data:`_DB_FIXTURE_NAMES` — currently
-    ``"main"`` (tests.json), ``"stochastic"`` (stochastics.json),
-    ``"lh2"`` (lh2_three_region.json), ``"h2_trade_parity"``,
-    ``"stochastics_pbt_inflow"``,
-    ``"branch2_parent_period"``, ``"case14"``.
-
-    Tests use it like:
-
-        def test_foo(scenario_workdir):
-            work = scenario_workdir("base")
-            data = load_flextool(work)
-    """
-    from flextool.engine.solve._orchestration import run_chain_from_db
+    """Session cache behind ``scenario_run`` and ``scenario_workdir``: one cascade per
+    ``(scenario, db_fixture)``, kept as a :class:`tests._support.load.ScenarioRun`."""
+    from tests._support.load import run_scenario
 
     url_by_fixture = {
         "main": test_db_url,
@@ -889,9 +853,9 @@ def scenario_workdir(
         "case14": case14_db_url,
     }
 
-    cache: dict[tuple[str, str], Path] = {}
+    cache: dict = {}
 
-    def factory(scenario_name: str, db_fixture: str = "main") -> Path:
+    def factory(scenario_name: str, db_fixture: str = "main"):
         key = (scenario_name, db_fixture)
         if key in cache:
             return cache[key]
@@ -902,45 +866,68 @@ def scenario_workdir(
                 f"Unknown db_fixture {db_fixture!r}; valid: "
                 f"{sorted(url_by_fixture)}"
             ) from None
-        # ``_find_scenario`` (flex_data.py) auto-constructs a SpineDbReader
-        # for ``load_flextool`` if and only if the workdir's basename
-        # matches ``work_<scenario_name>`` EXACTLY (no numeric suffix)
-        # and the workdir contains ``tests.sqlite``.  ``tmp_path_factory.
-        # mktemp`` always appends a numeric suffix (``work_base0`` etc.),
-        # so build a uniquely-named parent and nest the precisely-named
-        # work folder inside.
+        # The work folder keeps its exact ``work_<scenario>`` name (tests that
+        # still call bare ``load_flextool(work)`` rely on it to auto-construct a
+        # reader from ``tests.sqlite``).  ``tmp_path_factory.mktemp`` appends a
+        # numeric suffix, so nest it in a uniquely-named parent; the parent also
+        # holds the empty ``load_<scenario>`` folder ``load_scenario`` loads from.
         parent = tmp_path_factory.mktemp(f"_root_{scenario_name}_{db_fixture}")
-        wf = parent / f"work_{scenario_name}"
-        wf.mkdir()
-        steps = run_chain_from_db(
-            input_db_url=url,
-            scenario_name=scenario_name,
-            work_folder=wf,
-            solver_config_dir=test_solver_config_dir,
-            csv_dump=True,
-            keep_solutions=True,
+        run = run_scenario(
+            url, scenario_name, parent / f"work_{scenario_name}",
+            solver_config_dir=test_solver_config_dir, db_fixture=db_fixture,
         )
-        # Copy the SQLite the cascade was driven from into the workdir
-        # so ``_find_scenario`` can auto-construct a SpineDbReader for
-        # the re-solve in tests that call ``load_flextool(wf)``.  The
-        # url is ``sqlite:///<absolute-path>``; urlparse returns the leading
-        # slash inside ``.path``.  On Windows that yields ``/C:/…``, an invalid
-        # path (OSError 22), so strip the leading slash before a drive letter.
-        sqlite_src = urlparse(url).path
-        if len(sqlite_src) >= 3 and sqlite_src[0] == "/" and sqlite_src[2] == ":":
-            sqlite_src = sqlite_src[1:]  # '/C:/…' -> 'C:/…'
-        shutil.copy(sqlite_src, wf / "tests.sqlite")
-        # Mirror the CLI ``--csv-dump`` post-cascade snapshot: only the
-        # last sub-solve's Provider holds the union of every cascade
-        # emitter's frames; snapshot it to disk so ``_emit_*`` outputs
-        # appear under ``input/`` + ``solve_data/``.
-        if steps:
-            last_step = next(reversed(list(steps.values())))
-            provider = getattr(last_step, "flex_data_provider", None)
-            if provider is not None:
-                provider.snapshot_processed_inputs(wf)
-        cache[key] = wf
-        return wf
+        cache[key] = run
+        return run
+
+    return factory
+
+
+@pytest.fixture(scope="session")
+def scenario_run(_scenario_run_factory):
+    """Factory: ``scenario_run(scenario, db_fixture="main") -> ScenarioRun``.
+
+    Runs the full cascade once per ``(scenario, db_fixture)`` per session
+    (shared with ``scenario_workdir``) and returns the
+    :class:`tests._support.load.ScenarioRun`: every step's post-solve
+    provider, the handoff each step consumed, the objectives and the last
+    step's FlexData.  Rebuild a step's FlexData with the production loader
+    call through :func:`tests._support.load.load_scenario`::
+
+        def test_foo(scenario_run):
+            run = scenario_run("base")
+            data = load_scenario(run)
+
+    The run's providers, handoffs and ``last_flex_data`` are shared by every
+    test in the session: never mutate them (``clone_provider`` first).
+
+    ``db_fixture`` selects the JSON fixture backing the DB; valid values are
+    the keys of :data:`_DB_FIXTURE_NAMES`.
+    """
+    return _scenario_run_factory
+
+
+@pytest.fixture(scope="session")
+def scenario_workdir(_scenario_run_factory):
+    """Factory: ``scenario_workdir(scenario, db_fixture="main") -> Path``.
+
+    Returns the ``work_<scenario>`` folder of the cached
+    :class:`tests._support.load.ScenarioRun` (see ``scenario_run``; one
+    cascade per ``(scenario, db_fixture)`` per session, so calling it twice
+    returns the same ``Path``).  The folder holds the cascade's own outputs
+    (``output_raw/`` …), a CSV snapshot of the last sub-solve's
+    :class:`FlexDataProvider` under ``input/`` + ``solve_data/`` (for tests
+    that read those files) and a ``tests.sqlite`` copy of the DB the cascade
+    ran on.
+
+    The cascade runs with ``csv_dump=False`` and ``keep_solutions=True``
+    (``keep_solutions`` keeps every step's provider for ``load_scenario``).
+
+    To get a sub-solve's FlexData, use ``scenario_run`` +
+    :func:`tests._support.load.load_scenario` (the production loader call),
+    not ``load_flextool(work)`` (a CSV reload of the snapshot).
+    """
+    def factory(scenario_name: str, db_fixture: str = "main") -> Path:
+        return _scenario_run_factory(scenario_name, db_fixture).work_folder
 
     return factory
 
