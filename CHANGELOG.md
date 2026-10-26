@@ -84,6 +84,17 @@
   Where an upper-level nested solve fixes the storage state at that step
   (a nested roll whose horizon is one timeblock), the fixed value wins.
 
+- **Reserve price of groups with several requirements.** `reserve_price_t`
+  is now the sum of the duals of all of a group's requirement constraints at
+  the step (timeseries, dynamic, and the large-failure constraint of every
+  failing unit or connection): the cost of one more MW of every requirement
+  of the group at once. Groups with a large-failure requirement were not
+  reported at all (`large_failure_only`, `dynamic_and_large_failure`) or
+  reported only the timeseries dual (`timeseries_and_large_failure`, `all`),
+  and `timeseries_and_dynamic` groups reported the timeseries dual alone,
+  which is 0 when the dynamic requirement is the binding one. When a
+  requirement is short the price is now `penalty_reserve`.
+
 - **Time-varying `self_discharge_loss`.** A `self_discharge_loss` given as a
   time (or period) map was read as one value per map entry and every
   coefficient of the storage's balance was summed over the entries (about

@@ -467,19 +467,14 @@ def test_write_v_dual_node_balance_applies_per_period_inflation(tmp_path: Path) 
     assert df.loc[("s1", "p2025", "t0001"), "nA"] == pytest.approx(-0.5)
 
 
-def test_write_v_dual_reserve_balance_reports_dynamic_only_groups(tmp_path: Path) -> None:
-    """reserve_price_t: the timeseries dual for timeseries groups, the dynamic dual for dynamic_only groups
-    (one row per group and step); a group combining dynamic and large_failure is not reported (several
-    requirement rows per step).  Price = dual × 1e6 (default scale, no weight CSVs → weight 1)."""
+def test_write_v_dual_reserve_balance_sums_requirement_rows(tmp_path: Path) -> None:
+    """reserve_price_t = the sum of the duals of the group's requirement rows (timeseries, dynamic, and the
+    large-failure rows of every failing process), whatever the group's reserve_method; no method CSV needed.
+    Price = Σ dual × 1e6 (default scale, no weight CSVs → weight 1)."""
     from flextool.process_outputs.read_highs_solution import write_v_dual_reserve_balance
 
     (tmp_path / "output_raw").mkdir()
     (tmp_path / "solve_data").mkdir()
-    (tmp_path / "solve_data" / "reserve__upDown__group__method_dynamic.csv").write_text(
-        "reserve,upDown,group,method\n"
-        "dz,up,g2,dynamic_only\n"
-        "mix,up,g3,dynamic_and_large_failure\n"
-        "both,up,g1,timeseries_and_dynamic\n")
     h = _fake_highs(
         variable_names=[], col_values=[],
         row_names=[
@@ -487,15 +482,22 @@ def test_write_v_dual_reserve_balance_reports_dynamic_only_groups(tmp_path: Path
             "reserveBalance_dynamic_eq[both,up,g1,p2020,t0001]",
             "reserveBalance_dynamic_eq[dz,up,g2,p2020,t0001]",
             "reserveBalance_dynamic_eq[mix,up,g3,p2020,t0001]",
+            "reserveBalance_up_n_1_eq[mix,up,g3,f1,p2020,t0001]",
+            "reserveBalance_up_n_1_eq[mix,up,g3,f2,p2020,t0001]",
+            "reserveBalance_up_n_1_eq[n1,up,g4,f1,p2020,t0001]",
+            "reserveBalance_up_n_1_eq[n1,up,g4,f2,p2020,t0001]",
+            "reserveBalance_down_n_1_eq[nd,down,g5,f1,p2020,t0001]",
         ],
-        row_duals=[1.5e-6, 7.0e-6, 2.5e-6, 3.5e-6],
+        row_duals=[1.5e-6, 7.0e-6, 2.5e-6, 3.5e-6, 0.5e-6, 1.0e-6, 2.0e-6, 0.25e-6, 0.75e-6],
     )
     write_v_dual_reserve_balance(h, solve_name="s1", output_dir=tmp_path / "output_raw", work_folder=tmp_path)
     df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_reserve__upDown__group__period__t__s1.parquet")
     cols = {tuple(str(x) for x in c): c for c in df.columns}
-    assert set(cols) == {("both", "up", "g1"), ("dz", "up", "g2")}
-    assert df.loc[("s1", "p2020", "t0001"), cols[("both", "up", "g1")]] == pytest.approx(1.5)
-    assert df.loc[("s1", "p2020", "t0001"), cols[("dz", "up", "g2")]] == pytest.approx(2.5)
+    expected = {("both", "up", "g1"): 8.5, ("dz", "up", "g2"): 2.5, ("mix", "up", "g3"): 5.0,
+                ("n1", "up", "g4"): 2.25, ("nd", "down", "g5"): 0.75}
+    assert set(cols) == set(expected)
+    for key, price in expected.items():
+        assert df.loc[("s1", "p2020", "t0001"), cols[key]] == pytest.approx(price)
 
 
 def test_write_v_dual_reserve_balance_divides_by_step_and_weights(tmp_path: Path) -> None:

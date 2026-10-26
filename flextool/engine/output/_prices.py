@@ -22,9 +22,13 @@ Every operational cost term of the objective carries ``w_op[d,t] = Δt · tw · 
   # A node balance row is in MWh per step, so its dual is already per MWh (no Δt).
 
   # ─── PRICE. ─── reserve_price_t ───────────────────────────────────────────
-  # reserve_price[r,ud,g,d,t] = dual[reserveBalance_timeseries_eq | reserveBalance_dynamic_eq (dynamic_only)]
-  #                             / s / (Δt[d,t] · w[d,t])
-  # CUR per MW held for one hour (= CUR/MWh): the row is in MW per step and its shortfall costs penalty · w_op.
+  # reserve_price[r,ud,g,d,t] = ( dual[reserveBalance_timeseries_eq[r,ud,g,d,t]]
+  #                             + dual[reserveBalance_dynamic_eq[r,ud,g,d,t]]
+  #                             + Σ_f dual[reserveBalance_{up,down}_n_1_eq[r,ud,g,f,d,t]] ) / s / (Δt[d,t] · w[d,t])
+  #   a row the group does not have contributes 0;  f = failing process
+  # CUR per MW held for one hour (= CUR/MWh): the rows are in MW per step and their shared shortfall costs
+  # penalty · w_op.  The cost of one more MW of every requirement of the group at once: penalty_reserve when the
+  # shortfall is positive, else the value of one MW from a provider that is not failing.
 
 Absent weight components (no timestep weights, no branches, …) count as 1.  Polars only; ``FlexData`` is a type
 hint only (``preprocess`` imports this module).

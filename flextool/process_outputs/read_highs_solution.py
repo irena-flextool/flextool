@@ -1889,29 +1889,6 @@ def write_v_self_discharge(
     return path
 
 
-def _dynamic_only_reserve_groups(work_folder: Path, flex_data: "FlexData | None" = None,
-                                 ) -> set[tuple[str, str, str]]:
-    """``(r, ud, g)`` of the reserve groups whose ``reserve_method`` is ``dynamic_only``.
-
-    Read from ``flex_data.reserve_upDown_group_method_dynamic`` when supplied, else from
-    ``solve_data/reserve__upDown__group__method_dynamic.csv``.
-    """
-    if flex_data is not None:
-        frame = getattr(flex_data, "reserve_upDown_group_method_dynamic", None)
-        if frame is None or frame.height == 0:
-            return set()
-        rows = frame.select(pl.col(c).cast(pl.Utf8) for c in ("r", "ud", "g", "method")).iter_rows()
-        return {(r, ud, g) for r, ud, g, m in rows if m == "dynamic_only"}
-    path = work_folder / "solve_data" / "reserve__upDown__group__method_dynamic.csv"
-    if not path.exists():
-        return set()
-    df = pd.read_csv(path, dtype=str)
-    if df.shape[1] < 4:
-        return set()
-    return {(r, ud, g) for r, ud, g, m in df.iloc[:, :4].itertuples(index=False, name=None)
-            if m == "dynamic_only"}
-
-
 def write_v_dual_reserve_balance(
     h: "highspy.Highs",
     *,
@@ -1925,21 +1902,19 @@ def write_v_dual_reserve_balance(
     """Write ``v_dual_reserve__upDown__group__period__t__{solve}.parquet`` (``reserve_price_t``).
 
     # ─── PRICE. ─── reserve_price_t ─────────────────────────────────────────────
-    # reserve_price[r,ud,g,d,t] = dual[reserveBalance_timeseries_eq | reserveBalance_dynamic_eq (dynamic_only)]
-    #                              / s / (Δt[d,t] · w[d,t])
+    # reserve_price[r,ud,g,d,t] = ( dual[reserveBalance_timeseries_eq[r,ud,g,d,t]]
+    #                             + dual[reserveBalance_dynamic_eq[r,ud,g,d,t]]
+    #                             + Σ_f dual[reserveBalance_{up,down}_n_1_eq[r,ud,g,f,d,t]] ) / s / (Δt[d,t] · w[d,t])
     #   w[d,t] = timestep_weight[d,t] · inflation_op[d] / period_share[d] · branch_weight[d,t];   null where w = 0
+    #   a row the group does not have contributes 0;  f = failing process (row dim p_fail)
     # CUR per MW held for one hour (= CUR/MWh).  Definition: :mod:`flextool.engine.output._prices`.
 
-    The price of a group is the dual of its requirement row:
-
-    * groups with a timeseries requirement: ``reserveBalance_timeseries_eq``;
-    * groups whose only requirement is dynamic (``reserve_method = dynamic_only``):
-      ``reserveBalance_dynamic_eq`` — one row per ``(r, ud, g, d, t)``, so its dual is the price.
-
-    Groups that combine a dynamic and a large-failure requirement, or have only a large-failure
-    requirement, have several requirement rows per step (one per failing process) and no single dual:
-    they are not reported yet (an open choice between the largest and the sum of the duals).  A group
-    that combines the timeseries requirement with another one reports the timeseries dual.
+    The price of a group is the cost of one more MW of every requirement of the group at once: the sum of
+    the duals of all its requirement rows at the step (timeseries, dynamic, and one large-failure row per
+    failing process).  The rows share the group's shortfall ``vq_reserve``, so the sum equals
+    ``penalty_reserve`` when the shortfall is positive; when the group total ``v_reserve_total`` is positive
+    it equals ``−dual[reserve_total_upper]``: the value of one MW from a provider that is not failing.
+    The sum does not depend on how a degenerate LP splits the dual between equally large failures.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1948,39 +1923,34 @@ def write_v_dual_reserve_balance(
         f"v_dual_reserve__upDown__group__period__t__{solve_name}.parquet"
     )
 
-    # reserveBalance_timeseries_eq indices: r, ud, g, d, t (5).  The
-    # method is implicit in the constraint name prefix — there is no
-    # ``r_m`` column inside the brackets.  The sibling constraint
-    # ``reserveBalance_dynamic_eq`` carries the same (r, ud, g, d, t) axes;
-    # ``reserveBalance_*_n_1_eq`` carry (r, ud, g, p_fail, d, t), one row per
-    # failing process; the group's total reserve is the auxiliary
-    # ``v_reserve_total`` (row ``reserve_total_upper``, whose dual has the
-    # magnitude of the sum of the duals of the rows using the total when it
-    # is positive: the n-1 rows and, for the same group, the timeseries /
-    # dynamic rows, which use the total in place of the providers' sum).
-    # Combining the n-1 rows (not reported yet, see the docstring) must work
-    # over the n-1 rows' p_fail, not read the ``reserve_total_upper`` row.
-    df = extract_variable(
-        h, "reserveBalance_timeseries_eq",
-        ("reserve", "updown", "node_group"),
-        solve_name=solve_name, has_time=True, source="row_dual",
-        realized_dispatch_csv=realized_dispatch_csv,
-        flex_data=flex_data,
-    )
-    dyn_only = _dynamic_only_reserve_groups(wf, flex_data)
-    if dyn_only:
-        dyn = extract_variable(
-            h, "reserveBalance_dynamic_eq",
-            ("reserve", "updown", "node_group"),
+    # The requirement rows of a reserve group: reserveBalance_timeseries_eq and reserveBalance_dynamic_eq
+    # are indexed (r, ud, g, d, t); reserveBalance_{up,down}_n_1_eq (r, ud, g, p_fail, d, t), one row per
+    # failing process, summed over p_fail.  reserve_total_upper (the group total v_reserve_total) is not a
+    # requirement row: its dual is minus the sum of the duals of the rows that use the total.
+    group_cols = ("reserve", "updown", "node_group")
+    df: pd.DataFrame | None = None
+    for row_name, cols in (("reserveBalance_timeseries_eq", group_cols),
+                           ("reserveBalance_dynamic_eq", group_cols),
+                           ("reserveBalance_up_n_1_eq", group_cols + ("p_fail",)),
+                           ("reserveBalance_down_n_1_eq", group_cols + ("p_fail",))):
+        part = extract_variable(
+            h, row_name, cols,
             solve_name=solve_name, has_time=True, source="row_dual",
             realized_dispatch_csv=realized_dispatch_csv,
             flex_data=flex_data,
         )
-        if not dyn.empty:
-            keep = [c for c in dyn.columns if tuple(str(x) for x in c) in dyn_only]
-            if keep:
-                dyn = dyn.loc[:, keep]
-                df = dyn if df.empty else df.join(dyn, how="outer").fillna(0.0)
+        if df is None:
+            df = part      # the timeseries frame, also the shape of an empty output
+            continue
+        if part.empty:
+            continue
+        if len(cols) > len(group_cols):
+            part = part.T.groupby(level=list(range(len(group_cols))), sort=False).sum().T
+            part.columns = part.columns.set_names(list(group_cols))
+        df = part if df.empty else df.add(part, fill_value=0.0)
+    assert df is not None
+    if not df.empty:
+        df = df.sort_index(axis=1)
 
     if df.empty:
         write_lean_parquet(df, out_path)
@@ -1990,8 +1960,8 @@ def write_v_dual_reserve_balance(
         )
         return out_path
 
-    # Raw duals (the dynamic_only ∪ timeseries union above, 0.0 where a group has no row) → price per MW held for
-    # one hour; a zero-weight step stays empty.
+    # Summed raw duals (0.0 where a group has no row of a family) → price per MW held for one hour; a
+    # zero-weight step stays empty.
     inv_scale = _resolve_inv_scale_the_objective(wf, scale_the_objective=scale_the_objective)
     df = _wide_to_price(df, _price_weight(wf, flex_data, per_hour=True, rows=df.index), sign=1.0,
                         inv_scale=inv_scale)
