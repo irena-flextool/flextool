@@ -1298,6 +1298,45 @@ def _patch_conn_reserve_1var(data: dict) -> dict:
                     entities=_GW + e1 + e2 + e3 + e4)
 
 
+def _non_sync_group(g: str, nodes: list[str], limit: float, penalty: float = 4000.0) -> tuple[list, list]:
+    """Entities + values of node group ``g`` with a non-synchronous limit."""
+    ents = [["group", g]] + [["group__node", [g, n]] for n in nodes]
+    vals = [["group", g, "has_non_synchronous", "yes"], ["group", g, "non_synchronous_limit", limit],
+            ["group", g, "penalty_non_synchronous", penalty]]
+    return ents, vals
+
+
+def _patch_nonsync_internal_dc(data: dict) -> dict:
+    """Non-synchronous limit 0.3 on {west, east} (wind flagged): west_east runs inside the group and
+    west_north (is_DC) crosses its boundary."""
+    ents, vals = _non_sync_group("gwe", ["west", "east"], 0.3)
+    return _overlay(data, name="nonsync_internal_dc", base=_NET, entities=ents, values=vals + [
+        ["unit__outputNode", ["wind_plant", "west"], "is_non_synchronous", "yes"],
+        ["connection", "west_north", "is_DC", "yes"]])
+
+
+def _patch_nonsync_1var_dc(data: dict) -> dict:
+    """Non-synchronous limit 0.5 on {le}; ll (one variable, is_DC) imports to le through v_flow and exports
+    through v_flow_back."""
+    ents, vals = _non_sync_group("gle", ["le"], 0.5)
+    return _overlay(data, name="nonsync_1var_dc", base=_LL, entities=ents,
+                    values=vals + [["connection", "ll", "is_DC", "yes"]])
+
+
+def _patch_nonsync_energy_margin(data: dict) -> dict:
+    """Invest solve with an energy margin (inflow multiplier 1.1 on west) and a group {west} with a
+    non-synchronous limit and a manual capacity margin."""
+    ents = [["group", "gm"], ["group__node", ["gm", "west"]]]
+    return _overlay(data, name="nonsync_energy_margin",
+                    base=["init", "west", "wind", "battery", "battery_invest", "5weeks", "coal"],
+                    entities=ents, values=[
+                        ["group", "gm", "has_non_synchronous", "yes"], ["group", "gm", "non_synchronous_limit", 0.5],
+                        ["group", "gm", "capacity_margin_method", "manual"], ["group", "gm", "capacity_margin", 0.0],
+                        ["unit__outputNode", ["wind_plant", "west"], "is_non_synchronous", "yes"],
+                        ["node", "west", "energy_margin_method", "inflow_multiplier"],
+                        ["node", "west", "energy_margin_multiplier", 1.1]])
+
+
 def _patch_conn_reserve_uni(data: dict) -> dict:
     """One-way west_east (west -> east) holding down reserve (send more) and up reserve (send less) at
     west."""
@@ -1443,6 +1482,9 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "conn_exact_invest": _patch_conn_exact_invest,
     "conn_reserve_1var": _patch_conn_reserve_1var,
     "conn_reserve_uni": _patch_conn_reserve_uni,
+    "nonsync_internal_dc": _patch_nonsync_internal_dc,
+    "nonsync_1var_dc": _patch_nonsync_1var_dc,
+    "nonsync_energy_margin": _patch_nonsync_energy_margin,
     "conn_reserve_dc": _patch_conn_reserve_dc,
     "conn_online_roll": _patch_conn_online_roll,
     "conn_online_stoch": _patch_conn_online_stoch,
@@ -1626,6 +1668,9 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("conn_exact_invest", _T),
     ("conn_reserve_1var", _T),
     ("conn_reserve_uni", _T),
+    ("nonsync_internal_dc", _T),
+    ("nonsync_1var_dc", _T),
+    ("nonsync_energy_margin", _T),
     ("conn_reserve_dc", _F + "case14_dc_power_flow.json"),
     ("conn_online_roll", _T),
     ("conn_online_stoch", _F + "stochastics.json"),
