@@ -1017,6 +1017,8 @@ def _build_region_data(
         "n", keep_nodes,
     )
     new.storage_fix_start = _filter_frame(src.storage_fix_start, "n", keep_nodes)
+    new.storage_fix_end = _filter_frame(getattr(src, "storage_fix_end", None), "n", keep_nodes)
+    new.ndt_fix_storage_price = _filter_frame(getattr(src, "ndt_fix_storage_price", None), "n", keep_nodes)
     new.nodeStateBlock = _filter_frame(src.nodeStateBlock, "n", keep_nodes)
     new.nodeState_rp = _filter_frame(
         getattr(src, "nodeState_rp", None), "n", keep_nodes,
@@ -1031,6 +1033,7 @@ def _build_region_data(
     new.p_state_unitsize = _filter_param(src.p_state_unitsize, "n", keep_nodes)
     new.p_state_self_discharge = _filter_param(src.p_state_self_discharge, "n", keep_nodes)
     new.p_state_start = _filter_param(src.p_state_start, "n", keep_nodes)
+    new.p_state_end = _filter_param(getattr(src, "p_state_end", None), "n", keep_nodes)
     new.p_state_existing_capacity = _filter_param(src.p_state_existing_capacity, "n", keep_nodes)
     new.p_node_availability = _filter_param(src.p_node_availability, "n", keep_nodes)
     new.p_roll_continue_state = _filter_param(src.p_roll_continue_state, "n", keep_nodes)
@@ -1498,16 +1501,16 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "storage_bind_within_timeblock", "storage_bind_forward_only",
     "storage_bind_within_solve", "storage_bind_within_period", "storage_bind_within_solve_blended_weights",
     "storage_bind_within_period_blended_weights",
-    "storage_bind_forward_only_blended_weights", "storage_fix_start",
+    "storage_bind_forward_only_blended_weights", "storage_fix_start", "storage_fix_end",
     "p_state_upper", "p_state_unitsize", "p_state_self_discharge",
-    "p_state_start", "p_state_existing_capacity",
+    "p_state_start", "p_state_end", "p_state_existing_capacity",
     "storage_use_reference_value", "p_storage_state_reference_value",
     "p_storage_state_reference_price",
     "node_profile_upper", "node_profile_lower", "node_profile_fixed",
     "p_node_availability", "p_roll_continue_state",
     "n_fix_storage_quantity", "ndt_fix_storage_quantity",
     "p_fix_storage_quantity", "n_fix_storage_usage",
-    "ndt_fix_storage_usage", "p_fix_storage_usage",
+    "ndt_fix_storage_usage", "p_fix_storage_usage", "ndt_fix_storage_price",
     "p_node_capacity_for_scaling",
     # node-keyed invest/divest sets (the trade nodes are not the master's
     # invest variables — only the cross connections are).
@@ -1559,16 +1562,16 @@ _MASTER_N_KEYED_FIELDS: tuple[str, ...] = (
     "storage_bind_within_timeblock", "storage_bind_forward_only",
     "storage_bind_within_solve", "storage_bind_within_period", "storage_bind_within_solve_blended_weights",
     "storage_bind_within_period_blended_weights",
-    "storage_bind_forward_only_blended_weights", "storage_fix_start",
+    "storage_bind_forward_only_blended_weights", "storage_fix_start", "storage_fix_end",
     "p_state_upper", "p_state_unitsize", "p_state_self_discharge",
-    "p_state_start", "p_state_existing_capacity",
+    "p_state_start", "p_state_end", "p_state_existing_capacity",
     "storage_use_reference_value", "p_storage_state_reference_value",
     "p_storage_state_reference_price",
     "node_profile_upper", "node_profile_lower", "node_profile_fixed",
     "p_node_availability", "p_roll_continue_state",
     "n_fix_storage_quantity", "ndt_fix_storage_quantity",
     "p_fix_storage_quantity", "n_fix_storage_usage",
-    "ndt_fix_storage_usage", "p_fix_storage_usage",
+    "ndt_fix_storage_usage", "p_fix_storage_usage", "ndt_fix_storage_price",
     "p_node_capacity_for_scaling",
     "nd_invest_set", "nd_divest_set",
     "group_node",

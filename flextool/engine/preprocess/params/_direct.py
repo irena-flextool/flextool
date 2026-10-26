@@ -502,6 +502,15 @@ def p_state_start_from_source(source: "InputSource") -> Param | None:
     return _entity_scalar_explicit(source, "node", "storage_state_start", "n")
 
 
+def p_state_end_from_source(source: "InputSource") -> Param | None:
+    """``node.storage_state_end`` → ``Param(("n",), [n, value])``: the end state of a fix_end / fix_start_end node,
+    a share of its storage capacity.
+
+    Default ``None`` (schema).  Returns explicit rows only.
+    """
+    return _entity_scalar_explicit(source, "node", "storage_state_end", "n")
+
+
 # §5.2.7 — process scalars sliced from p_process.csv
 # NOTE: ``unit.min_load`` is NOT a direct (p,) scalar.  It is produced as a
 # shape-correct (p, d, t) Param by ``_derived.apply_derived_b`` (via
@@ -2108,6 +2117,7 @@ def apply_direct_params_a(source: "InputSource",
 
     # ─── Δ.4 second wave — node scalars (storage feature) ───────────────
     flex_data.p_state_start = p_state_start_from_source(source)
+    flex_data.p_state_end = p_state_end_from_source(source)
 
     # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
     # ``p_min_load`` is produced authoritatively as a shape-correct

@@ -1,5 +1,22 @@
 ## Unreleased
 
+- **`fix_end` / `fix_start_end` fix the end of the storage.** The
+  `storage_state_end` of a *fix_end* or *fix_start_end* storage was never
+  applied: the storage ended wherever the model chose. The end state is now
+  pinned to `storage_state_end` (a share of the storage capacity, invested
+  storage included) at the last step of the last solve of each nesting level
+  (the last roll of a rolling solve, each terminal branch of a stochastic
+  solve). At the end of a nested lower level, an upper-level *fix_quantity*
+  or *fix_usage* of the same step takes precedence.
+
+- **The horizon-end reference value yields to a nested storage fix.** A
+  nested dispatch solve with `storage_solve_horizon_method`
+  *use_reference_value* and `storage_nested_fix_method` *fix_quantity* (the
+  recommended nested setup) pinned the end of each roll both to the
+  reference value and to the storage solve's state, and the solve was
+  infeasible. Where the upper-level solve fixes, caps or prices the storage
+  at the step, its value now overrides the reference value, as documented.
+
 - **Nested dispatch rolls keep their unit commitment, ramps and running
   totals.** In a nested solve every dispatch roll after the first took the
   roll-forward carriers from the storage or investment solve above it,

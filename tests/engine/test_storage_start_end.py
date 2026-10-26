@@ -2,6 +2,9 @@
 
 * ``bind_within_timeblock`` + ``fix_start`` pins the state the first step starts from: the wrap target of the first
   step (the last step of the first timeblock), not the state at the end of the first step.
+* Later solves and rolls continue from the realised state; fix_start only where a level first appears.
+* ``fix_end`` / ``fix_start_end`` pin the end of the last sub-solve of each nesting level; an upper-level nested
+  fix_quantity / fix_usage at that step wins.  The horizon-end reference value yields to any nested fix.
 
 Databases: ``tests/fixtures/tests.json`` / ``stochastics.json`` plus an override alternative (never a checked-in
 sqlite).
@@ -557,3 +560,215 @@ def test_nested_dispatch_rolls_continue_commitment_ramps_and_totals(tmp_path_fac
         for name in (names[s1], names[s1 + 1]):
             assert _close(_rows(steps[name].flex_data.p_roll_continue_online, ["p", "value"]),
                           _rows(steps[names[s1 - 1]].handoff.roll_end_online, ["process", "value"])), name
+
+
+# ---------------------------------------------------------------------------
+# fix_end / fix_start_end pin the end of the last sub-solve of each level (N6); the reference value yields to a
+# nested fix (N11)
+# ---------------------------------------------------------------------------
+
+END = "storage_state_end_binding"
+REF = "storage_state_solve_horizon_reference_value"
+FIX_Q = "node_balance_fix_quantity_eq_lower"
+FIX_U = "node_storage_usage_fix_le"
+
+
+def _last_steps(fd, node: str = "battery") -> set[tuple[str, str]]:
+    """(d, t) of nodeState_last_dt ∩ period_last for ``node``."""
+    last = utf8(fd.nodeState_last_dt).filter(pl.col("n") == node)
+    periods = set(utf8(fd.period_last)["d"].to_list())
+    return {(d, t) for d, t in last.select("d", "t").iter_rows() if d in periods}
+
+
+def _existing(fd, node: str, d: str) -> float:
+    return float(utf8(fd.p_state_existing_capacity.frame)
+                 .filter((pl.col("n") == node) & (pl.col("d") == d))["value"][0])
+
+
+def test_fix_end_pins_the_last_step(tmp_path_factory):
+    """wind_battery (y2020_2day_dispatch, p2020 t0001–t0048), battery bind_forward_only + fix_end with
+    storage_state_end 0.3 and existing 50 MWh: the state at the end of t0048 is pinned to 0.3·50 = 15 MWh (bounds
+    15/su in state units), with no start pin (fix_end fixes only the end).  Before, no row pinned the end and the
+    state ended at 9.999 MWh."""
+    url, scen = make_db(tmp_path_factory, alt="sse_end", base_chain=WIND_BATTERY, values=[
+        ["node", "battery", "storage_start_end_method", _s("fix_end")],
+        ["node", "battery", "storage_binding_method", _s("bind_forward_only")],
+        ["node", "battery", "storage_state_end", _f(0.3)]])
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    fd = step.flex_data
+    assert _last_steps(fd) == {("p2020", "t0048")}
+    pb = build(fd)
+    rows = row_bounds(pb, END, "battery,")
+    assert set(rows) == {f"{END}[battery,p2020,t0048]"}
+    su = _su(fd)
+    assert rows[f"{END}[battery,p2020,t0048]"] == (pytest.approx(0.3 * 50.0 / su), pytest.approx(0.3 * 50.0 / su))
+    assert not _bare(pb, "battery") and not row_terms(pb, PIN, "battery,")
+    assert _state_mwh(step, "battery")["t0048"] == pytest.approx(15.0, abs=1e-6)
+
+
+def test_fix_end_only_in_the_last_roll(tmp_path_factory):
+    """fullYear_roll (p2020–p2035, 72 h each) rolling 36 h / 24 h, battery bind_forward_only + fix_end 0.3: only the
+    last roll ends the model, so only it has the end row (at the end of p2035) and its realised end is 0.3 of the
+    capacity; the earlier rolls end free (reference.md: the last timestep of the last roll)."""
+    url, scen = make_db(tmp_path_factory, alt="sse_end_roll", base_chain=FULLYEAR_ROLL, values=[
+        ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(36.0)],
+        ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(24.0)],
+        ["node", "battery", "storage_start_end_method", _s("fix_end")],
+        ["node", "battery", "storage_binding_method", _s("bind_forward_only")],
+        ["node", "battery", "storage_state_end", _f(0.3)]])
+    steps = list(run(tmp_path_factory, url, scen).values())
+    assert len(steps) > 3
+    for step in steps[:-1]:
+        assert step.flex_data.storage_solve_last is False, step.solve_name
+        assert not row_terms(build(step.flex_data), END, "battery,"), step.solve_name
+    last = steps[-1]
+    fd = last.flex_data
+    assert fd.storage_solve_last is True
+    assert {r.split("[", 1)[1].rstrip("]") for r in row_terms(build(fd), END, "battery,")} == {
+        f"battery,{d},{t}" for d, t in _last_steps(fd)}
+    assert {d for d, _t in _last_steps(fd)} == {"p2035"}
+    assert _realised_end(last) == pytest.approx(0.3 * _existing(fd, "battery", "p2035"), abs=1e-6)
+
+
+def test_fix_end_with_investment(tmp_path_factory):
+    """wind_battery_invest (5weeks, battery invest_total ≤ 800 MWh), battery bind_forward_only + fix_end 0.5: the end
+    row carries the built capacity, −0.5 on each v_invest_n column in service, so the realised end state is half of
+    the existing plus the invested storage."""
+    url, scen = make_db(tmp_path_factory, alt="sse_end_inv",
+                        base_chain=["init", "west", "wind", "battery", "battery_invest", "5weeks"], values=[
+        ["node", "battery", "storage_start_end_method", _s("fix_end")],
+        ["node", "battery", "storage_binding_method", _s("bind_forward_only")],
+        ["node", "battery", "storage_solve_horizon_method", _s("free")],
+        ["node", "battery", "storage_state_end", _f(0.5)]])
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    fd = step.flex_data
+    pb = build(fd)
+    rows = row_terms(pb, END, "battery,")
+    assert rows and set(rows) == {f"{END}[battery,{d},{t}]" for d, t in _last_steps(fd)}
+    su = _su(fd)
+    inv = utf8(step.solution.value("v_invest_n")).filter(pl.col("n") == "battery")
+    invested = {d: v for d, v in inv.select("d", "value").iter_rows()}
+    assert sum(invested.values()) > 1e-6, "the battery is built"
+    for name, terms in rows.items():
+        d, t = name[:-1].split(",")[-2:]
+        cols = {c: v for c, v in terms.items() if c.startswith("v_invest_n[battery,")}
+        assert cols and all(v == pytest.approx(-0.5) for v in cols.values()), terms
+        built = sum(invested[c[:-1].split(",")[-1]] for c in cols)
+        state = _state_mwh(step, "battery")[t]
+        assert state == pytest.approx(0.5 * (_existing(fd, "battery", d) + built * su), rel=1e-7), (d, t)
+
+
+@pytest.mark.parametrize("method", ["fix_quantity", "fix_usage", "fix_price"])
+def test_fix_end_nested(tmp_path_factory, method):
+    """Nested invest → storage → dispatch (36 h / 24 h), battery bind_forward_only + fix_start_end (end 0.3) and the
+    given nested fix method.  The invest solve and the storage solve are the last of their levels and have the end
+    row.  The last dispatch roll ends the dispatch level: with fix_quantity / fix_usage the upper solve fixes its end
+    step and wins (the fix row, no end row); a fix_price only values that end, so the end row stays.  Earlier dispatch
+    rolls have no end row."""
+    url, scen = make_db(tmp_path_factory, alt=f"sse_end_nest_{method}", base_chain=NESTED, values=[
+        ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(36.0)],
+        ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(24.0)],
+        ["node", "battery", "storage_start_end_method", _s("fix_start_end")],
+        ["node", "battery", "storage_state_end", _f(0.3)],
+        ["node", "battery", "storage_nested_fix_method", _s(method)]])
+    steps = run(tmp_path_factory, url, scen)
+    rolls = [k for k in steps if k.startswith("dispatch_fullYear_roll_roll_")]
+    assert len(rolls) > 3
+    for name in ("invest_24h", "storage_fullYear_6h"):
+        fd = steps[name].flex_data
+        assert fd.storage_solve_last is True, name
+        assert set(row_terms(build(fd), END, "battery,")) == {
+            f"{END}[battery,{d},{t}]" for d, t in _last_steps(fd)}, name
+    for name in rolls[:-1]:
+        assert steps[name].flex_data.storage_solve_last is False, name
+        assert not row_terms(build(steps[name].flex_data), END, "battery,"), name
+    last = steps[rolls[-1]]
+    fd = last.flex_data
+    assert fd.storage_solve_last is True
+    pb = build(fd)
+    ends = {f"battery,{d},{t}" for d, t in _last_steps(fd)}
+    if method == "fix_price":
+        assert {r.split("[", 1)[1][:-1] for r in row_terms(pb, END, "battery,")} == ends
+        assert _realised_end(last) == pytest.approx(0.3 * _existing(fd, "battery", "p2035"), abs=1e-6)
+    else:
+        fam = FIX_Q if method == "fix_quantity" else FIX_U
+        assert {r.split("[", 1)[1][:-1] for r in row_terms(pb, fam, "battery,")} == ends
+        assert not row_terms(pb, END, "battery,")
+    assert all(s.solution.optimal for s in steps.values())
+
+
+def test_fix_end_stochastic(tmp_path_factory):
+    """2_day_stochastic_dispatch, hydro_reservoir bind_forward_only + fix_end 0.4: each terminal branch period ends
+    at the target, one row per terminal period, and each branch's end state is 0.4 of the existing 5000."""
+    from flextool.engine import run_chain_from_db
+
+    url, scen = _stochastic_db(tmp_path_factory, "sse_end_stoch", [
+        ["node", "hydro_reservoir", "storage_binding_method", "bind_forward_only"],
+        ["node", "hydro_reservoir", "storage_start_end_method", "fix_end"],
+        ["node", "hydro_reservoir", "storage_state_end", 0.4]])
+    steps = list(run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("sse_end_stoch_w"),
+                                   keep_solutions=True).values())
+    assert all(s.solution.optimal for s in steps)
+    step = steps[-1]
+    fd = step.flex_data
+    node = "hydro_reservoir"
+    ends = _last_steps(fd, node)
+    assert len(ends) > 1 and len({d for d, _t in ends}) == len(ends)
+    assert set(row_terms(build(fd), END, f"{node},")) == {f"{END}[{node},{d},{t}]" for d, t in ends}
+    su = _su(fd, node)
+    v = utf8(step.solution.value("v_state")).filter(pl.col("n") == node)
+    for d, t in ends:
+        got = float(v.filter((pl.col("d") == d) & (pl.col("t") == t))["value"][0]) * su
+        assert got == pytest.approx(0.4 * _existing(fd, node, d), rel=1e-7), (d, t)
+
+
+@pytest.mark.parametrize("method", ["fix_nothing", "fix_quantity", "fix_usage", "fix_price"])
+def test_reference_value_yields_to_a_nested_fix(tmp_path_factory, method):
+    """Nested invest → storage → dispatch (36 h / 24 h), battery bind_forward_only + use_reference_value 0.4 and the
+    given nested fix method.  The storage solve fixes (or prices) every dispatch roll's end step, so with a nested fix
+    no dispatch roll has the reference row (how_to.md: the fixed storage value overrides the horizon end value); the
+    fix sits at each roll end instead.  Without a nested fix (control) every roll end has the reference row.  The
+    invest and storage solves have no upper fix and keep their reference rows; every solve is optimal.  Before, roll 0
+    had both the fix row and the reference row on v_state[t0036] (20 vs the storage state) and was infeasible."""
+    url, scen = make_db(tmp_path_factory, alt=f"sse_ref_{method}", base_chain=NESTED, values=[
+        ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(36.0)],
+        ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(24.0)],
+        ["node", "battery", "storage_solve_horizon_method", _s("use_reference_value")],
+        ["node", "battery", "storage_nested_fix_method", _s(method)]])
+    steps = run(tmp_path_factory, url, scen)
+    assert all(s.solution.optimal for s in steps.values())
+    rolls = [k for k in steps if k.startswith("dispatch_fullYear_roll_roll_")]
+    assert len(rolls) > 3
+    for name in rolls:
+        fd = steps[name].flex_data
+        pb = build(fd)
+        ends = {f"battery,{d},{t}" for d, t in _last_steps(fd)}
+        assert ends, name
+        refs = {r.split("[", 1)[1][:-1] for r in row_terms(pb, REF, "battery,")}
+        if method == "fix_nothing":
+            assert refs == ends, name
+            continue
+        assert not refs, name
+        if method == "fix_price":
+            assert fd.ndt_fix_storage_price is not None, name
+        else:
+            fam = FIX_Q if method == "fix_quantity" else FIX_U
+            assert {r.split("[", 1)[1][:-1] for r in row_terms(pb, fam, "battery,")} == ends, name
+    for name in ("invest_24h", "storage_fullYear_6h"):
+        fd = steps[name].flex_data
+        assert {r.split("[", 1)[1][:-1] for r in row_terms(build(fd), REF, "battery,")} == {
+            f"battery,{d},{t}" for d, t in _last_steps(fd)}, name
+
+
+def test_storage_solve_last_per_level():
+    """The last sub-solve of each nesting level: a later sub-solve at the same level clears the flag; a realised-
+    dispatch sibling is not counted and takes its parent's flag."""
+    from flextool.engine.solve._run_model import _storage_solve_last
+
+    solves = ["inv", "sto_0", "d_0", "d_1", "sto_1", "d_2", "d_3", "uc_0", "rd_0", "uc_1", "rd_1"]
+    level = {"inv": 0, "sto_0": 1, "sto_1": 1, "d_0": 2, "d_1": 2, "d_2": 2, "d_3": 2,
+             "uc_0": 0, "rd_0": 0, "uc_1": 0, "rd_1": 0}
+    siblings = {"rd_0": "uc_0", "rd_1": "uc_1"}
+    got = dict(zip(solves, _storage_solve_last(solves, level.__getitem__, siblings)))
+    assert got == {"inv": False, "sto_0": False, "d_0": False, "d_1": False, "sto_1": True, "d_2": False,
+                   "d_3": True, "uc_0": False, "rd_0": False, "uc_1": True, "rd_1": True}

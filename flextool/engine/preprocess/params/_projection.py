@@ -1252,6 +1252,20 @@ def storage_fix_start(source: "InputSource") -> pl.DataFrame:
               .collect())
 
 
+def storage_fix_end(source: "InputSource") -> pl.DataFrame:
+    """Nodes whose end state is fixed: ``storage_start_end_method`` ``fix_end`` or ``fix_start_end``.
+    Schema: ``[n]``."""
+    df = _try_param(source, "node", "storage_start_end_method")
+    if df is None:
+        return _empty({"n": pl.Utf8})
+    return (df.lazy()
+              .filter(pl.col("value").is_in(["fix_end", "fix_start_end"]))
+              .pipe(rename_to_axis, {"name": "n"})
+              .select("n")
+              .sort("n")
+              .collect())
+
+
 def n_fix_storage_quantity(source: "InputSource") -> pl.DataFrame:
     """Nodes with ``storage_nested_fix_method='fix_quantity'``.  Schema: ``[n]``."""
     df = _try_param(source, "node", "storage_nested_fix_method")
@@ -1925,6 +1939,7 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     # exported below for callers that want raw DB-source projection (e.g.
     # diagnostics), but is not wired here.
     "storage_fix_start": storage_fix_start,
+    "storage_fix_end": storage_fix_end,
     "n_fix_storage_quantity": n_fix_storage_quantity,
     "groupCapacityMargin": groupCapacityMargin,
     "groupInertia": groupInertia,

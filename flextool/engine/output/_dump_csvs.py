@@ -681,6 +681,7 @@ _P_COMMODITY_SLICES = {
 # p_node.csv columns: node, nodeParam, p_node
 _P_NODE_SLICES = {
     "storage_state_start": "p_state_start",
+    "storage_state_end": "p_state_end",
 }
 
 # p_process.csv columns: process, processParam, p_process

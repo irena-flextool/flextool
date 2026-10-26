@@ -48,7 +48,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Conversion          conversion_indirect (delayed inputs from [_delay]); minInputShare
   Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
-                      storage_state_start_binding[_cyclic_period]; storage_state_solve_horizon_reference_value
+                      storage_state_start_binding[_cyclic_period]; storage_state_end_binding;
+                      storage_state_solve_horizon_reference_value
   Profiles            profile_flow_{upper_limit,lower_limit,fixed}
   Objective           balance slack penalty, commodity cost and sales, CO2 price, variable cost, startup cost,
                       storage reference price, invest/divest annuities, existing fixed cost (optional constant)
@@ -373,6 +374,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_state_profiles,
         _eq_storage_start_binding,
         _eq_storage_start_binding_cyclic,
+        _eq_storage_end_binding,
         _eq_storage_reference_value,
         _eq_profiles,
         # ── core objective terms ──
@@ -1540,8 +1542,9 @@ def _eq_node_balance_fix_quantity(b: _Build) -> None:
     )
 
 
-def _eq_storage_usage_fix(b: _Build) -> None:
-    """Storage usage per period capped by an upper-level solve."""
+def _fix_usage_target(b: _Build) -> "pl.DataFrame | None":
+    """``(n, d, t, value)``: the storage usage (MWh) an upper-level solve caps over each last period, at the period's
+    last step (node_storage_usage_fix_le); None when the solve has no such cap."""
     d = b.d
     if not (b.has_proc
             and b.has_storage
@@ -1552,6 +1555,73 @@ def _eq_storage_usage_fix(b: _Build) -> None:
             and d.period_last is not None
             and d.p_fix_storage_usage is not None
             and d.nodeState_last_dt is not None):
+        return None
+    target = (d.n_fix_storage_usage
+              .join(d.p_fix_storage_usage.frame.pipe(rename_to_axis, {"d": "d_upper", "t": "t_upper"}),
+                    on="n", how="inner")
+              .join(d.period_branch, on="d_upper", how="inner")
+              .join(d.dtt_timeline_matching.select("d", "t_upper").unique(), on=["d", "t_upper"], how="inner")
+              .join(d.period_last, on="d", how="inner")
+              # On (n, d) only: every window of the period sums onto its last step.
+              .join(d.nodeState_last_dt, on=["n", "d"], how="inner")
+              # Fixed summation order: the joins above leave row order
+              # hash-dependent, which changes the float sum in the last bit.
+              .sort(["n", "d", "t", "d_upper", "t_upper"])
+              .group_by(["n", "d", "t"])
+              .agg(pl.col("value").sum())
+              .select("n", "d", "t", "value"))
+    return target if target.height > 0 else None
+
+
+def _fix_price_steps(b: _Build) -> "pl.DataFrame | None":
+    """``(n, d, t)``: the last step of each last period that an upper-level solve prices for a nested fix_price (the
+    storage reference price term values the state there); None when the solve has no such step."""
+    d = b.d
+    if not (b.has_storage
+            and _has_rows(d.ndt_fix_storage_price)
+            and _has_rows(d.dtt_timeline_matching)
+            and d.period_branch is not None
+            and d.period_last is not None
+            and d.nodeState_last_dt is not None):
+        return None
+    steps = (d.ndt_fix_storage_price.pipe(rename_to_axis, {"d": "d_upper", "t": "t_upper"})
+             .join(d.period_branch, on="d_upper", how="inner")
+             .join(d.dtt_timeline_matching, on=["d", "t_upper"], how="inner")
+             .join(d.period_last, on="d", how="inner")
+             .join(d.nodeState_last_dt, on=["n", "d", "t"], how="inner")
+             .select("n", "d", "t").unique())
+    return steps if steps.height > 0 else None
+
+
+def _nested_fixed_end(b: _Build, *, with_price: bool) -> "pl.DataFrame | None":
+    """``(n, d, t)``, all Utf8: the steps at which an upper-level solve fixes a nested storage node, i.e. the end of a
+    last period: node_balance_fix_quantity_eq_lower (fix_quantity), node_storage_usage_fix_le (fix_usage) and, with
+    ``with_price``, the nested fix_price steps.  None when there are none."""
+    parts = [_fix_quantity_target(b), _fix_usage_target(b)]
+    if with_price:
+        parts.append(_fix_price_steps(b))
+    frames = [f.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+              for f in parts if f is not None]
+    if not frames:
+        return None
+    return pl.concat(frames).unique().sort("n", "d", "t")
+
+
+def _without_steps(over: pl.DataFrame, steps: "pl.DataFrame | None") -> pl.DataFrame:
+    """``over`` (n, d, t) without the rows in ``steps`` (all-Utf8 (n, d, t)), keeping ``over``'s dtypes and order."""
+    if steps is None:
+        return over
+    utf = steps.rename({"n": "_n", "d": "_d", "t": "_t"})
+    return (over.with_columns(_n=pl.col("n").cast(pl.Utf8), _d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
+            .join(utf, on=["_n", "_d", "_t"], how="anti")
+            .drop("_n", "_d", "_t"))
+
+
+def _eq_storage_usage_fix(b: _Build) -> None:
+    """Storage usage per period capped by an upper-level solve."""
+    d = b.d
+    target = _fix_usage_target(b)
+    if target is None:
         return
 
     # ─── EQ. ─── node_storage_usage_fix_le ───────────────────────────────────
@@ -1569,23 +1639,6 @@ def _eq_storage_usage_fix(b: _Build) -> None:
     # The section term exists for min_load_efficiency units only.  The
     # process sink/source coefficient ratio is not applied (nor in the
     # source-side variable cost); it is 1 in every current dataset.
-    target = (d.n_fix_storage_usage
-              .join(d.p_fix_storage_usage.frame.pipe(rename_to_axis, {"d": "d_upper", "t": "t_upper"}),
-                    on="n", how="inner")
-              .join(d.period_branch, on="d_upper", how="inner")
-              .join(d.dtt_timeline_matching.select("d", "t_upper").unique(), on=["d", "t_upper"], how="inner")
-              .join(d.period_last, on="d", how="inner")
-              # On (n, d) only: every window of the period sums onto its last step.
-              .join(d.nodeState_last_dt, on=["n", "d"], how="inner")
-              # Fixed summation order: the joins above leave row order
-              # hash-dependent, which changes the float sum in the last bit.
-              .sort(["n", "d", "t", "d_upper", "t_upper"])
-              .group_by(["n", "d", "t"])
-              .agg(pl.col("value").sum())
-              .select("n", "d", "t", "value"))
-    if target.height == 0:
-        return
-
     nodes = d.n_fix_storage_usage.select("n")
 
     def _arcs_at_node(arcs: pl.DataFrame, side: str) -> pl.DataFrame:
@@ -2799,8 +2852,10 @@ def _eq_storage_start_binding(b: _Build) -> None:
     )
 
 
-def _eq_storage_start_binding_cyclic(b: _Build) -> None:
-    """Start state of fix_start storage nodes whose first step wraps to a later step of the solve."""
+def _cyclic_start_pin_steps(b: _Build, *, log: bool) -> "pl.DataFrame | None":
+    """``(n, d, t)``: the steps storage_state_start_binding_cyclic_period pins (the wrap targets of the cyclic
+    fix_start nodes' first steps, less the steps an upper-level solve fixes); None when there are none.  ``log``:
+    report the wrap targets that yield to an upper-level fix."""
     d = b.d
     if not (b.has_storage
             and _has_rows(d.storage_fix_start)
@@ -2808,15 +2863,15 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
             and d.p_state_existing_capacity is not None
             and d.p_state_unitsize is not None
             and _has_rows(d.nodeState_first_dt)):
-        return
+        return None
     cyclic = _self_discharge.node_union((d.storage_bind_within_timeblock, d.storage_bind_within_solve,
                                           d.storage_bind_within_period, _self_discharge.block_cyclic_nodes(d)))
     if cyclic is None:
-        return
+        return None
     nodes = cyclic.join(d.storage_fix_start, on="n", how="inner")
     nodes = _self_discharge.without_nodes(nodes, _self_discharge.carried_nodes(d))
     if nodes is None:
-        return
+        return None
     # The step each node's first step starts from: its wrap under the node's own lag (the lags of the state
     # change, _self_discharge.state_links).
     first = d.nodeState_first_dt.join(nodes, on="n", how="inner").select(
@@ -2832,14 +2887,23 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
                              pl.col("t").cast(pl.Utf8).alias("_t"))
         clash = wrap.rename({"n": "_n", "d": "_d", "t": "_t"}).join(fixed, on=["_n", "_d", "_t"], how="semi")
         if clash.height > 0:
-            _LOG.info("storage fix_start not pinned where the upper-level solve fixes the state at the same step: "
-                      "%s", ", ".join(f"{n} {dd} {tt}" for n, dd, tt in clash.sort("_n", "_d", "_t").iter_rows()))
+            if log:
+                _LOG.info("storage fix_start not pinned where the upper-level solve fixes the state at the same "
+                          "step: %s",
+                          ", ".join(f"{n} {dd} {tt}" for n, dd, tt in clash.sort("_n", "_d", "_t").iter_rows()))
             wrap = wrap.join(clash.rename({"_n": "n", "_d": "d", "_t": "t"}), on=["n", "d", "t"], how="anti")
     over = (b.nodeState_dt
             .with_columns(_n=pl.col("n").cast(pl.Utf8), _d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
             .join(wrap.rename({"n": "_n", "d": "_d", "t": "_t"}), on=["_n", "_d", "_t"], how="semi")
             .select("n", "d", "t").unique(maintain_order=True))
-    if over.height == 0:
+    return over if over.height > 0 else None
+
+
+def _eq_storage_start_binding_cyclic(b: _Build) -> None:
+    """Start state of fix_start storage nodes whose first step wraps to a later step of the solve."""
+    d = b.d
+    over = _cyclic_start_pin_steps(b, log=True)
+    if over is None:
         return
     m = b.m
 
@@ -2875,6 +2939,71 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     )
 
 
+def _eq_storage_end_binding(b: _Build) -> None:
+    """End state of fix_end / fix_start_end storage nodes in the last sub-solve of their nesting level."""
+    d = b.d
+    if not (b.has_storage
+            and d.storage_solve_last
+            and _has_rows(d.storage_fix_end)
+            and d.p_state_end is not None
+            and _has_rows(d.nodeState_last_dt)
+            and d.period_last is not None
+            and d.p_state_existing_capacity is not None
+            and d.p_state_unitsize is not None):
+        return
+    over = (d.nodeState_last_dt
+            .join(d.period_last, on="d", how="inner")
+            .join(d.storage_fix_end, on="n", how="inner")
+            .select("n", "d", "t").unique())
+    # An upper-level storage fix at the step wins (fix_quantity: a second equality on the same state; fix_usage: with
+    # the end pinned the usage cap can be infeasible).  A nested fix_price does not conflict and keeps the pin.
+    over = _without_steps(over, _nested_fixed_end(b, with_price=False))
+    # A cyclic fix_start_end node whose first step wraps to its end step: the start pin already sits on that state
+    # (the end of a cycle is its start), and two equalities would sit on one variable.  The start pin wins.
+    start_pins = _cyclic_start_pin_steps(b, log=False)
+    if start_pins is not None:
+        start_pins = start_pins.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                       pl.col("t").cast(pl.Utf8))
+        clash = (over.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+                 .join(start_pins, on=["n", "d", "t"], how="semi"))
+        if clash.height > 0:
+            _LOG.info("storage fix_end not pinned where the cyclic fix_start pin sits on the same state: %s",
+                      ", ".join(f"{n} {dd} {tt}" for n, dd, tt in clash.sort("n", "d", "t").iter_rows()))
+            over = _without_steps(over, start_pins)
+    over = over.sort("n", "d", "t")
+    if over.height == 0:
+        return
+
+    # ─── EQ. ─── storage_state_end_binding ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t] − state_end[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
+    #   + state_end[n]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
+    #   = state_end[n] · existing[n,d] / state_unitsize[n]
+    #   ∀ n ∈ storage_fix_end, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last, storage_solve_last,
+    #     (n,d,t) ∉ the steps node_balance_fix_quantity_eq_lower / node_storage_usage_fix_le fix,
+    #     (n,d,t) ∉ the steps storage_state_start_binding_cyclic_period pins
+    # Pins the state at the end of the last step of the last sub-solve of the node's nesting level (the last roll
+    # of the level) to the share state_end of the built storage capacity (state units); each last period (each
+    # terminal branch of a stochastic solve) ends there.  storage_fix_end = fix_end ∪ fix_start_end.  Where an
+    # upper-level solve fixes the quantity or caps the usage at that step the upper value wins; a nested fix_price
+    # steers the end through the objective and keeps the pin.  Where the end step is also the wrap target a cyclic
+    # fix_start_end node's start pin sits on (bind_within_solve, a single timeblock or period), the start pin wins.
+    m = b.m
+    lhs: dict = {"state": Where(b.v_state, over)}
+    invested, divested = _node_in_service(b, d.storage_fix_end, "_end", coef=d.p_state_end)
+    if invested is not None:
+        lhs["invest_neg"] = -invested
+    if divested is not None:
+        lhs["divest"] = divested
+    m.add_cstr(
+        "storage_state_end_binding",
+        over      = over,
+        sense     = "==",
+        lhs_terms = lhs,
+        rhs_terms = {"target": (d.p_state_end * d.p_state_existing_capacity) / d.p_state_unitsize},
+    )
+
+
 def _eq_storage_reference_value(b: _Build) -> None:
     """End state of storage nodes with a reference value."""
     d = b.d
@@ -2897,6 +3026,9 @@ def _eq_storage_reference_value(b: _Build) -> None:
         chain = [str(x) for x in d.period_block_chain["d"].to_list()] if _has_rows(d.period_block_chain) else []
         is_block = pl.col("n").cast(pl.Utf8).is_in([str(x) for x in d.nodeStateBlock["n"].to_list()])
         over = over.filter(~is_block | pl.col("d").cast(pl.Utf8).is_in(chain))
+    # An upper-level storage fix at the step (fix_quantity, fix_usage or fix_price) overrides the horizon-end
+    # reference value (how_to.md, nested solves); the reference stays at every other roll end.
+    over = _without_steps(over, _nested_fixed_end(b, with_price=True))
     if over.height == 0:
         return
 
@@ -2906,11 +3038,14 @@ def _eq_storage_reference_value(b: _Build) -> None:
     #   + reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   = reference_value[n,d,t] · existing[n,d] / state_unitsize[n]
     #   ∀ n ∈ storage_use_reference_value, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last,
-    #     (n ∈ nodeStateBlock ⇒ d ∈ period_block_chain)
+    #     (n ∈ nodeStateBlock ⇒ d ∈ period_block_chain), (n,d,t) ∉ the steps an upper-level solve fixes
     # Pins the state at the end of the solve horizon to the reference share of the built storage capacity
     # (state units), as maxState and the start pins count it.  Nodes with a competing end condition are not in
     # storage_use_reference_value; a bind_intraperiod_blocks node is, in a rolling solve, and is pinned where the
-    # roll holds its last period only in part (there its blocks chain forward instead of looping).
+    # roll holds its last period only in part (there its blocks chain forward instead of looping).  Where an
+    # upper-level solve fixes the node at the step (nested fix_quantity, fix_usage, fix_price) the upper value
+    # overrides the reference value: two equalities on one state (fix_quantity), a usage cap the pin could make
+    # infeasible (fix_usage), or a price meant to steer that end (fix_price).
     # reference_value on the pinned rows only: as a coefficient of the invest / divest sums it would otherwise span
     # every (n, d_invest, d, t) of the solve.
     rv = (promote_param_to_dt(d.p_storage_state_reference_value, d.dt)

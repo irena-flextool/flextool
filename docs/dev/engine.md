@@ -731,6 +731,30 @@ end-of-horizon state into both fields.  See architecture.md
 [Solve-to-solve handoff](architecture.md#solve-to-solve-handoff)
 for the carrier table.
 
+### Where the storage chain ends
+
+`fix_end` / `fix_start_end` (`storage_fix_end`) pin the state at
+`nodeState_last_dt ∩ period_last` to `storage_state_end` of the built
+capacity (`storage_state_end_binding`, `model._eq_storage_end_binding`),
+only in the last sub-solve of each nesting level.  `_run_model`
+computes that flag per sub-solve (`_storage_solve_last`: no later
+sub-solve at the same `CarryRouter.nesting_level`; a realised-dispatch
+sibling takes its parent's flag) and emits it as
+`solve_data/storage_solve_last` (`FlexData.storage_solve_last`, default
+True for a single solve or a FlexData built without the cascade).
+
+Precedence at a step where several end conditions meet
+(`model._nested_fixed_end`): an upper-level nested fix wins over the
+end pin for `fix_quantity` (`node_balance_fix_quantity_eq_lower`, a
+second equality on the same state) and `fix_usage`
+(`node_storage_usage_fix_le`, which the pin could make infeasible), not
+for `fix_price` (an objective term).  The horizon-end reference value
+(`storage_state_solve_horizon_reference_value`) yields to all three,
+`fix_price` included (`ndt_fix_storage_price`, the steps of
+`handoff/fix_storage_price`).  The end pin also yields where a cyclic
+`fix_start_end` node's start pin (`storage_state_start_binding_cyclic_period`)
+sits on the same state.
+
 ## Output-writer shape adaptation
 
 The Phase E.1 work made the post-solve output writers in

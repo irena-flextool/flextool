@@ -796,6 +796,10 @@ class FlexData:
     storage_bind_within_period_blended_weights: pl.DataFrame | None = None  # set: (n,)
     storage_bind_forward_only_blended_weights: pl.DataFrame | None = None   # set: (n,)
     storage_fix_start: pl.DataFrame | None = None
+    # Nodes whose end state is fixed (storage_start_end_method fix_end or fix_start_end), at the end of the last
+    # sub-solve of their nesting level (storage_solve_last; solve_data/storage_solve_last, default True).
+    storage_fix_end: pl.DataFrame | None = None  # set: (n,)
+    storage_solve_last: bool = True
     dtttdt: pl.DataFrame | None = None           # (d, t, t_previous_*, ...)
     dtttdt_forward_only: pl.DataFrame | None = None  # dtttdt with first (d,t) per solve dropped
     # (d, t, t_previous_within_period): the previous step of t in its own period; the first step of each period
@@ -820,6 +824,8 @@ class FlexData:
     n_fix_storage_usage: pl.DataFrame | None = None     # (n,)
     ndt_fix_storage_usage: pl.DataFrame | None = None   # (n, d, t)
     p_fix_storage_usage: Param | None = None            # (n, d, t)
+    # The (node, upper period, upper step) an upper-level solve hands a nested fix_price to (handoff/fix_storage_price).
+    ndt_fix_storage_price: pl.DataFrame | None = None   # (n, d, t), upper-level (d, t)
     dtt_timeline_matching: pl.DataFrame | None = None  # (d, t, t_upper) — lower→upper step map
     period_branch: pl.DataFrame | None = None         # (d_upper, d) — period→branch map
     period_last: pl.DataFrame | None = None           # (d,)
@@ -873,6 +879,7 @@ class FlexData:
     p_state_unitsize: Param | None = None        # (n,)
     p_state_self_discharge: Param | None = None  # (n, d, t): loss per hour
     p_state_start: Param | None = None           # (n,)
+    p_state_end: Param | None = None             # (n,): storage_state_end
     p_state_existing_capacity: Param | None = None  # (n, d)
     # ─── Storage end-state binding (use_reference_value) ─────────────────
     # mod:2802-2822 — pins v_state at the last timestep of period_last to
@@ -2722,6 +2729,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_bind_within_timeblock = None,
         storage_bind_forward_only = None,
         storage_fix_start = None,
+        storage_fix_end = None,
+        storage_solve_last = True,
         storage_use_reference_value = None,
         p_storage_state_reference_value = None,
         p_storage_state_reference_price = None,
@@ -2753,6 +2762,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         n_fix_storage_usage = None,
         ndt_fix_storage_usage = None,
         p_fix_storage_usage = None,
+        ndt_fix_storage_price = None,
         dtt_timeline_matching = None,
         period_branch = None,
         period_last = None,
@@ -2962,17 +2972,26 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         sse_key = "solve_data/node__storage_start_end_method"
     fix_start = None
     fix_end = None
-    fix_start_end = None
     if _provider_has(provider, sse_key, sse_path):
         sse = _provider_read(provider, sse_key, sse_path)
         if "storage_start_end_method" in sse.columns:
             sse = sse.pipe(rename_to_axis, {"node":"n","storage_start_end_method":"method"})
         elif "method" in sse.columns:
             sse = sse.pipe(rename_to_axis, {"node":"n"})
-        # fix_start_end fixes the start too (its end half: item 133).
+        # fix_start_end fixes both the start and the end.
         fix_start = (sse.filter(pl.col("method").is_in(["fix_start", "fix_start_end"])).select("n").unique())
-        fix_end = (sse.filter(pl.col("method")=="fix_end").select("n").unique())
-        fix_start_end = (sse.filter(pl.col("method")=="fix_start_end").select("n").unique())
+        fix_end = (sse.filter(pl.col("method").is_in(["fix_end", "fix_start_end"])).select("n").unique())
+        if fix_end.height == 0:
+            fix_end = None
+
+    # Whether this sub-solve is the last of its nesting level (_run_model): the end pin of fix_end / fix_start_end
+    # applies there only.  Default True (a single solve, a FlexData built without the cascade).
+    from flextool.engine.preprocess import _provider_keys as K
+    solve_last = True
+    if _provider_has(provider, K.SOLVE_DATA_STORAGE_SOLVE_LAST, sd / "storage_solve_last.csv"):
+        ssl = _provider_read(provider, K.SOLVE_DATA_STORAGE_SOLVE_LAST, sd / "storage_solve_last.csv")
+        if ssl.height > 0 and "value" in ssl.columns:
+            solve_last = bool(ssl["value"].cast(pl.Boolean)[0])
 
     # Rolling sub-solve: solve_data/roll_period_whole (period, whole) has a row per period of the roll
     # (_run_model).  The bind_intraperiod_blocks blocks of a period the roll holds only in part chain forward.
@@ -3018,7 +3037,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             nsb_df_local = _provider_read(provider, "solve_data/nodeStateBlock", nsb_path_local)
             if nsb_df_local.height > 0:
                 nsb_for_excl = nsb_df_local.pipe(rename_to_axis, {"node": "n"}).select("n")
-        for excl in (fix_end, fix_start_end,
+        for excl in (fix_end,
                      binding_within_solve, binding_within_period, binding_within_timeblock,
                      nsb_for_excl):
             if excl is not None and excl.height > 0:
@@ -3301,6 +3320,17 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         n_fix_storage_usage = fsu_frame.select("n").unique()
         ndt_fix_storage_usage = fsu_frame.select("n", "d", "t").unique()
 
+    # The steps an upper-level solve prices for a nested fix_price (handoff/fix_storage_price, upper-level (d, t)):
+    # the horizon-end reference value yields to the upper solve there (storage_state_solve_horizon_reference_value).
+    ndt_fix_storage_price = None
+    df_fsp = read_handoff_frame(provider, K.HANDOFF_FIX_STORAGE_PRICE)
+    if df_fsp is not None and df_fsp.height > 0:
+        df_fsp = (df_fsp.pipe(rename_to_axis, {"node": "n", "period": "d", "step": "t"})
+                  .filter(pl.col("p_fix_storage_price").is_not_null())
+                  .select("n", "d", "t").unique())
+        if df_fsp.height > 0:
+            ndt_fix_storage_price = df_fsp
+
     # ``dtt_timeline_matching`` (d, t, t_upper) and ``period_branch``
     # (d_upper, d) — seed from the snapshot CSVs.  ``apply_derived_e``
     # (the override-chain producer) is bypassed entirely for
@@ -3400,6 +3430,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_bind_within_period_blended_weights = binding_within_period_blended_weights,
         storage_bind_forward_only_blended_weights = binding_forward_only_blended_weights,
         storage_fix_start = fix_start,
+        storage_fix_end = fix_end,
+        storage_solve_last = solve_last,
         storage_use_reference_value = use_reference_value,
         p_storage_state_reference_value = p_ssrv,
         p_storage_state_reference_price = p_storage_state_reference_price,
@@ -3432,6 +3464,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         n_fix_storage_usage = n_fix_storage_usage,
         ndt_fix_storage_usage = ndt_fix_storage_usage,
         p_fix_storage_usage = p_fix_storage_usage,
+        ndt_fix_storage_price = ndt_fix_storage_price,
         dtt_timeline_matching = dtt_timeline_matching,
         period_branch = period_branch,
         period_last = period_last_df,

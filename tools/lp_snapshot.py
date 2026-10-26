@@ -1103,6 +1103,24 @@ def _patch_nested_rolling_storage_uc(data: dict) -> dict:
                         ["unit", "coal_plant", "min_uptime", 8.0]])
 
 
+def _patch_storage_sequence_start_end(data: dict) -> dict:
+    """The 4-solve investment sequence (y2020 -> y2035) with the battery bind_forward_only + fix_start_end (start 0.1,
+    end 0.3): y2020 starts from fix_start, y2025-y2035 continue from the realised state, and only y2035 (the last
+    solve) has storage_state_end_binding at its end."""
+    return _overlay(data, name="storage_sequence_start_end", base="wind_battery_invest_lifetime_renew_4solve",
+                    values=[["node", "battery", "storage_binding_method", "bind_forward_only"],
+                            ["node", "battery", "storage_start_end_method", "fix_start_end"],
+                            ["node", "battery", "storage_state_end", 0.3]])
+
+
+def _patch_nested_fix_quantity_reference(data: dict) -> dict:
+    """nested_fix_quantity with the battery use_reference_value 0.4: the dispatch rolls' ends are fixed by the
+    storage solve, so the reference value yields there; the invest and storage solves keep it."""
+    data = _nested(data, "nested_fix_quantity_reference_base", "fix_quantity")
+    return _overlay(data, name="nested_fix_quantity_reference", base="nested_fix_quantity_reference_base",
+                    values=[["node", "battery", "storage_solve_horizon_method", "use_reference_value"]])
+
+
 def _patch_rolling_intraperiod_blocks(data: dict) -> dict:
     """battery bind_intraperiod_blocks in the rolling fullYear dispatch over p2020 + p2025 (72 h each, horizon 96 h,
     jump 48 h): roll 0 holds p2020 whole (loops, cut at its realized end t0048) and chains into p2025; roll 1 starts
@@ -1437,6 +1455,8 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "rp_downgrade_within_solve": _patch_rp_downgrade_within_solve,
     "rolling_intraperiod_blocks": _patch_rolling_intraperiod_blocks,
     "nested_rolling_storage_uc": _patch_nested_rolling_storage_uc,
+    "storage_sequence_start_end": _patch_storage_sequence_start_end,
+    "nested_fix_quantity_reference": _patch_nested_fix_quantity_reference,
 }
 
 
@@ -1616,6 +1636,8 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("rp_downgrade_within_solve", _F + "lh2_three_region_rp_invest.json"),
     ("rolling_intraperiod_blocks", _T),
     ("nested_rolling_storage_uc", _T),
+    ("storage_sequence_start_end", _T),
+    ("nested_fix_quantity_reference", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

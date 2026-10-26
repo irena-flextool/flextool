@@ -68,6 +68,9 @@ SOLVE_DATA_P_ROLL_CONTINUE_STATE = "solve_data/p_roll_continue_state"
 # period (_run_model); header-only for a sub-solve that is not a roll.  The bind_intraperiod_blocks blocks of a
 # period loop when the roll holds the whole period and chain forward otherwise.
 SOLVE_DATA_ROLL_PERIOD_WHOLE = "solve_data/roll_period_whole"
+# (value) one Boolean row: whether the sub-solve is the last of its nesting level (_run_model); fix_end /
+# fix_start_end pin the end state there only.
+SOLVE_DATA_STORAGE_SOLVE_LAST = "solve_data/storage_solve_last"
 # (period, step, upper_step) all-Utf8: a nested child's steps matched to its parent's steps (_run_model); read by
 # the fix_quantity / fix_usage rows (FlexData dtt_timeline_matching) and by the fix_price reference-price derive.
 SOLVE_DATA_TIMELINE_MATCHING_MAP = "solve_data/timeline_matching_map"

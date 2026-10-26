@@ -243,6 +243,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "storage_state_start_binding": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_start_binding_cyclic
     "storage_state_start_binding_cyclic_period": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_storage_end_binding
+    "storage_state_end_binding": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_reference_value
     "storage_state_solve_horizon_reference_value": CstrFamily(QuantityType.ENERGY),
 
