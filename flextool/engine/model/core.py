@@ -1141,7 +1141,7 @@ def _eq_node_balance(b: _Build) -> None:
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
     #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n]
     #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n]
-    #   h = Δt·ln(1 + self_discharge_loss[n]),  α = h/(1 − e^{−h}) − 1,  β = 1 − h/(e^{h} − 1)
+    #   h = Δt·ln(1 + self_discharge_loss[n,d,t]),  α = h/(1 − e^{−h}) − 1,  β = 1 − h/(e^{h} − 1)
     #   S⁻ = the state the step starts from: v_state[n,d′,t⁻] by the binding method, v_state_rp_start at a
     #        representative block's first step, the fix_start start state / the roll carry at an open chain's
     #        first step, v_state[n,d,t] where the chain is open with neither
@@ -1224,8 +1224,9 @@ def _eq_node_balance_coarse(b: _Build) -> None:
     #   = − Σ_{t ∈ b} inflow[n,d,t]
     #   ∀ n ∈ nodeCoarse, (n,d,b) ∈ node_coarse_step;   t ∈ b: (n,d,b,t) ∈ node_coarse_step;   Δt = step_duration[d,t]
     #   t⁻, start and roll terms per storage_binding_method exactly as in nodeBalance_eq
-    #   α, β, S⁻ as in nodeBalance_eq with h = Δ_b·ln(1 + loss), Δ_b = Σ_{t∈b} Δt: α spread over the fine steps by
-    #   Δt/Δ_b, β at the first fine step only (the decay of the coarse step's own state over the coarse step)
+    #   α, β, S⁻ as in nodeBalance_eq with h_b = Σ_{t∈b} Δt·ln(1 + loss[n,d,t]), Δ_b = Σ_{t∈b} Δt: α spread over
+    #   the fine steps by Δt/Δ_b, β at the first fine step only (the decay of the coarse step's own state over the
+    #   coarse step; the flow weighting assumes the loss constant within the coarse step)
     # nodeBalance_eq summed over the fine steps of each coarse step of the node's group: every flow stays on the
     # solve's steps and each coarse leg sums its fine flows, so an arc between a fine and a coarse node, or
     # between two coarse nodes, conserves energy at both ends.  The node may shift energy freely within a coarse
@@ -1662,8 +1663,8 @@ def _eq_block_coupling(b: _Build) -> None:
     #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n] ]
     #   = − Σ_{t ∈ b} inflow[n,d,t]
     #   ∀ n ∈ nodeStateBlock, (d,b) ∈ period_block;   t ∈ b by period_block_time;   Δt = step_duration[d,t]
-    #   α, β, S⁻ as in nodeBalanceCoarse_eq with the block b (h = Δ_b·ln(1 + loss)); S⁻ at the block's first step is
-    #   the previous block's state
+    #   α, β, S⁻ as in nodeBalanceCoarse_eq with the block b (h_b = Σ_{t∈b} Δt·ln(1 + loss[n,d,t])); S⁻ at the
+    #   block's first step is the previous block's state
     # nodeBalance_eq summed over each timeset block of a bind_intraperiod_blocks node.  The state is constant within
     # a block (stateConstantWithinBlock_eq), so the state terms telescope to v_state[b⁻] − v_state[b]: v_state of a
     # block is its state at the end of the block.  b⁻ is the previous block of the period, the first block of a

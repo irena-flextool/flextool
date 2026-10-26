@@ -867,7 +867,7 @@ class FlexData:
     flow_from_nodeBalance_noEff: pl.DataFrame | None = None
     p_state_upper: Param | None = None           # (n, d) — capacity / unitsize
     p_state_unitsize: Param | None = None        # (n,)
-    p_state_self_discharge: Param | None = None  # (n,)
+    p_state_self_discharge: Param | None = None  # (n, d, t): loss per hour
     p_state_start: Param | None = None           # (n,)
     p_state_existing_capacity: Param | None = None  # (n, d)
     # ─── Storage end-state binding (use_reference_value) ─────────────────

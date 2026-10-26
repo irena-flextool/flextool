@@ -555,6 +555,7 @@ _PDT_NODE_SLICES = {
     "penalty_down": "p_penalty_down",
     "availability": "p_node_availability",
     "storage_state_reference_value": "p_storage_state_reference_value",
+    "self_discharge_loss": "p_state_self_discharge",
 }
 
 _PDT_PROCESS_SLICES = {
@@ -679,7 +680,6 @@ _P_COMMODITY_SLICES = {
 
 # p_node.csv columns: node, nodeParam, p_node
 _P_NODE_SLICES = {
-    "self_discharge_loss": "p_state_self_discharge",
     "storage_state_start": "p_state_start",
 }
 

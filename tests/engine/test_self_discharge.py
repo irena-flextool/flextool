@@ -499,3 +499,172 @@ def test_links_match_lp(tmp_path_factory, fixture):
         migrate_database(url)
         fd = list(run_chain_from_db(url, "agg_rp", work_folder=work / "w", keep_solutions=True).values())[-1].flex_data
     assert _guard_links_match_lp(fd) > 0
+
+
+# ---------------------------------------------------------------------------
+# Time-varying self_discharge_loss (item 128): a constant and the equivalent map give the same LP; a varying map
+# decays each step at its own rate
+# ---------------------------------------------------------------------------
+
+
+def _timeline_steps(fixture: Path, timeline: str = "y2020") -> list[str]:
+    import base64
+
+    data = json.loads(fixture.read_text())
+    for cls, name, param, val, _alt in data["parameter_values"]:
+        if cls == "timeline" and name == timeline and param == "timestep_duration":
+            return [k for k, _v in json.loads(base64.b64decode(val[0]))["data"]]
+    raise AssertionError(f"no timeline {timeline} in {fixture}")
+
+
+def _map_of(steps: list[str], values: dict, default: float) -> list:
+    return b64({"index_type": "str", "index_name": "time",
+                "data": [[t, values.get(t, default)] for t in steps]}, "map")
+
+
+def _assert_same_lp(steps_a: list, steps_b: list) -> None:
+    """Every sub-solve's LP is the same: rows, columns, coefficients and bounds (the same floats)."""
+    assert len(steps_a) == len(steps_b) > 0
+    for a, b in zip(steps_a, steps_b):
+        ma, mb = build(a.flex_data).canonicalise(), build(b.flex_data).canonicalise()
+        assert list(ma.row_names) == list(mb.row_names), a.solve_name
+        assert list(ma.col_names) == list(mb.col_names), a.solve_name
+        assert list(ma.col_ptr) == list(mb.col_ptr) and list(ma.row_idx) == list(mb.row_idx), a.solve_name
+        assert list(ma.val) == list(mb.val), a.solve_name
+        assert list(ma.row_lb) == list(mb.row_lb) and list(ma.row_ub) == list(mb.row_ub), a.solve_name
+
+
+def _run_json(tmp_path_factory, fixture: Path, base: str, values: list, tag: str) -> list:
+    from flextool.engine import run_chain_from_db
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    data = _lp_snapshot()._overlay(json.loads(fixture.read_text()), name="custom", base=base, values=values)
+    work = tmp_path_factory.mktemp(tag)
+    (work / "f.json").write_text(json.dumps(data))
+    url = json_to_db(work / "f.json", work / "f.sqlite")
+    migrate_database(url)
+    steps = list(run_chain_from_db(url, "custom", work_folder=work / "w", keep_solutions=True).values())
+    assert steps and all(s.solution is not None for s in steps)
+    _WORK[id(steps[-1])] = work / "w"
+    return steps
+
+
+_WORK: dict = {}       # last step id → its work folder (_run_json)
+
+
+TESTS_JSON = REPO / "tests" / "fixtures" / "tests.json"
+STOCH_JSON = REPO / "tests" / "fixtures" / "stochastics.json"
+
+
+@pytest.mark.parametrize("case", ["single", "single_period_map", "coarse", "rolling"])
+def test_constant_equals_map(tmp_path_factory, case):
+    """loss 0.01 as a constant and as the equivalent time (or period) map: the same LP in every sub-solve.  Before
+    the map was read as one value per map entry and every balance coefficient of the battery was summed over the
+    entries (×72)."""
+    steps = _timeline_steps(TESTS_JSON)
+    vals_c = [v for v in _values(0.01) if v[2] != "self_discharge_loss"]
+    ents = None
+    chain = CHAIN
+    if case == "coarse":
+        vals_c, ents = _coarse_values(0.01)
+        vals_c = [v for v in vals_c if v[2] != "self_discharge_loss"]
+    elif case == "rolling":
+        vals_c = [v for v in _roll_values(0.01) if v[2] != "self_discharge_loss"]
+        chain = CHAIN + ["fullYear", "dispatch_fullYear_roll"]
+    loss_c = ["node", "battery", "self_discharge_loss", b64(0.01, "float")]
+    if case == "single_period_map":
+        loss_m = ["node", "battery", "self_discharge_loss",
+                  b64({"index_type": "str", "index_name": "period", "data": [["p2020", 0.01]]}, "map")]
+    else:
+        loss_m = ["node", "battery", "self_discharge_loss", _map_of(steps, {}, 0.01)]
+    a = _solve(tmp_path_factory, f"sdc_{case[:6]}c", vals_c + [loss_c], entities=ents, chain=chain, all_steps=True)
+    b = _solve(tmp_path_factory, f"sdc_{case[:6]}m", vals_c + [loss_m], entities=ents, chain=chain, all_steps=True)
+    _assert_same_lp(a, b)
+
+
+@pytest.mark.parametrize("base", ["2_day_stochastic_dispatch", "1_week_rolling_wind"])
+def test_constant_equals_map_stochastic(tmp_path_factory, base):
+    """Stochastic dispatch and rolling stochastic (stochastics.json): hydro_reservoir loss 0.01 as a constant and as
+    the equivalent time map give the same LP in every sub-solve (branch periods inherit their anchor's values)."""
+    steps = _timeline_steps(STOCH_JSON)
+    a = _run_json(tmp_path_factory, STOCH_JSON, base, [["node", "hydro_reservoir", "self_discharge_loss", 0.01]],
+                  "sdcs_c")
+    m = {"type": "map", "index_type": "str", "index_name": "time", "data": [[t, 0.01] for t in steps]}
+    b = _run_json(tmp_path_factory, STOCH_JSON, base, [["node", "hydro_reservoir", "self_discharge_loss", m]],
+                  "sdcs_m")
+    _assert_same_lp(a, b)
+
+
+def test_time_varying_hourly(tmp_path_factory):
+    """Loss 0.01 in t0001–t0012 and 0.05 from t0013, charge in t0003: S(t0024) = 10·(1 − e^{−λ1})/λ1 ·
+    e^{−9λ1 − 12λ2}, and the written loss per step = α_t·S_t + β_t·S_{t−1} with each step's own λ."""
+    steps = _timeline_steps(TESTS_JSON)
+    early = {t: 0.01 for t in steps[:12]}
+    vals = [v for v in _values(0.01) if v[2] != "self_discharge_loss"]
+    vals += [["node", "battery", "self_discharge_loss", _map_of(steps, early, 0.05)]]
+    run_steps, wf, _ = _run_wf(tmp_path_factory, "sd_tv", vals)
+    step = run_steps[-1]
+    s = _states(step)
+    l1, l2 = _lam(0.01), _lam(0.05)
+    want = E * (1 - math.exp(-l1)) / l1 * math.exp(-9 * l1 - 12 * l2)
+    assert s[("p2020", "t0024")] == pytest.approx(want, rel=1e-7)
+    rep = _reported(wf, step.solve_name)
+    order, _dur = _steps_dur(step.flex_data)
+    for i, k in enumerate(order):
+        loss = 0.01 if k[1] in early else 0.05
+        a, b = _ab(1.0, loss)
+        prev = s[order[i - 1]] if i > 0 else 0.0
+        assert rep[k] == pytest.approx(a * s[k] + b * prev, rel=1e-9, abs=1e-12), k
+    assert sum(rep.values()) == pytest.approx(E - s[order[-1]], rel=1e-9)
+
+
+def test_time_varying_coarse(tmp_path_factory):
+    """The battery in a 24-h coarse group with loss 0.01 in hours 1–12 and 0.05 after: the day's decay is
+    h_b = 12λ1 + 12λ2, so S(day 1) = 10·(1 − e^{−h_b})/h_b and S(day 2)/S(day 1) = e^{−24λ2}."""
+    steps = _timeline_steps(TESTS_JSON)
+    vals, ents = _coarse_values(0.01)
+    vals = [v for v in vals if v[2] != "self_discharge_loss"]
+    vals += [["node", "battery", "self_discharge_loss", _map_of(steps, {t: 0.01 for t in steps[:12]}, 0.05)]]
+    s = _states(_solve(tmp_path_factory, "sd_tvc", vals, entities=ents))
+    h_b = 12 * _lam(0.01) + 12 * _lam(0.05)
+    assert s[("p2020", "t0024")] == pytest.approx(E * (1 - math.exp(-h_b)) / h_b, rel=1e-7)
+    assert s[("p2020", "t0048")] / s[("p2020", "t0024")] == pytest.approx(math.exp(-24 * _lam(0.05)), rel=1e-7)
+
+
+def test_time_varying_block(tmp_path_factory):
+    """bind_intraperiod_blocks (blocks t0001–t0024 and t0026–t0049) with loss 0.01 in hours 1–12 and 0.05 after:
+    block A decays by h_A = 12λ1 + 12λ2, block B by h_B = 24λ2, so the loop gives S_A = g_A·10/(1 − e^{−h_A − h_B})
+    with g_A = (1 − e^{−h_A})/h_A, and S_B = e^{−h_B}·S_A."""
+    steps = _timeline_steps(TESTS_JSON)
+    vals, ents = _block_values(0.01)
+    vals = [v for v in vals if v[2] != "self_discharge_loss"]
+    vals += [["node", "battery", "self_discharge_loss", _map_of(steps, {t: 0.01 for t in steps[:12]}, 0.05)]]
+    s = _states(_solve(tmp_path_factory, "sd_tvb", vals, entities=ents))
+    h_a = 12 * _lam(0.01) + 12 * _lam(0.05)
+    h_b = 24 * _lam(0.05)
+    s_a = (1 - math.exp(-h_a)) / h_a * E / (1 - math.exp(-h_a - h_b))
+    assert s[("p2020", "t0024")] == pytest.approx(s_a, rel=1e-7)
+    assert s[("p2020", "t0049")] == pytest.approx(math.exp(-h_b) * s_a, rel=1e-7)
+
+
+def test_duplicate_loss_keys_raise():
+    """A loss frame with two values for one node and step is refused at build time (it would scale the storage's
+    whole state change)."""
+    from types import SimpleNamespace
+
+    from polar_high import Param
+
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    dt = pl.DataFrame({"d": ["p1", "p1"], "t": ["t1", "t2"]})
+    d = SimpleNamespace(
+        p_state_self_discharge=Param(("n",), pl.DataFrame({"n": ["s", "s"], "value": [0.01, 0.02]})),
+        p_step_duration=Param(("d", "t"), dt.with_columns(value=pl.lit(1.0))),
+        node_coarse_step=None, nodeStateBlock=None, period_block_time=None)
+    with pytest.raises(FlexToolConfigError, match="more than one value"):
+        _self_discharge.loss_coefficients(d, dt.with_columns(n=pl.lit("s")).select("n", "d", "t"))
+    d.p_state_self_discharge = Param(("n", "d", "t"), pl.DataFrame(
+        {"n": ["s", "s", "s"], "d": ["p1", "p1", "p1"], "t": ["t1", "t1", "t2"], "value": [0.01, 0.01, 0.01]}))
+    with pytest.raises(FlexToolConfigError, match="s"):
+        _self_discharge.loss_coefficients(d, dt.with_columns(n=pl.lit("s")).select("n", "d", "t"))

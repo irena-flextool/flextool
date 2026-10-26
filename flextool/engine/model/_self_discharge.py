@@ -2,15 +2,15 @@
 
   # ─── self-discharge (in nodeBalance_eq, nodeBalanceCoarse_eq, nodeBalanceBlock_eq) ──
   #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n]
-  #   h = Δt·ln(1 + self_discharge_loss[n]),  α = h/(1 − e^{−h}) − 1,  β = 1 − h/(e^{h} − 1)   (α + β = h)
+  #   h = Δt·ln(1 + self_discharge_loss[n,d,t]),  α = h/(1 − e^{−h}) − 1,  β = 1 − h/(e^{h} − 1)
   #   S⁻ = the state the step starts from: v_state[n,d′,t⁻] by the binding method, v_state_rp_start at a
   #        representative block's first step, the fix_start start state / the roll carry at an open chain's first
   #        step, v_state[n,d,t] where the chain is open with neither (the step has no state change)
-  #   coarse steps / blocks b: h = Δ_b·ln(1 + loss), Δ_b = Σ_{t∈b} Δt; α spread over the fine steps by Δt/Δ_b, β at
-  #        the first fine step only
+  #   coarse steps / blocks b: h_b = Σ_{t∈b} Δt·ln(1 + loss[n,d,t]), Δ_b = Σ_{t∈b} Δt; α spread over the
+  #        fine steps by Δt/Δ_b, β at the first fine step only (the flow weighting assumes the loss constant in b)
   # The content decays continuously at ln(1 + loss) per hour and the flows of a step are spread evenly over the
-  # step: with this loss the balance row gives S_t = e^{−h}·S⁻ + (1 − e^{−h})/h · E_t/su (E_t the net energy into
-  # the storage in the step), exact for every modelled step whatever its length.  α, β ≥ 0.
+  # step: with this loss the balance row gives S_t = e^{−h}·S⁻ + (1 − e^{−h})/h · E_t/su (E_t the net energy
+  # into the storage in the step), exact for every modelled step whatever its length.  α, β ≥ 0, α + β = h.
 
 The model folds the loss into each state-change term: ``(S⁻·(1 − β) − S·(1 + α))·su`` (``keep_prev`` /
 ``keep_now``), so the β weight is always on the state the step's state change starts from.  The output writer
@@ -71,19 +71,48 @@ def _grouped_steps(d) -> "pl.DataFrame | None":
     return pl.concat(parts, how="vertical").unique(subset=["_n", "_d", "_t"], keep="first")
 
 
-def loss_coefficients(d, state_dt: "pl.DataFrame | None") -> "LossCoefficients | None":
-    """α, β over ``state_dt`` (the (n, d, t) of v_state); None when no storage node has a positive loss."""
+def _loss_frame(d) -> "pl.DataFrame | None":
+    """``(_n, _d, _t, loss)`` (Utf8 keys) of ``self_discharge_loss`` — per (n, d, t), or ``(_n, loss)`` for a
+    per-node constant (a Param over n only); None when absent.
+
+    Raises FlexToolConfigError when a node has more than one value for a key: summed duplicates would scale the
+    storage's whole state change (and not only the loss).
+    """
     loss = d.p_state_self_discharge
+    if loss is None or loss.frame.height == 0:
+        return None
+    frame = loss.frame
+    keys = [c for c in ("n", "d", "t") if c in frame.columns]
+    out = frame.select([pl.col(c).cast(pl.Utf8).alias(f"_{c}") for c in keys]
+                       + [pl.col("value").cast(pl.Float64).alias("loss")])
+    dup = out.group_by([f"_{c}" for c in keys]).len().filter(pl.col("len") > 1)
+    if dup.height > 0:
+        from flextool.engine.input._solve_state import FlexToolConfigError
+
+        names = ", ".join(sorted({str(x) for x in dup["_n"].to_list()}))
+        raise FlexToolConfigError(
+            f"self_discharge_loss of node(s) {names} has more than one value for the same step "
+            f"(keys {', '.join(keys)}); expected one value per node and step")
+    return out
+
+
+def loss_coefficients(d, state_dt: "pl.DataFrame | None") -> "LossCoefficients | None":
+    """α, β over ``state_dt`` (the (n, d, t) of v_state); None when no storage node has a positive loss.
+
+    λ[n,d,t] = ln(1 + self_discharge_loss[n,d,t]) (a per-node constant or a per-step value), h = Δt·λ.  A coarse
+    step / block b has h_b = Σ_{t∈b} Δt·λ_t (exact for idle decay); its α_b is spread over the fine steps by
+    Δt/Δ_b and β_b sits on the first fine step — the weighting of the flows assumes λ constant within b.
+    """
     dur = d.p_step_duration
-    if loss is None or dur is None or not _has_rows(state_dt):
+    if dur is None or not _has_rows(state_dt):
         return None
-    loss_frame = loss.frame.select(pl.col("n").cast(pl.Utf8).alias("_n"), pl.col("value").cast(pl.Float64)
-                                   .alias("loss"))
-    if loss_frame.filter(pl.col("loss") > 0.0).height == 0:
+    loss_frame = _loss_frame(d)
+    if loss_frame is None or loss_frame.filter(pl.col("loss") > 0.0).height == 0:
         return None
+    on = [c for c in ("_n", "_d", "_t") if c in loss_frame.columns]
     base = (state_dt.select("n", "d", "t")
             .with_columns(_n=pl.col("n").cast(pl.Utf8), _d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
-            .join(loss_frame, on="_n", how="left")
+            .join(loss_frame, on=on, how="left")
             .join(dur.frame.select(pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
                                    pl.col("value").cast(pl.Float64).alias("dur")), on=["_d", "_t"], how="left")
             .with_columns(pl.col("loss").fill_null(0.0))
@@ -93,14 +122,20 @@ def loss_coefficients(d, state_dt: "pl.DataFrame | None") -> "LossCoefficients |
     lam = np.log1p(base["loss"].to_numpy())
     dur_np = base["dur"].to_numpy()
     alpha, beta = alpha_beta(dur_np * lam)
-    base = base.with_columns(alpha=pl.Series(alpha), beta=pl.Series(beta))
+    base = base.with_columns(alpha=pl.Series(alpha), beta=pl.Series(beta), lam=pl.Series(lam))
     grouped = _grouped_steps(d)
     if grouped is not None:
         g = base.join(grouped, on=["_n", "_d", "_t"], how="inner")
         if g.height > 0:
-            g = (g.with_columns(span=pl.col("dur").sum().over("_n", "_d", "_b"))
-                 .sort("_n", "_d", "_b", "_t"))
-            ag, bg = alpha_beta(g["span"].to_numpy() * np.log1p(g["loss"].to_numpy()))
+            grp = ("_n", "_d", "_b")
+            # h_b = Σ Δt·λ_t; with λ constant in b the same value is Δ_b·λ (kept in that form, so a constant
+            # loss gives the same coefficients whether it was authored as a constant or as a map).
+            g = (g.sort("_n", "_d", "_b", "_t")
+                 .with_columns(span=pl.col("dur").sum().over(grp),
+                               h_b=pl.when(pl.col("lam").min().over(grp) == pl.col("lam").max().over(grp))
+                               .then(pl.col("dur").sum().over(grp) * pl.col("lam"))
+                               .otherwise((pl.col("dur") * pl.col("lam")).sum().over(grp))))
+            ag, bg = alpha_beta(g["h_b"].to_numpy())
             g = g.with_columns(
                 alpha=pl.Series(ag) * pl.col("dur") / pl.col("span"),
                 beta=pl.when(pl.col("_t") == pl.col("_b")).then(pl.Series(bg)).otherwise(0.0))

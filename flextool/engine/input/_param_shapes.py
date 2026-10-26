@@ -330,12 +330,17 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("node",       "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("connection", "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # ─── node: (period, time) Params ─────────────────────────────────────
-    # NODE_TIME_PARAM ⊇ {availability, storage_state_reference_value}.
+    # NODE_TIME_PARAM ⊇ {availability, storage_state_reference_value, self_discharge_loss}.
     # Cascade: pbt → pt → pd → p (write_pdtNode, time_first_priority=True).
     ("node", "availability"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
     ("node", "storage_state_reference_value"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
+    # Self-discharge loss per hour (schema: "Constant or time"; GMPL NODE_TIME_PARAM).  Consumer: the per-step
+    # loss weights of model/_self_discharge.py.
+    ("node", "self_discharge_loss"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
     # Balance slack penalties.  Cascade: pbt → pt → pd → p → class default (write_pdtNode).  Rank 3

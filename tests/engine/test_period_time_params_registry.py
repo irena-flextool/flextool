@@ -28,12 +28,12 @@ def test_derivation_rule_matches_registry():
     assert set(PERIOD_TIME_PARAMS) == expected
 
 
-def test_count_is_57_split_18_dual_39_period_only():
-    assert len(PERIOD_TIME_PARAMS) == 57
-    # 18 dual-axis: 17 with the full 2-D shape + commodity.price (two 1-D).
+def test_count_is_58_split_19_dual_39_period_only():
+    assert len(PERIOD_TIME_PARAMS) == 58
+    # 19 dual-axis: 18 with the full 2-D shape + commodity.price (two 1-D).
     dual_2d = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                if Shape.MAP_PERIOD_TIME in v}
-    assert len(dual_2d) == 17
+    assert len(dual_2d) == 18
     commodity_price = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                        if Shape.MAP_TIME in v and Shape.MAP_PERIOD_TIME not in v}
     assert commodity_price == {("commodity", "price")}
@@ -66,6 +66,7 @@ def test_known_dual_axis_members_present():
         ("flowGroup", "max_instant_flow"),
         ("node", "availability"),
         ("node", "storage_state_reference_value"),
+        ("node", "self_discharge_loss"),
         ("node", "penalty_up"),
         ("node", "penalty_down"),
         ("unit", "availability"),

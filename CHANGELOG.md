@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Time-varying `self_discharge_loss`.** A `self_discharge_loss` given as a
+  time (or period) map was read as one value per map entry and every
+  coefficient of the storage's balance was summed over the entries (about
+  72× for a 72-step map): the storage behaved as if it were many times
+  larger, with no error. The map is now read per period and time step: each
+  step decays at its own rate, and a coarse (`new_stepduration`) step or a
+  `bind_intraperiod_blocks` block decays by the sum of its hours' losses.
+
 - **`use_reference_value` counts invested storage.** The end state of a
   storage with `storage_solve_horizon_method` *use_reference_value* was
   pinned to `storage_state_reference_value` × the existing capacity only, so

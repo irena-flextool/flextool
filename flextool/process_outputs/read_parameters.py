@@ -1178,29 +1178,11 @@ def read_parameters(
 
     # node_self_discharge_loss / node_penalty_up / node_penalty_down /
     # node_inflow / commodity_price / group_co2_price / profile.
-    if (flex_data.p_state_self_discharge is not None
-            and flex_data.p_state_self_discharge.frame.height > 0):
-        # p_state_self_discharge has dims (n,).  Broadcast to (solve, d, t)
-        # via dt — matching the legacy ``pdtNode_self_discharge_loss.csv``
-        # which had per-(solve, period, time) rows × node columns even
-        # though the value is constant per node.
-        n_frame = flex_data.p_state_self_discharge.frame
-        dt_frame = flex_data.dt
-        broadcast = (
-            n_frame.lazy()
-                .join(dt_frame.lazy(), how="cross")
-                .with_columns(pl.lit(solve_name).alias("solve"))
-                .select("solve", "d", "t", pl.col("n"), pl.col("value"))
-                .collect()
-        )
-        p.node_self_discharge_loss = wide_per_entity(
-            broadcast, row_dims=("solve", "d", "t"), col_dim="n",
-            row_names=("solve", "period", "time"), col_name="node",
-        )
-    else:
-        p.node_self_discharge_loss = _empty_pdtX_per_entity(
-            flex_data=flex_data, solve_name=solve_name, col_name="node",
-        )
+    # p_state_self_discharge is (n, d, t) (a scalar is broadcast over the solve's steps by the reader).
+    p.node_self_discharge_loss = _pdtX_per_entity(
+        flex_data.p_state_self_discharge, solve_name=solve_name,
+        entity_dim="n", col_name="node", flex_data=flex_data,
+    )
 
     p.node_penalty_up = _pdtX_per_entity(
         flex_data.p_penalty_up, solve_name=solve_name,

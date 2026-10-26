@@ -481,14 +481,17 @@ def _entity_scalar_explicit(source: "InputSource", entity_class: str,
 
 
 # §5.2.5 — node scalars sliced from p_node.csv
-def p_state_self_discharge_from_source(source: "InputSource") -> Param | None:
-    """``node.self_discharge_loss`` → ``Param(("n",), [n, value])``.
+def p_state_self_discharge_from_source(source: "InputSource",
+                                      period_filter: pl.DataFrame | None = None,
+                                      ) -> Param | None:
+    """``node.self_discharge_loss`` → ``Param(("n", "d", "t"))``: the loss per hour of each storage step.
 
-    Default 0.0 (schema).  CSV path
-    (``flex_data.py::_load_storage::_node_param``) returns the explicit
-    rows only.  We mirror by reading via ``parameter_explicit``.
+    Uses :func:`._param_shapes.resolve_param_shape` → ``broadcast_to_period_time`` (shapes: scalar /
+    1d_map[period] / 1d_map[time] / 2d_map[period,time]; stochastic branch periods inherit their anchor).
+    Explicit rows only (schema default 0.0: no loss); a step a map leaves out has no row (no loss).
     """
-    return _entity_scalar_explicit(source, "node", "self_discharge_loss", "n")
+    resolved = resolve_param_shape(source, "node", "self_discharge_loss", period_filter=period_filter)
+    return broadcast_to_period_time(resolved, "n", period_filter)
 
 
 def p_state_start_from_source(source: "InputSource") -> Param | None:
@@ -2104,7 +2107,6 @@ def apply_direct_params_a(source: "InputSource",
         source, "retire_min_total", kind="divest", filter_zero=True)
 
     # ─── Δ.4 second wave — node scalars (storage feature) ───────────────
-    flex_data.p_state_self_discharge = p_state_self_discharge_from_source(source)
     flex_data.p_state_start = p_state_start_from_source(source)
 
     # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
@@ -2296,6 +2298,9 @@ def apply_direct_params_b(source: "InputSource",
         dt)
     if v is not None:
         flex_data.p_storage_state_reference_value = v
+    # Self-discharge per (n, d, t) (scalar or period / time map); None when no node authors one.
+    flex_data.p_state_self_discharge = _filter_param_by_periods(
+        p_state_self_discharge_from_source(source, period_filter=dt), dt)
 
     # ─── Δ.4b — CO2 (price + cap) ────────────────────────────────────────
     v = _filter_param_by_periods(
