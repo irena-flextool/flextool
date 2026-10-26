@@ -484,7 +484,9 @@ def _entity_scalar_explicit(source: "InputSource", entity_class: str,
 def p_state_self_discharge_from_source(source: "InputSource",
                                       period_filter: pl.DataFrame | None = None,
                                       ) -> Param | None:
-    """``node.self_discharge_loss`` → ``Param(("n", "d", "t"))``: the loss per hour of each storage step.
+    """``node.self_discharge_loss`` → the loss per hour of each storage step, a ``Param`` over ``n`` and the
+    authored axes (scalar ``(n,)``, period map ``(n, d)``, time map ``(n, t)``, period-time ``(n, d, t)``;
+    ``_self_discharge.loss_coefficients`` joins it on the axes it has).  None without an active period.
 
     Uses :func:`._param_shapes.resolve_param_shape` → ``broadcast_to_period_time`` (shapes: scalar /
     1d_map[period] / 1d_map[time] / 2d_map[period,time]; stochastic branch periods inherit their anchor).

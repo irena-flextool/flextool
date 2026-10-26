@@ -58,10 +58,17 @@ def _node_reader(name: str, value: float, parameter_name: str
     )
 
 
+# The solve's active (d, t): self_discharge_loss goes through the _param_shapes resolver (#128), which produces
+# nothing without an active period.
+_DT = pl.DataFrame({"d": ["p1", "p1"], "t": ["t1", "t2"]})
+
+
 def test_p_state_self_discharge_inmemory_explicit():
-    """Explicit ``self_discharge_loss`` row → ``Param(("n",), [n, value])``."""
+    """Explicit scalar ``self_discharge_loss`` row → ``Param(("n",), [n, value])`` (a scalar keeps the entity
+    axis only; the model broadcasts it over (d, t)); no active period → None."""
     src = _node_reader("nA", 0.05, "self_discharge_loss")
-    p = dp.p_state_self_discharge_from_source(src)
+    assert dp.p_state_self_discharge_from_source(src) is None
+    p = dp.p_state_self_discharge_from_source(src, period_filter=_DT)
     assert isinstance(p, Param)
     assert p.dims == ("n",)
     assert p.frame.sort("n")["value"].to_list() == pytest.approx([0.05])
@@ -77,7 +84,7 @@ def test_p_state_self_discharge_inmemory_no_rows():
             ),
         },
     )
-    assert dp.p_state_self_discharge_from_source(src) is None
+    assert dp.p_state_self_discharge_from_source(src, period_filter=_DT) is None
 
 
 def test_p_state_start_inmemory_explicit():
