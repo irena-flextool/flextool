@@ -84,6 +84,22 @@
   Where an upper-level nested solve fixes the storage state at that step
   (a nested roll whose horizon is one timeblock), the fixed value wins.
 
+- **Non-synchronous limit: internal flows, DC connections and reverse
+  flows.** The non-synchronous limit of a group counted the flows of a
+  connection between two nodes of the group (both directions, as supply)
+  in single solves, though not in rolling solves; the optimiser could cycle
+  energy through such a connection, or through a storage connection inside
+  the group, to loosen the limit. Those flows are now excluded on every
+  solve path, as documented. An `is_DC` connection's flow into the group
+  is counted as non-synchronous also when a unit is flagged
+  `is_non_synchronous` (it was dropped then), and the reverse flow of a
+  `no_losses_no_variable_cost` or DC connection is counted (infeed into the
+  group, supply out of it). Models with a non-synchronous limit change (the
+  `non_sync_and_curtailment` how-to: higher cost, the battery no longer
+  cycles). A warning names a `no_losses_no_variable_cost` connection that
+  crosses the boundary of a group with a non-synchronous limit (flowing
+  both ways at once is free and loosens the limit; use `exact`).
+
 - **The energy margin no longer enters the non-synchronous limit and the
   capacity margin.** An `energy_margin_multiplier` or `energy_margin_adder`
   added its demand to the group rows of the investment solve too: the

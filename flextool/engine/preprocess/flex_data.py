@@ -5295,6 +5295,10 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         _loadflex_prof("apply_db_overrides:pass_synthetic_inflow")
         _timed("c.synth inflow", _wire_inflow_split_for_synthetic_solve)
 
+        # The non-synchronous groups' internal transfers: the same rule as ``apply_derived_c`` (the
+        # sub-solve's process_source_sink / group_node / groupNonSync are loaded), not the CSV seed.
+        flex_data.process_group_inside_nonSync = _drv.process_group_inside_nonSync_from_flex(flex_data)
+
         # NA-1: the synthetic-solve early-return skips passes 3-10, so
         # ``apply_derived_g``'s ``apply_branch_cluster`` — the sole producer of
         # ``period_branch_full`` / ``dt_non_anticipativity`` — never runs on a

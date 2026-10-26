@@ -1378,16 +1378,31 @@ def process_source_inertia(source: "InputSource") -> pl.DataFrame:
 
 
 def process_sink_nonSync(source: "InputSource") -> pl.DataFrame:
-    """Output-arcs with ``is_non_synchronous='yes'``.  Schema: ``[p, sink]``."""
+    """Arcs whose infeed counts as non-synchronous.  Schema: ``[p, sink]``.
+
+    process_sink_nonSync = {(u, n) : unit__outputNode (u, n) with is_non_synchronous = yes}
+                         ∪ {(c, n) : connection c with is_DC = yes, n either node of its connection__node__node}
+    (flextool.mod l.1980–1985, ``emit/_mid_sets.derive_process__sink_nonSync``).  A DC connection's flow
+    into either of its nodes is non-synchronous.  ``connection.is_DC`` is read directly: the FlexData field
+    ``connection_dc_power_flow`` is a different set (DC power-flow lines).
+    """
+    parts: list[pl.LazyFrame] = []
     df = _try_param(source, "unit__outputNode", "is_non_synchronous")
-    if df is None:
+    if df is not None:
+        parts.append(df.lazy()
+                     .filter(pl.col("value") == "yes")
+                     .pipe(rename_to_axis, {"unit": "p", "node": "sink"})
+                     .select("p", "sink"))
+    dc = _try_param(source, "connection", "is_DC")
+    cnn = _try_entities(source, "connection__node__node")
+    if dc is not None and cnn is not None:
+        dc_names = dc.filter(pl.col("value") == "yes").get_column("name").cast(pl.Utf8).implode()
+        conn = cnn.lazy().filter(pl.col("connection").cast(pl.Utf8).is_in(dc_names))
+        for end in ("node_1", "node_2"):
+            parts.append(conn.select(alias_to_axis("connection", "p"), alias_to_axis(end, "sink")))
+    if not parts:
         return _empty({"p": pl.Utf8, "sink": pl.Utf8})
-    return (df.lazy()
-              .filter(pl.col("value") == "yes")
-              .pipe(rename_to_axis, {"unit": "p", "node": "sink"})
-              .select("p", "sink")
-              .sort("p", "sink")
-              .collect())
+    return pl.concat(parts, how="vertical").unique().sort("p", "sink").collect()
 
 
 # ---------------------------------------------------------------------------
@@ -2014,7 +2029,7 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
 # Set projections whose empty result means "no member" (field set to None), not "keep the seed".
 _AUTHORITATIVE_SETS: tuple[str, ...] = (
     "groupCapacityMargin", "groupInertia", "groupNonSync", "process_minload",
-    "process_online", "process_online_linear", "process_online_integer",
+    "process_online", "process_online_linear", "process_online_integer", "process_sink_nonSync",
 )
 
 

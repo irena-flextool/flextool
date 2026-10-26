@@ -126,6 +126,7 @@ def run(
         validate_group_output_memberships,
         validate_capacity_margin_groups,
         validate_group_limit_flags,
+        validate_non_sync_one_variable_connections,
         validate_min_load_efficiency_inputs,
         validate_connection_node_memberships,
         validate_connection_delay,
@@ -285,6 +286,7 @@ def run(
         # Step 4 — validators that need DB access.
         validate_capacity_margin_groups(db, logger)
         validate_group_limit_flags(db, logger)
+        validate_non_sync_one_variable_connections(db, provider, logger)
         validate_group_output_memberships(db, logger)
         validate_connection_node_memberships(db, logger)
 

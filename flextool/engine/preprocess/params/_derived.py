@@ -46,6 +46,7 @@ from polar_high import Param
 
 from flextool.engine.input._axis_enums import (
     alias_to_axis,
+    align_join_dtypes,
     axis_lazyframe,
     cast_dim,
     cast_frame_axes,
@@ -5695,24 +5696,42 @@ def online_mintime_carry_from_source(
 # ---------------------------------------------------------------------------
 
 
-def process_group_inside_nonSync_from_source(source: "InputSource"
-                                                  ) -> pl.DataFrame | None:
-    """Process×group set: processes belonging to a group nested inside a
-    non-sync group.  Algorithm (audit §3.12.1, ``nonsync_sets.py:90-152``):
+def process_group_inside_nonSync_from_flex(fd: object) -> pl.DataFrame | None:
+    """``(p, g)``: the processes whose flows stay inside the non-synchronous group g (internal transfers).
 
-      1. Pull non-sync groups (``group.<some_flag>`` or hand-curated).
-      2. Walk ``group__group`` nesting transitively.
-      3. For each (process, group) ∈ ``unit__inputNode → node ∈ group``,
-         emit if group is in the closure.
-
-    Defaults to None (empty) — fixtures without nested non-sync groups
-    surface this as a None overlay (no-op in load).
+    inside = {(p,g) : g ∈ groupNonSync, ∃ s ∈ src(p) ∩ N(g), k ∈ snk(p) ∩ N(g),
+                      not (|src(p) ∩ N(g)| = |snk(p) ∩ N(g)| = 1 ∧ s = k)}
+      src(p) = sources of the arcs of p in process_source_sink (other than p itself),
+      snk(p) = sinks of the arcs of p (other than p itself),  N(g) = nodes of g (group_node)
+    (flextool.mod l.4065/4075, ``emit/_mid_sets.derive_process__group_inside_group_nonSync``).  A process
+    with a source and a different sink node in g moves energy between the group's nodes: the non-synchronous
+    limit counts neither its infeed nor its draw.  A regular connection with one end in g has the same single
+    node on both sides, so it is not inside.  One rule for the single-solve and the synthetic-solve paths.
+    Sorted by (p, g); None when no process is inside a group.
     """
-    # Spine source has no direct entity class for ``process__group_inside_group_nonSync``
-    # — flextool builds it from ``group__group`` + ``group__node`` + the
-    # process arc topology.  Without a covered fixture we return None
-    # and rely on the CSV value (always empty for our scenarios).
-    return None
+    pss = getattr(fd, "process_source_sink", None)
+    gn = getattr(fd, "group_node", None)
+    gns = getattr(fd, "groupNonSync", None)
+    if pss is None or gn is None or gns is None or pss.height == 0 or gn.height == 0 or gns.height == 0:
+        return None
+    gns_g, gn_g = align_join_dtypes(gns.select("g"), gn.select("g", "n"), ("g",))
+    gn_ns = gn_g.join(gns_g, on="g", how="semi")
+    if gn_ns.height == 0:
+        return None
+    ends = []
+    for side in ("source", "sink"):
+        arcs = (pss.filter(pl.col(side).cast(pl.Utf8) != pl.col("p").cast(pl.Utf8))
+                .select("p", pl.col(side).alias("n")).unique())
+        arcs, gnj = align_join_dtypes(arcs, gn_ns, ("n",))
+        ends.append(arcs.join(gnj, on="n", how="inner")
+                    .group_by("p", "g")
+                    .agg(pl.col("n").n_unique().alias(f"{side}_count"),
+                         pl.col("n").cast(pl.Utf8).min().alias(f"{side}_node")))
+    both = ends[0].join(ends[1], on=["p", "g"], how="inner")
+    single_node = ((pl.col("source_count") == 1) & (pl.col("sink_count") == 1)
+                   & (pl.col("source_node") == pl.col("sink_node")))
+    out = both.filter(~single_node).select("p", "g").sort("p", "g")
+    return out if out.height > 0 else None
 
 
 # ---------------------------------------------------------------------------
@@ -6153,9 +6172,8 @@ def apply_derived_c(
     flex_data.p_negative_inflow = p_negative_inflow_from_inflow(inflow_real)
     flex_data.pdtNodeInflow_per_step = pdtNodeInflow_per_step_from_inflow(inflow_real, sd_csv)
 
-    # process_group_inside_nonSync — empty for all our covered fixtures.
-    flex_data.process_group_inside_nonSync = (
-        process_group_inside_nonSync_from_source(source))
+    # process_group_inside_nonSync — internal transfers of the non-synchronous groups.
+    flex_data.process_group_inside_nonSync = process_group_inside_nonSync_from_flex(flex_data)
 
     # ─── §3.8 online / UC ─────────────────────────────────────────────
     classified = _classify_process_method(source)

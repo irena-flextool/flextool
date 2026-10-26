@@ -529,6 +529,7 @@ def _eq_non_sync(b: _Build) -> None:
     # ─── EQ. ─── non_sync_constraint ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,s,k) ∈ in_ns(g)} v_flow[p,s,k,d,t] · unitsize[p] · Δt[d,t] · icap[g,d]
+    #   + Σ_{(p,s,k) ∈ back_in_ns(g)} v_flow_back[p,s,k,d,t] · unitsize[p] · Δt[d,t] · icap[g,d]
     #   + Σ_{n ∈ N(g)} positive_inflow[n,d,t] · icap[g,d]
     #   − vq_non_synchronous[g,d,t] · Δt[d,t]
     #   ≤ ns_limit[g,d] · icap[g,d] · ( Σ_{(p,s,k) ∈ out_noEff(g)} v_flow[p,s,k,d,t] · unitsize[p] · Δt[d,t]
@@ -536,22 +537,29 @@ def _eq_non_sync(b: _Build) -> None:
     #                                                            · Δt[d,t]
     #                                 + Σ_{(p,s,k) ∈ out_eff(g), p ∈ process_min_load_eff}
     #                                       v_online[p,d,t] · section[p] · unitsize[p] · Δt[d,t]
+    #                                 + Σ_{(p,s,k) ∈ back_out(g)} v_flow_back[p,s,k,d,t] · unitsize[p] · Δt[d,t]
     #                                 − Σ_{n ∈ N(g)} negative_inflow[n,d,t] )
     #   ∀ g ∈ groupNonSync, (d,t) ∈ dt
     #   groupNonSync = groups with has_non_synchronous = yes
     #   N(g) = nodes of g;  icap = inv_group_cap;  ns_limit = non_synchronous_limit, 0 where not authored (the
     #   right-hand side then vanishes: no non-synchronous infeed without the penalised slack)
-    #   in_ns(g) = arcs into N(g) with (p,k) ∈ process_sink_nonSync
-    #   out_*(g) = arcs out of N(g);  arcs of processes inside the group, (p,g) ∈ process_group_inside_nonSync,
-    #   are left out of in_ns and out_*
+    #   in_ns(g)      = arcs (p,s,k), k ∈ N(g), (p,k) ∈ process_sink_nonSync, (p,g) ∉ inside
+    #   back_in_ns(g) = twoway1var_arcs (p,s,k), s ∈ N(g), (p,s) ∈ process_sink_nonSync, (p,g) ∉ inside
+    #   out_*(g)      = arcs (p,s,k), s ∈ N(g), (p,g) ∉ inside
+    #   back_out(g)   = twoway1var_arcs (p,s,k), k ∈ N(g), (p,g) ∉ inside
+    #   process_sink_nonSync = unit arcs with is_non_synchronous ∪ (c,n) for is_DC connections c and their nodes n
+    #   inside = process_group_inside_nonSync: processes with a source and a different sink node in g
     #   positive_inflow / negative_inflow = max(inflow_real, 0) / min(inflow_real, 0);  inflow_real = the node's
     #   inflow before the invest-solve energy margin
-    # Non-synchronous infeed (flagged arcs and positive exogenous inflow,
-    # which counts as non-synchronous) is at most ns_limit times the group's
-    # supply, measured as the energy drawn by the processes and the demand
-    # leaving its nodes (the real demand: an energy margin does not count); the excess is penalised.  The slack has no icap,
-    # which makes it a fraction of group_capacity_for_scaling.  slope already
-    # holds the sink/source coefficient ratio of multi-arc processes.
+    # Non-synchronous infeed into the group (flagged unit arcs, DC connections,
+    # positive exogenous inflow) is at most ns_limit times the group's supply,
+    # measured as the energy its nodes deliver to processes, exports and the
+    # real demand (an energy margin does not count); the excess is penalised.
+    # Flows between nodes of the group are neither (inside).  The reverse flow
+    # of a one-variable / DC arc arrives at the arc's source and leaves its
+    # sink, lossless, as in nodeBalance_eq.  The slack has no icap, which makes
+    # it a fraction of group_capacity_for_scaling.  slope already holds the
+    # sink/source coefficient ratio of multi-arc processes.
     lhs: dict = {"slack_neg": -(b.vq_non_synchronous * d.p_step_duration)}
     if sink_ns is not None and sink_ns.height > 0 and b.v_flow is not None:
         pss_in_g = (pss.join(sink_ns, on=["p", "sink"], how="inner")
@@ -562,6 +570,16 @@ def _eq_non_sync(b: _Build) -> None:
         if pss_in_g.height > 0:
             lhs["incoming_nonSync"] = Sum(Where(b.v_flow, pss_in_g) * p_us * d.p_step_duration * invc,
                                           over=("p", "source", "sink"))
+    back = b.twoway1var_arcs if (b.v_flow_back is not None and _has_rows(b.twoway1var_arcs)) else None
+    if back is not None and sink_ns is not None and sink_ns.height > 0:
+        back_in = (back.join(sink_ns.rename({"sink": "source"}), on=["p", "source"], how="inner")
+                   .rename({"source": "n"})
+                   .join(gn_in_gns, on="n", how="inner")
+                   .rename({"n": "source"}))
+        back_in = _not_inside(back_in)
+        if back_in.height > 0:
+            lhs["incoming_nonSync_back"] = Sum(Where(b.v_flow_back, back_in) * p_us * d.p_step_duration * invc,
+                                               over=("p", "source", "sink"))
     p_pos = d.p_positive_inflow
     if p_pos is not None and gn_in_gns.height > 0:
         exo_in = (gn_in_gns.join(p_pos.frame.rename({"value": "v"}), on="n", how="inner")
@@ -601,6 +619,11 @@ def _eq_non_sync(b: _Build) -> None:
                     if b.v_online_integer is not None:
                         rhs["out_section_int"] = Sum(Where(b.v_online_integer, out_mle) * d.p_section * out_factor,
                                                      over=("p", "source", "sink"))
+    if out_factor is not None and back is not None:
+        back_out = _not_inside(back.rename({"sink": "n"}).join(gn_in_gns, on="n", how="inner")
+                               .rename({"n": "sink"}))
+        if back_out.height > 0:
+            rhs["out_back"] = Sum(Where(b.v_flow_back, back_out) * out_factor, over=("p", "source", "sink"))
     p_neg = d.p_negative_inflow
     if p_neg is not None and pgns is not None and gn_in_gns.height > 0:
         exo_out = (gn_in_gns.join(p_neg.frame.rename({"value": "v"}), on="n", how="inner")

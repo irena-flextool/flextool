@@ -30,12 +30,14 @@ from collections.abc import Iterable
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.input_derivation._method_constants import METHOD_2WAY_1VAR
 
 
 __all__ = [
     "validate_timeline_timestep_duration",
     "validate_capacity_margin_groups",
     "validate_group_limit_flags",
+    "validate_non_sync_one_variable_connections",
     "validate_min_load_efficiency_inputs",
     "validate_ladder_methods",
     "validate_group_output_memberships",
@@ -300,6 +302,56 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
         for g in sorted(flagged - set(values)):
             logger.warning(
                 "Group '%s' has %s = %s but no %s: %s.", g, flag, on, limit, _GROUP_LIMIT_ABSENT[limit])
+
+
+def validate_non_sync_one_variable_connections(db, provider, logger: logging.Logger) -> None:
+    """Warn about one-variable connections across the boundary of a group with a non-synchronous limit.
+
+    The non-synchronous limit counts the flows of a connection with one node in the group both ways: the
+    flow into the group as infeed, the flow out of it as supply.  A one-variable connection
+    (``no_losses_no_variable_cost``, and the lines of a ``dc_power_flow_with_angles`` group, which use it
+    internally) can flow both ways at once at no cost, so the optimiser can raise the group's supply side by
+    up to the line capacity and loosen the limit.  Warnings (``db`` is scenario-filtered), one per connection
+    and group, for groups with ``has_non_synchronous = yes``: the connection is classified ``2way_1var`` and
+    exactly one of its nodes is in the group.  ``is_DC`` connections are left out: their infeed into the
+    group counts as non-synchronous, so flowing both ways tightens the limit instead.  The same loophole
+    exists for a ``regular`` connection (documented); ``exact`` closes it.
+    """
+    groups = _entities_with_value(db, "group", "has_non_synchronous", "yes")
+    if not groups:
+        return
+    methods = _process_methods(provider)
+    one_var = {c for c, m in methods.items() if m in METHOD_2WAY_1VAR}
+    if not one_var:
+        return
+    is_dc = _entities_with_value(db, "connection", "is_DC", "yes")
+    dc_pf: set[str] = set()
+    if provider is not None and provider.has("input/connection_dc_power_flow"):
+        frame = provider.get("input/connection_dc_power_flow")
+        if frame is not None and frame.height > 0:
+            dc_pf = set(frame.get_column(frame.columns[0]).cast(str).to_list())
+    group_nodes: dict[str, set[str]] = {}
+    for ent in db.find_entities(entity_class_name="group__node"):
+        group_nodes.setdefault(ent["entity_byname"][0], set()).add(ent["entity_byname"][1])
+    for ent in sorted(db.find_entities(entity_class_name="connection__node__node"),
+                      key=lambda e: tuple(e["entity_byname"])):
+        conn, n1, n2 = ent["entity_byname"][:3]
+        if conn not in one_var or conn in is_dc:
+            continue
+        for g in sorted(groups):
+            nodes = group_nodes.get(g, set())
+            if (n1 in nodes) == (n2 in nodes):
+                continue
+            if conn in dc_pf:
+                logger.warning(
+                    "DC power-flow line '%s' crosses the boundary of group '%s' with a non-synchronous limit: its "
+                    "flows both ways count, and simultaneous flow both ways can loosen the limit at no cost.",
+                    conn, g)
+            else:
+                logger.warning(
+                    "Connection '%s' crosses the boundary of group '%s' with a non-synchronous limit: its flows "
+                    "both ways count, and simultaneous flow both ways can loosen the limit at no cost: use "
+                    "transfer_method exact.", conn, g)
 
 
 def validate_min_load_efficiency_inputs(db, logger: logging.Logger) -> None:
