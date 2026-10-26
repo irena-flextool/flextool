@@ -28,7 +28,7 @@ unit with ``min_uptime = min_downtime = 5`` and ``minimum_time_method="both"``
 on the fullYear rolling timeline (``rolling_solve_horizon=8``,
 ``rolling_solve_jump=4`` → 72 rolls, ``W=5 > jump=4``).  Pre-fix the realized
 roll-0 ``v_online`` collapsed to ``[0.418, 0.274, 0.152, 0.044]`` below its own
-startup obligation; with the wire it holds at ``[0.418, 0.274, 0.152, 0.152]``.
+startup obligation (``startup[0]≈0.152``); with the wire online[3] sits on the obligation ``Σ startup``.
 """
 from __future__ import annotations
 
@@ -190,15 +190,22 @@ def test_within_roll_min_downtime_enforced(rolling_uc):
 
 
 def test_roll0_online_holds_not_collapses(rolling_uc):
-    """Pinned driven witness: roll 0's realized ``v_online`` holds at its
-    startup floor (``[0.418, 0.274, 0.152, 0.152]``) instead of the HEAD
-    collapse ``[..., 0.044]`` below the ``startup[0]`` obligation."""
+    """Driven witness: roll 0 starts the unit up in its first step and then shuts down as far as min_uptime
+    allows, so ``v_online`` over steps 0-3 comes down to exactly the startup obligation
+    ``Σ v_startup[0..3]`` (the floor binds) instead of the HEAD collapse below it
+    (``online[3]≈0.044 < startup[0]≈0.152``).
+
+    The startup level itself is a tie of the linear online relaxation (0.152 before the unrounded
+    min-load slope/section of #140, 0.088 after, roll-0 objectives equal to 3e-8), so the witness asserts
+    the relation, not the level."""
     on = _per_roll_frame(rolling_uc["workdir"], "v_online_linear")
+    su = _per_roll_frame(rolling_uc["workdir"], "v_startup_linear")
     online0 = on[0][UNIT].to_list()[:4]
-    assert online0 == pytest.approx([0.418, 0.274, 0.152, 0.152], abs=5e-3), (
-        f"roll-0 online {online0} — expected the held floor, not a collapse"
-    )
-    # The HEAD collapse was online[3]≈0.044 < startup[0]≈0.152; now it holds.
-    assert online0[3] >= online0[2] - 1e-6, (
-        f"roll-0 online collapsed at step 3 ({online0}) — min_uptime not held"
+    startup0 = su[0][UNIT].to_list()[:4]
+    obligation = sum(startup0)
+    assert startup0[0] > 1e-3, f"roll 0 starts nothing up ({startup0}): the obligation is not exercised"
+    assert online0[0] > online0[3], f"roll 0 does not shut down ({online0}): the floor is not exercised"
+    assert online0[3] == pytest.approx(obligation, abs=1e-6), (
+        f"roll-0 online {online0}, startups {startup0}: online[3] must sit on the min_uptime obligation "
+        f"{obligation} (below it = collapse)"
     )
