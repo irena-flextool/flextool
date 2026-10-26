@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 
 import polars as pl
@@ -427,7 +428,14 @@ def test_coarse_storage_binding(tmp_path_factory) -> None:
     # the self-discharge α_b of the day on its state (the start is the fix_start energy in the bound).
     assert all(c.startswith("v_state[battery,p2020,") for c in states)
     alpha, beta = _alpha_beta_of_step(fd, "battery", "p2020", "t0001")
-    assert alpha > 0
+    # Closed form (oracle batch B, #152): the battery loses 1e-4 per hour, so the 24-h coarse step has
+    # h_b = 24·ln(1.0001) = 0.00239988, α_b = h_b/(1 − e^{−h_b}) − 1 = 0.00120042, β_b = 1 − h_b/(e^{h_b} − 1)
+    # = 0.00119946 (α_b + β_b = h_b).
+    h_b = 24 * math.log1p(1e-4)
+    assert beta == pytest.approx(1 - h_b / math.expm1(h_b), rel=1e-9)
+    assert beta == pytest.approx(0.00119946, rel=1e-6)
+    assert alpha == pytest.approx(h_b / -math.expm1(-h_b) - 1, rel=1e-9)
+    assert alpha == pytest.approx(0.00120042, rel=1e-6)
     assert sum(states.values()) == pytest.approx(-su * (1 + alpha), rel=1e-9)
     # fix_start: the start energy state_start × existing is in the bound (the summed −inflow minus it).
     lo, hi = row_bounds(pb, "nodeBalanceCoarse_eq", "battery,p2020,t0001")["nodeBalanceCoarse_eq[battery,p2020,t0001]"]
@@ -514,8 +522,9 @@ def test_coarse_price_sign(tmp_path_factory) -> None:
 
 def test_intraperiod_price_sign(tmp_path_factory) -> None:
     """battery bind_intraperiod_blocks on 5weeks: its block price has the sign of the price of the electricity
-    node it trades with (critique 11).  Before: nodeBalanceBlock_eq (written as the negation of nodeBalance_eq)
-    was extracted with the nodeBalance_eq sign, so the block prices had the opposite sign."""
+    node it trades with (critique 11).  The block row has the sign of nodeBalance_eq (σ = +1).  Before:
+    nodeBalanceBlock_eq was written as the negation of nodeBalance_eq but extracted with the nodeBalance_eq sign,
+    so the block prices had the opposite sign."""
     _steps, wf = _run_wf(tmp_path_factory, "c_ipb", [], ["init", "west", "wind", "coal", "battery", "5weeks",
                                                          "bind_battery_intraperiod_blocks"])
     dual = pl.read_parquet(next((wf / "output_raw").glob("v_dual_node_balance__*.parquet")))
@@ -532,9 +541,9 @@ def test_intraperiod_price_sign(tmp_path_factory) -> None:
 def test_nested_fix_price_from_coarse_parent(tmp_path_factory) -> None:
     """Nested invest (24 h) -> storage (6 h) -> rolling dispatch with battery fix_price and the battery in a 12-h
     group (not coarse in the 24-h solve, coarse in the 6-h one): the storage solve hands the dispatch the battery
-    price of each fix step = its coarse row's dual / s / (tw · inflation / period share) (critique 7; tw = 1
-    and no branches here).  Before: the storage solve had no nodeBalance_eq row for the battery, so no price
-    reached the child."""
+    price of each fix step = its coarse row's dual / s / (tw[d,t] · inflation[d] / period share[d] · bw[d,t])
+    (critique 7; tw and bw are per fine step, read from the solve, 1 where the solve has none).  Before: the
+    storage solve had no nodeBalance_eq row for the battery, so no price reached the child."""
     from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE as s_obj
     vals = [["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(36.0)],
             ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(24.0)],
@@ -552,11 +561,21 @@ def test_nested_fix_price_from_coarse_parent(tmp_path_factory) -> None:
     step_of = {(n, d, t): b for n, d, b, t in utf8(fd.node_coarse_step).iter_rows()}
     infl = dict(utf8(fd.p_inflation_op.frame).select("d", "value").iter_rows())
     share = dict(utf8(fd.p_period_share.frame).select("d", "value").iter_rows())
+
+    def per_step(param) -> dict[tuple[str, str], float]:
+        if param is None:
+            return {}
+        frame = utf8(getattr(param, "frame", param))
+        return {(d, t): w for d, t, w in frame.select("d", "t", "value").iter_rows()}
+
+    tw = per_step(getattr(fd, "p_timestep_weight", None))
+    bw = per_step(getattr(fd, "pdt_branch_weight", None))
     nonzero = 0
     for n, d, t, v in price.filter(pl.col("node") == "battery").select(
             "node", "period", "step", "p_fix_storage_price").iter_rows():
         b = step_of[(n, d, t)]
-        assert v == pytest.approx(dual[(n, d, b)] / s_obj / infl[d] * share[d], rel=1e-9, abs=1e-9)
+        w = tw.get((d, t), 1.0) * infl[d] / share[d] * bw.get((d, t), 1.0)
+        assert v == pytest.approx(dual[(n, d, b)] / s_obj / w, rel=1e-9, abs=1e-9)
         nonzero += abs(v) > 0
     assert nonzero > 0
 

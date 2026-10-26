@@ -10,7 +10,9 @@
   #        fine steps by Δt/Δ_b, β at the first fine step only (the flow weighting assumes the loss constant in b)
   # The content decays continuously at ln(1 + loss) per hour and the flows of a step are spread evenly over the
   # step: with this loss the balance row gives S_t = e^{−h}·S⁻ + (1 − e^{−h})/h · E_t/su (E_t the net energy
-  # into the storage in the step), exact for every modelled step whatever its length.  α, β ≥ 0, α + β = h.
+  # into the storage in the step), exact for every modelled step whatever its length while the loss is constant
+  # within the step (a coarse step / block with a time-varying loss: exact idle decay only, #152).
+  # α, β ≥ 0, α + β = h.
 
 The model folds the loss into each state-change term: ``(S⁻·(1 − β) − S·(1 + α))·su`` (``keep_prev`` /
 ``keep_now``), so the β weight is always on the state the step's state change starts from.  The output writer

@@ -55,7 +55,7 @@ For stochastic models the parquets carry only the **realised / committed** resul
     - *non-synchronous slack penalty* — M[CUR] cost of not meeting the non-synchronous constraint
     - *capacity margin penalty* — M[CUR] cost of not meeting the capacity margin constraint
     - *upward / downward reserve slack penalty* — M[CUR] cost of not meeting the reserve constraint
-- `model` entity `cost_t` parameter — M[CUR] same categories as above but per timestep (no investment / fixed terms)
+- `model` entity `cost_t` parameter — [CUR] (currency, not millions) same categories as above but per timestep: the cost incurred during the step, with the step duration and timestep weight applied but not scaled to a full year (no investment / fixed terms). The CSV / parquet output `costs__dt` has the same values and unit.
 - `model` entity `cost_discounted_solve` parameter — M[CUR] costs for the solve considering discounting and years represented (NPV currency)
 - `model` entity `cost_discounted_total` parameter — M[CUR] same, totalled over all realised periods
 

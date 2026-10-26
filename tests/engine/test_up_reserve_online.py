@@ -83,6 +83,11 @@ def _offline_case(tpf, alt: str, method: str):
 def test_offline_unit_holds_no_up_reserve(tmp_path_factory, method, kind) -> None:
     """An offline unit offers no upward reserve; the reserve requirement drives commitment.
 
+    Values (oracle batch D, own LP): holding R = 50 needs online ≥ out + 50 and out ≥ 0.5 · online, so the
+    cheapest commitment is online 100 MW / out 50 MW (linear) or one 500 MW unit / out 250 MW (binary); the 30 MW
+    (230 MW) excess at west costs 800/MWh, far below the 1e5 shortfall penalty, so the requirement is met (vq 0)
+    at every step.
+
     Before the fix the linear solve kept the coal plant offline (online 0) while it held the whole 50 MW
     reserve."""
     step = _offline_case(tmp_path_factory, f"uro_{kind}", method)
@@ -93,7 +98,11 @@ def test_offline_unit_holds_no_up_reserve(tmp_path_factory, method, kind) -> Non
     assert (up.filter(on <= TOL).abs() <= TOL).all()
     # The requirement is met by committing the unit, not by an unconstrained reserve.
     met = _vq(step) <= 1e-9
-    assert met.any()
+    assert met.all()
+    on_mw, out_mw = {"linear": (100.0, 50.0), "integer": (500.0, 250.0)}[kind]
+    assert on.to_list() == pytest.approx([on_mw] * on.len(), abs=1e-4)
+    assert out.to_list() == pytest.approx([out_mw] * out.len(), abs=1e-4)
+    assert up.to_list() == pytest.approx([50.0] * up.len(), abs=1e-4)
     assert ((on - out - up).filter(met) >= -1e-6).all()
     assert (on.filter(up > TOL) > 0.0).all()
     assert up.filter(met).min() == pytest.approx(50.0, abs=1e-4)
@@ -112,7 +121,11 @@ def test_indirect_online_unit_up_reserve_sum(tmp_path_factory) -> None:
     by the CHP.  Per arc, west 100 + reserve 200 ≤ online already holds whenever online ≥ 400 (the heat
     output alone needs that), so only the summed row can tie the reserve to the units online.  Before the
     fix that row had no reserve term: min_load 0.8 caps online at 400 / 0.8 = 500 MW while the reserve
-    stayed 200 MW (outputs + reserve = 600 MW > online), limited only by the 1000 MW built capacity."""
+    stayed 200 MW (outputs + reserve = 600 MW > online), limited only by the 1000 MW built capacity.
+
+    Values (oracle batch D): Σout ≥ 0.8 · online and Σout + R ≤ online give R ≤ 0.2 · online, so R = 200 needs
+    online = 1000 MW (all built capacity) and Σout = 800: west 100 (its demand), heat 700 (300 demand + 400 excess
+    at heat's penalty_down 50, far below the 1e5 shortfall penalty), at every step."""
     ents, vals = _up_reserve([("unit", CHP, "west")], reservation=200.0, penalty=1.0e5)
     step = solve(tmp_path_factory, alt="uro_chp", base_chain=CHP_CHAIN, entities=ents,
                  values=no_ratio_constraint() + vals + uc(CHP, 0.8)
@@ -122,7 +135,8 @@ def test_indirect_online_unit_up_reserve_sum(tmp_path_factory) -> None:
     up = reserve(step, CHP, "ru", "west")
     on = online(step, CHP)
     assert ((on - west - heat - up) >= -TOL).all()
-    assert up.max() > 1.0
+    for series, want in ((on, 1000.0), (west, 100.0), (heat, 700.0), (up, 200.0)):
+        assert series.to_list() == pytest.approx([want] * series.len(), abs=1e-4)
 
     pb = build(step.flex_data)
     for row, t in _row_terms(pb, "maxOutputSum_online_linear").items():

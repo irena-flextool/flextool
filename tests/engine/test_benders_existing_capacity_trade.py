@@ -56,8 +56,12 @@ REGIONS = ["region_A", "region_B", "region_C"]
 TRADE_CONNS = {"pipe_AB", "pipe_BC"}
 INVEST_SCENARIO = "lh2_three_region_invest"
 # The in-region wind units the monolith invests in: A and B.  wind_C is not
-# built (since c15b's coarse-group fix every electrolyser hour consumes
-# electricity; before, C built 838 MW).
+# built: the daily h2_C node is balanced once per day, so it acts as free
+# same-day storage (the electrolyser runs in reverse, h2 → elec), which covers
+# C's low-wind hours; elec_C's price is 0 whenever wind_C produces, so a new
+# MW of wind_C earns 0 against its 3 547.62 CUR/MW·a annuity (A and B earn
+# exactly the annuity).  An hourly h2 grid would build ~838 MW of wind_C, the
+# amount C built before c15b's coarse-group fix (oracle batch F §4).
 INVEST_UNITS = {"wind_A", "wind_B"}
 
 

@@ -55,8 +55,9 @@ def _steps(tpf, alt, ents, vals, chain=LL):
 def test_dynamic_counts_reverse_flow(tmp_path_factory) -> None:
     """C1: dynamic up reserve at lw with ll's increase_reserve_ratio 0.5: the requirement row has v_flow_back of
     ll (the import into lw) with −100 (0.5 × unitsize 200) as well as its v_flow; the shortfall scale holds both
-    directions' bounds (200 MW).  Solved: the requirement is 50 MW at t0002 (100 MW imported) and is met.  Before: no
-    v_flow_back term, the import raised no requirement."""
+    directions' bounds (200 MW).  Its v_flow (the export from lw) has −100 too: the docs count either direction.
+    Solved: the requirement is 50 MW at both steps (0.5 × the 100 MW exported at t0001 and imported at t0002) and
+    is met.  Before: no v_flow_back term, the import raised no requirement."""
     ents, vals = _reserve("dyu", "up", "gw", [("ll", "lw")], method="dynamic_only",
                           extra={"increase_reserve_ratio": 0.5})
     step = _steps(tmp_path_factory, "cr_dyn", _group("gw", "lw") + ents, vals)[-1]
@@ -65,14 +66,17 @@ def test_dynamic_counts_reverse_flow(tmp_path_factory) -> None:
     for row, terms in rows.items():
         t = row.split(",")[-1].rstrip("]")
         assert coef(terms, f"v_flow_back[ll,lw,le,p2020,{t}]") == pytest.approx(-100.0)
+        assert coef(terms, f"v_flow[ll,lw,le,p2020,{t}]") == pytest.approx(-100.0)
         assert coef(terms, f"vq_reserve[dyu,up,gw,p2020,{t}]") == pytest.approx(200.0)
     flow = {t: x for p, s, k, d, t, x in utf8(step.solution.value("v_flow")).rows()}
     back = {t: x for p, s, k, d, t, x in utf8(step.solution.value("v_flow_back")).rows()}
     req = {t: 100.0 * (flow[t] + back[t]) for t in flow}
+    assert req["t0001"] == pytest.approx(50.0, abs=1e-6)   # 0.5 × the 100 MW exported
     assert req["t0002"] == pytest.approx(50.0, abs=1e-6)   # 0.5 × the 100 MW imported
     res = {t: x for p, r, ud, n, d, t, x in utf8(step.solution.value("v_reserve")).rows()}
     q = {t: x for r, ud, g, d, t, x in utf8(step.solution.value("vq_reserve")).rows()}
-    assert res["t0002"] * 200.0 + q["t0002"] * 200.0 >= req["t0002"] - 1e-6
+    for t in ("t0001", "t0002"):
+        assert res[t] * 200.0 + q[t] * 200.0 >= req[t] - 1e-6, t
 
 
 def test_n_1_counts_reverse_flow(tmp_path_factory) -> None:

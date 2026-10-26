@@ -47,6 +47,13 @@ from flextool.engine import run_chain_from_db  # noqa: E402
 # Tolerance lifted from the existing scenario-test convention.
 OBJECTIVE_TOLERANCE = 1e-4
 
+# Objective of the hourly twin of this fixture (``daily_group.new_stepduration`` 24 → 1, or the daily group
+# removed: both give 5 855 731 058.77; oracle batch F, specs/bugfix/oracle_batch_F.md §2).  The daily model is a
+# relaxation of it: summing an hourly-feasible point's balances over each day gives a daily-feasible point, and
+# the daily state at the end of each day is the hourly state at that time.  So the daily objective can never
+# exceed it.
+HOURLY_TWIN_OBJECTIVE = 5_855_731_058.77
+
 
 # ---------------------------------------------------------------------------
 # Session-scoped fixtures
@@ -127,7 +134,9 @@ class TestLh2ThreeRegion:
         and is regenerated on demand via ``--regenerate lh2_three_region``
         on a separate parametrized test (see ``test_scenarios.py`` for
         the existing pattern).  Here we use a static JSON so the
-        threshold logic is explicit.
+        threshold logic is explicit.  Independently of the golden, the
+        daily objective is bounded above by the hourly twin's
+        (``HOURLY_TWIN_OBJECTIVE``).
         """
         v_obj_path = lh2_solve / "output_raw" / "v_obj__lh2_week.parquet"
         assert v_obj_path.exists(), f"v_obj parquet not produced at {v_obj_path}"
@@ -146,6 +155,10 @@ class TestLh2ThreeRegion:
                 f"{golden_path.relative_to(REPO_ROOT)}; commit it and "
                 f"re-run the test to validate."
             )
+        assert actual <= HOURLY_TWIN_OBJECTIVE, (
+            f"daily objective {actual!r} exceeds the hourly twin's "
+            f"{HOURLY_TWIN_OBJECTIVE!r}; the daily model is its relaxation"
+        )
         golden = json.loads(golden_path.read_text())
         expected = float(golden["objective"])
         rel_diff = abs(actual - expected) / max(abs(expected), 1.0)

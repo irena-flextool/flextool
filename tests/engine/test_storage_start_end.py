@@ -826,6 +826,30 @@ def _end_row_holds(step, node: str = "battery", invest: bool = False) -> None:
         assert _state_mwh(step, node)[t] == pytest.approx(0.3 * (_existing(fd, node, d) + built * su), rel=1e-7)
 
 
+def _end_state_closed_form(step, in_service: list[str], existing: float, node: str = "battery") -> None:
+    """The end row of ``step`` pins v_state[node, p2035, last] to 0.3·(existing + su·Σ v_invest_n[d]) over the
+    invest periods ``in_service`` (battery_invest: lifetime_method default reinvest_automatic, so every investment
+    stays in service to the end of the horizon; virtual_unitsize 1, so su = 1 MWh per unit).  ``existing`` comes
+    from the fixture or the earlier solves, not from the row: the row must have exactly −0.3 on each in-service
+    v_invest_n, 1 on the state (state units), and the bound 0.3·existing / su."""
+    fd = step.flex_data
+    rows = row_terms(build(fd), END, f"{node},")
+    assert len(rows) == 1, rows
+    (name, terms), = rows.items()
+    _d, t = name[:-1].split(",")[-2:]
+    assert name.startswith(f"{END}[{node},p2035,"), name
+    su = _su(fd, node)
+    assert su == pytest.approx(1.0)
+    cols = {c: v for c, v in terms.items() if c.startswith(f"v_invest_n[{node},")}
+    assert cols == {f"v_invest_n[{node},{d}]": pytest.approx(-0.3) for d in in_service}, cols
+    lo, hi = row_bounds(build(fd), END, f"{node},")[name]
+    assert terms[f"v_state[{node},p2035,{t}]"] == pytest.approx(1.0)
+    assert lo == pytest.approx(hi) and lo == pytest.approx(0.3 * existing / su)
+    inv = utf8(step.solution.value("v_invest_n")).filter(pl.col("n") == node)
+    built = sum(v for d, v in inv.select("d", "value").iter_rows() if d in in_service)
+    assert _state_mwh(step, node)[t] == pytest.approx(0.3 * (existing + built * su), rel=1e-7)
+
+
 @pytest.mark.parametrize("invest_to", ["p2035", "p2030"])
 def test_fix_end_in_every_solve_that_reaches_the_model_end(tmp_path_factory, invest_to):
     """Top-level sequence [invest_24h, dispatch_fullYear_roll] (no contains_solve), battery bind_forward_only + fix_end
@@ -833,7 +857,9 @@ def test_fix_end_in_every_solve_that_reaches_the_model_end(tmp_path_factory, inv
 
     * ``p2035``: the invest solve covers p2020–p2035 with 24 h steps; its last step t0049 lasts 24 h, so it ends at
       t0072 of p2035 and holds the model's last step: its end row is v_state[battery,p2035,t0049] with −0.3 on the
-      in-service v_invest_n columns, i.e. the state is 0.3·(existing + built) there.  The last dispatch roll
+      in-service v_invest_n columns, i.e. the state is 0.3·(existing + built) there: existing 50 MWh (tests.json
+      battery) and, battery_invest being reinvest_automatic, the units built in all four invest periods p2020–p2035
+      (su 1).  The last dispatch roll
       (t0049–t0072, 36 h / 24 h) holds it too and has its own end row (0.3 of its existing capacity).  Both pinned.
     * ``p2030``: the invest solve stops at the end of p2030 and never reaches p2035: no end row (before Q-c15f-D it
       was not pinned either, being followed by the dispatch at its level).  Only the last dispatch roll is pinned.
@@ -870,6 +896,8 @@ def test_fix_end_in_every_solve_that_reaches_the_model_end(tmp_path_factory, inv
         assert inv.flex_data.storage_solve_at_model_end is True
         assert inv_rows == {f"{END}[battery,p2035,t0049]"}
         _end_row_holds(inv, invest=True)
+        assert _existing(inv.flex_data, "battery", "p2035") == pytest.approx(50.0)
+        _end_state_closed_form(inv, ["p2020", "p2025", "p2030", "p2035"], 50.0)
     else:
         assert inv.flex_data.storage_solve_at_model_end is False
         assert not inv_rows
@@ -1074,7 +1102,12 @@ def test_fix_start_end_blocks_continue_between_solves(tmp_path_factory):
     −carry, as a forward-only node's first step), and no solve has the wrap-target pin.  The end pin sits at the
     model's last step (p2035 t0040) in every solve whose horizon holds it: y2030 (p2030 + p2035) and y2035 (p2035),
     not y2020 (ends with p2025) nor y2025 (p2030).  Before, the blocks looped in each solve: no carry in the balance
-    (bound 0)."""
+    (bound 0).
+
+    The pinned value (storage_state_end 0.3): the state at p2035 t0040 = 0.3·(existing + built), with existing the
+    tests.json 50 MWh plus what y2020 and y2025 built in their realised periods p2020 / p2025 (reinvest_automatic:
+    in service to the end of the horizon; su 1), and built the solve's own investments in service at p2035 —
+    y2030: v_invest_n[p2030] and [p2035], y2035: v_invest_n[p2035]."""
     url, scen = make_db(tmp_path_factory, alt="sse_n12_seq_blocks", base_chain=SEQ, values=[
         ["node", "battery", "storage_binding_method", _s("bind_intraperiod_blocks")],
         ["node", "battery", "storage_start_end_method", _s("fix_start_end")], NO_LOSS])
@@ -1088,6 +1121,13 @@ def test_fix_start_end_blocks_continue_between_solves(tmp_path_factory):
         assert not row_terms(pb, PIN, "battery,"), step.solve_name
         assert set(row_terms(pb, END, "battery,")) == (
             {f"{END}[battery,p2035,t0040]"} if i >= 2 else set()), step.solve_name
+        if i >= 2:
+            earlier = sum(v for prev, d0 in ((steps[0], "p2020"), (steps[1], "p2025"))
+                          for d, v in utf8(prev.solution.value("v_invest_n")).filter(pl.col("n") == "battery")
+                          .select("d", "value").iter_rows() if d == d0)
+            existing = 50.0 + earlier * _su(steps[0].flex_data)
+            assert _existing(fd, "battery", "p2035") == pytest.approx(existing, rel=1e-9), step.solve_name
+            _end_state_closed_form(step, ["p2030", "p2035"] if i == 2 else ["p2035"], existing)
         if i == 0:
             continue
         want = _realised_end(steps[i - 1])

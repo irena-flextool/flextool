@@ -1,10 +1,12 @@
-"""Storage self-discharge is exact for any step length (FA-1, item 3; owner decision option (a)).
+"""Storage self-discharge is exact for any step length when the loss is constant within the step (FA-1, item 3;
+owner decision option (a)).
 
 The content decays continuously at λ = ln(1 + self_discharge_loss) per hour and the flows of a step are spread evenly
 over the step.  The balance row applies the loss to a weighted average of the start and end state,
 ``(α·S_t + β·S⁻)·su`` with h = Δt·λ, α = h/(1 − e^{−h}) − 1, β = 1 − h/(e^h − 1), which gives the exact one-step
 solution S_t = e^{−h}·S⁻ + (1 − e^{−h})/h·E_t.  Coarse new_stepduration groups and bind_intraperiod_blocks blocks apply
-it once per coarse step / block (h = Δ_b·λ).  Before, the row charged ``loss·S_t`` per step whatever its length (a
+it once per coarse step / block (h = Δ_b·λ; with a time-varying loss h_b = Σ Δt·λ_t: the idle decay e^{−h_b} stays
+exact, the charge factor (1 − e^{−h_b})/h_b does not when λ varies inside the step, #152).  Before, the row charged ``loss·S_t`` per step whatever its length (a
 24 h step lost one hour's worth), the coarse and block rows ``loss·Δt·S_t``, and the outputs reported
 ``state·loss·su`` (not the LP's loss).
 
@@ -623,7 +625,10 @@ def test_time_varying_hourly(tmp_path_factory):
 
 def test_time_varying_coarse(tmp_path_factory):
     """The battery in a 24-h coarse group with loss 0.01 in hours 1–12 and 0.05 after: the day's decay is
-    h_b = 12λ1 + 12λ2, so S(day 1) = 10·(1 − e^{−h_b})/h_b and S(day 2)/S(day 1) = e^{−24λ2}."""
+    h_b = 12λ1 + 12λ2, so S(day 1) = 10·(1 − e^{−h_b})/h_b and S(day 2)/S(day 1) = e^{−24λ2}.  This pins the
+    documented rule ("decays by the sum of its hours' losses"), which is exact for the idle decay but not for the
+    charge term when the loss varies inside the step: energy spread evenly over day 1 would keep exactly
+    e^{−12λ2}(1 − e^{−12λ1})/(24λ1) + (1 − e^{−12λ2})/(24λ2) per MWh, 6.4090 of the 10 MWh, not 7.1761 (#152)."""
     steps = _timeline_steps(TESTS_JSON)
     vals, ents = _coarse_values(0.01)
     vals = [v for v in vals if v[2] != "self_discharge_loss"]
@@ -637,7 +642,8 @@ def test_time_varying_coarse(tmp_path_factory):
 def test_time_varying_block(tmp_path_factory):
     """bind_intraperiod_blocks (blocks t0001–t0024 and t0026–t0049) with loss 0.01 in hours 1–12 and 0.05 after:
     block A decays by h_A = 12λ1 + 12λ2, block B by h_B = 24λ2, so the loop gives S_A = g_A·10/(1 − e^{−h_A − h_B})
-    with g_A = (1 − e^{−h_A})/h_A, and S_B = e^{−h_B}·S_A."""
+    with g_A = (1 − e^{−h_A})/h_A, and S_B = e^{−h_B}·S_A.  As in the coarse case, g_A is the documented rule, not the
+    exact charge factor for a loss that varies inside the block (#152)."""
     steps = _timeline_steps(TESTS_JSON)
     vals, ents = _block_values(0.01)
     vals = [v for v in vals if v[2] != "self_discharge_loss"]

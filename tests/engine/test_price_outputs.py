@@ -291,7 +291,7 @@ def test_rolling_price_per_roll(tmp_path_factory) -> None:
 def test_intraperiod_block_price_absolute(tmp_path_factory) -> None:
     """5weeks with a bind_intraperiod_blocks battery: west at t0001 is short (900, unserved); the battery's block
     price is the west price × the inverter efficiency 0.95 (one MWh from the battery delivers 0.95 to west):
-    855, positive (the block row is written negated: σ = −1).  Before: −394 200 / −374 490."""
+    855, positive (nodeBalanceBlock_eq has the sign of nodeBalance_eq: σ = +1).  Before: −394 200 / −374 490."""
     _steps, wf = _run(tmp_path_factory, "pr_ipb", ["init", "west", "wind", "battery", "5weeks",
                                                    "bind_battery_intraperiod_blocks"])
     prices = _node_prices(wf)
@@ -393,8 +393,10 @@ def test_price_independent_of_lp_scaling(tmp_path_factory, monkeypatch) -> None:
 def test_fix_price_handoff_equals_parent_price(tmp_path_factory, monkeypatch, scale) -> None:
     """Nested invest → storage (6 h) → rolling dispatch (36 h / 24 h) with battery fix_price: the storage solve
     hands, at each fix step, exactly its own written battery price_t (rel 1e-9), at the default
-    scale_the_objective and at 1.  At p2020/t0067 that is 47.5 = the 50 CUR/MWh coal price × the inverter
-    efficiency 0.95.  Before: s × the price (4.75e-5) at the default scale, ÷ nothing else."""
+    scale_the_objective and at 1.  At p2020/t0067 the battery discharges at the margin, so its price is the west
+    price × the inverter efficiency 0.95 (one MWh from the battery delivers 0.95 MWh to west; 47.5 = 0.95 × 50 in
+    this run, but the west level rests on the nested invest result and is not pinned here).  Before: s × the
+    price (4.75e-5) at the default scale, ÷ nothing else."""
     if scale is not None:
         import flextool.engine.solve._orchestration as orch
         monkeypatch.setattr(orch, "_resolve_effective_obj_scale", lambda _v: scale)
@@ -415,7 +417,9 @@ def test_fix_price_handoff_equals_parent_price(tmp_path_factory, monkeypatch, sc
     assert checked > 0
     at = fp.filter((pl.col("period") == "p2020") & (pl.col("step") == "t0067"))
     assert at.height == 1
-    assert at["p_fix_storage_price"][0] == pytest.approx(47.5, rel=1e-6)
+    west = prices[("storage_fullYear_6h", "p2020", "t0067")]["west"]
+    assert west > 0.0
+    assert at["p_fix_storage_price"][0] == pytest.approx(0.95 * west, rel=1e-9)
 
 
 # ---------------------------------------------------------------------------

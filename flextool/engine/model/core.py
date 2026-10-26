@@ -1157,9 +1157,12 @@ def _eq_node_balance(b: _Build) -> None:
     # The section term exists for min_load_efficiency units only.  The flow
     # and slack terms are b.node_balance_flow_terms.  Self-discharge: the
     # content decays continuously at ln(1 + loss) per hour; flows within a
-    # step are spread evenly over the step.  Exact for any step length (the
-    # decay is applied to a weighted average of the start and the end state,
-    # model/_self_discharge.py); the model folds it into the state change as
+    # step are spread evenly over the step.  Exact for any step length while
+    # the loss is constant within the step; a coarse step / block with a
+    # time-varying loss uses h_b = Σ Δt·λ_t, exact for the idle decay only
+    # (#152).  The decay is applied to a weighted average of the start and
+    # the end state (model/_self_discharge.py); the model folds it into the
+    # state change as
     # (S⁻·(1 − β) − S·(1 + α))·state_unitsize.
     over = b.nodeBalance_dt
     if b.has_nsb:

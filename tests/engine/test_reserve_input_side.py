@@ -153,13 +153,16 @@ def test_online_consumer_headroom(input_side) -> None:
 
 def test_input_side_max_share_is_share_of_input_capacity(input_side) -> None:
     """max_share 0.2 at e_boiler's input: the reserve is at most 0.2 × 200 MW (input capacity) = 40 MW, and
-    it binds (40 MW held, 10 MW short).  coal_chp: rf ≤ 0.5 × input capacity (input_cap × existing).
-    Before: 0.2 × 100 MW (output) = 20 MW."""
+    it binds at every step (40 MW held, 10 MW of the 50 MW requirement short; the 20 000 shortfall penalty makes
+    e_boiler commit enough for the full 40: oracle batch D).  coal_chp: rf ≤ 0.5 × input capacity
+    (input_cap × existing).  Before: 0.2 × 100 MW (output) = 20 MW."""
     step = input_side
     us = unitsize(step, EB)
     res = reserve(step, EB, "rd", "west")
     assert (res <= 0.2 * 2.0 * us + TOL).all()
-    assert res.max() == pytest.approx(40.0, abs=1e-6)
+    assert res.to_list() == pytest.approx([40.0] * res.len(), abs=1e-6)
+    short = _shortfall(step, "rd")
+    assert short.to_list() == pytest.approx([10.0] * short.len(), abs=1e-6)
     pb = build(step.flex_data)
     rhs = _row_rhs(pb, "reserve_process_downward", f"{EB},rd,down,west,")
     assert rhs and set(round(v, 12) for v in rhs.values()) == {round(0.2 * 2.0 * 100.0 / us, 12)}
@@ -172,8 +175,9 @@ def test_input_side_max_share_is_share_of_input_capacity(input_side) -> None:
 
 def test_indirect_input_arc_headroom(input_side) -> None:
     """coal_chp (no invest: its fuel arc is bounded on v_flow) gets a maxFlow row on the fuel arc with the
-    reserve, and a maxInputFlow_online_linear row: fuel + reserve ≤ input_cap × online capacity (MW).
-    Before: no row; an offline-able unit could offer the reserve."""
+    reserve, and a maxInputFlow_online_linear row: fuel + reserve ≤ input_cap × online capacity (MW).  The
+    300 MW rf requirement is within 0.5 × the input capacity, so it is held in full at every step (rf = 300, no
+    shortfall: oracle batch D).  Before: no row; an offline-able unit could offer the reserve."""
     step = input_side
     pb = build(step.flex_data)
     mf = _row_terms(pb, "maxFlow", f"{CHP},{COAL},{CHP},")
@@ -188,7 +192,8 @@ def test_indirect_input_arc_headroom(input_side) -> None:
     fuel = flow(step, CHP, COAL, CHP)
     res = reserve(step, CHP, "rf", COAL)
     assert ((fuel + res - cap * online(step, CHP)) <= 1e-5).all()
-    assert res.max() > 1.0
+    assert res.to_list() == pytest.approx([300.0] * res.len(), abs=1e-6)
+    assert (_shortfall(step, "rf", "fuel").abs() < 1e-6).all()
 
 
 # ---------------------------------------------------------------------------

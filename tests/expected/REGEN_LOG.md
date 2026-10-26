@@ -614,8 +614,13 @@ invests pipe_AB 15.7 MW and pipe_BC 0, so the Benders phase tests that need both
 (`test_benders_phase0/2/3a`) moved to a re-tuned sibling, `lh2_trade_invest_retuned` (tests/conftest.py: region A
 wind 1 500 MW, electrolyser 1 000 MW, liquefier 800 MW), whose monolith builds both pipes again; they pin its
 optimum, M = 4.6054965e9 (commit 28022f7c, c15b review follow-ups; the previous text of this entry said 1.2217878e10,
-which is the trajectory pin's value on the un-tuned fixture, not what those tests pin).
-`test_benders_existing_capacity_trade`: wind_C is not built; the RP fixture `lh2_three_region_rp_invest`: M_rp
+which is the trajectory pin's value on the un-tuned fixture, not what those tests pin).  The re-tuned monolith
+(oracle batch F) is 4 605 499 297.6 (the pin's rtol is 1e-3): it builds pipe_AB 346.5 MW and pipe_BC 173.2 MW and
+ships A→B→C (pipe_BC B→C 5 760 MWh = C's LH2 demand, lh2_C slack 0; remaining slack battery_A 954, battery_C 5 053,
+h2_C 864 MWh).  Bound: the hourly twin (`daily_group.new_stepduration` = 1) gives 8 035 445 485.6 ≥ the daily M, as
+a relaxation must.  It is a new pin on a new fixture, not a re-pin; no golden file changed.
+`test_benders_existing_capacity_trade`: wind_C is not built (the daily h2_C node acts as same-day storage through
+the reverse electrolyser, so elec_C's price is 0 whenever wind_C produces; the hourly twin builds ~838 MW); the RP fixture `lh2_three_region_rp_invest`: M_rp
 7 577 959 045.2 → 9 026 550 085.3 = the snapshot's 7 577.959 → 9 026.550.
 
 ## 2026-10-25 — `fullYear_roll/summary_solve.csv` (cycle c15e1, item 119: cyclic storage takes no roll carry)
@@ -663,7 +668,8 @@ Regenerated with `pytest tests/test_scenarios.py --regenerate 5weeks_battery_int
 
 **Context.** Owner decision FA-1 option (a): the self-discharge of a step is `(α·S_t + β·S⁻)·su` with
 h = Δt·ln(1 + loss), α = h/(1 − e^{−h}) − 1, β = 1 − h/(e^h − 1) (coarse steps / blocks: h of the whole step),
-which is exact for idle storage and for flows spread evenly over the step at any step length.  Before: `loss·S_t`
+which is exact for idle storage and for flows spread evenly over the step at any step length, as long as the loss
+is constant within the step (a coarse step / block with a time-varying loss: exact idle decay only, #152).  Before: `loss·S_t`
 per step whatever its length.  The tests.json batteries lose 1e-4 per hour: the loss moves from `1e-4·S_t` to
 ≈ `0.5e-4·(S_t + S_{t−1})`, so states shift by up to 0.0025 MWh (= 50 MWh · 5e-5) and degenerate battery /
 connection schedules move at the 1e-5 level; nested chains with the 6-h storage solve shift more (the loss itself
@@ -713,7 +719,9 @@ first period.  For a `bind_within_solve` node in a multi-period solve that is mi
 the step the node's first step starts from (its own state-change lag): for `bind_within_solve` the solve's last step.
 
 - `tests/engine/test_benders_phase3b_rp_loop.py` (`lh2_three_region_rp_invest`, RP Benders): `_M_RP_EXPECTED`
-  9 026 550 085.3 → 9 437 466 952.7 (+4.6 %).
+  9 026 550 085.3 → 9 437 466 952.7 (+4.6 %).  The "before" value is the pin as captured before FA-1 (f145c659);
+  the actual parent commit of ed4927ed gives 9 026 593 938.7 (+4.9e-6 from FA-1's self-discharge, inside the
+  pin's rtol 1e-4), so FA-3 alone moves the optimum 9 026 593 938.7 → 9 437 466 952.7 (+4.55 %) (oracle batch C).
 - `tests/engine/test_rp_multi_period.py::test_variant_order_on_two_periods`, `bind_within_period_blended_weights`
   cost: 16 367 709 994 → 16 820 838 994 (+2.8 %).
 

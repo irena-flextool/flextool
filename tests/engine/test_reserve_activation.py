@@ -144,7 +144,13 @@ def test_dynamic_only_without_reservation_is_active(dynamic_only) -> None:
 
 def test_dynamic_only_reports_reserve_price(dynamic_only) -> None:
     """The dynamic_only group's reserve_price_t is the dual of its reserveBalance_dynamic_eq row (one row per
-    group and step), per MW held for one hour: dual / s / (Δt · tw · inflation / period_share · bw)."""
+    group and step), per MW held for one hour: dual / s / (Δt · tw · inflation / period_share · bw).
+
+    Absolute values (oracle batch A, own LP): the requirement is 0.5 × wind's output and only coal provides
+    (max_share 0.1 → 50 MW).  Where the shortfall slack is in use the price is its penalty **1000** (e.g. t0001:
+    coal covers 50 MW, 19.5 MW short).  At the other **21** of the 48 steps the requirement is met at the margin
+    by curtailing wind: 2 MW less wind (−1 MW requirement) replaced by coal at 50 CUR/MWh costs **100** per MW of
+    reserve.  So every price is 1000 or 100, 100 at exactly 21 steps."""
     from flextool.engine.output._prices import price_weight_dt
     from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE
     from flextool.lean_parquet import read_lean_parquet
@@ -167,6 +173,11 @@ def test_dynamic_only_reports_reserve_price(dynamic_only) -> None:
     for d, t, dual in duals.select("d", "t", "dual").iter_rows():
         expected = dual / _LEGACY_DEFAULT_OBJECTIVE_SCALE / weight[(d, t)]
         assert got[(d, t)] == pytest.approx(expected, rel=1e-9, abs=1e-9), (d, t)
+    assert len(got) == 48
+    for key, v in got.items():
+        assert v == pytest.approx(1000.0, rel=1e-9) or v == pytest.approx(100.0, rel=1e-9), (key, v)
+    assert sum(v == pytest.approx(100.0, rel=1e-9) for v in got.values()) == 21
+    assert got[("p2020", "t0001")] == pytest.approx(1000.0, rel=1e-9)
 
 
 # ---------------------------------------------------------------------------

@@ -89,18 +89,39 @@ def test_unidirectional_online_next_to_online_unit(uni_online) -> None:
         assert coef(terms, f"v_online_linear[{WE},{d},{t}]") < 0.0
 
 
-def test_connection_startup_cost(uni_online) -> None:
-    """A2: the objective coefficient of v_startup_linear[west_east] is startup_cost × unitsize × the event weight,
-    the same weight as coal_plant's (100 × 500).  Before: 0 (connection startup_cost dropped)."""
-    pb = build(uni_online.flex_data)
+# A startup is an event: its objective weight is tw · inflation / period_share, without Δt (the 2-day solve has
+# period_share 48/8760, so the weight is 182.5 at any step length).
+EVENT_W = 8760.0 / 48.0
+
+
+def _assert_startup_coefs(step, n_steps: int) -> None:
+    pb = build(step.flex_data)
     conn = _obj_coefs(pb, f"v_startup_linear[{WE},")
     unit = _obj_coefs(pb, "v_startup_linear[coal_plant,")
-    assert len(conn) == len(unit) == 48
+    assert len(conn) == len(unit) == n_steps
     for col, c in conn.items():
         d, t = step_of(col)
         u = unit[f"v_startup_linear[coal_plant,{d},{t}]"]
-        assert u > 0.0
+        assert u == pytest.approx(100.0 * 500.0 * EVENT_W, rel=1e-12)          # 9 125 000
+        assert c == pytest.approx(3.0 * 400.0 * EVENT_W, rel=1e-12)            # 219 000
         assert c / (3.0 * 400.0) == pytest.approx(u / (100.0 * 500.0), rel=1e-12)
+
+
+def test_connection_startup_cost(uni_online) -> None:
+    """A2: the objective coefficient of v_startup_linear[west_east] is startup_cost × unitsize × the event weight,
+    the same weight as coal_plant's (100 × 500): 3 × 400 × 8760/48 = 219 000 and 100 × 500 × 182.5 = 9 125 000
+    (build_flextool's default objective scale 1).  Before: 0 (connection startup_cost dropped)."""
+    _assert_startup_coefs(uni_online, 48)
+
+
+def test_connection_startup_cost_two_hour_steps(tmp_path_factory) -> None:
+    """A2 with 2-h steps (new_stepduration 2: 24 steps): a startup is an event, so the coefficients stay
+    219 000 / 9 125 000 per step; an operational weight (× Δt) would give 438 000 / 18 250 000."""
+    step = _steps(tmp_path_factory, "oc_uni_2h", _startup(WE, "linear")
+                  + [["solve", "y2020_2day_dispatch", "new_stepduration", b64(2.0, "float")]],
+                  UNI + ["coal_min_load"])[-1]
+    assert step.flex_data.dt.height == 24
+    _assert_startup_coefs(step, 24)
 
 
 def test_connection_binary_startup(tmp_path_factory) -> None:

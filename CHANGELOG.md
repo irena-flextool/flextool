@@ -156,7 +156,8 @@
   stochastic solve, the end of each forecast branch the first step wraps
   to).
 
-- **Storage self-discharge is exact for any time-step length.** The storage
+- **Storage self-discharge is exact for any time-step length** (for a loss
+  that is constant within each step). The storage
   content now decays continuously at ln(1 + `self_discharge_loss`) per hour,
   whatever the step length, with the energy charged or discharged within a
   step spread evenly over the step. Before, a step lost `self_discharge_loss`

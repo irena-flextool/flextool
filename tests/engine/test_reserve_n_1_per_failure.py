@@ -149,7 +149,8 @@ def test_requirement_is_the_largest_failure(two_failures) -> None:
 def test_failing_unit_cannot_cover_itself(tmp_path_factory) -> None:
     """Coal is the only failing process (ratio 0.1) and the only usable provider (max_share 0.01, wind
     max_share 0): its own reserve does not count, so the whole requirement is shortfall.  Before, coal's
-    own 5 MW covered part of its own failure."""
+    own 5 MW covered part of its own failure.  The shortfall equals the requirement (0.1 × coal's output; the
+    100/MW penalty never makes curtailing coal pay, and nothing else can cover it)."""
     ents, vals = _activator("n_1", "up")
     step = solve(tmp_path_factory, alt="n1pf_self", base_chain=PLANT_CHAIN + ["wind", "reserve_n_1"],
                  entities=ents, values=vals + [
@@ -159,6 +160,7 @@ def test_failing_unit_cannot_cover_itself(tmp_path_factory) -> None:
     short = _vq(step, "n_1") * 50.0
     assert requirement.max() > 10.0
     assert ((short - requirement) >= -1e-6).all()
+    assert short.to_list() == pytest.approx(requirement.to_list(), abs=1e-6)
 
 
 def _down_n_1(tpf, alt: str, extra: list | None = None):
@@ -188,8 +190,8 @@ def _down_n_1(tpf, alt: str, extra: list | None = None):
 
 def test_down_n_1_excludes_own_reserve(tmp_path_factory) -> None:
     """n-1 DOWN: the failing consumer ``dr_increase_demand`` also offers downward reserve; its row has
-    the consumer's flow, the group total and minus the consumer's own reserve; coal's reserve is only in
-    the total's bound reserve_total_upper."""
+    the consumer's flow, the group total and minus the consumer's own reserve (−unitsize × reliability =
+    −50 × 1 = −50); coal's reserve is only in the total's bound reserve_total_upper."""
     step = _down_n_1(tmp_path_factory, "n1pf_down")
     rows = _row_terms(build(step.flex_data), "reserveBalance_down_n_1_eq")
     assert len(rows) == step.flex_data.dt.height
@@ -197,7 +199,7 @@ def test_down_n_1_excludes_own_reserve(tmp_path_factory) -> None:
         assert row.startswith("reserveBalance_down_n_1_eq[n1d,down,electricity,dr_increase_demand,"), row
         assert len(_cols(terms, "v_flow[dr_increase_demand,west,")) == 1, row
         own = _cols(terms, "v_reserve[dr_increase_demand,n1d,down,west,")
-        assert len(own) == 1 and next(iter(own.values())) < 0.0, row
+        assert list(own.values()) == [pytest.approx(-50.0, rel=1e-12)], row
         assert len(_cols(terms, "v_reserve_total[n1d,down,electricity,")) == 1, row
         assert not _cols(terms, f"v_reserve[{PLANT},"), row
     totals = _row_terms(build(step.flex_data), "reserve_total_upper")

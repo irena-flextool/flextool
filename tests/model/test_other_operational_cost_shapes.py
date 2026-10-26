@@ -16,8 +16,9 @@ rolling, nested and stochastic solves; warm = cold in rolls (every roll builds i
 
 Vehicles (databases built from JSON, never a checked-in ``.sqlite``):
 - ``1_week_rolling_wind`` of ``stochastics.json`` without its stochastic data, plus the connection ``link``
-  (``tests/model/test_rolling_period_maps._deterministic_rolling_json``): one period ``period1`` (168 h),
-  7 rolls of 96 h, or one single solve.
+  (``tests/model/test_rolling_period_maps._deterministic_rolling_json``) and gas_plant capped at 200 MW (so that
+  coal_plant runs and its input-side cost reaches the objective): one period ``period1`` (168 h), 7 rolls of 96 h,
+  or one single solve.  Closed form of its objective: see :func:`_closed_form`.
 - ``2_day_stochastic_dispatch`` of ``stochastics.json``: ``period1`` and four branch periods.
 - ``invest_5weeks`` of ``tests.json`` with nested investment: the sub-solves ``invest_5weeks_<p>``.
 """
@@ -53,8 +54,10 @@ STOCH_PERIODS = (PERIOD,) + tuple(f"period1_{b}" for b in ("realized", "upper", 
 COSTS = {"in": 3.0, "out": 2.0, "conn": 1.5}
 INDEX_SETS = ("pssdt_varCost_noEff", "pssdt_varCost_eff_unit_source", "pssdt_varCost_eff_unit_sink",
               "pssdt_varCost_eff_connection")
+GAS_CAP = 200.0
 LINK = [["connection", "link", "existing", scalar(100.0)],
-        ["connection", "link", "transfer_method", b64("regular", "str")]]
+        ["connection", "link", "transfer_method", b64("regular", "str")],
+        ["unit", "gas_plant", "existing", scalar(GAS_CAP)]]
 
 
 @pytest.fixture(autouse=True)
@@ -125,6 +128,45 @@ def _canon(x) -> pl.DataFrame | None:
     return f.sort(f.columns)
 
 
+def _wind_profile_sum(hours: int) -> float:
+    """Σ of the ``system`` wind profile of ``stochastics.json`` over its first ``hours`` steps (85.879296713 over
+    168 h, 47.220043351 over 96 h)."""
+    import base64
+
+    data = json.loads(STOCHASTICS_JSON.read_text())
+    pv = next(v for v in data["parameter_values"] if v[0] == "profile" and v[1] == "wind" and v[4] == "system")
+    series = json.loads(base64.b64decode(pv[3][0]))["data"]
+    return sum(float(v) for _t, v in series[:hours])
+
+
+def _closed_form(hours: int) -> tuple[float, float]:
+    """``(objective, other operational cost per window)`` of the deterministic week with the scalar costs, for a
+    window of ``hours`` steps from t0001 that starts and ends with the reservoir at 2 500 MWh.
+
+    Data (stochastics.json ``system`` + this file): demand 3 000 MW; wind ≤ 4 000 · profile (free); hydro: the
+    reservoir's inflow 400 MW reaches demand one-to-one (efficiency 2, half to downriver through hydro_divide) and
+    start = end, so hydro delivers 400 · hours MWh in total; gas_plant ≤ 200 MW at 6/0.9 + 2 (out cost) = 8.667;
+    coal_plant ≤ 2 000 MW at 16/0.9 + 3/0.9 (in cost on the fuel) = 21.111; link (gas_market → coal_market, 100 MW,
+    O&M 1.5) sells into coal_market at 16 what it buys at 6: −8.5 · 100 per hour at its cap whatever else runs.
+
+    Gas is cheaper than coal, so it runs at its cap every hour, and coal is the marginal unit in every hour: the
+    residual 3 000 − wind − hydro can stay ≥ 200 everywhere (the windiest hour, profile 0.6527, wind 2 611 MW,
+    leaves 389 MW, so hydro delivers at most 189 MW there, above downriver's 100, and the reservoir moves the rest
+    to coal hours), there is no curtailment and no slack, and how hydro is spread over the hours does not change
+    the cost.  Thermal energy T = 3 000·h − 4 000·Σprofile −
+    400·h, gas G = 200·h, coal C = T − G.  Per window: 8.667·G + 21.111·C − 850·h; the objective weighs every hour
+    by 8760/168 (period share of the full 168-h period, also in a 96-h roll).  O&M: 2·G + 3·C/0.9 + 1.5·100·h.
+
+    168 h: T = 93 282.813, C = 59 682.813, objective **73 436 461.77**, O&M **291 342.71** per week.
+    96 h (roll 0): T = 60 719.827, C = 41 519.827, objective **50 126 475.78**."""
+    t = 3000.0 * hours - 4000.0 * _wind_profile_sum(hours) - 400.0 * hours
+    g = GAS_CAP * hours
+    c = t - g
+    per_window = (6.0 / 0.9 + COSTS["out"]) * g + (16.0 + COSTS["in"]) / 0.9 * c - (16.0 - 6.0 - COSTS["conn"]) * 100.0 * hours
+    om = COSTS["out"] * g + COSTS["in"] * c / 0.9 + COSTS["conn"] * 100.0 * hours
+    return per_window * 8760.0 / 168.0, om
+
+
 def _rel(a: float, b: float) -> float:
     return abs(a - b) / max(1.0, abs(b))
 
@@ -146,7 +188,9 @@ def _rows(x) -> int:
 
 
 def test_period_time_cost_equals_scalar_single_solve(tmp_path_factory) -> None:
-    """Before the fix the period × time run had no index rows and objective 23 666 882.67 (scalar 34 708 947.47)."""
+    """The scalar run's objective is the closed form of :func:`_closed_form` (73 436 461.77); the period × time run
+    equals it.  Before the fix the period × time run had no index rows and its objective lacked the O&M cost (on the
+    fixture without the gas cap: 23 666 882.67 vs 34 708 947.47)."""
     pt = next(iter(_det_const(tmp_path_factory, "ptmap", single=True).values()))
     sc = next(iter(_det_const(tmp_path_factory, "scalar", single=True).values()))
     d = pt.flex_data
@@ -155,7 +199,9 @@ def test_period_time_cost_equals_scalar_single_solve(tmp_path_factory) -> None:
     _assert_same_cost_sets(d, sc.flex_data, "single")
     cost = _canon(d.p_pssdt_varCost)
     assert set(cost["value"].to_list()) == {1.5, 2.0, 3.0}
-    assert float(sc.solution.obj) == pytest.approx(34_708_947.47, rel=1e-6)
+    want, _om = _closed_form(168)
+    assert want == pytest.approx(73_436_461.77, abs=0.01)
+    assert float(sc.solution.obj) == pytest.approx(want, rel=1e-8)
     assert _rel(float(pt.solution.obj), float(sc.solution.obj)) < 1e-9
 
 
@@ -219,8 +265,9 @@ def test_outputs_equal_lp_cost(tmp_path_factory, monkeypatch) -> None:
     """The outputs and the LP agree on the O&M cost (the bug: the outputs showed a cost the LP never charged).
 
     For the period × time run and the scalar run the calculated total equals the solver objective, and the O&M
-    output is the same, non-zero amount.  Before the fix the period × time run's objective lacked the O&M cost
-    that its outputs still contained."""
+    output (``costs__dt`` *other operational*, CUR per step, summed over the week) is the closed form
+    2·G + 3·C/0.9 + 1.5·100·168 = 291 342.71 (:func:`_closed_form`).  Before the fix the period × time run's
+    objective lacked the O&M cost that its outputs still contained."""
     out = {}
     for shape in ("ptmap", "scalar"):
         steps = _det_const(tmp_path_factory, shape, single=True)
@@ -228,7 +275,9 @@ def test_outputs_equal_lp_cost(tmp_path_factory, monkeypatch) -> None:
         objective, total = _summary(csv_dir)
         assert total == pytest.approx(objective, rel=1e-6), (shape, objective, total)
         out[shape] = _other_operational(csv_dir)
-    assert out["scalar"] > 0
+    _obj, want = _closed_form(168)
+    assert want == pytest.approx(291_342.71, abs=0.01)
+    assert out["scalar"] == pytest.approx(want, rel=1e-6)
     assert out["ptmap"] == pytest.approx(out["scalar"], rel=1e-9)
 
 
@@ -243,14 +292,19 @@ def _rolls(steps: dict) -> list[str]:
 
 
 def test_period_time_cost_equals_scalar_in_rolls(tmp_path_factory) -> None:
-    """Every roll: same index sets and objective (before the fix roll 0 had 16 101 651.90, scalar 23 184 719.53)."""
+    """Every roll: same index sets and objective; roll 0 (t0001–t0096, reservoir back at its 2 500 MWh reference
+    value at the window's end) is the 96-h closed form of :func:`_closed_form`, 50 126 475.78.  Before the fix the
+    period × time rolls lacked the O&M cost (on the fixture without the gas cap roll 0 had 16 101 651.90 vs
+    23 184 719.53)."""
     pt = _det_const(tmp_path_factory, "ptmap", single=False)
     sc = _det_const(tmp_path_factory, "scalar", single=False)
     for name in _rolls(pt):
         _assert_same_cost_sets(pt[name].flex_data, sc[name].flex_data, name)
         assert _rows(pt[name].flex_data.pssdt_varCost_eff_connection) > 0, name
         assert _rel(float(pt[name].solution.obj), float(sc[name].solution.obj)) < 1e-9, name
-    assert float(sc[_rolls(sc)[0]].solution.obj) == pytest.approx(23_184_719.53, rel=1e-6)
+    want, _om = _closed_form(96)
+    assert want == pytest.approx(50_126_475.78, abs=0.01)
+    assert float(sc[_rolls(sc)[0]].solution.obj) == pytest.approx(want, rel=1e-6)
 
 
 def _det_curve(tmp_path_factory, shape: str, *, single: bool, warm: bool = True) -> dict:

@@ -102,7 +102,7 @@ def test_fix_price_producer_sign_and_scale(tmp_path):
         assert fp.height == 1
         price = float(fp["p_fix_storage_price"][0])
         # infl = share = scale = 1 → price == +dual == +C.
-        assert price == pytest.approx(C, rel=1e-4), (
+        assert price == pytest.approx(C, rel=1e-9), (
             f"Water value +{C} must yield reference price +{C} (positive), "
             f"got {price}. A negative value means the HiGHS dual sign was "
             f"not flipped (the ported AMPL -dual is wrong for HiGHS).")
