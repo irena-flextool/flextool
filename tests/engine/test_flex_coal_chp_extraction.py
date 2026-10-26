@@ -18,7 +18,8 @@ the matching multiplier landed in ``flextool/model/core.py``'s
 import polars as pl
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 import pytest
 
 pytestmark = pytest.mark.solver
@@ -26,9 +27,10 @@ pytestmark = pytest.mark.solver
 
 SCENARIO = "coal_chp_extraction"
 
-def test_coal_chp_extraction_parity(scenario_workdir):
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+def test_coal_chp_extraction_parity(scenario_run):
+    run = scenario_run(SCENARIO)
+    work = run.work_folder
+    data = load_scenario(run)
     assert data.process_indirect is not None, (
         "fixture should have indirect process")
     # Sanity: the fixture should populate the sink-side flow_coef Param

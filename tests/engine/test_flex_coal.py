@@ -9,8 +9,8 @@ import pytest
 import polars as pl
 
 from polar_high import Problem, Param
-from flextool.engine import load_flextool
 from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 
 if TYPE_CHECKING:
     from polar_high.engine import Solution  # noqa: F401  # used in string annotation
@@ -32,13 +32,18 @@ def _solve(data) -> "Solution":
 
 
 @pytest.fixture(scope="module")
-def work(scenario_workdir):
-    return scenario_workdir(SCENARIO)
+def run(scenario_run):
+    return scenario_run(SCENARIO)
 
 
 @pytest.fixture(scope="module")
-def coal_data(work):
-    return load_flextool(work)
+def work(run):
+    return run.work_folder
+
+
+@pytest.fixture(scope="module")
+def coal_data(run):
+    return load_scenario(run)
 
 
 def test_coal_parity(coal_data, work):

@@ -11,7 +11,8 @@ from pathlib import Path
 import polars as pl
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 import pytest
 
 pytestmark = pytest.mark.solver
@@ -30,9 +31,10 @@ def _flextool_obj(work: Path) -> float:
     return pl.read_csv(work / "output_raw" / "v_obj.csv")["objective"][0]
 
 
-def test_lh2_three_region_parity(scenario_workdir):
-    work = scenario_workdir("lh2_three_region", db_fixture="lh2")
-    data = load_flextool(work)
+def test_lh2_three_region_parity(scenario_run):
+    run = scenario_run("lh2_three_region", db_fixture="lh2")
+    work = run.work_folder
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -49,7 +51,7 @@ def test_lh2_three_region_parity(scenario_workdir):
     )
 
 
-def test_coarse_node_dual_broadcast(scenario_workdir):
+def test_coarse_node_dual_broadcast(scenario_run):
     """``write_v_dual_node_balance`` reports per-(d,t) prices for the
     coarse-group nodes (``nodeCoarse``: h2_A/B/C, lh2_A/B/C here).
 
@@ -71,8 +73,9 @@ def test_coarse_node_dual_broadcast(scenario_workdir):
     import numpy as np
     import pandas as pd
 
-    work = scenario_workdir("lh2_three_region", db_fixture="lh2")
-    data = load_flextool(work)
+    run = scenario_run("lh2_three_region", db_fixture="lh2")
+    work = run.work_folder
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve(keep_solver=True)

@@ -12,7 +12,8 @@ to relative tolerance 1e-6.
 import polars as pl
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 import pytest
 
 pytestmark = pytest.mark.solver
@@ -23,7 +24,7 @@ pytestmark = pytest.mark.solver
 SCENARIO = "coal_ladder_annual"
 
 
-def test_commodity_ladder_annual_parity(scenario_workdir):
+def test_commodity_ladder_annual_parity(scenario_run):
     """polar_high obj == flextool's HiGHS objective for the annual ladder.
 
     Also confirms the per-tier v_trade decomposition: the cheap finite
@@ -31,8 +32,9 @@ def test_commodity_ladder_annual_parity(scenario_workdir):
     overflow.  This pins the entire algebra (variables × balance × cap
     × per-tier price) end-to-end.
     """
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+    run = scenario_run(SCENARIO)
+    work = run.work_folder
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()

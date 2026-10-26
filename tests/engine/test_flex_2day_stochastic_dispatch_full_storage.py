@@ -25,7 +25,8 @@ Post-A6: machine-epsilon parity.
 import polars as pl
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 import pytest
 
 pytestmark = pytest.mark.solver
@@ -39,9 +40,10 @@ pytestmark = pytest.mark.solver
 SCENARIO = "2_day_stochastic_dispatch"
 
 
-def test_2day_stochastic_dispatch_full_storage_parity(scenario_workdir):
-    work = scenario_workdir(SCENARIO, db_fixture="stochastic")
-    data = load_flextool(work)
+def test_2day_stochastic_dispatch_full_storage_parity(scenario_run):
+    run = scenario_run(SCENARIO, db_fixture="stochastic")
+    work = run.work_folder
+    data = load_scenario(run)
 
     # Fixture sanity — stochastic data + storage data populated.
     assert data.pdt_branch_weight is not None

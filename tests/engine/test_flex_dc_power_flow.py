@@ -18,7 +18,8 @@ Acceptance: parity at < 1e-6 on the v_obj objective.
 import polars as pl
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 import pytest
 
 pytestmark = pytest.mark.solver
@@ -30,9 +31,10 @@ pytestmark = pytest.mark.solver
 SCENARIO = "dc_opf_test"
 
 
-def test_dc_power_flow_parity(scenario_workdir):
-    work = scenario_workdir(SCENARIO, db_fixture="case14")
-    data = load_flextool(work)
+def test_dc_power_flow_parity(scenario_run):
+    run = scenario_run(SCENARIO, db_fixture="case14")
+    work = run.work_folder
+    data = load_scenario(run)
 
     # Fixture sanity — DC PF data populated.
     assert data.node_dc_power_flow is not None

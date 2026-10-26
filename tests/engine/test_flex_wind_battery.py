@@ -7,8 +7,8 @@ self-discharge)."""
 import polars as pl
 
 from polar_high import Problem
-from flextool.engine import load_flextool
 from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 import pytest
 
 pytestmark = pytest.mark.solver
@@ -16,9 +16,10 @@ pytestmark = pytest.mark.solver
 
 SCENARIO = "wind_battery"
 
-def test_wind_battery_parity(scenario_workdir):
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+def test_wind_battery_parity(scenario_run):
+    run = scenario_run(SCENARIO)
+    work = run.work_folder
+    data = load_scenario(run)
     assert data.nodeState is not None and data.nodeState.height > 0, \
         "fixture should carry a storage node"
     pb = Problem()

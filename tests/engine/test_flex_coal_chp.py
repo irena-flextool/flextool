@@ -13,17 +13,18 @@ import polars as pl
 import pytest
 
 from polar_high import Problem
-from flextool.engine import load_flextool
 from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 
 pytestmark = pytest.mark.solver
 
 
 SCENARIO = "coal_chp"
 
-def test_coal_chp_parity(scenario_workdir):
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+def test_coal_chp_parity(scenario_run):
+    run = scenario_run(SCENARIO)
+    work = run.work_folder
+    data = load_scenario(run)
     assert data.process_indirect is not None, "fixture should have indirect process"
     pb = Problem()
     build_flextool(pb, data)

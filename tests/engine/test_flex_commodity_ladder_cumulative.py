@@ -10,7 +10,8 @@ the pre-refactor form (Σ f_d_k = 1.0, no prior accumulator).
 import polars as pl
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 import pytest
 
 pytestmark = pytest.mark.solver
@@ -20,14 +21,15 @@ pytestmark = pytest.mark.solver
 SCENARIO = "coal_ladder_cumulative"
 
 
-def test_commodity_ladder_cumulative_parity(scenario_workdir):
+def test_commodity_ladder_cumulative_parity(scenario_run):
     """polar_high obj == flextool's HiGHS objective for the cumulative ladder.
 
     Also confirms the per-tier v_trade decomposition: tier 1 binds at
     its 1-MWh cumulative cap and tier 2 (+∞) absorbs the rest.
     """
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+    run = scenario_run(SCENARIO)
+    work = run.work_folder
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()

@@ -1,5 +1,5 @@
 """Stage-2: polar_high ``base`` model on real flextool-generated data
-(built by ``scenario_workdir`` fixture) — parity vs flextool's recorded
+(the ``scenario_run`` cascade, rebuilt through ``load_scenario``) — parity vs flextool's recorded
 ``v_obj``, plus parameter perturbations validated against a closed-form
 re-evaluation."""
 from __future__ import annotations
@@ -11,8 +11,8 @@ import pytest
 import polars as pl
 
 from polar_high import Problem, Param
-from flextool.engine import load_flextool
 from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 
 if TYPE_CHECKING:
     from polar_high.engine import Solution  # noqa: F401  # used in string annotation
@@ -53,13 +53,18 @@ def _solve(data) -> "Solution":
 
 
 @pytest.fixture(scope="module")
-def work(scenario_workdir):
-    return scenario_workdir(SCENARIO)
+def run(scenario_run):
+    return scenario_run(SCENARIO)
 
 
 @pytest.fixture(scope="module")
-def base_data(work):
-    return load_flextool(work)
+def work(run):
+    return run.work_folder
+
+
+@pytest.fixture(scope="module")
+def base_data(run):
+    return load_scenario(run)
 
 
 def test_base_parity(base_data, work):

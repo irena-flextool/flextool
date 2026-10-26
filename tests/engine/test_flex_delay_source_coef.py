@@ -17,7 +17,8 @@ import polars as pl
 import pytest
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 
 pytestmark = pytest.mark.solver
 
@@ -26,7 +27,7 @@ SCENARIO = "delay_source_coef"
 DELAY_SOURCE_COEF_OBJ = 1_303_907_750.0
 
 
-def test_delay_source_coef_parity(scenario_workdir):
+def test_delay_source_coef_parity(scenario_run):
     """Build the scenario workdir and solve the LP — the elevated source
     coefficient (=2.0) must flow through ``load_flextool`` into
     ``data.p_process_source_conversion_flow_coeff``, and the LP must still solve to
@@ -39,9 +40,8 @@ def test_delay_source_coef_parity(scenario_workdir):
     (load → build → solve with the elevated coefficient stitched into
     the delay LP) rather than asserting an obj delta.
     """
-    work = scenario_workdir(SCENARIO)
-
-    data = load_flextool(work)
+    run = scenario_run(SCENARIO)
+    data = load_scenario(run)
 
     # Sanity: the elevated coefficient flowed through into the loaded
     # data structure.

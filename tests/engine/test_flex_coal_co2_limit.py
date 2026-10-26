@@ -5,8 +5,8 @@ constraint in flex_coal_model."""
 import polars as pl
 
 from polar_high import Problem
-from flextool.engine import load_flextool
 from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 import pytest
 
 pytestmark = pytest.mark.solver
@@ -14,9 +14,10 @@ pytestmark = pytest.mark.solver
 
 SCENARIO = "coal_co2_limit"
 
-def test_coal_co2_limit_parity(scenario_workdir):
-    work = scenario_workdir(SCENARIO)
-    data = load_flextool(work)
+def test_coal_co2_limit_parity(scenario_run):
+    run = scenario_run(SCENARIO)
+    work = run.work_folder
+    data = load_scenario(run)
     assert data.flow_from_co2_capped is not None, \
         "fixture should carry a CO2 cap"
     pb = Problem()
