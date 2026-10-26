@@ -1,5 +1,17 @@
 ## Unreleased
 
+- **Only the last period of a solve ends its horizon.** In a solve with
+  several periods that share a timeset, the end of every period was
+  treated as the end of the solve: `storage_solve_horizon_method`
+  *use_reference_value* pinned and *use_reference_price* valued the
+  storage at the end of each period, and *fix_end* / *fix_start_end*
+  pinned each period end of the last solve. These now apply only at the
+  end of the solve's last period (and of each stochastic branch of it), as
+  documented. In a rolling solve with *bind_intraperiod_blocks*, the end of
+  a period that a roll holds only in part, followed by a period the roll
+  holds whole, also gets the node's `storage_solve_horizon_method`, since
+  nothing else continues from it.
+
 - **The csv dump shows what each solve was built from.** With `csv_dump`,
   `handoff/*.csv` now holds the carriers the last solve consumed (its
   starting storage state, running totals, …), so the dump and a model

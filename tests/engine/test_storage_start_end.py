@@ -741,6 +741,7 @@ def test_reference_value_yields_to_a_nested_fix(tmp_path_factory, method):
     assert all(s.solution.optimal for s in steps.values())
     rolls = [k for k in steps if k.startswith("dispatch_fullYear_roll_roll_")]
     assert len(rolls) > 3
+    fixed_rolls = 0
     for name in rolls:
         fd = steps[name].flex_data
         pb = build(fd)
@@ -750,12 +751,20 @@ def test_reference_value_yields_to_a_nested_fix(tmp_path_factory, method):
         if method == "fix_nothing":
             assert refs == ends, name
             continue
-        assert not refs, name
         if method == "fix_price":
+            assert not refs, name
             assert fd.ndt_fix_storage_price is not None, name
-        else:
-            fam = FIX_Q if method == "fix_quantity" else FIX_U
-            assert {r.split("[", 1)[1][:-1] for r in row_terms(pb, fam, "battery,")} == ends, name
+            fixed_rolls += 1
+            continue
+        # Each roll end has either the upper fix or (where the upper solve sets none there) the reference row, never
+        # both.  A fix_usage window whose upper usage is 0 has no cap row (the handoff drops zero usages, item 150),
+        # so that roll end keeps the reference row.
+        fam = FIX_Q if method == "fix_quantity" else FIX_U
+        fixed = {r.split("[", 1)[1][:-1] for r in row_terms(pb, fam, "battery,")}
+        assert not (refs & fixed) and refs | fixed == ends, (name, refs, fixed)
+        fixed_rolls += bool(fixed)
+    if method != "fix_nothing":
+        assert fixed_rolls >= len(rolls) // 2, (fixed_rolls, len(rolls))
     for name in ("invest_24h", "storage_fullYear_6h"):
         fd = steps[name].flex_data
         assert {r.split("[", 1)[1][:-1] for r in row_terms(build(fd), REF, "battery,")} == {
@@ -801,8 +810,8 @@ def test_fix_start_end_cyclic_chains_forward(tmp_path_factory, method):
     fix_start_end the binding method is ignored (reference.md), so the chain runs forward through both periods: it
     starts from 0.25·40 = 10 MWh, holds 10 + 10 = 20 from t0003 of p2020, continues into p2025 at 20, holds
     20 + 10 = 30 from its t0003 and ends at 30 = 0.5·60 MWh, the end pin, with no slack (_n12_state).  Both periods
-    end at t0040, so period_last holds both and p2020 is also pinned at its end: 20 = 0.5·40 (the existing
-    capacities are chosen so that the chain meets both pins).  A bind_intraperiod_blocks node keeps its blocks.  The
+    end at t0040, but only the solve's last period is last (#37): p2020's end (20 MWh) is not pinned.  A
+    bind_intraperiod_blocks node keeps its blocks.  The
     blended method has no representative periods here: blended → plain (downgrade) → forward-only.  Before, each
     cycle needed a net inflow of 0 (each period has +10: slack), and with bind_within_solve the start and end pins
     sat on one state."""
@@ -836,7 +845,7 @@ def test_fix_start_end_cyclic_chains_forward(tmp_path_factory, method):
     assert not row_terms(pb, PIN, "battery,") and not _bare(pb, "battery")
     su = _su(fd)
     last = _last_steps(fd)
-    assert ("p2025", "t0040") in last
+    assert last == {("p2025", "t0040")}
     ends = row_bounds(pb, END, "battery,")
     assert set(ends) == {f"{END}[battery,{d},{t}]" for d, t in last}
     for d, t in last:
@@ -849,6 +858,70 @@ def test_fix_start_end_cyclic_chains_forward(tmp_path_factory, method):
     for slack in ("vq_state_up", "vq_state_down"):
         hit = utf8(step.solution.value(slack)).filter(pl.col("n") == "battery")
         assert hit.height == 0 or hit["value"].abs().max() == pytest.approx(0.0, abs=1e-9), slack
+
+
+@pytest.mark.parametrize("method", ["use_reference_value", "use_reference_price", "fix_end"])
+def test_only_the_solves_last_period_ends_the_horizon(tmp_path_factory, method):
+    """y2020_5week holds p2020 and p2025, both ending at t0040 (one shared timeset).  Only the solve's last period
+    ends the horizon (#37, owner Q17): with battery bind_forward_only (existing 50 MWh, no self-discharge) the
+    reference value 0.4 pins only the end of p2025 (0.4·50 = 20 MWh), the reference price 30 values only that state
+    (a negative objective coefficient; none on the end of p2020), and fix_end 0.3 pins only that state (0.3·50 =
+    15 MWh).  The end of p2020 continues into p2025 (forward chain) and is free.  Before, period_last held both
+    periods, so the end of p2020 was pinned / valued too, mid-horizon."""
+    values = {"use_reference_value": [], "use_reference_price": [
+        ["node", "battery", "storage_solve_horizon_method", _s("use_reference_price")]], "fix_end": [
+        ["node", "battery", "storage_solve_horizon_method", _s("free")],
+        ["node", "battery", "storage_start_end_method", _s("fix_end")]]}[method]
+    url, scen = make_db(tmp_path_factory, alt=f"sse_37_{method}", base_chain=FIVE_WEEKS, values=[
+        ["node", "battery", "storage_binding_method", _s("bind_forward_only")], NO_LOSS] + values)
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    assert step.solution.optimal
+    fd = step.flex_data
+    assert {(d, t) for d, t in utf8(fd.nodeState_last_dt).filter(pl.col("n") == "battery")
+            .select("d", "t").iter_rows()} == {("p2020", "t0040"), ("p2025", "t0040")}
+    assert utf8(fd.period_last)["d"].to_list() == ["p2025"]
+    pb = build(fd)
+    family = {"use_reference_value": REF, "fix_end": END}.get(method)
+    for fam in (REF, END):
+        want = {f"{fam}[battery,p2025,t0040]"} if fam == family else set()
+        assert set(row_terms(pb, fam, "battery,")) == want, fam
+    if family is not None:
+        share = 0.4 if method == "use_reference_value" else 0.3
+        end = utf8(step.solution.value("v_state")).filter(
+            (pl.col("n") == "battery") & (pl.col("d") == "p2025") & (pl.col("t") == "t0040"))
+        assert float(end["value"][0]) * _su(fd) == pytest.approx(share * 50.0, abs=1e-6)
+    else:
+        m = pb.canonicalise()
+        obj = {nm: float(m.col_obj[i]) for i, nm in enumerate(m.col_names) if nm.startswith("v_state[battery,")}
+        assert obj["v_state[battery,p2025,t0040]"] < 0.0
+        assert {nm for nm, c in obj.items() if c != 0.0} == {"v_state[battery,p2025,t0040]"}
+
+
+def test_period_last_is_the_last_period_and_its_branches():
+    """``_compute_first_and_last_periods``: periods sharing a timeset are not all last — only the solve's last period
+    (#37); in a stochastic solve the last period's branch siblings that end on the same step are last with it (the
+    anchor group of the last period, as listed in period__branch), an earlier anchor's group is not."""
+    from types import SimpleNamespace
+
+    from flextool.engine.preprocess.emit._solve_writers import _compute_first_and_last_periods
+
+    def atl(spec: dict) -> dict:
+        return {p: [SimpleNamespace(timestep=a), SimpleNamespace(timestep=b)] for p, (a, b) in spec.items()}
+
+    shared = atl({"p2020": ("t0001", "t0040"), "p2025": ("t0001", "t0040"), "p2030": ("t0001", "t0040")})
+    assert _compute_first_and_last_periods(shared, [("p2020", "ts")], [])[0] == ["p2030"]
+    stoch = atl({"p2035": ("t0001", "t0003"), "p2035_high": ("t0001", "t0003"), "p2040": ("t0004", "t0006"),
+                 "p2040_high": ("t0004", "t0006"), "p2040_low": ("t0004", "t0006")})
+    branches = [("p2035", "p2035"), ("p2035", "p2035_high"), ("p2040", "p2040"), ("p2040", "p2040_high"),
+                ("p2040", "p2040_low")]
+    assert _compute_first_and_last_periods(stoch, [("p2035", "ts")], branches)[0] == [
+        "p2040_low", "p2040", "p2040_high"]
+    trunk = atl({"period1": ("t0001", "t0048"), "period1_upper": ("t0001", "t0048"),
+                 "period1_lower": ("t0001", "t0048")})
+    tb = [("period1", "period1"), ("period1", "period1_realized"), ("period1", "period1_upper"),
+          ("period1", "period1_lower")]
+    assert _compute_first_and_last_periods(trunk, [("period1", "ts")], tb)[0] == [
+        "period1_lower", "period1", "period1_upper"]
 
 
 def test_fix_start_end_blocks_continue_between_solves(tmp_path_factory):

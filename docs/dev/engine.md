@@ -654,7 +654,7 @@ on the child solve:
 - `fix_storage_price` arrives on the child as a dual carrier folded
   into `p_storage_state_reference_price`. The objective term added by
   `use_reference_price` (`model._obj_storage_reference_price`) values `v_state` at the last
-  step of every `period_last` by that reference price, so the parent's
+  step of each `period_last` period (and of a chained block tail, `model._horizon_end_steps`) by that reference price, so the parent's
   shadow price on storage at the boundary becomes the child's
   end-of-period valuation:
 
@@ -741,6 +741,18 @@ end-of-horizon state into both fields.  See architecture.md
 for the carrier table.
 
 ### Where the storage chain ends
+
+`period_last` (`solve_data/period_last`,
+`_solve_writers._compute_first_and_last_periods`) is the solve's last
+period and its stochastic branch siblings (the `period__branch` rows of
+its anchor that end on the same timestep).  An earlier period of a
+multi-period solve is not last even when it ends on the same timestep
+name (periods sharing one timeset, #37).  The horizon-end conditions
+of `storage_solve_horizon_method` (`model._horizon_end_steps`) apply at
+`nodeState_last_dt ∩ period_last` and, in a rolling solve, at the end
+of a chained `bind_intraperiod_blocks` tail that a looping period
+follows (`_self_discharge.block_tail_ends`: a period the roll holds in
+part, not last, from whose last step no block state link continues).
 
 `fix_end` / `fix_start_end` (`storage_fix_end`) pin the state at
 `nodeState_last_dt ∩ period_last` to `storage_state_end` of the built

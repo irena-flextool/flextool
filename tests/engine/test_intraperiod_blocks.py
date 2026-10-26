@@ -472,3 +472,38 @@ def test_block_row_is_summed_node_balance(tmp_path_factory) -> None:
                               f"v_state[battery,{d},{prev_last}]": pytest.approx(SU, rel=1e-12)}, (d, b_first)
     assert seen_back == sum(len(ts) for ts in BLOCKS.values()) * len(periods)
     assert seen_online == seen_back
+
+
+@pytest.mark.parametrize("method", ["use_reference_value", "use_reference_price", "free"])
+def test_rolling_blocks_tail_end_takes_the_horizon_method(tmp_path_factory, method) -> None:
+    """p2020 + p2025 (72 h each), 96-h rolls jumping 48 h.  Roll 1 starts inside p2020 (t0049–t0072, chained from the
+    carry) and holds p2025 whole (it loops on itself), so no block state link continues from (p2020, t0072): the end
+    of that tail gets the node's storage_solve_horizon_method like a roll end (owner default for Q-c15e2-A).  Only
+    p2025 is the roll's last period (#37), and its looping end is not pinned.  use_reference_value (0.4, battery
+    existing 50 MWh): the tail end is pinned to 20 MWh; use_reference_price (30): the tail-end state has a negative
+    objective coefficient; free: neither.  Roll 0 holds p2020 whole and p2025 in part (it ends the roll): no tail."""
+    from flextool.engine.model import _self_discharge
+
+    rolls = _rolls(tmp_path_factory, f"ibr_tail_{method}", _roll_values(96.0, 48.0, ("p2020", "p2025"))
+                   + [["node", "battery", "storage_solve_horizon_method", b64(method, "str")]])
+    fd0, fd1 = rolls[0].flex_data, rolls[1].flex_data
+    assert _self_discharge.block_tail_ends(fd0) is None
+    assert utf8(fd1.period_last)["d"].to_list() == ["p2025"]
+    assert utf8(fd1.period_block_chain)["d"].to_list() == ["p2020"]
+    lag = _lag(fd1)
+    assert ("p2020", "t0072") not in lag.values() and lag[("p2025", "t0001")] == ("p2025", "t0072")
+    tails = _self_discharge.block_tail_ends(fd1)
+    assert [tuple(r) for r in utf8(tails).iter_rows()] == [("battery", "p2020", "t0072")]
+    pb = build(fd1)
+    ref = set(row_terms(pb, "storage_state_solve_horizon_reference_value", "battery,"))
+    m = pb.canonicalise()
+    obj = {nm: float(m.col_obj[i]) for i, nm in enumerate(m.col_names) if nm.startswith("v_state[battery,p2020,")}
+    if method == "use_reference_value":
+        assert ref == {"storage_state_solve_horizon_reference_value[battery,p2020,t0072]"}
+        assert _states_mwh(rolls[1])[("p2020", "t0072")] == pytest.approx(0.4 * SU, abs=1e-6)
+    else:
+        assert ref == set()
+    priced = {nm for nm, c in obj.items() if c != 0.0}
+    assert priced == ({"v_state[battery,p2020,t0072]"} if method == "use_reference_price" else set())
+    if method == "use_reference_price":
+        assert obj["v_state[battery,p2020,t0072]"] < 0.0

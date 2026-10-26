@@ -2994,25 +2994,46 @@ def _eq_storage_end_binding(b: _Build) -> None:
     )
 
 
+def _horizon_end_steps(b: _Build) -> "pl.DataFrame | None":
+    """``(n, d, t)``: the storage steps where the solve horizon ends for the storage_solve_horizon_method — the last
+    step of each last period (the solve's last period and its stochastic branch siblings, period_last) and, in a
+    rolling solve, the end of a chained bind_intraperiod_blocks tail that a looping period follows
+    (_self_discharge.block_tail_ends).  None when there are none."""
+    d = b.d
+    if not _has_rows(d.nodeState_last_dt):
+        return None
+    parts = []
+    if _has_rows(d.period_last):
+        parts.append(d.nodeState_last_dt.join(d.period_last, on="d", how="inner").select("n", "d", "t"))
+    tails = _self_discharge.block_tail_ends(d)
+    if tails is not None:
+        parts.append(tails.select("n", "d", "t"))
+    if not parts:
+        return None
+    out = pl.concat(parts, how="vertical").unique()
+    return out if out.height > 0 else None
+
+
 def _eq_storage_reference_value(b: _Build) -> None:
     """End state of storage nodes with a reference value."""
     d = b.d
     if not (b.has_storage
             and _has_rows(d.storage_use_reference_value)
             and d.p_storage_state_reference_value is not None
-            and _has_rows(d.nodeState_last_dt)
-            and d.period_last is not None
             and d.p_state_existing_capacity is not None
             and d.p_state_unitsize is not None):
         return
+    ends = _horizon_end_steps(b)
+    if ends is None:
+        return
     m = b.m
-    over = (d.nodeState_last_dt
-            .join(d.period_last, on="d", how="inner")
+    over = (ends
             .join(d.storage_use_reference_value, on="n", how="inner")
             .select("n", "d", "t").unique())
     if _has_rows(d.nodeStateBlock):
         # A bind_intraperiod_blocks node (in storage_use_reference_value in rolling solves only) is pinned where the
-        # roll holds its last period in part (period_block_chain); where its blocks loop the end is tied to the start.
+        # roll holds the period in part (period_block_chain): at the roll end and at the end of a chained tail that a
+        # looping period follows; where its blocks loop the end is tied to the start.
         chain = [str(x) for x in d.period_block_chain["d"].to_list()] if _has_rows(d.period_block_chain) else []
         is_block = pl.col("n").cast(pl.Utf8).is_in([str(x) for x in d.nodeStateBlock["n"].to_list()])
         over = over.filter(~is_block | pl.col("d").cast(pl.Utf8).is_in(chain))
@@ -3027,12 +3048,16 @@ def _eq_storage_reference_value(b: _Build) -> None:
     # v_state[n,d,t] − reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
     #   = reference_value[n,d,t] · existing[n,d] / state_unitsize[n]
-    #   ∀ n ∈ storage_use_reference_value, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last,
+    #   ∀ n ∈ storage_use_reference_value, (n,d,t) ∈ horizon_end,
     #     (n ∈ nodeStateBlock ⇒ d ∈ period_block_chain), (n,d,t) ∉ the steps an upper-level solve fixes
+    #   horizon_end = nodeState_last_dt ∩ period_last  ∪  block_tail_end
     # Pins the state at the end of the solve horizon to the reference share of the built storage capacity
-    # (state units), as maxState and the start pins count it.  Nodes with a competing end condition are not in
-    # storage_use_reference_value; a bind_intraperiod_blocks node is, in a rolling solve, and is pinned where the
-    # roll holds its last period only in part (there its blocks chain forward instead of looping).  Where an
+    # (state units), as maxState and the start pins count it.  period_last is the solve's last period and its
+    # stochastic branch siblings only: an earlier period of a multi-period solve is not a horizon end.  Nodes with a
+    # competing end condition are not in storage_use_reference_value; a bind_intraperiod_blocks node is, in a
+    # rolling solve, and is pinned where the roll holds the period only in part (there its blocks chain forward
+    # instead of looping): at the roll end and at block_tail_end, the last step of a chained part-period tail that
+    # a period held whole follows (nothing continues from it, _self_discharge.block_tail_ends).  Where an
     # upper-level solve fixes the node at the step (nested fix_quantity, fix_usage, fix_price) the upper value
     # overrides the reference value: two equalities on one state (fix_quantity), a usage cap the pin could make
     # infeasible (fix_usage), or a price meant to steer that end (fix_price).
@@ -3396,12 +3421,12 @@ def _obj_storage_reference_price(b: _Build) -> Expr | None:
     """Value of the storage content left at the end of the solve horizon."""
     d = b.d
     if not (b.has_storage
-            and d.p_storage_state_reference_price is not None
-            and _has_rows(d.nodeState_last_dt)
-            and _has_rows(d.period_last)):
+            and d.p_storage_state_reference_price is not None):
         return None
-    over = (d.nodeState_last_dt
-            .join(d.period_last, on="d", how="inner")
+    ends = _horizon_end_steps(b)
+    if ends is None:
+        return None
+    over = (ends
             .join(d.p_storage_state_reference_price.frame.select("n", "d"),
                   on=["n", "d"], how="inner")
             .select("n", "d", "t").unique())
@@ -3410,8 +3435,11 @@ def _obj_storage_reference_price(b: _Build) -> Expr | None:
 
     # ─── OBJ. ─── storage_reference_price ────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # − Σ_{(n,d,t) ∈ nodeState_last_dt, d ∈ period_last, (n,d) ∈ reference_price}
+    # − Σ_{(n,d,t) ∈ horizon_end, (n,d) ∈ reference_price}
     #     v_state[n,d,t]·state_unitsize[n] · reference_price[n,d] · w_ev[d,t]
+    #   horizon_end = nodeState_last_dt ∩ period_last  ∪  block_tail_end   (as storage_state_solve_horizon_
+    #                 reference_value: the solve's last period and its branch siblings, and in a rolling solve the
+    #                 end of a chained bind_intraperiod_blocks tail that a looping period follows)
     #   w_ev = timestep_weight · inflation_op / period_share · branch_weight
     # Values the energy left in storage at the end of the solve horizon (revenue, hence the minus),
     # reference_price in currency/MWh.  The price comes from use_reference_price nodes or from the

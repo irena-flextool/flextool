@@ -387,6 +387,31 @@ def block_cyclic_nodes(d) -> "pl.DataFrame | None":
     return out if out.height > 0 else None
 
 
+def block_tail_ends(d) -> "pl.DataFrame | None":
+    """``(n, d, t)`` of ``nodeState_last_dt``: the end of a chained part-period tail of a bind_intraperiod_blocks
+    node in a rolling solve.  The roll holds the period only in part (``period_block_chain``: its blocks chain
+    forward), the period is not one of the solve's last periods, and no block state link continues from its last
+    step (the next period of the roll is held whole and loops on itself).  Nothing follows that state within the
+    roll, so the node's storage_solve_horizon_method applies there as at the roll end.  None when there are none."""
+    nsb, chain, last = getattr(d, "nodeStateBlock", None), getattr(d, "period_block_chain", None), d.nodeState_last_dt
+    if not (_has_rows(nsb) and _has_rows(chain) and _has_rows(last)):
+        return None
+    chained = [str(x) for x in chain["d"].to_list()]
+    last_periods = [str(x) for x in d.period_last["d"].to_list()] if _has_rows(d.period_last) else []
+    links = [link for link in state_links(d, has_rp=False, has_nsb=True)
+             if link.key in ("state_change_block", "state_change_block_forward")]
+    continued = previous_steps(links).select("n", pl.col("d_prev").alias("_d"), pl.col("t_prev").alias("_t"))
+    out = (last.with_columns(_n=pl.col("n").cast(pl.Utf8), _d=pl.col("d").cast(pl.Utf8),
+                             _t=pl.col("t").cast(pl.Utf8))
+           .join(nsb.select(pl.col("n").cast(pl.Utf8).alias("_n")), on="_n", how="semi")
+           .filter(pl.col("_d").is_in(chained) & ~pl.col("_d").is_in(last_periods))
+           .join(continued.rename({"n": "_n"}), on=["_n", "_d", "_t"], how="anti")
+           .select("n", "d", "t")
+           .unique()
+           .sort("n", "d", "t"))
+    return out if out.height > 0 else None
+
+
 def cyclic_nodes(d) -> "pl.DataFrame | None":
     """Storage nodes whose chain closes on itself within the solve (n): bind_within_timeblock,
     bind_within_period, bind_within_solve and the bind_intraperiod_blocks nodes whose first period loops

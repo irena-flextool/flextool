@@ -375,16 +375,24 @@ def _compute_first_and_last_periods(
 
     Returns ``(period_last, period_first_of_solve_list, period_first_list)``
     each as a flat list of period names.
+
+    ``period_last`` is the solve's last period and its stochastic branch
+    siblings (the periods of ``period__branch_list`` that share its anchor
+    period and end on the same timestep): the periods whose last step ends
+    the solve horizon.  An earlier period that merely ends on the same
+    timestep name (periods sharing one timeset) is not last (#37).
     """
     period_first_of_solve = list(active_time_list.keys())[0]
-    period_last = [list(active_time_list.keys())[-1]]
-    time_step_last = active_time_list[period_last[0]][-1].timestep
-    for period in active_time_list.keys():
-        if (
-            active_time_list[period][-1].timestep == time_step_last
-            and period != period_last[0]
-        ):
-            period_last.append(period)
+    last = list(active_time_list.keys())[-1]
+    time_step_last = active_time_list[last][-1].timestep
+    anchor = next((pb[0] for pb in period__branch_list if pb[1] == last), last)
+    siblings = {pb[1] for pb in period__branch_list if pb[0] == anchor} | {anchor}
+    period_last = [last] + [
+        period for period in active_time_list.keys()
+        if period != last
+        and period in siblings
+        and active_time_list[period][-1].timestep == time_step_last
+    ]
 
     period_first_of_solve_list = [
         pb[1] for pb in period__branch_list if pb[0] == period_first_of_solve
