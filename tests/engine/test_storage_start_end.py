@@ -479,3 +479,81 @@ def test_self_discharge_output_of_a_continuing_solve(tmp_path_factory):
     s = utf8(step.solution.value("v_state")).filter((pl.col("n") == "battery") & (pl.col("d") == d)
                                                      & (pl.col("t") == t))["value"][0] * _su(fd)
     assert _reported(wf, step.solve_name)[(d, t)] == pytest.approx(a * s + b * carry, rel=1e-9, abs=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# The other roll-forward carriers of a nested dispatch roll (N14)
+# ---------------------------------------------------------------------------
+
+
+def _rows(frame, cols: list[str]) -> list[tuple]:
+    if frame is None:
+        return []
+    f = frame.frame if hasattr(frame, "frame") else frame
+    return sorted(utf8(f).select(cols).rows())
+
+
+def _close(a: list[tuple], b: list[tuple]) -> bool:
+    if len(a) != len(b):
+        return False
+    for x, y in zip(a, b):
+        if x[:-1] != y[:-1] or abs(float(x[-1]) - float(y[-1])) > 1e-9:
+            return False
+    return True
+
+
+@pytest.mark.parametrize("parent", ["single", "rolling"])
+def test_nested_dispatch_rolls_continue_commitment_ramps_and_totals(tmp_path_factory, parent):
+    """Nested invest → storage (single, or rolling 48 h / 24 h) → dispatch with coal unit commitment (linear,
+    min_load 0.4, min_uptime 8 h, ramp 0.002).  Every dispatch roll after the first continues from the dispatch roll
+    realised before it — also the first roll under a later storage roll: its committed online state, the ramp from
+    that roll's last flow (when the steps are adjacent) and the min up time history.  Before, the parent solve's
+    handoff (a storage solve realises no dispatch) was translated over these carriers in every nested dispatch roll,
+    so each roll ≥ 1 restarted the commitment from its own cyclic wrap, ramped from nothing and forgot the min up time
+    history."""
+    vals = [["unit", "coal_plant", "startup_method", _s("linear")],
+            ["unit", "coal_plant", "min_load", _f(0.4)],
+            ["unit", "coal_plant", "min_uptime", _f(8.0)],
+            ["unit__outputNode", ["coal_plant", "west"], "ramp_method", _s("ramp_limit")],
+            ["unit__outputNode", ["coal_plant", "west"], "ramp_speed_up", _f(0.002)],
+            ["unit__outputNode", ["coal_plant", "west"], "ramp_speed_down", _f(0.002)],
+            ["node", "battery", "storage_nested_fix_method", _s("fix_nothing")]]
+    if parent == "single":
+        vals += [["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(36.0)],
+                 ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(24.0)]]
+    else:
+        vals += [["solve", "storage_fullYear_6h", "solve_mode", _s("rolling_window")],
+                 ["solve", "storage_fullYear_6h", "rolling_solve_horizon", _f(48.0)],
+                 ["solve", "storage_fullYear_6h", "rolling_solve_jump", _f(24.0)],
+                 ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(12.0)],
+                 ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(6.0)]]
+    url, scen = make_db(tmp_path_factory, alt=f"sse_n14_{parent}", base_chain=NESTED, values=vals)
+    steps = run(tmp_path_factory, url, scen)
+    rolls = [k for k in steps if k.startswith("dispatch_fullYear_roll_roll_")][:8]
+    assert len(rolls) == 8
+    ramp_checked = online_checked = 0
+    for prev_name, name in zip(rolls, rolls[1:]):
+        prev, fd = steps[prev_name].handoff, steps[name].flex_data
+        assert _close(_rows(fd.p_roll_continue_online, ["p", "value"]),
+                      _rows(prev.roll_end_online, ["process", "value"])), name
+        online_checked += 1
+        assert _rows(fd.online_startup_history, ["p", "d", "t"]) == _rows(prev.online_history,
+                                                                          ["process", "period", "step"]), name
+        end = prev.roll_end_step.rows()[0][:2]
+        first = _first_row(steps[name])[2]
+        if end[0] == first[0] and int(first[1][1:]) == int(end[1][1:]) + 1:
+            # Adjacent in the same period: the first step ramps from the previous roll's last realised flow.
+            assert _rows(fd.dt_ramp_carry, ["d", "t", "d_previous", "t_previous"])[:1] == [(first[0], first[1], *end)]
+            flow = [r[-1] for r in _rows(prev.roll_end_flow, ["process", "source", "sink", "value"])]
+            assert [r[-1] for r in _rows(fd.p_roll_continue_flow, ["p", "source", "sink", "value"])] == \
+                pytest.approx(flow, abs=1e-12)
+            ramp_checked += 1
+    assert online_checked == 7 and ramp_checked >= 4
+    assert any(steps[r].handoff.online_history is not None for r in rolls)
+    if parent == "rolling":
+        # The first roll under storage roll 1 and storage roll 1 itself (upward) continue from dispatch roll 3.
+        names = list(steps)
+        s1 = names.index("storage_fullYear_6h_roll_1")
+        for name in (names[s1], names[s1 + 1]):
+            assert _close(_rows(steps[name].flex_data.p_roll_continue_online, ["p", "value"]),
+                          _rows(steps[names[s1 - 1]].handoff.roll_end_online, ["process", "value"])), name

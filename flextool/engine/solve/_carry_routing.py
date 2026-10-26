@@ -1,4 +1,4 @@
-"""Where a sub-solve's storage state carry comes from: the latest realised state of an earlier sub-solve.
+"""Where a sub-solve's roll-forward carries come from: the latest realised state of an earlier sub-solve.
 
 A storage node continues from the state realised before the sub-solve starts, at the sub-solve's own nesting level
 or a deeper one (owner decision Q-c15e-B, with the nested clarification of 2026-10-25):
@@ -16,6 +16,13 @@ A node with no realised state yet starts from ``fix_start`` (or free).  ``nestin
 ``contains_solve`` hops above a sub-solve.  An auto-spawned realised-dispatch sibling is at its parent's level and
 starts where its parent starts: it never sees the state its parent realised in the same window.
 
+The same rule routes the other carriers tied to the realised end step (:data:`STEP_FIELDS`: the committed online
+state, the ramp-limited flows and the step itself, the min up / down time history), taken whole from the latest
+entry: the next roll's unit commitment and ramps continue from the dispatch that was realised last, also across a
+storage or investment solve in between.  The running totals (``cumulative_co2``, ``cumulative_commodity``,
+``cum_sim_hours``) are not routed: every sub-solve passes them on (its own realised part added), so the sequential
+predecessor already holds the total realised before the sub-solve, at any level.
+
 The registry is run-scoped (one :class:`CarryRouter` per cascade run), entries are appended in run order (which is
 deterministic), and "latest" means the last appended entry.  The realised end step of each entry must lie before the
 consuming sub-solve's first step in time; an entry that does not is not used (a warning names it).
@@ -32,6 +39,9 @@ _LOG = logging.getLogger(__name__)
 
 Position = tuple[int, int]
 
+# The SolveHandoff carriers tied to the realised end step, routed with the storage state.
+STEP_FIELDS: tuple[str, ...] = ("roll_end_online", "roll_end_flow", "roll_end_step", "online_history")
+
 
 @dataclass(frozen=True)
 class RealisedEntry:
@@ -42,6 +52,7 @@ class RealisedEntry:
     end_step: "tuple[str, str] | None"      # (period, step) of the last realised step
     end: "Position | None"                  # its position in time (period rank, timeline index)
     roll_end_state: "pl.DataFrame | None"   # [node, value], MWh
+    handoff: object = None                  # the SolveHandoff (the STEP_FIELDS carriers)
 
 
 class CarryRouter:
@@ -88,16 +99,18 @@ class CarryRouter:
             self._cutoff[solve] = len(self._entries)
 
     def record(self, solve: str, handoff) -> None:
-        """Append the realised end of ``solve`` (its handoff), when it realised a storage state."""
+        """Append the realised end of ``solve`` (its handoff), when it realised a step or a storage state."""
         if handoff is None:
             return
         state = getattr(handoff, "roll_end_state", None)
-        if state is None or state.height == 0:
-            return
+        if state is not None and state.height == 0:
+            state = None
         end_step = _end_step(handoff)
+        if state is None and end_step is None:
+            return
         end = self._position(*end_step) if end_step is not None else None
         self._entries.append(RealisedEntry(len(self._entries), solve, self.nesting_level(solve), end_step, end,
-                                           state))
+                                           state, handoff))
 
     def sources(self, solve: str, first_step: "tuple[str, str] | None") -> list[RealisedEntry]:
         """The entries ``solve`` may continue from, oldest first: recorded before it started, at its nesting level
@@ -114,7 +127,7 @@ class CarryRouter:
                 if key not in self._warned:
                     self._warned.add(key)
                     _LOG.warning(
-                        "Storage state realised by solve '%s' (ending at %s) is not before the start of solve '%s' "
+                        "The state realised by solve '%s' (ending at %s) is not before the start of solve '%s' "
                         "(%s); it is not carried into it.", entry.solve, entry.end_step, solve, first_step)
                 continue
             out.append(entry)
@@ -128,6 +141,8 @@ class CarryRouter:
         latest: dict[str, float] = {}
         for entry in self.sources(solve, first_step):
             frame = entry.roll_end_state
+            if frame is None:
+                continue
             for node, value in zip(frame["node"].cast(pl.Utf8).to_list(),
                                    frame["value"].cast(pl.Float64, strict=False).to_list()):
                 latest[node] = 0.0 if value is None else float(value)
@@ -137,6 +152,13 @@ class CarryRouter:
         return pl.DataFrame({"node": nodes, "value": [latest[n] for n in nodes]},
                             schema={"node": pl.Utf8, "value": pl.Float64})
 
+    def step_carriers(self, solve: str, first_step: "tuple[str, str] | None") -> dict:
+        """``{field: frame | None}`` of :data:`STEP_FIELDS` from the latest entry with a realised end step (all None
+        when there is none: the sub-solve is the first of its level)."""
+        entries = [e for e in self.sources(solve, first_step) if e.end_step is not None]
+        handoff = entries[-1].handoff if entries else None
+        return {f: (getattr(handoff, f, None) if handoff is not None else None) for f in STEP_FIELDS}
+
     def _warn_shallower(self, solve: str, level: int, cutoff: int, first, first_step) -> None:
         """The first sub-solve of a level starts from fix_start although a shallower level realised a state before
         it (a level that first appears later in the model): visible, not changed (owner rule)."""
@@ -144,7 +166,10 @@ class CarryRouter:
                    and (first is None or e.end is None or e.end < first)]
         if not shallow:
             return
-        entry = shallow[-1]
+        stateful = [e for e in shallow if e.roll_end_state is not None]
+        if not stateful:
+            return
+        entry = stateful[-1]
         key = ("shallower", solve)
         if key in self._warned:
             return
@@ -154,6 +179,14 @@ class CarryRouter:
             "Solve '%s' is the first solve of its nesting level: its storage node(s) %s start from "
             "storage_start_end_method (fix_start) or free, not from the state solve '%s' realised at a higher level "
             "before it.", solve, nodes, entry.solve)
+
+
+class RoutedCarriers:
+    """The routed :data:`STEP_FIELDS` frames as attributes (the shape the handoff translator reads)."""
+
+    def __init__(self, frames: dict) -> None:
+        for name in STEP_FIELDS:
+            setattr(self, name, frames.get(name))
 
 
 def _end_step(handoff) -> "tuple[str, str] | None":
@@ -220,4 +253,4 @@ def first_step(active_time_list: dict) -> "tuple[str, str] | None":
     return None
 
 
-__all__ = ["CarryRouter", "RealisedEntry", "first_step", "make_position"]
+__all__ = ["STEP_FIELDS", "CarryRouter", "RealisedEntry", "RoutedCarriers", "first_step", "make_position"]

@@ -711,6 +711,20 @@ representative-period nodes) and no `fix_start` pin; the others get
 `fix_start` (or the open first step).  `p_nested_solve_first` is not
 read by storage (it still gates the divest history).
 
+The carriers tied to the realised end step (`STEP_FIELDS`:
+`roll_end_online`, `roll_end_flow`, `roll_end_step`, `online_history`)
+are routed by the same rule, taken whole from the latest entry with a
+realised step: the next dispatch roll continues the commitment, the
+ramp and the min up / down history from the dispatch realised last,
+also across a storage or investment solve in between.  The producer
+extends the min up / down window it was handed (the routed
+`handoff/online_history` its LP read).  A nested parent's handoff is
+translated only for `PIN_FIELDS` (realised investment / existing /
+divest, fixed online, the nested storage fix).  The running totals
+(`cumulative_co2`, `cumulative_commodity`, `cum_sim_hours`) are not
+routed: every sub-solve passes them on with its own realised part added,
+so the sequential predecessor holds the total at any level.
+
 `upward_roll_end_state` (`SolveHandoff` field added by `bb35cd54`) stays
 as a carrier and an override key; the producer copies the same
 end-of-horizon state into both fields.  See architecture.md

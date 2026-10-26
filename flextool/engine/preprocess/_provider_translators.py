@@ -62,10 +62,12 @@ def _empty_handoff_frame(key: str) -> pl.DataFrame:
     )
 
 
-# OC1 rolling separate_dispatch — the two carrier FLOWS, so a dispatch roll
-# can take its ROLL-FORWARD (realized trajectory) from the previous dispatch
-# roll and its PIN (commitment + capacity) from its UC roll via TWO partial
-# translates that never clobber each other's keys.
+# The two carrier FLOWS, as partial translates that never clobber each
+# other's keys: OC1 rolling separate_dispatch takes a dispatch roll's
+# ROLL-FORWARD (realized trajectory) from the previous dispatch roll and its
+# PIN (commitment + capacity) from its UC roll; a nested sub-solve takes only
+# the PIN from its parent (the roll-forward carriers tied to the realised end
+# are routed by solve._carry_routing).
 ROLL_FORWARD_FIELDS: frozenset = frozenset((
     "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
     "roll_end_step", "online_history", "cumulative_co2", "cumulative_commodity",

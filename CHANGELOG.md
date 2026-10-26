@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **Nested dispatch rolls keep their unit commitment, ramps and running
+  totals.** In a nested solve every dispatch roll after the first took the
+  roll-forward carriers from the storage or investment solve above it,
+  which realises no dispatch: each roll restarted its unit commitment from
+  its own cyclic wrap (charging startups again), ramped from nothing, forgot
+  the min up / down time history and, with a cumulative price ladder, the
+  tier energy already bought. They now continue from the dispatch realised
+  before them, also across a later roll of the storage solve; a storage roll
+  continues the commitment of the dispatch solved below it.
+
 - **Later solves continue from the realised storage state.** In a solve
   sequence (e.g. one solve per investment period) every solve was pinned
   again to `storage_state_start`, discarding the state the previous solve

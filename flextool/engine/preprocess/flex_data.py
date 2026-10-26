@@ -6604,9 +6604,17 @@ def build_handoff_from_solution(
             hist_now = hist_now.with_columns(
                 pl.col("duration").cast(pl.Float64).fill_null(1.0))
 
-            # accumulate prior window (rename carrier schema → p/d/t)
-            prior_hist = (prior_handoff.online_history
-                          if prior_handoff is not None else None)
+            # accumulate prior window (rename carrier schema → p/d/t): the window this solve started from, i.e. the
+            # routed ``handoff/online_history`` its LP read (solve._carry_routing: the latest realised dispatch, which
+            # is not the sequential predecessor after a storage / investment solve or for a realised-dispatch
+            # sibling); the predecessor's window without a Provider (unit-test synthesis).
+            from flextool.engine.preprocess import _provider_keys as _K
+            from flextool.engine.preprocess._provider_translators import read_handoff_frame as _read_hf
+            if provider is not None:
+                prior_hist = _read_hf(provider, _K.HANDOFF_ONLINE_HISTORY)
+            else:
+                prior_hist = (prior_handoff.online_history
+                              if prior_handoff is not None else None)
             if prior_hist is not None and prior_hist.height > 0:
                 prior_renamed = prior_hist.rename(
                     {"process": "p", "period": "d", "step": "t"}).with_columns(

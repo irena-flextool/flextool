@@ -1084,6 +1084,25 @@ def _patch_rp_downgrade_within_solve(data: dict) -> dict:
            for n in ("lh2_A", "lh2_B", "lh2_C")])
 
 
+def _patch_nested_rolling_storage_uc(data: dict) -> dict:
+    """Nested invest -> rolling storage (48 h / 24 h, 6-h steps) -> rolling dispatch (24 h / 12 h) with the battery
+    bind_forward_only + fix_start (no nested fix) and coal unit commitment (linear, min_load 0.4, min_uptime 8 h, ramp
+    limit 0.002): the first dispatch roll under each later storage roll continues the storage level, the commitment,
+    the ramp and the min up time history from the dispatch realised before it (carry routing)."""
+    return _overlay(data, name="nested_rolling_storage_uc",
+                    base="multi_fullYear_battery_nested_24h_invest_one_solve",
+                    values=_RAMP_COAL + [
+                        ["solve", "storage_fullYear_6h", "solve_mode", "rolling_window"],
+                        ["solve", "storage_fullYear_6h", "rolling_solve_horizon", 48.0],
+                        ["solve", "storage_fullYear_6h", "rolling_solve_jump", 24.0],
+                        ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", 24.0],
+                        ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", 12.0],
+                        ["node", "battery", "storage_nested_fix_method", "fix_nothing"],
+                        ["unit", "coal_plant", "startup_method", "linear"],
+                        ["unit", "coal_plant", "min_load", 0.4],
+                        ["unit", "coal_plant", "min_uptime", 8.0]])
+
+
 def _patch_rolling_intraperiod_blocks(data: dict) -> dict:
     """battery bind_intraperiod_blocks in the rolling fullYear dispatch over p2020 + p2025 (72 h each, horizon 96 h,
     jump 48 h): roll 0 holds p2020 whole (loops, cut at its realized end t0048) and chains into p2025; roll 1 starts
@@ -1417,6 +1436,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "bind_within_period_2p": _patch_bind_within_period_2p,
     "rp_downgrade_within_solve": _patch_rp_downgrade_within_solve,
     "rolling_intraperiod_blocks": _patch_rolling_intraperiod_blocks,
+    "nested_rolling_storage_uc": _patch_nested_rolling_storage_uc,
 }
 
 
@@ -1595,6 +1615,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("bind_within_period_2p", _T),
     ("rp_downgrade_within_solve", _F + "lh2_three_region_rp_invest.json"),
     ("rolling_intraperiod_blocks", _T),
+    ("nested_rolling_storage_uc", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

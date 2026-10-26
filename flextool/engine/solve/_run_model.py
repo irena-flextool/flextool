@@ -1418,16 +1418,10 @@ def native_run_model(state, solver) -> int:
             _provider_translators.translate_handoff_to_provider(
                 prior_handoff, sub_solve_provider,
             )
-        # Phase 4.1e — when nested, parent solve's handoff shadows the
-        # sequential prior in ``handoff/*`` keys: both translator calls
-        # write the same Provider keys, and parent's call lands after
-        # sequential's so parent's values win where both are populated.
-        # Reuses ``_parent_complete_for_carriers`` resolved earlier in
-        # the same iteration scope.  Guarded by ``if parent_handoff is
-        # not None`` so non-nested cascades skip the second call
-        # entirely; calling the translator with ``None`` would write
-        # empty frames via its empty-schema fallback, obliterating the
-        # sequential prior's just-written data.
+        # When nested, the parent solve's handoff supplies what the parent imposes on this sub-solve
+        # (PIN_FIELDS: realised investment / existing / divest, fixed online, the nested storage fix): a partial
+        # translate that lands after the sequential one.  The roll-forward carriers are not the parent's (a storage
+        # or investment parent realises no dispatch, so its frames are empty or stale): they are routed below.
         parent_handoff = (
             state.handoffs.get(_parent_complete_for_carriers)
             if state.handoffs is not None and _parent_complete_for_carriers is not None
@@ -1436,16 +1430,24 @@ def native_run_model(state, solver) -> int:
         if parent_handoff is not None and not _is_dispatch_roll:
             _provider_translators.translate_handoff_to_provider(
                 parent_handoff, sub_solve_provider,
+                fields=_provider_translators.PIN_FIELDS,
             )
-        # The storage carry is routed, not taken from the sequential / parent handoff: the latest state realised
-        # before this sub-solve at its nesting level or deeper (_carry_routing; None → the node is first and starts
-        # from fix_start).  Both keys hold the same frame; the override translate below still wins.
+        # The roll-forward carriers tied to the realised end are routed, not taken from the sequential / parent
+        # handoff: the latest state realised before this sub-solve at its nesting level or deeper (_carry_routing;
+        # none → the sub-solve is the first of its level: storage starts from fix_start, online and ramps from the
+        # solve's own wrap).  Both storage keys hold the same frame; the override translate below still wins.  The
+        # running totals (cumulative_*) stay with the sequential predecessor, which passes them on.
         carry_router.start(solve)
-        _routed_state = carry_router.roll_end_state(solve, _carry_routing.first_step(active_time_lists[solve]))
+        _first_step = _carry_routing.first_step(active_time_lists[solve])
+        _routed_state = carry_router.roll_end_state(solve, _first_step)
         for _key in (_provider_keys.HANDOFF_ROLL_END_STATE, _provider_keys.HANDOFF_UPWARD_ROLL_END_STATE):
             sub_solve_provider.put(
                 _key, _routed_state if _routed_state is not None
                 else _provider_translators._empty_handoff_frame(_key))
+        _provider_translators.translate_handoff_to_provider(
+            _carry_routing.RoutedCarriers(carry_router.step_carriers(solve, _first_step)), sub_solve_provider,
+            fields=frozenset(_carry_routing.STEP_FIELDS),
+        )
         # Phase 5b — external overrides shadow handoff via the
         # ``override/*`` Provider layer.  The callable is set by
         # external code wrapping the runner (file-watch / ZeroMQ /
