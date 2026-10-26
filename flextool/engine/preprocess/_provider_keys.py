@@ -68,6 +68,9 @@ SOLVE_DATA_P_ROLL_CONTINUE_STATE = "solve_data/p_roll_continue_state"
 # period (_run_model); header-only for a sub-solve that is not a roll.  The bind_intraperiod_blocks blocks of a
 # period loop when the roll holds the whole period and chain forward otherwise.
 SOLVE_DATA_ROLL_PERIOD_WHOLE = "solve_data/roll_period_whole"
+# (period, step, upper_step) all-Utf8: a nested child's steps matched to its parent's steps (_run_model); read by
+# the fix_quantity / fix_usage rows (FlexData dtt_timeline_matching) and by the fix_price reference-price derive.
+SOLVE_DATA_TIMELINE_MATCHING_MAP = "solve_data/timeline_matching_map"
 SOLVE_DATA_CO2_CUM_REALIZED_TONNES = "solve_data/co2_cum_realized_tonnes"
 SOLVE_DATA_LADDER_CUM_SIM_HOURS = "solve_data/ladder_cum_sim_hours"
 SOLVE_DATA_LADDER_CUM_REALIZED_MWH = "solve_data/ladder_cum_realized_mwh"

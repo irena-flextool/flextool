@@ -561,6 +561,42 @@ def test_nested_fix_price_from_coarse_parent(tmp_path_factory) -> None:
     assert nonzero > 0
 
 
+def test_nested_fix_price_reaches_dispatch_rolls(tmp_path_factory) -> None:
+    """Nested invest (24 h) -> storage (6 h) -> rolling dispatch (horizon 36 h, jump 24 h) with battery fix_price: a
+    roll's reference price of a period is the storage solve's price at the parent step matched to the period's last
+    step in the roll (roll 2: p2020, roll 11: p2035; 47.5 here).  The objective values the end state only in the
+    roll's terminal period (period_last): roll 11 has the term on v_state[battery,p2035,t0072], roll 2 has none on
+    p2020's last step (item 134).  Before: the matching map reached only the disk, the reference-price derive (which
+    reads the Provider) saw none, and every roll got 0."""
+    vals = [["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(36.0)],
+            ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(24.0)],
+            ["node", "battery", "storage_nested_fix_method", _s("fix_price")]]
+    steps = _run(tmp_path_factory, "c_nfp_roll", vals, _chain(FIX / "tests.json",
+                                                               "multi_fullYear_battery_nested_24h_invest_one_solve"))
+    price = {(n, d, t): v for n, d, t, v in utf8(steps["storage_fullYear_6h"].handoff.fix_storage_price)
+             .select("node", "period", "step", "p_fix_storage_price").iter_rows()}
+
+    def check(roll: int, period: str) -> str:
+        fd = steps[f"dispatch_fullYear_roll_roll_{roll}"].flex_data
+        ref = dict(utf8(fd.p_storage_state_reference_price.frame).filter(pl.col("n") == "battery")
+                   .select("d", "value").iter_rows())
+        last = utf8(fd.nodeState_last_dt).filter((pl.col("n") == "battery") & (pl.col("d") == period))["t"][0]
+        upper = utf8(fd.dtt_timeline_matching).filter((pl.col("d") == period) & (pl.col("t") == last))["t_upper"][0]
+        want = float(price[("battery", period, upper)])
+        assert want != 0.0
+        assert ref[period] == pytest.approx(want, rel=1e-12), (roll, period)
+        return last
+
+    last11 = check(11, "p2035")
+    last2 = check(2, "p2020")
+    m11 = build(steps["dispatch_fullYear_roll_roll_11"].flex_data).canonicalise()
+    m2 = build(steps["dispatch_fullYear_roll_roll_2"].flex_data).canonicalise()
+    obj11 = {nm: float(m11.col_obj[i]) for i, nm in enumerate(m11.col_names)}
+    obj2 = {nm: float(m2.col_obj[i]) for i, nm in enumerate(m2.col_names)}
+    assert obj11[f"v_state[battery,p2035,{last11}]"] < 0.0
+    assert obj2[f"v_state[battery,p2020,{last2}]"] == 0.0
+
+
 def test_group_step_relative_to_solve_step(caplog, monkeypatch) -> None:
     """Coarse means longer than the solve's step: a group step equal to the solve's step is not coarse (silently),
     a shorter one is not coarse with a warning, a longer one that is not a multiple raises."""

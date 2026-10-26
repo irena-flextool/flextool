@@ -148,8 +148,9 @@
   its own price, and a step the objective does not weigh (the trunk period
   at the branch steps) has no price. The nested `fix_price` storage handoff
   passed the dispatch solve a price a million times too small (and weighted);
-  it now passes the storage solve's `price_t`, also for
-  `bind_intraperiod_blocks` storage nodes.
+  it now passes the storage solve's `price_t` to the dispatch solve, also to
+  the rolls of a rolling dispatch solve (before, a rolling dispatch solve
+  always received 0) and also for `bind_intraperiod_blocks` storage nodes.
 
 - **`bind_intraperiod_blocks` storage in rolling and nested solves.** Before,
   such a node had no energy balance at all in a roll and in the per-period

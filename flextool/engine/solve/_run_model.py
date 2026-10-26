@@ -1140,6 +1140,7 @@ def native_run_model(state, solver) -> int:
         else:
             storage_fix_values_exist = False
 
+        matching_rows: list[tuple[str, str, str]] = []
         if storage_fix_values_exist:
             state.logger.info("Nested timeline matching")
             matching_map = stochastic_solver.write_timeline_matching_map(
@@ -1156,9 +1157,17 @@ def native_run_model(state, solver) -> int:
                 writer.writerow(["period", "step", "upper_step"])
                 for (period, step), upper_step in matching_map.items():
                     writer.writerow([period, step, upper_step])
+                    matching_rows.append((str(period), str(step), str(upper_step)))
         else:
             with open(wf / "solve_data/timeline_matching_map.csv", "w") as realfile:
                 realfile.write("period,step,upper_step\n")
+        # The same rows in the Provider: the fix_price reference-price derive reads the Provider only (the disk file
+        # stays for the csv dump); written every iter, the level Provider being shared by the iters of a level.
+        import polars as pl
+        sub_solve_provider.put(
+            _provider_keys.SOLVE_DATA_TIMELINE_MATCHING_MAP,
+            pl.DataFrame(matching_rows, schema={"period": pl.Utf8, "step": pl.Utf8, "upper_step": pl.Utf8},
+                         orient="row"))
 
         # Aggregate timeseries when step size changes between solves.
         if previous_complete_solve != complete_solve[solve]:
