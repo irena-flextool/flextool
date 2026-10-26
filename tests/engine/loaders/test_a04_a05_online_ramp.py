@@ -1,21 +1,39 @@
 """Surface A.4 (Online / Unit-Commitment / Startup Constraints) and A.5
 (Ramp-Rate Constraints) loader tests.
 
-Entry point: ``flextool.engine.load_flextool(workdir)``.  These
-sections are gated by ``pss`` (process_source_sink) presence, so we
-seed each test from one of the existing *real* workdirs that already
-wires up online / ramp data, then strip its ``tests.sqlite`` (forcing
-the CSV-only branch — the spine reader would otherwise re-derive pss
-from the DB and bypass our overlays).
+Entry point: ``flextool.engine.load_flextool``.  These sections are
+gated by ``pss`` (process_source_sink) presence, so each test starts from
+a real scenario that wires up online / ramp data (``coal_min_load``,
+``coal_ramp_limit``) or from ``base`` (no process, pss absent).
 
-The fully-empty case (A5-empty_when_pss_none) reuses ``tiny_workdir``
-where pss is absent — the loader's blank short-circuit fires before
-disk reads.
+Production-path tests (provider clone + DB reader, ``load_scenario``):
 
-The single ``pdt_online_zero_startup_cost_excluded`` spec exercises
-the ``filter(value != 0)`` branch which is unreachable from the CSV
-path (``source=None`` skips the helper); we call ``_load_online``
-directly with a stub source returning ``startup_cost=0``.
+* A5-empty_when_pss_none on ``base`` (``tiny_run``).
+* A5-all_four_directions_independent: the ramp direction sets are
+  ``SIMPLE_PROJECTIONS`` of the DB (``params/_projection.py``) that keep
+  the provider seed when the DB has no member, so an overlay on a
+  direction the DB leaves empty is what the model sees.
+* ``pdt_online_zero_startup_cost_excluded`` calls ``_load_online``
+  directly with a stub source returning ``startup_cost=0`` and the
+  ``coal_min_load`` provider (the ``filter(value != 0)`` branch is
+  reachable only with a source).
+
+Reload-only seeds (c24 S1-7; they stay on the reader-less CSV load of a
+copied work folder without ``tests.sqlite`` and move to
+``tests/csv_reload/`` in S1-8):
+
+* the online tests: ``process_online`` / ``_linear`` / ``_integer`` /
+  ``process_minload`` are ``_AUTHORITATIVE_SETS`` and
+  ``process_min_load_eff`` a ``SIMPLE_PROJECTIONS`` set, re-derived from
+  the DB on every load.  On the provider path a header-only
+  ``process_online`` overlay still gives ``[coal_plant]``, a dropped
+  ``process_online_integer`` gives None (not the empty frame), and the
+  ``process__ct_method`` overlays (input/ or solve_data/ ``method``
+  alias) leave ``process_min_load_eff == [coal_plant]``;
+* the all-empty / ramp-speed parts of the ramp blank-path test: the DB
+  re-derives ``sink_up`` (still ``[coal_plant]`` under header-only
+  overlays) and ``apply_direct_params`` fills ``p_ramp_speed_up_sink``
+  (0.001), so "all four None" holds only for a reader-less load.
 """
 from __future__ import annotations
 
@@ -26,6 +44,9 @@ import polars as pl
 import pytest
 
 from flextool.engine import load_flextool
+from tests._support.load import ScenarioRun, clone_provider, load_scenario
+
+from .conftest import drop_frame, put_frame
 
 
 @pytest.fixture(scope="function")
@@ -53,6 +74,20 @@ def ramp_workdir(tmp_path: Path, scenario_workdir) -> Path:
     return target
 
 
+@pytest.fixture(scope="function")
+def online_run(scenario_run) -> tuple[ScenarioRun, object]:
+    """The ``coal_min_load`` run (1 online process with min_load_eff) and a fresh clone of its provider."""
+    run = scenario_run("coal_min_load")
+    return run, clone_provider(run.last.provider)
+
+
+@pytest.fixture(scope="function")
+def ramp_run(scenario_run) -> tuple[ScenarioRun, object]:
+    """The ``coal_ramp_limit`` run (one ``sink_up`` ramp arc) and a fresh clone of its provider."""
+    run = scenario_run("coal_ramp_limit")
+    return run, clone_provider(run.last.provider)
+
+
 def _write(workdir: Path, rel: str, content: str) -> None:
     p = workdir / rel
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +108,8 @@ def test_online_empty_and_partition_and_missing_int_file(online_workdir):
     is preserved verbatim, (3) delete ``process_online_integer.csv``
     and confirm the missing-file fallback substitutes an empty
     ``{p:Utf8}`` frame (NOT None).
+
+    Reload-only seed (c24 S1-7): see the module docstring; S1-8 moves it to tests/csv_reload/.
     """
     # (1) Empty-gate — overwrite to header-only.
     _write(online_workdir, "solve_data/process_online.csv", "process\n")
@@ -109,6 +146,8 @@ def test_minload_set_and_min_load_eff_filter(online_workdir):
     1-row p-set; ``process_minload`` is loaded as-is from the seed.
     Inserts a second process ``p2`` with method ``linear`` — the seed
     already has ``coal_plant -> min_load_efficiency``.
+
+    Reload-only seed (c24 S1-7): see the module docstring; S1-8 moves it to tests/csv_reload/.
     """
     # Both files exist in seed.  ct_method (input/) wins per precedence.
     _write(online_workdir, "input/process__ct_method.csv",
@@ -135,6 +174,8 @@ def test_ct_method_alias_and_inp_over_sd_precedence(online_workdir):
     (b) successfully read whichever-named column.  Then we delete the
     ``input/`` file and assert the ``solve_data/`` ``method`` alias is
     honoured.
+
+    Reload-only seed (c24 S1-7): see the module docstring; S1-8 moves it to tests/csv_reload/.
     """
     # input/ has ct_method column, solve_data/ has method alias with
     # different membership.
@@ -153,19 +194,22 @@ def test_ct_method_alias_and_inp_over_sd_precedence(online_workdir):
     assert data.process_min_load_eff["p"].to_list() == ["other_p"]
 
 
-def test_pdt_online_zero_startup_cost_excluded(online_workdir):
+def test_pdt_online_zero_startup_cost_excluded(online_run):
     """Covers A4-pdt_online_zero_startup_cost_excluded (direct).
 
     Stub ``InputSource`` returns ``startup_cost = 0`` for the lone
     process; ``_load_online`` must filter that row before constructing
     the ``pdt_online_*`` join sets, leaving them and ``p_startup_cost``
     as ``None``.  Called directly because the CSV path skips the
-    source helper entirely (``source=None``).
+    source helper entirely (``source=None``).  The online sets come from
+    the ``coal_min_load`` provider; ``inp`` / ``sd`` point into the empty
+    load folder, so no file is read.
     """
     from flextool.engine.preprocess.flex_data import _load_online
 
-    inp = online_workdir / "input"
-    sd = online_workdir / "solve_data"
+    run, P = online_run
+    inp = run.load_folder / "input"
+    sd = run.load_folder / "solve_data"
     pss = pl.DataFrame({"p": ["coal_plant"],
                         "source": ["coal_market"], "sink": ["west"]})
     dt = pl.DataFrame({"d": ["p2020"], "t": ["t0001"]})
@@ -187,7 +231,11 @@ def test_pdt_online_zero_startup_cost_excluded(online_workdir):
         def parameter_explicit(self, ec: str, name: str) -> pl.DataFrame:
             return self.parameter(ec, name)
 
-    out = _load_online(inp, sd, dt, pss, source=_ZeroStartupSource())
+    out = _load_online(inp, sd, dt, pss, source=_ZeroStartupSource(), provider=P)
+    # The provider's online set is read (not the blank early return), so the Nones below come from
+    # the zero-startup filter.
+    assert out["process_online"]["p"].to_list() == ["coal_plant"]
+    assert out["process_online_linear"]["p"].to_list() == ["coal_plant"]
     # Hand-calc: filter removes the only sc row -> sc_frame.height == 0
     # -> pdt_online_lin / p_startup_cost left at their initial None.
     assert out["pdt_online_linear"] is None
@@ -206,6 +254,10 @@ def test_ramp_blank_paths_pss_none_and_all_empty_and_speed_none(
     Δ.12 contract: even with populated direction sets the loader must
     leave all four ``p_ramp_speed_*`` Params as ``None`` — they're
     filled later by ``apply_direct_params``).
+
+    Reload-only seed (c24 S1-7) for parts (2) and (3): see the module
+    docstring; S1-8 moves it to tests/csv_reload/.  Part (1) runs on the
+    production path in :func:`test_ramp_blank_when_pss_none`.
     """
     # (1) pss=None branch: tiny seed has header-only pss CSV.
     data = load_flextool(tiny_workdir)
@@ -247,30 +299,54 @@ def test_ramp_blank_paths_pss_none_and_all_empty_and_speed_none(
     assert data.p_ramp_speed_down_source is None
 
 
-def test_ramp_directions_independent(ramp_workdir):
+def test_ramp_blank_when_pss_none(tiny_run):
+    """Covers A5-empty_when_pss_none (direct) on the production path.
+
+    ``base`` has no process, so pss is None and ``_load_ramp`` returns the
+    blank dict: every ramp set and every ``p_ramp_speed_*`` Param is None.
+    No overlay; the ``coal_ramp_limit`` load below shows the same fields
+    are populated when a ramp arc exists.
+    """
+    run, P = tiny_run
+    data = load_scenario(run, provider=P)
+    assert data.process_source_sink is None
+    for key in ("process_source_sink_ramp_limit_sink_up",
+                "process_source_sink_ramp_limit_sink_down",
+                "process_source_sink_ramp_limit_source_up",
+                "process_source_sink_ramp_limit_source_down",
+                "p_ramp_speed_up_sink", "p_ramp_speed_down_sink",
+                "p_ramp_speed_up_source", "p_ramp_speed_down_source"):
+        assert getattr(data, key) is None, f"{key} not None on the base seed"
+
+
+def test_ramp_directions_independent(ramp_run):
     """Covers A5-all_four_directions_independent (direct).
 
-    Ramp seed already has ``sink_up`` populated and the other three
-    files header-only.  Overlay swaps that to *only* ``source_down``
-    populated (the other three become missing files entirely).  Per
-    ``_read_set``, missing files -> None; this asserts no cross-fill
+    The ``coal_ramp_limit`` provider holds the four direction sets
+    (``sink_up`` = the one ramp arc, the other three empty).  The overlay
+    removes all four keys and puts back *only* ``source_down`` populated.
+    Per ``_read_set``, a missing key -> None; this asserts no cross-fill
     between directions.
+
+    Production path: the direction sets are DB projections that keep the
+    provider seed when the DB has no member.  The DB has no ``source_down``
+    arc, so the overlay is what the model sees; ``sink_up`` is re-derived
+    from the DB (the scenario's ramp arc) although its key was removed.
     """
-    # Delete all four direction CSVs, then write only source_down.
+    run, P = ramp_run
     for dirn in ("sink_up", "sink_down", "source_up", "source_down"):
-        f = (ramp_workdir / "solve_data"
-             / f"process_source_sink_ramp_limit_{dirn}.csv")
-        if f.exists():
-            f.unlink()
-    _write(ramp_workdir,
-           "solve_data/process_source_sink_ramp_limit_source_down.csv",
-           "process,source,sink\ncoal_plant,coal_market,west\n")
-    data = load_flextool(ramp_workdir)
-    # Hand-calc: only source_down populated; others stay None — no
-    # accidental fill from the populated direction.
+        drop_frame(P, f"process_source_sink_ramp_limit_{dirn}.csv")
+    put_frame(P, "process_source_sink_ramp_limit_source_down.csv",
+              "process,source,sink\ncoal_plant,coal_market,west\n")
+    data = load_scenario(run, provider=P)
+    # Hand-calc: only source_down populated by the overlay; sink_down and
+    # source_up stay None — no accidental fill from a populated direction.
     assert data.process_source_sink_ramp_limit_source_down.height == 1
     assert data.process_source_sink_ramp_limit_source_down["p"].to_list() == [
         "coal_plant"]
-    assert data.process_source_sink_ramp_limit_sink_up is None
     assert data.process_source_sink_ramp_limit_sink_down is None
     assert data.process_source_sink_ramp_limit_source_up is None
+    # sink_up is the DB's own ramp arc (unchanged by the overlay).
+    assert data.process_source_sink_ramp_limit_sink_up["p"].to_list() == ["coal_plant"]
+    # The overlay is consumed: the un-overlaid load has no source_down set.
+    assert run.last_flex_data.process_source_sink_ramp_limit_source_down is None

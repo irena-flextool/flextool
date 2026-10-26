@@ -22,6 +22,17 @@ The base seed (``data/work_base``) is dispatch-only with no processes;
 to drive the CSV-only branch of ``_load_process_topology`` (so the
 overlays are honoured rather than overridden by ``SpineDbReader``) the
 seed's ``tests.sqlite`` is removed from the tmp_path copy first.
+
+Reload-only seeds (c24 S1-7): both tests drive the reader-less CSV branch
+(``_load_process_topology``'s ``if source is None:`` arm, flex_data.py).
+On the production path (provider + DB reader) the pss family comes from
+``process_source_sink_canonical(source)`` and the profile partition / the
+existing count from the DB cascades; put into a provider clone of
+``base`` and loaded with ``load_scenario``, every overlay here is ignored
+(``process_source_sink`` / ``process_indirect`` / ``process_profile_*`` /
+``p_process_existing_count`` all None, as ``base`` has no process).  The
+tests therefore stay on the reader-less load and move to
+``tests/csv_reload/`` in S1-8.
 """
 from __future__ import annotations
 
