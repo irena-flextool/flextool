@@ -177,7 +177,7 @@ def test_warm_native_rolling_speedup(scenario_workdir) -> None:
 # every transition).
 
 def test_warm_native_reuses_warmproblem_on_identical_data(
-    scenario_workdir,
+    scenario_run,
 ) -> None:
     """Δ.12d — directly verify the cascade solver reuses one
     ``WarmProblem`` across two consecutive ``run()`` calls when
@@ -190,12 +190,12 @@ def test_warm_native_reuses_warmproblem_on_identical_data(
         _apply_warm_updates,
         _fingerprint,
     )
-    from flextool.engine.preprocess.flex_data import load_flextool
+    from tests._support.load import load_scenario
 
-    work = scenario_workdir("test_a_lot")
+    run = scenario_run("test_a_lot")
 
-    data1 = load_flextool(work)
-    data2 = load_flextool(work)  # identical re-load
+    data1 = load_scenario(run)
+    data2 = load_scenario(run)  # identical re-load (production loader call)
 
     fp1 = _fingerprint(data1)
     fp2 = _fingerprint(data2)

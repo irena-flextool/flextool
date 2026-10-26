@@ -144,7 +144,7 @@ def test_run_chain_from_db_single_solve_smoke(scenario_workdir)-> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_handoff_from_solution_covers_eight_carriers(scenario_workdir)-> None:
+def test_build_handoff_from_solution_covers_eight_carriers(scenario_run)-> None:
     """Γ.8.D extension: all eight carriers populated when their source
     data is present.
 
@@ -166,40 +166,31 @@ def test_build_handoff_from_solution_covers_eight_carriers(scenario_workdir)-> N
     extraction populate from the handoff CSVs that flextool's
     preprocessing already writes.
     """
-    # Use a fixture whose solve_data has period_capacity.csv + at least
-    # one of the cumulative carriers.
-    # work_multi_year_one_solve_co2_limit has all of these.
-    work = scenario_workdir("multi_year_one_solve_co2_limit")
-    if not work.exists():
-        pytest.skip("work_multi_year_one_solve_co2_limit not present")
-
+    # multi_year_one_solve_co2_limit has period_capacity + at least one of the
+    # cumulative carriers in its solve_data.
     from polar_high import Problem
-    from flextool.engine.preprocess.flex_data import (
-        build_handoff_from_solution,
-        load_flextool,
-    )
+    from flextool.engine.preprocess.flex_data import build_handoff_from_solution
     from flextool.engine.model.core import build_flextool
+    from tests._support.load import clone_provider, load_scenario
 
-    # Build a tempdir mirroring the layout used by run_chain so
-    # build_handoff_from_solution can find the per-solve CSVs.
-    import tempfile
-    import os
-    with tempfile.TemporaryDirectory() as tmp:
-        td = Path(tmp)
-        # Symlink input/ + solve_data/ from the fixture to the tempdir.
-        for child in ("input", "solve_data", "output_raw"):
-            src = work / child
-            if src.exists():
-                os.symlink(src, td / child)
+    run = scenario_run("multi_year_one_solve_co2_limit")
+    # The production call pair: load with the step's provider, then build the
+    # handoff from the same provider (the cascade passes ``current_provider``).
+    # A clone, so the session-cached provider is never touched.
+    provider = clone_provider(run.last.provider)
+    data = load_scenario(run, provider=provider)
+    pb = Problem()
+    build_flextool(pb, data)
+    sol = pb.solve()
+    assert sol.optimal, "multi_year_one_solve_co2_limit: rebuilt LP not optimal"
 
-        data = load_flextool(td)
-        pb = Problem()
-        build_flextool(pb, data)
-        sol = pb.solve()
-        if not sol.optimal:
-            pytest.skip("LP not optimal — fixture corrupted")
-
-        handoff = build_handoff_from_solution(sol, td, "test_solve")
+    handoff = build_handoff_from_solution(
+        sol, run.load_folder, "test_solve",
+        prior_handoff=run.last.prior_handoff,
+        flex_data=data,
+        provider=provider,
+    )
+    work = run.work_folder
 
     # The three file-based carriers we extended for Γ.8.D.  Δ.1 retired
     # ``periods_already_emitted`` from SolveHandoff (see test docstring).

@@ -17,10 +17,11 @@ as the period weight: scaling it by ``Y`` scales every operational
 linear in the period weight when the rest of the inputs are held
 fixed.
 
-The two on-disk RP fixtures (``work_years_represented_half`` and
-``work_years_represented_2_5``) are identical except for
+The two RP scenarios (``years_represented_half`` and
+``years_represented_2_5``) are identical except for
 ``p_inflation_factor_operations_yearly`` / ``…investment_yearly``:
-0.5 vs. 2.5.  This test re-solves both with polar_high and asserts the
+0.5 vs. 2.5.  This test rebuilds both through the production loader call
+(``load_scenario``), re-solves them with polar_high and asserts the
 objective ratio matches the period-weight ratio (2.5 / 0.5 = 5.0)
 to machine precision — i.e. the LP literally implements
 ``cost = Σ RP_cost · RP_weight``.
@@ -31,7 +32,8 @@ import polars as pl
 import pytest
 
 from polar_high import Problem
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from tests._support.load import ScenarioRun, load_scenario
 
 pytestmark = pytest.mark.solver
 
@@ -40,12 +42,12 @@ SCEN_HALF = "years_represented_half"
 SCEN_2_5 = "years_represented_2_5"
 
 
-def _solve(work_dir: Path) -> float:
-    data = load_flextool(work_dir)
+def _solve(run: ScenarioRun) -> float:
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
-    assert sol.optimal, f"{work_dir.name} did not solve to optimality"
+    assert sol.optimal, f"{run.scenario} did not solve to optimality"
     return float(sol.obj)
 
 
@@ -66,7 +68,7 @@ def _flextool_published_obj(work_dir: Path) -> float:
     return float(pl.read_csv(work_dir / "output_raw" / "v_obj.csv")["objective"][0])
 
 
-def test_rp_total_cost_equals_sum_of_rp_cost_times_rp_weight(scenario_workdir):
+def test_rp_total_cost_equals_sum_of_rp_cost_times_rp_weight(scenario_run):
     """Closed-form RP weighting:  total_cost = Σ_d (RP_cost_d · RP_weight_d).
 
     Single-period RP fixtures collapse the sum to a single term.  The two
@@ -74,11 +76,13 @@ def test_rp_total_cost_equals_sum_of_rp_cost_times_rp_weight(scenario_workdir):
     so their objectives must be exactly proportional to the weight ratio,
     AND each must match flextool's published objective.
     """
-    work_half = scenario_workdir(SCEN_HALF)
-    work_2_5 = scenario_workdir(SCEN_2_5)
+    run_half = scenario_run(SCEN_HALF)
+    run_2_5 = scenario_run(SCEN_2_5)
+    work_half = run_half.work_folder
+    work_2_5 = run_2_5.work_folder
 
-    obj_half = _solve(work_half)
-    obj_2_5 = _solve(work_2_5)
+    obj_half = _solve(run_half)
+    obj_2_5 = _solve(run_2_5)
 
     w_half = _period_weight(work_half)  # 0.5
     w_2_5 = _period_weight(work_2_5)    # 2.5

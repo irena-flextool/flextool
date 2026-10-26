@@ -30,10 +30,12 @@ survives the guarded call site at ``apply_derived_a``):
 
 See ``specs/benders_option_c.md`` "RP-weight bug — fix design".
 
-NOTE: the cascade ``build_flextool`` + ``.solve()`` path is required (not
-a direct hand-built FlexData) because it is the path that EMITS the
-folded ``timestep_weight.csv`` and LOADS it back into FlexData — the
-exact round-trip the fix repairs.
+NOTE: the cascade path is required (not a direct hand-built FlexData)
+because it is the path that folds the RP weights into the provider's
+``solve_data/timestep_weight`` frame (snapshotted to
+``solve_data/timestep_weight.csv`` in the work folder) and loads them
+into FlexData — the exact hand-over the fix repairs.  Each FlexData is
+rebuilt through the production loader call (``load_scenario``).
 """
 from __future__ import annotations
 
@@ -42,7 +44,8 @@ import pytest
 
 from polar_high import Problem
 
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 
 
 # Folded RP weights expected in ``timestep_weight.csv`` for the BASE
@@ -52,9 +55,9 @@ from flextool.engine import build_flextool, load_flextool
 _BASE_FOLDED_WEIGHTS = {1.4, 0.6, 1.1, 0.9}
 
 
-def _solve_monolith(workdir):
-    """Load the cascade-emitted workdir and solve the monolith."""
-    data = load_flextool(workdir)
+def _solve_monolith(run):
+    """Rebuild the cascade's last-step FlexData (production loader call) and solve the monolith."""
+    data = load_scenario(run)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -80,26 +83,26 @@ def _flexdata_weights(data) -> set[float]:
     )
 
 
-# --- Per-scenario workdirs (module-scoped, cascade-built once each) ---------
+# --- Per-scenario runs (module-scoped, cascade-built once each) -------------
 
 
 @pytest.fixture(scope="module")
-def rp_base_workdir(scenario_workdir):
-    return scenario_workdir(
+def rp_base_run(scenario_run):
+    return scenario_run(
         "lh2_three_region_rp_invest", db_fixture="lh2_rp_invest"
     )
 
 
 @pytest.fixture(scope="module")
-def rp_swap_workdir(scenario_workdir):
-    return scenario_workdir(
+def rp_swap_run(scenario_run):
+    return scenario_run(
         "lh2_three_region_rp_invest_swap", db_fixture="lh2_rp_invest"
     )
 
 
 @pytest.fixture(scope="module")
-def rp_uniform_workdir(scenario_workdir):
-    return scenario_workdir(
+def rp_uniform_run(scenario_run):
+    return scenario_run(
         "lh2_three_region_rp_invest_uniform", db_fixture="lh2_rp_invest"
     )
 
@@ -108,7 +111,7 @@ def rp_uniform_workdir(scenario_workdir):
 
 
 def test_rp_weights_reach_objective_swap_moves_M(
-    rp_base_workdir, rp_swap_workdir
+    rp_base_run, rp_swap_run
 ):
     """LIVENESS: swapping the two y2030 reps' weights MOVES the objective.
 
@@ -116,8 +119,8 @@ def test_rp_weights_reach_objective_swap_moves_M(
     identical (delta == 0.0).  Post-fix the cost-asymmetric reps make the
     objective strictly depend on which rep carries the larger weight.
     """
-    _, sol_base = _solve_monolith(rp_base_workdir)
-    _, sol_swap = _solve_monolith(rp_swap_workdir)
+    _, sol_base = _solve_monolith(rp_base_run)
+    _, sol_swap = _solve_monolith(rp_swap_run)
     assert sol_base.optimal
     assert sol_swap.optimal
 
@@ -141,13 +144,13 @@ def test_rp_weights_reach_objective_swap_moves_M(
     assert 1e9 < m_swap < 1e11, f"M_swap out of band: {m_swap!r}"
 
 
-def test_flexdata_matches_emitted_csv_folded_weights(rp_base_workdir):
+def test_flexdata_matches_emitted_csv_folded_weights(rp_base_run):
     """FLEXDATA == CSV: the loaded p_timestep_weight equals the folded
     weights the cascade emitted to ``timestep_weight.csv`` — NOT 1.0."""
-    data, sol = _solve_monolith(rp_base_workdir)
+    data, sol = _solve_monolith(rp_base_run)
     assert sol.optimal
 
-    csv_w = _csv_weights(rp_base_workdir)
+    csv_w = _csv_weights(rp_base_run.work_folder)
     fd_w = _flexdata_weights(data)
 
     # The emitted CSV carries the folded RP weights, not a dense 1.0.
@@ -164,14 +167,14 @@ def test_flexdata_matches_emitted_csv_folded_weights(rp_base_workdir):
     assert fd_w != {1.0}, "p_timestep_weight is all-1.0 — RP weights lost."
 
 
-def test_uniform_rp_weights_byte_identical_to_prefix(rp_uniform_workdir):
+def test_uniform_rp_weights_byte_identical_to_prefix(rp_uniform_run):
     """W≡1 BYTE-IDENTITY: uniform RP weights (0.5/0.5) fold to a dense
     1.0 p_timestep_weight — byte-identical to the pre-fix clobber, so the
     fix is inert at unit weights."""
-    data, sol = _solve_monolith(rp_uniform_workdir)
+    data, sol = _solve_monolith(rp_uniform_run)
     assert sol.optimal
 
-    csv_w = _csv_weights(rp_uniform_workdir)
+    csv_w = _csv_weights(rp_uniform_run.work_folder)
     fd_w = _flexdata_weights(data)
 
     # Uniform 0.5/0.5 → folded w_r = 0.5·2 = 1.0 everywhere.

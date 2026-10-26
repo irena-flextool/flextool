@@ -279,17 +279,15 @@ _TRACKED_PARAMS = (
 )
 
 
-def test_param_cells_size_bound_on_real_fixture(scenario_workdir) -> None:
+def test_param_cells_size_bound_on_real_fixture(scenario_run) -> None:
     """Sanity check that polar-high's side-table for a realistic set of
     tracked Params on a feature-heavy fixture stays under a generous size
     budget.  Acts as an early-warning for a tracker change that explodes
     the per-cell map."""
-    from flextool.engine.preprocess.flex_data import load_flextool
     from flextool.engine.model.core import build_flextool
+    from tests._support.load import load_scenario
 
-    data_dir = scenario_workdir("test_a_lot")
-
-    data = load_flextool(data_dir)
+    data = load_scenario(scenario_run("test_a_lot"))
     pb = Problem()
     build_flextool(pb, data)
     wp = WarmProblem(pb)
