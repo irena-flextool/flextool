@@ -178,11 +178,14 @@ def test_efficiency_maps_equal_scalars_in_rolls(roll_map, roll_scalar) -> None:
     for name, s_map in roll_map.items():
         s_scalar = roll_scalar[name]
         dm, ds = s_map.flex_data, s_scalar.flex_data
+        # Unrounded (#140), compared at 9 decimals: slope = 1/efficiency; gas_plant (efficiency 0.9, min_load 0.3
+        # at efficiency 0.6) slope = (1/0.9 - 0.3/0.6) / (1 - 0.3).
         assert _value(dm.p_slope, p="coal_plant") == {2.0}, name
-        assert _value(dm.p_slope, p="hydro_plant") == {0.666667}, name
-        assert _value(dm.p_slope, p="gas_plant") == {0.873016}, name
-        assert _value(dm.p_slope, p="link") == {round(1 / 0.7, 6)}, name
-        assert _value(dm.p_flow_upper, p="hydro_plant", source="hydro_reservoir", sink="hydro_plant") == {0.666667}
+        assert _value(dm.p_slope, p="hydro_plant") == {round(1 / 1.5, 9)}, name
+        assert _value(dm.p_slope, p="gas_plant") == {round((1 / 0.9 - 0.3 / 0.6) / 0.7, 9)}, name
+        assert _value(dm.p_slope, p="link") == {round(1 / 0.7, 9)}, name
+        assert _value(dm.p_flow_upper, p="hydro_plant", source="hydro_reservoir", sink="hydro_plant") == {
+            round(1 / 1.5, 9)}
         for field in ("p_slope", "p_section", "p_flow_upper", "p_indirect_input_cap"):
             assert _canon(getattr(dm, field)).equals(_canon(getattr(ds, field))), (name, field)
         assert s_map.solution.obj == pytest.approx(s_scalar.solution.obj, rel=1e-9), name
@@ -224,7 +227,7 @@ def test_rolls_match_single_solve_parameters(roll_map, single_map) -> None:
             s, r = _slice(single, step.flex_data, field)
             keys = [c for c in r.columns if c != "value"]
             assert s.select(keys).equals(r.select(keys)), (name, field)
-            assert s["value"].to_list() == pytest.approx(r["value"].to_list(), rel=1e-6), (name, field)
+            assert s["value"].to_list() == pytest.approx(r["value"].to_list(), rel=1e-12), (name, field)
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +266,7 @@ def test_period_maps_on_nested_investment_sub_solves(tmp_path_factory) -> None:
     for name, s_map in as_map.items():
         dm, ds = s_map.flex_data, as_scalar[name].flex_data
         # efficiency 0.5, min_load 0.3 at efficiency 0.4: slope = (1/0.5 - 0.3/0.4) / 0.7
-        assert _value(dm.p_slope, p="coal_plant") == {round((2.0 - 0.75) / 0.7, 6)}, name
+        assert _value(dm.p_slope, p="coal_plant") == {round((2.0 - 0.75) / 0.7, 9)}, name
         assert _value(dm.p_profile_value, f="wind_profile") == {0.35}, name
         for field in ("p_slope", "p_section", "p_flow_upper", "p_profile_value"):
             assert _canon(getattr(dm, field)).equals(_canon(getattr(ds, field))), (name, field)
