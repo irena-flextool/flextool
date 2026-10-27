@@ -134,9 +134,18 @@ def test_rolling_min_load_efficiency_solves(
     # per-boundary startup re-charge.  Pre-OC1 the cyclic-wrap predecessor
     # re-charged the coal unit's startup at every continuation-roll first
     # step, inflating the realized yearly v_startup to 7.284 (startup cost
-    # 364 200 €); with the carry it drops to the honest 5.854 (292 700 €).
-    # Assert the CORRECTED value so a regression that re-breaks the carry
-    # (reverting to the over-charged total) fails here, not just silently.
+    # 364 200 €). OC1's carry alone dropped it to 5.854; c14c part B
+    # (`c34a2650`, #99) makes v_startup/v_shutdown an EXACT function of the
+    # online trajectory everywhere (not only at the roll boundary OC1
+    # targets), closing interior-step slack the old inequality form left
+    # and landing the honest total at 5.898 (292 700 € -> 294 900 €).
+    # Bisected on git-archive exports of c14c's commits: unchanged through
+    # part A (2f5e11ca), moves to 5.898 at part B (c34a2650), stays there
+    # through part C / review (see tests/test_rolling_online_carry.py's
+    # module docstring for the independent Delta-online re-derivation that
+    # reproduces 5.898000000000001 without reading v_startup as ground
+    # truth). Assert the CORRECTED value so a regression that re-breaks
+    # the carry or the online_change identity fails here, not just silently.
     import polars as pl
 
     su_files = sorted((workdir / "output_raw").glob("v_startup_linear__*.parquet"))
@@ -144,7 +153,7 @@ def test_rolling_min_load_efficiency_solves(
     total_startup = sum(
         float(pl.read_parquet(f)["coal_plant"].sum()) for f in su_files
     )
-    assert total_startup == pytest.approx(5.854, abs=5e-3), (
+    assert total_startup == pytest.approx(5.898, abs=5e-3), (
         f"realized yearly coal v_startup={total_startup} "
-        f"(expected the OC1-corrected 5.854, pre-fix was the over-charged 7.284)"
+        f"(expected the c14c-corrected 5.898, pre-fix was the over-charged 7.284)"
     )

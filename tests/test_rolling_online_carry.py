@@ -24,9 +24,26 @@ pays — ``carried ≈ 0`` leaves the full charge).
 Driven witness: ``coal_min_load_fullYear_roll`` (a ``min_load_efficiency``
 coal unit on the fullYear timeline, ``rolling_solve_horizon=8``,
 ``rolling_solve_jump=4`` → 72 rolls spanning p2020/p2025/p2030/p2035, so
-multiple-period roll windows are exercised).  Pre-fix the realized coal
-``v_startup`` summed to 7.284 (startup cost 364 200 €); with the carry the
-boundary over-charges vanish and it drops to 5.854 (292 700 €).
+multiple-period roll windows are exercised).  Pre-fix (pre-OC1) the realized
+coal ``v_startup`` summed to 7.284 (startup cost 364 200 €); with the OC1
+carry alone it dropped to 5.854 (292 700 €).
+
+c14c (#98/#99/N1) re-derives this baseline again: part B
+(``c34a2650``, "startups and shutdowns equal the change in units online")
+makes ``v_startup``/``v_shutdown`` an EXACT function of the online
+trajectory everywhere, not only at the roll boundary the OC1 carry
+targets — closing slack that previously let the realized total sit below
+the honest per-step increment at some INTERIOR steps too.  Bisected on
+``git archive`` exports of c14c's commits: unchanged (5.854) through part
+A (``2f5e11ca``), changes to 5.898 at part B (``c34a2650``) and stays
+there through part C / review.  Independently re-verified (not copied
+from the new code's output): recomputing the yearly total from
+``v_online_linear`` deltas stitched with the same ``p_roll_continue_online``
+/ ``roll_end_online`` carriers this module already tests
+(``Σ max(0, online[t] - predecessor[t])`` over every step of every roll,
+not just each roll's first step) reproduces 5.898000000000001 to the
+last bit — the realized total is forced by the (already-tested-correct)
+online path, not an LP alternate-optimum artifact.
 """
 from __future__ import annotations
 
@@ -52,10 +69,14 @@ UNIT = "coal_plant"
 STARTUP_COST = 100.0  # €/unit-start
 UNITSIZE = 500.0      # MW  → objective coef = STARTUP_COST * UNITSIZE
 
-# Driven baselines (see module docstring).  Pre-fix the cyclic-wrap
-# re-charge inflated the yearly realized startup to 7.284; the carry
-# removes exactly the boundary over-charges.
-CORRECTED_TOTAL_STARTUP = 5.854
+# Driven baselines (see module docstring).  Pre-OC1 the cyclic-wrap
+# re-charge inflated the yearly realized startup to 7.284.  OC1's carry
+# alone dropped it to 5.854; c14c part B's exact online_change identity
+# (#99) closes additional interior-step slack the inequality form left,
+# landing the honest total at 5.898 — independently re-derived via the
+# Delta-online recomputation in the module docstring, not read off the
+# new code's own v_startup total.
+CORRECTED_TOTAL_STARTUP = 5.898
 PREFIX_TOTAL_STARTUP = 7.284
 
 
@@ -185,9 +206,10 @@ def test_total_startup_drops_to_corrected_value(rolling_uc):
         f"startup {total} not meaningfully below pre-fix {PREFIX_TOTAL_STARTUP}"
     )
     # Objective-coef translation (startup_cost × unitsize): the saved cost.
+    # (7.284 - 5.898) * 100 * 500 = 69 300 € exactly, given the two pinned totals.
     saved = (PREFIX_TOTAL_STARTUP - total) * STARTUP_COST * UNITSIZE
-    assert saved == pytest.approx(71_500.0, abs=500.0), (
-        f"saved startup cost {saved} € off expected ≈71 500 €"
+    assert saved == pytest.approx(69_300.0, abs=100.0), (
+        f"saved startup cost {saved} € off expected ≈69 300 €"
     )
 
 
