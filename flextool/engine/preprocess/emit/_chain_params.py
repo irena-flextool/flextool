@@ -74,7 +74,7 @@ def _ed_value_frame(
 #
 # These read the in-memory polars frame directly from the Provider via
 # ``provider.get(_provider_key(path))`` instead of round-tripping through
-# CSV text (the legacy ``_provider_open`` + ``csv.reader`` path).
+# CSV text (the former write-CSV + ``csv.reader`` path).
 #
 # Type-fidelity contract — reproduce *exactly* what ``csv.reader`` over a
 # ``DataFrame.write_csv`` serialisation would have yielded:

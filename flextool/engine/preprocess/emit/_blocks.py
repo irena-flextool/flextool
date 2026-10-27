@@ -36,7 +36,6 @@ at the solve's step whatever groups they are listed in.
 """
 from __future__ import annotations
 
-import csv
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,7 +46,6 @@ import polars as pl
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess.params._coarse import _warn_once, coarse_membership_warnings
 from flextool.engine.preprocess._provider_io import _emit
-from flextool.engine.preprocess.flex_data import _provider_open
 
 
 # ---------------------------------------------------------------------------
@@ -1034,41 +1032,27 @@ def _read_input_rows(
     basename: str,
     provider: "object | None" = None,
 ) -> list[list[str]]:
-    """Read rows from ``inp/<basename>.csv``, falling back to *provider*.
+    """Return the data rows of the ``input/<stem>`` frame in *provider* as row-of-strings lists.
 
-    Returns a list of row lists with the header stripped.  When the
-    Provider is supplied and the disk file is absent / empty, looks up
-    the frame under the canonical ``input/<stem>`` key the cascade uses.
+    Looks up ``input/<stem>`` first, then the bare ``<stem>``; the first frame found wins.  No frame → ``[]``.
+    Files on disk are never read (*inp* only names the stem), so CSVs left in a reused work folder cannot
+    change the block layout.  ``provider`` is required.
 
-    Returning the same row-of-strings shape as the legacy ``csv.reader``
-    loops keeps the existing assembly code byte-identical.
+    ``provider.get`` returns data rows only (no header) and frames never carry empty rows, so the shape matches
+    the former ``csv.reader`` loop with its header skip and blank-row filter.
     """
-    path = inp / basename
+    if provider is None:
+        raise ValueError(f"_read_input_rows({basename!r}) requires a FlexDataProvider; the work folder is not read")
     stem = basename[:-4] if basename.endswith(".csv") else basename
-    # Provider arm: read the in-memory frame natively instead of
-    # round-tripping through ``DataFrame.write_csv`` + ``csv.reader``.
-    # Try the canonical ``input/<stem>`` first (post-Δ.20 input writer),
-    # then the bare ``<stem>`` for the legacy alias; first non-None
-    # frame wins.  ``provider.get`` returns DATA rows only (no header),
-    # so no header is skipped.  Frames never carry empty rows, so the
-    # legacy ``if row`` blank-row filter is a no-op here.  When neither
-    # key resolves, fall through to the unchanged disk-fallback arm.
-    if provider is not None:
-        for key in (f"input/{stem}", stem):
-            try:
-                df = provider.get(key)
-            except Exception:  # pragma: no cover — defensive only
-                df = None
-            if df is None:
-                continue
-            return [[_cell_str(c) for c in row] for row in df.iter_rows()]
-    fh = _provider_open(None, basename, path)
-    if fh is None:
-        return []
-    with fh as f:
-        reader = csv.reader(f)
-        next(reader, None)
-        return [row for row in reader if row]
+    for key in (f"input/{stem}", stem):
+        try:
+            df = provider.get(key)
+        except Exception:  # pragma: no cover — defensive only
+            df = None
+        if df is None:
+            continue
+        return [[_cell_str(c) for c in row] for row in df.iter_rows()]
+    return []
 
 
 def emit_block_data_for_solve(
@@ -1087,9 +1071,9 @@ def emit_block_data_for_solve(
     seven CSV emissions through :func:`emit_block_data` (Provider) rather
     than :func:`write_block_data` (disk).
 
-    The ``provider`` keyword is retained as the *input* Provider —
-    :func:`_read_input_rows` consults it for ``input/*.csv`` lookups.
-    The new keyword-only ``emit_provider`` is the *output* Provider into
+    ``provider`` is the *input* Provider (required): :func:`_read_input_rows`
+    reads the ``input/*`` frames from it; the work folder is never read.
+    The keyword-only ``emit_provider`` is the *output* Provider into
     which the seven block frames are emitted.
     """
     wf = Path(work_folder)
@@ -1114,27 +1098,18 @@ def emit_block_data_for_solve(
 
     resolution_groups: dict[str, float] = {}
     p_group_rows = _read_input_rows(inp, "p_group.csv", provider)
-    p_group_csv = inp / "p_group.csv"
     p_group_header: list[str] | None = None
-    # Provider arm: the frame carries the column NAMES, so the "header"
-    # is ``list(df.columns)`` — exactly what ``next(csv.reader(f), None)``
-    # returned for the header row.  Same key-candidate order
-    # (``input/p_group`` before bare ``p_group``); first non-None frame
-    # wins.  When no frame resolves, fall to the unchanged disk arm.
-    if provider is not None:
-        for key in ("input/p_group", "p_group"):
-            try:
-                df = provider.get(key)
-            except Exception:  # pragma: no cover — defensive only
-                df = None
-            if df is not None:
-                p_group_header = list(df.columns)
-                break
-    if p_group_header is None:
-        p_group_fh = _provider_open(None, "p_group", p_group_csv)
-        if p_group_fh is not None:
-            with p_group_fh as f:
-                p_group_header = next(csv.reader(f), None)
+    # The frame's column NAMES are the header.  Same key-candidate order as
+    # ``_read_input_rows`` (``input/p_group`` before bare ``p_group``); first
+    # non-None frame wins; no frame → the default header below.
+    for key in ("input/p_group", "p_group"):
+        try:
+            df = provider.get(key)
+        except Exception:  # pragma: no cover — defensive only
+            df = None
+        if df is not None:
+            p_group_header = list(df.columns)
+            break
     if p_group_header is None:
         p_group_header = ["group", "groupParam", "p_group"]
 
@@ -1150,28 +1125,16 @@ def emit_block_data_for_solve(
             except (TypeError, ValueError):
                 continue
     decomposition_groups: dict[str, str] = {}
-    p_group_decomp_csv = inp / "p_group_decomposition.csv"
     p_group_decomp_header: list[str] | None = None
-    # Same Provider-first / disk-fallback shape as the ``p_group`` header
-    # probe above: the frame's column NAMES are the header.  Same
-    # key-candidate order; first non-None frame wins; otherwise fall to
-    # the unchanged disk arm.
-    if provider is not None:
-        for key in ("input/p_group_decomposition", "p_group_decomposition"):
-            try:
-                df = provider.get(key)
-            except Exception:  # pragma: no cover — defensive only
-                df = None
-            if df is not None:
-                p_group_decomp_header = list(df.columns)
-                break
-    if p_group_decomp_header is None:
-        p_group_decomp_fh = _provider_open(
-            None, "p_group_decomposition", p_group_decomp_csv,
-        )
-        if p_group_decomp_fh is not None:
-            with p_group_decomp_fh as f:
-                p_group_decomp_header = next(csv.reader(f), None)
+    # Same shape as the ``p_group`` header probe above.
+    for key in ("input/p_group_decomposition", "p_group_decomposition"):
+        try:
+            df = provider.get(key)
+        except Exception:  # pragma: no cover — defensive only
+            df = None
+        if df is not None:
+            p_group_decomp_header = list(df.columns)
+            break
     if p_group_decomp_header is None:
         p_group_decomp_header = ["group", "groupParam", "p_group"]
     for row in _read_input_rows(inp, "p_group_decomposition.csv", provider):

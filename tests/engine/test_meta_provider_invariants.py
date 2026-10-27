@@ -29,8 +29,8 @@ Forbidden call shapes in cascade modules:
 
 * ``pl.read_csv(...)`` / ``pl.scan_csv(...)``
 * ``_read_csv_file(...)`` (the residual Provider-fallback helper)
-* ``csv.reader(<fh>)`` where ``<fh>`` is the result of a bare
-  ``path.open()`` (i.e. NOT a Provider-served buffer)
+* ``csv.reader(...)`` (cascade code reads frames from the Provider, never
+  CSV text from a file handle)
 
 Files that legitimately read raw inputs are listed in
 ``RAW_INPUT_FALLBACK_ALLOWLIST`` below, with a per-file justification.
@@ -150,15 +150,6 @@ RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
         "Reads workdir solve_data/p_model.csv and similar context "
         "files at solve-context build time (pre-Provider)."
     ),
-    # Note: `_pdt_lookup.py` and the writer-port modules
-    # (`_arc_unions.py`, `_chain_params.py`,
-    # `_dispatchers.py`, `_pdt_params.py`,
-    # `_period_params.py`, `_solve_writers.py`) previously
-    # appeared here because the Rule 1 AST detector couldn't distinguish
-    # `csv.reader(fh)` on a `_provider_open()` in-memory buffer from
-    # `csv.reader(open(path))` on disk.  The detector now whitelists
-    # `csv.reader` sites whose enclosing function calls `_provider_open`,
-    # so those files no longer need allowlist entries.
 }
 
 
@@ -234,40 +225,9 @@ def _is_csv_reader_call(call: ast.Call) -> bool:
     )
 
 
-def _function_uses_provider_open(func_node: ast.AST) -> bool:
-    """Return True iff *func_node* contains a call to ``_provider_open``.
-
-    Used to whitelist ``csv.reader(fh)`` sites where ``fh`` is produced
-    by ``_provider_open(provider, ...)`` — i.e. served from the
-    in-memory Provider, never from disk.
-    """
-    for sub in ast.walk(func_node):
-        if not isinstance(sub, ast.Call):
-            continue
-        f = sub.func
-        if isinstance(f, ast.Name) and f.id == "_provider_open":
-            return True
-        if isinstance(f, ast.Attribute) and f.attr == "_provider_open":
-            return True
-    return False
-
-
 def _detect_rule1_violations(path: Path, tree: ast.AST) -> list[Violation]:
     out: list[Violation] = []
     fname = _rel(path)
-    # Map each ast node to its enclosing function (None for module-level).
-    parent_func: dict[int, ast.AST] = {}
-
-    def _walk(node: ast.AST, current_func: ast.AST | None) -> None:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            current_func = node
-        if isinstance(node, ast.Call):
-            parent_func[id(node)] = current_func  # type: ignore[assignment]
-        for child in ast.iter_child_nodes(node):
-            _walk(child, current_func)
-
-    _walk(tree, None)
-
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -288,20 +248,11 @@ def _detect_rule1_violations(path: Path, tree: ast.AST) -> list[Violation]:
                 "Provider-fallback helper, not a cascade entry point.",
             ))
         elif _is_csv_reader_call(node):
-            # Whitelist: csv.reader on a handle produced by
-            # _provider_open(...) inside the same function.  The
-            # Provider serves the bytes from memory in this case.
-            enclosing = parent_func.get(id(node))
-            if enclosing is not None and _function_uses_provider_open(
-                enclosing
-            ):
-                continue
             out.append(Violation(
-                fname, node.lineno, "csv.reader(<fh>)",
-                "Cascade code must obtain the file handle from "
-                "_provider_open(...) so the Provider serves the bytes "
-                "when available.  Direct csv.reader on a disk fh "
-                "reintroduces the seed-funnel bug class.",
+                fname, node.lineno, "csv.reader(...)",
+                "Read the frame through provider.get(name); csv.reader "
+                "on a file handle reads the work folder and reintroduces "
+                "the seed-funnel bug class.",
             ))
     return out
 

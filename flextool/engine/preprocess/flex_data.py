@@ -55,7 +55,6 @@ from flextool.engine.preprocess.params._branch import (
     solve_branch_anchor_pairs,
 )
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.input._input_source import read_csv_fallback
 
 
 def _loadflex_prof(label: str) -> None:
@@ -112,72 +111,51 @@ def _cascade_gate():
 
 
 # ---------------------------------------------------------------------------
-# Provider-aware access helpers.
+# Provider access helpers.
 #
-# Post-Step-2 the cascade prefers the live :class:`FlexDataProvider` as
-# the single source of truth for preprocessing artefacts.  The Provider
-# carries every frame emitted by writers in ``_PATCH_MODULES`` (and any
-# downstream Step 1-g writer that wired ``put(name, frame)`` into its
-# emit path).  A disk arm is retained for the *raw* fixture inputs under
-# ``input/`` which are produced by the legacy ``input_writer``
-# preprocessing pass and are NOT captured into the Provider — they live
-# on disk for the cascade to consume.  Once that legacy preprocessing
-# is folded into the Provider (a separate, larger refactor), the disk
-# arm can collapse to ``None``.
+# The loader reads only the sub-solve's in-memory :class:`FlexDataProvider`; it never reads ``input/`` or
+# ``solve_data/`` on disk, so CSV files left in a reused work folder (a ``--csv-dump``, an earlier run) cannot
+# change the model.  The ``path`` arguments only name the key (``_provider_key(path)``) and appear in error
+# messages.  A ``provider`` of ``None`` is a programming error and raises.
+
+def _require_provider(provider: "object | None", helper: str) -> None:
+    """Raise ``ValueError`` when *provider* is ``None``."""
+    if provider is None:
+        raise ValueError(
+            f"{helper} requires a FlexDataProvider; the loader never reads the work folder "
+            "(the disk fallback was removed)"
+        )
+
 
 def _provider_has(provider: "object | None", name: str,
                    path: "Path | str") -> bool:
-    """True iff *provider* has *name* OR *path* exists on disk."""
-    if provider is not None and provider.has(name):
-        return True
-    return Path(path).exists()
+    """True iff *provider* has *name*.  A file at *path* is ignored."""
+    _require_provider(provider, "_provider_has")
+    return provider.has(name)
 
 
 def _provider_read(provider: "object | None", name: str,
                     path: "Path | str") -> pl.DataFrame:
     """Return the frame for *name* from *provider*.
 
-    Cascade callers always thread a Provider seeded by the cascade-input
-    emitters (``input_derivation.run`` and the per-solve preprocessing
-    chain).  Off-cascade callers (the loader-unit tests in
-    ``tests/engine/loaders``) pass ``provider=None``; for those
-    the residual disk-read goes through
-    :func:`flextool.engine.input._input_source.read_csv_fallback` so
-    Rule 1 of ``tests/engine/test_meta_provider_invariants.py``
-    can confirm flex_data.py never calls ``_read_csv_file`` /
-    ``pl.read_csv`` directly.
+    Raises ``FileNotFoundError`` when the provider has no *name* (the error a read of a missing CSV gave
+    before, so the callers' ``except`` clauses behave as they did); a file at *path* is ignored.
     """
-    if provider is not None and provider.has(name):
+    _require_provider(provider, "_provider_read")
+    if provider.has(name):
         return provider.get(name)
-    return read_csv_fallback(path)
+    raise FileNotFoundError(f"provider has no {name!r} (the loader does not read {path})")
 
 
 def _provider_pick(provider: "object | None",
                     *candidates: "tuple[str, Path]") -> "Path | None":
-    """Return the first ``Path`` for which the Provider has the matching
-    *name* OR the disk file exists; ``None`` if none.
+    """Return the ``Path`` of the first ``(name, path)`` candidate whose *name* the provider has; ``None`` if
+    none.  Files on disk are ignored.
     """
+    _require_provider(provider, "_provider_pick")
     for name, path in candidates:
-        if (provider is not None and provider.has(name)) or Path(path).exists():
+        if provider.has(name):
             return Path(path)
-    return None
-
-
-def _provider_open(provider: "object | None", name: str,
-                    path: "Path | str"):
-    """Open a file-like handle for *name* sourced from the Provider or
-    from disk; return ``None`` when neither has the file.
-    """
-    if provider is not None and provider.has(name):
-        import io
-        df = provider.get(name)
-        buf = io.StringIO()
-        df.write_csv(buf)
-        buf.seek(0)
-        return buf
-    p = Path(path)
-    if p.exists():
-        return p.open()
     return None
 
 
@@ -1292,8 +1270,7 @@ def _load_inflow_unmargined(sd: Path, *, provider=None) -> "Param | None":
     in some solve (``emit/_energy_margin._record_unmargined_inflow``); None otherwise.
     """
     path = sd / "pdtNodeInflow_unmargined.csv"
-    present = (provider.has(_provider_key(path)) if provider is not None else path.exists())
-    if not present:
+    if not _provider_has(provider, _provider_key(path), path):
         return None
     long = _read_wide_per_entity(path, rename={"entity": "n"}, provider=provider)
     return Param(("n", "d", "t"), long.select("n", "d", "t", "value"))
@@ -2412,14 +2389,10 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
     )
 
 
-def _read_process_exact(inp: Path, sd: Path, *, provider: "object | None" = None) -> "pl.DataFrame | None":
+def _read_process_exact(inp: Path, *, provider: "object | None" = None) -> "pl.DataFrame | None":
     """``process_exact`` (p,): the processes whose internal method is ``method_2way_2var_MIP_exclude`` (the
-    ``exact`` transfer method, group overrides applied) in ``input/process_method``; a CSV dump's
-    ``solve_data/process_exact.csv`` wins.  None when there is none."""
-    path = sd / "process_exact.csv"
-    if _provider_has(provider, "solve_data/process_exact", path):
-        df = _provider_read(provider, "solve_data/process_exact", path).pipe(rename_to_axis, {"process": "p"})
-        return df.select("p") if df.height > 0 else None
+    ``exact`` transfer method, group overrides applied) in ``input/process_method``.  None when there is
+    none."""
     path = inp / "process_method.csv"
     if not _provider_has(provider, "input/process_method", path):
         return None
@@ -4593,7 +4566,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         online = _load_online(inp, sd, dt, proc["pss"], source=db_reader,
                               provider=provider)
-        online["process_exact"] = _read_process_exact(inp, sd, provider=provider)
+        online["process_exact"] = _read_process_exact(inp, provider=provider)
         ramp = _load_ramp(inp, sd, proc["pss"], dt=dt, provider=provider)
         invest = _load_invest(sd, dt, inp, proc["pss"], db_reader=db_reader,
                               provider=provider)

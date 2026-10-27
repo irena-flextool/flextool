@@ -80,7 +80,7 @@ _SCALING_METHODS = (
 #
 # These read the in-memory polars frame directly from the Provider via
 # ``provider.get(_provider_key(path))`` instead of round-tripping through
-# CSV text (the legacy ``_provider_open`` + manual ``line.split(",")``
+# CSV text (the former write-CSV + manual ``line.split(",")``
 # path, which had no quoted-field handling).
 #
 # Type-fidelity contract — reproduce *exactly* what the legacy

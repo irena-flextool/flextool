@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Leftover CSV files in a reused work folder no longer change the
+  model.** When a run found no value for an input in memory, it read a
+  CSV file of that name from the work folder instead, if one was there
+  (for example from an earlier `--csv-dump` of another model). A stale
+  dump of a model with an *exact* connection made a *regular* connection
+  of the next model exact as well. The model is now built only from the
+  database of the run; CSV files in the work folder are ignored.
+
 - **A run that cannot read its database stops with an error.** When the
   input database could not be opened for the scenario (for example locked
   by another program or not migrated to the current version), the run

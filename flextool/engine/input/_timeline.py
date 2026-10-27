@@ -1650,9 +1650,8 @@ def separate_period_and_timeseries_data(
     *provider* is required: the cascade's Provider supplies the
     ``input/pdt_<X>`` frames and receives the two derived shards
     keyed under the same canonical ``<parent>/<stem>`` convention
-    other writer-port modules use.  The Provider is consulted first
-    for the source frame; ``_provider_open`` falls back to disk for
-    the off-cascade test harness only.
+    other writer-port modules use.  The source frame is read only from
+    the Provider; the work folder is not read.
     """
     wf = Path(work_folder) if work_folder is not None else Path.cwd()
 
