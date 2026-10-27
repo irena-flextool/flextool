@@ -1474,6 +1474,51 @@ def _patch_online_mintime_lin(data: dict) -> dict:
                     values=[["unit", "coal_chp", "startup_method", "linear"]])
 
 
+# Silent-label inputs: a Map with Toolbox's default index name ``x`` whose keys are periods of other solves only
+# (p2030 on a p2020 solve).  Each fixture has an unambiguous twin in tests/engine/test_silent_label_params.py
+# (items 167-169 of specs/github_issues.md).
+
+def _patch_pen_silent(data: dict) -> dict:
+    """west penalty_up / penalty_down = {p2030: 5000} with index ``x``: no key in the solve, so the default 10000
+    applies (item 167)."""
+    m = _pmap({"p2030": 5000.0}, index_name="x")
+    return _overlay(data, name="pen_silent", base="base",
+                    values=[["node", "west", "penalty_up", m], ["node", "west", "penalty_down", m]])
+
+
+def _patch_avail_silent(data: dict) -> dict:
+    """coal_plant availability = {p2030: 0.5} with index ``x`` next to wind_plant availability 0.5: coal keeps the
+    default and wind its scalar (item 168)."""
+    return _overlay(data, name="avail_silent", base="coal_wind_ev", values=[
+        ["unit", "coal_plant", "availability", _pmap({"p2030": 0.5}, index_name="x")],
+        ["unit", "wind_plant", "availability", 0.5]])
+
+
+def _patch_varcost_silent(data: dict) -> dict:
+    """(coal_plant, west) other_operational_cost = {p2030: 7} with index ``x`` next to (wind_plant, west) 3.0: coal
+    keeps no cost and wind its scalar (item 168)."""
+    return _overlay(data, name="varcost_silent", base="coal_wind_ev", values=[
+        ["unit__outputNode", ["wind_plant", "west"], "other_operational_cost", 3.0],
+        ["unit__outputNode", ["coal_plant", "west"], "other_operational_cost",
+         _pmap({"p2030": 7.0}, index_name="x")]])
+
+
+def _patch_ladder_ann_depth2(data: dict) -> dict:
+    """coal price_ladder_annual in the depth-2 form tier -> {price, quantity} (the same ladder in every period) in
+    place of coal_ladder_annual's depth-3 period -> tier -> facet value with the same tiers (item 169)."""
+    def tier(price: float, quantity: float) -> dict:
+        return {"type": "map", "index_type": "str", "rank": 1, "index_name": "x",
+                "data": [["price", price], ["quantity", quantity]]}
+
+    ladder = {"index_type": "str", "rank": 2, "index_name": "tier",
+              "data": [["1", tier(20.0, 1.0)], ["2", tier(30.0, 1e30)]]}
+    data["parameter_values"] = [
+        v for v in data["parameter_values"]
+        if not (v[0] == "commodity" and v[1] == "coal" and v[2] == "price_ladder_annual" and v[4] == "ladder_ann_on")]
+    return _overlay(data, name="ladder_ann_depth2", base="coal_ladder_annual",
+                    values=[["commodity", "coal", "price_ladder_annual", ladder]])
+
+
 PATCHES: dict[str, Callable[[dict], dict]] = {
     "none": _no_patch,
     "invest_limits": _patch_invest_limits,
@@ -1560,6 +1605,10 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "nested_fix_quantity_reference": _patch_nested_fix_quantity_reference,
     "storage_fix_start_end_blocks": _patch_storage_fix_start_end_blocks,
     "storage_fix_start_end_within_solve": _patch_storage_fix_start_end_within_solve,
+    "pen_silent": _patch_pen_silent,
+    "avail_silent": _patch_avail_silent,
+    "varcost_silent": _patch_varcost_silent,
+    "ladder_ann_depth2": _patch_ladder_ann_depth2,
 }
 
 
@@ -1622,6 +1671,7 @@ _PLAIN: tuple[tuple[str, str, str], ...] = (
      "5weeks_battery_intraperiod_blocks"),
     ("5weeks_invest_fullYear_dispatch_coal_wind", _T,
      "5weeks_invest_fullYear_dispatch_coal_wind"),
+    ("nested_multi_invest", _T, "multi_fullYear_battery_nested_multi_invest"),
     ("lh2_three_region", _F + "lh2_three_region.json", "lh2_three_region"),
     ("lh2_three_region_invest", _F + "lh2_three_region.json",
      "lh2_three_region_invest"),
@@ -1746,6 +1796,10 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("nested_fix_quantity_reference", _T),
     ("storage_fix_start_end_blocks", _T),
     ("storage_fix_start_end_within_solve", _T),
+    ("pen_silent", _T),
+    ("avail_silent", _T),
+    ("varcost_silent", _T),
+    ("ladder_ann_depth2", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (
