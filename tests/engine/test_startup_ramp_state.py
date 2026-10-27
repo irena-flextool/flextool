@@ -34,6 +34,10 @@ def _pmap(values: dict, index_name: str = "period") -> dict:
     return {"index_type": "str", "index_name": index_name, "data": [[k, v] for k, v in values.items()]}
 
 
+def _tmap(values: dict[str, float]) -> list:
+    return b64({"index_type": "str", "index_name": "time", "data": [[t, v] for t, v in values.items()]}, "map")
+
+
 def _two_periods() -> list:
     return [
         ["timeset", "ta", "timeline", b64("y2020", "str")],
@@ -121,20 +125,23 @@ def test_startups_equal_online_increases(tmp_path_factory) -> None:
                         base_chain=["init", "west", "coal", "coal_chp", "heat"], entities=entities)
     step = list(run(tmp_path_factory, url, scen).values())[-1]
 
-    for p, existing in (("coal_plant", 500.0), ("e_boiler", 100.0)):
+    for p in ("coal_plant", "e_boiler"):
         on = utf8(step.solution.value("v_online_linear")).filter(pl.col("p") == p).sort("t")
         su = utf8(step.solution.value("v_startup_linear")).filter(pl.col("p") == p).sort("t")
         sd = utf8(step.solution.value("v_shutdown_linear")).filter(pl.col("p") == p).sort("t")
         on_v, su_v, sd_v = on["value"].to_list(), su["value"].to_list(), sd["value"].to_list()
+        existing_count = float(utf8(step.flex_data.p_process_existing_count.frame)
+                               .filter(pl.col("p") == p)["value"][0])   # unitsize falls back to existing -> 1
         # The equality identity: su - sd = on - on_prev at every interior step (cyclic wrap at t0001 means
         # on_prev there is on[-1], the last step -- also exact).
         for i in range(len(on_v)):
             prev = on_v[i - 1]   # Python negative indexing: i=0 -> on_v[-1], the cyclic wrap
             assert su_v[i] - sd_v[i] == pytest.approx(on_v[i] - prev, abs=TOL)
-        # No orphans: su bounded by online_now, sd bounded by existing - online_now (maxStartup / maxShutdown).
+        # No orphans: su bounded by online_now, sd bounded by built - online_now (maxStartup / maxShutdown,
+        # same-period predecessor -- Q-c14c-A). Both sides in units of unitsize (existing_count = 1 here).
         for i in range(len(on_v)):
             assert su_v[i] <= on_v[i] + TOL
-            assert sd_v[i] <= existing + TOL   # existing in count-of-unitsize units (unitsize unauthored = 1)
+            assert sd_v[i] <= existing_count - on_v[i] + TOL
 
     su_coal = utf8(step.solution.value("v_startup_linear")).filter(pl.col("p") == "coal_plant")["value"].sum()
     on_coal = (utf8(step.solution.value("v_online_linear")).filter(pl.col("p") == "coal_plant")
@@ -184,6 +191,55 @@ def test_online_change_rows_replace_the_two_inequalities(tmp_path_factory) -> No
     interior = mshut[f"maxShutdown_linear[{PLANT},p2020,t0012]"]
     assert coef(interior, f"v_shutdown_linear[{PLANT},p2020,t0012]") == pytest.approx(1.0)
     assert coef(interior, f"v_online_linear[{PLANT},p2020,t0012]") == pytest.approx(1.0)
+
+
+def test_boundary_capacity_drop_without_maxshutdown_stays_feasible(tmp_path_factory) -> None:
+    """Critique item 9 / owner question Q-c14c-A.  TWO_PERIODS + coal_plant linear online (min_load 0.2,
+    ramp 0.002/min -- same SU/SD' as A4), existing a period map 500 MW (p2020) / 300 MW (p2025) -- a
+    retirement between periods, unitsize falling back to the MAX existing over periods (500, as the
+    cascade's own per-period-MAX rule for a 1d_map ``existing`` dictates): existing_count 1.0 in p2020 drops
+    to 0.6 in p2025.  Demand keeps the plant near built capacity through p2020 t0024 and within p2025's
+    lower cap after, so the units online genuinely must drop across the boundary.
+
+    ``maxShutdown_linear`` is absent at the cross-period step: using the NEW period's (lower) existing_count
+    there would wrongly cap this step's shutdown by the SMALLER number, when the units actually online a
+    moment before are the LARGER, pre-retirement count -- Q-c14c-A's default.  Nothing else blocks the drop
+    either: the run SOLVES (a hard infeasibility, unlike a penalised node-balance deficit, would raise inside
+    ``run()``'s solution check), and online_change's equality plus maxStartup (``su <= on_now``) together
+    force ``sd = su - on_now + on_prev >= on_prev - on_now >= on_prev - existing_count[p2025]`` -- the
+    shutdown is bounded by the units online BEFORE the boundary, never by the new, lower capacity.  The A4
+    pre-shutdown reduction row (``maxFlow_online_shutdown_linear``) is present at p2020 t0024 -- this scenario
+    also exercises that mechanism, and the solved schedule (a witness at min_load) satisfies it only because
+    the solve is feasible at all."""
+    vals = (_ramp(0.002, ["coal_plant", "west"]) + _two_periods() + [
+        ["unit", PLANT, "existing", b64(_pmap({"p2020": 500.0, "p2025": 300.0}), "map")],
+        ["unit", PLANT, "startup_method", b64("linear", "str")],
+        ["unit", PLANT, "min_load", b64(0.2, "float")],
+        ["node", "west", "inflow", _tmap({f"t{i:04d}": -480.0 for i in range(1, 25)}
+                                         | {f"t{i:04d}": -250.0 for i in range(25, 49)})]])
+    url, scen = make_db(tmp_path_factory, alt="b2b_boundary_drop", values=vals,
+                        base_chain=["init", "west", "coal"], entities=TWO_PERIODS_ENTS)
+    step = list(run(tmp_path_factory, url, scen).values())[-1]   # raises if hard-infeasible
+    pb = build(step.flex_data)
+
+    ec = utf8(step.flex_data.p_process_existing_count.frame).filter(pl.col("p") == PLANT).sort("d")
+    ec_p2020 = float(ec.filter(pl.col("d") == "p2020")["value"][0])
+    ec_p2025 = float(ec.filter(pl.col("d") == "p2025")["value"][0])
+    assert ec_p2020 == pytest.approx(1.0)
+    assert ec_p2025 == pytest.approx(0.6)
+
+    on = utf8(step.solution.value("v_online_linear")).filter(pl.col("p") == PLANT)
+    sd = utf8(step.solution.value("v_shutdown_linear")).filter(pl.col("p") == PLANT)
+    on_prev = float(on.filter((pl.col("d") == "p2020") & (pl.col("t") == "t0024"))["value"][0])
+    sd_now = float(sd.filter((pl.col("d") == "p2025") & (pl.col("t") == "t0025"))["value"][0])
+    assert on_prev > ec_p2025 + TOL   # the premise this test needs: the boundary genuinely forces a drop
+    assert sd_now >= on_prev - ec_p2025 - TOL   # bounded by the units online BEFORE the boundary
+
+    mshut = row_terms(pb, "maxShutdown_linear")
+    assert f"maxShutdown_linear[{PLANT},p2025,t0025]" not in mshut   # Q-c14c-A: no cross-period row
+
+    mred = row_terms(pb, "maxFlow_online_shutdown_linear", f"{PLANT},coal_market,west,")
+    assert f"maxFlow_online_shutdown_linear[{PLANT},coal_market,west,p2020,t0024]" in mred   # A4 engaged
 
 
 def test_single_integer_unit_has_no_start_stop_pair(tmp_path_factory) -> None:
@@ -413,15 +469,18 @@ def test_real_start_reaches_su(tmp_path_factory) -> None:
 
 def test_stopper_floor_and_sd(tmp_path_factory) -> None:
     """C4: coal_plant alone at west, min_load 0.3, ramp 0.005/min (rho-bar = 0.3, SD' = ml + 1/2*ramp_down*60*
-    1h = 0.3 + 0.15 = 0.45), startup_cost 10, huge ``penalty_down``; demand 400 MW t0001-t0023 then 0 from
-    t0024.
+    1h = 0.3 + 0.15 = 0.45), startup_cost 10, huge ``penalty_down``; demand 400 MW t0001-t0024 then 0 from
+    t0025 (``_step_demand(400.0, 0.0)``: the switch is at t0025, the default).
 
     Hand derivation: continuing ramp-down alone only allows -0.3/step, so from the steady 0.8 the fastest a
     CONTINUING unit reaches is 0.8 - 0.3 = 0.5 by t0024; a one-step full stop instead needs flow(t0024) <=
-    SD' = 0.45 for flow(t0025) = 0 to be feasible at all (maxFlow_online forces flow = 0 once on = 0).  Since
-    penalty_up (1000) << penalty_down (1e9), it is cheaper to take 0.35 of shortfall ONE step early
-    (t0024: 0.8 - 0.45) than to carry any surplus past the shutdown, so the solver lands flow(t0024) exactly
-    at SD' = 0.45 and shuts down cleanly at t0025 (flow 0, su/sd row ``ramp_sink_down_constraint`` at t0025
+    SD' = 0.45 for flow(t0025) = 0 to be feasible at all (maxFlow_online forces flow = 0 once on = 0).  The
+    drop from the steady 0.8 to 0.45 is 0.35, more than one step's room (rho-bar = 0.3), so the shortfall is
+    NOT confined to one step: since penalty_up (1000) << penalty_down (1e9), the solver sheds the smallest
+    possible amount first -- t0023 drops only to 0.75 (375 of the 400 MW demanded served, a 25 MW shortfall),
+    exactly as much as leaves -0.3/step of room into t0024 -- then lands flow(t0024) exactly at SD' = 0.45
+    (175 of the 400 MW demanded short) and shuts down cleanly at t0025 (flow 0, su/sd row
+    ``ramp_sink_down_constraint`` at t0025
     carries +rho-bar*c on v_online (0.3), -(rho-bar*c + F) = -(0.3+0.3) = -0.6 on v_startup (F = min_load 0.3,
     the ONLY arc of this direct unit's output measure), and +c*SD' = +0.45 on v_shutdown -- canonical signs,
     i.e. the negative of each RHS-formula term).  The last online (pre-shutdown) flow is therefore <= SD' =

@@ -138,6 +138,13 @@ sets `minFlow_minload` / `minFlow_output_floor` use):
 | an output of a multi-output unit with `capacity_min_coeff > 0` | `min_load · capacity_min_coeff` |
 | any other (other outputs, input arcs, units without `min_load`) | 0 |
 
+A single-input indirect unit's own fuel (input) arc also gets `F = 0` here, by design, not oversight
+(c14c critique item 10): `conversion_indirect` plus the output floor already give
+`input ≥ (slope·ml + section)·on = c·ml_in·on` structurally, so `F_in = c·ml_in` would be a valid,
+tighter floor there too (closing the same pair-gain gap the output-side table closes). c14c's own
+target was single-output arcs only; the input-arc floor is left for a follow-up (see "Follow-ups"
+below, item 6), not adopted silently.
+
 So a continuing unit's online capacity changes by at most `ρ̄` each step, a
 starter reaches at most `SU` (reusing `maxFlow_online`'s startup-step limit)
 and a stopper floors at `F` at the predecessor step; downwards a stopper
@@ -377,3 +384,7 @@ with the orientation of `nodeBalance_eq` (into the arc's source, out of its sink
    connection delay needs a delayed term in the node balance; when it is
    added, drop the filters and the warning.
 5. (Done: `v_flow_back` in the dynamic and n-1 rows, see "Connections and reserve".)
+6. A single-input indirect unit's fuel (input) arc gets `F = 0` in the ramp-row table above
+   (c14c critique item 10) instead of `F_in = c·ml_in`, which `conversion_indirect` plus the output
+   floor would justify structurally. Deliberately left: c14c's target was single-output arcs; see
+   `specs/github_issues.md` §3 item 178.
