@@ -1137,19 +1137,14 @@ def native_run_model(state, solver) -> int:
             _mem_cp("prep_period_writers_done",
                     "prep: period writers done")
 
-        # ---- LP scaling: emit user-set row-scaling state and the
-        # header-only objective-scaling CSV.  ``analyze_solve`` runs
-        # post-solve from ``_orchestration.py`` for reporting (Γ-scale);
-        # auto-row-scaling and objective auto-scaling were removed in
-        # Δ.22 along with the ``--auto-scale`` CLI flag.
+        # ---- LP scaling: emit user-set row-scaling state.  The objective
+        # scale (``solve_data/scale_the_objective``) is emitted by the
+        # orchestrator when it resolves the value the LP is built with
+        # (``_orchestration._emit_provider_obj_scale``).
         solve_writers.emit_p_use_row_scaling(
             solve,
             state.solve.use_row_scaling,
             str(wf / "solve_data/p_use_row_scaling.csv"),
-            provider=sub_solve_provider,
-        )
-        solve_writers.emit_scale_the_objective_header_only(
-            wf / "solve_data",
             provider=sub_solve_provider,
         )
 

@@ -369,9 +369,10 @@ whoever needs the reload brings it up to date first (and then updates `VERIFIED_
 `_csv_reload/_stamp.py`).
 
 The offline output writer replaces the removed `python -m flextool.process_outputs.read_highs_solution` and needs
-`--dump`. It currently also needs `--scale` (the solve's `scale_the_objective`): a provider snapshot (`--csv-dump`,
-a run's work folder) carries a header-only `solve_data/scale_the_objective.csv`, because the snapshot writes the
-provider's empty copy over the file the solve wrote.
+`--dump`. It reads the solve's `scale_the_objective` from the dump's `solve_data/scale_the_objective.csv`: the
+sub-solve provider holds the scale its LP was built with, so a provider snapshot (`--csv-dump`, a run's work folder)
+carries it. `--scale` is an optional override (an MPS built at another scale); a missing or header-only file is an
+error, never a silent default.
 
 #### Package map
 

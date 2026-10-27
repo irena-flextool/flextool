@@ -855,11 +855,6 @@ def derive_scale_the_objective(value: float) -> pl.DataFrame:
     )
 
 
-def derive_scale_the_objective_header_only() -> pl.DataFrame:
-    """Build the header-only ``scale_the_objective`` frame."""
-    return _empty_frame(("key", "value"))
-
-
 def emit_scale_the_objective(
     solve_data_dir: Path | str,
     value: float,
@@ -869,17 +864,6 @@ def emit_scale_the_objective(
     path = Path(solve_data_dir) / "scale_the_objective.csv"
     _emit(provider, "solve_data/scale_the_objective.csv",
                    derive_scale_the_objective(value))
-    return path
-
-
-def emit_scale_the_objective_header_only(
-    solve_data_dir: Path | str,
-    *, provider,
-) -> Path:
-    """Emit ``scale_the_objective_header_only`` to the Provider."""
-    path = Path(solve_data_dir) / "scale_the_objective.csv"
-    _emit(provider, "solve_data/scale_the_objective.csv",
-                   derive_scale_the_objective_header_only())
     return path
 
 

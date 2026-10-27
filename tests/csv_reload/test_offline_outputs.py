@@ -1,12 +1,12 @@
 """``flextool.engine._csv_reload.offline_outputs``: offline outputs from MPS + solution + dump (c24 stage 2, S2-4).
 
-Relational test, no oracle: run a scenario's cascade in ``tmp_path`` and keep the objective scale the solve wrote
-to ``work/solve_data/scale_the_objective.csv``; snapshot the last sub-solve's provider into a separate stamped dump
-(as ``--csv-dump`` does; its ``scale_the_objective.csv`` is the provider's header-only copy).  Rebuild the last LP
-from the dump (``load_from_dump`` + ``build_flextool`` with the production objective scale), write it as a named MPS,
-solve it with the test ``highs.opt``, write the solution, then run ``write_outputs_from_files`` on those files and
-the dump.  Every parquet it writes must equal the production ``output_raw/`` parquet of that solve (rtol 1e-6), and
-it must write every variable parquet production wrote for that solve.
+Relational test, no oracle: run a scenario's cascade in ``tmp_path``; snapshot the last sub-solve's provider into a
+separate stamped dump (as ``--csv-dump`` does).  The dump's ``scale_the_objective.csv`` must equal the one the solve
+wrote to ``work/solve_data/``.  Rebuild the last LP from the dump (``load_from_dump`` + ``build_flextool`` with that
+scale), write it as a named MPS, solve it with the test ``highs.opt``, write the solution, then run
+``write_outputs_from_files`` on those files and the dump, without passing the scale.  Every parquet it writes must
+equal the production ``output_raw/`` parquet of that solve (rtol 1e-6), and it must write every variable parquet
+production wrote for that solve.
 
 Precondition (checked first): the rebuilt LP's objective equals the production objective.  A dump has no
 solve-to-solve carry, so a scenario whose last solve depends on carry fails here with that message instead of with
@@ -103,10 +103,11 @@ def offline(test_db_url, tmp_path_factory, test_solver_config_dir):
             solver_config_dir=test_solver_config_dir, csv_dump=False, keep_solutions=True,
         )
         solve_name, last = list(steps.items())[-1]
-        # The scale the solve wrote; the provider snapshot below carries only a header-only copy of the file.
-        scale = read_scale_the_objective(work)
         dump = tmp / "dump"
         last.flex_data_provider.snapshot_processed_inputs(dump)
+        # The provider snapshot carries the scale the solve wrote (item 165: it used to be header-only).
+        scale = read_scale_the_objective(dump)
+        assert scale == read_scale_the_objective(work)
         mps, sol, obj = _rebuild_and_solve(dump, test_db_url, scenario, scale, tmp, test_solver_config_dir)
         assert obj == pytest.approx(last.obj, rel=1e-9), (
             f"{scenario}: the LP rebuilt from the dump has objective {obj!r}, production {last.obj!r}; "
@@ -116,7 +117,6 @@ def offline(test_db_url, tmp_path_factory, test_solver_config_dir):
         with pytest.warns(CsvReloadWarning, match=_UNSUPPORTED):
             paths = write_outputs_from_files(
                 mps, sol, solve_name, out, dump_dir=dump, db_url=test_db_url, scenario=scenario,
-                scale_the_objective=scale,
             )
         cache[scenario] = _Offline(
             scenario=scenario, db_url=test_db_url, work=work, dump=dump, solve_name=solve_name,
@@ -180,24 +180,24 @@ def test_invest_scenario_invests(offline):
 def test_objective_scale_from_the_dump(offline, tmp_path):
     """Without ``scale_the_objective=`` the scale is read from the dump; missing or header-only → error.
 
-    The provider snapshot's ``scale_the_objective.csv`` is header-only, so the real dump is refused (never a silent
-    1e-6); a copy that holds the file the solve wrote resolves to the production value.
+    The provider snapshot holds the scale the solve wrote (one row); a dump whose file is header-only or missing is
+    refused, never read as a silent 1e-6.
     """
     o = offline("coal")
-    assert (o.dump / "solve_data" / "scale_the_objective.csv").is_file()
+    assert pd.read_csv(o.dump / "solve_data" / "scale_the_objective.csv").shape[0] == 1
+    assert read_scale_the_objective(o.dump) == o.scale == read_scale_the_objective(o.work)
+    dump = tmp_path / "dump"
+    shutil.copytree(o.dump, dump)
+    (dump / "solve_data" / "scale_the_objective.csv").write_text("key,value\n")
     with pytest.raises(FlexToolConfigError, match="no 'value' row.*pass scale_the_objective"):
-        read_scale_the_objective(o.dump)
+        read_scale_the_objective(dump)
     with pytest.raises(FlexToolConfigError, match="pass scale_the_objective"):
-        write_outputs_from_files(o.mps, o.sol, o.solve_name, tmp_path / "out", dump_dir=o.dump)
+        write_outputs_from_files(o.mps, o.sol, o.solve_name, tmp_path / "out", dump_dir=dump)
     assert not (tmp_path / "out").exists()
     empty = tmp_path / "empty"
     (empty / "solve_data").mkdir(parents=True)
     with pytest.raises(FlexToolConfigError, match="is missing.*pass scale_the_objective"):
         read_scale_the_objective(empty)
-    dump = tmp_path / "dump"
-    shutil.copytree(o.dump, dump)
-    shutil.copy(o.work / "solve_data" / "scale_the_objective.csv", dump / "solve_data" / "scale_the_objective.csv")
-    assert read_scale_the_objective(dump) == o.scale
 
 
 def test_cli_help_exits_zero():

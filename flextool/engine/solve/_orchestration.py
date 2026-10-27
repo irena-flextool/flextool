@@ -1662,6 +1662,22 @@ def _write_scale_csv(
         )
 
 
+def _emit_provider_obj_scale(state, effective_obj_scale: float) -> None:
+    """Put the objective scale this sub-solve's LP is built with into its provider.
+
+    ``solve_data/scale_the_objective`` in the sub-solve provider holds exactly the value passed to
+    ``build_flextool``, so a provider snapshot (``--csv-dump``, a test run's dump) carries the solve's real scale.
+    No reader in the run uses the key (the output writers get the scale as an argument); it is there for the dump.
+    """
+    provider = getattr(state, "current_provider", None)
+    if provider is None:
+        return
+    from flextool.engine.preprocess.emit._solve_writers import emit_scale_the_objective
+    emit_scale_the_objective(
+        state.paths.work_folder / "solve_data", effective_obj_scale, provider=provider,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Master loop
 # ---------------------------------------------------------------------------
@@ -2281,6 +2297,9 @@ def _drive_cascade(
     _op = getattr(state, "override_provider", None)
     if _op is not None:
         runner.state.override_provider = _op
+    # ``--csv-dump``: the per-sub-solve gates (``dump_csvs`` and the handoff writers' dump branch) read
+    # ``runner.state``, so the flag must be on the runner's state, not only on the outer one.
+    runner.state.csv_dump = bool(getattr(state, "csv_dump", False))  # type: ignore[attr-defined]
     runner.state.logger.setLevel(logging.ERROR)
     # Forward the opt-in memory recorder (no-op when env var unset) so
     # ``_PolarHighCascadeSolver.run`` can fire the first-iter checkpoints.
@@ -2581,6 +2600,7 @@ def _drive_cascade(
                 complete_solve_name
             ) or state.solve.scale_the_objective.get(base_solve_name)
             obj_scale = _resolve_effective_obj_scale(_user_obj_scale)
+            _emit_provider_obj_scale(self.state, obj_scale)
 
             # Benders progress is surfaced via ``print`` (flushed), the
             # same channel as the cascade's "Solve start" markers — the
@@ -2970,6 +2990,7 @@ def _drive_cascade(
 
             user_obj_scale = state.solve.scale_the_objective.get(complete_solve_name)
             effective_obj_scale = _resolve_effective_obj_scale(user_obj_scale)
+            _emit_provider_obj_scale(self.state, effective_obj_scale)
             # ``user_bound_scale`` resolution priority:
             # ``FLEXTOOL_USER_BOUND_SCALE`` env var (set by
             # ``--user-bound-scale`` CLI flag) > DB ``solve.user_bound_scale``
@@ -3921,12 +3942,15 @@ def _drive_cascade(
             # cascade stays in-memory; ``--csv-dump`` materialises the
             # full FlexData → CSV snapshot for debug.
             _t_dump_start = time.perf_counter() if _phase_timing else 0.0
+            # A failed debug dump does not stop the run (the LP and the outputs do not depend on it), but it is
+            # logged at ERROR: the runner's logger is pinned to ERROR in ``_drive_cascade``, so a warning would
+            # never be seen.
             try:
                 if getattr(self.state, "csv_dump", False):
                     data.dump_csvs(self.state.paths.work_folder)
             except Exception as exc:  # noqa: BLE001
-                self.state.logger.warning(
-                    f"dump_csvs failed for {complete_solve_name}: {exc}"
+                self.state.logger.error(
+                    f"dump_csvs failed for {complete_solve_name}: {exc!r}"
                 )
             if _phase_timing:
                 _tr.record(

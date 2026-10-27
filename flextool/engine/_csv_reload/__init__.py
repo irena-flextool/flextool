@@ -26,9 +26,9 @@ Public names:
 
 Not re-exported (it imports the output writers): :mod:`.offline_outputs` — write a solve's output parquets from an
 MPS + HiGHS solution file and the solve's dump (``python -m flextool.engine._csv_reload.offline_outputs``).
-It replaces the removed ``python -m flextool.process_outputs.read_highs_solution``.  It currently needs the solve's
-``scale_the_objective`` passed explicitly (``--scale``): a provider snapshot (``--csv-dump``, a run's work folder)
-carries a header-only ``solve_data/scale_the_objective.csv``.
+It replaces the removed ``python -m flextool.process_outputs.read_highs_solution``.  It reads the solve's
+``scale_the_objective`` from the dump (a provider snapshot carries the scale the sub-solve's LP was built with);
+``--scale`` is an optional override.
 """
 from __future__ import annotations
 

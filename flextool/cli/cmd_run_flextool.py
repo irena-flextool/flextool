@@ -671,7 +671,10 @@ def main():
                              'output_csv/, output_excel/, output_plots/ '
                              'requested via --write-methods). With the '
                              'flag set, every intermediate directory '
-                             'survives the run for inspection.')
+                             'survives the run for inspection, and each '
+                             'sub-solve dumps its inputs to input/ and '
+                             'solve_data/ (one folder: a later sub-solve '
+                             'overwrites the files of an earlier one).')
 
     args = parser.parse_args()
     # --user-bound-scale / --presolve are surfaced through env vars

@@ -15,11 +15,11 @@ Valid input.  The outputs are only right when all of these hold; none of them ca
 * The MPS was built without autoscale Layer 2.  A Layer-2 MPS is in scaled variables
   (``flextool/engine/autoscale/_layer2.py``), and its solution gives silently wrong values.
 * Its objective was scaled by the solve's ``scale_the_objective`` (``build_flextool(..., scale_the_objective=)``;
-  production uses the solve's ``scale_the_objective`` DB parameter, default 1e-6).  Pass that value; when it is not
-  passed it is read from ``<dump>/solve_data/scale_the_objective.csv`` and a missing or header-only file is an
-  error, never a silent default.  A provider snapshot (``--csv-dump``, a test run's work folder) holds the
-  provider's header-only copy of that file, written over the one the solve wrote, so for those dumps the value
-  must be passed.
+  production uses the solve's ``scale_the_objective`` DB parameter, default 1e-6).  It is read from
+  ``<dump>/solve_data/scale_the_objective.csv``: the sub-solve provider holds the scale its LP was built with, so a
+  provider snapshot (``--csv-dump``, a test run's work folder) carries it.  A missing or header-only file is an
+  error, never a silent default.  ``scale_the_objective=`` (CLI ``--scale``) overrides it, for an MPS built at
+  another scale.
 * It is the same solve as the dump: the last sub-solve of the run whose work folder (or ``--csv-dump`` folder) the
   dump is.  A dump has no solve-to-solve carry, so the FlexData rebuilt from it is that of the last sub-solve only.
 
@@ -53,13 +53,13 @@ def read_scale_the_objective(dump_dir: Path | str) -> float:
     not a positive number (no silent default).
     """
     path = Path(dump_dir) / _SCALE_FILE
-    hint = "pass scale_the_objective= (CLI: --scale)"
+    hint = "the dump does not hold the solve's objective scale; pass scale_the_objective= (CLI: --scale)"
     if not path.is_file():
         raise FlexToolConfigError(f"offline outputs: {path} is missing; {hint}")
     df = pl.read_csv(path)
     if "value" not in df.columns or df.height == 0:
         raise FlexToolConfigError(
-            f"offline outputs: {path} has no 'value' row (a provider snapshot writes it header-only); {hint}"
+            f"offline outputs: {path} has no 'value' row; {hint}"
         )
     try:
         value = float(df["value"][0])
@@ -105,7 +105,8 @@ def write_outputs_from_files(mps_file: Path | str, sol_file: Path | str, solve_n
 
     ``dump_dir`` is the solve's stamped CSV dump; ``db_url`` + ``scenario`` (together or neither) give the
     DB-direct parameters, as in :func:`load_from_dump_with_provider`.  ``scale_the_objective`` defaults to the
-    dump's (:func:`read_scale_the_objective`, which raises when it is missing).  ``force`` loads a dump the stamp
+    dump's (:func:`read_scale_the_objective`, which raises when it is missing); pass it only to override the dump's
+    value (an MPS built at another scale).  ``force`` loads a dump the stamp
     check would refuse.  See the module docstring for which MPS files are valid input.
     """
     import highspy  # local import, as in the production writer path
@@ -163,9 +164,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--db-url", default=None, help="Input DB URL (give together with --scenario)")
     parser.add_argument("--scenario", default=None, help="Scenario name in --db-url")
     parser.add_argument("--scale", type=float, default=None,
-                        help="scale_the_objective the MPS was built with (the solve's DB value, default 1e-6); "
-                             "if omitted it is read from <dump>/solve_data/scale_the_objective.csv, which is an "
-                             "error when that file is missing or header-only (as in a --csv-dump folder)")
+                        help="override the scale_the_objective read from <dump>/solve_data/"
+                             "scale_the_objective.csv (only for an MPS built at another scale)")
     parser.add_argument("--force", action="store_true", help="Load a dump the stamp check refuses")
     args = parser.parse_args(argv)
 

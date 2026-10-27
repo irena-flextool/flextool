@@ -1,5 +1,18 @@
 ## Unreleased
 
+- **`--csv-dump` writes the per-solve input dump again.** With
+  `--csv-dump` (the GUI's "Full" debug level) each sub-solve's inputs
+  were supposed to be dumped to `input/` and `solve_data/` in the work
+  folder, but the setting never reached the solves, so only the
+  end-of-run snapshot was written. Each sub-solve now dumps into the work
+  folder (a later sub-solve overwrites the files of an earlier one). The
+  dump also keeps the solve's objective scale in
+  `solve_data/scale_the_objective.csv`, which the end-of-run snapshot used
+  to replace with an empty file, so the offline output writer
+  (`python -m flextool.engine._csv_reload.offline_outputs`) no longer
+  needs `--scale`. A dump that fails is reported as an error with the
+  solve's name; the run continues.
+
 - **A database file left in the work folder no longer changes or crashes
   the run.** When the work folder held a copy of a database named
   `tests.sqlite` (for example the run's own input database), the run read
