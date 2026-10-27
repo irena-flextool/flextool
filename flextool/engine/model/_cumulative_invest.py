@@ -19,6 +19,7 @@ from polar_high.engine import Expr, Var
 from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
 from flextool.engine.model._common import (
     _entities_of_kind,
+    _entity_rows,
     _has_rows,
     _var_view,
     chain_prior,
@@ -325,34 +326,68 @@ def _eq_cumulative_capacity(b: _Build) -> None:
 
     # ─── EQ. ─── {max,min}Cumulative_capacity_{p,n} ──────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p] − v_divest_p[p,d] · unitsize[p]
+    # Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
+    #   − Σ_{d′ : (p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′] · unitsize[p]
     #   ≤ cumulative_max_capacity[p,d] − existing[p,d]        (maxCumulative_capacity_p)
     #   ≥ cumulative_min_capacity[p,d] − existing[p,d]        (minCumulative_capacity_p)
-    #   ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities
-    #   _n: the node analogue with v_invest_n / v_divest_n and state_unitsize[n]
-    # Keeps the capacity of an entity in a period (existing + invested and still alive − divested)
-    # within its cumulative limits, MW (MWh for storage nodes).  Existing capacity is a constant on the
-    # right-hand side.  The divest term is the divestment of period d only, present where v_divest exists;
-    # divestments of earlier periods are not subtracted (known limitation).
-    for name, sense, cap, var, divest, axis in (
-        ("maxCumulative_capacity_p", "<=", d.ed_cumulative_max_capacity, b.v_invest_p, b.v_divest_p, "p"),
-        ("maxCumulative_capacity_n", "<=", d.ed_cumulative_max_capacity, b.v_invest_n, b.v_divest_n, "n"),
-        ("minCumulative_capacity_p", ">=", d.ed_cumulative_min_capacity, b.v_invest_p, b.v_divest_p, "p"),
-        ("minCumulative_capacity_n", ">=", d.ed_cumulative_min_capacity, b.v_invest_n, b.v_divest_n, "n"),
+    #   max: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities, p ∈ authors(cumulative_max_capacity) —
+    #        a period the author's own map leaves out is a configuration error (FA-12), not "no limit"
+    #        (c16b critique change 2)
+    #   min: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities ∩ cumulative_min_capacity.frame
+    #   _n: the node analogue with v_invest_n / v_divest_n and state_unitsize[n] — ``edd_divest_active``
+    #       is built only from process divestments (``pd_divest_set``; no node equivalent exists), so
+    #       the _n rows keep subtracting only the row's own period's divestment (pre-existing
+    #       limitation, unchanged by #29; tracking node divest history needs its own data plumbing).
+    # Keeps the capacity of an entity in a period (existing + invested and still alive − every
+    # retirement up to and including d, #29, process axis only) within its cumulative limits,
+    # MW (MWh for storage nodes).  Existing capacity is a constant on the right-hand side.
+    for name, sense, cap, var, divest, axis, param_name in (
+        ("maxCumulative_capacity_p", "<=", d.ed_cumulative_max_capacity, b.v_invest_p, b.v_divest_p, "p",
+         "cumulative_max_capacity"),
+        ("maxCumulative_capacity_n", "<=", d.ed_cumulative_max_capacity, b.v_invest_n, b.v_divest_n, "n",
+         "cumulative_max_capacity"),
+        ("minCumulative_capacity_p", ">=", d.ed_cumulative_min_capacity, b.v_invest_p, b.v_divest_p, "p", None),
+        ("minCumulative_capacity_n", ">=", d.ed_cumulative_min_capacity, b.v_invest_n, b.v_divest_n, "n", None),
     ):
         unitsize = _unitsize(d, axis)
         if cap is None or var is None or unitsize is None:
             continue
-        rows = _on_var_axis(idx, axis, var)
-        if rows.height == 0:
+        all_rows = _on_var_axis(idx, axis, var)
+        if all_rows.height == 0:
             continue
+        cap_frame = cap.frame.rename({"e": axis})
+        rows_src, cap_dt = align_join_dtypes(all_rows, cap_frame, (axis,))
+        if sense == "<=":
+            # Max rows: entities that author the cap at all (any period), restricted to periods the
+            # entity actually has the variable for; FA-12 then catches a period that same entity's
+            # own map leaves out (c16b critique change 1).
+            rows = rows_src.join(cap_dt.select(axis).unique(), on=axis, how="semi")
+            if rows.height == 0:
+                continue
+            check_max_cap(rows, cap_dt, axis, True, param_name=param_name)
+        else:
+            # Min rows: only the periods an explicit value is given for (a missing min is simply "no
+            # floor", not an error).
+            rows = rows_src.join(cap_dt.select(axis, "d").unique(), on=[axis, "d"], how="semi")
+            if rows.height == 0:
+                continue
         lifetime, rows_aligned = align_join_dtypes(edd.rename({"e": axis}), rows, (axis,))
         lifetime = lifetime.join(rows_aligned, on=[axis, "d"], how="inner")
         invest = _var_view(var, "__cumcap_at", {"d": "d_invest"})
         lhs: dict = {"invest_cum": Sum(Where(invest * unitsize, lifetime), over=("d_invest",))}
         if divest is not None:
-            lhs["divest"] = -Where(divest * unitsize, rows)
-        rhs: dict = {"cap": Param((axis, "d"), cap.frame.rename({"e": axis}))}
+            if axis == "p" and d.edd_divest_active is not None:
+                # #29: every earlier divestment still active at d, not just d's own — the maxFlow
+                # measure (core.py divest_in_dispatch_p).  ``edd_divest_active`` only ever carries
+                # process rows (built solely from ``pd_divest_set``), so this branch is process-only.
+                view = _var_view(divest, "__cumcap_div", {"d": "d_divest"}, to_axis=True)
+                active = _entity_rows(d.edd_divest_active, "p", rows, axis)
+                active, rows_div = align_join_dtypes(active, rows.select(axis, "d"), (axis, "d"))
+                active = active.join(rows_div, on=[axis, "d"], how="semi")
+                lhs["divest"] = -Sum(Where(view * unitsize, active), over=("d_divest",))
+            else:
+                lhs["divest"] = -Where(divest * unitsize, rows)
+        rhs: dict = {"cap": Param((axis, "d"), cap_frame)}
         if existing is not None:
             rhs["minus_existing"] = -Param((axis, "d"), existing.frame.rename({"e": axis}))
         b.m.add_cstr(

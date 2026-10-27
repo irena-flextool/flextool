@@ -1201,9 +1201,11 @@ def ed_divest_min_period_from_source(source: "InputSource",
 def ed_cumulative_max_capacity_from_source(source: "InputSource",
                                              period_filter: pl.DataFrame | None = None,
                                              ) -> Param | None:
-    """Δ.17c-Tier2 — see :func:`ed_invest_max_period_from_source`."""
+    """An explicit ``cumulative_max_capacity = 0`` (a phase-out year) must bind, so zero rows are kept
+    (``filter_zero=False``, c16b critique change 1); ``check_max_cap`` (FA-12) then tells a genuinely
+    missing period apart from an authored zero.  See :func:`ed_invest_max_period_from_source`."""
     return _e_period_param_union(source, "cumulative_max_capacity",
-                                    filter_zero=True,
+                                    filter_zero=False,
                                     period_filter=period_filter)
 
 

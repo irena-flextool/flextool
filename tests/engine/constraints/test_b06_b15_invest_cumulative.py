@@ -605,3 +605,70 @@ def test_entity_invest_totals_count_chain_prior(toy_invest_3d):
     v_inv = sol.value("v_invest_p")
     total = float(v_inv["value"].sum())
     assert total == pytest.approx(1.0, rel=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# c16b (#29) — cumulative capacity rows count every earlier divestment.
+
+
+def test_cumulative_min_counts_earlier_divest(toy_invest_3d):
+    """Covers c16b #29: ``minCumulative_capacity_p`` subtracts every earlier divestment still
+    active at the row's period, not just a divestment of the row's own period.
+
+    Hand-calc: existing=3, ``cumulative_min_capacity[u,d3]=3`` (RHS = 3 − 3 = 0 with no divest).
+    Divest is possible only at d1 (``pd_divest_set``/``ed_divest_set`` restricted to d1), capped at
+    2 by ``p_entity_max_units``, and rewarded 10/unit (``ed_lifetime_fixed_cost_divest``) — strictly
+    profitable, so the LP divests the full 2 units at d1 regardless of the cumulative row.
+    ``edd_divest_active`` makes that divestment active (still subtracted) at every later period, so
+    the d3 row becomes ``v_invest[u,d3] − v_divest[u,d1] ≥ 0`` i.e. ``v_invest[u,d3] ≥ 2``.  Investing
+    at d3 costs only 1/unit (``ed_entity_annual_discounted``), far cheaper than the 10/unit divest
+    reward, so the LP invests exactly the forced 2 units: v_divest[d1]=2, v_invest[d3]=2.
+
+    Before the fix, the d3 row's divest term only looks for a divestment AT d3 — there is none (the
+    only ``v_divest`` entity-period is (u, d1)) — so the row degenerates to ``v_invest[u,d3] ≥ 0`` and
+    the LP, with nothing forcing reinvestment, leaves v_invest[u,d3] = 0.
+    """
+    d = toy_invest_3d
+    periods = ["d1", "d2", "d3"]
+    p_entity_max_units = Param(("e", "d"),
+        pl.DataFrame({"e": ["u"]*3, "d": periods, "value": [2.0]*3}))
+    p_entity_all_existing = Param(("e", "d"),
+        pl.DataFrame({"e": ["u"]*3, "d": periods, "value": [3.0]*3}))
+    pss = d.process_source_sink
+    p_flow_upper_existing = Param(("p", "source", "sink", "d"),
+        pss.join(pl.DataFrame({"d": periods}), how="cross")
+           .with_columns(value=pl.lit(3.0))
+           .select("p", "source", "sink", "d", "value"))
+    pd_divest_set = pl.DataFrame({"p": ["u"], "d": ["d1"]})
+    ed_divest_set = pd_divest_set.rename({"p": "e"})
+    edd_divest_active = pl.DataFrame(
+        {"p": ["u"]*3, "d_divest": ["d1"]*3, "d": periods})
+    ed_lifetime_fixed_cost_divest = Param(("e", "d"),
+        pl.DataFrame({"e": ["u"], "d": ["d1"], "value": [10.0]}))
+    ed_entity_annual_discounted = Param(("e", "d"),
+        pl.DataFrame({"e": ["u"]*3, "d": periods, "value": [1.0]*3}))
+    ed_invest_cumulative = pl.DataFrame({"e": ["u"], "d": ["d3"]})
+    ed_cumulative_min_capacity = Param(("e", "d"),
+        pl.DataFrame({"e": ["u"], "d": ["d3"], "value": [3.0]}))
+    data = dataclasses.replace(d,
+        p_entity_max_units=p_entity_max_units,
+        p_entity_all_existing=p_entity_all_existing,
+        p_flow_upper_existing=p_flow_upper_existing,
+        pd_divest_set=pd_divest_set,
+        ed_divest_set=ed_divest_set,
+        edd_divest_active=edd_divest_active,
+        ed_lifetime_fixed_cost_divest=ed_lifetime_fixed_cost_divest,
+        ed_entity_annual_discounted=ed_entity_annual_discounted,
+        ed_invest_cumulative=ed_invest_cumulative,
+        ed_cumulative_min_capacity=ed_cumulative_min_capacity,
+    )
+    pb, sol = _solve(data)
+    assert sol.optimal
+    cstr = set(pb.cstr_names())
+    assert "minCumulative_capacity_p" in cstr
+    v_div = sol.value("v_divest_p")
+    v_inv = sol.value("v_invest_p")
+    divest_d1 = float(v_div.filter(pl.col("d") == "d1")["value"][0])
+    invest_d3 = float(v_inv.filter(pl.col("d") == "d3")["value"][0])
+    assert divest_d1 == pytest.approx(2.0, rel=1e-7)
+    assert invest_d3 == pytest.approx(2.0, rel=1e-7)

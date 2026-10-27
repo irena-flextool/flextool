@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **Cumulative capacity limits now subtract every earlier retirement, not just a retirement of
+  the row's own period.** `cumulative_max_capacity` / `cumulative_min_capacity` on a unit,
+  connection or storage node compare existing plus invested plus retired capacity against a
+  limit for every period; a retirement from an earlier period used to drop out of that
+  comparison again at later periods (processes/units only — storage nodes already counted every
+  retirement before this fix and are unchanged). An explicit `cumulative_max_capacity = 0` (a
+  phase-out year) now binds as given, instead of being read as "no limit"; a period an entity's
+  own map leaves out, once that entity authors the parameter at all, is now a configuration error
+  instead of silently capping investment at zero there.
+
 - **Investment and retirement totals over a chain of solves now count every earlier solve, not
   just the capacity still alive.** `invest_max_total` / `retire_max_total` (and the group-level
   analogues) used to ignore everything a previous solve in the same chain had already built or
