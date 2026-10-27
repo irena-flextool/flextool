@@ -4,11 +4,11 @@
 * A dump without a readable stamp (A), with another dump format (B) or another schema version (C) is refused
   without ``force`` and loads with it.
 * ``db_url`` and ``scenario`` come together.
-* Parity while the loader's own CSV topology branch still exists: on a ``dump_csvs`` folder, ``load_from_dump``
-  (topology from the package's ``pss_from_dump``) builds the same FlexData as a bare ``load_flextool`` (topology
-  from the loader's inline branch).
-* No discovery: a reload of a ``work_<scenario>`` folder that holds ``tests.sqlite`` builds no axis Enums, where a
-  bare ``load_flextool`` of the same folder does.
+* Smoke: a ``dump_csvs`` folder reloads with the package's ``pss_from_dump`` topology and the frame fields
+  populated.  (Until c24 S3-4 this compared against a bare ``load_flextool(dump)``, whose inline CSV topology
+  branch is gone; ``load_flextool`` now requires a provider and a DB reader.)
+* No discovery: a reload of a ``work_<scenario>`` folder that holds ``tests.sqlite`` builds no axis Enums, with or
+  without the DB.
 
 Dumps come from the session-cached cascade runs (``scenario_run``), whose DBs are built from the JSON fixtures.
 """
@@ -33,7 +33,7 @@ from flextool.engine._csv_reload import (
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._dump_stamp import STAMP_FILE, _engine_identity, read_dump_stamp
-from flextool.engine.preprocess.flex_data import FlexData, load_flextool
+from flextool.engine.preprocess.flex_data import FlexData
 
 _UNSUPPORTED = "CSV reload is unsupported"
 
@@ -177,7 +177,7 @@ def test_db_url_and_scenario_come_together(coal_dump, scenario_run):
 
 
 # ---------------------------------------------------------------------------
-# Parity: pss_from_dump ≡ the loader's inline CSV topology branch
+# Smoke: a dump_csvs folder reloads
 # ---------------------------------------------------------------------------
 
 
@@ -189,46 +189,18 @@ def _frame(value) -> pl.DataFrame | None:
     return None
 
 
-def _same_frame(a: pl.DataFrame, b: pl.DataFrame) -> bool:
-    if a.schema != b.schema or a.shape != b.shape:
-        return False
-    sortable = [c for c, t in a.schema.items() if not isinstance(t, (pl.List, pl.Struct, pl.Object))]
-    if sortable:
-        a, b = a.sort(sortable, nulls_last=True), b.sort(sortable, nulls_last=True)
-    return a.equals(b)
-
-
 @pytest.mark.parametrize("scenario,db_fixture", [("coal", "main"), ("lh2_three_region", "lh2")])
-def test_reload_matches_bare_load_flextool(tmp_path, scenario_run, scenario, db_fixture):
-    """Every frame field of ``load_from_dump(dump)`` equals that of a bare ``load_flextool(dump)``.
-
-    The two loads differ only in where the process topology comes from (package vs loader CSV branch), so this
-    pins ``pss_from_dump`` to the inline branch while both exist.  The dump folder is not a ``work_<scenario>``
-    folder and has no ``tests.sqlite``, so the bare load is CSV-only too.
-    """
+def test_reload_of_a_dump_populates_the_model(tmp_path, scenario_run, scenario, db_fixture):
+    """``load_from_dump(dump)`` builds the topology from ``pss_from_dump`` and populates the frame fields."""
     dump = _dump_of(scenario_run(scenario, db_fixture), tmp_path / "dump")
     with pytest.warns(CsvReloadWarning, match=_UNSUPPORTED):
         reloaded = load_from_dump(dump)
-    bare = load_flextool(dump)
-    assert reloaded._axis_enums is None and bare._axis_enums is None
-
-    compared = 0
-    mismatches: list[str] = []
-    for field in dataclasses.fields(FlexData):
-        a, b = _frame(getattr(reloaded, field.name, None)), _frame(getattr(bare, field.name, None))
-        if a is None and b is None:
-            continue
-        if a is None or b is None:
-            mismatches.append(f"{field.name}: load_from_dump populated={a is not None}, bare={b is not None}")
-            continue
-        compared += 1
-        if not _same_frame(a, b):
-            mismatches.append(f"{field.name}: load_from_dump {a.shape} {a.schema}\nbare {b.shape} {b.schema}")
-    assert not mismatches, "\n".join(mismatches)
+    assert reloaded._axis_enums is None
     for field in ("process_source_sink", "process_source_sink_eff"):
         frame = _frame(getattr(reloaded, field))
-        assert frame is not None and frame.height > 0, f"{field} must be populated for the parity to bite"
-    assert compared > 30  # coal populates 43 frame fields
+        assert frame is not None and frame.height > 0, f"{field} must be populated by the reload"
+    populated = sum(_frame(getattr(reloaded, f.name, None)) is not None for f in dataclasses.fields(FlexData))
+    assert populated > 30  # coal populates 43 frame fields
 
 
 # ---------------------------------------------------------------------------
@@ -237,10 +209,9 @@ def test_reload_matches_bare_load_flextool(tmp_path, scenario_run, scenario, db_
 
 
 def test_work_folder_reload_builds_no_axis_enums(scenario_run):
-    """``run.work_folder`` is ``work_coal`` with a ``tests.sqlite``: the bare loader discovers it, the reload not."""
+    """``run.work_folder`` is ``work_coal`` with a ``tests.sqlite``: the reload never builds axis Enums from it."""
     run = scenario_run("coal")
     assert (run.work_folder / "tests.sqlite").exists()
-    assert load_flextool(run.work_folder)._axis_enums is not None  # precondition: discovery would fire
 
     with pytest.warns(CsvReloadWarning, match=_UNSUPPORTED):
         csv_only, provider = load_from_dump_with_provider(run.work_folder)

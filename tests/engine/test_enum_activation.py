@@ -2,10 +2,10 @@
 
 After Phase 4.4 the activation substrate is in place:
 
-* ``provider.axis_enums`` + ``provider.contract`` attributes are
-  populated by ``load_flextool`` (either inherited from the production
-  ``input_derivation.run`` path or lazy-built against the workdir
-  sqlite).
+* ``provider.axis_enums`` (+ ``provider.contract``) set on the provider
+  activates the Enum dtypes in ``load_flextool``; the loader never builds
+  them itself (production leaves them None; ``load_scenario(axis_enums=True)``
+  sets them in tests).
 * ``_AXIS_SYNONYMS`` is extended with the cluster-discovered short
   forms (``b`` → branch, ``b_first`` / ``b_next`` → t, ``b_f`` →
   block, ``anchor`` → d, plus the entity-class element columns
@@ -25,9 +25,9 @@ without touching the surrounding plumbing.
 After the follow-up lands, strengthen this test per the dispatch
 template (assert ``utf8_count == 0`` on every FlexData dim column).
 
-The ``tests.sqlite`` auto-build test of the CSV reload
-(``test_load_flextool_threads_axis_enums``) is in
-``tests/csv_reload/test_enum_activation.py`` (c24 S1-8).
+The loader's former ``tests.sqlite`` auto-build of the vocabulary (and its
+test) was removed in c24 S3-4: a DB file in the work folder no longer
+switches the run to Enum dtypes.
 """
 from __future__ import annotations
 

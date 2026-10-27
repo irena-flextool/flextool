@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **A database file left in the work folder no longer changes or crashes
+  the run.** When the work folder held a copy of a database named
+  `tests.sqlite` (for example the run's own input database), the run read
+  its entity names and switched the model's internal data types. The
+  solve then built the same model in a different order, or stopped with a
+  `SchemaError` (seen with rolling separate dispatch and nested
+  *fix_quantity* runs). The run now takes everything from its input
+  database and ignores such files. `load_flextool` now needs the run's
+  data provider and database reader; loading a model from a CSV dump is
+  done only by the unsupported `flextool.engine._csv_reload` package.
+
 - **Leftover CSV files in a reused work folder no longer change the
   model.** When a run found no value for an input in memory, it read a
   CSV file of that name from the work folder instead, if one was there

@@ -1294,81 +1294,19 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                                        "unitsize","flow_upper","slope","commodity_price",
                                        "pss_source_canonical","pss_sink_canonical")}
 
-    # Δ.18 — CSV-fallback for the pss family.  When ``source`` is None
-    # (dump_csvs roundtrip workdirs without a ``tests.sqlite``), read
-    # the canonical preprocessed CSVs (``process_source_sink.csv`` /
-    # ``_eff.csv`` / ``_noEff.csv``) directly.  These mirror the
-    # source-driven helper's output; the round-trip test depends on it.
-    #
-    # ``dump_topology`` (only ``flextool.engine._csv_reload`` passes it) replaces that CSV branch with the
-    # package's own copy, read from the seeded provider: ``None`` means "no processes", otherwise a dict with
-    # the five frames below.
-    if source is None and dump_topology is not None:
+    # Without a DB reader the topology comes only from ``dump_topology``, which only
+    # ``flextool.engine._csv_reload`` passes (built from its seeded provider): ``None`` means "no processes",
+    # otherwise a dict with the five frames below.
+    if source is None:
+        if dump_topology is None:
+            from flextool.engine.input._solve_state import FlexToolConfigError
+            raise FlexToolConfigError("process topology needs the DB reader")
         parts = dump_topology(sd, provider)
         if parts is None:
             return empty_return
         pss, pss_eff, pss_noEff = parts["pss"], parts["pss_eff"], parts["pss_noEff"]
         pss_source_canonical = parts["pss_source_canonical"]
         pss_sink_canonical = parts["pss_sink_canonical"]
-    elif source is None:
-        pss_path     = sd / "process_source_sink.csv"
-        pss_eff_path = sd / "process_source_sink_eff.csv"
-        pss_noe_path = sd / "process_source_sink_noEff.csv"
-        if not _provider_has(provider, "solve_data/process_source_sink", pss_path):
-            return empty_return
-        from flextool.engine.input._axis_enums import schema_dtype
-        empty_pss = pl.DataFrame(
-            schema={
-                "p": schema_dtype(None, "p"),
-                "source": schema_dtype(None, "source"),
-                "sink": schema_dtype(None, "sink"),
-            })
-
-        def _read_pss(p: Path) -> pl.DataFrame:
-            df = _provider_read(provider, f"solve_data/{p.stem}", p)
-            if df.height == 0 or "process" not in df.columns:
-                return empty_pss
-            return (df.pipe(rename_to_axis, {"process": "p"})
-                      .with_columns(
-                          cast_dim(pl.col("source"), None, "source"),
-                          cast_dim(pl.col("sink"), None, "sink"),
-                      )
-                      .select("p", "source", "sink")
-                      .unique()
-                      .sort("p", "source", "sink"))
-        pss = _read_pss(pss_path)
-        if pss.height == 0:
-            return empty_return
-        pss_eff = (_read_pss(pss_eff_path)
-                   if _provider_has(provider,
-                                    "solve_data/process_source_sink_eff",
-                                    pss_eff_path)
-                   else empty_pss)
-        pss_noEff = (_read_pss(pss_noe_path)
-                     if _provider_has(provider,
-                                      "solve_data/process_source_sink_noEff",
-                                      pss_noe_path)
-                     else empty_pss)
-
-        # Canonical source/sink per process from the preprocessed CSV sets.
-        # process_source.csv and process_sink.csv (written by flextool's
-        # preprocessing) contain exactly the canonical node per process:
-        # unit__inputNode for source, unit__outputNode for sink, and the
-        # original connection__node__node direction for connections.
-        def _read_canonical_set(p: Path, side: str) -> pl.DataFrame | None:
-            name = f"solve_data/{p.stem}"
-            if not _provider_has(provider, name, p):
-                return None
-            df = _provider_read(provider, name, p)
-            if df.height == 0 or "process" not in df.columns or side not in df.columns:
-                return None
-            return (df.pipe(rename_to_axis, {"process": "p"})
-                      .with_columns(cast_dim(pl.col(side), None, side))
-                      .select("p", side)
-                      .unique()
-                      .sort("p", side))
-        pss_source_canonical = _read_canonical_set(sd / "process_source.csv", "source")
-        pss_sink_canonical   = _read_canonical_set(sd / "process_sink.csv",   "sink")
     else:
         from flextool.engine.preprocess.params._projection import process_source_sink_canonical, _try_entities
         canonical = process_source_sink_canonical(source)
@@ -1473,12 +1411,8 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     unitsize_p = (unitsize_long.pipe(rename_to_axis, {"e": "p"})
                        .filter(pl.col("p").is_in(pss["p"].unique())))
 
-    # ``p_slope`` is produced by ``apply_derived_b.p_slope_from_source``
-    # but the 7 mismatch fixtures (see Δ.12-drop close stanza in
-    # progress.md) skip auto-resolution and rely on the seed.  Keep
-    # CSV read.
-    # TODO(Δ.12c+): retire when ``_find_scenario`` covers underscore-
-    # variant fixtures or all fixtures explicitly pass db_reader=.
+    # ``p_slope`` is produced by ``apply_derived_b.p_slope_from_source``; this provider seed is kept for
+    # synthetic per-sub-solve names. Stage 4 of the CSV reload isolation checks whether the DB overlay always wins.
     slope_long = _read_wide_per_entity(sd / "pdtProcess_slope.csv",
                                          rename={"entity":"p"},
                                          provider=provider)
@@ -1576,13 +1510,8 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             flow_from_co2_priced_noEff = None
     if flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None:
         return (None, None, None, None)
-    # ``p_co2_content`` is produced by ``apply_direct_params`` BUT some
-    # callers exercise the pure-CSV path (e.g. ``run_chain``-style
-    # tempdir without tests.sqlite — see
-    # test_orchestration_parity::test_build_handoff_from_solution_covers_eight_carriers).
-    # Keep the seed.
-    # TODO(Δ.12c+): retire when all callers either pass an explicit
-    # db_reader= or a workdir whose tests.sqlite + scenario auto-resolve.
+    # ``p_co2_content`` is produced by ``apply_direct_params``; this provider seed is kept for synthetic
+    # per-sub-solve names. Stage 4 of the CSV reload isolation checks whether the DB overlay always wins.
     p_comm = _provider_read(provider, "input/p_commodity",
                               inp / "p_commodity.csv")
     co2_content = Param(("c",),
@@ -2091,11 +2020,8 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     edd_inv_lookback = pl.DataFrame(
         schema={"e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8})
 
-    # ``p_entity_max_units`` is produced by apply_derived_c BUT some
-    # callers exercise the pure-CSV path (e.g. tempdir-symlink-based
-    # tests in test_orchestration_parity.py).  Keep the seed.
-    # TODO(Δ.12c+): retire when all callers either pass an explicit
-    # db_reader= or a workdir whose tests.sqlite + scenario auto-resolve.
+    # ``p_entity_max_units`` is produced by apply_derived_c; this provider seed is kept for synthetic
+    # per-sub-solve names. Stage 4 of the CSV reload isolation checks whether the DB overlay always wins.
     p_max_units = Param(("e", "d"),
         _read_wide_e_d(sd / "p_entity_max_units.csv", provider=provider)
             .filter(pl.col("value") > 0)
@@ -4007,116 +3933,6 @@ def _assign_param_names(data: "FlexData") -> "FlexData":
     return data
 
 
-# Δ.12c — explicit fixture → (sqlite_filename, scenario_name) overrides
-# for fixtures whose workdir basename doesn't follow the
-# ``work_<scenario>`` convention (or whose DB lives in a non-default
-# sqlite file).  Each entry was validated against the fixture's
-# ``_gen_*.py`` script.
-_FIND_SCENARIO_OVERRIDES: "dict[str, tuple[str, str]]" = {
-    "work_2day_stochastic_dispatch_full_storage":
-        ("tests.sqlite", "2_day_stochastic_dispatch"),
-    "work_2day_stochastic_dispatch_no_storage":
-        ("tests.sqlite", "2_day_stochastic_dispatch_no_storage"),
-    "work_commodity_ladder_annual":
-        ("tests.sqlite", "coal_ladder_annual"),
-    "work_commodity_ladder_cumulative":
-        ("tests.sqlite", "coal_ladder_cumulative"),
-    "work_dc_power_flow":
-        ("case14.sqlite", "dc_opf_test"),
-    "work_delay_source_coef":
-        ("tests.sqlite", "water_pump_delayed"),
-    "work_inflation_check":
-        ("tests.sqlite", "wind_battery_invest_lifetime_renew"),
-}
-
-
-def _find_scenario(workdir: Path) -> str | None:
-    """Best-effort scenario discovery for ``load_flextool``'s Γ.8.F Step 3
-    auto-construction of a :class:`SpineDbReader`.
-
-    Strategy (in order):
-
-    1. Explicit override map (``_FIND_SCENARIO_OVERRIDES``) — fixtures
-       whose workdir basename doesn't match the ``work_<scenario>``
-       convention.  Each entry maps to ``(sqlite_filename, scenario_name)``.
-    2. Strip a leading ``work_`` from the workdir's basename and check
-       whether the resulting name appears as a scenario in
-       ``<workdir>/tests.sqlite``.  If yes, return it.
-    3. Δ.16 — when the workdir's ``input/`` is a symlink, recurse into
-       the linked directory's parent (the canonical workdir).  This
-       lets the per-sub-solve test pattern
-       (``tempdir/{input,output_raw}`` symlinked to a fixture's
-       canonical dirs, ``tempdir/solve_data`` symlinked to a sub-solve
-       snapshot) auto-resolve to the original fixture's scenario.
-    4. Otherwise return ``None`` — the caller should fall back to the
-       CSV-only path.
-
-    This covers every fixture in ``tests/engine/data/`` without
-    forcing a scenario name into workdirs that don't follow the
-    convention.  Production callers that build their own workdirs
-    without the ``work_`` prefix will continue to use the CSV-only
-    path until they pass an explicit ``db_reader=``.
-    """
-    # Δ.16 — per-sub-solve test pattern: ``tempdir/input`` is a symlink
-    # into the fixture's canonical ``work_<scenario>/input``.  Recurse
-    # into that fixture before falling back to the basename heuristic.
-    input_link = workdir / "input"
-    if input_link.is_symlink():
-        try:
-            target = (workdir / "input").resolve()
-            canonical = target.parent
-            if canonical != workdir and canonical.is_dir():
-                resolved = _find_scenario(canonical)
-                if resolved is not None:
-                    return resolved
-        except Exception:  # noqa: BLE001 — best-effort
-            pass
-    # 1. Explicit override map for the seven mismatch fixtures.
-    override = _FIND_SCENARIO_OVERRIDES.get(workdir.name)
-    if override is not None:
-        sqlite_filename, scenario_name = override
-        sqlite_path = workdir / sqlite_filename
-        if not sqlite_path.exists():
-            return None
-        # Verify the scenario actually exists in the DB before returning
-        # it — this guards against stale fixtures with renamed scenarios.
-        try:
-            import sqlite3
-            with sqlite3.connect(str(sqlite_path)) as con:
-                cur = con.cursor()
-                cur.execute("SELECT name FROM scenario")
-                scenarios = {row[0] for row in cur.fetchall()}
-        except Exception:  # noqa: BLE001 — best-effort discovery
-            return None
-        if scenario_name in scenarios:
-            return scenario_name
-        return None
-
-    # 2. Default ``work_<scenario>`` convention.
-    sqlite_path = workdir / "tests.sqlite"
-    if not sqlite_path.exists():
-        return None
-    candidate = workdir.name
-    if candidate.startswith("work_"):
-        candidate = candidate[len("work_"):]
-    if not candidate:
-        return None
-    # Cheap probe: list scenarios via spinedb_api.  The probe is best-
-    # effort; any failure (DB locked, bad schema, missing scenario
-    # table) returns None and we fall back to CSV.
-    try:
-        import sqlite3
-        with sqlite3.connect(str(sqlite_path)) as con:
-            cur = con.cursor()
-            cur.execute("SELECT name FROM scenario")
-            scenarios = {row[0] for row in cur.fetchall()}
-    except Exception:  # noqa: BLE001 — best-effort discovery
-        return None
-    if candidate in scenarios:
-        return candidate
-    return None
-
-
 def _years_represented_boundary(dt: "pl.DataFrame | None", db_reader, provider,
                                 workdir: "Path | str | None") -> "Param | None":
     """``p_years_represented_d`` over the periods of ``dt`` for a sub-solve that skipped ``apply_derived_a``.
@@ -4129,7 +3945,7 @@ def _years_represented_boundary(dt: "pl.DataFrame | None", db_reader, provider,
     """
     from flextool.engine.preprocess.params import _derived as _drv_yr
 
-    if (dt is None or dt.height == 0 or provider is None
+    if (dt is None or dt.height == 0
             or not _drv_yr._provider_has_key(provider, Path("solve_data") / "p_years_represented.csv")):
         return None
     active = (_drv_yr._read_active_solve(Path(workdir), provider=provider)
@@ -4147,28 +3963,16 @@ def load_flextool(source: "Path | str | FlexInputSource",
     """Load a :class:`FlexData` from either a workdir on disk or a
     :class:`flextool._input_source.FlexInputSource`.
 
-    Backward-compatible: passing a ``Path`` (today's call style) wraps
-    it as a :class:`flextool._input_source.CsvSource` internally and
-    behaves identically.
+    A ``Path`` is wrapped as a :class:`flextool._input_source.CsvSource`; it names the sub-solve's work folder
+    (the path keys of the provider frames), not files to read.  The DB-direct parameters come from ``db_reader``
+    (the per-(entity_class, parameter_name) :class:`flextool._input_source.InputSource`, a
+    :class:`SpineDbReader` in a run); the per-solve frames come from ``provider``.
 
-    Γ.1 of the deeper DB-direct migration adds an optional ``db_reader``
-    keyword: when supplied, the per-(entity_class, parameter_name)
-    :class:`flextool._input_source.InputSource` (typically
-    :class:`SpineDbReader`) overrides the chosen first-wave Direct
-    Params with frames built directly from the DB.  Every other
-    ``FlexData`` field is still loaded via the CSV path; the full
-    sweep into ``flex_data.py`` happens in Γ.2/Γ.3.
-
-    Γ.8.F Step 3 — when ``source`` is a workdir-shaped path (Path / str)
-    AND ``db_reader`` is not supplied, ``load_flextool`` auto-constructs
-    a :class:`SpineDbReader` against ``<workdir>/tests.sqlite`` using
-    the scenario name derived from the workdir basename
-    (``work_<scenario>`` convention).  When the convention doesn't match
-    or ``tests.sqlite`` is absent, the loader falls back to the
-    CSV-only path (no override-chain).  Explicit ``db_reader=`` overrides
-    the auto-construction.
-
-    See ``audit/db_direct_param_map.md §7.1`` for the migration plan.
+    ``provider`` (the sub-solve's :class:`FlexDataProvider`, which the cascade passes from ``_drive_cascade``) and
+    ``db_reader`` (a :class:`SpineDbReader` for the run's scenario) are required; without either the loader raises
+    :class:`FlexToolConfigError`.  Nothing is discovered from the work folder: no DB reader, scenario or axis-Enum
+    vocabulary is built from a ``tests.sqlite`` (or any other file) found there.  Axis Enums are active only when
+    ``provider.axis_enums`` is set.
 
     Δ.11 — ``handoff`` (in-memory :class:`SolveHandoff`) overlay
     ------------------------------------------------------------
@@ -4191,9 +3995,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
     truth, even when the workdir's ``solve_data/*.csv`` already carries
     a value).
 
-    ``_dump_topology`` is private to ``flextool.engine._csv_reload`` (the unsupported CSV reload).  When given,
-    the loader builds the process topology with it instead of its own CSV branch, and it neither
-    auto-constructs a DB reader nor builds axis Enums from a ``tests.sqlite`` next to the workdir.
+    Private: ``_dump_topology`` is passed only by ``flextool.engine._csv_reload.load_from_dump`` (the unsupported
+    CSV reload); the loader then builds the process topology with it when there is no reader.  It is also the only
+    way to load without a reader.
     """
     _loadflex_prof("enter")
     # Late-import the Protocol + adapters to avoid a circular import
@@ -4215,36 +4019,18 @@ def load_flextool(source: "Path | str | FlexInputSource",
             f"load_flextool db_reader must implement InputSource, "
             f"got {type(db_reader).__name__}"
         )
-    # Γ.8.F Step 3 — defer SpineDbReader auto-construction until AFTER
-    # the axis_enums vocabulary is built so the reader can be threaded
-    # with it (cast-on-emit).  ``_auto_construct_db_reader`` records the
-    # intent; the actual construction lives below the axis_enums build.
-    _auto_construct_db_reader = (db_reader is None and workdir_for_db is not None
-                                 and _dump_topology is None)
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    if provider is None:
+        raise FlexToolConfigError(
+            "load_flextool needs the sub-solve's FlexDataProvider (the cascade passes it from _drive_cascade). "
+            "Loading a model from a CSV dump is unsupported; see flextool.engine._csv_reload.load_from_dump.")
+    if db_reader is None and _dump_topology is None:
+        raise FlexToolConfigError(
+            "load_flextool needs db_reader (a SpineDbReader for the scenario); only flextool.engine._csv_reload "
+            "may load without one.")
 
     inp = source.input_dir
     sd  = source.solve_data_dir
-
-    # Step 2.5 Phase B — every ``_provider_read`` call now requires the
-    # Provider.  When the caller did not pass one (legacy workdir-only
-    # entry point used by the loader-level tests in
-    # ``tests/engine/loaders/``), seed an ephemeral Provider from
-    # the workdir's ``input/`` and ``solve_data/`` directories so the
-    # cascade keeps reading from memory.  Cascade-level entry points
-    # (``input_derivation.run`` → ``load_flextool``) always pass an
-    # explicit Provider, so this branch is a no-op there.
-    if provider is None:
-        from flextool.engine.preprocess._flex_data_provider import (
-            FlexDataProvider,
-        )
-        from flextool.engine.input._input_source import (
-            seed_provider_from_dir,
-        )
-        provider = FlexDataProvider()
-        if Path(inp).exists():
-            seed_provider_from_dir(provider, inp, "input")
-        if Path(sd).exists():
-            seed_provider_from_dir(provider, sd, "solve_data")
 
     from flextool.engine.solve._orchestration import get_phase_recorder
     _entry_rec = get_phase_recorder()
@@ -4290,116 +4076,17 @@ def load_flextool(source: "Path | str | FlexInputSource",
         )
 
     # ── Phase 4 — axis enum vocabulary activation ────────────────────
-    # Production path (input_derivation.run) populates
-    # ``provider.axis_enums`` + ``provider.contract`` up-front.  The
-    # workdir-only path (loader-level tests, bare ``load_flextool``)
-    # lazily builds them against the workdir sqlite below.  When neither
-    # works we keep activation OFF (axis_enums = None), preserving
-    # pre-Phase-4 behaviour for tests that have no DB at all.
-    #
+    # Enum activation follows the provider only (``provider.axis_enums``; production leaves it None).
     # See ``specs/enum_dtype_refactor_plan.md §Phase 4``.
     axis_enums: "dict[str, pl.Enum] | None" = getattr(
         provider, "axis_enums", None,
     )
-    contract = getattr(provider, "contract", None)
-    if axis_enums is None and _dump_topology is None:
-        from flextool.spinedb_backend._axis_enums import (
-            build_axis_enums,
-            load_axis_contract,
-        )
-        sqlite_for_backend: Path | None = None
-        if workdir_for_db is not None:
-            db_workdir = workdir_for_db
-            input_link = workdir_for_db / "input"
-            if input_link.is_symlink():
-                try:
-                    db_workdir = input_link.resolve().parent
-                except Exception:  # noqa: BLE001
-                    db_workdir = workdir_for_db
-            override = _FIND_SCENARIO_OVERRIDES.get(db_workdir.name)
-            sqlite_filename = (
-                override[0] if override is not None else "tests.sqlite"
-            )
-            sp = db_workdir / sqlite_filename
-            if sp.exists():
-                sqlite_for_backend = sp
-        if sqlite_for_backend is not None:
-            try:
-                from flextool.spinedb_backend import SpineDBBackend
-                contract = load_axis_contract()
-                # Resolve a scenario name so the backend's scenario_filter
-                # narrows ``find_entities`` / ``find_parameter_values`` to
-                # the active alternatives.  Without this, ``is_enabled="no"``
-                # parameter rows from non-scenario alternatives can disable
-                # entities that are perfectly valid in the active scenario
-                # — surfacing as missing tokens in the constraint / unit /
-                # connection axis enum vocabularies (e.g. ``coal_chp_fix``
-                # dropped from the ``constraint`` enum on the ``coal_chp``
-                # scenario, which then nulls the ``cn`` column in
-                # ``flow_constraint_idx`` and silently drops every user-
-                # defined flow constraint from the LP).  Source the
-                # scenario from an explicit ``db_reader=`` first (it
-                # already knows which scenario to filter to); fall back
-                # to ``_find_scenario`` on the workdir convention.
-                _scenario_for_backend = None
-                if db_reader is not None:
-                    _scenario_for_backend = getattr(db_reader, "scenario", None)
-                if _scenario_for_backend is None:
-                    _scenario_for_backend = _find_scenario(workdir_for_db)
-                with SpineDBBackend(
-                    f"sqlite:///{sqlite_for_backend}",
-                    _scenario_for_backend,
-                ) as _ab:
-                    axis_enums = build_axis_enums(_ab, contract)
-                if provider is not None:
-                    provider.axis_enums = axis_enums
-                    provider.contract = contract
-            except Exception:  # noqa: BLE001
-                axis_enums = None
-                contract = None
-
     if _entry_rec is not None:
         _entry_rec.checkpoint(
             "load_flextool_axis_enums_done",
             _entry_logger,
             user_label="load_flextool: axis_enums built",
         )
-
-    # Auto-construct a SpineDbReader for the workdir-only entry path
-    # (no explicit ``db_reader=``).  Phase 4.6: thread ``axis_enums`` +
-    # ``contract`` so cast-on-emit at the SpineDbReader boundary
-    # delivers Enum-typed frames to the cascade — paired with the
-    # alias sweep + cross-Enum compare fixes, downstream joins compose
-    # without SchemaError.
-    if _auto_construct_db_reader:
-        scenario = _find_scenario(workdir_for_db)
-        if scenario is not None:
-            from flextool.engine.input._spinedb_reader import SpineDbReader
-            db_workdir = workdir_for_db
-            input_link = workdir_for_db / "input"
-            if input_link.is_symlink():
-                try:
-                    db_workdir = input_link.resolve().parent
-                except Exception:  # noqa: BLE001
-                    db_workdir = workdir_for_db
-            override = _FIND_SCENARIO_OVERRIDES.get(db_workdir.name)
-            sqlite_filename = (
-                override[0] if override is not None else "tests.sqlite"
-            )
-            sqlite_path = db_workdir / sqlite_filename
-            try:
-                db_reader = SpineDbReader(
-                    f"sqlite:///{sqlite_path}", scenario=scenario,
-                    axis_enums=axis_enums, contract=contract,
-                )
-            except Exception:  # noqa: BLE001 — best-effort auto-construction
-                db_reader = None
-            if _entry_rec is not None:
-                _entry_rec.checkpoint(
-                    "load_flextool_spinedb_reader_done",
-                    _entry_logger,
-                    user_label="load_flextool: SpineDbReader constructed",
-                )
 
     # Phase 4.6 — flip the cascade-wide global on.  Every cascade module
     # that uses ``rename_to_axis`` / ``alias_to_axis`` / ``lit_axis`` /

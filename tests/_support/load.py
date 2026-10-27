@@ -16,10 +16,9 @@ provider-only state, and builds axis Enums that production never builds).  This 
 * :func:`save_provider` / :func:`load_saved` carry a provider to a child process (which cannot receive
   the in-memory object) as parquet files, and repeat the production load there.
 
-Loads happen in ``run.load_folder``, an empty sibling of the work folder.  Until the loader's disk
-fallbacks are removed, a load in the work folder (which holds the provider snapshot CSVs and a
-``tests.sqlite`` copy) would read those files for keys the provider lacks and would build axis
-Enums.  Production's work folder has neither, so the empty folder is the faithful stand-in.
+Loads happen in ``run.load_folder``, an empty sibling of the work folder (which holds the provider
+snapshot CSVs and a ``tests.sqlite`` copy).  The loader reads neither any more (c24 stage 3: provider
+only, no discovery), so the empty folder only keeps the load free of files production never has.
 
 Mutation contract: the providers, handoffs and ``last_flex_data`` held by a :class:`ScenarioRun` are
 shared by every test that uses the (session-cached) run.  Never mutate them; clone a provider with

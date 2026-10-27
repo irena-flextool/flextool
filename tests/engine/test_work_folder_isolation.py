@@ -11,14 +11,25 @@ lacked the key, so a stale ``solve_data/process_exact.csv`` from an ``exact``-tr
   fresh folder F. Both B runs must build the same LP.
 * The helper tests pin the provider-only contract directly: a CSV at the path is ignored when the provider
   lacks the key, and ``provider=None`` raises.
+* A database file in the work folder is ignored (item 166). ``load_flextool`` used to build the axis-Enum
+  vocabulary from a ``<work folder>/tests.sqlite``, which switched the run to Enum dtypes: a reordered LP, and a
+  ``SchemaError`` crash in ``rolling_separate_dispatch``. ``test_tests_sqlite_in_work_folder_is_ignored`` (unit DB)
+  and ``test_tests_sqlite_does_not_crash_rolling_separate_dispatch`` run the model with its own DB copied there and
+  compare with a fresh folder; ``test_load_flextool_requires_provider_and_reader`` pins that the loader has no
+  discovery mode left.
 
-Databases are built from ``tests/fixtures/tests.json`` (``tests/engine/_unit_db.make_db``).
+Databases are built from JSON: ``tests/fixtures/tests.json`` (``tests/engine/_unit_db.make_db``) and
+``tests/fixtures/rolling_separate_dispatch.json``.
 """
 from __future__ import annotations
+
+import shutil
+from pathlib import Path
 
 import polars as pl
 import pytest
 
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess.emit._blocks import _read_input_rows
 from flextool.engine.preprocess.flex_data import (
@@ -26,21 +37,27 @@ from flextool.engine.preprocess.flex_data import (
     _provider_pick,
     _provider_read,
     _read_process_exact,
+    load_flextool,
 )
+from tests._support.load import sqlite_path_from_url
 from tests.engine._unit_db import b64, make_db
 
 NET_CHAIN = ["init", "west", "coal", "wind", "network"]
 CONN = "west_east"
 
 
-def _run(url: str, scenario: str, work):
+def _run_steps(url: str, scenario: str, work, **kwargs) -> list:
     from flextool.engine import run_chain_from_db
 
-    steps = run_chain_from_db(url, scenario, work_folder=work, keep_solutions=True)
+    steps = run_chain_from_db(url, scenario, work_folder=work, keep_solutions=True, **kwargs)
     assert steps, "run_chain_from_db produced no orchestration steps"
     for step in steps.values():
         assert step.solution is not None, "solve produced no solution"
-    return list(steps.values())[-1]
+    return list(steps.values())
+
+
+def _run(url: str, scenario: str, work):
+    return _run_steps(url, scenario, work)[-1]
 
 
 def _var_names(step) -> set[str]:
@@ -154,3 +171,58 @@ def test_block_input_rows_ignore_csv_on_disk(tmp_path) -> None:
     assert _read_input_rows(inp, "node.csv", provider) == [["live_node"]]
     with pytest.raises(ValueError, match="requires a FlexDataProvider"):
         _read_input_rows(inp, "node.csv", None)
+
+
+# ---------------------------------------------------------------------------
+# Item 166: a database file in the work folder is ignored.
+
+
+def _assert_same_lp(dirty: list, fresh: list) -> None:
+    """Same steps, no axis Enums, and per step the same LP (column and row names in order) and objective."""
+    assert [s.solve_name for s in dirty] == [s.solve_name for s in fresh]
+    for d, f in zip(dirty, fresh):
+        assert f.flex_data._axis_enums is None, f"{f.solve_name}: a fresh run builds no axis Enums"
+        assert d.flex_data._axis_enums is None, f"{d.solve_name}: tests.sqlite in the work folder built axis Enums"
+        assert d.solution.col_names == f.solution.col_names, f"{d.solve_name}: column order differs"
+        assert d.solution.row_names == f.solution.row_names, f"{d.solve_name}: row order differs"
+        assert d.obj == pytest.approx(f.obj, rel=1e-12), d.solve_name
+
+
+def test_tests_sqlite_in_work_folder_is_ignored(tmp_path_factory: pytest.TempPathFactory) -> None:
+    url, scen = make_db(
+        tmp_path_factory, alt="iso_sqlite", base_chain=NET_CHAIN,
+        values=[["connection", CONN, "startup_method", b64("linear", "str")],
+                ["connection", CONN, "startup_cost", b64(3.0, "float")]],
+    )
+    dirty = tmp_path_factory.mktemp("sqlite_work")
+    shutil.copy(sqlite_path_from_url(url), dirty / "tests.sqlite")
+    fresh = tmp_path_factory.mktemp("fresh_work")
+
+    _assert_same_lp(_run_steps(url, scen, dirty), _run_steps(url, scen, fresh))
+
+
+ROLLING_SEPARATE_DISPATCH = Path(__file__).resolve().parents[1] / "fixtures" / "rolling_separate_dispatch.json"
+
+
+def test_tests_sqlite_does_not_crash_rolling_separate_dispatch(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """The Enum switch made this model crash (``SchemaError: join keys b: enum vs enum``); now it runs as fresh."""
+    from db_utils import json_to_db
+    from flextool.update_flextool.db_migration import migrate_database
+
+    db_dir = tmp_path_factory.mktemp("rsd_db")
+    url = json_to_db(ROLLING_SEPARATE_DISPATCH, db_dir / "rolling_separate_dispatch.sqlite")
+    migrate_database(url)
+    dirty = tmp_path_factory.mktemp("rsd_sqlite_work")
+    shutil.copy(sqlite_path_from_url(url), dirty / "tests.sqlite")
+    fresh = tmp_path_factory.mktemp("rsd_fresh_work")
+
+    scenario = "rolling_separate_dispatch"
+    _assert_same_lp(_run_steps(url, scenario, dirty, warm=False), _run_steps(url, scenario, fresh, warm=False))
+
+
+def test_load_flextool_requires_provider_and_reader(tmp_path) -> None:
+    """No provider: the error points to the CSV reload package; a provider but no reader: it names ``db_reader``."""
+    with pytest.raises(FlexToolConfigError, match=r"FlexDataProvider.*_csv_reload"):
+        load_flextool(tmp_path)
+    with pytest.raises(FlexToolConfigError, match=r"needs db_reader .*_csv_reload"):
+        load_flextool(tmp_path, provider=FlexDataProvider())

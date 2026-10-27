@@ -866,10 +866,9 @@ def _scenario_run_factory(
                 f"Unknown db_fixture {db_fixture!r}; valid: "
                 f"{sorted(url_by_fixture)}"
             ) from None
-        # The work folder keeps its exact ``work_<scenario>`` name (the opt-in
-        # reload contract tests in ``tests/csv_reload/`` call bare
-        # ``load_flextool(work)`` and rely on it to auto-construct a reader from
-        # ``tests.sqlite``).  ``tmp_path_factory.mktemp`` appends a
+        # The work folder keeps its exact ``work_<scenario>`` name (the reload
+        # tests in ``tests/csv_reload/`` check that a ``work_<scenario>`` folder
+        # holding ``tests.sqlite`` is not discovered).  ``tmp_path_factory.mktemp`` appends a
         # numeric suffix, so nest it in a uniquely-named parent; the parent also
         # holds the empty ``load_<scenario>`` folder ``load_scenario`` loads from.
         parent = tmp_path_factory.mktemp(f"_root_{scenario_name}_{db_fixture}")
