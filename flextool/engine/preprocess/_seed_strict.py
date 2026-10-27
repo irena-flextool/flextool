@@ -37,14 +37,10 @@ _LOG = logging.getLogger(__name__)
 
 #: The fields of design_stage4_rev.md §1 whose DB producer assigns the field on every DB path and whose loader
 #: seed is not yet deleted (each deletion commit drops its fields; the five varcost fields went in S4-2, the seven
-#: direct-parameter fields in S4-3, the five authoritative sets and process_group_inside_nonSync in S4-4).
-SEED_PRUNE_CANDIDATES: tuple[str, ...] = (
-    # derived.
-    "p_profile_value",
-    "dtt__delay_duration",
-    "p_process_delay_weight",
-    "process_delayed__duration",
-)
+#: direct-parameter fields in S4-3, the five authoritative sets and process_group_inside_nonSync in S4-4,
+#: p_profile_value and the three delay tables in S4-5).  Empty: every seed of the list is deleted, so a strict load
+#: arms nothing; ``tests/engine/test_seed_strict.py`` arms a test-only list.
+SEED_PRUNE_CANDIDATES: tuple[str, ...] = ()
 
 _STACK_FRAMES = 8
 

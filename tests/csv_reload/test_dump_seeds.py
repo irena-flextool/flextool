@@ -117,6 +117,12 @@ SCENARIO_OF_FIELD: dict[str, str] = {
     "process_sink_nonSync": "nonsync_internal",
     "process_group_inside_nonSync": "nonsync_internal",
     "process_minload": "coal_min_load",
+    # S4-5 profile values and delay tables.  coal_wind_inertia: wind_plant upper_limit profile; water_pump_delayed:
+    # the delayed water pump.
+    "p_profile_value": "coal_wind_inertia",
+    "dtt__delay_duration": "water_pump_delayed",
+    "p_process_delay_weight": "water_pump_delayed",
+    "process_delayed__duration": "water_pump_delayed",
 }
 
 #: Fields where the reload legitimately differs from production: field -> reason.  None yet.
@@ -428,3 +434,52 @@ def test_minload_set_when_the_run_has_online_processes(tmp_path: Path):
     assert fd.process_minload.schema == {"p": pl.Utf8}
     fd = _seeds(tmp_path / "offline", {"process_minload.csv": "process\ncoal_plant\n"}, process_online=None)
     assert fd.process_minload == "untouched"
+
+
+_PDT_PROFILE = "solve,period,time,wind,ev\ns,d1,t1,0.5,0.25\ns,d1,t2,0.75,0.0\n"
+
+
+def test_profile_values_when_the_run_has_profile_arcs(tmp_path: Path):
+    """With the loader's profile-method sets (``process_profile_upper``), ``p_profile_value`` is the emitted wide
+    ``pdtProfile.csv`` as ``(f, d, t)``; without the file it is None; without profile arcs the hook leaves it alone
+    (the loader's None).  The ``_load_profiles`` read moved here in S4-5."""
+    upper = pl.DataFrame({"p": ["w"], "source": ["w"], "sink": ["n"], "f": ["wind"]})
+    fd = _seeds(tmp_path / "file", {"pdtProfile.csv": _PDT_PROFILE}, process_profile_upper=upper)
+    assert fd.p_profile_value.dims == ("f", "d", "t")
+    assert sorted(fd.p_profile_value.frame.rows()) == [
+        ("ev", "d1", "t1", 0.25), ("ev", "d1", "t2", 0.0), ("wind", "d1", "t1", 0.5), ("wind", "d1", "t2", 0.75)]
+    fd = _seeds(tmp_path / "missing", {}, process_profile_upper=upper)
+    assert fd.p_profile_value is None
+    fd = _seeds(tmp_path / "no_arcs", {"pdtProfile.csv": _PDT_PROFILE}, process_profile_upper=None)
+    assert fd.p_profile_value == "untouched"
+
+
+_DELAY_CSVS = {
+    "dtt__delay_duration.csv": "period,time_source,time_sink,delay_duration\nd1,t1,t2,1\nd1,t2,t1,1.0\n",
+    "p_process_delay_weight.csv": "process,delay_duration,value\npump,1,0.6\npump,2.0,0.4\n",
+}
+
+
+def test_delay_tables_when_a_process_is_delayed(tmp_path: Path):
+    """With a delayed process, the shift table and the weights come from the emitted CSVs with Float64 ``td`` ("1"
+    and "1.0" read the same), and ``process_delayed__duration`` is the weights' ``(p, td)`` keys; a missing CSV is
+    None (and no weights give no durations).  The ``_delay.load_data`` reads moved here in S4-5."""
+    delayed = pl.DataFrame({"p": ["pump"]})
+    fd = _seeds(tmp_path / "file", _DELAY_CSVS, process_delayed=delayed)
+    assert fd.dtt__delay_duration.columns == ["d", "t_source", "t_sink", "td"]
+    assert fd.dtt__delay_duration.schema["td"] == pl.Float64
+    assert sorted(fd.dtt__delay_duration.rows()) == [("d1", "t1", "t2", 1.0), ("d1", "t2", "t1", 1.0)]
+    assert fd.p_process_delay_weight.dims == ("p", "td")
+    assert sorted(fd.p_process_delay_weight.frame.rows()) == [("pump", 1.0, 0.6), ("pump", 2.0, 0.4)]
+    assert fd.process_delayed__duration.schema["td"] == pl.Float64
+    assert sorted(fd.process_delayed__duration.select("p", "td").rows()) == [("pump", 1.0), ("pump", 2.0)]
+    fd = _seeds(tmp_path / "missing", {}, process_delayed=delayed)
+    assert (fd.dtt__delay_duration, fd.p_process_delay_weight, fd.process_delayed__duration) == (None, None, None)
+
+
+@pytest.mark.parametrize("delayed", [None, pl.DataFrame(schema={"p": pl.Utf8})], ids=["none", "empty"])
+def test_delay_tables_untouched_without_delayed_processes(tmp_path: Path, delayed):
+    """No delayed process -> the hook leaves the three delay tables alone (the loader's None)."""
+    fd = _seeds(tmp_path, _DELAY_CSVS, process_delayed=delayed)
+    assert all(getattr(fd, name) == "untouched" for name in
+               ("dtt__delay_duration", "p_process_delay_weight", "process_delayed__duration"))

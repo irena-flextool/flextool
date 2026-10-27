@@ -12,11 +12,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import polars as pl
-from polar_high import Param, Sum, Where
+from polar_high import Sum, Where
 from polar_high.engine import Expr, Var
 
 from flextool.engine.input._axis_enums import cast_dim
-from flextool.engine.preprocess.params._derived import process_delayed__duration_from_weight
 from flextool.engine.preprocess._provider_io import _provider_key
 
 
@@ -60,6 +59,11 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *, provider=None) -> dict
 
     ``inp_dir`` / ``sd_dir`` are the input and solve_data directories; files are read through ``provider``.
     ``td`` (delay duration, hours) is Float64 in every table.
+
+    ``process_delayed__duration``, ``dtt__delay_duration`` and ``p_process_delay_weight`` are always None here: on
+    every DB path ``_derived.apply_delay_params`` writes the three together (``apply_derived_g``, DELAY-1 on a
+    synthetic sub-solve).  A reader-less CSV reload reads them from the emitted CSVs instead
+    (``_csv_reload._field_seeds``).
     """
     sd = Path(sd_dir)
 
@@ -128,51 +132,15 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *, provider=None) -> dict
                 psse_delayed = psse_delayed.join(
                     zero_src, on=["p", "source"], how="anti")
 
-    # Time-shift table (d, t_source, t_sink, td).  The text column may be written as "1" or "1.0", so td is
-    # cast to Float64 like on the DB path.
-    dtt_path = sd / "dtt__delay_duration.csv"
-    dtt_df = None
-    raw = _provider_get(provider, dtt_path)
-    if raw is not None and raw.height > 0:
-        rename_map = {}
-        if "period" in raw.columns:
-            rename_map["period"] = "d"
-        if "time_source" in raw.columns:
-            rename_map["time_source"] = "t_source"
-        if "time_sink" in raw.columns:
-            rename_map["time_sink"] = "t_sink"
-        if "delay_duration" in raw.columns:
-            rename_map["delay_duration"] = "td"
-        dtt_df = (raw.rename(rename_map)
-                  .select("d", "t_source", "t_sink",
-                          pl.col("td").cast(pl.Float64)))
-
-    pw_path = sd / "p_process_delay_weight.csv"
-    pw_param = None
-    raw = _provider_get(provider, pw_path)
-    if raw is not None and raw.height > 0:
-        rename_map = {}
-        if "process" in raw.columns:
-            rename_map["process"] = "p"
-        if "delay_duration" in raw.columns:
-            rename_map["delay_duration"] = "td"
-        pw_long = raw.rename(rename_map).select(
-            "p", pl.col("td").cast(pl.Float64),
-            pl.col("value").cast(pl.Float64))
-        pw_param = Param(("p", "td"), pw_long)
-    # The duration set comes from the weight keys (the same derivation as on the DB path), so its td labels
-    # match dtt__delay_duration and p_process_delay_weight exactly.
-    pdd_df = process_delayed__duration_from_weight(pw_param)
-
     return dict(
         process_delayed              = pd_df.select("p"),
-        process_delayed__duration    = pdd_df,
+        process_delayed__duration    = None,
         process_source_delayed       = pse_delayed,
         process_source_undelayed     = pse_undelayed,
         process_source_sink_delayed  = psse_delayed,
         process_source_sink_undelayed = psse_undelayed,
-        dtt__delay_duration          = dtt_df,
-        p_process_delay_weight       = pw_param,
+        dtt__delay_duration          = None,
+        p_process_delay_weight       = None,
     )
 
 
