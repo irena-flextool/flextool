@@ -958,3 +958,260 @@ def test_csv_reload_leaf_detector_flags_every_import_form(source: str, package: 
 def test_csv_reload_leaf_detector_ignores_non_imports(source: str, package: list[str]) -> None:
     """Self-check: docstrings, other modules and same-named siblings elsewhere are not flagged."""
     assert _csv_reload_imports(source, package) == [], source
+
+
+# ---------------------------------------------------------------------------
+# Rule 5 — the output writers read no work-folder inputs (item 163, 163-6)
+# ---------------------------------------------------------------------------
+#
+# design_163.md §6: after item 163, these six files read ONLY the sub-solve's FlexData /
+# FlexDataProvider / OutputWriterState — never ``input/`` or ``solve_data/`` back from the work
+# folder. Two of them (``process_outputs/*``) live outside ``flextool/engine/`` (CASCADE_ROOT
+# above), so Rule 5 uses its own file list, given as paths relative to the REPO root.
+#
+# (a) No call of ``pd.read_csv``, ``pl.read_csv`` or ``pl.scan_csv`` anywhere in these files.
+# (b)/(c) No banned literal path segment (``"input"``, ``"solve_data"``,
+#     ``"group_entity_invest.csv"``, ``"solve__p_entity_pre_existing.csv"``, ``"v_flow.csv"``,
+#     ``"timeline_breaks.csv"``) is used as an argument of a ``/`` path join, ``Path(...)`` or
+#     ``os.path.join(...)`` in a function that ALSO contains a disk-read call (``.exists()``,
+#     ``.is_file()``, ``.read_text()``, ``open(`` in a read mode, or a read_csv/scan_csv call).
+#
+# design_163.md §6's own text offers a "simpler" shortcut for (b) — "no such constants anywhere
+# in the file" — but that is NOT what's implemented here: ``read_highs_solution.py`` and
+# ``write_outputs.py`` legitimately keep bare ``"solve_data"`` / ``"input"`` literals as
+# PROVIDER-KEY SELECTORS (``_provider_lookup``, ``_provider_lookup_df`` — e.g.
+# ``Path(work_folder) / "solve_data" / "enable_optional_outputs.csv"`` passed to
+# ``_provider_lookup``, never opened), landed correctly in 163-1..163-3. A blanket per-file ban on
+# the bare literal would false-positive on that already-correct code. The co-occurrence form
+# below is the rule's actual intent — catch a real disk READ, not a key-selector literal — and it
+# passes cleanly on the current tree with zero exemptions needed.
+
+RULE_5_ROOT = Path(__file__).resolve().parents[2]
+
+RULE_5_FILES: tuple[str, ...] = (
+    "flextool/process_outputs/read_highs_solution.py",
+    "flextool/process_outputs/handoff_writers.py",
+    "flextool/process_outputs/read_variables.py",
+    "flextool/process_outputs/solve_order.py",
+    "flextool/process_outputs/union_realized_slice.py",
+    "flextool/process_outputs/write_outputs.py",
+    "flextool/engine/output/_writer.py",
+)
+
+RULE_5_BANNED_SEGMENTS: frozenset[str] = frozenset({
+    "input", "solve_data", "group_entity_invest.csv",
+    "solve__p_entity_pre_existing.csv", "v_flow.csv", "timeline_breaks.csv",
+})
+
+_RULE_5_READ_CSV_FUNCS: frozenset[tuple[str, str]] = frozenset({
+    ("pd", "read_csv"), ("pl", "read_csv"), ("pl", "scan_csv"),
+})
+
+
+def _rule_5_read_csv_calls(tree: ast.AST) -> list[Violation]:
+    """(a): every ``pd.read_csv`` / ``pl.read_csv`` / ``pl.scan_csv`` call, anywhere."""
+    out: list[Violation] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if (
+            isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
+            and (f.value.id, f.attr) in _RULE_5_READ_CSV_FUNCS
+        ):
+            out.append(Violation(
+                "", node.lineno, f"{f.value.id}.{f.attr}(...)",
+                "the output writers read only flex_data / provider / OutputWriterState; "
+                "route this read through provider.get(...) or delete the dead arm",
+            ))
+    return out
+
+
+def _rule_5_is_read_csv_call(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    f = node.func
+    return (
+        isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
+        and (f.value.id, f.attr) in _RULE_5_READ_CSV_FUNCS
+    )
+
+
+def _rule_5_is_disk_read_call(node: ast.AST) -> bool:
+    """``.exists()``, ``.is_file()``, ``.read_text()``, ``open(`` in a read mode, or read_csv."""
+    if not isinstance(node, ast.Call):
+        return False
+    if _rule_5_is_read_csv_call(node):
+        return True
+    f = node.func
+    if isinstance(f, ast.Attribute) and f.attr in ("exists", "is_file", "read_text"):
+        return True
+    opened = _open_mode_and_path(node)
+    return opened is not None and opened[0]
+
+
+def _rule_5_banned_segments_in_path_context(node: ast.AST) -> list[str]:
+    """A banned literal used as a ``/`` operand, or a ``Path(...)`` / ``os.path.join(...)`` arg."""
+
+    def _segment(n: ast.AST) -> str | None:
+        if (
+            isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and n.value in RULE_5_BANNED_SEGMENTS
+        ):
+            return n.value
+        return None
+
+    hits: list[str] = []
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        for side in (node.left, node.right):
+            seg = _segment(side)
+            if seg is not None:
+                hits.append(seg)
+    elif isinstance(node, ast.Call):
+        f = node.func
+        is_path_call = isinstance(f, ast.Name) and f.id == "Path"
+        is_join_call = (
+            isinstance(f, ast.Attribute) and f.attr == "join"
+            and isinstance(f.value, ast.Attribute) and f.value.attr == "path"
+        )
+        if is_path_call or is_join_call:
+            for arg in node.args:
+                seg = _segment(arg)
+                if seg is not None:
+                    hits.append(seg)
+    return hits
+
+
+def _rule_5_function_violations(fn: "ast.FunctionDef | ast.AsyncFunctionDef", fname: str) -> list[Violation]:
+    """(b)/(c): banned path segment co-occurring with a disk-read call, within one function."""
+    segments: list[str] = []
+    has_read = False
+    for node in ast.walk(fn):
+        segments.extend(_rule_5_banned_segments_in_path_context(node))
+        if _rule_5_is_disk_read_call(node):
+            has_read = True
+    if segments and has_read:
+        return [Violation(
+            fname, fn.lineno,
+            f"{fn.name}(...): path segment(s) {sorted(set(segments))} built alongside a disk-read call",
+            "the output writers read only flex_data / provider / OutputWriterState; a bare path "
+            "segment used only as a provider-key selector is fine, but not next to an actual "
+            "disk-read call in the same function",
+        )]
+    return []
+
+
+def _rule_5_violations(source: str, fname: str) -> list[Violation]:
+    """Both parts of Rule 5 for one file's source."""
+    tree = ast.parse(source)
+    violations = [
+        Violation(fname, v.line, v.pattern, v.hint) for v in _rule_5_read_csv_calls(tree)
+    ]
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            violations.extend(_rule_5_function_violations(node, fname))
+    return violations
+
+
+def test_output_writers_read_no_work_folder_inputs() -> None:
+    """Rule 5 (item 163, 163-6): the output-writer modules read no work-folder inputs.
+
+    design_163.md §6: after item 163 these six files source everything from the sub-solve's
+    FlexData / FlexDataProvider / OutputWriterState; a dump or stale CSVs in a reused work folder
+    cannot change their output.
+    """
+    violations: list[Violation] = []
+    for rel in RULE_5_FILES:
+        path = RULE_5_ROOT / rel
+        assert path.is_file(), f"Rule 5 scope file missing: {rel}"
+        violations.extend(_rule_5_violations(path.read_text(encoding="utf-8"), rel))
+    if violations:
+        pytest.fail(
+            "Output writer reads a work-folder input (item 163): outputs must read only "
+            "flex_data / provider / OutputWriterState, never input/ or solve_data/ back from "
+            "disk.\n\n" + "\n".join(v.format() for v in violations)
+            + "\n\nSee specs/bugfix/c24/design_163.md §3.3/§3.4/§6 (Rule 5)."
+        )
+
+
+@pytest.mark.parametrize("source,fname", [
+    # (a) an absolute ban, anywhere
+    ("pd.read_csv(p)", "flextool/process_outputs/handoff_writers.py"),
+    ("pl.read_csv(p)", "flextool/process_outputs/read_highs_solution.py"),
+    ("pl.scan_csv(p)", "flextool/process_outputs/read_variables.py"),
+    # (b)/(c) banned segment co-occurring with a disk read, in one function
+    (
+        "def f(wf):\n"
+        "    p = Path(wf) / 'solve_data' / 'x.csv'\n"
+        "    if p.exists():\n"
+        "        return p.read_text()\n",
+        "flextool/process_outputs/read_highs_solution.py",
+    ),
+    (
+        "def g(wf):\n"
+        "    p = os.path.join(wf, 'input', 'process_unit.csv')\n"
+        "    with open(p) as f:\n"
+        "        return f.read()\n",
+        "flextool/process_outputs/handoff_writers.py",
+    ),
+    (
+        "def h(wf):\n"
+        "    p = Path(wf) / 'timeline_breaks.csv'\n"
+        "    return p.exists()\n",
+        "flextool/process_outputs/write_outputs.py",
+    ),
+])
+def test_rule_5_detector_flags_every_pattern(source: str, fname: str) -> None:
+    """Self-check: Rule 5 flags each absolute-ban call and each segment+read co-occurrence."""
+    assert len(_rule_5_violations(source, fname)) == 1, source
+
+
+@pytest.mark.parametrize("source,fname", [
+    # a bare path-segment literal used ONLY as a provider-key selector (no disk read nearby) —
+    # exactly the real ``_output_horizon_enabled`` / ``_load_pre_existing`` shape.
+    (
+        "def f(wf, *, provider=None):\n"
+        "    path = Path(wf) / 'solve_data' / 'enable_optional_outputs.csv'\n"
+        "    return _provider_lookup(provider, path)\n",
+        "flextool/process_outputs/read_highs_solution.py",
+    ),
+    # a disk read elsewhere in the file for something unrelated (not input/ or solve_data/)
+    (
+        "def f(p):\n"
+        "    with open(p, 'r', encoding='utf-8') as fh:\n"
+        "        return fh.read()\n",
+        "flextool/process_outputs/write_outputs.py",
+    ),
+    # a write, not a read — the handoff mirrors' own out_path pattern
+    (
+        "def f(wf):\n"
+        "    out_path = wf / 'solve_data' / 'p_entity_divested.csv'\n"
+        "    with open(out_path, 'w', encoding='utf-8') as fh:\n"
+        "        fh.write('x')\n",
+        "flextool/process_outputs/handoff_writers.py",
+    ),
+    # the banned string as a plain call argument, not a /, Path(...) or os.path.join(...) operand
+    (
+        "def f(provider):\n"
+        "    df = _provider_lookup_df(provider, 'solve_data', 'group_entity')\n"
+        "    return df.exists()\n",
+        "flextool/process_outputs/write_outputs.py",
+    ),
+    # a docstring / comment mention, not code
+    (
+        '"""Reads input/group_entity_invest.csv from disk — no, it does not."""\n'
+        "def f(p):\n"
+        "    return p.exists()\n",
+        "flextool/process_outputs/read_variables.py",
+    ),
+])
+def test_rule_5_detector_ignores_allowed_forms(source: str, fname: str) -> None:
+    """Self-check: key-selector-only literals, unrelated reads, writes, plain call args and
+    docstring mentions are not flagged."""
+    assert _rule_5_violations(source, fname) == [], source
+
+
+def test_rule_5_scope_files_exist() -> None:
+    """Sanity: every Rule 5 scope file exists (catches a stale path after a rename/move)."""
+    missing = [rel for rel in RULE_5_FILES if not (RULE_5_ROOT / rel).is_file()]
+    assert not missing, f"Rule 5 scope files missing on disk: {missing}"

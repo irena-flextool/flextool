@@ -350,6 +350,29 @@ The Provider is the contract. Disk-side CSV mirrors in `input/` + `solve_data/`
 exist only when `csv_dump=True` (a debug toggle; one folder, shared by every
 sub-solve; a Benders solve dumps its undecomposed FlexData) and are not load-bearing for any downstream phase.
 
+#### Output writers read only memory; one run per work folder
+
+The output cascade (`flextool/process_outputs/`) has the same contract as the loader: every writer sources its
+values from the sub-solve's `FlexData`, `FlexDataProvider` or `OutputWriterState`, never from `input/` or
+`solve_data/` on the work folder (item 163, `specs/bugfix/c24/design_163.md`;
+`test_output_writers_read_no_work_folder_inputs` in `tests/engine/test_meta_provider_invariants.py`, Rule 5). The
+five handoff-mirror CSVs under `solve_data/` (`p_entity_divested`, `fix_storage_quantity`, `fix_storage_usage`,
+`p_roll_continue_state`, `p_entity_period_existing_capacity`) are write-only `--csv-dump` debug output with no
+reader anywhere in the engine; `period_capacity.csv` is the one mirror still written on every run (vestigial,
+always header-only).
+
+Because nothing reads the work folder back, **FlexTool supports exactly one run per work folder at a time**: a
+second concurrent cascade into the same folder is not supported (its parquets would interleave with the first's,
+and whichever run finishes first deletes the other's stash). `run_orchestration`'s `_bootstrap_dirs` clears the
+*previous* run's own leftovers at the start of every cascade — `output_raw/` (`rmtree` + recreate: the per-roll
+parquet stash, `_solve_order.txt`, `manifest.json`) and the `solve_data/` handoff-mirror basenames
+(`handoff_writers.MIRROR_FILES`) — so a reused folder (the CLI-in-cwd rerun case, e.g. after a failed run or a
+`--csv-dump` run) cannot leak a prior run's output into this one
+(`union_realized_slice.has_persisted_slices` would otherwise union stale per-roll parquets into the fresh run).
+`input/` and every other `solve_data/*` file (dump / debug output) are left alone. A symlinked `output_raw/` is
+refused rather than followed. The GUI and Spine Toolbox already give each job / execution a fresh work folder, so
+this clearing is a no-op there; it is the fix for the CLI case.
+
 #### CSV dump (supported) and CSV reload (unsupported)
 
 `--csv-dump` / the GUI "Full" debug level, `FlexData.dump_csvs` and

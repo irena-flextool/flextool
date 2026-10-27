@@ -377,26 +377,25 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
             stub.write_csv(sd_dir / "p_entity_period_existing_capacity.csv")
 
     # ─── input/ entity-class set + wide-format unitsize  ────────
-    # flextool's handoff_writers (process_outputs/handoff_writers.py) read
     # ``input/p_entity_unitsize.csv`` (wide-transposed: ``entity,<e1>,<e2>,…``
     # / ``value,<v1>,<v2>,…``) plus the entity-class set CSVs
     # ``input/{entity,process_unit,process_connection,node}.csv``
-    # (single-column lists).  These are produced by flextool's
-    # preprocessing pipeline on the slow path; the fast path skips
-    # preprocessing, so without these the handoff writers fail with
-    # ``[Errno 2]`` and the wide-format output writers downstream see
-    # an incomplete workdir.  We synthesise them from FlexData here.
+    # (single-column lists). Item 163 (design_163.md): these are now
+    # write-only ``--csv-dump`` debug output with NO main-code reader —
+    # ``read_highs_solution._entity_class_members`` and every
+    # ``handoff_writers`` helper read the sub-solve's FlexDataProvider /
+    # FlexData, never these files. Kept for manual inspection of a dump and
+    # for parity with the historical slow-path preprocessing output; a grep
+    # across ``flextool/`` finds no reader of either file shape.
     _write_input_entity_set_csvs(data, inp_dir)
     _write_input_p_entity_unitsize_wide(data, inp_dir)
 
     # ─── solve_data/ handoff stub CSVs  ─────────────────────────
-    # ``write_p_entity_period_existing_capacity`` reads
     # ``solve_data/solve__p_entity_pre_existing.csv`` (wide-by-entity,
-    # indexed by (solve, period)).  In single-solve mode there's no
-    # prior solve so no pre-existing capacity has been carried over;
-    # write a header-only stub so ``pd.read_csv(... index_col=[0, 1])``
-    # returns an empty frame and the writer's ``if df.empty: return {}``
-    # branch fires.  Idempotent — overwrites only when missing.
+    # indexed by (solve, period)). Item 163: ``handoff_writers._load_pre_existing``
+    # is provider-only now (key ``solve_data/p_entity_pre_existing``) — this
+    # file has no main-code reader. Kept, header-only, for dump round-trip
+    # / manual inspection; idempotent — overwrites only when missing.
     pre_existing_path = sd_dir / "solve__p_entity_pre_existing.csv"
     if not pre_existing_path.exists():
         pre_existing_path.write_text("solve,period\n")

@@ -839,6 +839,42 @@ user-renamed `Map.index_name` works without code changes. The same
 pattern reappears in `p_entity_all_existing_from_source` for the
 existing-capacity loader.
 
+## Output writers read only memory (item 163)
+
+`flextool/process_outputs/{read_highs_solution,handoff_writers,read_variables,solve_order,
+union_realized_slice,write_outputs}.py` and `engine/output/_writer.py` read exclusively from the
+sub-solve's `FlexData`, `FlexDataProvider` and `OutputWriterState` (cross-solve writer scratch:
+`divested`, `existing`/`invested`, `mirrors_written`, `periods_already_emitted`) — never from
+`input/` or `solve_data/` on the work folder. Two fresh-run defects this closed (both were silently
+empty because the thing they read was a file no normal run writes):
+
+* `v_dual_invest_{unit,connection,node}`'s entity-class split now comes from the provider's
+  `input/process_unit` / `input/process_connection` / `input/node` frames
+  (`_entity_class_members`), not a disk read of those CSVs — only `--csv-dump` ever wrote them, so
+  regime (a) of `out_ancillary._synthesize_invest_dual` (the not-built entity's own reduced cost)
+  was `-0.0` in every fresh run until this fix.
+* `group_entity_invest` (`write_outputs._group_entity_invest`) is built from the provider's
+  `solve_data/group_entity` ⋉ `solve_data/group_invest`, replacing a disk read of
+  `input/group_entity_invest.csv` — a file only the retired GMPL model ever wrote.
+
+The five `solve_data/` handoff-mirror CSVs (`p_entity_divested`, `fix_storage_quantity`,
+`fix_storage_usage`, `p_roll_continue_state`, `p_entity_period_existing_capacity`) are write-only
+debug output for `--csv-dump`, never read back by anything (`handoff_writers.py`'s module
+docstring); a plain run computes and writes none of them. `period_capacity.csv` is the one
+exception — written every run, unconditionally, always header-only (the per-period capacity dumps
+that once consumed it were removed 2026-08-07).
+
+Because nothing in the output cascade reads the work folder back, a REUSED work folder (the
+CLI-in-cwd rerun case) is now safe: `run_orchestration`'s `_bootstrap_dirs` clears the previous
+run's `output_raw/` and the `solve_data/` mirror basenames (`handoff_writers.MIRROR_FILES`) at the
+start of every cascade, so stale per-roll parquets or mirror files can never leak into this run's
+output (`union_realized_slice.has_persisted_slices` otherwise unions them in). See
+`docs/dev/architecture.md` "Output writers read only memory; one run per work folder" and
+`specs/bugfix/c24/design_163.md`. `tests/engine/test_meta_provider_invariants.py`'s Rule 5
+(`test_output_writers_read_no_work_folder_inputs`) pins the invariant: none of those files may call
+`pd.read_csv` / `pl.read_csv` / `pl.scan_csv`, or build an `input/` / `solve_data/` path alongside
+an actual disk-read call.
+
 ## Per-solve sets and PDT lookup
 
 A FlexTool scenario may have several solves with overlapping but
