@@ -23,6 +23,9 @@ Public names:
 * :func:`seed_provider_from_dump` — the provider seeding step on its own.
 * :func:`check_dump` — the stamp check on its own.
 * :class:`CsvReloadWarning`.
+
+Not re-exported (it imports the output writers): :mod:`.offline_outputs` — write a solve's output parquets from an
+MPS + HiGHS solution file and the solve's dump (``python -m flextool.engine._csv_reload.offline_outputs``).
 """
 from __future__ import annotations
 

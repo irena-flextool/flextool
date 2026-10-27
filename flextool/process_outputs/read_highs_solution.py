@@ -54,7 +54,6 @@ Usage from solver_runner (after a successful ``h.run()``)::
 """
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 import re
@@ -2161,48 +2160,3 @@ def write_all_variables(
         len(written), solve_name, output_dir,
     )
     return written
-
-
-# ---------------------------------------------------------------------------
-# Standalone / offline test entry point
-# ---------------------------------------------------------------------------
-
-
-def _standalone_from_files(
-    mps_file: Path, sol_file: Path, solve_name: str, out_dir: Path
-) -> list[Path]:
-    """Re-read a HiGHS model + solution offline and write all registered vars."""
-    import highspy  # local import — the runtime path imports lazily
-
-    h = highspy.Highs()
-    status = h.readModel(str(mps_file))
-    if status != highspy.HighsStatus.kOk:
-        raise RuntimeError(f"HiGHS failed to read MPS: {mps_file}")
-    status = h.readSolution(str(sol_file), 0)
-    if status != highspy.HighsStatus.kOk:
-        raise RuntimeError(
-            f"HiGHS failed to read solution file: {sol_file} "
-            f"(status={status}).  Try re-solving instead."
-        )
-    return write_all_variables(h, solve_name=solve_name, output_dir=out_dir)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
-    parser.add_argument("--mps", type=Path, required=True, help="MPS file")
-    parser.add_argument(
-        "--sol", type=Path, required=True,
-        help="HiGHS solution file (write_solution_style=0)",
-    )
-    parser.add_argument("--solve", required=True, help="Solve name tag")
-    parser.add_argument("--out", type=Path, required=True, help="Output dir")
-    args = parser.parse_args()
-
-    logging.basicConfig(level=logging.INFO)
-    paths = _standalone_from_files(args.mps, args.sol, args.solve, args.out)
-    for p in paths:
-        print(f"Wrote {p}")
-
-
-if __name__ == "__main__":
-    main()
