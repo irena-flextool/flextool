@@ -182,12 +182,17 @@ pythonpath = ["."]
 # in a file on ONE worker, so an expensive module-scoped fixture (e.g. the
 # energy-margin double-cascade, ~400s) is built once instead of being rebuilt on
 # each worker that happens to receive one of the module's tests.
-addopts = "--import-mode=importlib -n auto --dist loadfile"
+# ``-m "not csv_reload"`` deselects the opt-in CSV reload contract tests
+# (``tests/csv_reload/``; run them with ``pytest -m csv_reload tests/csv_reload/``).
+# A command-line ``-m`` replaces this one, so ``tests/csv_reload/conftest.py``
+# also skips them unless the ``-m`` expression names ``csv_reload``.
+addopts = "--import-mode=importlib -n auto --dist loadfile -m 'not csv_reload'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "solver: marks tests that invoke a real solver (5-60s each); deselect with '-m \"not solver\"'",
     "smoke: fast Layer-1 scenarios for the per-commit gate",
     "gui: opens a real interactive Tk window; opt-in via --run-gui (deselected by default)",
+    "csv_reload: CSV reload contract tests in tests/csv_reload/; opt-in via -m csv_reload (deselected by default)",
 ]
 testpaths = ["tests"]
 # Hard per-test wallclock cap.  Used by ``pytest-timeout`` (installed

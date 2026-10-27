@@ -133,22 +133,22 @@ def test_exact_with_online(tmp_path_factory) -> None:
     assert not [nm for nm in m.col_names if nm.startswith("v_online_integer[")]
 
 
-def test_process_exact_csv_round_trip(tmp_path_factory) -> None:
-    """Critique 8f: the CSV reader derives process_exact from input/process_method (a --csv-dump work folder), and
-    dump_csvs writes solve_data/process_exact.csv, which load_flextool reads back."""
-    from flextool.engine import load_flextool, run_chain_from_db
+def test_process_exact_dump_writes_csv(tmp_path_factory) -> None:
+    """Critique 8f, writer half: the solved FlexData has process_exact = {ll}, and dump_csvs writes it to
+    solve_data/process_exact.csv.  The CSV reload half is ``tests/csv_reload/test_exact_connection.py``
+    (c24 S1-8)."""
+    from flextool.engine import run_chain_from_db
 
     url, scen = make_db(tmp_path_factory, alt="ex_dump", values=_dissipate("exact"), base_chain=LL)
     wf = tmp_path_factory.mktemp("ex_dump_wf")
-    steps = run_chain_from_db(url, scen, work_folder=wf, csv_dump=True, keep_solutions=True)
-    list(steps.values())[-1].flex_data_provider.snapshot_processed_inputs(wf)
-    original = load_flextool(wf)
+    steps = run_chain_from_db(url, scen, work_folder=wf, keep_solutions=True)
+    original = list(steps.values())[-1].flex_data
     assert set(utf8(original.process_exact)["p"].to_list()) == {"ll"}
     out = tmp_path_factory.mktemp("ex_dump_out")
-    original.dump_csvs(out, copy_meta_from=wf, include_heavy=True)
-    assert (out / "solve_data" / "process_exact.csv").exists()
-    redo = load_flextool(out)
-    assert set(utf8(redo.process_exact)["p"].to_list()) == {"ll"}
+    original.dump_csvs(out, include_heavy=True)
+    path = out / "solve_data" / "process_exact.csv"
+    assert path.exists()
+    assert set(pl.read_csv(path).to_series(0).to_list()) == {"ll"}
 
 
 def _no_simultaneous(step, conn: str, a: str, b: str) -> int:

@@ -155,7 +155,8 @@ def boundary_runs(tmp_path_factory) -> dict:
     out = {}
     for warm in (True, False):
         wf = tmp_path_factory.mktemp(f"co2roll_boundary_w{int(warm)}")
-        # The cold run also writes the CSV dump (no effect on the LP), so a roll can be reloaded from disk.
+        # The cold run also writes the CSV dump (no effect on the LP) and a snapshot (``csv_workdir``), so a
+        # roll can be reloaded from disk (tests/csv_reload/test_co2_max_period_rolling.py, c24 S1-8).
         out[warm] = run_chain_from_db(url, scen, warm=warm, keep_solutions=True, work_folder=wf,
                                       csv_dump=not warm)
         if not warm:
@@ -184,19 +185,6 @@ def test_rolls_across_a_period_boundary(boundary_runs) -> None:
         assert not hot[_roll(i)].warm_used, f"roll {i} reused an LP built for another window"
     for i in range(16):
         assert hot[_roll(i)].solution.obj == pytest.approx(cold[_roll(i)].solution.obj, rel=1e-9), i
-
-
-def test_window_fraction_survives_dump_reload(boundary_runs, tmp_path) -> None:
-    """A dumped roll (CSV workdir, no DB reader) rebuilds its own fraction at the load boundary."""
-    from flextool.engine import load_flextool
-
-    for i, want in ((5, {"p2020": 18 / 48, "p2025": 12 / 48}), (15, {"p2025": 6 / 48})):
-        fd = boundary_runs[False][_roll(i)].flex_data
-        out = tmp_path / f"dumped_roll_{i}"
-        fd.dump_csvs(out, copy_meta_from=boundary_runs["csv_workdir"])
-        redo = load_flextool(out)
-        assert _fraction(redo) == _fraction(fd), i
-        assert _fraction(fd) == pytest.approx(want, rel=1e-12), i
 
 
 def test_co2_cap_without_window_fraction_fails_clearly(boundary_runs) -> None:

@@ -5,20 +5,17 @@ that ``load_scenario`` accepts; ``put_frame`` types an overlay as the
 loader saw the key before (critique item 11); ``drop_frame`` removes a
 key; the clone never reaches the session-cached run.
 
-Reload-only fixtures (``tiny_workdir`` / ``write_csv``): their self-tests
-are reload-only too and move to ``tests/csv_reload/`` with them (c24 S1-8).
+The self-tests of the reload-only fixtures (``tiny_workdir`` /
+``write_csv``) are in ``tests/csv_reload/test_fixtures_solve.py`` (c24 S1-8).
 """
 from __future__ import annotations
 
 import polars as pl
 
-from flextool.engine import load_flextool
 from tests._support.load import load_scenario
 
-from .conftest import drop_frame, provider_key, put_frame, write_csv
+from .conftest import drop_frame, provider_key, put_frame
 
-
-# --- production-path fixtures -----------------------------------------------
 
 def test_tiny_run_loads(tiny_run):
     """The ``base`` provider clone loads through the production call, and equals the cascade's FlexData.
@@ -109,55 +106,3 @@ def test_tiny_run_clone_is_isolated(tiny_run):
     assert run.last.provider.get("solve_data/pdtNodeInflow") is original
     assert run.last.provider.get("solve_data/_isolation_marker") is None
 
-
-# --- reload-only fixtures (S1-8 moves these tests to tests/csv_reload/) -----
-
-def test_tiny_workdir_loads(tiny_workdir):
-    """The seed workdir must load through ``load_flextool`` cleanly.
-
-    This is the contract: any loader test that starts from
-    ``tiny_workdir`` and overlays a CSV via :func:`write_csv` is then
-    safe to call ``load_flextool(tiny_workdir)`` without secondary
-    setup.
-
-    Reload-only (c24 S1-7): a reader-less CSV load; S1-8 moves it to tests/csv_reload/.
-    """
-    data = load_flextool(tiny_workdir)
-    # Required-always fields populated.
-    assert data.dt is not None
-    assert data.dt.height > 0
-    assert data.nodeBalance is not None
-    assert data.nodeBalance.height > 0
-
-
-def test_write_csv_roundtrip(tiny_workdir):
-    """write_csv writes to solve_data/ by default; explicit prefixes honoured.
-
-    Reload-only (c24 S1-7): self-test of a reload-only fixture; S1-8 moves it to tests/csv_reload/.
-    """
-    rows = [{"a": "x", "b": 1.5}, {"a": "y", "b": 2.5}]
-
-    p1 = write_csv(tiny_workdir, "_probe.csv", rows)
-    assert p1 == tiny_workdir / "solve_data" / "_probe.csv"
-    assert p1.exists()
-    df1 = pl.read_csv(p1)
-    assert df1.shape == (2, 2)
-    assert df1["a"].to_list() == ["x", "y"]
-
-    p2 = write_csv(tiny_workdir, "input/_probe2.csv",
-                    pl.DataFrame({"k": ["a"], "v": [1.0]}))
-    assert p2 == tiny_workdir / "input" / "_probe2.csv"
-    assert p2.exists()
-
-
-def test_tiny_workdir_is_isolated_per_call(tiny_workdir, tmp_path):
-    """Each test gets a fresh copy under its own tmp_path.
-
-    Reload-only (c24 S1-7): self-test of a reload-only fixture; S1-8 moves it to tests/csv_reload/.
-    """
-    assert tiny_workdir.parent == tmp_path
-    assert tiny_workdir.name == "work"
-    # Adding a file in this test must not leak into other tests
-    # (validated implicitly by other tests reading the seed).
-    write_csv(tiny_workdir, "_isolation_marker.csv", [{"x": 1}])
-    assert (tiny_workdir / "solve_data" / "_isolation_marker.csv").exists()

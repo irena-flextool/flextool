@@ -31,8 +31,8 @@ existing count from the DB cascades; put into a provider clone of
 ``base`` and loaded with ``load_scenario``, every overlay here is ignored
 (``process_source_sink`` / ``process_indirect`` / ``process_profile_*`` /
 ``p_process_existing_count`` all None, as ``base`` has no process).  The
-tests therefore stay on the reader-less load and move to
-``tests/csv_reload/`` in S1-8.
+tests therefore stay on the reader-less load (moved from
+``tests/engine/loaders/`` to ``tests/csv_reload/`` by c24 S1-8).
 """
 from __future__ import annotations
 

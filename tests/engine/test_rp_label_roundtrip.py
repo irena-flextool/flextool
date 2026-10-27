@@ -1,5 +1,5 @@
 """Regression: representative-period label columns must survive the
-``load_flextool`` axis-enum sweep (the CSV / provider round-trip).
+``load_flextool`` axis-enum sweep on the production load.
 
 Root cause (fixed in ``_axis_enums._FLEXDATA_SWEEP_SKIP_COLUMNS``): the RP
 base-period / rep-start relations name their label columns ``"b"`` (base
@@ -14,70 +14,30 @@ collapses ``v_state_inter``'s index → the seasonal-closure constraints
 (``rp_inter_period_cyclic`` / ``_balance``) are silently dropped → the LP
 solves an under-constrained, too-cheap problem.
 
-This test pins the contract that ``load_flextool`` reproduces the emitted
-RP labels faithfully AND that the seasonal-closure constraint therefore
-fires with a non-empty index.  It exercises BOTH the disk-CSV reload
-(bare-Path ``load_flextool``) and — mirroring production
-(``_orchestration.py`` ``load_flextool(..., provider=...)``) — the
-in-memory Provider reload; both must produce identical, non-null RP frames
-and the same closure row count.
+This test loads the last sub-solve with the production call (provider +
+DB reader, :func:`tests._support.load.load_scenario`) with the axis-Enum
+vocabulary activated (``axis_enums=True``: the sweep is what collided;
+production builds no Enums, c24 design_stage1 F2), and pins that the RP
+labels equal the emitted ones and that the seasonal-closure constraint
+fires with a non-empty index.  The disk-CSV reload and the disk-vs-provider
+agreement check are in ``tests/csv_reload/test_rp_label_roundtrip.py``
+(c24 S1-8).
 """
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
-from urllib.parse import urlparse
-
 import polars as pl
-import pytest
 
 from polar_high import Problem
 
-from flextool.engine import build_flextool, load_flextool
-
-
-@pytest.fixture(scope="module")
-def rp_build(tmp_path_factory, lh2_rp_invest_db_url, test_solver_config_dir):
-    """Run the full cascade for the RP-invest fixture and return
-    ``(workdir, provider)`` — the workdir carries the emitted CSVs on
-    disk and ``provider`` is the live in-memory sub-solve Provider
-    (kept via ``keep_solutions=True``), so the test can compare the two
-    reload paths."""
-    from flextool.engine.solve._orchestration import run_chain_from_db
-
-    parent = tmp_path_factory.mktemp("_root_rp_roundtrip")
-    wf = parent / "work_lh2_three_region_rp_invest"
-    wf.mkdir()
-    steps = run_chain_from_db(
-        input_db_url=lh2_rp_invest_db_url,
-        scenario_name="lh2_three_region_rp_invest",
-        work_folder=wf,
-        solver_config_dir=test_solver_config_dir,
-        csv_dump=True,
-        keep_solutions=True,
-    )
-    _src = urlparse(lh2_rp_invest_db_url).path
-    if len(_src) >= 3 and _src[0] == "/" and _src[2] == ":":
-        _src = _src[1:]  # Windows '/C:/...' -> 'C:/...'
-    shutil.copy(_src, wf / "tests.sqlite")
-    last_step = next(reversed(list(steps.values())))
-    provider = getattr(last_step, "flex_data_provider", None)
-    assert provider is not None
-    provider.snapshot_processed_inputs(wf)
-    return wf, provider
-
-
-def _read_csv_labels(sd: Path, name: str, col: str) -> set[str]:
-    df = pl.read_csv(sd / f"{name}.csv")
-    return set(df[col].cast(pl.Utf8).to_list())
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
 
 
 def _closure_rows(data) -> int:
     pb = Problem()
     build_flextool(pb, data)
-    names = pb.cstr_names()
     total = 0
-    for n in names:
+    for n in pb.cstr_names():
         if n.startswith("rp_inter_period_cyclic") or n.startswith(
             "rp_inter_period_balance"
         ):
@@ -85,19 +45,23 @@ def _closure_rows(data) -> int:
     return total
 
 
-@pytest.mark.parametrize("via_provider", [False, True])
-def test_rp_labels_survive_load(rp_build, via_provider):
-    wf, provider = rp_build
-    sd = wf / "solve_data"
+def _emitted_labels(provider, key: str, col: str) -> set[str]:
+    frame = provider.get(key)
+    assert frame is not None, f"{key} not in the post-solve provider"
+    return set(frame[col].cast(pl.Utf8).to_list())
 
-    # The emitted CSVs on disk DO carry the labels (so any nulling is a
+
+def test_rp_labels_survive_production_load(scenario_run):
+    run = scenario_run("lh2_three_region_rp_invest", db_fixture="lh2_rp_invest")
+
+    # The emitted frames DO carry the labels (so any nulling is a
     # read/cast bug, not an emit bug).
-    emitted_base = _read_csv_labels(sd, "rp_base_first", "base_start")
-    emitted_rep = _read_csv_labels(sd, "rp_weights", "rep_start")
+    emitted_base = _emitted_labels(run.last.provider, "solve_data/rp_base_first", "base_start")
+    emitted_rep = _emitted_labels(run.last.provider, "solve_data/rp_weights", "rep_start")
     assert emitted_base and all(b is not None for b in emitted_base)
     assert emitted_rep and all(r is not None for r in emitted_rep)
 
-    data = load_flextool(wf, provider=provider if via_provider else None)
+    data = load_scenario(run, axis_enums=True)
 
     # --- The RP label columns round-trip NON-NULL and equal to the emit.
     def labels(field, col):
@@ -126,27 +90,5 @@ def test_rp_labels_survive_load(rp_build, via_provider):
         "rp_inter_period seasonal-closure constraint did not fire — a "
         "nulled RP label collapsed v_state_inter's index"
     )
-
-
-def test_disk_and_provider_reload_agree(rp_build):
-    """The disk-CSV reload and the in-memory Provider reload (the
-    production path) produce byte-identical RP label frames and the same
-    closure row count."""
-    wf, provider = rp_build
-    disk = load_flextool(wf)
-    mem = load_flextool(wf, provider=provider)
-
-    for field, cols in (
-        ("rp_base_first", ("b", "d")),
-        ("rp_base_last", ("b", "d")),
-        ("rp_base_period_set", ("b",)),
-        ("rp_base__rep", ("b", "r", "value")),
-        ("p_rp_last_step", ("r", "last_step")),
-    ):
-        dv = getattr(disk, field)
-        mv = getattr(mem, field)
-        df = getattr(dv, "frame", dv).select(cols).sort(cols)
-        mf = getattr(mv, "frame", mv).select(cols).sort(cols)
-        assert df.equals(mf), f"{field} differs between disk and provider reload"
-
-    assert _closure_rows(disk) == _closure_rows(mem) > 0
+    # The Enum build went onto the clone, not the session-cached provider.
+    assert run.last.provider.axis_enums is None

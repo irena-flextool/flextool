@@ -481,44 +481,27 @@ def test_t11_enum_hygiene(stoch_enum_data):
     assert pd_na.schema["b"] == b_dtype
 
 
-def test_t12_stoch_dump_reload_roundtrip(stoch_data, stoch_wf, tmp_path):
-    """T12 (F2, r3 — regression pin of the ``_copy_meta`` glob): dump
-    the stochastic FlexData with ``copy_meta_from``, assert
-    ``solve_branch__time_branch.csv`` is in the dumped tree (glob
-    copy), reload without a raise, and assert the lineage frames
-    REBUILD identically from the dumped workdir's CSVs (no §3.1.1
-    inconsistency raise).  First stochastic dump/reload round-trip in
-    the suite — existing round-trip tests cover deterministic fixtures
-    only.
+def test_t12_stoch_dump_keeps_lineage_inputs(stoch_run, stoch_wf, tmp_path):
+    """T12 writer half (F2, r3 — regression pin of the ``_copy_meta`` glob):
+    dump the cascade's stochastic FlexData with ``copy_meta_from``, assert
+    ``solve_branch__time_branch.csv`` is in the dumped tree (glob copy),
+    and assert the lineage frames REBUILD identically from the dumped
+    workdir's CSVs (no §3.1.1 inconsistency raise): every rebuild input
+    survives a dump.  First stochastic dump round-trip in the suite —
+    existing round-trip tests cover deterministic fixtures only.
 
-    Path note (design §5 implementation note): a CSV-only reload
-    (dumped dir carries no Spine DB) skips the ENTIRE derived cascade
-    (``_apply_db_overrides`` gates on ``db_reader is not None``,
-    ``flex_data.py:4679``), so every cascade-produced field — the lineage
-    frames, like their cousins ``period_branch_full`` /
-    ``dt_non_anticipativity`` — is None after ``load_flextool`` of a
-    dumped tree.  The F2 substance ("the rebuild inputs all survive a
-    dump") is therefore pinned by running the builders directly
-    against the dumped CSVs."""
-    from flextool.engine import load_flextool
-
+    The builders run directly against the dumped CSVs.  The reload half
+    (a provider-less ``load_flextool`` of the dumped tree) is in
+    ``tests/csv_reload/test_derived_branch_lineage.py`` (c24 S1-8)."""
+    fd = stoch_run.last_flex_data
     out_dir = tmp_path / "dumped"
-    stoch_data.dump_csvs(out_dir, copy_meta_from=stoch_wf)
+    fd.dump_csvs(out_dir, copy_meta_from=stoch_wf)
     assert (out_dir / "solve_data"
             / "solve_branch__time_branch.csv").exists(), (
         "_copy_meta glob no longer copies solve_branch__time_branch."
         "csv — the always-on lineage builders would raise when the "
         "cascade runs against the dumped tree"
     )
-    # Reload succeeds — no raise introduced by Slice A anywhere on the
-    # CSV-only load path.
-    redo = load_flextool(out_dir)
-    # Current-architecture pin: CSV-only reloads skip the derived
-    # cascade, so cascade-produced fields stay None (same as
-    # period_branch_full).  If this flips, the cascade now runs on
-    # reload — re-point the equality leg below at ``redo`` directly.
-    assert redo.dd_same_scenario is None
-    assert redo.period_branch_full is None
     # F2 substance: the builders, fed the DUMPED workdir's CSVs,
     # rebuild both frames identically — i.e. every rebuild input
     # survived the dump (period__branch.csv, period_in_use_set.csv,
@@ -532,9 +515,9 @@ def test_t12_stoch_dump_reload_roundtrip(stoch_data, stoch_wf, tmp_path):
     dd_rebuilt = dd_same_scenario_df(out_dir, provider=prov)
     pd_rebuilt = pd_non_anticipativity_df(out_dir, provider=prov)
     assert dd_rebuilt.columns == ["d", "d_other"]
-    assert _rows(dd_rebuilt) == _rows(stoch_data.dd_same_scenario)
+    assert _rows(dd_rebuilt) == _rows(fd.dd_same_scenario)
     assert pd_rebuilt.columns == ["d", "b"]
-    assert _rows(pd_rebuilt) == _rows(stoch_data.pd_non_anticipativity)
+    assert _rows(pd_rebuilt) == _rows(fd.pd_non_anticipativity)
 
 
 # ---------------------------------------------------------------------------

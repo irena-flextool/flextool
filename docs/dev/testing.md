@@ -239,9 +239,18 @@ Defined in `pyproject.toml` and re-asserted in `tests/conftest.py`:
 | `decomposition` | Tier 8 objective-decomposition parity tests                   |
 | `perturbation`  | Tier 6 single-multiplier perturbation tests                   |
 | `emission`      | Tier 7 MPS row-count emission tests                           |
+| `csv_reload`    | CSV reload contract tests in `tests/csv_reload/` — opt-in     |
 
 The `smoke` marker is attached automatically to scenarios in
 `scenarios.yaml` that set `smoke: true`.
+
+`csv_reload` is attached by `tests/csv_reload/conftest.py` to every test
+in that folder: tests that load a CSV work folder (a provider snapshot, a
+`dump_csvs` tree, hand-written CSVs) with a provider-less `load_flextool`,
+which production never does. The default `addopts` (`-m 'not csv_reload'`)
+deselects them, and because a command-line `-m` replaces that one, the
+conftest also skips them unless the `-m` expression names `csv_reload`.
+Run them with `pytest -m csv_reload tests/csv_reload/`.
 
 `.github/workflows/ci.yml` defines the three-tier CI gate:
 

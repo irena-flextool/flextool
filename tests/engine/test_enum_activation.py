@@ -24,15 +24,17 @@ without touching the surrounding plumbing.
 
 After the follow-up lands, strengthen this test per the dispatch
 template (assert ``utf8_count == 0`` on every FlexData dim column).
+
+The ``tests.sqlite`` auto-build test of the CSV reload
+(``test_load_flextool_threads_axis_enums``) is in
+``tests/csv_reload/test_enum_activation.py`` (c24 S1-8).
 """
 from __future__ import annotations
 
 import dataclasses
-from pathlib import Path
 
 import polars as pl
 
-from flextool.engine.preprocess.flex_data import load_flextool
 from tests._support.load import load_scenario
 
 
@@ -69,49 +71,6 @@ def _all_dim_dtypes(flex_data) -> list[tuple[str, str, pl.DataType]]:
             if col in dim_names:
                 out.append((f.name, col, dt))
     return out
-
-
-def test_load_flextool_threads_axis_enums(
-    tmp_path: Path, scenario_workdir,
-) -> None:
-    """Phase 4 substrate: ``load_flextool`` populates the Provider's
-    ``axis_enums`` + ``contract`` attributes from the workdir sqlite.
-
-    This is the prerequisite for the cascade-wide activation flip
-    (which is BLOCKED on the cross-axis alias audit — see Phase 4
-    BLOCKERS in ``specs/enum_dtype_refactor_plan.md``).
-    """
-    import shutil
-
-    fixture = scenario_workdir("base")
-    work = tmp_path / "work_base"
-    shutil.copytree(fixture, work)
-
-    # Call without an explicit provider so load_flextool builds an
-    # ephemeral one seeded from the workdir; the helper then
-    # auto-builds axis_enums from the workdir sqlite.
-    flex_data = load_flextool(work)
-    assert flex_data is not None
-
-    # Build the same axis_enums independently to confirm the workdir
-    # sqlite produces the canonical vocabulary the substrate would
-    # have threaded.
-    from flextool.spinedb_backend._axis_enums import (
-        build_axis_enums,
-        load_axis_contract,
-    )
-    from flextool.spinedb_backend import SpineDBBackend
-
-    sqlite_path = work / "tests.sqlite"
-    contract = load_axis_contract()
-    with SpineDBBackend(f"sqlite:///{sqlite_path}", None) as backend:
-        axis_enums = build_axis_enums(backend, contract)
-
-    # Spot-check vocabulary: the ``p`` axis enum is the union of unit
-    # + connection names; ``work_base`` has at least one of each.
-    p_enum = axis_enums.get("p")
-    assert p_enum is not None and isinstance(p_enum, pl.Enum)
-    assert len(p_enum.categories) > 0
 
 
 def test_load_flextool_emits_enum_typed_dim_columns(scenario_run) -> None:

@@ -22,19 +22,12 @@ on such a key checks a reload-only seed and belongs in
 its overlay is consumed (the loaded value differs from the un-overlaid
 load).
 
-Reload-only fixtures (c24 S1-7: kept for the reload-only tests, which
-S1-8 moves to ``tests/csv_reload/`` together with these two):
-
-* ``tiny_workdir(tmp_path)`` copies the session-cached ``base`` work
-  folder (provider snapshot CSVs + ``tests.sqlite``) into ``tmp_path``;
-  ``load_flextool(tiny_workdir)`` is a reader-less CSV load of it.
-* ``write_csv(workdir, name, rows)`` writes a CSV overlay under the
-  matching sub-directory (bare names → ``solve_data/``).
+The reload-only loader tests and their fixtures (``tiny_workdir``,
+``write_csv``) are in ``tests/csv_reload/`` (c24 S1-8).
 """
 from __future__ import annotations
 
 import io
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -134,33 +127,3 @@ def tiny_run(scenario_run) -> tuple[ScenarioRun, FlexDataProvider]:
     run = scenario_run("base")
     return run, clone_provider(run.last.provider)
 
-
-# --- reload-only fixtures (S1-8 moves them to tests/csv_reload/) -----------
-
-@pytest.fixture(scope="function")
-def tiny_workdir(tmp_path: Path, scenario_workdir) -> Path:
-    """Copy the session-cached ``base`` work folder into ``tmp_path / 'work'``.
-
-    Reload-only: ``load_flextool(tiny_workdir)`` reads the snapshot CSVs
-    without a DB reader (the folder is not named ``work_<scenario>``).
-    Production-path loader tests use :func:`tiny_run`.
-    """
-    source = scenario_workdir("base")
-    target = tmp_path / "work"
-    shutil.copytree(source, target)
-    return target
-
-
-def write_csv(workdir: Path, name: str,
-              rows: "list[dict] | pl.DataFrame") -> Path:
-    """Write ``rows`` as a CSV under ``workdir / <subdir> / <basename>`` (reload-only overlays).
-
-    ``name`` may be ``"foo.csv"`` (→ ``solve_data/foo.csv``) or
-    ``"input/foo.csv"`` / ``"solve_data/foo.csv"``.  ``rows`` is a list of
-    dicts or a ``pl.DataFrame``.  Returns the path written; overwrites.
-    """
-    target = workdir / name if "/" in name else workdir / "solve_data" / name
-    target.parent.mkdir(parents=True, exist_ok=True)
-    df = rows if isinstance(rows, pl.DataFrame) else pl.DataFrame(rows)
-    df.write_csv(target)
-    return target
