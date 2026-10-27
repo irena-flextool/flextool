@@ -451,6 +451,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # explicitly: the "maxFlow_online" prefix would otherwise resolve them silently.
     "maxFlow_online_shutdown": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxInputFlow_online_shutdown": CstrFamily(QuantityType.DIMENSIONLESS),
+    # c14c critique item 1 — flextool/engine/model/_online.py (maxFlow_online_shutdown_branch_<sfx> /
+    # maxInputFlow_online_shutdown_branch_<sfx>): the pre-shutdown twin's per-successor rows at a branch point
+    # (several mid-horizon branches continuing from the same trunk step).  Registered explicitly: the
+    # "maxFlow_online_shutdown" / "maxInputFlow_online_shutdown" prefixes would otherwise resolve them silently.
+    "maxFlow_online_shutdown_branch": CstrFamily(QuantityType.DIMENSIONLESS),
+    "maxInputFlow_online_shutdown_branch": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/_online.py (maxFlow_back_online_<sfx>: the reverse flow of an online one-variable
     # connection ≤ online capacity).  Explicit: the "maxFlow_back" prefix would otherwise resolve it silently.
     "maxFlow_back_online": CstrFamily(QuantityType.DIMENSIONLESS),

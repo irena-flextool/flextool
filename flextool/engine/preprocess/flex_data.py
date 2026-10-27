@@ -736,6 +736,12 @@ class FlexData:
     # a startup across the roll boundary.  ``None`` on the first roll /
     # non-rolling / no-online solves (→ byte-identical baseline path).
     p_roll_continue_online: Param | None = None              # (p,)
+    # (d, t), Utf8: the step(s) of THIS roll that take the ``p_roll_continue_online`` carry as their online
+    # predecessor (params._ramp_links.online_roll_carry_steps) — the roll's real first step (and the forecast
+    # branches starting with it), with a timeline-order fallback when the complete solve's predecessor of no
+    # period's first step is the carried step (e.g. a nested child solve that doesn't contain it).  ``None``
+    # together with ``p_roll_continue_online`` (first roll / non-rolling / no-online solves).
+    dt_online_carry: pl.DataFrame | None = None
     # OC1 #1 sub-slice (b) — separate_dispatch sibling online PIN.  The
     # parent's committed ``v_online`` over the jump (read from the
     # ``fix_online`` handoff), pinned onto the sibling's ``v_online`` by
@@ -2317,6 +2323,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         pdt_uptime_set=None, pdt_downtime_set=None,
         uptime_lookback=None, downtime_lookback=None,
         p_roll_continue_online=None,
+        dt_online_carry=None,
         p_fix_online=None,
         online_startup_history=None, online_min_time=None,
         uptime_carry=None, downtime_carry=None,
@@ -2437,6 +2444,24 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         if df_rco.height > 0:
             p_roll_continue_online = Param(("p",), df_rco)
 
+    # Part A / N1 fix — the step(s) of THIS roll that take the carry (``dt_online_carry``): the roll's real
+    # first step (plus forecast branches starting with it), not the (d, t)-name-sorted first row (N1, the bug
+    # this fixes).  Same source frames as the ramp carry (:func:`_load_ramp_carry` /
+    # ``params._ramp_links.ramp_roll_carry``): the previous roll's last realized step and the complete solve's
+    # ``step_previous`` rows of each period's first step.  ``None`` together with ``p_roll_continue_online``
+    # (first roll / non-rolling / no-online solves).
+    dt_online_carry = None
+    if p_roll_continue_online is not None:
+        from flextool.engine.preprocess.params._ramp_links import online_roll_carry_steps
+        _rco_step = read_handoff_frame(provider, K.HANDOFF_ROLL_END_STEP)
+        _rco_link_path = sd / "roll_first_step_link.csv"
+        _rco_link = (_provider_read(provider, K.SOLVE_DATA_ROLL_FIRST_STEP_LINK, _rco_link_path)
+                    if _provider_has(provider, K.SOLVE_DATA_ROLL_FIRST_STEP_LINK, _rco_link_path) else None)
+        _rco_pb_path = sd / "period__branch.csv"
+        _rco_pb = (_provider_read(provider, "solve_data/period__branch", _rco_pb_path)
+                  if _provider_has(provider, "solve_data/period__branch", _rco_pb_path) else None)
+        dt_online_carry = online_roll_carry_steps(dt, _rco_step, _rco_link, _rco_pb)
+
     # OC1 #1 sub-slice (b) — read the parent's committed v_online over the
     # jump (``handoff/fix_online``, schema ``[process, period, step,
     # value]``), seeded by the separate_dispatch parent's handoff producer.
@@ -2518,6 +2543,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         uptime_lookback=None,
         downtime_lookback=None,
         p_roll_continue_online=p_roll_continue_online,
+        dt_online_carry=dt_online_carry,
         p_fix_online=p_fix_online,
         online_startup_history=online_startup_history,
         online_min_time=online_min_time,
@@ -4141,6 +4167,18 @@ def load_flextool(source: "Path | str | FlexInputSource",
                               provider=provider)
         online["process_exact"] = _read_process_exact(inp, provider=provider)
         ramp = _load_ramp(inp, sd, proc["pss"], dt=dt, provider=provider)
+        # Part A, critique item 2: the online carry (rule 2) and the ramp carry / ramp link (rule 1) must agree
+        # — raise instead of silently falling back to a predecessor of 0 (params._ramp_links).
+        from flextool.engine.preprocess.params._ramp_links import check_online_ramp_carry_consistency
+        _rco = online.get("p_roll_continue_online")
+        _rcf = ramp.get("p_roll_continue_flow")
+        check_online_ramp_carry_consistency(
+            online.get("dt_online_carry"),
+            _rco.frame.select("p") if _rco is not None else None,
+            ramp.get("dt_ramp_carry"),
+            _rcf.frame.select("p") if _rcf is not None else None,
+            online.get("process_online"),
+            ramp.get("dt_ramp_link"))
         invest = _load_invest(sd, dt, inp, proc["pss"], db_reader=db_reader,
                               provider=provider)
         varcost = _load_varcost(sd, proc["pss"], provider=provider)

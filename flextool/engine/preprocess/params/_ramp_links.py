@@ -114,3 +114,120 @@ def ramp_roll_carry(dt: "pl.DataFrame | None",
                  .join(hit, how="cross")
                  .select("p", "source", "sink", "d", "t", "value"))
     return link_out, flows_out
+
+
+def online_roll_carry_steps(dt: "pl.DataFrame | None",
+                            carried_step: "pl.DataFrame | None",
+                            first_step_link: "pl.DataFrame | None",
+                            period_branch: "pl.DataFrame | None" = None) -> "pl.DataFrame | None":
+    """The step(s) of this roll that take the online-commitment carry (``p_roll_continue_online``) as their
+    online predecessor.
+
+    Same inputs as :func:`ramp_roll_carry` (``dt`` in solve order, ``carried_step`` = the previous roll's last
+    realized step, ``first_step_link`` = the complete solve's ``step_previous`` rows of the first step of each
+    period of this roll, ``period_branch``), but the match does not require ``jump == 1``: a period's first
+    step ``(d, t1)`` takes the carry when the complete solve's predecessor of ``t1`` **is** the carried step,
+    whatever its jump (a new year still continues the commitment, as today) — plus the forecast-branch periods
+    that start at the same step as such a period.
+
+    If no period's complete-solve predecessor matches the carried step (e.g. a nested child solve whose
+    complete solve does not contain it), the carry instead lands on the roll's own first step in **timeline
+    order** — ``dt``'s row order, which is the solve's chronological order, not a ``(d, t)`` name sort (the bug
+    this fixes, N1: a period name that sorts after another, e.g. ``a2025`` after ``p2020``, no longer steals
+    the carry from the period that is actually first).
+
+    Returns ``(d, t)`` Utf8, one row per step; ``None`` when there is no carry (first roll, a single solve, or
+    ``dt`` is empty).
+    """
+    if dt is None or dt.height == 0 or carried_step is None or carried_step.height == 0:
+        return None
+    carried = (carried_step.select(pl.col("period").cast(pl.Utf8), pl.col("step").cast(pl.Utf8)).unique())
+    if carried.height != 1:
+        raise ValueError(
+            "online_roll_carry_steps: the carry must come from one step of the previous roll, got "
+            f"{carried.rows()}")
+    c_d, c_t = carried.row(0)
+    firsts = (dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+              .with_row_index("__i")
+              .group_by("d", maintain_order=True)
+              .agg(pl.col("t").sort_by("__i").first(), pl.col("__i").sort_by("__i").first()))
+    hit = firsts.head(0).select("d", "t")
+    if first_step_link is not None and first_step_link.height > 0:
+        link = first_step_link.select(
+            pl.col("period").cast(pl.Utf8).alias("d"), pl.col("time").cast(pl.Utf8).alias("t"),
+            pl.col("previous_period").cast(pl.Utf8).alias("d_previous"),
+            pl.col("previous_within_solve").cast(pl.Utf8).alias("t_previous"))
+        hit = (firsts.join(link, on=["d", "t"], how="inner")
+               .filter((pl.col("d_previous") == c_d) & (pl.col("t_previous") == c_t))
+               .select("d", "t"))
+        if period_branch is not None and period_branch.height > 0 and hit.height > 0:
+            pb = (period_branch.select(pl.col("period").cast(pl.Utf8).alias("d"),
+                                       pl.col("branch").cast(pl.Utf8).alias("b"))
+                  .filter(pl.col("d") != pl.col("b")))
+            branches = (hit.join(pb, on="d", how="inner")
+                        .join(firsts.select("d", "t").rename({"d": "b", "t": "t_b"}), on="b", how="inner")
+                        .filter(pl.col("t_b") == pl.col("t"))
+                        .select(pl.col("b").alias("d"), "t"))
+            hit = pl.concat([hit, branches]).unique(maintain_order=True)
+    if hit.height == 0:
+        # Fallback: the roll's own first step in timeline order (dt's row order), not a (d, t) name sort.
+        hit = firsts.sort("__i").head(1).select("d", "t")
+    return hit if hit.height > 0 else None
+
+
+def check_online_ramp_carry_consistency(dt_online_carry: "pl.DataFrame | None",
+                                        p_roll_continue_online_p: "pl.DataFrame | None",
+                                        dt_ramp_carry: "pl.DataFrame | None",
+                                        p_roll_continue_flow_p: "pl.DataFrame | None",
+                                        process_online: "pl.DataFrame | None",
+                                        dt_ramp_link: "pl.DataFrame | None") -> None:
+    """Raise a clear error when the online carry (rule 2, part A) and the ramp carry / ramp link (rule 1,
+    part A) disagree, instead of silently falling back to a predecessor of 0 (critique item 2).
+
+    1. Every online process with a ramp-carry flow row at a ``dt_ramp_carry`` step must also have an online
+       carry there: the process in ``p_roll_continue_online_p`` and the step in ``dt_online_carry``.  The
+       ramp-row state split (part C) reads ``v_startup`` / ``v_shutdown`` relative to the SAME predecessor the
+       ramp carry uses; a missing online carry would read a false "0 units online before" at a history-carried
+       step instead of raising.
+    2. A step that takes the online carry (rule 2) must not also be a target of ``dt_ramp_link`` (rule 1): the
+       two rules are defined on disjoint domains (rule 1 only where the predecessor is in this LP's ``dt``,
+       rule 2 only where it is not).
+
+    All frames plain ``(p,)`` / ``(d, t)`` Utf8 (``p_roll_continue_online_p`` / ``p_roll_continue_flow_p``:
+    just the ``p`` column of the respective ``Param``'s frame).  No return value; raises ``ValueError`` on a
+    violation, otherwise does nothing.
+    """
+    if dt_ramp_carry is not None and dt_ramp_carry.height > 0 and p_roll_continue_flow_p is not None:
+        carry_steps = dt_ramp_carry.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique()
+        flow_p = p_roll_continue_flow_p.select(pl.col("p").cast(pl.Utf8)).unique()
+        online_p = (process_online.select(pl.col("p").cast(pl.Utf8)).unique()
+                    if process_online is not None and process_online.height > 0 else flow_p.head(0))
+        at_risk = flow_p.join(online_p, on="p", how="semi")
+        if at_risk.height > 0:
+            rco_p = (p_roll_continue_online_p.select(pl.col("p").cast(pl.Utf8)).unique()
+                     if p_roll_continue_online_p is not None else at_risk.head(0))
+            missing_p = at_risk.join(rco_p, on="p", how="anti")
+            if missing_p.height > 0:
+                raise ValueError(
+                    "check_online_ramp_carry_consistency: process(es) "
+                    f"{missing_p['p'].to_list()} have a ramp-carry flow but no online carry "
+                    "(p_roll_continue_online) at the carried step — the ramp split would read a false "
+                    "online-before-history of 0 there.")
+            oc_steps = (dt_online_carry.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique()
+                        if dt_online_carry is not None and dt_online_carry.height > 0 else carry_steps.head(0))
+            missing_steps = carry_steps.join(oc_steps, on=["d", "t"], how="anti")
+            if missing_steps.height > 0:
+                raise ValueError(
+                    "check_online_ramp_carry_consistency: ramp-carry step(s) "
+                    f"{missing_steps.rows()} have no matching online-carry step (dt_online_carry) although an "
+                    "online process has a ramp-carry flow there.")
+    if (dt_online_carry is not None and dt_online_carry.height > 0
+            and dt_ramp_link is not None and dt_ramp_link.height > 0):
+        link_targets = dt_ramp_link.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique()
+        oc = dt_online_carry.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique()
+        overlap = oc.join(link_targets, on=["d", "t"], how="semi")
+        if overlap.height > 0:
+            raise ValueError(
+                "check_online_ramp_carry_consistency: step(s) "
+                f"{overlap.rows()} are both in dt_online_carry (rule 2) and a dt_ramp_link target (rule 1) — "
+                "the two online-predecessor rules must be disjoint.")

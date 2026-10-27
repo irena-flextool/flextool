@@ -218,6 +218,9 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxInputFlow_online_linear", "maxInputFlow_online_integer",
     "maxFlow_online_shutdown_linear", "maxFlow_online_shutdown_integer",
     "maxInputFlow_online_shutdown_linear", "maxInputFlow_online_shutdown_integer",
+    # c14c critique item 1 — the pre-shutdown twin's per-successor rows at a branch point.
+    "maxFlow_online_shutdown_branch_linear", "maxFlow_online_shutdown_branch_integer",
+    "maxInputFlow_online_shutdown_branch_linear", "maxInputFlow_online_shutdown_branch_integer",
     "maxFlow_back_online_linear", "maxFlow_back_online_integer",
     # connection reserve — _reserve.py f"connection_reserve_{ud}[_online_{kind}|_exact]"
     "connection_reserve_up", "connection_reserve_down",

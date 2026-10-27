@@ -2483,6 +2483,8 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
                        "maxFlow_online", "maxOutputSum_online",
                        "maxInputFlow_online", "maxFlow_online_shutdown",
                        "maxInputFlow_online_shutdown", "maxFlow_back_online",
+                       "maxFlow_online_shutdown_branch",
+                       "maxInputFlow_online_shutdown_branch",
                        "minimum_uptime", "minimum_downtime",
                        "online_fix_eq")
           for kind in ("linear", "integer")),

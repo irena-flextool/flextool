@@ -226,6 +226,160 @@ def test_midhorizon_branches_ramp_from_trunk(tmp_path_factory) -> None:
         assert coef(terms[r], "v_flow[base,base,elec,p2035,t0003]") == pytest.approx(-1.0)
 
 
+# ---------------------------------------------------------------------------
+# online predecessor (part A, #98 / N1 — c14c)
+
+
+def test_online_continues_across_period_boundary(tmp_path_factory) -> None:
+    """A1.  TWO_PERIODS (p2020 t0001-24, p2025 t0025-48 of one timeline) + coal_plant linear online
+    (min_load 0.2, startup_cost 100), flat demand that keeps the unit online throughout: p2025's first step's
+    online__startup row has coal_plant's v_online_linear[p2020,t0024] as its only predecessor column (part A
+    rule 1, #98).  Oracle: the unit stays online across the boundary (flat demand, no shutdown anywhere), so
+    the ``>=`` row's minimiser (startup_cost > 0) sets v_startup there to exactly max(0, on_now - on_prev) = 0.
+    Before: the row had no predecessor at p2025 t0025 (Lag only matches within the same period), so
+    v_startup there was forced to equal v_online there (~1.0), costing startup_cost x that count."""
+    vals = TWO_PERIODS + [
+        ["unit", PLANT, "startup_method", b64("linear", "str")],
+        ["unit", PLANT, "min_load", b64(0.2, "float")],
+        ["unit", PLANT, "startup_cost", b64(100.0, "float")]]
+    step = _last(_solve(tmp_path_factory, "uc_2p", vals, entities=TWO_PERIODS_ENTS))
+    pb = build(step.flex_data)
+    row = row_terms(pb, "online__startup_linear")[f"online__startup_linear[{PLANT},p2025,t0025]"]
+    assert coef(row, f"v_online_linear[{PLANT},p2020,t0024]") == pytest.approx(1.0)
+    # exactly two v_online_linear columns: the cross-period predecessor (above) and this step's own online_now
+    assert sorted(c for c in row if c.startswith("v_online_linear[")) == [
+        f"v_online_linear[{PLANT},p2020,t0024]", f"v_online_linear[{PLANT},p2025,t0025]"]
+    su = (utf8(step.solution.value("v_startup_linear"))
+          .filter((pl.col("p") == PLANT) & (pl.col("d") == "p2025") & (pl.col("t") == "t0025"))["value"][0])
+    assert su == pytest.approx(0.0, abs=TOL)
+
+
+def test_online_roll_carry_steps_module(tmp_path_factory) -> None:
+    """A2.  The roll-carriers-take-the-last-realized-step fixture (review F3 / item 100: periods p2020 then
+    a2025 — a name that sorts BEFORE p2020 — coal linear online with a ramp, rolls of 16 h / jump 10), with
+    startup_cost 20 (> 0 — critique item 4: with cost 0 a zero-gain start/stop pair could inflate the relation
+    below past equality): on every continuation roll the online carry lands on the roll's own real first step
+    (that step's online__startup row has no OTHER v_online_linear predecessor column — only roll_continue_online
+    — and its (d, t) is exactly ``dt_online_carry``), never the (d, t)-name-sorted first row.  Relational
+    oracle: over the whole realized run, in solve order (including roll boundaries), Σ v_startup ==
+    Σ positive increases of the realized online trajectory (±1e-7; a nonzero startup_cost makes any zero-gain
+    pair strictly suboptimal, so equality — not just ``>=`` — holds).  Before: the carry landed on a2025 t0025
+    and a bogus startup was charged at p2020 t0011 (N1)."""
+    tp = [v for v in TWO_PERIODS if v[2] not in ("period_timeset", "realized_periods")] + [
+        ["solve", "y2020_2day_dispatch", "period_timeset", b64(_pmap({"p2020": "ta", "a2025": "tb"}), "map")],
+        ["solve", "y2020_2day_dispatch", "realized_periods",
+         b64({"value_type": "str", "data": ["p2020", "a2025"]}, "array")]]
+    vals = _ramp(0.002) + tp + [
+        ["unit", PLANT, "startup_method", b64("linear", "str")],
+        ["unit", PLANT, "min_load", b64(0.2, "float")],
+        ["unit", PLANT, "startup_cost", b64(20.0, "float")],
+        ["solve", "y2020_2day_dispatch", "solve_mode", b64("rolling_window", "str")],
+        ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", b64(16.0, "float")],
+        ["solve", "y2020_2day_dispatch", "rolling_solve_jump", b64(10.0, "float")]]
+    steps = list(_solve(tmp_path_factory, "uc_span", vals, chain=("init", "west", "battery", "coal"),
+                        entities=TWO_PERIODS_ENTS).values())
+    carried = [s for s in steps if s.flex_data.p_roll_continue_online is not None]
+    assert carried
+    for s in carried:
+        oc = utf8(s.flex_data.dt_online_carry)
+        assert oc is not None and oc.height >= 1
+        pb = build(s.flex_data)
+        rows = row_terms(pb, "online__startup_linear")
+        for d, t in oc.select("d", "t").iter_rows():
+            row = rows[f"online__startup_linear[{PLANT},{d},{t}]"]
+            assert len([c for c in row if c.startswith("v_online_linear[")]) == 1   # only online_now, no link
+    traj_on, traj_su = [], []
+    for s in steps:
+        real = utf8(s.flex_data.realized_dispatch.rename({"period": "d", "step": "t"})
+                    if "period" in s.flex_data.realized_dispatch.columns else s.flex_data.realized_dispatch)
+        order = utf8(s.flex_data.dt).with_row_index("i")
+        for name, bucket in (("v_online_linear", traj_on), ("v_startup_linear", traj_su)):
+            v = (utf8(s.solution.value(name)).filter(pl.col("p") == PLANT)
+                 .join(real.select("d", "t"), on=["d", "t"], how="semi"))
+            bucket += v.join(order, on=["d", "t"]).sort("i").select("d", "t", "value").rows()
+    su_total = sum(x for _, _, x in traj_su)
+    delta_pos = sum(max(0.0, f1 - f0) for (_, _, f0), (_, _, f1) in zip(traj_on, traj_on[1:]))
+    assert su_total == pytest.approx(delta_pos, abs=1e-7)
+
+
+def test_shutdown_reduction_across_continuing_periods(tmp_path_factory) -> None:
+    """A4.  TWO_PERIODS + coal linear online (min_load 0.2) + a ramp slow enough that the pre-shutdown limit
+    SD < 1 (speed 0.002/min, 1-h steps: rho = 0.12, SD = min(1, 0.2 + 0.5*0.12) = 0.26), demand forcing a
+    shutdown at p2025 t0025 (step high then dropped to 0): maxFlow_online_shutdown_linear[ARC,p2020,t0024]
+    exists with v_shutdown_linear[coal_plant,p2025,t0025] coefficient kappa*(1 - SD) = 0.74 (kappa = 1,
+    capacity_max_coeff unauthored).  Before: #98's ``d_previous == d`` filter in _successor_steps kept this a
+    same-period-only row, so no row existed across the period boundary."""
+    vals = _ramp(0.002) + TWO_PERIODS + [
+        ["unit", PLANT, "startup_method", b64("linear", "str")],
+        ["unit", PLANT, "min_load", b64(0.2, "float")],
+        ["node", "west", "inflow", _tmap({f"t{i:04d}": -450.0 for i in range(1, 25)}
+                                         | {f"t{i:04d}": 0.0 for i in range(25, 49)})]]
+    step = _last(_solve(tmp_path_factory, "uc_2p_sd", vals, entities=TWO_PERIODS_ENTS))
+    pb = build(step.flex_data)
+    row = row_terms(pb, "maxFlow_online_shutdown_linear", ARC)[f"maxFlow_online_shutdown_linear[{ARC}p2020,t0024]"]
+    assert coef(row, f"v_shutdown_linear[{PLANT},p2025,t0025]") == pytest.approx(0.74, abs=1e-6)
+    sd = (utf8(step.solution.value("v_shutdown_linear"))
+          .filter((pl.col("p") == PLANT) & (pl.col("d") == "p2025") & (pl.col("t") == "t0025"))["value"][0])
+    assert sd > 0.3   # the shutdown this row protects against is real (demand drops to 0 at p2025)
+
+
+def test_midhorizon_online_branches_from_trunk(tmp_path_factory) -> None:
+    """A5.  Mid-horizon stochastic fixture (p2035 t0001-3, p2040 branches from t0004) with unit ``base`` online
+    (linear, min_load 0.2, startup_cost 50): every p2040 branch's online__startup row at its first step has
+    v_online_linear[base,p2035,t0003] as its only predecessor; no row links FROM p2035 t0001.  Before: no
+    predecessor at any branch's first step (Lag only matches within the same period)."""
+    from tests.engine._unit_db import FLEXTOOL_ROOT
+
+    url, scen = make_db(tmp_path_factory, alt="uc_mid",
+                        values=[["unit", "base", "startup_method", b64("linear", "str")],
+                                ["unit", "base", "min_load", b64(0.2, "float")],
+                                ["unit", "base", "startup_cost", b64(50.0, "float")]],
+                        base_chain=["init", "base", "stoch"],
+                        fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_midhorizon_nreal0.json")
+    step = _last(run(tmp_path_factory, url, scen))
+    rows = row_terms(build(step.flex_data), "online__startup_linear")
+    firsts = [r for r in rows if step_of(r) == ("p2040", "t0004") or (step_of(r)[1] == "t0004"
+              and step_of(r)[0].startswith("p2040"))]
+    assert len(firsts) >= 2
+    for r in firsts:
+        assert coef(rows[r], "v_online_linear[base,p2035,t0003]") == pytest.approx(1.0)
+        d, t = step_of(r)
+        assert sorted(c for c in rows[r] if c.startswith("v_online_linear[")) == sorted(
+            ["v_online_linear[base,p2035,t0003]", f"v_online_linear[base,{d},{t}]"])
+
+
+def test_shutdown_reduction_branch_point_per_successor(tmp_path_factory) -> None:
+    """A6 (critique item 1).  Mid-horizon stochastic fixture with unit ``base`` online (linear, min_load 0.2)
+    and a ramp slow enough that the pre-shutdown limit binds (speed 0.002/min): several p2040 branches continue
+    from the same p2035 t0003 trunk step, so maxFlow_online_shutdown_linear[base,base,elec,p2035,t0003] (the
+    UNIQUE-successor row) is absent there and maxFlow_online_shutdown_branch_linear emits one row per branch
+    instead, each with ONLY its own branch's v_shutdown_linear column (never a sum of several branches'
+    shutdowns on one row — that would let several mutually-exclusive branches each buy back ramp room from the
+    shared trunk step, critique item 1)."""
+    from tests.engine._unit_db import FLEXTOOL_ROOT
+
+    url, scen = make_db(tmp_path_factory, alt="uc_mid_branch",
+                        values=_ramp(0.002, rel=["base", "elec"]) + [
+                            ["unit", "base", "startup_method", b64("linear", "str")],
+                            ["unit", "base", "min_load", b64(0.2, "float")]],
+                        base_chain=["init", "base", "stoch"],
+                        fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_midhorizon_nreal0.json")
+    step = _last(run(tmp_path_factory, url, scen))
+    pb = build(step.flex_data)
+    arc = "base,base,elec,"
+    unique_rows = row_terms(pb, "maxFlow_online_shutdown_linear", arc)
+    assert f"maxFlow_online_shutdown_linear[{arc}p2035,t0003]" not in unique_rows
+    branch_rows = row_terms(pb, "maxFlow_online_shutdown_branch_linear", arc)
+    at_trunk = {name: cols for name, cols in branch_rows.items()
+               if name.startswith(f"maxFlow_online_shutdown_branch_linear[{arc}p2035,t0003,")}
+    assert len(at_trunk) >= 2
+    for name, cols in at_trunk.items():
+        sd_cols = [c for c in cols if c.startswith("v_shutdown_linear[base,")]
+        assert len(sd_cols) == 1
+        branch_d = name.split(",")[-2]
+        assert sd_cols[0] == f"v_shutdown_linear[base,{branch_d},t0004]"
+
+
 def test_derived_link_equals_step_previous(tmp_path_factory) -> None:
     """dt_ramp_link built from the source timeline equals the jump == 1 rows of solve_data/step_previous
     (make_step_jump) on gaps, continuing periods, solve-level new_stepduration (review F1), aggregated blocks

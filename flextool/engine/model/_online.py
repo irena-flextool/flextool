@@ -1,9 +1,12 @@
 """Unit commitment: units (and connections) online, startups, shutdowns and minimum up/down times.
 
 Owns the variables v_online_*, v_startup_*, v_shutdown_* and the equations maxOnline, maxStartup,
-maxShutdown, online__startup, online__shutdown, maxFlow_online, maxFlow_online_shutdown, maxFlow_back_online,
-maxOutputSum_online, maxInputFlow_online, maxInputFlow_online_shutdown, minimum_uptime, minimum_downtime and
-online_fix_eq.  Each exists once per UC class present: ``linear`` (continuous v_online) and ``integer`` (integer
+maxShutdown, online__startup, online__shutdown, maxFlow_online, maxFlow_online_shutdown,
+maxFlow_online_shutdown_branch, maxFlow_back_online, maxOutputSum_online, maxInputFlow_online,
+maxInputFlow_online_shutdown, maxInputFlow_online_shutdown_branch, minimum_uptime, minimum_downtime and
+online_fix_eq.  The ``_branch`` rows exist only at a branch point (several mid-horizon branches continuing from
+the same trunk step, c14c critique item 1); every other fixture never emits them.  Each exists once per UC
+class present: ``linear`` (continuous v_online) and ``integer`` (integer
 v_online), suffixed ``_linear`` / ``_integer``.  A process is online by its startup method (units: also by
 ``minimum_time_method``); a connection with a startup method has online capacity in service covering both flow
 directions, and no minimum load, minimum up / down times or startup reduction (connections have no such
@@ -129,52 +132,78 @@ def add_constraints(b: "_Build") -> None:
 
         # ─── EQ. ─── online__startup / online__shutdown_{linear,integer} ─────
         # ─────────────────────────────────────────────────────────────────────
-        # v_startup[p,d,t] + v_online[p,d′,t′] (+ carry[p,d,t])  ≥ v_online[p,d,t]
-        # v_shutdown[p,d,t] + v_online[p,d,t]  ≥ v_online[p,d′,t′] (+ carry[p,d,t])
-        #   ∀ (p,d,t) ∈ p_idx,   (d′,t′) = t_previous_within_solve of (d,t)
-        # Startups and shutdowns count the change in units online.
-        # The predecessor of the first step of a solve wraps cyclically to its last step.  On a
-        # continuation roll of a rolling solve (d.p_roll_continue_online is set) that wrap would
-        # point at the discarded look-ahead tail: the first step's lag is dropped instead and the
-        # committed v_online carried from the previous roll (carry, p_roll_continue_online at the
-        # first (d,t) only) is the predecessor, so a unit that stays committed is not charged a
-        # new startup.  The gate is the presence of the carry: p_nested_solve_first is None on
-        # every roll of the standalone rolling-window path.
+        # v_startup[p,d,t] + v_online_prev[p,d,t] (+ carry[p,d,t])  ≥ v_online[p,d,t]
+        # v_shutdown[p,d,t] + v_online[p,d,t]  ≥ v_online_prev[p,d,t] (+ carry[p,d,t])
+        #   ∀ (p,d,t) ∈ p_idx
+        # Startups and shutdowns count the change in units online.  v_online_prev is the online predecessor
+        # of (p,d,t), one of (part A, #98 / N1, disjoint — each (d,t) matches at most one):
+        #   1. (d,t) ∈ dt_ramp_link → v_online[p,d_previous,t_previous] of the link: the interior adjacent
+        #      step (today's lag), PLUS a continuing period boundary or a mid-horizon branch's first step (#98) —
+        #      topics the cyclic lag below cannot reach (Lag only matches within the same d).
+        #   2. else (d,t) ∈ dt_online_carry → p_roll_continue_online[p], a constant: the previous roll's
+        #      realized committed v_online, carried to the roll's real first step (and the forecast branches
+        #      starting with it) so a unit that stays committed is not charged a new startup there (N1: this
+        #      used to land on the (d,t)-name-sorted first row, not necessarily the roll's actual first step).
+        #   3. else v_online[p,d,t_previous_within_solve] of dtttdt (Lag): the cyclic wrap at a solve's / a
+        #      non-continuing period's first step, steps after a timeline gap, representative-block starts —
+        #      unchanged.  0 where that lag target is not in the solve (also unchanged).
         rco = d.p_roll_continue_online
-        if rco is not None and d.dtttdt is not None and d.dtttdt.height > 0:
-            dtttdt_cont = d.dtttdt.sort("d", "t").slice(1)
-            first_dt = d.dtttdt.sort("d", "t").select("d", "t").head(1)
-            # The carried p is String: cast to the online_set p Enum before the join.  A process
-            # has one startup method, so the classes never share a p.
+        d_dtype, t_dtype = p_idx.schema["d"], p_idx.schema["t"]
+        link_native = None
+        if d.dt_ramp_link is not None and d.dt_ramp_link.height > 0:
+            link_cast = d.dt_ramp_link.pipe(
+                rename_to_axis, {"d": "d", "t": "t", "d_previous": "d_previous", "t_previous": "t_previous"})
+            link_rows = (online_set.select("p").unique().join(link_cast, how="cross")
+                        .join(p_idx.select("p", "d", "t"), on=["p", "d", "t"], how="inner"))
+            if link_rows.height > 0:
+                link_native = link_rows
+
+        carry_rows = None
+        if d.dt_online_carry is not None and d.dt_online_carry.height > 0 and rco is not None:
+            carry_dt = d.dt_online_carry.select(pl.col("d").cast(d_dtype, strict=False),
+                                                pl.col("t").cast(t_dtype, strict=False)).unique()
+            # The carried p is String: cast to the online_set p Enum before the join.  A process has one
+            # startup method, so the classes never share a p.
             carry_al = rco.frame.with_columns(pl.col("p").cast(online_set.schema["p"], strict=False))
             p_carry_rows = (online_set.select("p").unique()
                             .join(carry_al, on="p", how="inner")
-                            .join(first_dt, how="cross")
+                            .join(carry_dt, how="cross")
+                            .join(p_idx.select("p", "d", "t"), on=["p", "d", "t"], how="inner")
                             .select("p", "d", "t", "value"))
-            v_online_lag = Lag(v_online, dtttdt_cont, "t", "t_previous_within_solve")
-            su_lhs = {"startup": v_startup, "online_prev": v_online_lag}
-            sd_rhs = {"online_prev": v_online_lag}
             if p_carry_rows.height > 0:
-                # Sparse Param at the boundary row only; Param + Param outer-joins with 0-fill.
-                su_lhs["roll_continue_online"] = Param(("p", "d", "t"), p_carry_rows)
-                sd_rhs["roll_continue_online"] = Param(("p", "d", "t"), p_carry_rows)
-            m.add_cstr(f"online__startup{sfx}",  over=p_idx, sense=">=",
-                       lhs_terms=su_lhs,
-                       rhs_terms={"online_now":  v_online})
-            m.add_cstr(f"online__shutdown{sfx}", over=p_idx, sense=">=",
-                       lhs_terms={"shutdown":    v_shutdown,
-                                  "online_now":  v_online},
-                       rhs_terms=sd_rhs)
-        else:
-            v_online_lag = Lag(v_online, d.dtttdt, "t", "t_previous_within_solve")
-            m.add_cstr(f"online__startup{sfx}",  over=p_idx, sense=">=",
-                       lhs_terms={"startup":     v_startup,
-                                  "online_prev": v_online_lag},
-                       rhs_terms={"online_now":  v_online})
-            m.add_cstr(f"online__shutdown{sfx}", over=p_idx, sense=">=",
-                       lhs_terms={"shutdown":    v_shutdown,
-                                  "online_now":  v_online},
-                       rhs_terms={"online_prev": v_online_lag})
+                carry_rows = p_carry_rows
+
+        dtttdt_rest = d.dtttdt
+        if dtttdt_rest is not None and dtttdt_rest.height > 0:
+            excl = [f.select("d", "t").unique() for f in (link_native, carry_rows) if f is not None]
+            if excl:
+                excl_dt = excl[0] if len(excl) == 1 else pl.concat(excl).unique()
+                dtttdt_rest = dtttdt_rest.join(excl_dt, on=["d", "t"], how="anti")
+
+        su_lhs: dict = {"startup": v_startup}
+        sd_rhs: dict = {}
+        if link_native is not None:
+            v_online_prev_link = _var_view(v_online, f"__online_prev_link{sfx}",
+                                           {"d": "d_previous", "t": "t_previous"}, to_axis=True)
+            link_term = Sum(Where(v_online_prev_link, link_native), over=("d_previous", "t_previous"))
+            su_lhs["online_prev_link"] = link_term
+            sd_rhs["online_prev_link"] = link_term
+        if carry_rows is not None:
+            # Sparse Param at the carried boundary row(s) only; Param + Param outer-joins with 0-fill.
+            carry_param = Param(("p", "d", "t"), carry_rows)
+            su_lhs["roll_continue_online"] = carry_param
+            sd_rhs["roll_continue_online"] = carry_param
+        if dtttdt_rest is not None and dtttdt_rest.height > 0:
+            v_online_lag = Lag(v_online, dtttdt_rest, "t", "t_previous_within_solve")
+            su_lhs["online_prev_lag"] = v_online_lag
+            sd_rhs["online_prev_lag"] = v_online_lag
+        m.add_cstr(f"online__startup{sfx}",  over=p_idx, sense=">=",
+                   lhs_terms=su_lhs,
+                   rhs_terms={"online_now":  v_online})
+        m.add_cstr(f"online__shutdown{sfx}", over=p_idx, sense=">=",
+                   lhs_terms={"shutdown":    v_shutdown,
+                              "online_now":  v_online},
+                   rhs_terms=sd_rhs)
 
         # ─── EQ. ─── maxFlow_online_{linear,integer} ─────────────────────────
         # ─────────────────────────────────────────────────────────────────────
@@ -187,12 +216,19 @@ def add_constraints(b: "_Build") -> None:
         # (maxFlow_online LHS)
         #   ≤  κ · ( v_online · availability − red_sd · v_shutdown[p,d,t⁺]
         #            − max(0, red_su − red_sd) · v_startup[p,d,t] )
-        #   ∀ rows of maxFlow_online with red_sd > 0 and a successor t⁺
+        #   ∀ rows of maxFlow_online with red_sd > 0 and a UNIQUE successor t⁺
+        # ─── EQ. ─── maxFlow_online_shutdown_branch_{linear,integer} ─────────
+        # (maxFlow_online LHS)
+        #   ≤  κ · ( v_online · availability − red_sd · v_shutdown[p,d⁺,t⁺]
+        #            − max(0, red_su − red_sd) · v_startup[p,d,t] )
+        #   ∀ (row of maxFlow_online, successor (d⁺,t⁺) of (d,t)) with red_sd > 0, at a (d,t) with SEVERAL
+        #     successors (a branch point: several mid-horizon branches continuing from the same trunk step)
         # red_su = max(0, availability − SU),
         #   SU = min(1, min_load[p,d,t] + ½ · ramp_speed_up · 60 · step_duration[d,t])
         #   over the sides of the arc with an up ramp limit (process_source_sink_ramp_limit_{sink,source}_up; the
         #   smaller SU when both); red_sd likewise with ramp_speed_down at the pre-shutdown step (d,t); 0 without a
-        #   ramp limit.  t⁺ = the step whose ramp predecessor (dt_ramp_link) is (d,t) in the same period.
+        #   ramp limit.  (d⁺,t⁺) = a successor whose ramp predecessor (dt_ramp_link) is (d,t) — the same period
+        #   (today's only case) or the next continuing period (#98).
         # A unit's flow and the reserve that raises it — upward reserve at the arc's sink and
         # "consume more" downward reserve at its source — are limited by the units online
         # (spinning reserve: an offline unit holds neither).  The reserve terms are maxFlow's (units only; an online
@@ -201,7 +237,13 @@ def add_constraints(b: "_Build") -> None:
         # min load, then ramping as fast as they may: half a step's ramp on average; owner question Q-c14a-A),
         # units shutting down after step t at most SD in t.  Two rows, so capacity online for a single step gets
         # the smaller of the two limits instead of both reductions (exact for any mix of starts and stops; GMPL's
-        # one row with both reductions forbids one-step runs).  Only capped arcs (direct arcs and indirect
+        # one row with both reductions forbids one-step runs).  At a branch point (several successors of one
+        # (d,t): several mid-horizon branches continuing from the same trunk step) the shutdown cross-term cannot
+        # be split across the single maxFlow_online row (one v_flow[t] variable, one row); it is dropped there
+        # (maxFlow_online keeps only its startup term, a valid — looser — bound) and maxFlow_online_shutdown_branch
+        # gives the tight, correctly-isolated bound per branch instead: summing the branches' v_shutdown into one
+        # row would let several mutually-exclusive branches each buy back a whole unit of ramp room from the
+        # trunk step (critique item 1).  Only capped arcs (direct arcs and indirect
         # output arcs, see _capped_arcs): indirect input arcs are tied to the outputs by
         # conversion_indirect, and conversion_flow_coeff = 0 arcs are uncapped.  Availability and
         # capacity_max_coeff are densified to their 1.0 defaults so an unauthored unit keeps
@@ -221,15 +263,18 @@ def add_constraints(b: "_Build") -> None:
             online_lhs.update(b.reserve_down_at_source)
             online_rhs_terms: dict = {"online": online_rhs}
             shutdown_rows = None
+            branch_rows = None
             red = _cap_reduction(b, pss_online, input_side=False)
             if red is not None:
                 kappa = (_coef_factor(pss_online, d.p_arc_max_cap_coef, ["p", "source", "sink"]).frame
                          if d.p_arc_max_cap_coef is not None
                          else pss_online.select("p", "source", "sink").unique().with_columns(value=pl.lit(1.0)))
-                row1, row2, over2 = _reduction_terms(red, kappa, v_startup, v_shutdown, sfx)
+                row1, row2, over2, over3, row3 = _reduction_terms(red, kappa, v_startup, v_shutdown, sfx)
                 online_rhs_terms.update(row1)
                 if over2.height > 0:
                     shutdown_rows = (over2, {"online": online_rhs, **row2})
+                if over3.height > 0:
+                    branch_rows = (over3, {"online": online_rhs, **row3})
             m.add_cstr(f"maxFlow_online{sfx}",
                        over=over_pss_online, sense="<=",
                        lhs_terms=online_lhs,
@@ -239,6 +284,11 @@ def add_constraints(b: "_Build") -> None:
                            over=shutdown_rows[0], sense="<=",
                            lhs_terms=online_lhs,
                            rhs_terms=shutdown_rows[1])
+            if branch_rows is not None:
+                m.add_cstr(f"maxFlow_online_shutdown_branch{sfx}",
+                           over=branch_rows[0], sense="<=",
+                           lhs_terms=online_lhs,
+                           rhs_terms=branch_rows[1])
 
         # ─── EQ. ─── maxFlow_back_online_{linear,integer} ────────────────────
         # ─────────────────────────────────────────────────────────────────────
@@ -274,7 +324,13 @@ def add_constraints(b: "_Build") -> None:
         # ─── EQ. ─── maxInputFlow_online_shutdown_{linear,integer} ───────────
         # (maxInputFlow_online LHS) ≤ input_cap · ( v_online · x(availability) − red_sd · v_shutdown[p,d,t⁺]
         #                                           − max(0, red_su − red_sd) · v_startup[p,d,t] )
-        #   ∀ rows of maxInputFlow_online with red_sd > 0 and a successor t⁺
+        #   ∀ rows of maxInputFlow_online with red_sd > 0 and a UNIQUE successor t⁺
+        # ─── EQ. ─── maxInputFlow_online_shutdown_branch_{linear,integer} ────
+        # (maxInputFlow_online LHS) ≤ input_cap · ( v_online · x(availability) − red_sd · v_shutdown[p,d⁺,t⁺]
+        #                                           − max(0, red_su − red_sd) · v_startup[p,d,t] )
+        #   ∀ (row of maxInputFlow_online, successor (d⁺,t⁺) of (d,t)) with red_sd > 0, at a (d,t) with several
+        #     successors (a branch point) — split per successor exactly as maxFlow_online_shutdown_branch
+        #     (critique item 1): never summed across mutually-exclusive branches.
         # x(y) = (slope · W(y) + section) / (slope · W(1) + section): the input drawn at output level y per unit of
         #   full-load input (W(y): the output-side fuel width filled up to y, as in p_indirect_input_cap; section
         #   only for min_load_efficiency units).  x(availability) replaces availability: the section is drawn per
@@ -282,7 +338,9 @@ def add_constraints(b: "_Build") -> None:
         #   without a section).
         # red_su = max(0, x(availability) − SU_in), SU_in = min(1, x(min_load) / input_share_max[p,s]
         #   + ½ · ramp_speed_up · 60 · step_duration) from the input node's ramp speeds (red_sd likewise), so a
-        #   started unit can always draw what it needs at min load.
+        #   started unit can always draw what it needs at min load.  (d⁺,t⁺) = a successor whose ramp
+        #   predecessor (dt_ramp_link) is (d,t) — the same period (today's only case) or the next continuing
+        #   period (#98).
         # The online analogue of maxFlow on an indirect unit's input arc: consuming more needs online capacity,
         # and a starting (stopping) unit draws at most its startup (pre-shutdown) share of the input.  The other
         # inputs and the outputs are not adjusted (the per-arc simplification of the input-side floors).
@@ -454,22 +512,28 @@ def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame"
     lhs: dict = {"flow": b.v_flow}
     lhs.update(b.reserve_down_at_source)
     rhs_terms: dict = {"online": rhs}
-    over2 = None
+    over2 = over3 = None
+    row2 = row3 = {}
     if red is not None:
-        row1, row2, over2 = _reduction_terms(red, cap, v_startup, v_shutdown, f"_in{sfx}")
+        row1, row2, over2, over3, row3 = _reduction_terms(red, cap, v_startup, v_shutdown, f"_in{sfx}")
         rhs_terms.update(row1)
     b.m.add_cstr(f"maxInputFlow_online{sfx}", over=over, sense="<=", lhs_terms=lhs, rhs_terms=rhs_terms)
     if over2 is not None and over2.height > 0:
         b.m.add_cstr(f"maxInputFlow_online_shutdown{sfx}", over=over2, sense="<=", lhs_terms=lhs,
                      rhs_terms={"online": rhs, **row2})
+    if over3 is not None and over3.height > 0:
+        b.m.add_cstr(f"maxInputFlow_online_shutdown_branch{sfx}", over=over3, sense="<=", lhs_terms=lhs,
+                     rhs_terms={"online": rhs, **row3})
 
 
 def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *, input_side: bool) -> "pl.DataFrame | None":
     """Startup / shutdown capacity reduction of online arcs ``arcs`` (``p, source, sink``) over dt.
 
-    Returns ``(p, source, sink, d, t, red_su, red_sd, t_next)`` in the dtypes of ``arcs`` / ``d.dt`` (``t_next``
-    Utf8, null where the step has no successor in the same period), only rows with ``red_su > 0`` or (a
-    successor and ``red_sd > 0``); ``None`` when there are none.  See the EQ. header of maxFlow_online:
+    Returns ``(p, source, sink, d, t, red_su, red_sd, d_next, t_next, __nsucc)`` in the dtypes of ``arcs`` /
+    ``d.dt`` (``d_next``, ``t_next`` Utf8, null where the step has no successor; ``__nsucc`` = the number of
+    successors of ``(d, t)``, 0 without one), one row PER SUCCESSOR at a branch point (several rows sharing
+    ``(p, source, sink, d, t)``, critique item 1), only rows with ``red_su > 0`` or (a successor and
+    ``red_sd > 0``); ``None`` when there are none.  See the EQ. header of maxFlow_online:
     ``SU = min(1, ml + ½ · ramp_speed_up · 60 · step_duration)`` over the sides of the arc with an up ramp limit,
     ``red_su = max(0, availability − SU)``; ``SD`` / ``red_sd`` likewise with the down speeds.  ``ml`` is
     ``min_load`` on an output-measured arc (``input_side`` False) and the input the unit draws at min load as a
@@ -540,22 +604,31 @@ def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *, input_side: bool) -> "p
                          red_sd=pl.when(pl.col("t_next").is_not_null())
                          .then((pl.col("__av") - pl.col("__sd")).clip(lower_bound=0.0).fill_null(0.0))
                          .otherwise(0.0))
+           .with_columns(__nsucc=pl.when(pl.col("t_next").is_not_null())
+                         .then(pl.col("t_next").count().over("_p", "_source", "_sink", "_d", "_t"))
+                         .otherwise(0))
            .filter((pl.col("red_su") > 0.0) | (pl.col("red_sd") > 0.0))
-           .select(*keys, "d", "t", "red_su", "red_sd", "t_next")
+           .select(*keys, "d", "t", "red_su", "red_sd", "d_next", "t_next", "__nsucc")
            .collect())
     return out if out.height > 0 else None
 
 
 def _successor_steps(d) -> "pl.LazyFrame":
-    """``(_d, _t, t_next)`` Utf8: the step whose ramp predecessor (dt_ramp_link) is ``(_d, _t)`` in the same period."""
+    """``(_d, _t, d_next, t_next)`` Utf8: every successor ``(d_next, t_next)`` whose ramp predecessor
+    (``dt_ramp_link``) is ``(_d, _t)`` — the same period (today's only case) or the next continuing period
+    (c14c §2.4, item 1 / #98: dropped the ``d_previous == d`` filter so the pre-shutdown limit also applies
+    across a continuing period boundary).  Several rows per predecessor at a branch point (several mid-horizon
+    branches continuing from the same trunk step) — callers must not sum across them (critique item 1): that
+    would let several branches each buy back a whole unit of ramp room from the trunk step instead of each
+    being bound by its own (mutually exclusive) branch."""
     link = getattr(d, "dt_ramp_link", None)
     if link is None or link.height == 0:
-        return pl.LazyFrame(schema={"_d": pl.Utf8, "_t": pl.Utf8, "t_next": pl.Utf8})
+        return pl.LazyFrame(schema={"_d": pl.Utf8, "_t": pl.Utf8, "d_next": pl.Utf8, "t_next": pl.Utf8})
     return (link.lazy()
             .select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
                     pl.col("d_previous").cast(pl.Utf8), pl.col("t_previous").cast(pl.Utf8))
-            .filter(pl.col("d_previous") == pl.col("d"))
-            .select(pl.col("d").alias("_d"), pl.col("t_previous").alias("_t"), pl.col("t").alias("t_next")))
+            .select(pl.col("d_previous").alias("_d"), pl.col("t_previous").alias("_t"),
+                    pl.col("d").alias("d_next"), pl.col("t").alias("t_next")))
 
 
 def _min_load_share(b: "_Build", base: "pl.LazyFrame", *, input_side: bool) -> "pl.LazyFrame":
@@ -674,9 +747,20 @@ def _fuel_share(b: "_Build", levels: "pl.LazyFrame") -> "pl.LazyFrame":
 
 
 def _reduction_terms(red: "pl.DataFrame", kappa: "pl.DataFrame", v_startup, v_shutdown, sfx: str):
-    """RHS terms of the pair maxFlow_online / maxFlow_online_shutdown (or the input pair) from ``red``
-    (:func:`_cap_reduction`) and the arc limit factor ``kappa`` ``(p, source, sink, d, t, value)``: returns
-    ``(terms_row1, terms_row2, over_row2)``."""
+    """RHS terms of maxFlow_online / maxFlow_online_shutdown / maxFlow_online_shutdown_branch (or the input
+    triple) from ``red`` (:func:`_cap_reduction`) and the arc limit factor ``kappa``
+    ``(p, source, sink, d, t, value)``: returns ``(terms_row1, terms_row2, over_row2, over_row3, terms_row3)``.
+
+    Predecessor rows with a UNIQUE successor (``__nsucc <= 1``, the common case — today's structure, byte-
+    unchanged) feed row1 / row2 exactly as before.  Predecessor rows at a branch point (``__nsucc > 1``,
+    several mid-horizon branches continuing from the same trunk step) feed row3 instead: ONE
+    maxFlow_online_shutdown_branch row per (predecessor, successor) pair, never summed across branches
+    (critique item 1 — summing would let several branches each buy back a whole unit of ramp room from the
+    trunk step, instead of each being bound by its own mutually-exclusive scenario).  row1 omits the
+    shutdown_reduction cross-term at a branch point: it bounds the single v_flow[t] variable and cannot itself
+    be split per branch; row3's rows give the tight, correctly-isolated bound there instead (row1 alone, without
+    the cross-term, is still a valid — just looser — bound, so nothing is under-constrained).
+    """
     keys = ["p", "source", "sink", "d", "t"]
     on = [k for k in keys if k in kappa.columns]
     r = (_utf8_keys(red.lazy(), on)
@@ -687,29 +771,54 @@ def _reduction_terms(red: "pl.DataFrame", kappa: "pl.DataFrame", v_startup, v_sh
                        __b=pl.col("__k") * (pl.col("red_sd") - pl.col("red_su")).clip(lower_bound=0.0),
                        __c=pl.col("__k") * pl.col("red_sd"),
                        __e=pl.col("__k") * (pl.col("red_su") - pl.col("red_sd")).clip(lower_bound=0.0)))
-    sd_next = _var_view(v_shutdown, f"__sd_next{sfx}", {"t": "t_next"}, to_axis=True)
-    t_dtype = sd_next.frame.schema["t_next"]
+    r_unique = r.filter(pl.col("__nsucc") <= 1)
+    r_branch = r.filter(pl.col("__nsucc") > 1)
 
-    def _su(col: str):
-        rows = r.filter(pl.col(col) > 0.0)
+    def _su(col: str, rows_df: "pl.DataFrame"):
+        # .unique(): at a branch point rows_df carries one row per successor sharing the same (p,s,k,d,t) and
+        # the same value of ``col`` (it does not depend on which successor) — collapse back to one Param row.
+        rows = rows_df.filter(pl.col(col) > 0.0).select(*keys, value=pl.col(col)).unique()
         if rows.height == 0:
             return None
-        return v_startup * Param(tuple(keys), rows.select(*keys, value=pl.col(col)))
+        return v_startup * Param(tuple(keys), rows)
 
-    def _sd(col: str):
-        rows = r.filter((pl.col(col) > 0.0) & pl.col("t_next").is_not_null())
+    # Renames BOTH d and t (not just t): the unique successor can now be in the next continuing period
+    # (#98), so the view must follow it there — v_shutdown[p, d_next, t_next], not v_shutdown[p, d, t_next].
+    sd_next = _var_view(v_shutdown, f"__sd_next{sfx}", {"d": "d_next", "t": "t_next"}, to_axis=True)
+    d_next_dtype, t_next_dtype = sd_next.frame.schema["d_next"], sd_next.frame.schema["t_next"]
+
+    def _sd_unique(col: str):
+        rows = r_unique.filter((pl.col(col) > 0.0) & pl.col("t_next").is_not_null())
         if rows.height == 0:
             return None
-        coef = Param(tuple(keys) + ("t_next",),
-                     rows.select(*keys, pl.col("t_next").cast(t_dtype), value=pl.col(col)))
-        return Sum(sd_next * coef, over=("t_next",))
+        coef = Param(tuple(keys) + ("d_next", "t_next"),
+                     rows.select(*keys, pl.col("d_next").cast(d_next_dtype), pl.col("t_next").cast(t_next_dtype),
+                                 value=pl.col(col)))
+        return Sum(sd_next * coef, over=("d_next", "t_next"))
 
-    row1 = {k: -v for k, v in (("startup_reduction", _su("__a")), ("shutdown_reduction", _sd("__b")))
+    row1 = {k: -v for k, v in (("startup_reduction", _su("__a", r)), ("shutdown_reduction", _sd_unique("__b")))
             if v is not None}
-    over2 = r.filter((pl.col("red_sd") > 0.0) & pl.col("t_next").is_not_null()).select(keys)
-    row2 = {k: -v for k, v in (("shutdown_reduction", _sd("__c")), ("startup_reduction", _su("__e")))
+    over2 = r_unique.filter((pl.col("red_sd") > 0.0) & pl.col("t_next").is_not_null()).select(keys)
+    row2 = {k: -v for k, v in (("shutdown_reduction", _sd_unique("__c")),
+                               ("startup_reduction", _su("__e", r_unique)))
             if v is not None}
-    return row1, row2, over2
+
+    over3 = r_branch.filter((pl.col("red_sd") > 0.0) & pl.col("t_next").is_not_null()).select(
+        *keys, "d_next", "t_next")
+    row3: dict = {}
+    if over3.height > 0:
+        # over3's own index already carries (d_next, t_next) — one row per (predecessor, successor) pair — so
+        # the shutdown term here is a plain product (no Sum/contraction: each row has exactly one successor).
+        c_rows = r_branch.filter((pl.col("__c") > 0.0) & pl.col("t_next").is_not_null())
+        if c_rows.height > 0:
+            row3["shutdown_reduction"] = -sd_next * Param(
+                tuple(keys) + ("d_next", "t_next"),
+                c_rows.select(*keys, pl.col("d_next").cast(d_next_dtype), pl.col("t_next").cast(t_next_dtype),
+                              value=pl.col("__c")))
+        e_term = _su("__e", r_branch)
+        if e_term is not None:
+            row3["startup_reduction"] = -e_term
+    return row1, row2, over2, over3, row3
 
 
 def _online_mintime_carry_term(carry: "pl.DataFrame | None", idx: "pl.DataFrame") -> "Param | None":

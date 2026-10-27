@@ -958,7 +958,9 @@ def _build_region_data(
     new.p_slope = _filter_param(src.p_slope, "p", keep_procs)
     new.p_process_existing_count = _filter_param(src.p_process_existing_count, "p", keep_procs)
     new.p_process_availability = _filter_param(src.p_process_availability, "p", keep_procs)
-    # Ramp limits: only this region's arcs (dt_ramp_link / dt_ramp_carry are (d, t)-keyed and pass through).
+    # Ramp limits: only this region's arcs (dt_ramp_link / dt_ramp_carry / dt_online_carry are (d, t)-keyed,
+    # process-independent, and pass through; so do process_online / p_roll_continue_online, online sets never
+    # filtered by region — c14c part A).
     for _f in ("process_source_sink_ramp_limit_sink_up", "process_source_sink_ramp_limit_sink_down",
                "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down"):
         setattr(new, _f, _filter_arc_by_proc(getattr(src, _f)))
