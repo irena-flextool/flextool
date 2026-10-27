@@ -82,11 +82,8 @@ def _record(event: dict) -> None:
     if not path:
         return
     line = json.dumps(event, sort_keys=True) + "\n"
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-    try:
-        os.write(fd, line.encode())
-    finally:
-        os.close(fd)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(line)
 
 
 def _stack() -> list[str]:
