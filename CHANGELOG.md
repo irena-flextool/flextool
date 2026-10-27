@@ -1,5 +1,23 @@
 ## Unreleased
 
+- **Investment and retirement totals over a chain of solves now count every earlier solve, not
+  just the capacity still alive.** `invest_max_total` / `retire_max_total` (and the group-level
+  analogues) used to ignore everything a previous solve in the same chain had already built or
+  retired, so a chain of solves could invest past its own cap. `invest_min_total` /
+  `retire_min_total` used to re-impose the full minimum in every solve instead of crediting what
+  earlier solves had already met, and a minimum on a storage node could be silently skipped
+  whenever the matching per-process check had nothing to check first. Both now count the capacity
+  the whole chain has built or retired so far and only require what is left; the minimum is now
+  one requirement per entity (or group) over the whole chain — per scenario branch under
+  stochastic recourse — instead of a repeated per-period check, so it can no longer be satisfied
+  by pooling alternative branches together. An entity or group whose investment/retirement method
+  still needs a per-period or total limit, but is never given one explicitly, now raises a clear
+  configuration error instead of silently capping it at zero; a limit nobody sets at all is
+  unaffected and stays unlimited, as before. The investment/retirement total's shadow-price
+  output is now a single value per entity/group for the whole chain instead of one per period; a
+  group's shadow price under stochastic recourse is no longer available in this output (it never
+  was for the matching per-entity value either).
+
 - **Startups and shutdowns are exact, and the ramp limit of a unit with online variables applies to its
   online capacity.** Startups and shutdowns are now exactly the change in units online: declaring a
   startup or a shutdown that does not match a real change in committed units is no longer possible, and

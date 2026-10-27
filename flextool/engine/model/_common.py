@@ -152,6 +152,45 @@ def leaf_rows(terms: pl.DataFrame, key: str, var: Var, d_leaf: "pl.DataFrame | N
     return True, rows, mask
 
 
+def check_max_cap(over: pl.DataFrame, cap: "pl.DataFrame | None", key: str, has_period: bool,
+                  *, param_name: str) -> None:
+    """Raise ``FlexToolConfigError`` (FA-12) when some row of ``over`` — the rows that would get
+    a ``<=`` cap row, already restricted to entities/groups that have the variable (the #43 /
+    c16a critique #4 scope) — has no matching value in ``cap`` (the sparse Param supplying the
+    RHS).
+
+    A row with no value there does not mean "unlimited": once some OTHER entity/group sets
+    ``param_name``, the RHS column exists, and a row absent from it reads as ``0`` — silently
+    forbidding investment/retirement instead of leaving it unlimited.  A ``cap`` that is entirely
+    ``None`` (nobody sets ``param_name`` at all) is unaffected — callers already skip the whole
+    family in that case (Q2: the outcome stays "no rows / unlimited").
+
+    ``over`` and ``cap`` are joined on ``key`` (plus ``"d"`` when ``has_period``).
+    """
+    if cap is None:
+        return
+    join_keys = [key, "d"] if has_period else [key]
+    missing = (over.select(join_keys).unique()
+               .join(cap.select(join_keys).unique(), on=join_keys, how="anti"))
+    if missing.height == 0:
+        return
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    if has_period:
+        by_key: dict[str, list[str]] = {}
+        for row in missing.sort(join_keys).iter_rows(named=True):
+            by_key.setdefault(str(row[key]), []).append(str(row["d"]))
+        detail = "; ".join(f"{k} (period(s) {', '.join(v)})" for k, v in sorted(by_key.items()))
+    else:
+        detail = ", ".join(sorted({str(x) for x in missing[key].to_list()}))
+    raise FlexToolConfigError(
+        f"{detail}: an investment/retirement cap applies (another entity/group sets "
+        f"{param_name}) but no {param_name} value is given here; a missing value reads as 0, "
+        f"silently forbidding investment/retirement. Give {param_name} a value explicitly "
+        f"(0 forbids it) or give the capping entities/groups their own invest/retire method so "
+        f"this one is not swept in by a shared column."
+    )
+
+
 def _utf8_keys(lf: "pl.LazyFrame", keys) -> "pl.LazyFrame":
     """Add ``_<k>`` Utf8 copies of ``keys`` — join keys that bridge Enum
     vocabulary edges between frames built by different producers."""

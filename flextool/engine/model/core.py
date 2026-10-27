@@ -94,6 +94,7 @@ from flextool.engine.model._common import (
     _utf8_keys,
     _var_view,
     chain_prior,
+    check_max_cap,
     leaf_rows,
     minus_prior,
 )
@@ -2496,22 +2497,24 @@ def _eq_invest_period_caps(b: _Build) -> None:
     # Caps the capacity built or retired in one period for entities with a per-period limit
     # (e.g. invest_method = invest_period_total).  The cap is raw capacity with unitsize on the LHS, as in
     # the other invest caps, so the row dual is in objective units per unit of capacity.
-    for name, active, period_set, var_set, cap, var, axis, kind in (
+    for name, active, period_set, var_set, cap, var, axis, kind, param_name in (
         ("maxInvest_entity_period_p", b.has_invest_p, d.ed_invest_period_set, d.pd_invest_set,
-         d.ed_invest_max_period, b.v_invest_p, "p", "invest"),
+         d.ed_invest_max_period, b.v_invest_p, "p", "invest", "invest_max_period"),
         ("maxInvest_entity_period_n", b.has_invest_n, d.ed_invest_period_set, d.nd_invest_set,
-         d.ed_invest_max_period, b.v_invest_n, "n", "invest"),
+         d.ed_invest_max_period, b.v_invest_n, "n", "invest", "invest_max_period"),
         ("maxDivest_entity_period_p", b.has_divest_p, d.ed_divest_period_set, d.pd_divest_set,
-         d.ed_divest_max_period, b.v_divest_p, "p", "divest"),
+         d.ed_divest_max_period, b.v_divest_p, "p", "divest", "retire_max_period"),
         ("maxDivest_entity_period_n", b.has_divest_n, d.ed_divest_period_set, d.nd_divest_set,
-         d.ed_divest_max_period, b.v_divest_n, "n", "divest"),
+         d.ed_divest_max_period, b.v_divest_n, "n", "divest", "retire_max_period"),
     ):
         if not active or not _has_rows(period_set):
             continue
         over = period_set.pipe(rename_to_axis, {"e": axis}).join(var_set, on=[axis, "d"], how="inner")
         if over.height == 0 or cap is None:
             continue
-        cap_param = Param((axis, "d"), cap.frame.pipe(rename_to_axis, {"e": axis}).select(axis, "d", "value"))
+        cap_frame = cap.frame.pipe(rename_to_axis, {"e": axis})
+        check_max_cap(over, cap_frame, axis, True, param_name=param_name)  # FA-12
+        cap_param = Param((axis, "d"), cap_frame.select(axis, "d", "value"))
         unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
         m.add_cstr(
             name,
@@ -2551,15 +2554,19 @@ def _eq_invest_total_caps(b: _Build) -> None:
     # the variable in this solve (#43).  If a user realizes a period in one solve and invests in it
     # again in a later one, it is counted twice in prior_inv — same as the old (now-removed)
     # max_d(p_entity_previously_invested_capacity) form; no fixture does this.
-    for active, total_set, max_total, axis, var, legacy_name, path_name, label, prior in (
+    for active, total_set, max_total, axis, var, legacy_name, path_name, label, prior, param_name in (
         (b.has_invest_p, d.e_invest_total, d.e_invest_max_total, "p", b.v_invest_p,
-         "maxInvest_entity_total", "maxInvest_entity_total_path", "invest_total", prior_invest),
+         "maxInvest_entity_total", "maxInvest_entity_total_path", "invest_total", prior_invest,
+         "invest_max_total"),
         (b.has_divest_p, d.e_divest_total, d.e_divest_max_total, "p", b.v_divest_p,
-         "maxDivest_entity_total", "maxDivest_entity_total_path", "divest_total", prior_divest),
+         "maxDivest_entity_total", "maxDivest_entity_total_path", "divest_total", prior_divest,
+         "retire_max_total"),
         (b.has_invest_n, d.e_invest_total, d.e_invest_max_total, "n", b.v_invest_n,
-         "maxInvest_entity_total_n", "maxInvest_entity_total_path_n", "invest_total", prior_invest),
+         "maxInvest_entity_total_n", "maxInvest_entity_total_path_n", "invest_total", prior_invest,
+         "invest_max_total"),
         (b.has_divest_n, d.e_divest_total, d.e_divest_max_total, "n", b.v_divest_n,
-         "maxDivest_entity_total_n", "maxDivest_entity_total_path_n", "divest_total", prior_divest),
+         "maxDivest_entity_total_n", "maxDivest_entity_total_path_n", "divest_total", prior_divest,
+         "retire_max_total"),
     ):
         if not active or not _has_rows(total_set) or max_total is None:
             continue
@@ -2567,7 +2574,9 @@ def _eq_invest_total_caps(b: _Build) -> None:
             var.frame.select(axis).unique(), on=axis, how="semi")
         if over_e.height == 0:
             continue
-        cap = Param((axis,), minus_prior(max_total.frame.pipe(rename_to_axis, {"e": axis}), axis, prior))
+        max_total_frame = max_total.frame.pipe(rename_to_axis, {"e": axis})
+        check_max_cap(over_e, max_total_frame, axis, False, param_name=param_name)  # FA-12
+        cap = Param((axis,), minus_prior(max_total_frame, axis, prior))
         unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
         terms = over_e.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
         is_path, over, mask = leaf_rows(terms, axis, var, d_leaf)

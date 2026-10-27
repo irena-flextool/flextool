@@ -22,6 +22,7 @@ from flextool.engine.model._common import (
     _has_rows,
     _var_view,
     chain_prior,
+    check_max_cap,
     group_prior,
     leaf_rows,
     minus_prior,
@@ -380,19 +381,19 @@ def _eq_group_entity_period(b: _Build) -> None:
     # Bounds the capacity a group of entities builds or retires in one period, MW (MWh for storage
     # nodes); processes and storage nodes of a group get separate rows.  Group retire_{max,min}_period is
     # not a schema parameter, so the divest rows are reachable only with off-schema data.
-    for kind, sense, gd_idx, cap, sides in (
+    for kind, sense, gd_idx, cap, sides, param_name in (
         ("invest", "<=", d.gd_invest_period, d.p_group_invest_max_period,
          (("maxInvestGroup_entity_period_p", b.v_invest_p, "p"),
-          ("maxInvestGroup_entity_period_n", b.v_invest_n, "n"))),
+          ("maxInvestGroup_entity_period_n", b.v_invest_n, "n")), "invest_max_period"),
         ("invest", ">=", d.gd_invest_period, d.p_group_invest_min_period,
          (("minInvestGroup_entity_period_p", b.v_invest_p, "p"),
-          ("minInvestGroup_entity_period_n", b.v_invest_n, "n"))),
+          ("minInvestGroup_entity_period_n", b.v_invest_n, "n")), None),
         ("divest", "<=", d.gd_divest_period, d.p_group_retire_max_period,
          (("maxDivestGroup_entity_period_p", b.v_divest_p, "p"),
-          ("maxDivestGroup_entity_period_n", b.v_divest_n, "n"))),
+          ("maxDivestGroup_entity_period_n", b.v_divest_n, "n")), "retire_max_period"),
         ("divest", ">=", d.gd_divest_period, d.p_group_retire_min_period,
          (("minDivestGroup_entity_period_p", b.v_divest_p, "p"),
-          ("minDivestGroup_entity_period_n", b.v_divest_n, "n"))),
+          ("minDivestGroup_entity_period_n", b.v_divest_n, "n")), None),
     ):
         if not _has_rows(gd_idx) or cap is None:
             continue
@@ -407,6 +408,10 @@ def _eq_group_entity_period(b: _Build) -> None:
                      .join(gd_idx, on=["g", "d"], how="inner"))
             if terms.height == 0:
                 continue
+            if sense == "<=":
+                # FA-12, c16a critique #4: only on (g, d) whose members have the variable.
+                check_max_cap(terms.select("g", "d").unique(), cap.frame, "g", True,
+                              param_name=param_name)
             b.m.add_cstr(
                 name,
                 over      = gd_idx,
@@ -440,15 +445,17 @@ def _eq_group_invest_total(b: _Build) -> None:
     #     one branch meet the floor for every branch (Q3, same reason as the entity min side)
     # Changed from per-(g,d) "invested and still alive" rows to one row per group (per leaf);
     # processes and storage nodes of a group get separate rows.
-    for sense, cap, var, axis, legacy_name, path_name, always_path in (
+    for sense, cap, var, axis, legacy_name, path_name, always_path, param_name in (
         ("<=", d.p_group_invest_max_total, b.v_invest_p, "p",
-         "maxInvestGroup_entity_total_p", "maxInvestGroup_entity_total_path_p", False),
+         "maxInvestGroup_entity_total_p", "maxInvestGroup_entity_total_path_p", False,
+         "invest_max_total"),
         ("<=", d.p_group_invest_max_total, b.v_invest_n, "n",
-         "maxInvestGroup_entity_total_n", "maxInvestGroup_entity_total_path_n", False),
+         "maxInvestGroup_entity_total_n", "maxInvestGroup_entity_total_path_n", False,
+         "invest_max_total"),
         (">=", d.p_group_invest_min_total, b.v_invest_p, "p",
-         None, "minInvestGroup_entity_total_path_p", True),
+         None, "minInvestGroup_entity_total_path_p", True, None),
         (">=", d.p_group_invest_min_total, b.v_invest_n, "n",
-         None, "minInvestGroup_entity_total_path_n", True),
+         None, "minInvestGroup_entity_total_path_n", True, None),
     ):
         unitsize = _unitsize(d, axis)
         if cap is None or var is None or unitsize is None:
@@ -460,6 +467,9 @@ def _eq_group_invest_total(b: _Build) -> None:
         terms = members.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
         if terms.height == 0:
             continue
+        if sense == "<=":
+            # FA-12, c16a critique #4: only on g whose members have the variable.
+            check_max_cap(terms.select("g").unique(), cap.frame, "g", False, param_name=param_name)
         cap_g = Param(("g",), minus_prior(cap.frame, "g", group_prior(group_entity, prior, d, axis)))
         is_path, over, mask = leaf_rows(terms, "g", var, d_leaf)
         name = path_name if (always_path or is_path) else legacy_name
@@ -498,15 +508,17 @@ def _eq_group_divest_total(b: _Build) -> None:
     # Bounds the capacity a group retires over the chain; processes and storage nodes of a group
     # get separate rows.  Group retire_{max,min}_total is not a schema parameter, so these rows
     # are reachable only with off-schema data.
-    for sense, cap, var, axis, legacy_name, path_name, always_path in (
+    for sense, cap, var, axis, legacy_name, path_name, always_path, param_name in (
         ("<=", d.p_group_retire_max_total, b.v_divest_p, "p",
-         "maxDivestGroup_entity_total_p", "maxDivestGroup_entity_total_path_p", False),
+         "maxDivestGroup_entity_total_p", "maxDivestGroup_entity_total_path_p", False,
+         "retire_max_total"),
         ("<=", d.p_group_retire_max_total, b.v_divest_n, "n",
-         "maxDivestGroup_entity_total_n", "maxDivestGroup_entity_total_path_n", False),
+         "maxDivestGroup_entity_total_n", "maxDivestGroup_entity_total_path_n", False,
+         "retire_max_total"),
         (">=", d.p_group_retire_min_total, b.v_divest_p, "p",
-         None, "minDivestGroup_entity_total_path_p", True),
+         None, "minDivestGroup_entity_total_path_p", True, None),
         (">=", d.p_group_retire_min_total, b.v_divest_n, "n",
-         None, "minDivestGroup_entity_total_path_n", True),
+         None, "minDivestGroup_entity_total_path_n", True, None),
     ):
         unitsize = _unitsize(d, axis)
         if cap is None or var is None or unitsize is None:
@@ -518,6 +530,9 @@ def _eq_group_divest_total(b: _Build) -> None:
         terms = members.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
         if terms.height == 0:
             continue
+        if sense == "<=":
+            # FA-12, c16a critique #4: only on g whose members have the variable.
+            check_max_cap(terms.select("g").unique(), cap.frame, "g", False, param_name=param_name)
         cap_g = Param(("g",), minus_prior(cap.frame, "g", group_prior(group_entity, prior, d, axis)))
         is_path, over, mask = leaf_rows(terms, "g", var, d_leaf)
         name = path_name if (always_path or is_path) else legacy_name

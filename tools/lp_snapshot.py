@@ -332,6 +332,12 @@ def _patch_stoch_invest_storage(data: dict) -> dict:
                 ["node", "store", "invest_cost", 1.0],
                 ["node", "store", "invest_max_total", 50.0],
                 ["node", "store", "retire_max_total", 10.0],
+                # c16a FA-12 (Q1): "base" is invest_retire_total too but never set its own
+                # retire_max_total; once "store" sets the column, a missing value here would
+                # read as 0 and raise.  Give it the same value explicitly (0 forbids divest,
+                # which is what the fixture already got implicitly before this fix -- keeps
+                # maxDivest_entity_total_path[base,*] byte-identical).
+                ["unit", "base", "retire_max_total", 0.0],
                 ["node", "store", "salvage_value", 0.5],
                 ["node", "store", "discount_rate", 0.05],
                 ["node", "store", "lifetime", 1.0],
