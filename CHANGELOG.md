@@ -11,7 +11,8 @@
   needed to reach its own floor — because the internal ceiling used to default to 0 when nobody
   authored a maximum. It is now unconstrained above (the actual limit, if any, is still enforced
   by the cumulative-capacity constraint itself); an entity that also authors a
-  `cumulative_max_capacity` is unaffected.
+  `cumulative_max_capacity` is unaffected. The same gap also existed on the second (later) solve
+  of a continuation/rolling chain and is fixed there too.
 
 - **Group cumulative capacity limits now subtract a group's process retirements, same as the
   entity-level limit (#29).** A group of units/connections with a cumulative capacity limit

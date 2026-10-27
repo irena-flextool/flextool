@@ -17,8 +17,7 @@ shape — it's already optimal for the per-row access pattern and the
 intricate branching is much easier to verify against the mod source
 when written procedurally.
 
-Byte-for-byte parity with the legacy emitters is the gate; tests live
-in ``tests/engine/test_writer_port_phase1.py``.
+Byte-for-byte parity with the legacy emitters is the gate.
 """
 from __future__ import annotations
 
@@ -575,6 +574,10 @@ def _compute_p_entity_capacity_max_chain(
                                        provider=provider)
     cum_max_cap = _load_ed_value_csv(solve_data_dir / "ed_cumulative_max_capacity.csv",
                                       provider=provider)
+    # c16b review #2 (mirrors `_derived.py` fix 4(b)): entities that author
+    # cumulative_max_capacity at all (any period) — an entity absent here never set the
+    # parameter, as opposed to an authored-but-zero value.
+    cmc_authors = {e for (e, _d) in cum_max_cap}
     invest_max_period = _load_ed_value_csv(
         solve_data_dir / "ed_invest_max_period.csv",
         provider=provider,
@@ -637,7 +640,14 @@ def _compute_p_entity_capacity_max_chain(
                 max_capacity[(e, d)] = 0.0
                 continue
             if (e, d) in invest_cumulative:
-                v = cum_max_cap.get((e, d), 0.0)
+                if e in cmc_authors:
+                    v = cum_max_cap.get((e, d), 0.0)
+                else:
+                    # c16b review #2: a cumulative_limits entity that never authors
+                    # cumulative_max_capacity (e.g. only cumulative_min_capacity, a floor with
+                    # no ceiling) is unconstrained above, not pinned to v_invest = 0 — the floor
+                    # would otherwise be unmeetable.
+                    v = all_existing.get((e, d), 0.0) + p_unc
             else:
                 v = all_existing.get((e, d), 0.0)
                 in_period = (e, d) in invest_period
@@ -675,11 +685,16 @@ def _compute_p_entity_capacity_max_chain(
                 invest_cum_max[(e, d)] = 0.0
                 continue
             if (e, d) in invest_cumulative:
-                v = max(
-                    0.0,
-                    cum_max_cap.get((e, d), 0.0)
-                    - all_existing.get((e, d), 0.0),
-                )
+                if e in cmc_authors:
+                    v = max(
+                        0.0,
+                        cum_max_cap.get((e, d), 0.0)
+                        - all_existing.get((e, d), 0.0),
+                    )
+                else:
+                    # c16b review #2: unconstrained side has no existing-capacity subtraction
+                    # to add back — matches the has_no_limit_method branch below.
+                    v = p_unc
             elif has_no_limit_method:
                 v = p_unc
             else:

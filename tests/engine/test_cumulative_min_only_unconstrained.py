@@ -27,6 +27,9 @@ from pathlib import Path
 
 import pytest
 
+import polars as pl
+
+from flextool.engine.preprocess.emit import _chain_params as cp
 from flextool.engine.preprocess.params import _derived as dp
 from flextool.engine.input._spinedb_reader import SpineDbReader
 
@@ -123,3 +126,77 @@ def test_cumulative_min_only_ceiling_is_unconstrained(min_only_source: SpineDbRe
     # Unmistakably above the authored floor converted to units — proves it is the unconstrained
     # ceiling, not the (small) floor value misread as a ceiling.
     assert wind_units > (MIN_CAPACITY / UNITSIZE) * 10
+
+
+class _FakeProvider:
+    """Minimal stand-in for ``FlexDataProvider.get`` keyed by ``_provider_key``."""
+
+    def __init__(self, frames: dict) -> None:
+        self._frames = frames
+
+    def get(self, key: str) -> pl.DataFrame | None:
+        return self._frames.get(key)
+
+
+def test_chain_params_cumulative_min_only_ceiling_is_unconstrained() -> None:
+    """Mirrors the ``_derived.py`` case above, but for the chain-cluster emitter
+    (``_chain_params._compute_p_entity_capacity_max_chain``) used across a continuation/rolling
+    solve boundary, which carried the exact same pre-fix bug independently (c16b review #2):
+    a ``cumulative_limits`` entity that never authors ``cumulative_max_capacity`` (floor only)
+    used to be pinned to ceiling 0 in ``p_entity_max_units.csv`` AND to 0 investable headroom in
+    ``p_entity_dispatch_capacity_max.csv`` (via ``invest_cum_max``).
+
+    Exercises ``_compute_p_entity_capacity_max_chain`` directly with an in-memory fake Provider
+    (no disk I/O — every read in that function goes through ``provider.get``), so this is
+    independent of the DB-fixture path above.  FAILS against the old code (``mu == 0``,
+    ``icm == 0`` so ``dcm`` carries no headroom beyond ``all_existing``) and PASSES after the fix.
+    """
+    input_dir = Path("input")
+    solve_data_dir = Path("solve_data")
+
+    def k(path: Path) -> str:
+        return cp._provider_key(path)
+
+    frames = {
+        k(input_dir / "entity.csv"): pl.DataFrame({"e": ["wind_plant"]}),
+        k(solve_data_dir / "period_set.csv"): pl.DataFrame({"d": [INVEST_PERIOD]}),
+        k(solve_data_dir / "period_in_use_set.csv"): pl.DataFrame({"d": [INVEST_PERIOD]}),
+        k(solve_data_dir / "p_entity_all_existing.csv"): pl.DataFrame(
+            {"e": ["wind_plant"], "d": [INVEST_PERIOD], "v": [WIND_EXISTING]}
+        ),
+        # No row at all for wind_plant in ed_cumulative_max_capacity.csv: it authors only
+        # cumulative_min_capacity, never cumulative_max_capacity (the floor-only case).
+        k(solve_data_dir / "p_entity_unitsize.csv"): pl.DataFrame(
+            {"e": ["wind_plant"], "v": [UNITSIZE]}
+        ),
+        k(solve_data_dir / "ed_invest_cumulative.csv"): pl.DataFrame(
+            {"e": ["wind_plant"], "d": [INVEST_PERIOD]}
+        ),
+        k(solve_data_dir / "entityInvest.csv"): pl.DataFrame({"e": ["wind_plant"]}),
+    }
+    provider = _FakeProvider(frames)
+
+    mc_rows, mu_rows, icm_rows, dcm_rows = cp._compute_p_entity_capacity_max_chain(
+        input_dir, solve_data_dir, provider=provider,
+    )
+
+    mu_by_ed = {(e, d): v for e, d, v in mu_rows}
+    icm_by_ed = {(e, d): v for e, d, v in icm_rows}
+    dcm_by_ed = {(e, d): v for e, d, v in dcm_rows}
+
+    key = ("wind_plant", INVEST_PERIOD)
+    p_unc = 1_000_000.0  # the default max_flow_for_unconstrained_variables (no override supplied)
+
+    # p_entity_max_units.csv row: before the fix this is 0.0 (ceiling pinned, floor unmeetable).
+    expected_mu = (WIND_EXISTING + p_unc) / UNITSIZE
+    assert mu_by_ed[key] == pytest.approx(expected_mu)
+    assert mu_by_ed[key] > 0.0
+
+    # invest_cum_max (feeds p_entity_dispatch_capacity_max.csv): before the fix this is 0.0
+    # (max(0, 0 - existing)), leaving no investable headroom beyond existing capacity.
+    assert icm_by_ed[key] == pytest.approx(p_unc)
+
+    # p_entity_dispatch_capacity_max.csv row: before the fix this equals WIND_EXISTING exactly
+    # (no headroom); after the fix it carries the unconstrained headroom on top.
+    assert dcm_by_ed[key] == pytest.approx(WIND_EXISTING + p_unc)
+    assert dcm_by_ed[key] > WIND_EXISTING
