@@ -58,6 +58,10 @@ from flextool.engine.input._axis_enums import (
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.preprocess.params._direct import _e_period_param_union
+from flextool.engine.preprocess.params._per_solve_sets import (
+    timeset_duration_lf,
+    timeset_timeline_lf,
+)
 from flextool.engine.input._solve_state import CommissioningLagError, FlexToolConfigError, LineageFilterError
 from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
@@ -635,33 +639,6 @@ def dt_and_step_duration_from_source(
             at_e = cast_frame_axes(at_e, _live)
         pt = pl.concat([pt_e, at_e]).unique().lazy()
 
-    ts_timeline = _try_param(source, "timeset", "timeline")
-    if ts_timeline is None:
-        return None
-    ttl = ts_timeline.lazy().select(pl.col("name").alias("ts"),
-                                      pl.col("value").alias("timeline"))
-
-    ts_dur = _try_param(source, "timeset", "timeset_duration")
-    if ts_dur is None:
-        return None
-    # timeset_duration: name=timeset, <step_col>, value=count.
-    dur_cols = ts_dur.columns
-    step_col = next((c for c in ("t", "x", "step", "timestep")
-                       if c in dur_cols and c != "name" and c != "value"),
-                     None)
-    if step_col is None:
-        return None
-    # ``start_step`` joins against ``tl.t`` which is t-Enum under
-    # activation.  Source columns named "x" / "step" / "timestep" are
-    # not axis-aware synonyms, so we cast explicitly to t-Enum and
-    # alias to "start_step".
-    _live_enums = get_global_axis_enums()
-    blocks = (ts_dur.lazy()
-                    .select(pl.col("name").alias("ts"),
-                            cast_dim(pl.col(step_col), _live_enums, "t")
-                                .alias("start_step"),
-                            pl.col("value").cast(pl.Float64).alias("count")))
-
     tl_dur = _try_param(source, "timeline", "timestep_duration")
     if tl_dur is None:
         return None
@@ -680,6 +657,29 @@ def dt_and_step_duration_from_source(
     # matches t0001 < t0002 < ... in flextool's canonical naming).
     tl = tl.sort(["timeline", "t"]) \
             .with_columns(rank=pl.col("t").cum_count().over("timeline"))
+
+    # ``timeset.timeline`` / ``timeset.timeset_duration``, through the
+    # shared single-timeline defaults (item #171, Rules 2/3 — see
+    # ``_per_solve_sets.timeset_timeline_lf`` / ``timeset_duration_lf``).
+    # ``timesets`` is the set of timesets the active solve's (branch-
+    # broadcast) ``period_timeset`` actually names.
+    timesets = pt.select("ts").unique()
+    ttl = timeset_timeline_lf(source, timesets, tl)
+    if ttl is None:
+        return None
+
+    ts_dur_lf = timeset_duration_lf(source, timesets, tl)
+    if ts_dur_lf is None:
+        return None
+    # ``start_step`` joins against ``tl.t`` which is t-Enum under
+    # activation.  The shared helper returns Utf8; cast explicitly to
+    # t-Enum and alias to "start_step" (caller-side cast, per design).
+    _live_enums = get_global_axis_enums()
+    blocks = ts_dur_lf.select(
+        pl.col("ts"),
+        cast_dim(pl.col("start_step"), _live_enums, "t").alias("start_step"),
+        pl.col("count"),
+    )
 
     # Build (period, ts, timeline, start_step, count) frame, then expand.
     realized_p_with_ts = realized_p.join(pt, on="d", how="inner")
@@ -7280,27 +7280,6 @@ def _dt_period_active_steps(source: "InputSource",
         "d": list(anchor_to_ts.keys()),
         "ts": list(anchor_to_ts.values()),
     })
-    ts_timeline = _try_param(source, "timeset", "timeline")
-    if ts_timeline is None:
-        return None
-    ttl_lf = ts_timeline.lazy().select(pl.col("name").alias("ts"),
-                                          pl.col("value").alias("timeline"))
-    ts_dur = _try_param(source, "timeset", "timeset_duration")
-    if ts_dur is None:
-        return None
-    step_col = next((c for c in ("t", "x", "step", "timestep")
-                      if c in ts_dur.columns and c not in ("name", "value")),
-                     None)
-    if step_col is None:
-        return None
-    # ``start_step`` lives on the ``t`` axis; cast to the canonical Enum
-    # so the downstream join against ``tl_lf`` (whose ``t``/``start_step``
-    # is cast to Enum at line 6204+) doesn't trip on Utf8-vs-Enum.
-    blocks_lf = (ts_dur.lazy()
-                       .select(pl.col("name").alias("ts"),
-                               cast_dim(pl.col(step_col), None, "t")
-                                 .alias("start_step"),
-                               pl.col("value").cast(pl.Int64).alias("count")))
     tl_dur = _try_param(source, "timeline", "timestep_duration")
     if tl_dur is None:
         return None
@@ -7318,6 +7297,27 @@ def _dt_period_active_steps(source: "InputSource",
                     .with_columns(rank=pl.col("t").cum_count()
                                                   .over("timeline")
                                                   .cast(pl.Int64)))
+
+    # ``timeset.timeline`` / ``timeset.timeset_duration``, through the
+    # shared single-timeline defaults (item #171, Rules 2/3 — see
+    # ``_per_solve_sets.timeset_timeline_lf`` / ``timeset_duration_lf``).
+    timesets_lf = pt_lf.select("ts").unique()
+    ttl_lf = timeset_timeline_lf(source, timesets_lf, tl_lf)
+    if ttl_lf is None:
+        return None
+
+    ts_dur_lf = timeset_duration_lf(source, timesets_lf, tl_lf)
+    if ts_dur_lf is None:
+        return None
+    # ``start_step`` lives on the ``t`` axis; cast to the canonical Enum
+    # so the downstream join against ``tl_lf`` (whose ``t``/``start_step``
+    # is cast to Enum at line 6204+) doesn't trip on Utf8-vs-Enum.  The
+    # shared helper returns Utf8/Float64; this caller casts both itself.
+    blocks_lf = ts_dur_lf.select(
+        pl.col("ts"),
+        cast_dim(pl.col("start_step"), None, "t").alias("start_step"),
+        pl.col("count").cast(pl.Int64),
+    )
     # Period order: prefer realized_periods.i ordering when present, else
     # fall back to period_timeset's natural order.  ``period_in_use_set``
     # lists ALL solve periods (realized + non-realized + branch siblings).

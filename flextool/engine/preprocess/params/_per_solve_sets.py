@@ -58,6 +58,8 @@ if TYPE_CHECKING:
 __all__ = [
     "PerSolveAggregates",
     "derive_per_solve_aggregates",
+    "timeset_duration_lf",
+    "timeset_timeline_lf",
 ]
 
 
@@ -165,38 +167,111 @@ def _period_timeset_lf(source: "InputSource", active_solve: str
     return lf
 
 
-def _timeset_duration_lf(source: "InputSource") -> pl.LazyFrame | None:
-    """Lazy ``[ts, start_step, count]`` from ``timeset.timeset_duration``.
+def timeset_duration_lf(
+    source: "InputSource",
+    timesets: pl.LazyFrame,
+    tl_lf: pl.LazyFrame,
+) -> pl.LazyFrame | None:
+    """Lazy ``[ts, start_step, count]`` from ``timeset.timeset_duration``,
+    with the single-timeline "Rule 2" default applied (item #171).
 
     Mirrors the (start, count) Map semantics: each ts has zero or more
     contiguous timestep blocks, each starting at ``start_step`` and
     spanning ``count`` consecutive timesteps in the timeline's lex order.
+
+    **Rule 2 default.** When the *scenario* authors no ``timeset.
+    timeset_duration`` value at all (not merely "none for this timeset" —
+    the guard is scenario-wide, matching ``input/_timeline.py``'s own
+    Rule 2) and ``tl_lf`` names exactly one timeline, every timeset in
+    *timesets* gets a single block covering the whole timeline:
+    ``(first_step, step_count)``.
+
+    ``first_step`` here is the **lexicographic minimum** step of the sole
+    timeline (the same ``t0001 < t0002 < ...`` rank order every DB-side
+    helper uses, see :func:`_expand_active_steps_lf`) — not the timeline's
+    *authored-first* step, which is what ``_timeline.py``'s CSV-side Rule 2
+    uses. Both blocks cover every rank of the timeline, so the *set* of
+    steps the block expands to is identical either way; only the literal
+    ``start_step`` label differs, and no caller reads that label on its
+    own once the block has been expanded to steps.
+
+    Returns ``None`` when *source* has an authored ``timeset.
+    timeset_duration`` with no recognisable step column, or when no value
+    is authored at all and the scenario does not have exactly one
+    timeline (nothing to default to).
     """
     ts_dur = _try_param(source, "timeset", "timeset_duration")
-    if ts_dur is None:
+    if ts_dur is not None:
+        cols = ts_dur.columns
+        step_col = next(
+            (c for c in ("t", "x", "step", "timestep")
+             if c in cols and c not in ("name", "value")),
+            None,
+        )
+        if step_col is None:
+            return None
+        return (ts_dur.lazy()
+                      .select(pl.col("name").cast(pl.Utf8).alias("ts"),
+                              pl.col(step_col).cast(pl.Utf8).alias("start_step"),
+                              pl.col("value").cast(pl.Float64).alias("count")))
+    # Rule 2: no timeset_duration value anywhere in the scenario.
+    tl_sorted = tl_lf.select("timeline", "t").sort("timeline", "t").collect()
+    timeline_names = tl_sorted.select("timeline").unique()
+    if timeline_names.height != 1:
         return None
-    cols = ts_dur.columns
-    step_col = next(
-        (c for c in ("t", "x", "step", "timestep")
-         if c in cols and c not in ("name", "value")),
-        None,
-    )
-    if step_col is None:
-        return None
-    return (ts_dur.lazy()
-                  .select(pl.col("name").alias("ts"),
-                          pl.col(step_col).alias("start_step"),
-                          pl.col("value").cast(pl.Float64).alias("count")))
+    sole_timeline = timeline_names.item(0, "timeline")
+    tl_sole = tl_sorted.filter(pl.col("timeline") == sole_timeline)
+    first_step = str(tl_sole.row(0)[1])
+    step_count = float(tl_sole.height)
+    return (timesets.select(pl.col("ts").cast(pl.Utf8))
+                     .unique()
+                     .with_columns(pl.lit(first_step).alias("start_step"),
+                                   pl.lit(step_count).alias("count")))
 
 
-def _timeset_timeline_lf(source: "InputSource") -> pl.LazyFrame | None:
-    """Lazy ``[ts, timeline]`` from ``timeset.timeline``."""
+def timeset_timeline_lf(
+    source: "InputSource",
+    timesets: pl.LazyFrame,
+    tl_lf: pl.LazyFrame,
+) -> pl.LazyFrame | None:
+    """Lazy ``[ts, timeline]`` from ``timeset.timeline``, with the
+    single-timeline "Rule 3" default applied (item #171).
+
+    **Rule 3 default.** When ``tl_lf`` names exactly one timeline, every
+    timeset in *timesets* that has no authored ``timeset.timeline`` row
+    is mapped to that sole timeline. With several timelines a missing row
+    stays missing — ``_timeline.py``'s CSV-side Rule 3 raises
+    ``FlexToolConfigError`` first in that situation, so this helper does
+    not need to (it is read by DB-side readers only after the CSV path
+    would already have failed loudly for the same model).
+
+    Unlike :func:`timeset_duration_lf`'s Rule 2, this default is applied
+    **per timeset** (a timeset with its own authored row keeps it; only
+    timesets with no row at all are defaulted) — mirroring
+    ``_timeline.py``'s own per-timeset Rule 3 loop.
+
+    Returns ``None`` only when *source* has no ``timeset.timeline``
+    parameter at all AND the scenario does not have exactly one timeline.
+    """
     ts_tl = _try_param(source, "timeset", "timeline")
-    if ts_tl is None:
-        return None
-    return (ts_tl.lazy()
-                 .select(pl.col("name").alias("ts"),
-                         pl.col("value").alias("timeline")))
+    authored = (
+        ts_tl.lazy().select(pl.col("name").cast(pl.Utf8).alias("ts"),
+                             pl.col("value").cast(pl.Utf8).alias("timeline"))
+        if ts_tl is not None
+        else pl.DataFrame(
+            {"ts": [], "timeline": []},
+            schema={"ts": pl.Utf8, "timeline": pl.Utf8},
+        ).lazy()
+    )
+    timeline_names = tl_lf.select("timeline").unique().collect()
+    if timeline_names.height != 1:
+        return authored if ts_tl is not None else None
+    sole_timeline = str(timeline_names.item(0, "timeline"))
+    missing = (timesets.select(pl.col("ts").cast(pl.Utf8))
+                        .unique()
+                        .join(authored, on="ts", how="anti")
+                        .with_columns(pl.lit(sole_timeline).alias("timeline")))
+    return pl.concat([authored, missing]).unique()
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +333,10 @@ def derive_per_solve_aggregates(
       * ``solve.period_timeset`` for *active_solve* is empty (synthetic
         rolling/nested sub-solves whose names aren't in Spine — caller
         falls through to the workdir path);
-      * ``timeset.timeset_duration`` or ``timeset.timeline`` is absent.
+      * ``timeset.timeset_duration`` or ``timeset.timeline`` is absent AND
+        the scenario does not have exactly one timeline (the single-
+        timeline "Rule 2" / "Rule 3" defaults of item #171 — see
+        :func:`timeset_duration_lf` / :func:`timeset_timeline_lf`).
 
     Otherwise returns a fully-populated :class:`PerSolveAggregates`.
 
@@ -270,14 +348,15 @@ def derive_per_solve_aggregates(
     pt_lf = _period_timeset_lf(source, active_solve)
     if pt_lf is None:
         return None
-    ts_dur_lf = _timeset_duration_lf(source)
-    if ts_dur_lf is None:
-        return None
-    ts_tl_lf = _timeset_timeline_lf(source)
-    if ts_tl_lf is None:
-        return None
     tl_lf = _timeline_step_duration_lf(source)
     if tl_lf is None:
+        return None
+    timesets_lf = pt_lf.select("ts").unique()
+    ts_dur_lf = timeset_duration_lf(source, timesets_lf, tl_lf)
+    if ts_dur_lf is None:
+        return None
+    ts_tl_lf = timeset_timeline_lf(source, timesets_lf, tl_lf)
+    if ts_tl_lf is None:
         return None
 
     # Expand to (d, t, timeline, step_duration) at full lazy.

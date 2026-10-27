@@ -454,9 +454,20 @@ class TimelineConfig:
             self.timesets = list(timeset_name)
 
         # Rule 2: No timeset_durations + sole timeline → block the whole
-        # timeline as one timeset_duration entry.
+        # timeline as one timeset_duration entry.  The guard is evaluated
+        # ONCE, before the loop (Q-c25-A's default, item #171): it must
+        # stay scenario-wide ("no timeset_durations anywhere"), not
+        # per-timeset, or the first timeset's assignment flips the guard
+        # false and every later timeset of a multi-timeset, single-
+        # timeline model with no authored durations gets no steps at all
+        # — which contradicts this rule's own docstring ("No
+        # timeset_durations → full-timeline timeset" for every timeset).
+        # This matches the DB-side default
+        # (``_per_solve_sets.timeset_duration_lf``), which gives every
+        # timeset of the solve the whole timeline unconditionally.
+        apply_rule_2 = not self.timeset_durations and len(self.timelines) == 1
         for timeset_name in self.timesets:
-            if not self.timeset_durations and len(self.timelines) == 1:
+            if apply_rule_2:
                 self.timesets__timeline[timeset_name] = list(
                     self.timelines.keys()
                 )[0]

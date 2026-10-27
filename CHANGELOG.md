@@ -19,6 +19,16 @@
   by period) could also have their tier numbers and period names mixed up with each other. Every one
   of these forms is now read correctly; naming a ladder's Map levels explicitly is no longer necessary.
 
+- **A model with a single timeline and no explicit `timeset_duration` now gets its usual
+  "the timeset covers the whole timeline" default reliably.** FlexTool has always defaulted a
+  timeset with no authored duration to the whole (sole) timeline, and a timeset with no authored
+  timeline to that sole timeline, when the model otherwise leaves this unspecified. A model built
+  without these defaults in mind (for example `model_builder.build_model`'s generated models, which
+  never write `timeset_duration` at all) could end up with several of its per-period weighting
+  Params (period-share-of-year, inflation, timestep weighting, branch weighting, profile values)
+  silently missing. Both defaults now apply consistently wherever the model's time structure is
+  read, not only on the legacy CSV-based path.
+
 - **A reused work folder no longer mixes old outputs in.** Running FlexTool twice into the same
   work folder (for example, re-running in the same directory after a failed run or a `--csv-dump`
   run) could mix an earlier run's per-roll output files into the new run's results, producing wrong
