@@ -7,8 +7,9 @@ diverges from what flextool's preprocessing would have produced, this
 helper lets a developer dump both views to disk and ``diff`` them.
 The DB-loaded ``FlexData`` is the in-memory canonical;
 ``dump_csvs(tmpdir)`` materialises that canonical to CSV so a
-side-by-side ``diff -r tmpdir tests/data/work_<fixture>`` surfaces the
-divergence at file granularity.
+side-by-side ``diff -r`` against another dump (for example
+``FlexDataProvider.snapshot_processed_inputs`` of the same solve, or a
+dump from another commit) surfaces the divergence at file granularity.
 
 **Reload.**  The dump is for inspection.  Reloading it is unsupported
 and lives in ``flextool.engine._csv_reload`` (``copy_runner_meta`` +

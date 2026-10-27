@@ -350,6 +350,28 @@ The Provider is the contract. Disk-side CSV mirrors in `solve_data/<solve>/`
 exist only when `csv_dump=True` (a debug toggle) and are not load-bearing
 for any downstream phase.
 
+#### CSV dump (supported) and CSV reload (unsupported)
+
+`--csv-dump` / the GUI "Full" debug level, `FlexData.dump_csvs` and
+`FlexDataProvider.snapshot_processed_inputs` write a CSV dump for inspection. Both writers stamp the folder with
+`_dump_meta.json` (`dump_format`, FlexTool version, schema version, git hash; `preprocess/_dump_stamp.py`). The
+writers are supported; nothing in a run reads a dump back.
+
+Reloading a model from a dump lives only in `flextool/engine/_csv_reload/`: `load_from_dump(dump_dir, *, db_url=None,
+scenario=None, force=False)`, `copy_runner_meta`, and the offline output writer (`python -m
+flextool.engine._csv_reload.offline_outputs`, outputs from an MPS + solution file). It is **unsupported**: it is not
+kept in sync with the engine, it warns on every call, and it refuses a dump without a stamp or with another dump
+format or schema version unless `force=True`. A reloaded model has no solve-to-solve carry and can differ from the
+solved model. Nothing outside the package imports it (`test_csv_reload_is_a_leaf`), and its tests in
+`tests/csv_reload/` run only with `pytest -m csv_reload`. Do not update the package when you change the engine;
+whoever needs the reload brings it up to date first (and then updates `VERIFIED_FLEXTOOL` / `VERIFIED_SCHEMA` in
+`_csv_reload/_stamp.py`).
+
+The offline output writer replaces the removed `python -m flextool.process_outputs.read_highs_solution` and needs
+`--dump`. It currently also needs `--scale` (the solve's `scale_the_objective`): a provider snapshot (`--csv-dump`,
+a run's work folder) carries a header-only `solve_data/scale_the_objective.csv`, because the snapshot writes the
+provider's empty copy over the file the solve wrote.
+
 #### Package map
 
 `flextool/engine/README.md` is the entry point: public API, the pipeline
@@ -369,6 +391,7 @@ model/                The LP: core.py (build_flextool, table of contents +
 solve/                Orchestration (_orchestration.py), sub-solve expansion,
                       solver dispatch, warm start, Benders, SolveHandoff
 output/               Solution → output parquet bundle; CSV dumps
+_csv_reload/           Unsupported, opt-in CSV-dump reload + offline outputs (see "CSV dump … reload")
 autoscale/            Auto-scaling pipeline + YAML audit report
 ```
 
@@ -1011,6 +1034,7 @@ tests/
 ├── engine/               Engine-internal unit tests.
 ├── spinedb_backend/             Backend unit tests.
 ├── model/                       Model-level end-to-end suites.
+├── csv_reload/                  Unsupported CSV reload; run only with -m csv_reload.
 ├── gui/                         GUI startup tests.
 ├── decomposition/               Benders / region-filter tests.
 └── test_*.py                    Top-level unit & integration tests.

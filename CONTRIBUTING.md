@@ -37,6 +37,9 @@ The suite runs across 8 worker processes by default (`-n 8`, via
 `pytest-xdist`). Pass `-n 0` to disable parallelism when you need `-s` / `--pdb`
 for interactive debugging.
 
+Tests of the unsupported CSV reload are deselected by default; run them with
+`pytest -m csv_reload tests/csv_reload/`.
+
 Run a specific test file:
 ```bash
 pytest tests/test_scenarios.py -v
@@ -266,6 +269,7 @@ elif next_version == N:
 - [ ] New `add_var` / `add_cstr` / schema parameter is registered in the autoscale registries (`flextool/engine/autoscale/_layer2_types.py`, `_quantity_types.py`); ran the affected tests with `FLEXTOOL_AUTOSCALE_STRICT=1`. A missing entry silently degrades the solve to an un-scaled LP — see [architecture.md "Numerical scaling"](docs/dev/architecture.md).
 - [ ] Any parameter broadcast over `(d,t)` goes through `_param_shapes` (`resolve_param_shape` / `broadcast_to_period_time` / `promote_param_to_dt`), never column-name axis detection — see [architecture.md "Parameter shapes & (d,t) broadcasting"](docs/dev/architecture.md).
 - [ ] New / changed tests build their DB from JSON or schema under `tmp_path` (no checked-in `.sqlite` dependency).
+- [ ] The CSV dump writers (`dump_csvs`, `snapshot_processed_inputs`) are supported; `flextool/engine/_csv_reload/` (CSV reload, offline outputs) is not kept in sync — do not update it or its `tests/csv_reload/` unless you need the reload, and never import it from outside the package.
 - [ ] A changed heavy `preprocess/emit/` derive is gated by a `tests/engine/test_vectorize_<family>_parity.py` test against a reference implementation (Tier A `.equals` for pure lookup/coalesce families, Tier B `rtol≈1e-12` for many-term sums).
 
 ### Review Process

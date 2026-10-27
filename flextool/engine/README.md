@@ -39,6 +39,7 @@ stochastic), builds each LP with polar_high, solves it and passes results
 | `model/` | The LP: `core.py` plus one module per optional feature |
 | `solve/` | Orchestration, sub-solve expansion, solvers, warm start, Benders, handoff |
 | `output/` | Solution to output parquet files; CSV dumps |
+| `_csv_reload/` | Unsupported, opt-in: reload a model from a CSV dump; offline outputs from MPS + solution. Imports the engine; nothing imports it. |
 | `autoscale/` | LP scaling around the solve |
 
 ## Import direction
@@ -49,6 +50,8 @@ Imports point down the pipeline: solve → model → preprocess → input
 inside functions, `solve/_orchestration`, `solve/_handoff` and
 `output/_dump_csvs`; `input/_timeline.py` imports `preprocess/_provider_io`;
 several modules import `SolveHandoff` from `solve/_handoff` inside functions.
+`_csv_reload/` sits outside the pipeline: it may import any engine module, and no
+module outside it may import it.
 
 ## Finding things
 
