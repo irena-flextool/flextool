@@ -2045,16 +2045,78 @@ def _benders_consume_guard_message(
 
 
 def _bootstrap_dirs(work_folder: Path, logger: logging.Logger) -> None:
-    """Create ``solve_data/``, ``output_raw/``, ``output_plots/`` under
-    *work_folder* if they don't exist.
+    """Create ``solve_data/``, ``output_raw/``, ``output_plots/`` under *work_folder*, clearing
+    THIS run's own output set first (item 163 §4, design_163.md).
 
-    Mirrors lines 63-76 of the flextool reference.
+    A reused work folder's leftover ``output_raw/`` (per-roll parquets, ``_solve_order.txt``,
+    ``manifest.json``) and ``solve_data/`` handoff-mirror files must never leak into this run:
+    ``union_realized_slice.has_persisted_slices`` would union stale per-roll parquets into the fresh
+    run's output, and the mirror writers' own "preserve prior content" checks would mistake a
+    leftover file from an EARLIER run for same-cascade state written by THIS run (design_163.md F6).
+
+    Only the run's own output set is cleared:
+
+    * ``output_raw/`` — ``shutil.rmtree`` + recreate.
+    * The six ``solve_data/`` basenames in
+      :data:`flextool.process_outputs.handoff_writers.MIRROR_FILES` — ``unlink(missing_ok=True)``.
+      Most of those six are written only under ``csv_dump=True`` (design_163.md §11 Q1) and key
+      their own "first write this cascade" logic off the fresh-per-run
+      :class:`~flextool.engine.output._writer.OutputWriterState`, not off disk, so they are
+      already self-resetting; ``period_capacity.csv`` (written every run, unconditionally) and
+      ``p_roll_continue_state.csv`` (whose "preserve prior content" skip has no in-memory guard of
+      its own) are the two that actually depend on this clearing for correctness. Clearing all six
+      is simplest and matches what the module already names for this purpose.
+
+    Nothing else is touched: not ``input/``, not any other ``solve_data/*`` file (dump / debug
+    output the output cascade never reads back, item 163), not ``solver_config/``,
+    ``basis_cache/`` or ``subprocess/``.  This is a no-op for the GUI and Spine Toolbox, which
+    already give each job / execution a fresh work folder; it is the fix for the CLI-in-cwd rerun
+    case, where a stale ``output_raw/`` from a failed or ``--csv-dump`` run used to corrupt the
+    next run's outputs (design_163.md §4).
+
+    A symlinked ``output_raw/`` is refused rather than followed, so the clearing can never reach
+    outside the work folder.
+
+    Mirrors lines 63-76 of the flextool reference, plus the item-163 clearing.
     """
-    for sub in ("solve_data", "output_raw", "output_plots"):
+    from flextool.process_outputs.handoff_writers import MIRROR_FILES
+
+    output_raw = work_folder / "output_raw"
+    if output_raw.is_symlink():
+        raise FlexToolConfigError(
+            "output_raw/ in the work folder is a symlink; FlexTool clears "
+            "it at the start of each run"
+        )
+    removed = 0
+    if output_raw.is_dir():
+        removed += sum(1 for p in output_raw.rglob("*") if p.is_file())
+        shutil.rmtree(output_raw)
+    elif output_raw.exists():
+        # Not a directory, not a symlink (checked above) — an odd leftover
+        # (e.g. a plain file at that path). Clear it the same way.
+        removed += 1
+        output_raw.unlink()
+    output_raw.mkdir(parents=True, exist_ok=True)
+
+    for sub in ("solve_data", "output_plots"):
         try:
             (work_folder / sub).mkdir(parents=True, exist_ok=False)
         except FileExistsError:
             logger.debug(f"{sub} folder existed")
+
+    solve_data = work_folder / "solve_data"
+    for name in MIRROR_FILES:
+        target = solve_data / name
+        if target.exists():
+            removed += 1
+        target.unlink(missing_ok=True)
+
+    if removed:
+        logger.info(
+            f"Removed {removed} files an earlier run left in "
+            f"{work_folder}/output_raw/ and solve_data/ (this run writes "
+            f"them anew)"
+        )
 
 
 def run_orchestration(
@@ -4004,7 +4066,11 @@ def _drive_cascade(
                     csv_dump=getattr(self.state, "csv_dump", False),
                 )
             except Exception as exc:  # noqa: BLE001
-                self.state.logger.warning(
+                # item 163 §3.5 / owner Q3: ERROR, not WARNING — the runner
+                # logger is pinned at ERROR (see RunnerState construction),
+                # so a WARNING here was invisible and a partial/missing
+                # output set went unnoticed. The run still continues.
+                self.state.logger.error(
                     f"write_outputs_for_solve failed for "
                     f"{complete_solve_name}: {exc}"
                 )

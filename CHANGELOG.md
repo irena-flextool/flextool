@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **A reused work folder no longer mixes old outputs in.** Running FlexTool twice into the same
+  work folder (for example, re-running in the same directory after a failed run or a `--csv-dump`
+  run) could mix an earlier run's per-roll output files into the new run's results, producing wrong
+  values or, in some cases, a crash. Every run now starts by clearing its own previous output stash
+  in the work folder (the raw per-roll files and the `--csv-dump` debug mirrors); nothing else there
+  is touched. The GUI and Spine Toolbox already gave each run its own folder, so this only changes
+  behaviour for a command-line run reused in the same directory.
+
 - **`invest_marginal` now shows the dual of an unbuilt entity, and group investment caps/floors
   reach their members.** For a `unit`, `connection` or `node` entity that is eligible to invest but
   not built, `invest_marginal` (and the `unit_invest_marginal__d` / `connection_invest_marginal__d` /
