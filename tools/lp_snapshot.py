@@ -1519,6 +1519,42 @@ def _patch_ladder_ann_depth2(data: dict) -> dict:
                     values=[["commodity", "coal", "price_ladder_annual", ladder]])
 
 
+def _patch_sd_silent(data: dict) -> dict:
+    """coal_wind_ev + west self_discharge_loss = {p2030: 0.1} with index ``x``: west has no storage, so this
+    value must change nothing, and ev_battery keeps its own self_discharge_loss (item 168).  Mirrors the
+    ``sd_silent`` case of tests/engine/test_silent_label_params.py."""
+    return _overlay(data, name="sd_silent", base="coal_wind_ev", values=[
+        ["node", "west", "self_discharge_loss", _pmap({"p2030": 0.1}, index_name="x")]])
+
+
+def _patch_timeline_default(data: dict) -> dict:
+    """base with the 2day timeset's timeset_duration (alternative ``init``) removed: the scenario then has one
+    timeline (y2020) and no ``timeset_duration`` anywhere, so the single-timeline default (item 171) must apply
+    for the DB-side timeline readers to give the same ``dt`` as today's CSV-seeded path."""
+    data = dict(data)
+    data["parameter_values"] = [
+        v for v in data["parameter_values"]
+        if not (v[0] == "timeset" and v[2] == "timeset_duration" and v[4] == "init")]
+    return _overlay(data, name="timeline_default", base="base", values=[])
+
+
+def _patch_ladder_cum_silent(data: dict) -> dict:
+    """coal price_ladder_cumulative with index_name ``x`` on both levels in place of coal_ladder_cumulative's
+    labelled ``tier`` level (item 169)."""
+    def tier(price: float, quantity: float) -> dict:
+        return {"type": "map", "index_type": "str", "rank": 1, "index_name": "x",
+                "data": [["price", price], ["quantity", quantity]]}
+
+    ladder = {"index_type": "str", "rank": 2, "index_name": "x",
+              "data": [["1", tier(20.0, 1.0)], ["2", tier(30.0, 1e30)]]}
+    data["parameter_values"] = [
+        v for v in data["parameter_values"]
+        if not (v[0] == "commodity" and v[1] == "coal" and v[2] == "price_ladder_cumulative"
+                and v[4] == "ladder_cum_on")]
+    return _overlay(data, name="ladder_cum_silent", base="coal_ladder_cumulative",
+                    values=[["commodity", "coal", "price_ladder_cumulative", ladder]])
+
+
 PATCHES: dict[str, Callable[[dict], dict]] = {
     "none": _no_patch,
     "invest_limits": _patch_invest_limits,
@@ -1609,6 +1645,9 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "avail_silent": _patch_avail_silent,
     "varcost_silent": _patch_varcost_silent,
     "ladder_ann_depth2": _patch_ladder_ann_depth2,
+    "sd_silent": _patch_sd_silent,
+    "timeline_default": _patch_timeline_default,
+    "ladder_cum_silent": _patch_ladder_cum_silent,
 }
 
 
@@ -1800,6 +1839,9 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("avail_silent", _T),
     ("varcost_silent", _T),
     ("ladder_ann_depth2", _T),
+    ("sd_silent", _T),
+    ("timeline_default", _T),
+    ("ladder_cum_silent", _T),
 )
 
 FIXTURES: tuple[Fixture, ...] = (
