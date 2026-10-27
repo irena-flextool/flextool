@@ -69,11 +69,35 @@ class OutputWriterState:
 
     Other writer-level scratch state (e.g. solve_progress.csv append
     pointers if ever ported) belongs here too.
+
+    Item 163 (c24) added the four fields below: the handoff-mirror
+    writers in ``process_outputs/handoff_writers.py`` no longer read
+    their own previous CSV back from disk (the sub-solve's work folder
+    is never read on the output path) — when ``prior_handoff`` doesn't
+    carry the value they need (typically the first solve), they fall
+    back to what the PREVIOUS call of the same writer, within this same
+    cascade, stashed here.
+
+    * ``divested`` — :func:`handoff_writers.write_p_entity_divested`'s
+      ``{entity: cumulative_divested}`` from its last call.
+    * ``existing`` / ``invested`` — :func:`handoff_writers.
+      write_p_entity_period_existing_capacity`'s ``{(entity, period):
+      value}`` pair from its last call.
+    * ``mirrors_written`` — basenames (``handoff_writers.MIRROR_FILES``)
+      the "preserve prior content when this solve has nothing new"
+      writers have already written at least once this cascade; replaces
+      the old ``out_path.exists()`` disk check, which a reused work
+      folder (or a leftover file from an earlier run) made unreliable.
     """
 
     # Per-period bare-set; periods accumulated by ``_bump_period_capacity``
     # across the cascade.  Empty initially; grows monotonically.
     periods_already_emitted: set[str] = field(default_factory=set)
+    # Item 163 — handoff-mirror writer scratch (see the class docstring).
+    divested: dict[str, float] = field(default_factory=dict)
+    existing: dict[tuple[str, str], float] = field(default_factory=dict)
+    invested: dict[tuple[str, str], float] = field(default_factory=dict)
+    mirrors_written: set[str] = field(default_factory=set)
 
 
 # ---------------------------------------------------------------------------

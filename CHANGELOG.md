@@ -11,6 +11,12 @@
   *group* of entities is also now correctly spread to its member entities' `invest_marginal`, instead
   of only ever applying to the group itself.
 
+- **Five debug-only `solve_data/` files no longer leak into a normal run's work folder.**
+  `p_entity_divested.csv`, `fix_storage_quantity.csv`, `fix_storage_usage.csv`,
+  `p_roll_continue_state.csv` and `p_entity_period_existing_capacity.csv` are solve-to-solve
+  handoff mirrors that nothing in FlexTool reads back; they are debug output for `--csv-dump` only
+  and are no longer written on an ordinary run. `--csv-dump` still writes all five, unchanged.
+
 - **`--csv-dump` writes the per-solve input dump again.** With
   `--csv-dump` (the GUI's "Full" debug level) each sub-solve's inputs
   were supposed to be dumped to `input/` and `solve_data/` in the work
