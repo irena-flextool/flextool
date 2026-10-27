@@ -3444,66 +3444,25 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
 def _load_varcost(sd: Path, pss: pl.DataFrame | None,
                    *,
                    provider: "object | None" = None) -> dict:
-    """Load process variable-cost (other_operational_cost) sets and Params: the emit seeds.
+    """Load the three per-side variable-cost (other_operational_cost) Params: the emit seeds.
 
-    On every DB path ``_direct.apply_direct_params_b`` replaces all eight fields with the DB-direct
-    per-side Params and the index sets ``_direct.apply_varcost_params`` builds from them (the emit has no
-    period × time tier, #74); a CSV-only load without a DB reader keeps these seeds.
+    On every DB path ``_direct.apply_direct_params_b`` replaces each of the three with its DB-direct Param when
+    the DB authors one (``if v is not None``), then ``_direct.apply_varcost_params`` builds the four index sets
+    and ``p_pssdt_varCost`` from the three (the emit has no period × time tier, #74).  The loader does not seed
+    those five: ``apply_varcost_params`` sets them to None before rebuilding them.  A reader-less CSV reload
+    builds them from these seeds with the same producer (``_csv_reload._field_seeds``).
 
-    The .mod has 4 disjoint sets:
-      pssdt_varCost_noEff       — uses pdtProcess__source__sink__dt_varCost
-      pssdt_varCost_eff_unit_source — uses pdtProcess_source[…,'other_operational_cost']
-      pssdt_varCost_eff_unit_sink   — uses pdtProcess_sink[…,'other_operational_cost']
-      pssdt_varCost_eff_connection  — uses pdtProcess[…,'other_operational_cost']
+      p_pdt_varCost_source  — pdtProcess_source[…,'other_operational_cost']  (p, source, d, t)
+      p_pdt_varCost_sink    — pdtProcess_sink[…,'other_operational_cost']    (p, sink, d, t)
+      p_pdt_varCost_process — pdtProcess[…,'other_operational_cost']         (p, d, t)
     """
     blank = dict(
-        pssdt_varCost_noEff=None,
-        pssdt_varCost_eff_unit_source=None,
-        pssdt_varCost_eff_unit_sink=None,
-        pssdt_varCost_eff_connection=None,
-        p_pssdt_varCost=None,
         p_pdt_varCost_source=None,
         p_pdt_varCost_sink=None,
         p_pdt_varCost_process=None,
     )
     if pss is None:
         return blank
-
-    def _read_pssdt_set(name: str) -> pl.DataFrame | None:
-        f = sd / f"{name}.csv"
-        if not _provider_has(provider, f"solve_data/{name}", f):
-            return None
-        df = _provider_read(provider, f"solve_data/{name}", f)
-        if df.height == 0:
-            return None
-        return df.pipe(rename_to_axis, {"process": "p", "period": "d", "time": "t"}) \
-                 .select("p", "source", "sink", "d", "t")
-
-    pssdt_noEff = _read_pssdt_set("pssdt_varCost_noEff")
-    pssdt_es = _read_pssdt_set("pssdt_varCost_eff_unit_source")
-    pssdt_ek = _read_pssdt_set("pssdt_varCost_eff_unit_sink")
-    pssdt_ec = _read_pssdt_set("pssdt_varCost_eff_connection")
-
-    # Δ.18 — CSV-fallback seed for ``p_pssdt_varCost``.  On every DB path (registered solves,
-    # synthetic sub-solves) ``_direct.apply_varcost_params`` overlays it and
-    # the four index sets above from the DB-direct per-side Params; the seeds serve CSV-only loads
-    # without a DB reader.  Reads ``pdtProcess__source__sink__dt_varCost.csv``
-    # (long: process, source, sink, period, time, value).  Filtering
-    # zero-value rows mirrors the override's "drop zero coefficients" pass.
-    p_pssdt_var = None
-    pssdt_path = sd / "pdtProcess__source__sink__dt_varCost.csv"
-    if _provider_has(provider, "solve_data/pdtProcess__source__sink__dt_varCost", pssdt_path):
-        df = _provider_read(provider, "solve_data/pdtProcess__source__sink__dt_varCost", pssdt_path)
-        if df.height > 0:
-            sliced = (df.pipe(rename_to_axis, {"process": "p", "period": "d", "time": "t"})
-                        .with_columns(value=pl.col("value")
-                                              .cast(pl.Float64, strict=False)
-                                              .fill_null(0.0))
-                        .filter(pl.col("value") != 0.0))
-            if sliced.height > 0:
-                p_pssdt_var = Param(
-                    ("p", "source", "sink", "d", "t"),
-                    sliced.select("p", "source", "sink", "d", "t", "value"))
 
     # pdtProcess_source[p,source,'other_operational_cost',d,t] — wide param file
     def _slice_pds(name: str, side_col: str) -> Param | None:
@@ -3547,11 +3506,6 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None,
                                        sliced.select("p", "d", "t", "value"))
 
     return dict(
-        pssdt_varCost_noEff=pssdt_noEff,
-        pssdt_varCost_eff_unit_source=pssdt_es,
-        pssdt_varCost_eff_unit_sink=pssdt_ek,
-        pssdt_varCost_eff_connection=pssdt_ec,
-        p_pssdt_varCost=p_pssdt_var,
         p_pdt_varCost_source=p_var_src,
         p_pdt_varCost_sink=p_var_sink,
         p_pdt_varCost_process=p_var_proc,

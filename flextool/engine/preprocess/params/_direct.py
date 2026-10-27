@@ -1587,8 +1587,10 @@ def apply_varcost_params(flex_data: object) -> None:
     DB-direct Params: the per-side Params read every shape (scalar, period, time, period × time, stochastic
     time) on every solve type, while the emit seeds have no period × time tier.  The ``(p, s) ∈
     process__source`` / ``(p, k) ∈ process__sink`` gates of the emit follow from the joins (the per-side
-    Params are keyed by the unit's own arcs).  Runs at the end of :func:`apply_direct_params_b`, so on
-    registered solves and synthetic sub-solves alike.  Every set is an eager frame
+    Params are keyed by the unit's own arcs).  :func:`apply_direct_params_b` calls it right after it writes
+    the three per-side Params (later steps there write none of the five fields), so on registered solves and
+    synthetic sub-solves alike; the loader seeds none of the five, and a reader-less CSV reload calls it on
+    the emit seeds of the per-side Params (``_csv_reload._field_seeds``).  Every set is an eager frame
     ``[p, source, sink, d, t]`` sorted by its columns, ``p_pssdt_varCost`` an eager Param sorted the same way;
     an empty result is None (the objective term is skipped).
     """

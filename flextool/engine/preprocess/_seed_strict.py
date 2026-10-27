@@ -35,14 +35,9 @@ __all__ = ["SEED_PRUNE_CANDIDATES", "SeedPoisonError", "arm", "check", "strict_e
 
 _LOG = logging.getLogger(__name__)
 
-#: The 22 fields of design_stage4_rev.md §1 whose DB producer assigns the field on every DB path.
+#: The fields of design_stage4_rev.md §1 whose DB producer assigns the field on every DB path and whose loader
+#: seed is not yet deleted (each deletion commit drops its fields; the five varcost fields went in S4-2).
 SEED_PRUNE_CANDIDATES: tuple[str, ...] = (
-    # varcost: ``apply_varcost_params`` sets the five to None, then rebuilds them.
-    "pssdt_varCost_noEff",
-    "pssdt_varCost_eff_unit_source",
-    "pssdt_varCost_eff_unit_sink",
-    "pssdt_varCost_eff_connection",
-    "p_pssdt_varCost",
     # direct a/b: plain assignments.
     "p_co2_content",
     "e_invest_max_total",

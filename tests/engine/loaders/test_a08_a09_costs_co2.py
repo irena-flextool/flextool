@@ -2,11 +2,15 @@
 loader) tests.
 
 A.8 covers ``flextool.engine.preprocess.flex_data._load_varcost`` — the helper
-that reads up to four ``pssdt_varCost_*.csv`` set files plus three
-wide ``pdt*`` Param files and returns the eight-key dict consumed by
-the cost-emit pass.  Each helper returns ``None`` independently per
-field so a single source-only / sink-only / process-only fixture
-suffices to verify the disjoint-routing contract.
+that reads the three wide ``pdt*`` Param files and returns the three per-side
+variable-cost Params (``p_pdt_varCost_{source,sink,process}``).  Each leg
+returns ``None`` independently, so a single source-only / sink-only /
+process-only fixture suffices to verify the disjoint-routing contract.  The
+four ``pssdt_varCost_*`` index sets and ``p_pssdt_varCost`` are not seeded by
+the loader: the DB overlay builds them (``_direct.apply_varcost_params``,
+``tests/engine/test_varcost_index_sets.py``), and a reader-less CSV reload
+seeds them in ``flextool.engine._csv_reload._field_seeds``; the A8 checks of
+those reads are with the reload hook (``tests/csv_reload/test_dump_seeds.py``).
 
 A.9 covers ``flextool.engine.preprocess.flex_data._load_co2_cap`` — the loader
 behind the per-period CO2-cap constraint family.  Tests focus on the
@@ -52,75 +56,6 @@ def _pss_one_row() -> pl.DataFrame:
 # ====================================================================
 # A.8 — _load_varcost
 # ====================================================================
-
-def test_pssdt_varCost_eff_partitions_disjoint(tmp_path: Path):
-    """Covers A8-pssdt_varCost_eff_unit_source_disjoint
-    + A8-pssdt_varCost_eff_unit_sink_routing
-    + A8-pssdt_varCost_eff_connection_routing.
-
-    Populate all three eff-side ``pssdt_varCost_eff_*`` set files with
-    one row each; leave ``pssdt_varCost_noEff.csv`` absent.  Each
-    ``_read_pssdt_set`` call reads its own file independently so the
-    three sets land on disjoint keys without cross-contamination.
-    """
-    _, sd = _make_dirs(tmp_path)
-    _write(sd / "pssdt_varCost_eff_unit_source.csv",
-           "process,source,sink,period,time\np1,n_src,p1,d1,t1\n")
-    _write(sd / "pssdt_varCost_eff_unit_sink.csv",
-           "process,source,sink,period,time\np1,p1,n_snk,d1,t1\n")
-    _write(sd / "pssdt_varCost_eff_connection.csv",
-           "process,source,sink,period,time\nc1,n1,n2,d1,t1\n")
-
-    out = _load_varcost(sd, _pss_one_row(), provider=provider_from_csv_dirs(solve_data_dir=sd))
-    # Hand-calc: each _read_pssdt_set hits its own file -> height=1 each;
-    # noEff file absent -> None (no cross-fill).
-    assert out["pssdt_varCost_noEff"] is None
-    for k in ("pssdt_varCost_eff_unit_source",
-              "pssdt_varCost_eff_unit_sink",
-              "pssdt_varCost_eff_connection"):
-        df = out[k]
-        assert df is not None and df.height == 1, f"{k} not height=1"
-        assert df.columns == ["p", "source", "sink", "d", "t"]
-    # Spot-check the source-side row keys to confirm no cross-leakage.
-    assert out["pssdt_varCost_eff_unit_source"].row(0) == (
-        "p1", "n_src", "p1", "d1", "t1")
-    assert out["pssdt_varCost_eff_connection"].row(0) == (
-        "c1", "n1", "n2", "d1", "t1")
-
-
-def test_p_pssdt_varCost_drops_zeros_and_returns_none_when_all_zero(
-        tmp_path: Path):
-    """Covers A8-p_pssdt_varCost_drops_zero_rows
-    + A8-p_pssdt_varCost_returns_none_when_all_zero.
-
-    Two passes share the same minimal ``pdtProcess__source__sink__dt_varCost.csv``
-    schema: first with one nonzero + one zero row (zero dropped, Param
-    height=1); second with a single zero row (post-filter height=0 -> None).
-    """
-    _, sd = _make_dirs(tmp_path)
-    # (1) mixed: 2.5 at t1, 0.0 at t2 -> filter drops zero, height=1.
-    _write(sd / "pdtProcess__source__sink__dt_varCost.csv",
-           "process,source,sink,period,time,value\n"
-           "p1,n_src,n_snk,d1,t1,2.5\n"
-           "p1,n_src,n_snk,d1,t2,0.0\n")
-    out1 = _load_varcost(sd, _pss_one_row(), provider=provider_from_csv_dirs(solve_data_dir=sd))
-    # Hand-calc: cast Float64, fill_null(0), filter !=0 -> 1 row at t1=2.5.
-    p = out1["p_pssdt_varCost"]
-    assert p is not None
-    fr = p.frame
-    assert fr.height == 1
-    assert fr["t"][0] == "t1"
-    assert fr["value"][0] == pytest.approx(2.5, rel=1e-7)
-
-    # (2) all-zero: post-filter height=0 -> None (no degenerate Param).
-    _write(sd / "pdtProcess__source__sink__dt_varCost.csv",
-           "process,source,sink,period,time,value\n"
-           "p1,n_src,n_snk,d1,t1,0.0\n")
-    out2 = _load_varcost(sd, _pss_one_row(), provider=provider_from_csv_dirs(solve_data_dir=sd))
-    # Hand-calc: filter !=0 -> height=0 -> the `if sliced.height > 0` gate
-    # never wraps a Param.
-    assert out2["p_pssdt_varCost"] is None
-
 
 def test_pdt_varCost_three_legs_independent(tmp_path: Path):
     """Covers A8-pdt_varCost_source_filters_param_value
@@ -178,21 +113,12 @@ def test_blank_when_pss_none(tmp_path: Path):
     _, sd = _make_dirs(tmp_path)
     # Populate every CSV the live path would consume; the gate must skip
     # ALL of them.
-    _write(sd / "pssdt_varCost_noEff.csv",
-           "process,source,sink,period,time\np1,n_src,n_snk,d1,t1\n")
-    _write(sd / "pdtProcess__source__sink__dt_varCost.csv",
-           "process,source,sink,period,time,value\np1,n_src,n_snk,d1,t1,9.0\n")
     _write(sd / "pdtProcess.csv",
            "process,period,time,param,value\np1,d1,t1,other_operational_cost,9.0\n")
 
     out = _load_varcost(sd, pss=None, provider=provider_from_csv_dirs(solve_data_dir=sd))
-    # Hand-calc: pss is None -> blank dict; all 8 keys present and None.
+    # Hand-calc: pss is None -> blank dict; all 3 keys present and None.
     expected_keys = {
-        "pssdt_varCost_noEff",
-        "pssdt_varCost_eff_unit_source",
-        "pssdt_varCost_eff_unit_sink",
-        "pssdt_varCost_eff_connection",
-        "p_pssdt_varCost",
         "p_pdt_varCost_source",
         "p_pdt_varCost_sink",
         "p_pdt_varCost_process",
