@@ -13,12 +13,11 @@ topology, missing-region defaults).  Asserts the output FlexDatas have:
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import polars as pl
 import pytest
 
 from flextool.engine.model._pdt_join import compute_pss_dt
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.solve._region_filter import (
     discover_regions,
     load_decomposition_method,
@@ -34,10 +33,10 @@ def lh2_run(scenario_run):
 
 
 @pytest.fixture(scope="module")
-def lh2_workdir(lh2_run):
-    """The cascade's work folder: the discovery tests read the snapshot's
-    ``input/p_group_decomposition.csv`` through the helpers' work_dir arm."""
-    return lh2_run.work_folder
+def lh2_provider(lh2_run):
+    """The last sub-solve's provider: the discovery tests read its
+    ``input/p_group_decomposition`` frame (shared with the session cache: read only)."""
+    return lh2_run.last.provider
 
 
 # ---------------------------------------------------------------------------
@@ -46,22 +45,21 @@ def lh2_workdir(lh2_run):
 
 
 class TestDiscovery:
-    def test_load_decomposition_method(self, lh2_workdir) -> None:
-        meth = load_decomposition_method(lh2_workdir)
+    def test_load_decomposition_method(self, lh2_provider) -> None:
+        meth = load_decomposition_method(provider=lh2_provider)
         assert meth == {
             "region_A": "benders_regional",
             "region_B": "benders_regional",
             "region_C": "benders_regional",
         }
 
-    def test_discover_regions(self, lh2_workdir) -> None:
-        regions = discover_regions(lh2_workdir)
+    def test_discover_regions(self, lh2_provider) -> None:
+        regions = discover_regions(provider=lh2_provider)
         assert regions == ["region_A", "region_B", "region_C"]
 
-    def test_load_decomposition_method_missing_file(self, tmp_path: Path) -> None:
-        # Empty work_dir — no input/p_group_decomposition.csv.
-        (tmp_path / "input").mkdir()
-        meth = load_decomposition_method(tmp_path)
+    def test_load_decomposition_method_missing_key(self) -> None:
+        # Empty provider — no input/p_group_decomposition frame.
+        meth = load_decomposition_method(provider=FlexDataProvider())
         assert meth == {}
 
     def test_region_membership_lh2(self, lh2_data) -> None:

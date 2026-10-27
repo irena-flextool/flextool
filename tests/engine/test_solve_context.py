@@ -14,10 +14,10 @@ import pytest
 from flextool.engine.input._input_source import (
     _install_csv_cache,
     _read_csv_file,
-    seed_provider_from_dir,
 )
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess._solve_context import SolveContext
+from tests._support.provider import provider_from_csv_dirs
 
 
 def _seed_workdir_provider(wd: Path) -> FlexDataProvider:
@@ -31,11 +31,10 @@ def _seed_workdir_provider(wd: Path) -> FlexDataProvider:
     test's "empty workdir → empty fields" semantics intact under the
     new strict contract.
     """
-    provider = FlexDataProvider()
-    if (wd / "input").exists():
-        seed_provider_from_dir(provider, wd / "input", "input")
-    if (wd / "solve_data").exists():
-        seed_provider_from_dir(provider, wd / "solve_data", "solve_data")
+    provider = provider_from_csv_dirs(
+        wd / "input" if (wd / "input").is_dir() else None,
+        wd / "solve_data" if (wd / "solve_data").is_dir() else None,
+    )
     # Empty placeholders for the SolveContext lazy carriers — only
     # seeded when the on-disk seed didn't supply them.
     for stem in ("period_in_use_set", "period__branch", "edd_history",

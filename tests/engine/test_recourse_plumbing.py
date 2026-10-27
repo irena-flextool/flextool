@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess.params._derived import (
     _has_branch_invest_axis,
     _recourse_invest_active,
@@ -16,6 +17,7 @@ from flextool.engine.preprocess.params._derived import (
 from flextool.engine.preprocess.emit._solve_writers import (
     emit_stochastic_invest_method,
 )
+from tests._support.provider import provider_from_csv_dirs
 
 
 CSV = "solve_data/stochastic_invest_method.csv"
@@ -28,19 +30,13 @@ def _write(workdir, text: str) -> None:
 
 
 def _seeded_provider(workdir):
-    """Provider seeded from ``workdir/solve_data`` — mirrors the cascade,
-    which reads the flag exclusively from the Provider (never disk).  On
-    the real run/reload paths ``load_flextool`` seeds the Provider the
-    same way before the reader runs.
+    """Provider holding the CSVs of ``workdir/solve_data`` — the cascade
+    reads the flag exclusively from the sub-solve's Provider (never disk),
+    where the run-model emit puts it (see
+    ``test_emit_read_roundtrip_provider``).
     """
-    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-    from flextool.engine.input._input_source import seed_provider_from_dir
-
-    prov = FlexDataProvider()
     sd = workdir / "solve_data"
-    if sd.exists():
-        seed_provider_from_dir(prov, sd, "solve_data")
-    return prov
+    return provider_from_csv_dirs(solve_data_dir=sd if sd.is_dir() else None)
 
 
 # ---------------------------------------------------------------------------
@@ -66,14 +62,14 @@ def test_recourse_active_absent_csv_false(tmp_path):
         tmp_path, provider=_seeded_provider(tmp_path)) is False
 
 
-def test_recourse_active_no_provider_false(tmp_path):
-    # No Provider → no key → byte-parity-safe default (never touches disk).
+def test_recourse_active_reads_provider_not_disk(tmp_path):
+    # The flag CSV on disk, an empty Provider → no key → default False (never touches disk).
     _write(tmp_path, "method\nrecourse\n")
-    assert _recourse_invest_active(tmp_path) is False
+    assert _recourse_invest_active(tmp_path, provider=FlexDataProvider()) is False
 
 
 def test_recourse_active_workdir_none_false():
-    assert _recourse_invest_active(None) is False
+    assert _recourse_invest_active(None, provider=FlexDataProvider()) is False
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +78,6 @@ def test_recourse_active_workdir_none_false():
 
 
 def test_emit_read_roundtrip_provider(tmp_path):
-    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-
     prov = FlexDataProvider()
     emit_stochastic_invest_method(
         "recourse", str(tmp_path / CSV), provider=prov)

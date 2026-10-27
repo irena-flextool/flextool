@@ -8,6 +8,8 @@ instead of re-reading the writer-produced CSVs.  This module verifies:
   → reader-side ``SolveContext`` attribute access).
 * A missing carrier raises :class:`FlexDataError` with an informative
   message naming the carrier.
+* The loaders never read a CSV on disk; an empty carrier yields a typed
+  empty frame.
 
 The tests build minimal in-memory frames matching each carrier's
 canonical schema and seed them via :meth:`FlexDataProvider.put` under
@@ -234,27 +236,31 @@ def test_solve_context_missing_carrier_raises(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# D) Legacy disk path still works when provider is None.
+# D) The loaders read only the Provider: a CSV on disk is never read.
 # ---------------------------------------------------------------------------
 
 
-def test_loader_disk_path_when_provider_is_none(tmp_path):
-    """The legacy disk-fallback path remains when ``provider=None`` —
-    this is the test-only contract that goes away with Phase 4."""
+def test_loader_ignores_csv_on_disk(tmp_path):
+    """A ``period_in_use_set.csv`` on disk beside the Provider is not read:
+    the frame comes from the Provider's carrier."""
     workdir = tmp_path / "wd"
     sd = workdir / "solve_data"
     sd.mkdir(parents=True)
-    pl.DataFrame({"period": ["d2025"]}).write_csv(sd / "period_in_use_set.csv")
-    out = _load_period_in_use(sd / "period_in_use_set.csv", provider=None)
+    pl.DataFrame({"period": ["d2030"]}).write_csv(sd / "period_in_use_set.csv")
+    provider = FlexDataProvider()
+    _seed(provider, "period_in_use_set", pl.DataFrame({"period": ["d2025"]}))
+    out = _load_period_in_use(sd / "period_in_use_set.csv", provider=provider)
     assert out.columns == ["d"]
     assert out["d"].to_list() == ["d2025"]
 
 
-def test_loader_disk_path_missing_file_returns_empty(tmp_path):
-    """Disk path — missing file yields a typed empty frame (legacy
-    contract, retained for the ``provider=None`` test path)."""
+def test_loader_empty_carrier_returns_empty(tmp_path):
+    """A carrier present in the Provider with no rows yields a typed empty
+    ``[d]`` frame (a missing carrier raises, see B)."""
+    provider = FlexDataProvider()
+    _seed(provider, "period_in_use_set", pl.DataFrame(schema={"period": pl.Utf8}))
     out = _load_period_in_use(
-        tmp_path / "no_such_file.csv", provider=None,
+        tmp_path / "solve_data" / "period_in_use_set.csv", provider=provider,
     )
     assert out.height == 0
     assert out.columns == ["d"]
