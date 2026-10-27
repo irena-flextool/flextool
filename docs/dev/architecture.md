@@ -362,7 +362,8 @@ scenario=None, force=False)`, `copy_runner_meta`, and the offline output writer 
 flextool.engine._csv_reload.offline_outputs`, outputs from an MPS + solution file). It is **unsupported**: it is not
 kept in sync with the engine, it warns on every call, and it refuses a dump without a stamp or with another dump
 format or schema version unless `force=True`. A reloaded model has no solve-to-solve carry and can differ from the
-solved model. Nothing outside the package imports it (`test_csv_reload_is_a_leaf`), and its tests in
+solved model. The stamp does not detect leftover CSVs from earlier runs in a reused folder (the CLI work folder
+defaults to the current directory and is never cleaned), so reload only from a folder that holds a single dump. Nothing outside the package imports it (`test_csv_reload_is_a_leaf`), and its tests in
 `tests/csv_reload/` run only with `pytest -m csv_reload`. Do not update the package when you change the engine;
 whoever needs the reload brings it up to date first (and then updates `VERIFIED_FLEXTOOL` / `VERIFIED_SCHEMA` in
 `_csv_reload/_stamp.py`).
