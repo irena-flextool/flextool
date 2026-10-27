@@ -54,6 +54,7 @@ from polar_high import Param
 
 from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.preprocess._dump_stamp import write_dump_stamp
 
 if TYPE_CHECKING:
     from flextool.engine.preprocess.flex_data import FlexData
@@ -418,6 +419,8 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
     if copy_meta_from is not None:
         _copy_meta(Path(copy_meta_from), work)
 
+    # ─── Dump format stamp (``_dump_meta.json``; never raises) ────────
+    write_dump_stamp(work, writer="dump_csvs")
     return work
 
 

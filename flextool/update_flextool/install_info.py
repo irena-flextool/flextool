@@ -132,8 +132,11 @@ def upgrade_steps(include_toolbox: bool) -> tuple[list[list[str]], Path | None]:
 
 
 def _git(root: Path, *args: str, timeout: float = 10.0) -> subprocess.CompletedProcess:
+    # On Windows a GUI process (no console) would flash a console window for every git call.
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     return subprocess.run(
-        ["git", *args], cwd=root, timeout=timeout, capture_output=True, text=True
+        ["git", *args], cwd=root, timeout=timeout, capture_output=True, text=True,
+        creationflags=flags,
     )
 
 
@@ -143,6 +146,17 @@ def current_branch(root: Path) -> str | None:
         result = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
         name = result.stdout.strip()
         return name if result.returncode == 0 and name and name != "HEAD" else None
+    except Exception:
+        return None
+
+
+def current_commit(root: Path) -> str | None:
+    """Abbreviated commit of the checkout (8+ hex digits, ``-dirty`` suffix when tracked files have uncommitted
+    changes), or ``None`` on any error."""
+    try:
+        result = _git(root, "describe", "--always", "--dirty", "--abbrev=8", "--exclude=*", timeout=5.0)
+        name = result.stdout.strip()
+        return name if result.returncode == 0 and name else None
     except Exception:
         return None
 

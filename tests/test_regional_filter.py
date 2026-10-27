@@ -126,7 +126,7 @@ def _region_dir_from_provider(
             flat.put(key.split("/", 1)[1], frame)
         else:
             flat.put(key, frame)
-    flat.snapshot_processed_inputs(out)
+    flat.snapshot_processed_inputs(out, stamp=False)  # as write_input_for_region: an export, not a dump
     return out, result
 
 

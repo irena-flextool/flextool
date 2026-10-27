@@ -53,6 +53,8 @@ from typing import Any, Iterable, Iterator
 
 import polars as pl
 
+from flextool.engine.preprocess._dump_stamp import write_dump_stamp
+
 
 class EvictedFrameError(KeyError):
     """Raised by :meth:`FlexDataProvider.get` when *name* has been
@@ -460,12 +462,17 @@ class FlexDataProvider:
         """
         pass
 
-    def snapshot_processed_inputs(self, work_folder: Path) -> None:
+    def snapshot_processed_inputs(self, work_folder: Path, *, stamp: bool = True) -> None:
         """Write every stored frame to ``work_folder/{name}.csv``.
 
         Bare-keyed frames go directly under *work_folder*; parent-qualified
         keys (``"solve_data/foo"``) materialise into subdirectories
         (``work_folder/solve_data/foo.csv``).
+
+        With ``stamp=True`` (a CSV dump) the folder also gets the dump
+        format stamp ``_dump_meta.json`` (:mod:`._dump_stamp`).  Pass
+        ``stamp=False`` when the folder is not a dump (the region-input
+        CLI export).
         """
         work_folder = Path(work_folder)
         work_folder.mkdir(parents=True, exist_ok=True)
@@ -473,6 +480,8 @@ class FlexDataProvider:
             target = work_folder / f"{name}.csv"
             target.parent.mkdir(parents=True, exist_ok=True)
             frame.write_csv(target)
+        if stamp:
+            write_dump_stamp(work_folder, writer="snapshot_processed_inputs")
 
 
 __all__ = ["FlexDataProvider"]

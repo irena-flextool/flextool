@@ -114,7 +114,8 @@ def write_input_for_region(
         else:
             # Non-input frames stay under their qualified parent.
             flat_provider.put(key, frame)
-    flat_provider.snapshot_processed_inputs(output_dir)
+    # ``stamp=False``: the region directory is a CLI export, not a CSV dump.
+    flat_provider.snapshot_processed_inputs(output_dir, stamp=False)
 
     # 5. Write the coupling manifest.  Routes through the Provider for
     # symmetry with the rest of the pipeline; the snapshot lands at
@@ -124,5 +125,6 @@ def write_input_for_region(
         manifest_provider,
         results=[result],
     )
-    manifest_provider.snapshot_processed_inputs(wf)
+    # ``stamp=False``: one manifest file into the run's work folder root, not a CSV dump.
+    manifest_provider.snapshot_processed_inputs(wf, stamp=False)
     return result
