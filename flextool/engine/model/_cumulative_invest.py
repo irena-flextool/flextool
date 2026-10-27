@@ -93,9 +93,14 @@ def _group_flow(b: _Build) -> Expr | None:
     """Net flow into each flow group, MW, indexed (g, d, t); None when no group sees a flow.
 
     F[g,d,t] = Σ_{(p,s,k,n) ∈ flow_to_n, (g,p,n) ∈ gpn} v_flow[p,s,k,d,t] · unitsize[p]
-             − Σ_{(p,s,k,n) ∈ flow_from_n ∩ pss_eff, (g,p,n) ∈ gpn} v_flow[p,s,k,d,t] · unitsize[p] · slope[p,d,t]
+             − Σ_{(p,s,k,n) ∈ flow_from_n ∩ pss_eff, (g,p,n) ∈ gpn}
+                 (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t]
+                  + v_online[p,d,t]·section[p,d,t]·unitsize[p])   [min_load_efficiency units only]
              − Σ_{(p,s,k,n) ∈ flow_from_n ∩ pss_noEff, (g,p,n) ∈ gpn} v_flow[p,s,k,d,t] · unitsize[p]
       gpn = group_process_node;  flow_to_n / flow_from_n carry the sink / source node as n
+    The eff-source term is the same fuel measure as ``nodeBalance_eq`` and the CO2/commodity cost
+    terms (``_eff_fuel_input``): eff sources carry no ``conversion_flow_coeff``, and a
+    min_load_efficiency unit's section fuel (the units online, linear or integer) is drawn too.
     """
     d, v_flow = b.d, b.v_flow
     gpn = d.group_process_node
@@ -110,7 +115,10 @@ def _group_flow(b: _Build) -> Expr | None:
         arcs = (d.flow_from_n.join(d.process_source_sink_eff, on=["p", "source", "sink"], how="inner")
                 .join(gpn, on=["p", "n"], how="inner"))
         if arcs.height > 0:
-            parts.append(-Sum(Where(v_flow * d.p_unitsize * d.p_slope, arcs), over=("p", "source", "sink", "n")))
+            from flextool.engine.model.core import _eff_fuel_input
+
+            for _key, term in _eff_fuel_input(b, arcs):
+                parts.append(-Sum(term, over=("p", "source", "sink", "n")))
     if d.process_source_sink_noEff is not None and _has_rows(d.flow_from_n):
         arcs = (d.flow_from_n.join(d.process_source_sink_noEff, on=["p", "source", "sink"], how="inner")
                 .join(gpn, on=["p", "n"], how="inner"))
@@ -720,9 +728,7 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
     # under/over-count its hours.  Under recourse each scenario path gets its own row (_path, one
     # per (g, leaf), leaf_rows): a plain per-group row, summed across branches, would let one
     # branch's surplus cover another's deficit.  Constraints carry no stochastic branch weight —
-    # each branch must respect the limit on its own, unlike the objective (owner decision).  Eff
-    # source flows carry the slope but no conversion_flow_coeff, and the min-load section input
-    # is not counted (known limitation).
+    # each branch must respect the limit on its own, unlike the objective (owner decision).
     for name, sense, cap in caps:
         terms = cap.frame.select("g").unique().join(dt_periods, how="cross").select("g", "d")
         is_path, over, mask = leaf_rows(terms, "g", b.v_flow, d_leaf)

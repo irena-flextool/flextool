@@ -1,8 +1,12 @@
-"""Flow-group cumulative flow limits weight their steps like every other operational measure.
+"""Flow-group cumulative flow limits weight their steps like every other operational measure, and
+the flow-group's net flow counts the fuel a min_load_efficiency unit draws for the units online.
 
 Before: ``{max,min}Cumulative_flow_period`` (and ``_solve``) weighted a step by its
 ``step_duration`` only — a representative-period's ``timestep_weight`` dropped out, so a
-half-weight step and a full-weight step counted the same.
+half-weight step and a full-weight step counted the same.  The flow group's net flow
+(``_group_flow``) also measured only ``v_flow·slope`` on eff sources, leaving out the
+``v_online·section`` fuel a ``min_load_efficiency`` unit draws while idling at partial load — the
+same term ``nodeBalance_eq``, the CO2 price and the CO2 caps already count (``_eff_fuel_input``).
 
 Under recourse (stochastic branches), the owner decision is that a constraint carries no shared
 branch weight: each scenario path must respect the cumulative-flow-over-the-solve limit on its
@@ -10,9 +14,9 @@ own, so ``{max,min}Cumulative_flow_solve`` gains a ``_path`` row per (group, lea
 row that lets one branch's surplus flow cover another branch's deficit.
 
 Fixtures: ``tests.json`` + the ``weighted_2day`` timestep-weight override, a ``flowGroup`` over
-``coal_plant``'s fuel arc from ``coal_market`` (test 1, built from JSON);
+``coal_plant``'s fuel arc from ``coal_market`` (tests 1/2, built from JSON);
 ``stoch_two_period_hedge.json``'s fan-at-p2035 recourse topology (``base``/``stoch``/``ws``/
-``na_window``/``divest``) + a ``flowGroup`` over ``base``'s output arc (test 2).
+``na_window``/``divest``) + a ``flowGroup`` over ``base``'s output arc (test 3).
 """
 from __future__ import annotations
 
@@ -90,6 +94,32 @@ def test_cumulative_flow_weights_timestep_weight(tmp_path_factory) -> None:
         for t in dts)
     lower, _upper = row_bounds(pb, "minCumulative_flow_period")[row]
     assert lower == pytest.approx(cap * weighted_hours, rel=1e-9)
+
+
+def test_group_flow_counts_minload_section(tmp_path_factory) -> None:
+    """The same row's ``v_online_linear[coal_plant,d,t]`` coefficient (the section fuel a
+    min_load_efficiency unit draws while online) stands in the fixed ratio ``section/slope`` to
+    the ``v_flow`` coefficient of the same step — the fuel-draw measure ``_group_flow`` must share
+    with ``nodeBalance_eq``.  Before the fix ``v_online`` was absent from the row entirely.
+    """
+    pmap = {"index_type": "str", "index_name": "period", "data": [["p2020", -50.0]]}
+    step = _flow_group_step(
+        tmp_path_factory, "flow_minload_section",
+        [["flowGroup", GROUP, "min_cumulative_flow", b64(pmap, "map")]])
+    fd = step.flex_data
+    pb = build(fd)
+    terms = row_terms(pb, "minCumulative_flow_period")[f"minCumulative_flow_period[{GROUP},p2020]"]
+
+    seen = 0
+    for t in utf8(fd.dt).filter(pl.col("d") == "p2020")["t"].to_list():
+        on_col = f"v_online_linear[{PLANT},p2020,{t}]"
+        flow_col = f"v_flow[{PLANT},coal_market,west,p2020,{t}]"
+        assert on_col in terms, on_col
+        section = _value(fd.p_section, p=PLANT, d="p2020", t=t)
+        slope = _value(fd.p_slope, p=PLANT, d="p2020", t=t)
+        assert terms[on_col] / terms[flow_col] == pytest.approx(section / slope, rel=1e-9)
+        seen += 1
+    assert seen > 0
 
 
 def test_cumulative_flow_solve_gets_one_row_per_scenario_path(tmp_path_factory) -> None:

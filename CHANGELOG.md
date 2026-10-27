@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **A flow group's net flow now counts the fuel a min-load-efficient unit draws while online,
+  not only the fuel its output flow implies.** `flowGroup`-based flow limits (cumulative-over-
+  the-solve, cumulative-per-period and instantaneous) used to measure a flow group's net flow as
+  output flow times slope only; a unit with a minimum-load efficiency curve also draws a fixed
+  "section" fuel proportional to the capacity online, which the node balance, the CO2 price and
+  the CO2 caps already count but the flow-group limits did not. The limits now use the same fuel
+  measure throughout.
+
 - **Flow-group cumulative flow limits now weight each time step the same way every operational
   cost does, instead of by its duration alone.** `max_cumulative_flow` / `min_cumulative_flow`
   (per period and over the whole solve) used to multiply a step's net flow by its duration only;
