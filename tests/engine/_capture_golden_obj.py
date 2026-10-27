@@ -33,7 +33,7 @@ for p in (str(ROOT), str(TESTS), str(HERE)):
 
 from polar_high import Problem  # noqa: E402  # imports after sys.path manipulation above
 from flextool.engine import build_flextool  # noqa: E402  # imports after sys.path manipulation above
-from flextool.update_flextool.db_migration import migrate_database  # noqa: E402  # imports after sys.path manipulation above
+from flextool.update_flextool.db_migration import migrate_database  # noqa: E402  # after the sys.path setup above
 
 from _golden import write_golden  # noqa: E402  # imports after sys.path manipulation above
 from db_utils import json_to_db  # noqa: E402  # imports after sys.path manipulation above

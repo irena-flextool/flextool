@@ -27,6 +27,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
+from tests._support.fields import field_diff
 from tests._support.load import ScenarioRun, clone_provider, load_scenario
 
 from .conftest import drop_frame, put_frame
@@ -148,7 +149,13 @@ def test_ramp_directions_independent(ramp_run):
         "coal_plant"]
     assert data.process_source_sink_ramp_limit_sink_down is None
     assert data.process_source_sink_ramp_limit_source_up is None
-    # sink_up is the DB's own ramp arc (unchanged by the overlay).
-    assert data.process_source_sink_ramp_limit_sink_up["p"].to_list() == ["coal_plant"]
+    # The three directions the overlay did not populate equal the un-overlaid
+    # load whole (every column, every row): sink_up is the DB's own ramp arc,
+    # so a cross-fill of the source_down row into sink_up (same p, other
+    # source/sink) fails here.
+    for dirn in ("sink_up", "sink_down", "source_up"):
+        field = f"process_source_sink_ramp_limit_{dirn}"
+        assert field_diff(getattr(data, field), getattr(run.last_flex_data, field)) is None, field
+    assert data.process_source_sink_ramp_limit_sink_up.height == 1
     # The overlay is consumed: the un-overlaid load has no source_down set.
     assert run.last_flex_data.process_source_sink_ramp_limit_source_down is None

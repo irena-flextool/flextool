@@ -149,13 +149,18 @@ def test_enum_provider_needs_axis_enums_flag(scenario_run):
 
 
 def _same_field(a, b) -> bool:
+    """Exact equality of two FlexData field values.  A dataclass value (``block_layout``) is compared field by
+    field; a value of any other type raises, so a new field type is never compared by type alone."""
     if isinstance(a, Param) and isinstance(b, Param):
         return a.dims == b.dims and a.frame.schema == b.frame.schema and a.frame.equals(b.frame)
     if isinstance(a, pl.DataFrame) and isinstance(b, pl.DataFrame):
         return a.schema == b.schema and a.equals(b)
-    if a is None or b is None or isinstance(a, (bool, int, float, str)):
+    if a is None or b is None or isinstance(a, (bool, int, float, str, dict, list, tuple, set, frozenset)):
         return a == b
-    return type(a) is type(b)
+    if dataclasses.is_dataclass(a) and not isinstance(a, type):
+        return type(a) is type(b) and all(
+            _same_field(getattr(a, f.name), getattr(b, f.name)) for f in dataclasses.fields(a))
+    raise TypeError(f"_same_field: no comparison for {type(a).__name__}")
 
 
 def test_saved_provider_round_trips_and_loads_like_load_scenario(scenario_run, tmp_path):
@@ -184,6 +189,7 @@ def test_saved_provider_round_trips_and_loads_like_load_scenario(scenario_run, t
         if not _same_field(getattr(direct, f.name), getattr(via_saved, f.name))
     ]
     assert differing == []
+    assert direct.block_layout is not None  # compared field by field above, not by type alone
     assert via_saved._axis_enums is None
     assert list(load_folder.iterdir()) == []
 

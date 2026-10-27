@@ -1226,10 +1226,11 @@ def _run_keeping_workdir(tmp_path_factory, url: str, scen: str) -> tuple[list, P
 @pytest.mark.parametrize("chain", ["single", "sequence"])
 def test_rebuild_from_the_post_solve_provider_is_the_solved_lp(tmp_path_factory, chain):
     """After a solve the Provider keeps the carriers the solve consumed (``handoff/*``) and exposes its own end state
-    beside them (``produced_handoff/*``).  ``load_flextool(<empty folder>, provider=<post-solve provider>, db_reader=…)``
-    (no ``handoff=``) then rebuilds the last solve's LP: the same carry (none in a single solve, which starts from
-    fix_start 0.1·50 = 5 MWh; the previous solve's realised end in the 4-solve sequence) and the same optimum; the csv
-    dump holds the same carry in ``handoff/roll_end_state.csv`` and the solve's own end in ``produced_handoff/roll_end_state.csv``.  Before, the
+    beside them (``produced_handoff/*``).
+    ``load_flextool(<empty folder>, provider=<post-solve provider>, db_reader=…)`` (no ``handoff=``) then rebuilds the
+    last solve's LP: the same carry (none in a single solve, which starts from fix_start 0.1·50 = 5 MWh; the previous
+    solve's realised end in the 4-solve sequence) and the same optimum; the csv dump holds the same carry in
+    ``handoff/roll_end_state.csv`` and the solve's own end in ``produced_handoff/roll_end_state.csv``.  Before, the
     post-solve provider held the solve's own realised end as ``handoff/roll_end_state``, so the rebuild started from
     it (single: no fix_start, carry = its own end)."""
     values = [["node", "battery", "storage_binding_method", _s("bind_forward_only")],

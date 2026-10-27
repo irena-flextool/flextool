@@ -119,7 +119,8 @@ def test_p_penalty_down_parity(work_name: str, scenario: str, db_fixture: str, r
     ids=[c[0] for c in PARITY_CASES],
 )
 def test_p_process_source_conversion_flow_coeff_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
-    """``p_process_source_conversion_flow_coeff``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    """``p_process_source_conversion_flow_coeff``: rebuild from the post-solve provider == the cascade's FlexData
+    (cluster F)."""
     _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_process_source_conversion_flow_coeff")
 
 
@@ -128,7 +129,8 @@ def test_p_process_source_conversion_flow_coeff_parity(work_name: str, scenario:
     ids=[c[0] for c in PARITY_CASES],
 )
 def test_p_process_sink_conversion_flow_coeff_parity(work_name: str, scenario: str, db_fixture: str, rebuilt) -> None:
-    """``p_process_sink_conversion_flow_coeff``: rebuild from the post-solve provider == the cascade's FlexData (cluster F)."""
+    """``p_process_sink_conversion_flow_coeff``: rebuild from the post-solve provider == the cascade's FlexData
+    (cluster F)."""
     _check_rebuild(rebuilt, work_name, scenario, db_fixture, "p_process_sink_conversion_flow_coeff")
 
 

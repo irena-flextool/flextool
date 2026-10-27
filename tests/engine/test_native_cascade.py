@@ -137,11 +137,13 @@ def _step_duration_provider(run: ScenarioRun, scale: float) -> FlexDataProvider:
     """A clone of ``run``'s last provider with every step_duration scaled by ``scale`` and every per-step
     inflow scaled by ``scale`` to match.
 
-    The transformation keeps the LP internally consistent: each
-    timestep now covers ``scale`` hours and the demand booked in
-    ``pdtNodeInflow`` (MWh-per-step) is multiplied accordingly.
-    Steady-state instantaneous power is unchanged; total demand
-    across the horizon multiplies by ``scale``.
+    On the production load only the inflow scaling reaches the LP:
+    with a DB reader, ``apply_derived`` re-derives ``p_step_duration``
+    from the DB timeline (1 h steps, no ``solve.new_stepduration``), so
+    the loaded LP has ×``scale`` inflow on 1 h steps — not an internally
+    consistent model, and not meant to be solved.  The scaled
+    step_duration seed is kept so the provider looks like a
+    ``step_duration = scale`` timeline to any reader of the seed frames.
 
     Only the provider's seed frames are modified — the DB the load
     reads is the run's own.  Under the ``p_inflow`` cascade disable
@@ -166,10 +168,13 @@ def _sum(frame: pl.DataFrame) -> float:
 def test_step_duration_3_keeps_seed_intact(scenario_run):
     """``step_duration > 1`` regression guard for the ``p_inflow`` seed.
 
-    Rebuild ``base`` from a provider with ``step_duration = 3`` and a
-    consistently-scaled ``pdtNodeInflow``.  Under the current
-    code (``p_inflow`` override disabled), the seed survives and
-    ``flex_data.p_inflow`` carries the ×3 scaled values verbatim.
+    Load ``base`` from a provider whose step_duration seed frames are
+    scaled ×3 and whose ``pdtNodeInflow`` seed is scaled ×3 to match.
+    Under the current code (``p_inflow`` override disabled), the inflow
+    seed survives and ``flex_data.p_inflow`` carries the ×3 scaled
+    values verbatim.  ``p_step_duration`` does not keep the ×3 seed: the
+    DB re-derives it (1 h steps, see the trailing comment), so the
+    loaded LP is ×3 inflow on 1 h steps.
 
     If a future change re-enables the cascade override path and the
     override is still ``step_duration``-unaware (the lt_rp bug

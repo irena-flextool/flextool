@@ -9,7 +9,8 @@ device: it adds demand to the node balance only.  The group rows measure the gro
 
 so a model with a margin has the same group rows as the model without it, and a different node balance.
 Checked in a single invest solve, a nested invest + dispatch chain, a stochastic invest solve and after a
-``--csv-dump`` dump (the reload is in ``tests/csv_reload/``).  Every database is a JSON fixture plus an override alternative.
+``--csv-dump`` dump (the reload is in ``tests/csv_reload/``).  Every database is a JSON fixture plus an override
+alternative.
 """
 from __future__ import annotations
 

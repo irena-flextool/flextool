@@ -21,8 +21,9 @@ def test_scenario_workdir_smoke_base(scenario_workdir):
     assert input_dir.is_dir(), f"missing {input_dir}"
     assert solve_data_dir.is_dir(), f"missing {solve_data_dir}"
 
-    # With ``csv_dump=True`` the full cascade flushes every ``_emit_*``
-    # frame to disk.  Seed dir for ``base`` has 140 input + 492 solve_data
+    # The cascade runs with ``csv_dump=False``; the CSVs are the
+    # ``snapshot_processed_inputs`` snapshot of the last sub-solve's
+    # provider.  Seed dir for ``base`` has 140 input + 492 solve_data
     # CSVs; allow some slack since the exact set can shift between
     # cascade versions, but the count must be in the same ballpark.
     input_csvs = list(input_dir.glob("*.csv"))
