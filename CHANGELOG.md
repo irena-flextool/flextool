@@ -14,6 +14,13 @@
   `cumulative_max_capacity` is unaffected. The same gap also existed on the second (later) solve
   of a continuation/rolling chain and is fixed there too.
 
+- **A group with a `cumulative_limits` investment method now gets the same "give your own
+  maximum once a sibling sets one" check as an entity does.** Once one `cumulative_limits`
+  group sets `cumulative_max_capacity` for a period, another such group that leaves that period
+  out of its own map used to be silently read as "no limit" there instead of being asked for an
+  explicit value (or an explicit 0 to forbid investment); it now raises naming the group that
+  needs a value, matching the entity-level behaviour.
+
 - **Group cumulative capacity limits now subtract a group's process retirements, same as the
   entity-level limit (#29).** A group of units/connections with a cumulative capacity limit
   (`invest_method = cumulative_limits`) ignored its own retirements entirely; the group's capacity

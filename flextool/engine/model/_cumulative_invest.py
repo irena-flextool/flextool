@@ -605,20 +605,32 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
     #   and some member alive (invest) or retirable (divest) in d
     # Keeps the capacity of a group in a period (existing + invested and still alive − every
     # process retirement up to and including d, #30b) within its cumulative limits (schema
-    # "[MW or MWh]"); processes and storage nodes share one row.  Rows are restricted to (g, d)
-    # the cap's own map actually covers (#5: now a real period map, not a dummy scalar) — a
-    # period the map leaves out has no limit, matching B-Q2's default for this family (no FA-12
-    # check here, unlike the entity-level cumulative row).  The divest term is process-only, same
-    # as the entity-level row (#29): edd_divest_active carries no storage-node history.  Capacity
-    # invested by earlier solves of a chain is not counted (pre-existing, separate item).
-    for name, sense, cap in (("maxInvestGroup_entity_cumulative", "<=", d.pd_group_cumulative_max_capacity),
-                             ("minInvestGroup_entity_cumulative", ">=", d.pd_group_cumulative_min_capacity)):
+    # "[MW or MWh]"); processes and storage nodes share one row.  Max rows: groups that author
+    # the cap at all (any period), restricted to periods the group actually has a candidate
+    # (g, d) row for; FA-12 (check_max_cap) then catches a period that same group's own map
+    # leaves out — mirrors the entity-level cumulative row (c16b review #3; previously this
+    # family had no FA-12 check at all, unlike the entity-level row).  Min rows: only the
+    # periods an explicit value is given for (a missing min is simply "no floor", not an
+    # error).  The divest term is process-only, same as the entity-level row (#29):
+    # edd_divest_active carries no storage-node history.  Capacity invested by earlier solves
+    # of a chain is not counted (pre-existing, separate item).
+    for name, sense, cap, param_name in (
+        ("maxInvestGroup_entity_cumulative", "<=", d.pd_group_cumulative_max_capacity,
+         "cumulative_max_capacity"),
+        ("minInvestGroup_entity_cumulative", ">=", d.pd_group_cumulative_min_capacity, None),
+    ):
         if cap is None:
             continue
         cap_frame, over = align_join_dtypes(cap.frame, base_over, ("g",))
-        over = over.join(cap_frame.select("g", "d").unique(), on=["g", "d"], how="semi")
-        if over.height == 0:
-            continue
+        if sense == "<=":
+            over = over.join(cap_frame.select("g").unique(), on="g", how="semi")
+            if over.height == 0:
+                continue
+            check_max_cap(over, cap_frame, "g", True, param_name=param_name)
+        else:
+            over = over.join(cap_frame.select("g", "d").unique(), on=["g", "d"], how="semi")
+            if over.height == 0:
+                continue
         lhs: dict = {}
         for key, var, divest, axis in (("invest_p", b.v_invest_p, b.v_divest_p, "p"),
                                         ("invest_n", b.v_invest_n, b.v_divest_n, "n")):
