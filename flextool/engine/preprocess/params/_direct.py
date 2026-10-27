@@ -490,7 +490,9 @@ def p_state_self_discharge_from_source(source: "InputSource",
 
     Uses :func:`._param_shapes.resolve_param_shape` → ``broadcast_to_period_time`` (shapes: scalar /
     1d_map[period] / 1d_map[time] / 2d_map[period,time]; stochastic branch periods inherit their anchor).
-    Explicit rows only (schema default 0.0: no loss); a step a map leaves out has no row (no loss).
+    Explicit rows only (the schema default is None: no loss); a step a map leaves out has no row (no
+    loss), and an entity with no key in the active solve (the silent-label per-entity fallback, #168)
+    is absent entirely, which is the same "no loss" outcome.
     """
     resolved = resolve_param_shape(source, "node", "self_discharge_loss", period_filter=period_filter)
     return broadcast_to_period_time(resolved, "n", period_filter)
@@ -1660,15 +1662,18 @@ def pdtReserve_upDown_group_reservation_from_source(
     period_filter: pl.DataFrame | None = None,
 ) -> Param | None:
     """``reserve__upDown__group.reservation`` Map(period→time) →
-    ``Param(("r", "ud", "g", "d", "t"))``.  Default 0.0 (schema) — CSV
-    path emits explicit rows only (zero values are NOT filtered).
+    ``Param(("r", "ud", "g", "d", "t"))``.  The schema default is None (not authored); the CSV path
+    emits explicit rows only (zero values are NOT filtered), and the consumer's constraint RHS treats
+    an absent entity as 0 (no reservation requirement).
 
     Δ.17c-Tier3 — routes through ``resolve_param_shape`` +
     ``broadcast_to_period_time`` with a per-source-column rename dict
     mapping the 3-dim relationship class's ``(reserve, upDown, group)``
-    columns to ``(r, ud, g)``.  ``filter_zero=False`` because the
-    schema default of 0.0 makes explicit zero rows authoring-
-    meaningful (legacy CSV path preserved zero rows for this param).
+    columns to ``(r, ud, g)``.  ``filter_zero=False`` because an
+    explicit zero row is authoring-meaningful (legacy CSV path
+    preserved zero rows for this param); an entity with no key in the
+    active solve (the silent-label per-entity fallback, #168) is absent
+    entirely, the same as the None default.
     """
     resolved = resolve_param_shape(
         source, "reserve__upDown__group", "reservation",

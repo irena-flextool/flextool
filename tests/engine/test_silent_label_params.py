@@ -9,11 +9,14 @@ Items of specs/github_issues.md:
 
 * 167: a silent-label period Map with no key in the solve resolves to nothing (``pen``).
 * 168: one ambiguous silent-label entity drops the whole parameter for its class (``avail``, ``varcost``; the
-  unconditional-write field ``self_discharge_loss`` is wrong today: ``sd``, xfail).
+  unconditional-write field ``self_discharge_loss``, ``sd``, is fixed by the per-entity fallback in
+  ``flextool/engine/input/_param_shapes.py`` -- ``resolve_param_shape`` now drops only the entity with no key
+  in the solve instead of the whole parameter).
 * 169: the depth-2 annual price ladder (tier -> {price, quantity}) is not read DB-side (``ladder``).
 
-Today the emit seed masks items 167, 168 (conditional writes) and 169, so those pairs hold; the comparison is the
-whole LP (every MPS of the chain, canonical up to row/column order) plus the objective.
+Today the emit seed masks items 167 and 169 (conditional writes), so those pairs hold; the comparison is the
+whole LP (every MPS of the chain, canonical up to row/column order) plus the objective.  Item 168's
+unconditional-write field (``sd``) was wrong before the per-entity fallback and is now a guard.
 """
 from __future__ import annotations
 
@@ -69,8 +72,7 @@ CASES = [
     pytest.param("avail_silent", "avail_silent", _avail_twin, "avail_twin", id="avail-item168"),
     pytest.param("varcost_silent", "varcost_silent", _varcost_twin, "varcost_twin", id="varcost-item168"),
     pytest.param("ladder_ann_depth2", "ladder_ann_depth2", _no_patch, "coal_ladder_annual", id="ladder-item169"),
-    pytest.param(_sd_case, "sd_silent", _no_patch, "coal_wind_ev", id="self_discharge-item168",
-                 marks=pytest.mark.xfail(strict=True, reason="item 168")),
+    pytest.param(_sd_case, "sd_silent", _no_patch, "coal_wind_ev", id="self_discharge-item168"),
 ]
 
 

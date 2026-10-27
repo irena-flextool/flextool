@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **A period or time Map with an unset/default Map index name (`index_name`) no longer drops other
+  entities' values of the same parameter.** When one entity's Map had no index name set (Spine stores
+  this as `x`) and its keys could not be matched to either a period or a timestep of the active solve,
+  FlexTool used to drop the *whole* parameter for every entity of that class, including other entities
+  whose own values were set normally. Now only the one entity with no matching key is affected (it
+  gets the parameter's usual default, exactly as if it had authored nothing); every other entity's
+  value is unaffected. The most visible case was a storage's `self_discharge_loss`: one node's
+  unrelated, unresolvable Map could silently zero out every other node's self-discharge loss. Setting
+  the Map's `index_name` explicitly to `period` or `time` (see "How to define the temporal properties
+  of the model" in the user docs) avoids the ambiguity entirely and is still recommended.
+
 - **A reused work folder no longer mixes old outputs in.** Running FlexTool twice into the same
   work folder (for example, re-running in the same directory after a failed run or a `--csv-dump`
   run) could mix an earlier run's per-roll output files into the new run's results, producing wrong

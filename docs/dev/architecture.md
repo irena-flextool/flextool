@@ -443,6 +443,23 @@ cross-product) → `promote_param_to_dt` (narrowing inner-join on the
 carried axis). A new parameter that needs this must be added to
 `PARAM_ALLOWED_SHAPES`.
 
+##### Silent-label Maps are resolved per entity, not per parameter
+
+When the DB carries no explicit `index_name` on a Map (`"x"` or empty) and the registry admits both a
+period and a time shape at that depth, `resolve_param_shape` first tries to disambiguate the *whole*
+parameter at once, by value-domain probing the union of every entity's keys against the solve's
+`(d, t)`. When that union probe stays ambiguous — no entity's keys overlap the solve's periods or
+timesteps at all, or different entities' keys overlap different axes — the resolver does **not** fall
+back to dropping the whole parameter. Instead each silent entity is classified on its own
+(`_silent_entity_axes`): an entity never decides another entity's shape. An entity with no key in the
+active solve has no value in that solve — it is removed from the frame the same way an entity that
+authored nothing at all would be (so the parameter's own default applies, whatever that is for the
+consuming producer); when *every* entity is removed this way, the frame falls through to the source's
+own default-broadcast path (a scalar default spread over every entity, or nothing when there is none).
+An entity whose keys match both axes raises, naming it — the same rule a single ambiguous row inside
+one entity's own Map already raises on. See `tests/engine/test_param_shapes_silent_per_entity.py` and
+`tests/engine/test_silent_label_params.py` (items #167 / #168 of `specs/github_issues.md`).
+
 `_param_shapes` is the **I/O contract only** — it validates user-authored
 DB shapes and errors to the user on mismatch. Model-internal axes (e.g.
 the rolling-solve `roll` axis) are deliberately excluded; they are never

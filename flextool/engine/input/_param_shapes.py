@@ -97,6 +97,7 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.spinedb_backend._axis_enums import FlexDataIntegrityError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -656,10 +657,14 @@ def _allowed_shape_names(allowed: "set[Shape]") -> str:
 
 
 # Labels that the spinedb_api default-fills when the author didn't
-# specify ``index_name`` on a Map.  Treated as "silent default" — the
-# resolver returns None (the caller falls through to the seed / leaves
-# the field unset) instead of raising.  Per the user advice, the error
-# path applies to *explicit* mismatches, not authoring oversights.
+# specify ``index_name`` on a Map.  Treated as "silent default" — when the whole parameter stays
+# ambiguous even after value-domain probing, the resolver no longer gives up on every entity: each
+# silent entity is classified on its own (:func:`_silent_entity_axes`), and only an entity with no key
+# in the solve falls through to the seed / leaves the field unset (the same thing an un-authored entity
+# does).  The caller never sees this per-entity work directly — it only ever gets back the same
+# ``ResolvedShape | None`` contract.  Per the user advice, the error path (raising) applies to
+# *explicit* mismatches, not authoring oversights — that still holds per entity (one entity's keys
+# matching both axes raises, naming it, instead of silently returning None for the whole parameter).
 _SILENT_DEFAULT_LABELS: frozenset[str] = frozenset(("x", ""))
 
 
@@ -823,6 +828,55 @@ class _UnrecognisedIndex(Exception):
         self.depth = depth
 
 
+def _period_time_vocab(
+    period_filter: "pl.DataFrame | None",
+) -> "tuple[set[str] | None, set[str] | None]":
+    """The period / timestep vocabularies a silent-default Map's keys are classified against.
+
+    Periods are the active solve's own ``d`` plus, when a stochastic load has armed them
+    (:func:`flextool.engine.preprocess.params._branch.active_branch_anchor_pairs`), the anchor periods of
+    the active branch-anchor pairs — a labelled ``{anchor: v}`` row keeps its value for the branch periods
+    through :func:`_with_branch_periods` / ``inherit_active_branch_periods`` even when the anchor itself
+    has left ``d`` (a non-realized forecast branch under the forecasts-only stochastic fan).  Classifying
+    a silent-label row against the same, wider universe keeps the silent and the labelled path from
+    diverging.  Timesteps are the active solve's own ``t``, unchanged.
+
+    Shared by :func:`_disambiguate_shape_by_value_domain` (the whole-parameter probe) and
+    :func:`_silent_entity_axes` (the per-entity fallback) so the two cannot disagree.  Either element is
+    ``None`` when *period_filter* is ``None`` or lacks that column.
+    """
+    if period_filter is None:
+        return None, None
+    pf_cols = period_filter.columns
+    periods_set: "set[str] | None" = None
+    timesteps_set: "set[str] | None" = None
+    if "d" in pf_cols:
+        periods_set = set(
+            period_filter.lazy()
+                         .select(pl.col("d").cast(pl.Utf8))
+                         .unique()
+                         .collect()
+                         .get_column("d")
+                         .to_list()
+        )
+        # Function-local import: input -> preprocess, kept out of the module import order (mirrors
+        # ``_with_branch_periods``).
+        from flextool.engine.preprocess.params._branch import active_branch_anchor_pairs
+        pairs = active_branch_anchor_pairs()
+        if pairs is not None and pairs.height > 0:
+            periods_set = periods_set | set(pairs.get_column("anchor").cast(pl.Utf8).to_list())
+    if "t" in pf_cols:
+        timesteps_set = set(
+            period_filter.lazy()
+                         .select(pl.col("t").cast(pl.Utf8))
+                         .unique()
+                         .collect()
+                         .get_column("t")
+                         .to_list()
+        )
+    return periods_set, timesteps_set
+
+
 def _disambiguate_shape_by_value_domain(
     df: "pl.DataFrame",
     ent_cols: "list[str]",
@@ -842,8 +896,11 @@ def _disambiguate_shape_by_value_domain(
     is :class:`Shape.MAP_TIME`.
 
     Requires *period_filter* with columns ``d`` (periods) and ``t``
-    (timesteps).  Returns ``None`` when probing is impossible (no
-    filter, no candidates, mixed values matching neither set).
+    (timesteps); the period universe also includes the active stochastic
+    branch-anchor periods (:func:`_period_time_vocab`), so a labelled and
+    a silent-default map of the same entity never disagree.  Returns
+    ``None`` when probing is impossible (no filter, no candidates, mixed
+    values matching neither set).
 
     Currently only handles depth-1 ambiguity (a single Map level).  For
     depth-2 Maps we don't yet probe — the registry's allow-list usually
@@ -891,28 +948,8 @@ def _disambiguate_shape_by_value_domain(
     if not idx_values:
         return None
     idx_set = {str(v) for v in idx_values if v is not None}
-    # Build the period / timestep universes from period_filter.
-    pf_cols = period_filter.columns
-    periods_set: "set[str] | None" = None
-    timesteps_set: "set[str] | None" = None
-    if "d" in pf_cols:
-        periods_set = set(
-            period_filter.lazy()
-                         .select(pl.col("d").cast(pl.Utf8))
-                         .unique()
-                         .collect()
-                         .get_column("d")
-                         .to_list()
-        )
-    if "t" in pf_cols:
-        timesteps_set = set(
-            period_filter.lazy()
-                         .select(pl.col("t").cast(pl.Utf8))
-                         .unique()
-                         .collect()
-                         .get_column("t")
-                         .to_list()
-        )
+    # Build the period / timestep universes from period_filter (+ active branch anchors).
+    periods_set, timesteps_set = _period_time_vocab(period_filter)
     # Intersects-and-not-the-other: the index must overlap exactly one
     # universe and not the other.  We use intersection (not subset) so a
     # Map authored with more periods than the active solve realises still
@@ -1060,17 +1097,38 @@ def stochastic_time_entities(
     return _run_memo(source, ("stochastic_time_entities", entity_class, parameter_name), compute)
 
 
+def _view_without(source: "InputSource", entity_class: str, parameter_name: str,
+                  entities: "frozenset[tuple[str, ...]]", tag: str) -> "InputSource":
+    """``source`` without ``entities``' values of ``(entity_class, parameter_name)``, memoised on the run's
+    reader under ``(tag, entity_class, parameter_name, entities)``.
+
+    ``tag`` separates callers with different memo-validity assumptions:
+
+    * ``"stochastic_time_view"`` (:func:`_stochastic_view`) — the entity set is solve-agnostic (every
+      stochastic-time entity of the parameter, independent of the active roll), so one view serves every
+      call of a run.
+    * ``"no_key_in_solve"`` (the silent-label fallback, :func:`resolve_param_shape`) — the entity set is
+      the active solve's own drop set (:func:`_silent_entity_axes`), so it is recomputed, and a fresh view
+      memoised, on every roll; the number of distinct views is bounded by the number of distinct drop sets,
+      at most one per solve.
+
+    Raises :class:`FlexToolConfigError` when the source has no ``without_entities`` (every production
+    reader does; a test stub that doesn't is not expected to reach either caller).
+    """
+    fn = getattr(source, "without_entities", None)
+    if fn is None:
+        raise FlexToolConfigError(
+            f"{entity_class}.{parameter_name}: the input source {type(source).__name__} reports values to hide "
+            "from the period / time reader but cannot (no without_entities).")
+    return _run_memo(source, (tag, entity_class, parameter_name, frozenset(entities)),
+                     lambda: fn(entity_class, parameter_name, sorted(entities)))
+
+
 def _stochastic_view(source: "InputSource", entity_class: str, parameter_name: str,
                      entities: "frozenset[tuple[str, ...]]") -> "InputSource":
     """``source`` without the stochastic-time entities' values of that one parameter (memoised on the run's
     reader: the entity set is solve-agnostic)."""
-    fn = getattr(source, "without_entities", None)
-    if fn is None:
-        raise FlexToolConfigError(
-            f"{entity_class}.{parameter_name}: the input source {type(source).__name__} reports stochastic-time "
-            "values but cannot hide them from the period / time reader (no without_entities).")
-    return _run_memo(source, ("stochastic_time_view", entity_class, parameter_name),
-                     lambda: fn(entity_class, parameter_name, sorted(entities)))
+    return _view_without(source, entity_class, parameter_name, entities, "stochastic_time_view")
 
 
 class _StochasticTimeSource:
@@ -1455,6 +1513,189 @@ def _validate_shape_variants(
         )
 
 
+# ---------------------------------------------------------------------------
+# Per-entity silent-label fallback (#167, #168) — Δ.17c-silent-per-entity
+# ---------------------------------------------------------------------------
+
+
+def _silent_entity_axes(
+    source: "InputSource",
+    entity_class: str,
+    parameter_name: str,
+    df: "pl.DataFrame",
+    ent_cols: "list[str]",
+    period_filter: "pl.DataFrame | None",
+) -> "tuple[frozenset[tuple[str, ...]], dict[tuple[str, ...], str]]":
+    """Per-entity classification of a depth-1 silent-label Map's axis, read from
+    :meth:`InputSource.parameter_entity_label_paths`.
+
+    Called by :func:`resolve_param_shape` only after the whole-frame probe
+    (:func:`_disambiguate_shape_by_value_domain`) stayed ambiguous.  Returns ``(drop, axis_of)``:
+
+    * ``drop`` — silent entities whose keys match NEITHER the active solve's periods nor its timesteps
+      (:func:`_period_time_vocab`): they have no value in this solve, exactly like an entity that
+      authored nothing.  The caller re-resolves the parameter on a view without them.
+    * ``axis_of`` — for every OTHER silent entity, the axis its keys matched (``"period"`` or ``"t"``).
+      A labelled entity (an explicit, non-silent ``index_name``) is never a key of this dict: its path
+      length is not 1-and-silent, so it is outside this fallback entirely and keeps resolving through the
+      normal structural / label path once the drop set (if any) has been removed.
+
+    Both are empty when the source has no ``parameter_entity_label_paths`` (no fallback: the caller keeps
+    today's ``None``), when no entity's value is a silent depth-1 map, or when the solve has neither a
+    period nor a timestep vocabulary to classify against (*period_filter* without ``d`` or ``t``).
+
+    One vectorized pass over *df* — a ``group_by(ent_cols)`` plus a value-domain membership test, never a
+    Python loop per entity: the fallback runs once per roll of a rolling / stochastic solve, and a
+    silent-label time map can carry thousands of rows across thousands of entities.  Entity dim columns
+    are compared as Utf8 (the frame may be Enum-cast by the axis contract).
+
+    Raises :class:`FlexDataIntegrityError` naming the entity when a silent entity's keys match BOTH
+    vocabularies — the ambiguous case :meth:`SpineDbReader._classify_pt_level` already raises on for a
+    single row; here the same rule is applied once per entity, over the union of its (possibly many) keys.
+    """
+    fn = getattr(source, "parameter_entity_label_paths", None)
+    if fn is None:
+        return frozenset(), {}
+    try:
+        paths = fn(entity_class, parameter_name)
+    except KeyError:
+        return frozenset(), {}
+    silent_entities = [ent for ent, path in paths.items()
+                       if len(path) == 1 and _normalise_label(path[0]) is None]
+    if not silent_entities:
+        return frozenset(), {}
+    periods_set, timesteps_set = _period_time_vocab(period_filter)
+    if periods_set is None and timesteps_set is None:
+        return frozenset(), {}
+
+    non_val_cols = [c for c in df.columns if c not in ent_cols and c != "value"]
+    if not non_val_cols:
+        return frozenset(), {}
+    ent_schema = {c: pl.Utf8 for c in ent_cols}
+    ent_df = pl.DataFrame([list(e) for e in silent_entities], schema=ent_schema, orient="row")
+    keys = (
+        df.lazy()
+          .select(*(pl.col(c).cast(pl.Utf8) for c in ent_cols),
+                  pl.coalesce([pl.col(c).cast(pl.Utf8) for c in non_val_cols]).alias("__key"))
+          .join(ent_df.lazy(), on=ent_cols, how="semi")
+          .filter(pl.col("__key").is_not_null())
+          .group_by(ent_cols, maintain_order=True)
+          .agg(pl.col("__key").unique().alias("__keys"))
+          .collect()
+    )
+    periods = sorted(periods_set) if periods_set else []
+    timesteps = sorted(timesteps_set) if timesteps_set else []
+    classified = keys.with_columns(
+        pl.col("__keys").list.eval(pl.element().is_in(periods)).list.any().fill_null(False).alias("__hits_d"),
+        pl.col("__keys").list.eval(pl.element().is_in(timesteps)).list.any().fill_null(False).alias("__hits_t"),
+    )
+    both = classified.filter(pl.col("__hits_d") & pl.col("__hits_t"))
+    if both.height > 0:
+        bad = "/".join(str(v) for v in both.row(0)[:len(ent_cols)])
+        raise FlexDataIntegrityError(
+            f"Parameter ({entity_class!r}, {parameter_name!r}): entity {bad!r} has a silent-label Map "
+            "whose keys match BOTH the period and the timestep vocabulary of this solve; cannot classify "
+            "the axis.  Author the Map's index_name as 'period' or 'time'."
+        )
+    axis_of: "dict[tuple[str, ...], str]" = {}
+    for row in classified.filter(pl.col("__hits_d") & ~pl.col("__hits_t")).select(ent_cols).iter_rows():
+        axis_of[tuple(str(v) for v in row)] = "period"
+    for row in classified.filter(pl.col("__hits_t") & ~pl.col("__hits_d")).select(ent_cols).iter_rows():
+        axis_of[tuple(str(v) for v in row)] = "t"
+    drop = frozenset(
+        tuple(str(v) for v in row)
+        for row in classified.filter(~pl.col("__hits_d") & ~pl.col("__hits_t")).select(ent_cols).iter_rows()
+    )
+    return drop, axis_of
+
+
+def _per_entity_resolved(
+    df: "pl.DataFrame",
+    ent_cols: "list[str]",
+    axis_of: "dict[tuple[str, ...], str]",
+    allowed: "set[Shape]",
+    entity_class: str,
+    parameter_name: str,
+) -> "ResolvedShape":
+    """Split a depth-1 parameter frame's single, Spine-silent index column into ``period`` / ``t`` per
+    entity, using ``axis_of`` (:func:`_silent_entity_axes`'s per-entity classification).
+
+    Only reached without the reader's own axis Enums (:class:`InMemoryReader`; the reader-less
+    ``_csv_reload`` fallback): with axis Enums, the recursive retry in :func:`resolve_param_shape` (after
+    any ``drop`` entities are removed) has the reader classify every remaining row itself, through its own
+    per-row classifier against the reader's GLOBAL vocabulary — which is at least as wide as the active
+    solve's — so this helper never runs there.  By the time control reaches here, ``resolve_param_shape``
+    has already established that the WHOLE parameter carries exactly one non-entity, non-value column
+    (``len(resolved_labels) == 1``): every entity's value, silent or not, was unrolled into that single
+    column by the legacy positional path, so a genuinely labelled entity (an explicit, differently-named
+    index column) cannot coexist with a silent one here — it would make a second column and the resolver
+    would never have reached this branch.  An entity outside ``axis_of`` is therefore always a plain
+    scalar (no map at all): its one column is null and its own ``value`` is untouched.
+
+    Builds the per-entity shape ``variants`` exactly as :meth:`SpineDbReader.parameter_shape_info` reports
+    them on the reader path (``()`` / ``("period",)`` / ``("time",)``), validates them with
+    :func:`_validate_shape_variants` and returns the union :class:`ResolvedShape` (``MAP_PERIOD_TIME``
+    when both axes occur among the entities, otherwise the lone one), with the canonical column order
+    (``period`` before ``t``) — never ``MAP_TIME_PERIOD``.
+
+    Row order of *df* is preserved throughout (a ``maintain_order`` left join plus ``with_columns`` /
+    ``select`` only — the LP-determinism memo); the caller's eventual ``.sort(...)`` in
+    ``broadcast_to_period[_time]`` is unaffected either way.
+    """
+    non_val_cols = [c for c in df.columns if c not in ent_cols and c != "value"]
+    shared_col = non_val_cols[0] if non_val_cols else None
+
+    ent_schema = {c: pl.Utf8 for c in ent_cols}
+    axis_rows = [[*e, a] for e, a in sorted(axis_of.items())]
+    axis_lookup = (
+        pl.DataFrame(axis_rows, schema={**ent_schema, "__axis": pl.Utf8}, orient="row")
+        if axis_rows else pl.DataFrame(schema={**ent_schema, "__axis": pl.Utf8})
+    )
+    joined = (
+        df.with_columns(pl.col(c).cast(pl.Utf8) for c in ent_cols)
+          .join(axis_lookup, on=ent_cols, how="left", maintain_order="left")
+    )
+    shared = pl.col(shared_col) if shared_col is not None else pl.lit(None, dtype=pl.Utf8)
+    out = joined.with_columns(
+        period=pl.when(pl.col("__axis") == "period").then(shared).otherwise(None),
+        t=pl.when(pl.col("__axis") == "t").then(shared).otherwise(None),
+    ).select(*ent_cols, "period", "t", "value")
+
+    variants: "set[tuple[str, ...]]" = set()
+    for row in out.select(*ent_cols, "period", "t").unique(subset=ent_cols, maintain_order=True).iter_rows(
+            named=True):
+        path: list[str] = []
+        if row["period"] is not None:
+            path.append("period")
+        if row["t"] is not None:
+            path.append("time")
+        variants.add(tuple(path))
+    _validate_shape_variants(variants, allowed, out, tuple(ent_cols), entity_class, parameter_name)
+
+    any_period = any(v[:1] == ("period",) for v in variants)
+    any_time = any("time" in v for v in variants)
+    if any_period and any_time:
+        shape = Shape.MAP_PERIOD_TIME
+        frame = out
+    elif any_period:
+        shape = Shape.MAP_PERIOD
+        frame = out.select(*ent_cols, "period", "value")
+    elif any_time:
+        shape = Shape.MAP_TIME
+        frame = out.select(*ent_cols, "t", "value")
+    else:
+        shape = Shape.SCALAR
+        frame = out.select(*ent_cols, "value")
+
+    return ResolvedShape(
+        shape=shape,
+        frame=frame,
+        entity_dim_columns=tuple(ent_cols),
+        period_index_column="period" if shape in (Shape.MAP_PERIOD, Shape.MAP_PERIOD_TIME) else None,
+        time_index_column="t" if shape in (Shape.MAP_TIME, Shape.MAP_PERIOD_TIME) else None,
+    )
+
+
 def resolve_param_shape(
     source: "InputSource",
     entity_class: str,
@@ -1498,11 +1739,23 @@ def resolve_param_shape(
     other entities (an empty ``SCALAR`` frame when there are none) and carries the stochastic ones in
     :attr:`ResolvedShape.stochastic_entities`.
 
-    Returns ``None`` only when the parameter has no explicit rows AND
-    no scalar default to broadcast (the source plugin's None-skip per
-    §4.5).  Otherwise returns a :class:`ResolvedShape` carrying
-    everything :func:`broadcast_to_period_time` /
-    :func:`broadcast_to_period` need.
+    Per-entity silent-label fallback (#167, #168) — when the whole-frame value-domain probe above
+    stays ambiguous (depth 1, the allow-list admits both ``MAP_PERIOD`` and ``MAP_TIME``, and
+    *period_filter* is given), the resolver does not give up on the whole parameter: each silent entity
+    is classified on its own against the solve's own periods / timesteps
+    (:func:`_silent_entity_axes`).  An entity with no key in the solve has no value in this solve — the
+    same as an entity that authored nothing at all — and is dropped (re-resolved on a view without it,
+    recursively, until nothing more can be dropped); an entity whose keys match BOTH axes raises
+    :class:`FlexDataIntegrityError` naming it, the same rule a single ambiguous row already raises on.
+    This never changes the ``ResolvedShape | None`` contract below — it only changes which entities the
+    returned shape (or the ``None``) describes.  Re-evaluated on every call (every roll of a rolling or
+    stochastic solve may drop a different set, since *period_filter* is the roll's own window); only the
+    view per distinct drop set is memoised (:func:`_view_without`), never the drop set itself.
+
+    Returns ``None`` only when the parameter has no explicit rows AND no scalar default to broadcast
+    (the source plugin's None-skip per §4.5), or when every entity was dropped by the per-entity fallback
+    and the source has no default to broadcast over the rest.  Otherwise returns a :class:`ResolvedShape`
+    carrying everything :func:`broadcast_to_period_time` / :func:`broadcast_to_period` need.
     """
     key = (entity_class, parameter_name)
     allowed = PARAM_ALLOWED_SHAPES.get(key)
@@ -1602,12 +1855,36 @@ def resolve_param_shape(
             df, ent_cols, resolved_labels, allowed, period_filter,
         )
         if shape is None:
-            # Still ambiguous (no period_filter, or values match neither
-            # the period nor the timestep set).  Per Δ.17c policy: don't
-            # raise; return None so the caller falls back to its
-            # non-resolver pathway (typically the seed CSV).  Δ.18+
-            # punch-list: re-author fixtures so every Map level carries
-            # an explicit ``index_name``.
+            # Still ambiguous after the whole-frame probe.  Per-entity fallback (#167, #168): an entity
+            # whose silent-label map has no key that is a period or a timestep of this solve has no value
+            # in this solve — the same as an entity that authored nothing — so it is dropped and the rest
+            # of the parameter is re-resolved without it; when the remaining silent entities split across
+            # both axes (only reachable without the reader's own axis Enums — see
+            # :func:`_per_entity_resolved`), the frame is built directly.  Runs only for the parameters
+            # whose allow-list admits both ``MAP_PERIOD`` and ``MAP_TIME`` at depth 1 (the 19 keys of
+            # :data:`PARAM_ALLOWED_SHAPES` that can reach this branch — Δ.17c-silent-per-entity) and only
+            # with an active *period_filter* (the probe above already requires one; spelled out again here
+            # because this is where the fallback actually changes behaviour).
+            if period_filter is not None and {Shape.MAP_PERIOD, Shape.MAP_TIME} <= allowed:
+                drop, axis_of = _silent_entity_axes(
+                    source, entity_class, parameter_name, df, ent_cols, period_filter,
+                )
+                if drop:
+                    view = _view_without(
+                        source, entity_class, parameter_name, drop, "no_key_in_solve",
+                    )
+                    return resolve_param_shape(
+                        view, entity_class, parameter_name, period_filter=period_filter,
+                    )
+                if axis_of:
+                    return _per_entity_resolved(
+                        df, ent_cols, axis_of, allowed, entity_class, parameter_name,
+                    )
+            # Nothing silent was classifiable (no period_filter, no ``parameter_entity_label_paths`` on
+            # the source, or no entity at all matches one axis and not the other).  Per Δ.17c policy:
+            # don't raise; return None so the caller falls back to its non-resolver pathway (typically the
+            # seed CSV).  Δ.18+ punch-list: re-author fixtures so every Map level carries an explicit
+            # ``index_name``.
             return None
         # Update the resolved labels so the downstream rename block sees
         # the disambiguated label and renames the silent-default column
