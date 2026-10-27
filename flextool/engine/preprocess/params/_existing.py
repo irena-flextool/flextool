@@ -40,8 +40,10 @@ Cluster B fields (per
   current-solve invest decision).
 * ``edd_invest_lookback_set`` — strict-lookback variant
   (``yr[d_invest] < yr[d]``) used by the prebuilt-capacity LHS.
-* ``edd_divest_active`` — ``pd_divest`` × period grid filtered to
-  ``yr[d_divest] <= yr[d]`` (used in cap-margin user constraint).
+* ``edd_divest_active`` / ``ndd_divest_active`` — ``pd_divest`` /
+  ``nd_divest_set`` × period grid filtered to ``yr[d_divest] <= yr[d]``
+  (process and storage-node capacity history: storage state limits,
+  cumulative capacity limits, and the cap-margin user constraint).
 * ``p_entity_all_existing`` — per-(e, d) lifetime-cumulative existing
   capacity.  Algorithm:
     * solve-first: pre-existing[e, d] (lifetime-gated entity.existing).

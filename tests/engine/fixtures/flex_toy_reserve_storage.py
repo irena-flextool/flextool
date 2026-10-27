@@ -288,11 +288,9 @@ def data(*, direction: str = "up", duration: float | None = 0.5,
                           "value": [float(invest_cost)]}))
     if divest:
         kwargs["nd_divest_set"] = pl.DataFrame({"n": ["bat"], "d": ["p2020"]})
-        # edd_divest_active carries the entity on the ``p`` axis (shared
-        # process/node entity vocab); the DOWN-headroom block casts the
-        # storage node n→p to semi-join it.  No divest credit is authored,
-        # so ``v_divest_n`` stays 0 at the optimum — the term is still built.
-        kwargs["edd_divest_active"] = pl.DataFrame(
-            {"p": ["bat"], "d_divest": ["p2020"], "d": ["p2020"]})
+        # No divest credit is authored, so ``v_divest_n`` stays 0 at the
+        # optimum — the term is still built.
+        kwargs["ndd_divest_active"] = pl.DataFrame(
+            {"n": ["bat"], "d_divest": ["p2020"], "d": ["p2020"]})
 
     return FlexData(**kwargs)

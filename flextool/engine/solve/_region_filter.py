@@ -1496,7 +1496,7 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "p_node_capacity_for_scaling",
     # node-keyed invest/divest sets (the trade nodes are not the master's
     # invest variables — only the cross connections are).
-    "nd_invest_set", "nd_divest_set",
+    "nd_invest_set", "nd_divest_set", "ndd_divest_active",
     # CO2 / reserve / user-constraint / group features — all in-region
     # recourse, not part of the network-only master.  (The commodity
     # frames + ``p_commodity_price`` are REQUIRED-present by the PROCESSES
@@ -1555,7 +1555,7 @@ _MASTER_N_KEYED_FIELDS: tuple[str, ...] = (
     "p_fix_storage_quantity", "n_fix_storage_usage",
     "ndt_fix_storage_usage", "p_fix_storage_usage", "ndt_fix_storage_price",
     "p_node_capacity_for_scaling",
-    "nd_invest_set", "nd_divest_set",
+    "nd_invest_set", "nd_divest_set", "ndd_divest_active",
     "group_node",
 )
 

@@ -4072,13 +4072,18 @@ def edd_divest_active_from_source(source: "InputSource",
                                       active_solve: str | None,
                                       pd_divest: pl.DataFrame | None,
                                       *,
+                                      entity_col: str = "p",
                                       provider: "object | None" = None,
                                       lineage: pl.DataFrame | None = None,
                                       ) -> pl.DataFrame | None:
-    """Build the active-divest (p, d_divest, d) tuples — see audit §3.7.3.
+    """Build the active-divest (entity_col, d_divest, d) tuples — see audit §3.7.3.
 
-    pd_divest ⊆ ed_divest with ``p ∈ process``; the active set further
-    filters d_divest ≤ d using year ordering.
+    pd_divest ⊆ ed_divest with ``entity_col ∈ {process, node}``; the active
+    set further filters d_divest ≤ d using year ordering. ``entity_col``
+    selects which entity vocabulary the incoming/outgoing frame uses — the
+    process set calls with ``entity_col="p"``, the node set with
+    ``entity_col="n"`` — so the two never cross-contaminate each other's
+    Enum casts.
 
     ``lineage`` — the one non-walker cross-period pair-former
     (Slice B design §7.0, inventory #18): when not ``None``, the
@@ -4093,7 +4098,7 @@ def edd_divest_active_from_source(source: "InputSource",
     """
     if pd_divest is None or pd_divest.height == 0:
         return pl.DataFrame(schema={
-            "p": schema_dtype(_enums, "p"),
+            entity_col: schema_dtype(_enums, entity_col),
             "d_divest": schema_dtype(_enums, "d_divest"),
             "d": schema_dtype(_enums, "d"),
         })
@@ -4107,7 +4112,7 @@ def edd_divest_active_from_source(source: "InputSource",
     periods = _period_in_use_set(source, active_solve, provider=provider)
     if not periods:
         return pl.DataFrame(schema={
-            "p": schema_dtype(_enums, "p"),
+            entity_col: schema_dtype(_enums, entity_col),
             "d_divest": schema_dtype(_enums, "d_divest"),
             "d": schema_dtype(_enums, "d"),
         })
@@ -4131,8 +4136,8 @@ def edd_divest_active_from_source(source: "InputSource",
                                       anchor_col="d_divest",
                                       dall_col="d")
     out = (chain
-              .select("p", "d_divest", "d")
-              .sort("p", "d_divest", "d")
+              .select(entity_col, "d_divest", "d")
+              .sort(entity_col, "d_divest", "d")
               .collect())
     return out
 
@@ -5929,7 +5934,7 @@ def pdtNodeInflow_per_step_from_inflow(p_inflow: object | None,
 DERIVED_C_FIELDS = (
     # §3.7
     "ed_invest_set", "ed_divest_set",
-    "edd_invest_lookback_set", "edd_divest_active",
+    "edd_invest_lookback_set", "edd_divest_active", "ndd_divest_active",
     "p_entity_max_units",
     # §3.8
     "p_section",
@@ -6312,6 +6317,18 @@ def apply_derived_c(
         edda_db = None
     if edda_db is not None and edda_db.height > 0:
         flex_data.edd_divest_active = edda_db
+
+    nd_div_used = getattr(flex_data, "nd_divest_set", None)
+    try:
+        ndda_db = edd_divest_active_from_source(
+            source, active_solve, nd_div_used,
+            entity_col="n", provider=provider, lineage=_c_lineage)
+    except LineageFilterError:
+        raise
+    except Exception:
+        ndda_db = None
+    if ndda_db is not None and ndda_db.height > 0:
+        flex_data.ndd_divest_active = ndda_db
 
     # p_entity_max_units uses ed_invest plus the per-period-in-use grid
     # and the unitsize cascade.

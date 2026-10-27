@@ -654,6 +654,7 @@ class FlexData:
     edd_invest_set: pl.DataFrame | None = None       # (e, d_invest, d)
     edd_invest_lookback_set: pl.DataFrame | None = None  # (e, d_invest, d) strict d_invest<d
     edd_divest_active: pl.DataFrame | None = None    # (p, d_divest, d) where d_divest ≤ d
+    ndd_divest_active: pl.DataFrame | None = None    # (n, d_divest, d) where d_divest ≤ d — node analogue
     p_entity_max_units: Param | None = None          # (e, d)
     ed_lifetime_fixed_cost: Param | None = None      # (e, d)
     ed_lifetime_fixed_cost_divest: Param | None = None
@@ -1930,7 +1931,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         pd_invest_set=None, pd_divest_set=None,
         nd_invest_set=None, nd_divest_set=None,
         edd_invest_set=None, edd_invest_lookback_set=None,
-        edd_divest_active=None,
+        edd_divest_active=None, ndd_divest_active=None,
         p_entity_max_units=None,
         ed_lifetime_fixed_cost=None,
         ed_lifetime_fixed_cost_divest=None,
@@ -2016,6 +2017,8 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
 
     edd_div = pl.DataFrame(
         schema={"p": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8})
+    ndd_div = pl.DataFrame(
+        schema={"n": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8})
     edd_inv_lookback = pl.DataFrame(
         schema={"e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8})
 
@@ -2102,6 +2105,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         edd_invest_set=_hnz(edd_inv),
         edd_invest_lookback_set=edd_inv_lookback if edd_inv_lookback.height > 0 else None,
         edd_divest_active=edd_div if edd_div.height > 0 else None,
+        ndd_divest_active=ndd_div if ndd_div.height > 0 else None,
         p_entity_max_units=p_max_units,
         # Δ.18 — CSV-fallback seeds (override chain overlays when it has
         # data; for synthetic per-sub-solve fixtures the snapshot CSV is
