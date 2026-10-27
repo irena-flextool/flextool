@@ -274,6 +274,121 @@ def test_group_invest_max_total(toy_invest_3d):
 
 
 # ---------------------------------------------------------------------------
+# c16a (#30a) — group invest totals subtract chain-cumulative prior.
+
+def test_group_invest_totals_count_chain_prior(toy_invest_3d):
+    """Covers c16a #30a: ``maxInvestGroup_entity_total`` subtracts capacity already realized by
+    earlier solves of a solve chain (``p_entity_invested``), summed over the group's members —
+    instead of ignoring it.
+
+    Reuses ``test_group_invest_max_total``'s two-process group setup (cap 2, demand that would
+    otherwise drive the group to invest more than 2 units total) plus
+    ``p_entity_invested[u1] = 0.5`` (realized by an earlier solve of the chain).
+
+    Hand-calc: group RHS = max(0, 2 − 0.5) = 1.5.  Cost-min invests exactly the cap:
+    Σ_{e,d} v_invest = 1.5.
+
+    Before the fix (on the parent commit): no prior is subtracted, so Σ_{e,d} v_invest = 2 (the
+    group cap, unaffected by ``p_entity_invested``).
+    """
+    d = toy_invest_3d
+    periods = ["d1", "d2", "d3"]
+    pss = pl.DataFrame({"p": ["u1", "u2"],
+                        "source": ["FUEL_n", "FUEL_n"],
+                        "sink":   ["n", "n"]})
+    pss_eff = pss.clone()
+    pss_noEff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+    pss_dt = pss.join(d.dt, how="cross")
+    flow_to_n = pss.with_columns(n=pl.col("sink"))
+    flow_from_commodity_eff = pl.DataFrame(
+        {"p": ["u1", "u2"], "source": ["FUEL_n", "FUEL_n"],
+         "sink": ["n", "n"], "c": ["FUEL", "FUEL"]})
+    flow_from_commodity_noEff = pl.DataFrame(
+        schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "c": pl.Utf8})
+    p_unitsize = Param(("p",),
+        pl.DataFrame({"p": ["u1", "u2"], "value": [1.0, 1.0]}))
+    p_flow_upper = Param(("p", "source", "sink", "d", "t"),
+        pss_dt.with_columns(value=pl.lit(0.0))
+              .select("p", "source", "sink", "d", "t", "value"))
+    p_flow_upper_existing = Param(("p", "source", "sink", "d"),
+        pss.join(pl.DataFrame({"d": periods}), how="cross")
+           .with_columns(value=pl.lit(0.0))
+           .select("p", "source", "sink", "d", "value"))
+    p_slope = Param(("p", "d", "t"),
+        pss_dt.select("p", "d", "t").with_columns(value=pl.lit(1.0)))
+    pd_invest_set = pl.DataFrame(
+        {"p": ["u1"]*3 + ["u2"]*3, "d": periods + periods})
+    ed_invest_set = pd_invest_set.rename({"p": "e"})
+    # Cumulative edd_invest_set — the realistic lifetime shape the OLD per-(g,d) "alive" rows
+    # assumed.  The NEW code no longer reads edd_invest_set at all, so this only matters for the
+    # fail-before check.
+    edd_rows = []
+    for e in ("u1", "u2"):
+        for d_inv in periods:
+            for dd in periods:
+                if periods.index(d_inv) <= periods.index(dd):
+                    edd_rows.append({"e": e, "d_invest": d_inv, "d": dd})
+    edd_invest_set = pl.DataFrame(edd_rows)
+    p_entity_max_units = Param(("e", "d"),
+        pl.DataFrame({"e": ["u1"]*3 + ["u2"]*3,
+                      "d": periods + periods, "value": [10.0]*6}))
+    ed_invest_max_period = Param(("e", "d"),
+        pl.DataFrame({"e": ["u1"]*3 + ["u2"]*3,
+                      "d": periods + periods, "value": [10.0]*6}))
+    ed_entity_annual_discounted = Param(("e", "d"),
+        pl.DataFrame({"e": ["u1"]*3 + ["u2"]*3,
+                      "d": periods + periods, "value": [10.0]*6}))
+    ed_lifetime_fixed_cost = Param(("e", "d"),
+        pl.DataFrame({"e": ["u1"]*3 + ["u2"]*3,
+                      "d": periods + periods, "value": [0.0]*6}))
+    group_entity = pl.DataFrame({"g": ["g", "g"], "e": ["u1", "u2"]})
+    g_invest_total = pl.DataFrame({"g": ["g"]})
+    p_group_invest_max_total = Param(("g",),
+        pl.DataFrame({"g": ["g"], "value": [2.0]}))
+    # Earlier solve of the chain already realized 0.5 of u1's investment.
+    p_entity_invested = Param(("e",), pl.DataFrame({"e": ["u1"], "value": [0.5]}))
+    nb_dt = compute_nodeBalance_dt(d)
+    p_inflow_new = Param(("n", "d", "t"),
+        nb_dt.with_columns(value=pl.lit(-100.0))
+            .select("n", "d", "t", "value"))
+    data = dataclasses.replace(d,
+        process_source_sink=pss, process_source_sink_eff=pss_eff,
+        process_source_sink_noEff=pss_noEff, pss_dt=pss_dt,
+        flow_to_n=flow_to_n,
+        flow_from_commodity_eff=flow_from_commodity_eff,
+        flow_from_commodity_noEff=flow_from_commodity_noEff,
+        p_unitsize=p_unitsize,
+        p_flow_upper=p_flow_upper,
+        p_flow_upper_existing=p_flow_upper_existing,
+        p_slope=p_slope,
+        p_inflow=p_inflow_new,
+        pd_invest_set=pd_invest_set,
+        ed_invest_set=ed_invest_set,
+        edd_invest_set=edd_invest_set,
+        p_entity_max_units=p_entity_max_units,
+        ed_invest_period_set=ed_invest_set.clone(),
+        ed_invest_max_period=ed_invest_max_period,
+        ed_entity_annual_discounted=ed_entity_annual_discounted,
+        ed_lifetime_fixed_cost=ed_lifetime_fixed_cost,
+        group_entity=group_entity,
+        g_invest_total=g_invest_total,
+        p_group_invest_max_total=p_group_invest_max_total,
+        p_entity_invested=p_entity_invested,
+    )
+    pb, sol = _solve(data)
+    assert sol.optimal
+    assert "maxInvestGroup_entity_total_p" in set(pb.cstr_names())
+    bounds = row_bounds(pb, "maxInvestGroup_entity_total_p")
+    assert len(bounds) == 1
+    (_lb, ub), = bounds.values()
+    assert ub == pytest.approx(1.5, rel=1e-7)
+    v_inv = sol.value("v_invest_p")
+    total = float(v_inv["value"].sum())
+    assert total == pytest.approx(1.5, rel=1e-7)
+
+
+# ---------------------------------------------------------------------------
 # B15-5 + B15-6 — minInvest floors and no-investment equality.
 
 def test_min_invest_and_no_investment_eq(toy_invest_3d):

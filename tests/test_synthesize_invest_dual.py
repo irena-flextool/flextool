@@ -62,7 +62,9 @@ def _base_v(periods):
     v.dual_maxInvest_total.columns.name = 'entity'
     v.dual_maxCumulative = _empty_entity(periods)
     v.dual_maxInvestGroup_period = _empty_group(periods)
-    v.dual_maxInvestGroup_total = _empty_group(periods)
+    # solve-only collapsed shape (RangeIndex) — populated per test (c16a).
+    v.dual_maxInvestGroup_total = pd.DataFrame(index=pd.RangeIndex(0))
+    v.dual_maxInvestGroup_total.columns.name = 'group'
     v.dual_maxInvestGroup_cumulative = _empty_group(periods)
     v.dual_minInvest_period = _empty_entity(periods)
     # solve-only collapsed shape (RangeIndex) — populated per test (c16a).
@@ -70,7 +72,9 @@ def _base_v(periods):
     v.dual_minInvest_total.columns.name = 'entity'
     v.dual_minCumulative = _empty_entity(periods)
     v.dual_minInvestGroup_period = _empty_group(periods)
-    v.dual_minInvestGroup_total = _empty_group(periods)
+    # solve-only collapsed shape (RangeIndex) — populated per test (c16a).
+    v.dual_minInvestGroup_total = pd.DataFrame(index=pd.RangeIndex(0))
+    v.dual_minInvestGroup_total.columns.name = 'group'
     v.dual_minInvestGroup_cumulative = _empty_group(periods)
     v.dual_invest_unit = _empty_col(periods, 'unit')
     v.dual_invest_connection = _empty_col(periods, 'connection')

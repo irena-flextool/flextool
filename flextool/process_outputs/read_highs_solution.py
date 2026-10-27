@@ -372,7 +372,12 @@ VARIABLE_SPECS: list[VariableSpec] = [
     _invest_dual("maxInvestGroup_entity_period",     "group",  "maxInvestGroup_period",
                  derived_from=("maxInvestGroup_entity_period_p",
                                 "maxInvestGroup_entity_period_n")),
+    # c16a: maxInvestGroup_entity_total is now one row per group over the
+    # chain horizon (period summed out, like maxInvest_entity_total) —
+    # has_period=False.  Under recourse it is renamed to _path (not read
+    # here, same as the entity-level _path rows).
     _invest_dual("maxInvestGroup_entity_total",      "group",  "maxInvestGroup_total",
+                 has_period=False,
                  derived_from=("maxInvestGroup_entity_total_p",
                                 "maxInvestGroup_entity_total_n")),
     # ``maxInvestGroup_entity_cumulative`` keeps a single non-suffixed
@@ -412,9 +417,13 @@ VARIABLE_SPECS: list[VariableSpec] = [
     _invest_dual("minInvestGroup_entity_period",     "group",  "minInvestGroup_period",
                  derived_from=("minInvestGroup_entity_period_p",
                                 "minInvestGroup_entity_period_n")),
-    _invest_dual("minInvestGroup_entity_total",      "group",  "minInvestGroup_total",
-                 derived_from=("minInvestGroup_entity_total_p",
-                                "minInvestGroup_entity_total_n")),
+    # c16a: minInvestGroup_entity_total_path_{p,n} is now one row per group
+    # over the chain horizon (period summed out, always named _path -- see
+    # minInvest_entity_total_path above); has_period=False.
+    _invest_dual("minInvestGroup_entity_total_path", "group",  "minInvestGroup_total",
+                 has_period=False,
+                 derived_from=("minInvestGroup_entity_total_path_p",
+                                "minInvestGroup_entity_total_path_n")),
     # ``minInvestGroup_entity_cumulative`` keeps a single non-suffixed
     # name (_cumulative_invest._eq_group_invest_cumulative), like the max-side cumulative.
     _invest_dual("minInvestGroup_entity_cumulative", "group",  "minInvestGroup_cumulative"),

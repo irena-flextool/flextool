@@ -120,32 +120,34 @@ def group_prior(group_entity: pl.DataFrame, prior: "pl.DataFrame | None", d, axi
     return out if out.height > 0 else pl.DataFrame(schema=out_schema)
 
 
-def leaf_rows(over: pl.DataFrame, key: str, var: Var, d_leaf: "pl.DataFrame | None"
+def leaf_rows(terms: pl.DataFrame, key: str, var: Var, d_leaf: "pl.DataFrame | None"
              ) -> tuple[bool, pl.DataFrame, pl.DataFrame]:
     """``(is_path, rows, mask)`` for the ``Σ_d`` block shared by every ``*_total`` family.
 
-    ``over`` is keyed on ``key`` (no ``"d"`` column) and already restricted to rows that have the
-    variable (callers apply the #43 restriction before calling this).  With one scenario leaf (or
-    no ``d_leaf``) returns ``(False, over, over)`` — the legacy shape: ``Sum(Where(var *
-    unitsize, over), over=("d",))`` sums every period ``var`` has for each ``key``.
+    ``terms`` is the actual support of the Σ term — every row has a ``key`` column (``"p"``/
+    ``"n"`` for an entity total, ``"g"`` for a group total) and a ``"d"`` column, already
+    restricted to rows that have the variable (an entity caller intersects its ``over`` with
+    ``var.frame.select(key, "d")``; a group caller additionally joins in the group's members —
+    callers apply the #43 restriction this way before calling this).  With one scenario leaf (or
+    no ``d_leaf``) returns ``(False, rows, terms)`` where ``rows = terms.select(key).unique()`` —
+    the legacy shape: ``Sum(Where(... , terms), over=(...,"d"))`` sums every period/member
+    ``terms`` has for each ``key``.
 
-    With several leaves (recourse) returns ``(True, rows, mask)``: ``mask`` is the actual ``(key,
-    d, leaf)`` triples — ``var``'s own ``(key, d)`` support, restricted to ``over``'s keys, joined
-    to the scenario tree's ``(d, leaf)`` pairs (``d_leaf``) — and ``rows =
-    mask.select(key, "leaf").unique()``.  A ``(key, leaf)`` combination with no ``d`` (that key has
-    no variable in that leaf) therefore gets no row at all, instead of a constants-only row that
-    would be infeasible for a ``>=`` family and a no-op for ``<=`` (c16a critique #2).
+    With several leaves (recourse) returns ``(True, rows, mask)``: ``mask`` is ``terms`` joined to
+    the scenario tree's ``(d, leaf)`` pairs (``d_leaf``), and ``rows = mask.select(key,
+    "leaf").unique()``.  A ``(key, leaf)`` combination with no ``d`` (that key has no
+    variable/member in that leaf) therefore gets no row at all, instead of a constants-only row
+    that would be infeasible for a ``>=`` family and a no-op for ``<=`` (c16a critique #2).
     """
     if d_leaf is None or getattr(d_leaf, "height", 0) == 0:
-        return False, over, over
+        return False, terms.select(key).unique(), terms
     d_dtype = var.frame.schema["d"]
     leaves_all = (d_leaf if d_leaf.schema["d"] == d_dtype
                   else d_leaf.with_columns(pl.col("d").cast(d_dtype, strict=False)))
     leaves = leaves_all.join(var.frame.select("d").unique(), on="d", how="semi")
     if leaves.height == 0 or leaves["leaf"].n_unique() <= 1:
-        return False, over, over
-    key_d = over.join(var.frame.select(key, "d").unique(), on=key, how="inner")
-    mask = key_d.join(leaves_all, on="d", how="inner")
+        return False, terms.select(key).unique(), terms
+    mask = terms.join(leaves_all, on="d", how="inner")
     rows = mask.select(key, "leaf").unique()
     return True, rows, mask
 

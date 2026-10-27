@@ -126,14 +126,15 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
       the reduced cost is ≥0, so negate → NEGATIVE (unprofitable to build).
     - (d) interior, binds nothing → 0.
 
-    SOLVE-ONLY BROADCAST (read off ``drop_levels.py``): both
-    ``dual_maxInvest_total`` and ``dual_minInvest_total`` (c16a: the min
-    side moved to ``_V_SOLVE_ONLY`` alongside the max side — the row it
-    mirrors, ``minInvest_entity_total_path_{p,n}``, is now one row per
-    entity over the whole chain horizon, period summed out, same shape as
-    the max-side total) are collapsed to a single-row ``RangeIndex(1)``
-    (period-less) and so must be broadcast across the period axis of a
-    sibling before combining.
+    SOLVE-ONLY BROADCAST (read off ``drop_levels.py``): ``dual_maxInvest_total``,
+    ``dual_minInvest_total``, and (c16a) their group counterparts
+    ``dual_maxInvestGroup_total`` / ``dual_minInvestGroup_total`` — the rows
+    they mirror are each now one row per entity/group over the whole chain
+    horizon, period summed out — are all collapsed to a single-row
+    ``RangeIndex(1)`` (period-less) and so must be broadcast across the
+    period axis of a sibling before combining.  The group pair is expanded
+    to member entities FIRST (still period-less), then broadcast the same
+    way as the entity-level pair.
 
     The broadcast period axis is taken from a per-period sibling dual when
     one is non-empty; otherwise (a binding total cap is the SOLE family, so
@@ -196,36 +197,46 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
                 and 'period' in ei.names:
             ed_invest_idx = ei
 
+    def _broadcast(df: "pd.DataFrame") -> "pd.DataFrame | None":
+        """Broadcast a period-less (single-row ``RangeIndex``) dual frame
+        across periods: ``period_ref`` when available, else each column's
+        own realized invest periods from ``ed_invest_idx`` (c16a: shared by
+        ``dual_maxInvest_total``, ``dual_minInvest_total`` and, after their
+        member expansion, ``dual_{max,min}InvestGroup_total``).  ``None``
+        when neither fallback is available (drop it, don't fabricate 0)."""
+        if period_ref is not None:
+            out = pd.DataFrame(
+                {c: df.iloc[0][c] for c in df.columns},
+                index=period_ref.index,
+            )
+            out.columns.name = df.columns.name
+            return out
+        if ed_invest_idx is not None:
+            row = df.iloc[0]
+            cols = {}
+            for c in df.columns:
+                periods = ed_invest_idx[
+                    ed_invest_idx.get_level_values('entity') == c
+                ].get_level_values('period').unique()
+                if len(periods) == 0:
+                    continue
+                cols[c] = pd.Series(row[c], index=periods)
+            if not cols:
+                return None
+            out = pd.DataFrame(cols)
+            out.index.name = 'period'
+            out.columns.name = df.columns.name
+            return out
+        return None
+
     # (b) Max-side ``<=`` duals: raw < 0 → negate → POSITIVE.
     #     ``dual_maxInvest_total`` is solve-only → broadcast over periods.
     for df in (v.dual_maxInvest_period, v.dual_maxInvest_total, v.dual_maxCumulative):
         if df.empty:
             continue
         if df is v.dual_maxInvest_total:
-            if period_ref is not None:
-                df = pd.DataFrame(
-                    {c: df.iloc[0][c] for c in df.columns},
-                    index=period_ref.index,
-                )
-                df.columns.name = 'entity'
-            elif ed_invest_idx is not None:
-                # Build per-(entity, period) from the invest set: each capped
-                # entity's value goes only on its own realized invest periods.
-                cols = {}
-                row = df.iloc[0]
-                for c in df.columns:
-                    periods = ed_invest_idx[
-                        ed_invest_idx.get_level_values('entity') == c
-                    ].get_level_values('period').unique()
-                    if len(periods) == 0:
-                        continue
-                    cols[c] = pd.Series(row[c], index=periods)
-                if not cols:
-                    continue
-                df = pd.DataFrame(cols)
-                df.index.name = 'period'
-                df.columns.name = 'entity'
-            else:
+            df = _broadcast(df)
+            if df is None:
                 continue
         entity_duals.append(df.mul(-1.0))
 
@@ -238,39 +249,17 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
     # c16a: ``dual_minInvest_total`` is now solve-only (one row per entity
     # over the chain horizon) — broadcast it over periods the same way as
     # ``dual_maxInvest_total`` above, instead of adding it directly.
-    df = v.dual_minInvest_total
-    if not df.empty:
-        if period_ref is not None:
-            df = pd.DataFrame(
-                {c: df.iloc[0][c] for c in df.columns},
-                index=period_ref.index,
-            )
-            df.columns.name = 'entity'
+    if not v.dual_minInvest_total.empty:
+        df = _broadcast(v.dual_minInvest_total)
+        if df is not None:
             entity_duals.append(df.mul(-1.0))
-        elif ed_invest_idx is not None:
-            cols = {}
-            row = df.iloc[0]
-            for c in df.columns:
-                periods = ed_invest_idx[
-                    ed_invest_idx.get_level_values('entity') == c
-                ].get_level_values('period').unique()
-                if len(periods) == 0:
-                    continue
-                cols[c] = pd.Series(row[c], index=periods)
-            if cols:
-                df = pd.DataFrame(cols)
-                df.index.name = 'period'
-                df.columns.name = 'entity'
-                entity_duals.append(df.mul(-1.0))
 
     # (b)/(c) group caps/floors: expand group → member entities, then negate.
     if not v.group_entity_invest.empty:
         group_map = v.group_entity_invest  # columns: group, entity
         for group_df in (
-            v.dual_maxInvestGroup_period, v.dual_maxInvestGroup_total,
-            v.dual_maxInvestGroup_cumulative,
-            v.dual_minInvestGroup_period, v.dual_minInvestGroup_total,
-            v.dual_minInvestGroup_cumulative,
+            v.dual_maxInvestGroup_period, v.dual_maxInvestGroup_cumulative,
+            v.dual_minInvestGroup_period, v.dual_minInvestGroup_cumulative,
         ):
             if group_df.empty:
                 continue
@@ -278,13 +267,37 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
                 members = group_map.loc[group_map['group'] == group_name, 'entity'].tolist()
                 if not members:
                     continue
-                # Create per-entity columns with the group's dual value.
                 group_series = group_df[group_name]
                 expanded = pd.DataFrame(
                     {entity: group_series for entity in members},
                     index=group_series.index,
                 )
                 expanded.columns.name = 'entity'
+                entity_duals.append(expanded.mul(-1.0))
+
+        # c16a: dual_{max,min}InvestGroup_total are now solve-only (one row
+        # per group over the chain horizon, like the entity-level totals).
+        # Expand to member entities FIRST (still period-less), then
+        # broadcast the expanded per-entity frame over periods the same way
+        # dual_maxInvest_total is broadcast above.
+        for group_df in (v.dual_maxInvestGroup_total, v.dual_minInvestGroup_total):
+            if group_df.empty:
+                continue
+            for group_name in group_df.columns:
+                members = group_map.loc[group_map['group'] == group_name, 'entity'].tolist()
+                if not members:
+                    continue
+                # Create per-entity columns with the group's (still
+                # period-less) dual value, then broadcast over periods.
+                group_series = group_df[group_name]
+                expanded = pd.DataFrame(
+                    {entity: group_series for entity in members},
+                    index=group_series.index,
+                )
+                expanded.columns.name = 'entity'
+                expanded = _broadcast(expanded)
+                if expanded is None:
+                    continue
                 entity_duals.append(expanded.mul(-1.0))
 
     # (a) Not-built regime — v_invest COLUMN reduced cost.  Divide by

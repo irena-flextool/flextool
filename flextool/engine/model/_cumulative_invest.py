@@ -262,7 +262,8 @@ def _eq_min_invest_total(b: _Build) -> None:
         if over_e.height == 0:
             continue
         cap_param = Param((axis,), minus_prior(cap.frame.pipe(rename_to_axis, {"e": axis}), axis, prior))
-        _, over, mask = leaf_rows(over_e, axis, var, d_leaf)
+        terms = over_e.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
+        _, over, mask = leaf_rows(terms, axis, var, d_leaf)
         b.m.add_cstr(
             name,
             over      = over,
@@ -302,7 +303,8 @@ def _eq_min_divest_total(b: _Build) -> None:
         if over_e.height == 0:
             continue
         cap_param = Param((axis,), minus_prior(cap.frame.pipe(rename_to_axis, {"e": axis}), axis, prior))
-        _, over, mask = leaf_rows(over_e, axis, var, d_leaf)
+        terms = over_e.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
+        _, over, mask = leaf_rows(terms, axis, var, d_leaf)
         b.m.add_cstr(
             name,
             over      = over,
@@ -415,105 +417,116 @@ def _eq_group_entity_period(b: _Build) -> None:
 
 
 def _eq_group_invest_total(b: _Build) -> None:
-    """{max,min}InvestGroup_entity_total_{p,n}: capacity a group has invested and still alive."""
+    """{max,min}InvestGroup_entity_total[_path]_{p,n}: capacity a group has invested over the chain."""
     d = b.d
-    group_entity, g_set, edd = d.group_entity, d.g_invest_total, d.edd_invest_set
-    if not _has_rows(group_entity) or not _has_rows(g_set) or edd is None:
+    group_entity, g_set = d.group_entity, d.g_invest_total
+    if not _has_rows(group_entity) or not _has_rows(g_set):
         return
-    # (g, d): the periods in which some member of the group has investments alive.
-    over = (group_entity.rename({"e": "_e"}).filter(pl.col("g").is_in(g_set["g"].unique()))
-            .join(edd.rename({"e": "_e"}), on="_e", how="inner")
-            .select("g", "d").unique())
-    if over.height == 0:
-        return
+    d_leaf = getattr(d, "d_leaf", None)
+    prior = chain_prior(d, "invest")
 
-    # ─── EQ. ─── {max,min}InvestGroup_entity_total_{p,n} ─────────────────────
+    # ─── EQ. ─── {max,min}InvestGroup_entity_total[_path]_{p,n} ─────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
-    #   ≤ group_invest_max_total[g]   (maxInvestGroup_entity_total_p)
-    #   ≥ group_invest_min_total[g]   (minInvestGroup_entity_total_p)
-    #   ∀ g ∈ g_invest_total, d with some member alive in edd_invest_set
-    #   _n: the node analogue with v_invest_n and state_unitsize[n]
-    # In every period, the capacity the group has invested and still alive stays within the group's
-    # totals; processes and storage nodes of a group get separate rows.  Capacity invested by earlier
-    # solves of a chain is not counted.
-    for name, sense, cap, var, axis in (
-        ("maxInvestGroup_entity_total_p", "<=", d.p_group_invest_max_total, b.v_invest_p, "p"),
-        ("maxInvestGroup_entity_total_n", "<=", d.p_group_invest_max_total, b.v_invest_n, "n"),
-        ("minInvestGroup_entity_total_p", ">=", d.p_group_invest_min_total, b.v_invest_p, "p"),
-        ("minInvestGroup_entity_total_n", ">=", d.p_group_invest_min_total, b.v_invest_n, "n"),
+    # Σ_{p:(g,p)∈group_entity} Σ_{d∈D(leaf)} v_invest_p[p,d]·unitsize[p]
+    #   ≤ max(0, group_invest_max_total[g] − Σ_{p∈g} prior_inv[p])   (maxInvestGroup_entity_total[_path]_p)
+    #   ≥ max(0, group_invest_min_total[g] − Σ_{p∈g} prior_inv[p])   (minInvestGroup_entity_total_path_p)
+    #   ∀ g ∈ g_invest_total (, leaf)
+    #   prior_inv[p] = p_entity_invested[p]  (capacity realized by all earlier solves of the
+    #     chain); the group's prior sums every member of the axis kind, not only those with the
+    #     variable in THIS solve — their earlier investment still counts (c16a design §2)
+    #   _n: storage-node members, state_unitsize[n]
+    #   max: _path (one row per (g, leaf)) only under recourse, like the entity max side.
+    #   min: always _path — a plain per-group row, summed across alternative branches, would let
+    #     one branch meet the floor for every branch (Q3, same reason as the entity min side)
+    # Changed from per-(g,d) "invested and still alive" rows to one row per group (per leaf);
+    # processes and storage nodes of a group get separate rows.
+    for sense, cap, var, axis, legacy_name, path_name, always_path in (
+        ("<=", d.p_group_invest_max_total, b.v_invest_p, "p",
+         "maxInvestGroup_entity_total_p", "maxInvestGroup_entity_total_path_p", False),
+        ("<=", d.p_group_invest_max_total, b.v_invest_n, "n",
+         "maxInvestGroup_entity_total_n", "maxInvestGroup_entity_total_path_n", False),
+        (">=", d.p_group_invest_min_total, b.v_invest_p, "p",
+         None, "minInvestGroup_entity_total_path_p", True),
+        (">=", d.p_group_invest_min_total, b.v_invest_n, "n",
+         None, "minInvestGroup_entity_total_path_n", True),
     ):
         unitsize = _unitsize(d, axis)
         if cap is None or var is None or unitsize is None:
             continue
-        terms = _on_var_axis(group_entity, axis, var).join(_on_var_axis(edd, axis, var), on=axis, how="inner")
+        members = (_entities_of_kind(d, group_entity, axis).pipe(rename_to_axis, {"e": axis})
+                   .filter(pl.col("g").is_in(g_set["g"].unique())))
+        if members.height == 0:
+            continue
+        terms = members.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
         if terms.height == 0:
             continue
-        invest = _var_view(var, "__grp_total_at", {"d": "d_invest"})
+        cap_g = Param(("g",), minus_prior(cap.frame, "g", group_prior(group_entity, prior, d, axis)))
+        is_path, over, mask = leaf_rows(terms, "g", var, d_leaf)
+        name = path_name if (always_path or is_path) else legacy_name
         b.m.add_cstr(
             name,
             over      = over,
             sense     = sense,
-            lhs_terms = {"invest_grp": Sum(Where(invest * unitsize, terms), over=(axis, "d_invest"))},
-            rhs_terms = {"cap":        cap},
+            lhs_terms = {"invest_grp": Sum(Where(var * unitsize, mask), over=(axis, "d"))},
+            rhs_terms = {"cap":        cap_g},
         )
 
 
 def _eq_group_divest_total(b: _Build) -> None:
-    """{max,min}DivestGroup_entity_total[_path]_{p,n}: capacity a group retires over the horizon."""
+    """{max,min}DivestGroup_entity_total[_path]_{p,n}: capacity a group retires over the chain."""
     d = b.d
     group_entity, g_set = d.group_entity, d.g_divest_total
     if not _has_rows(group_entity) or not _has_rows(g_set):
         return
-    over = g_set.select("g")
     d_leaf = getattr(d, "d_leaf", None)
+    prior = chain_prior(d, "divest")
 
-    # ─── EQ. ─── {max,min}DivestGroup_entity_total[_path]_{p,n} ──────────────
+    # ─── EQ. ─── {max,min}DivestGroup_entity_total[_path]_{p,n} ─────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{p : (g,p) ∈ group_entity} Σ_d v_divest_p[p,d] · unitsize[p]
-    #   ≤ group_retire_max_total[g]   (maxDivestGroup_entity_total_p)
-    #   ≥ group_retire_min_total[g]   (minDivestGroup_entity_total_p)
-    #   ∀ g ∈ g_divest_total
-    #   _n: the node analogue with v_divest_n and state_unitsize[n]
-    #   _path (max only): one row per (g, leaf), Σ_d over the periods of the leaf
-    # Bounds the capacity a group retires over the horizon; processes and storage nodes of a group get
-    # separate rows.  With one scenario leaf (deterministic) the max row is the plain total; with
-    # several (recourse) it becomes the _path row, so the cap applies to each scenario path instead of
-    # adding up divestments of alternative branches.  Group retire_{max,min}_total is not a schema
-    # parameter, so these rows are reachable only with off-schema data.
-    for name, path_name, sense, cap, var, axis in (
-        ("maxDivestGroup_entity_total_p", "maxDivestGroup_entity_total_path_p", "<=",
-         d.p_group_retire_max_total, b.v_divest_p, "p"),
-        ("maxDivestGroup_entity_total_n", "maxDivestGroup_entity_total_path_n", "<=",
-         d.p_group_retire_max_total, b.v_divest_n, "n"),
-        ("minDivestGroup_entity_total_p", None, ">=", d.p_group_retire_min_total, b.v_divest_p, "p"),
-        ("minDivestGroup_entity_total_n", None, ">=", d.p_group_retire_min_total, b.v_divest_n, "n"),
+    # Σ_{p:(g,p)∈group_entity} Σ_{d∈D(leaf)} v_divest_p[p,d]·unitsize[p]
+    #   ≤ max(0, group_retire_max_total[g] − Σ_{p∈g} prior_div[p])   (maxDivestGroup_entity_total[_path]_p)
+    #   ≥ max(0, group_retire_min_total[g] − Σ_{p∈g} prior_div[p])   (minDivestGroup_entity_total_path_p)
+    #   ∀ g ∈ g_divest_total (, leaf)
+    #   prior_div[p] = p_entity_divested[p]  (capacity retired by earlier solves of the chain, at
+    #     realized non-branch periods only); the group's prior sums every member of the axis kind
+    #   _n: storage-node members, state_unitsize[n]
+    #   max: _path (one row per (g, leaf)) only under recourse, as before — the cap applies to
+    #     each scenario path instead of adding up divestments of alternative branches.
+    #   min: always _path (new — Q3, same reason as every other min-total family: a plain
+    #     per-group row, summed across alternative branches, would let one branch meet the floor
+    #     for every branch)
+    # Bounds the capacity a group retires over the chain; processes and storage nodes of a group
+    # get separate rows.  Group retire_{max,min}_total is not a schema parameter, so these rows
+    # are reachable only with off-schema data.
+    for sense, cap, var, axis, legacy_name, path_name, always_path in (
+        ("<=", d.p_group_retire_max_total, b.v_divest_p, "p",
+         "maxDivestGroup_entity_total_p", "maxDivestGroup_entity_total_path_p", False),
+        ("<=", d.p_group_retire_max_total, b.v_divest_n, "n",
+         "maxDivestGroup_entity_total_n", "maxDivestGroup_entity_total_path_n", False),
+        (">=", d.p_group_retire_min_total, b.v_divest_p, "p",
+         None, "minDivestGroup_entity_total_path_p", True),
+        (">=", d.p_group_retire_min_total, b.v_divest_n, "n",
+         None, "minDivestGroup_entity_total_path_n", True),
     ):
         unitsize = _unitsize(d, axis)
         if cap is None or var is None or unitsize is None:
             continue
-        members = _on_var_axis(group_entity, axis, var).filter(pl.col("g").is_in(g_set["g"].unique()))
+        members = (_entities_of_kind(d, group_entity, axis).pipe(rename_to_axis, {"e": axis})
+                   .filter(pl.col("g").is_in(g_set["g"].unique())))
         if members.height == 0:
             continue
-        # (d, leaf) pairs of the scenario tree, restricted to the periods var exists in.
-        leaf_periods = None
-        if path_name is not None and _has_rows(d_leaf):
-            d_dtype = var.frame.schema["d"]
-            leaf_periods = (d_leaf if d_leaf.schema["d"] == d_dtype
-                            else d_leaf.with_columns(pl.col("d").cast(d_dtype, strict=False)))
-            leaf_periods = leaf_periods.join(var.frame.select("d").unique(), on="d", how="semi")
-        if leaf_periods is None or leaf_periods.height == 0 or leaf_periods["leaf"].n_unique() <= 1:
-            row_name, rows, mask = name, over, members
-        else:
-            row_name = path_name
-            mask = members.join(leaf_periods, how="cross")
-            rows = over.join(leaf_periods.select("leaf").unique().sort("leaf"), how="cross")
+        terms = members.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
+        if terms.height == 0:
+            continue
+        cap_g = Param(("g",), minus_prior(cap.frame, "g", group_prior(group_entity, prior, d, axis)))
+        is_path, over, mask = leaf_rows(terms, "g", var, d_leaf)
+        name = path_name if (always_path or is_path) else legacy_name
         b.m.add_cstr(
-            row_name,
-            over      = rows,
+            name,
+            over      = over,
             sense     = sense,
             lhs_terms = {"divest_grp": Sum(Where(var * unitsize, mask), over=(axis, "d"))},
-            rhs_terms = {"cap":        cap},
+            rhs_terms = {"cap":        cap_g},
         )
 
 

@@ -245,6 +245,10 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxDivest_entity_total_path", "maxDivest_entity_total_path_n",
     "maxDivestGroup_entity_total_path_p",
     "maxDivestGroup_entity_total_path_n",
+    # c16a: the group max-invest total gains the same legacy-vs-_path split
+    # (_cumulative_invest.py ``_eq_group_invest_total``).
+    "maxInvestGroup_entity_total_path_p",
+    "maxInvestGroup_entity_total_path_n",
     # Per-period invest/divest caps — model/core.py ``_eq_invest_period_caps``
     # passes the constraint name from a loop table.
     "maxInvest_entity_period_p", "maxInvest_entity_period_n",
@@ -277,9 +281,12 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxDivestGroup_entity_period_p", "maxDivestGroup_entity_period_n",
     "minDivestGroup_entity_period_p", "minDivestGroup_entity_period_n",
     "maxInvestGroup_entity_total_p", "maxInvestGroup_entity_total_n",
-    "minInvestGroup_entity_total_p", "minInvestGroup_entity_total_n",
     "maxDivestGroup_entity_total_p", "maxDivestGroup_entity_total_n",
-    "minDivestGroup_entity_total_p", "minDivestGroup_entity_total_n",
+    # c16a: minInvestGroup/minDivestGroup entity totals are always named
+    # _path now (one row per (group, leaf), required even with a single
+    # scenario leaf); the bare names are no longer emitted.
+    "minInvestGroup_entity_total_path_p", "minInvestGroup_entity_total_path_n",
+    "minDivestGroup_entity_total_path_p", "minDivestGroup_entity_total_path_n",
     "maxCumulative_flow_solve", "minCumulative_flow_solve",
     "maxCumulative_flow_period", "minCumulative_flow_period",
     "maxInstant_flow", "minInstant_flow",

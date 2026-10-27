@@ -2569,7 +2569,8 @@ def _eq_invest_total_caps(b: _Build) -> None:
             continue
         cap = Param((axis,), minus_prior(max_total.frame.pipe(rename_to_axis, {"e": axis}), axis, prior))
         unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
-        is_path, over, mask = leaf_rows(over_e, axis, var, d_leaf)
+        terms = over_e.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
+        is_path, over, mask = leaf_rows(terms, axis, var, d_leaf)
         name = path_name if is_path else legacy_name
         m.add_cstr(
             name,

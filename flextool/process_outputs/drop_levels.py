@@ -13,15 +13,16 @@ _V_DROP = [
     'invest', 'divest',
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
     'dual_maxInvest_period', 'dual_maxCumulative',
-    'dual_maxInvestGroup_period', 'dual_maxInvestGroup_total', 'dual_maxInvestGroup_cumulative',
+    'dual_maxInvestGroup_period', 'dual_maxInvestGroup_cumulative',
     # Investment-floor (min-side) duals — keep a ('solve', 'period') index,
     # so every family drops the solve level here rather than collapsing to
-    # solve-only.  c16a: ``dual_minInvest_total`` moved to ``_V_SOLVE_ONLY``
-    # below — the row it mirrors (``minInvest_entity_total_path_{p,n}``) is
-    # now one row per entity over the whole chain horizon (period summed
-    # out), like ``dual_maxInvest_total``, not per (entity, period).
+    # solve-only.  c16a: ``dual_minInvest_total`` / ``dual_minInvestGroup_total``
+    # moved to ``_V_SOLVE_ONLY`` below — the rows they mirror
+    # (``min{,InvestGroup_}entity_total_path_{p,n}``) are now one row per
+    # entity/group over the whole chain horizon (period summed out), like
+    # the max-side totals, not per (entity/group, period).
     'dual_minInvest_period', 'dual_minCumulative',
-    'dual_minInvestGroup_period', 'dual_minInvestGroup_total', 'dual_minInvestGroup_cumulative',
+    'dual_minInvestGroup_period', 'dual_minInvestGroup_cumulative',
     'dual_co2_max_period',
 ]
 
@@ -30,9 +31,12 @@ _V_DROP = [
 # ``dual_co2_max_total`` below.
 _V_SOLVE_ONLY = [
     'dual_maxInvest_total',
-    # c16a: minInvest_entity_total_path_{p,n} is now one row per entity
-    # over the chain horizon (no period axis) — see the comment above.
+    # c16a: min{,InvestGroup_}entity_total_path_{p,n} are now one row per
+    # entity/group over the chain horizon (no period axis) — see the
+    # comment above.  dual_maxInvestGroup_total moves here too (same
+    # chain-horizon reshape, max side).
     'dual_minInvest_total',
+    'dual_maxInvestGroup_total', 'dual_minInvestGroup_total',
 ]
 
 # Parameters: droplevel('solve') + deduplicate with keep='last'.

@@ -350,25 +350,35 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "minDivestGroup_entity_period": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
-    # _cumulative_invest._eq_group_invest_total / _eq_group_divest_total
+    # _cumulative_invest._eq_group_invest_total / _eq_group_divest_total.
+    # c16a: the min side (both invest and divest) is always named _path now
+    # (one row per (group, leaf), required even with a single scenario leaf
+    # -- same reason as the entity min-total families); the bare
+    # (no-_path) min names are no longer emitted.  The max side keeps the
+    # bare name for the deterministic (single-leaf) case and only uses
+    # _path under recourse, like the entity max-total families.
     "maxInvestGroup_entity_total": CstrFamily(
-        None, member_class_resolver="group_capacity"
-    ),
-    "minInvestGroup_entity_total": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
     "maxDivestGroup_entity_total": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
-    "minDivestGroup_entity_total": CstrFamily(
-        None, member_class_resolver="group_capacity"
-    ),
-    # Slice D per-path divest-group total cap (design §7.2 item 4 /
-    # §14): ``maxDivestGroup_entity_total_path_{p,n}`` emitted by
-    # ``_cumulative_invest._eq_group_divest_total`` when >1 scenario leaf exists.  The
+    # Slice D per-path total caps (design §7.2 item 4 / §14, extended by
+    # c16a to the invest side and to both min families):
+    # ``{max,min}{Invest,Divest}Group_entity_total_path_{p,n}`` emitted by
+    # ``_cumulative_invest._eq_group_invest_total`` / ``_eq_group_divest_total``.  The
     # ``_p`` / ``_n`` member-class suffix resolves POWER vs ENERGY off
     # this key (``lookup_cstr`` strips it since the resolver is set).
+    "maxInvestGroup_entity_total_path": CstrFamily(
+        None, member_class_resolver="group_capacity"
+    ),
+    "minInvestGroup_entity_total_path": CstrFamily(
+        None, member_class_resolver="group_capacity"
+    ),
     "maxDivestGroup_entity_total_path": CstrFamily(
+        None, member_class_resolver="group_capacity"
+    ),
+    "minDivestGroup_entity_total_path": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
     # _cumulative_invest._eq_group_invest_cumulative ({max,min}InvestGroup_entity_cumulative)
