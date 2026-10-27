@@ -1020,13 +1020,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             write_lean_parquet(df, f'{parquet_dir}/{name}.parquet',
                                column_metadata=col_meta)
 
-        # Copy timeline_breaks from solve_data to parquet dir.
-        raw_dir = raw_output_dir or 'output_raw'
-        work_dir = os.path.dirname(raw_dir) or '.'
-        breaks_csv = os.path.join(work_dir, 'solve_data', 'timeline_breaks.csv')
-        if os.path.exists(breaks_csv):
-            breaks_df = pd.read_csv(breaks_csv)
-            write_lean_parquet(breaks_df, f'{parquet_dir}/timeline_breaks.parquet', index=False)
+        # Item 163 (Q2): the GMPL model wrote ``solve_data/timeline_breaks.csv``;
+        # nothing in the polars cascade writes it (no producer since v4), so this
+        # read was always absent in a fresh run.  Dropped rather than routed
+        # through a work-folder read; rebuilding the timeline breaks from
+        # FlexData is tracked as a follow-up (github_issues.md item 170).
 
         start = log_time("Wrote to parquet", start, timing_recorder)
 

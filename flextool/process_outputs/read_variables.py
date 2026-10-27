@@ -1,20 +1,15 @@
 """Read solver variable outputs into a namespace.
 
-Supports two pathways:
+Per-solve parquets in ``output_raw/<var>__{solve}.parquet``, written by
+:mod:`flextool.process_outputs.read_highs_solution`.  The parquets carry
+full MultiIndex information in compact ``flextool`` metadata (see
+``lean_parquet``).
 
-* **CSV** — ``output_raw/*.csv`` (legacy path).  Kept alive for
-  ``--use-old-raw-csv`` runs.
-* **Parquet** — per-solve parquets in
-  ``output_raw/<var>__{solve}.parquet`` written by
-  :mod:`flextool.process_outputs.read_highs_solution`.  The parquets
-  carry full MultiIndex information in compact ``flextool`` metadata,
-  so they round-trip to the same DataFrame shape the CSV path
-  produces (see ``lean_parquet``).
-
-Both pathways use the same ``output_raw/`` folder.  Dispatch is by
-file presence: if any ``v_flow__*.parquet`` exists and no
-``v_flow.csv`` does, the parquet pathway is used; otherwise the CSV
-pathway.
+Item 163: the legacy ``output_raw/*.csv`` pathway (``--use-old-raw-csv``)
+is gone — the cascade's output writers (:mod:`read_highs_solution`) only
+ever write the per-solve parquets, so a work folder with no
+``v_flow__*.parquet`` is an error, not a prompt to probe for a stale
+``v_flow.csv``.
 """
 import ast
 import json
@@ -34,28 +29,24 @@ from flextool.process_outputs.solve_order import load_solve_order
 def read_variables(output_dir, *, group_entity_invest: pd.DataFrame):
     """Read all variable outputs into a :class:`SimpleNamespace`.
 
-    ``output_dir`` is the ``output_raw/`` path.  ``input/`` is resolved
-    as a sibling folder (legacy CSV pathway only).
+    ``output_dir`` is the ``output_raw/`` path.  Raises ``FileNotFoundError``
+    when it holds no per-solve variable parquet (item 163: there is no
+    CSV fallback to probe for any more).
 
     ``group_entity_invest`` (item 163 addendum) is the caller-supplied
     ``(group, entity)`` frame — the sub-solve's FlexDataProvider never
     reads ``input/group_entity_invest.csv`` from disk, because no
     normal run writes it (see :func:`flextool.process_outputs.write_outputs._group_entity_invest`).
-    It is set on the returned namespace regardless of which pathway
-    below produced the rest of ``v``.
+    It is set on the returned namespace.
     """
     output_path = Path(output_dir)
-    work_folder = output_path.parent
-    input_path = work_folder / "input"
 
-    # Prefer the CSV pathway when its output is present.  Fall back to
-    # the per-solve parquets when ``v_flow.csv`` is absent.
-    if (output_path / "v_flow.csv").exists():
-        v = _read_from_csv(output_path, input_path)
-    elif any(output_path.glob("v_flow__*.parquet")):
-        v = _read_from_parquet(output_path, input_path)
-    else:
-        v = _read_from_csv(output_path, input_path)
+    if not any(output_path.glob("v_flow__*.parquet")):
+        raise FileNotFoundError(
+            f"no per-solve parquet outputs in {output_path}; the cascade "
+            f"writes output_raw/<var>__<solve>.parquet"
+        )
+    v = _read_from_parquet(output_path)
     v.group_entity_invest = group_entity_invest
     return v
 
@@ -281,15 +272,12 @@ def _stream_concat_parts(parts: list[Path], *, zero_fill: bool = True) -> pd.Dat
     return df.fillna(0.0) if zero_fill else df
 
 
-def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
-    """New pathway: concat per-solve parquets for each variable.
+def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
+    """Concat per-solve parquets for each variable.
 
-    Per-solve parquets are concatenated in solve **creation** order —
-    the same order the CSV pathway sees rows appended by phase-1
-    printfs.  Reading in creation order avoids any post-concat sort;
-    downstream ``DataFrame.mul(axis=1, level=0)`` aligns operands by
-    row index, and both reader pathways producing the same row order
-    is enough.
+    Per-solve parquets are concatenated in solve **creation** order, so
+    downstream ``DataFrame.mul(axis=1, level=0)`` aligns operands by row
+    index with no post-concat sort needed.
     """
     v = SimpleNamespace()
     work_folder = parquet_dir.parent
@@ -390,178 +378,4 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
     # sub-solve's FlexDataProvider — item 163 addendum; no polars producer
     # writes ``input/group_entity_invest.csv``, so a disk read here was always
     # empty on a fresh run.
-    return v
-
-
-def _read_from_csv(output_path: Path, input_path: Path) -> SimpleNamespace:
-    """CSV pathway: read ``output_raw/<var>.csv`` files."""
-    v = SimpleNamespace()
-
-    # Variables with (solve, period, time) index
-    v.obj = pd.read_csv(output_path / 'v_obj.csv', header=[0], index_col=[0]).astype(float)
-    v.flow = pd.read_csv(output_path / 'v_flow.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
-    # Reverse-flow auxiliary for method_2way_1var_off arcs.  The legacy CSV
-    # writer only emits this file when the variable exists; mirror v_flow's
-    # shape with an empty frame otherwise.
-    _flow_back_csv = output_path / 'v_flow_back.csv'
-    if _flow_back_csv.exists():
-        v.flow_back = pd.read_csv(_flow_back_csv, header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
-    else:
-        v.flow_back = pd.DataFrame(index=v.flow.index, columns=v.flow.columns[:0])
-    v.ramp = pd.read_csv(output_path / 'v_ramp.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
-    v.reserve = pd.read_csv(output_path / 'v_reserve.csv', header=[0, 1, 2, 3], index_col=[0, 1, 2]).astype(float)
-    v.state = pd.read_csv(output_path / 'v_state.csv', index_col=[0, 1, 2]).astype(float)
-    # The self-discharge the balance rows used is written by the engine writer only (parquet pathway); the legacy
-    # CSV layout has none, so the self-discharge outputs are empty here.
-    v.self_discharge = pd.DataFrame(index=v.state.index, columns=pd.Index([], name='node'), dtype=float)
-    v.online_linear = pd.read_csv(output_path / 'v_online_linear.csv', index_col=[0, 1, 2]).astype(float)
-    v.startup_linear = pd.read_csv(output_path / 'v_startup_linear.csv', index_col=[0, 1, 2]).astype(float)
-    v.shutdown_linear = pd.read_csv(output_path / 'v_shutdown_linear.csv', index_col=[0, 1, 2]).astype(float)
-    v.online_integer = pd.read_csv(output_path / 'v_online_integer.csv', index_col=[0, 1, 2]).astype(float)
-    v.startup_integer = pd.read_csv(output_path / 'v_startup_integer.csv', index_col=[0, 1, 2]).astype(float)
-    v.shutdown_integer = pd.read_csv(output_path / 'v_shutdown_integer.csv', index_col=[0, 1, 2]).astype(float)
-    v.q_state_up = pd.read_csv(output_path / 'vq_state_up.csv', index_col=[0, 1, 2]).astype(float)
-    v.q_state_down = pd.read_csv(output_path / 'vq_state_down.csv', index_col=[0, 1, 2]).astype(float)
-    v.q_reserve = pd.read_csv(output_path / 'vq_reserve.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
-    v.q_inertia = pd.read_csv(output_path / 'vq_inertia.csv', index_col=[0, 1, 2]).astype(float)
-    v.q_non_synchronous = pd.read_csv(output_path / 'vq_non_synchronous.csv', index_col=[0, 1, 2]).astype(float)
-    v.q_state_up_group = pd.read_csv(output_path / 'vq_state_up_group.csv', index_col=[0, 1, 2]).astype(float)
-    v.q_capacity_margin = pd.read_csv(output_path / 'vq_capacity_margin.csv', index_col=[0, 1]).astype(float)
-    v.invest = pd.read_csv(output_path / 'v_invest.csv', index_col=[0, 1]).astype(float)
-    v.divest = pd.read_csv(output_path / 'v_divest.csv', index_col=[0, 1]).astype(float)
-    v.dual_node_balance = pd.read_csv(output_path / 'v_dual_node_balance.csv', index_col=[0, 1, 2]).astype(float)
-    v.dual_reserve_balance = pd.read_csv(output_path / 'v_dual_reserve__upDown__group__period__t.csv', header=[0, 1, 2], index_col=[0, 1, 2]).astype(float)
-
-    # DC power flow voltage angles (may be empty when no DC PF nodes exist)
-    angle_path = output_path / 'v_angle.csv'
-    if angle_path.exists():
-        v.angle = pd.read_csv(angle_path, index_col=[0, 1, 2]).astype(float)
-        if v.angle.empty:
-            v.angle = pd.DataFrame()
-        else:
-            v.angle.index.names = ['solve', 'period', 'time']
-            v.angle.columns.name = 'node'
-    else:
-        v.angle = pd.DataFrame()
-
-    v.dual_invest_unit = pd.read_csv(output_path / 'v_dual_invest_unit.csv', index_col=[0, 1]).astype(float)
-    v.dual_invest_connection = pd.read_csv(output_path / 'v_dual_invest_connection.csv', index_col=[0, 1]).astype(float)
-    v.dual_invest_node = pd.read_csv(output_path / 'v_dual_invest_node.csv', index_col=[0, 1]).astype(float)
-    # Investment constraint duals (per MW, unscaled)
-    v.dual_maxInvest_period = pd.read_csv(output_path / 'v_dual_maxInvest_period.csv', index_col=[0, 1]).astype(float)
-    v.dual_maxInvest_total = pd.read_csv(output_path / 'v_dual_maxInvest_total.csv', index_col=[0, 1]).astype(float)
-    v.dual_maxCumulative = pd.read_csv(output_path / 'v_dual_maxCumulative.csv', index_col=[0, 1]).astype(float)
-    v.dual_maxInvestGroup_period = pd.read_csv(output_path / 'v_dual_maxInvestGroup_period.csv', index_col=[0, 1]).astype(float)
-    v.dual_maxInvestGroup_total = pd.read_csv(output_path / 'v_dual_maxInvestGroup_total.csv', index_col=[0, 1]).astype(float)
-    v.dual_maxInvestGroup_cumulative = pd.read_csv(output_path / 'v_dual_maxInvestGroup_cumulative.csv', index_col=[0, 1]).astype(float)
-    # Investment-floor (min-side) duals (per MW, unscaled)
-    v.dual_minInvest_period = pd.read_csv(output_path / 'v_dual_minInvest_period.csv', index_col=[0, 1]).astype(float)
-    v.dual_minInvest_total = pd.read_csv(output_path / 'v_dual_minInvest_total.csv', index_col=[0, 1]).astype(float)
-    v.dual_minCumulative = pd.read_csv(output_path / 'v_dual_minCumulative.csv', index_col=[0, 1]).astype(float)
-    v.dual_minInvestGroup_period = pd.read_csv(output_path / 'v_dual_minInvestGroup_period.csv', index_col=[0, 1]).astype(float)
-    v.dual_minInvestGroup_total = pd.read_csv(output_path / 'v_dual_minInvestGroup_total.csv', index_col=[0, 1]).astype(float)
-    v.dual_minInvestGroup_cumulative = pd.read_csv(output_path / 'v_dual_minInvestGroup_cumulative.csv', index_col=[0, 1]).astype(float)
-    # CO2 emission-cap duals (raw dual is per /1000-scaled RHS; downstream * 1000 for tCO2)
-    v.dual_co2_max_period = pd.read_csv(output_path / 'v_dual_co2_max_period.csv', index_col=[0, 1]).astype(float)
-    v.dual_co2_max_total = pd.read_csv(output_path / 'v_dual_co2_max_total.csv', index_col=[0]).astype(float)
-    # group_entity_invest lives in input/ (solveFirst-gated static).
-    v.group_entity_invest = pd.read_csv(input_path / 'group_entity_invest.csv')
-
-    v.flow.index.names = ['solve', 'period', 'time']
-    v.ramp.index.names = ['solve', 'period', 'time']
-    v.reserve.index.names = ['solve', 'period', 'time']
-    v.state.index.names = ['solve', 'period', 'time']
-    v.self_discharge.index.names = ['solve', 'period', 'time']
-    v.online_linear.index.names = ['solve', 'period', 'time']
-    v.startup_linear.index.names = ['solve', 'period', 'time']
-    v.shutdown_linear.index.names = ['solve', 'period', 'time']
-    v.online_integer.index.names = ['solve', 'period', 'time']
-    v.startup_integer.index.names = ['solve', 'period', 'time']
-    v.shutdown_integer.index.names = ['solve', 'period', 'time']
-    v.q_state_up.index.names = ['solve', 'period', 'time']
-    v.q_state_down.index.names = ['solve', 'period', 'time']
-    v.q_reserve.index.names = ['solve', 'period', 'time']
-    v.q_inertia.index.names = ['solve', 'period', 'time']
-    v.q_non_synchronous.index.names = ['solve', 'period', 'time']
-    v.q_state_up_group.index.names = ['solve', 'period', 'time']
-    v.q_capacity_margin.index.names = ['solve', 'period']
-    v.invest.index.names = ['solve', 'period']
-    v.divest.index.names = ['solve', 'period']
-    v.dual_node_balance.index.names = ['solve', 'period', 'time']
-    v.dual_reserve_balance.index.names = ['solve', 'period', 'time']
-    v.dual_invest_unit.index.names = ['solve', 'period']
-    v.dual_invest_connection.index.names = ['solve', 'period']
-    v.dual_invest_node.index.names = ['solve', 'period']
-    v.dual_maxInvest_period.index.names = ['solve', 'period']
-    v.dual_maxInvest_total.index.names = ['solve', 'period']
-    v.dual_maxCumulative.index.names = ['solve', 'period']
-    v.dual_maxInvestGroup_period.index.names = ['solve', 'period']
-    v.dual_maxInvestGroup_total.index.names = ['solve', 'period']
-    v.dual_maxInvestGroup_cumulative.index.names = ['solve', 'period']
-    v.dual_minInvest_period.index.names = ['solve', 'period']
-    v.dual_minInvest_total.index.names = ['solve', 'period']
-    v.dual_minCumulative.index.names = ['solve', 'period']
-    v.dual_minInvestGroup_period.index.names = ['solve', 'period']
-    v.dual_minInvestGroup_total.index.names = ['solve', 'period']
-    v.dual_minInvestGroup_cumulative.index.names = ['solve', 'period']
-    v.dual_co2_max_period.index.names = ['solve', 'period']
-    v.dual_co2_max_total.index.name = 'solve'
-
-    # Create multi-index for variables with single header row
-    v.state.columns.name = 'node'
-    v.online_linear.columns.name = 'process'
-    v.startup_linear.columns.name = 'process'
-    v.shutdown_linear.columns.name = 'process'
-    v.online_integer.columns.name = 'process'
-    v.startup_integer.columns.name = 'process'
-    v.shutdown_integer.columns.name = 'process'
-    v.q_state_up.columns.name = 'node'
-    v.q_state_down.columns.name = 'node'
-    v.q_inertia.columns.name = 'group'
-    v.q_non_synchronous.columns.name = 'group'
-    v.q_state_up_group.columns.name = 'group'
-    v.q_capacity_margin.columns.name = 'group'
-    v.invest.columns.name = 'entity'
-    v.divest.columns.name = 'entity'
-    v.dual_node_balance.columns.name = 'node'
-    v.dual_invest_unit.columns.name = 'unit'
-    v.dual_invest_connection.columns.name = 'connection'
-    v.dual_invest_node.columns.name = 'node'
-    v.dual_maxInvest_period.columns.name = 'entity'
-    v.dual_maxInvest_total.columns.name = 'entity'
-    v.dual_maxCumulative.columns.name = 'entity'
-    v.dual_maxInvestGroup_period.columns.name = 'group'
-    v.dual_maxInvestGroup_total.columns.name = 'group'
-    v.dual_maxInvestGroup_cumulative.columns.name = 'group'
-    v.dual_minInvest_period.columns.name = 'entity'
-    v.dual_minInvest_total.columns.name = 'entity'
-    v.dual_minCumulative.columns.name = 'entity'
-    v.dual_minInvestGroup_period.columns.name = 'group'
-    v.dual_minInvestGroup_total.columns.name = 'group'
-    v.dual_minInvestGroup_cumulative.columns.name = 'group'
-    v.dual_co2_max_period.columns.name = 'group'
-    v.dual_co2_max_total.columns.name = 'group'
-
-    # Add multi-index to variables with multiple header rows (this multi-index creation works also when the dataframe is empty)
-    v.flow.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in v.flow.columns],
-        names=['process', 'source', 'sink']
-    )
-    v.ramp.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in v.ramp.columns],
-        names=['process', 'source', 'sink']
-    )
-    v.reserve.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2], col[3]) for col in v.reserve.columns],
-        names=['process', 'reserve', 'updown', 'node']
-    )
-    v.q_reserve.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in v.q_reserve.columns],
-        names=['reserve', 'updown', 'node_group']
-    )
-    v.dual_reserve_balance.columns = pd.MultiIndex.from_tuples(
-        [(col[0], col[1], col[2]) for col in v.dual_reserve_balance.columns],
-        names=['reserve', 'updown', 'node_group']
-    )
-
     return v

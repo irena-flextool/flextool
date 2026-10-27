@@ -130,7 +130,7 @@ def write_outputs_from_files(mps_file: Path | str, sol_file: Path | str, solve_n
     h._flextool_unscaled_objective = _objective_from_solution(h)
 
     sd = dump_dir / "solve_data"
-    roll = _actual_solve_name(dump_dir, solve_name, provider=provider)
+    roll = _actual_solve_name(solve_name, provider=provider)
     return write_all_variables(
         h,
         solve_name=roll,

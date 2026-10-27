@@ -1052,7 +1052,7 @@ def _bump_period_capacity(
     in-memory.  The writer adapter previously re-read the file to refresh
     this set; with the in-memory dual update it can trust the accumulator.
     """
-    roll = _actual_solve_name(work_folder, solve_name)
+    roll = _actual_solve_name(solve_name)
     new_periods = _load_drdi(work_folder, roll)
     _append_period_capacity(work_folder, new_periods, writer_state=writer_state)
     if writer_state is not None and new_periods:

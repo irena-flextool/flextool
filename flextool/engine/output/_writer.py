@@ -284,7 +284,7 @@ def write_outputs_for_solve(
     # Some scenarios use a "complete-solve" name distinct from the
     # roll/solve-current name written into solve_data/ CSVs.  Mirror
     # solver_runner._run_highs_or_cplex's resolution.
-    roll_name = _actual_solve_name(work_folder, solve_name, provider=provider)
+    roll_name = _actual_solve_name(solve_name, provider=provider)
 
     # Multi-solve output union — record this sub-solve in the creation-
     # order manifest (``output_raw/_solve_order.txt``).  The per-roll

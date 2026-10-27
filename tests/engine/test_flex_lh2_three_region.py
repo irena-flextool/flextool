@@ -95,9 +95,15 @@ def test_coarse_node_dual_broadcast(scenario_run):
     solve = pl.read_csv(sc)["solve"][0] if sc.exists() else "solve"
     rd = sd / "realized_dispatch.csv"
 
+    # Item 163: the writer and the oracle's extractor no longer read
+    # ``solve_data/scale_the_objective.csv`` off disk — ``build_flextool(pb,
+    # data)`` built this LP at the default ``scale_the_objective=1.0``
+    # (``core.py`` l.336), so that is the scale to pass explicitly, not the
+    # (removed) work-folder read, which only happened to cancel out before.
     p = write_v_dual_node_balance(
         h, solve_name=solve, output_dir=out,
         realized_dispatch_csv=rd, flex_data=data,
+        scale_the_objective=1.0,
     )
     dual = pd.read_parquet(p).set_index(["solve", "period", "time"])
     cols = set(dual.columns)
@@ -109,7 +115,7 @@ def test_coarse_node_dual_broadcast(scenario_run):
 
     # Independent re-derivation: map each coarse row's dual to its t's, per node, then ÷ the step weight
     # tw · inflation / period_share (+dual: the coarse row has the orientation of nodeBalance_eq).
-    inv = _resolve_inv_scale_the_objective(work)
+    inv = _resolve_inv_scale_the_objective(scale_the_objective=1.0)
     raw = extract_variable(
         h, "nodeBalanceCoarse_eq", ("node",), solve_name=solve,
         has_time=True, source="row_dual", value_scale=inv,

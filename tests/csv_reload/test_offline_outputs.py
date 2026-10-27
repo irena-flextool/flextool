@@ -33,6 +33,7 @@ import pytest
 from polar_high import Problem
 from flextool.engine import build_flextool, run_chain_from_db
 from flextool.engine._csv_reload import CsvReloadWarning, load_from_dump
+from flextool.engine._csv_reload.load import load_from_dump_with_provider
 from flextool.engine._csv_reload.offline_outputs import read_scale_the_objective, write_outputs_from_files
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.lean_parquet import read_lean_parquet
@@ -118,10 +119,14 @@ def offline(test_db_url, tmp_path_factory, test_solver_config_dir):
             paths = write_outputs_from_files(
                 mps, sol, solve_name, out, dump_dir=dump, db_url=test_db_url, scenario=scenario,
             )
+        # Item 163: ``_actual_solve_name`` is provider-only (no work-folder read); load the dump's
+        # provider the same way ``write_outputs_from_files`` does internally.
+        with pytest.warns(CsvReloadWarning, match=_UNSUPPORTED):
+            _, dump_provider = load_from_dump_with_provider(dump, db_url=test_db_url, scenario=scenario)
         cache[scenario] = _Offline(
             scenario=scenario, db_url=test_db_url, work=work, dump=dump, solve_name=solve_name,
-            roll=_actual_solve_name(dump, solve_name), last_obj=last.obj, scale=scale, mps=mps, sol=sol,
-            out=out, paths=tuple(Path(x) for x in paths),
+            roll=_actual_solve_name(solve_name, provider=dump_provider), last_obj=last.obj, scale=scale,
+            mps=mps, sol=sol, out=out, paths=tuple(Path(x) for x in paths),
         )
         return cache[scenario]
 

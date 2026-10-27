@@ -4090,7 +4090,7 @@ def _drive_cascade(
                 _actual_solve_name,
             )
             step_key = _actual_solve_name(
-                self.state.paths.work_folder, complete_solve_name,
+                complete_solve_name,
                 provider=getattr(self.state, "current_provider", None),
             )
             # NOTE: the previous "slim PRIOR iter's _vars + highs at

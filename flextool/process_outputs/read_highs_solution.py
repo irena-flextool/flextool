@@ -218,39 +218,22 @@ _DEFAULT_SCALE_THE_OBJECTIVE = 1e-6
 
 
 def _resolve_inv_scale_the_objective(
-    work_folder: Path | str | None,
     scale_the_objective: float | None = None,
 ) -> float:
     """Return ``1 / scale_the_objective`` for the current solve.
 
-    Phase G — when ``scale_the_objective`` is supplied directly (cascade-
-    threaded), use it and skip the disk read entirely.  Otherwise reads
-    ``<work_folder>/solve_data/scale_the_objective.csv`` (Agent 12;
-    emitted by :func:`flextool.engine.preprocess.emit._solve_writers.write_scale_the_objective`).
-    Falls back to ``1 / 1e-6`` when the file is missing / empty /
-    unreadable — mirrors the ``default 1e-6`` clause on
-    ``param scale_the_objective`` in ``flextool.mod``.
+    Item 163: the output writers never read the work folder, so the disk
+    arm (``<work_folder>/solve_data/scale_the_objective.csv``) is gone —
+    every caller is in-process and already threads the cascade's live
+    ``scale_the_objective`` (Agent 12; emitted by
+    :func:`flextool.engine.preprocess.emit._solve_writers.write_scale_the_objective`).
+    A ``None`` or non-positive value falls back to ``1 / 1e-6`` — mirrors
+    the ``default 1e-6`` clause on ``param scale_the_objective`` in the
+    retired GMPL model.
     """
     if scale_the_objective is not None and scale_the_objective > 0:
         return 1.0 / float(scale_the_objective)
-    if work_folder is None:
-        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
-    path = Path(work_folder) / "solve_data" / "scale_the_objective.csv"
-    if not path.exists():
-        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
-    try:
-        df = pd.read_csv(path)
-    except Exception:
-        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
-    if df.empty or "value" not in df.columns:
-        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
-    try:
-        val = float(df["value"].iloc[0])
-    except (ValueError, TypeError):
-        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
-    if not (val > 0):
-        return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
-    return 1.0 / val
+    return 1.0 / _DEFAULT_SCALE_THE_OBJECTIVE
 
 
 # Helper — every investment-constraint-dual entry uses the same scale to
@@ -474,43 +457,29 @@ def _load_realized_set(
     *,
     provider: "object | None" = None,
 ) -> set[tuple[str, str]] | None:
-    """Return ``{(period, time), …}`` from ``realized_dispatch.csv``, or None.
+    """Return ``{(period, time), …}`` from the provider's ``realized_dispatch`` frame, or None.
 
     Used for O(1) membership checks in :func:`extract_variable`.  For
     synthesis of empty-frame row order (which must match the canonical
     iteration order in phase-1 printfs), use
     :func:`_load_realized_list` instead — an ordered variant.
+
+    Item 163: ``realized_dispatch_csv`` is a key selector only (its
+    ``<parent>/<stem>`` names the provider key) — no disk read.  A
+    ``None`` provider or a missing key gives ``None`` (caller treats
+    every (period, time) as realized).
     """
     if realized_dispatch_csv is None:
         return None
-    path = Path(realized_dispatch_csv)
-    # Step 1-e — Provider-aware: under the in-memory cascade the file
-    # isn't on disk but the per-sub-solve Provider has the frame.  The
-    # transitional seed-funnel fallback in :func:`_provider_lookup`
-    # keeps unplumbed callers working during the dual-write window.
-    seeded = _provider_lookup(provider, path)
-    if seeded is not None:
-        period_col = "period"
-        time_col = "step" if "step" in seeded.columns else "time"
-        return set(zip(
-            seeded[period_col].cast(str).to_list(),
-            seeded[time_col].cast(str).to_list(),
-        ))
-    if not path.exists():
-        # Expected fallback path on every solve where the previous
-        # iteration didn't realise any timesteps yet -- write all.
-        # Not a warning; just informational.
-        _logger.debug("realized_dispatch file missing, writing all timesteps: %s", path)
+    seeded = _provider_lookup(provider, realized_dispatch_csv)
+    if seeded is None:
         return None
-    realized = pd.read_csv(path)
     period_col = "period"
-    time_col = "step" if "step" in realized.columns else "time"
-    return set(
-        zip(
-            realized[period_col].astype(str).to_list(),
-            realized[time_col].astype(str).to_list(),
-        )
-    )
+    time_col = "step" if "step" in seeded.columns else "time"
+    return set(zip(
+        seeded[period_col].cast(str).to_list(),
+        seeded[time_col].cast(str).to_list(),
+    ))
 
 
 def _load_realized_list(
@@ -518,35 +487,26 @@ def _load_realized_list(
     *,
     provider: "object | None" = None,
 ) -> list[tuple[str, str]] | None:
-    """Return ``[(period, time), …]`` from ``realized_dispatch.csv`` in file order.
+    """Return ``[(period, time), …]`` from the provider's ``realized_dispatch`` frame, in frame order.
 
-    The CSV file order matches the canonical
+    The frame's row order matches the canonical
     ``for {(d, t) in dt_realize_dispatch}`` iteration order that every
-    dt-indexed phase-1 printf uses — so synthesizing empty-frame rows
+    dt-indexed phase-1 printf used — so synthesizing empty-frame rows
     in this order reproduces the CSV-read parameter's row order exactly.
+
+    Item 163: key selector only, no disk read (see :func:`_load_realized_set`).
     """
     if realized_dispatch_csv is None:
         return None
-    path = Path(realized_dispatch_csv)
-    seeded = _provider_lookup(provider, path)
-    if seeded is not None:
-        period_col = "period"
-        time_col = "step" if "step" in seeded.columns else "time"
-        return list(zip(
-            seeded[period_col].cast(str).to_list(),
-            seeded[time_col].cast(str).to_list(),
-        ))
-    if not path.exists():
+    seeded = _provider_lookup(provider, realized_dispatch_csv)
+    if seeded is None:
         return None
-    realized = pd.read_csv(path)
     period_col = "period"
-    time_col = "step" if "step" in realized.columns else "time"
-    return list(
-        zip(
-            realized[period_col].astype(str).to_list(),
-            realized[time_col].astype(str).to_list(),
-        )
-    )
+    time_col = "step" if "step" in seeded.columns else "time"
+    return list(zip(
+        seeded[period_col].cast(str).to_list(),
+        seeded[time_col].cast(str).to_list(),
+    ))
 
 
 def _load_realized_periods(
@@ -554,31 +514,15 @@ def _load_realized_periods(
     *,
     provider: "object | None" = None,
 ) -> set[str] | None:
-    """Return ``{period, …}`` from a ``period``-only CSV, or None."""
+    """Return ``{period, …}`` from the provider's frame at *realized_periods_csv*'s key, or None.
+
+    Item 163: key selector only, no disk read."""
     if realized_periods_csv is None:
         return None
-    path = Path(realized_periods_csv)
-    seeded = _provider_lookup(provider, path)
-    if seeded is not None:
-        return set(seeded["period"].cast(str).to_list())
-    if not path.exists():
-        _logger.debug("realized periods file missing, writing all periods: %s", path)
+    seeded = _provider_lookup(provider, realized_periods_csv)
+    if seeded is None:
         return None
-    realized = pd.read_csv(path)
-    return set(realized["period"].astype(str).to_list())
-
-
-def _load_realized_periods_list(
-    realized_periods_csv: Path | str | None,
-) -> list[str] | None:
-    """Return ``[period, …]`` in CSV file order."""
-    if realized_periods_csv is None:
-        return None
-    path = Path(realized_periods_csv)
-    if not path.exists():
-        return None
-    realized = pd.read_csv(path)
-    return list(realized["period"].astype(str).to_list())
+    return set(seeded["period"].cast(str).to_list())
 
 
 def _load_realized_invest_periods_list(
@@ -589,29 +533,22 @@ def _load_realized_invest_periods_list(
     """Return the roll's realized-INVEST ``[period, …]`` in source order.
 
     Canonical row source for the investment-axis variables
-    (``v_invest`` / ``v_divest``).  Prefers the in-memory provider frame
-    (``solve_data/realized_invest_periods_of_current_solve``); falls back
-    to the CSV.  Returns the (possibly EMPTY) ordered period list when the
+    (``v_invest`` / ``v_divest``).  Sourced from the in-memory provider frame
+    (``solve_data/realized_invest_periods_of_current_solve``) — item 163: no disk
+    fallback.  Returns the (possibly EMPTY) ordered period list when the
     source is present — an empty list means this roll realizes no
     investment, so the variable extractor must emit no rows for it.
-    Returns ``None`` only when no source is available at all, signalling
-    the caller to fall back to the dispatch-axis canonical order (e.g.
-    single-solve fixtures that never emit the invest-period set).
+    Returns ``None`` only when no source is available at all (a ``None``
+    provider or a missing key), signalling the caller to fall back to the
+    dispatch-axis canonical order (e.g. single-solve fixtures that never
+    emit the invest-period set).
     """
-    seeded = (
-        _provider_lookup(provider, realized_periods_csv)
-        if realized_periods_csv is not None
-        else None
-    )
-    if seeded is not None:
-        return list(seeded["period"].cast(str).to_list())
     if realized_periods_csv is None:
         return None
-    path = Path(realized_periods_csv)
-    if not path.exists():
+    seeded = _provider_lookup(provider, realized_periods_csv)
+    if seeded is None:
         return None
-    realized = pd.read_csv(path)
-    return list(realized["period"].astype(str).to_list())
+    return list(seeded["period"].cast(str).to_list())
 
 
 def _output_horizon_enabled(
@@ -621,26 +558,20 @@ def _output_horizon_enabled(
 ) -> bool:
     """True when ``model.output_horizon`` is enabled for this solve.
 
-    Reads ``solve_data/enable_optional_outputs.csv`` (the same flag set
-    ``_per_solve`` consults to source horizon vs realized rows).
-    Provider-first, disk fallback; missing → False.
+    The provider key is ``solve_data/enable_optional_outputs`` (the same
+    flag set ``_per_solve`` consults to source horizon vs realized rows).
+    Item 163: ``work_folder`` is a key-path selector only, no disk read; a
+    ``None`` provider or a missing key gives False.
     """
     if work_folder is None:
         return False
     path = Path(work_folder) / "solve_data" / "enable_optional_outputs.csv"
     frame = _provider_lookup(provider, path)
-    if frame is not None:
-        try:
-            return "output_horizon" in {
-                str(v) for v in frame["flag"].to_list() if v is not None}
-        except Exception:  # noqa: BLE001
-            return False
-    if not path.exists():
+    if frame is None:
         return False
     try:
-        df = pd.read_csv(path)
         return "output_horizon" in {
-            str(v) for v in df["flag"].astype(str).to_list()}
+            str(v) for v in frame["flag"].to_list() if v is not None}
     except Exception:  # noqa: BLE001
         return False
 
@@ -656,25 +587,20 @@ def _load_dispatch_or_invest_periods(
     Under ``output_horizon`` this set (emitted by ``_per_solve``)
     unions the branch (non-realized) dispatch periods with the realized
     invest periods, so it carries the branch-suffixed period tokens the
-    in-memory ``realized_dispatch`` shortcut omits.  Provider-first, disk
-    fallback; empty list when unavailable.
+    in-memory ``realized_dispatch`` shortcut omits.  Item 163: key-path
+    selector only (``solve_data/d_realize_dispatch_or_invest_set``), no
+    disk fallback; empty list when unavailable.
     """
     if work_folder is None:
         return []
     path = (Path(work_folder) / "solve_data"
             / "d_realize_dispatch_or_invest_set.csv")
     frame = _provider_lookup(provider, path)
-    if frame is not None:
-        try:
-            return [str(v) for v in frame["period"].to_list()
-                    if v is not None]
-        except Exception:  # noqa: BLE001
-            return []
-    if not path.exists():
+    if frame is None:
         return []
     try:
-        df = pd.read_csv(path, dtype=str)
-        return [str(v) for v in df["period"].to_list() if v is not None]
+        return [str(v) for v in frame["period"].to_list()
+                if v is not None]
     except Exception:  # noqa: BLE001
         return []
 
@@ -685,33 +611,20 @@ def _name_regex(var_name: str) -> re.Pattern[str]:
 
 
 def _load_canonical_dt_order(
-    work_folder: Path | str | None,
     solve_name: str,
     *,
     flex_data: "FlexData | None" = None,
 ) -> list[tuple[str, str]] | None:
-    """Return ``[(period, time), …]`` in the canonical iteration order.
+    """Return ``[(period, time), …]`` in the canonical iteration order, or ``None``.
 
-    When ``flex_data`` is supplied, prefer the in-memory
-    ``flex_data.realized_dispatch`` (already a polars frame of
-    ``(period, step)``); skip the CSV read entirely.
-
-    Source priority (file fallback):
-      1. ``solve_data/p_step_duration.csv`` — written by the phase-1
-         printf ``for {s in solve_current, (d, t) in dt_realize_dispatch}``.
-      2. ``solve_data/dt_realize_dispatch_set.csv`` — the polars
-         cascade's authoritative emission set (mirrors the .mod's
-         ``dt_realize_dispatch`` after the ``output_horizon`` toggle).
-         Carries forecast-branch rows for stochastic scenarios where
-         ``realized_dispatch.csv`` is anchor-only by design.
-
-    Every dt-indexed phase-1 printf in ``flextool.mod`` uses the same
-    set iteration, so this sequence is the row order ALL parameter
-    CSVs of dt arity have.
-
-    Filtered to ``solve_name`` when the CSV carries a ``solve`` column;
-    ``dt_realize_dispatch_set.csv`` is per-solve already (no solve col).
-    Returns ``None`` when neither file is present.
+    Item 163: the work folder is never read here any more.  The source is the
+    in-memory ``flex_data.realized_dispatch`` (already a polars frame of
+    ``(period, step)``) — the cascade's authoritative per-roll dispatch order,
+    which every dt-indexed output follows.  ``None`` (no ``flex_data``, or
+    ``flex_data.realized_dispatch`` not populated this roll) means the caller
+    falls back to its own ``realized_dispatch_csv``-keyed provider lookup
+    (:func:`_load_realized_list`) or, failing that, the defensive first-
+    appearance order in :func:`extract_variable`.
     """
     if flex_data is not None and getattr(flex_data, "realized_dispatch", None) is not None:
         try:
@@ -724,37 +637,19 @@ def _load_canonical_dt_order(
             ))
         except Exception:  # noqa: BLE001
             pass
-    if work_folder is None:
-        return None
-    sd = Path(work_folder) / "solve_data"
-    psd = sd / "p_step_duration.csv"
-    if psd.exists():
-        df = pd.read_csv(psd, usecols=["solve", "period", "time"], dtype=str)
-        df = df[df["solve"] == str(solve_name)]
-        return list(zip(df["period"].to_list(), df["time"].to_list()))
-    drd = sd / "dt_realize_dispatch_set.csv"
-    if drd.exists():
-        df = pd.read_csv(drd, usecols=["period", "time"], dtype=str)
-        return list(zip(df["period"].to_list(), df["time"].to_list()))
     return None
 
 
 def _load_canonical_d_order(
-    work_folder: Path | str | None,
     solve_name: str,
     *,
     flex_data: "FlexData | None" = None,
 ) -> list[str] | None:
-    """Return ``[period, …]`` in the canonical iteration order.
+    """Return ``[period, …]`` in the canonical iteration order, or ``None``.
 
-    When ``flex_data.realized_dispatch`` is in memory, derive the
-    ordered distinct period list directly (skipping the disk read).
-
-    Source (file fallback): ``solve_data/p_years_from_start_d.csv`` —
-    written by the phase-1 printf ``for {s in solve_current, d in
-    d_realize_dispatch_or_invest}``.  Period-indexed parameter CSVs
-    use the same iteration.  Filtered to ``solve_name``.  Returns
-    ``None`` if the file is absent.
+    Item 163: no disk fallback.  Derives the ordered distinct period list
+    from the in-memory ``flex_data.realized_dispatch`` when populated this
+    roll; ``None`` otherwise (see :func:`_load_canonical_dt_order`).
     """
     if flex_data is not None and getattr(flex_data, "realized_dispatch", None) is not None:
         try:
@@ -768,14 +663,7 @@ def _load_canonical_d_order(
             return seen
         except Exception:  # noqa: BLE001
             pass
-    if work_folder is None:
-        return None
-    path = Path(work_folder) / "solve_data" / "p_years_from_start_d.csv"
-    if not path.exists():
-        return None
-    df = pd.read_csv(path, usecols=["solve", "period"], dtype=str)
-    df = df[df["solve"] == str(solve_name)]
-    return list(df["period"].to_list())
+    return None
 
 
 def _row_index_names(*, has_period: bool, has_time: bool) -> list[str]:
@@ -941,20 +829,19 @@ def extract_variable(
     )
     if has_period and has_time:
         canonical_rows: list[tuple[str, ...]] | None = (
-            _load_canonical_dt_order(work_folder, solve_name, flex_data=flex_data)
+            _load_canonical_dt_order(solve_name, flex_data=flex_data)
         )
-        # Fallback for callers that only provide ``realized_dispatch_csv``
-        # (e.g. unit tests with a synthetic CSV outside ``solve_data/``).
+        # Fallback for callers whose ``flex_data.realized_dispatch`` is
+        # absent this roll (e.g. a custom-writer call with no ``flex_data``,
+        # or a unit test) — the provider-keyed frame at ``realized_dispatch_csv``.
         if canonical_rows is None and realized_dispatch_csv is not None:
             canonical_rows = _load_realized_list(
                 realized_dispatch_csv, provider=provider,
             )
     elif has_period:
         canonical_d = _load_canonical_d_order(
-            work_folder, solve_name, flex_data=flex_data,
+            solve_name, flex_data=flex_data,
         )
-        if canonical_d is None and realized_periods_csv is not None:
-            canonical_d = _load_realized_periods_list(realized_periods_csv)
         if period_source == "invest":
             # Investment-axis variables (``v_invest`` / ``v_divest``): a
             # roll that realizes DISPATCH but NO investment (the dispatch
@@ -1151,19 +1038,10 @@ def write_variable_parquet(
     # current solve's ``scale_the_objective``.  Specs with an explicit
     # non-sentinel ``value_scale`` (e.g. ``-1e6`` for node balance duals)
     # still honour that — see :func:`write_v_dual_node_balance`.
-    work_folder = (
-        Path(realized_dispatch_csv).parent.parent
-        if realized_dispatch_csv is not None
-        else (
-            Path(realized_periods_csv).parent.parent
-            if realized_periods_csv is not None
-            else None
-        )
-    )
     effective_scale = spec.value_scale
     if spec.value_scale == _INV_SCALE_THE_OBJECTIVE:
         effective_scale = _resolve_inv_scale_the_objective(
-            work_folder, scale_the_objective=scale_the_objective,
+            scale_the_objective=scale_the_objective,
         )
     # Multi-source fan-out: when the output quantity is the sum of two or
     # more HiGHS variables (e.g. two-tier slack), extract each source and
@@ -1215,11 +1093,9 @@ def write_variable_parquet(
             period_source=spec.period_source,
         )
     # Agent 9 — row-scaling un-scaling applied at the output boundary.
-    # Source CSV comes from the same work folder as realized_*_csv
-    # (``work_folder`` was inferred above for the scale_the_objective
-    # resolution — reuse it).
+    # Item 163: the scaler comes from ``flex_data`` only (no work-folder CSV).
     if spec.unscale_by is not None:
-        df = _apply_unscale(df, spec.unscale_by, work_folder, solve_name, flex_data=flex_data)
+        df = _apply_unscale(df, spec.unscale_by, solve_name, flex_data=flex_data)
     if file_name is None:
         file_name = f"{spec.output_name or spec.name}__{solve_name}.parquet"
     path = output_dir / file_name
@@ -1253,172 +1129,81 @@ def _entity_class_members(provider: "object | None", set_name: str) -> set[str]:
     return set(frame.to_series(0).cast(pl.Utf8).to_list())
 
 
-def _load_inflation_factor(
-    work_folder: Path,
-    flex_data: "FlexData | None" = None,
-) -> dict[str, float]:
-    """``{period: p_inflation_factor_operations_yearly}``.
-
-    Phase G — when ``flex_data`` is supplied, trust the in-memory carrier
-    (``None`` ⇒ empty dict, matching the disk fallback's missing-file
-    branch).  CSV fallback retained for callers without FlexData.
-
-    Written by the model during phase 1 (derived parameter moved above
-    ``solve;``).
-    """
-    if flex_data is not None:
-        param = getattr(flex_data, "p_inflation_op", None)
-        if param is None:
-            return {}
-        try:
-            f = param.frame
-            period_col = f.columns[0]
-            return dict(zip(
-                f[period_col].cast(str).to_list(),
-                f["value"].cast(float).to_list(),
-            ))
-        except Exception:  # noqa: BLE001
-            pass
-    path = work_folder / "solve_data" / "solve__p_inflation_factor_operations_yearly.csv"
-    if not path.exists():
-        return {}
-    df = pd.read_csv(path)
-    period_col = "period"
-    value_col = [c for c in df.columns if c not in ("solve", "period")][0]
-    return dict(zip(df[period_col].astype(str), df[value_col].astype(float)))
-
-
-def _load_complete_period_share_of_year(
-    work_folder: Path,
-    flex_data: "FlexData | None" = None,
-) -> dict[str, float]:
-    """``{period: complete_period_share_of_year}`` — Phase G prefers
-    ``flex_data.p_period_share`` (trusted when supplied; ``None`` ⇒ {}).
-    CSV fallback retained."""
-    if flex_data is not None:
-        param = getattr(flex_data, "p_period_share", None)
-        if param is None:
-            return {}
-        try:
-            f = param.frame
-            period_col = f.columns[0]
-            return dict(zip(
-                f[period_col].cast(str).to_list(),
-                f["value"].cast(float).to_list(),
-            ))
-        except Exception:  # noqa: BLE001
-            pass
-    path = work_folder / "solve_data" / "complete_period_share_of_year.csv"
-    if not path.exists():
-        return {}
-    df = pd.read_csv(path)
-    period_col = "period"
-    value_col = [c for c in df.columns if c not in ("solve", "period")][0]
-    return dict(zip(df[period_col].astype(str), df[value_col].astype(float)))
-
-
 # ---------------------------------------------------------------------------
-# Row-scaler CSVs (Agent 9)
+# Row-scaler (Agent 9)
 # ---------------------------------------------------------------------------
 
 
 def _load_row_scaler(
-    work_folder: Path | str | None,
     kind: str,
     solve_name: str,
     *,
     flex_data: "FlexData | None" = None,
 ) -> pd.DataFrame | None:
-    """Read ``solve_data/solve__{node,group}_capacity_for_scaling.csv``.
+    """The sub-solve's ``p_{node,group}_capacity_for_scaling`` Param, from ``flex_data`` only.
 
     Phase G — prefers ``flex_data.p_{node,group}_capacity_for_scaling``
-    (Param, already in memory).  CSV fallback retained.
-
-    Format (wide, produced by the AMPL phase-1 printf block at
-    ``flextool.mod:4805``)::
-
-        solve,period,entity1,entity2,...
-        <solve>,<period>,<scaler>,...
-
-    Returned frame has ``(solve, period)`` as row MultiIndex and the
-    entity names as columns.  Filtered to ``solve_name`` on read.
-
-    Returns ``None`` when the CSV is missing or empty — callers then
-    treat the scaler as 1 everywhere (no-op).
+    Returns ``None`` when ``flex_data`` is absent or carries no such Param —
+    callers then treat the scaler as 1 everywhere (no-op); this is every
+    fresh run today (Mode A — the DB-level row scaling was removed).
 
     ``kind`` is ``"node"`` or ``"group"``.
     """
-    if flex_data is not None:
-        attr = f"p_{kind}_capacity_for_scaling"
-        param = getattr(flex_data, attr, None)
-        if param is not None:
-            try:
-                # Param frame: columns (entity, "d", "value").  Pivot to
-                # wide ``(solve, period)``-row × entity-column shape used
-                # downstream.  ``solve`` is the active solve_name.
-                f = param.frame
-                cols = f.columns
-                # Drop value column from the pivot index set.
-                if "value" in cols:
-                    entity_col = cols[0]
-                    period_col = cols[1]
-                    wide = f.pivot(
-                        on=entity_col, index=period_col, values="value",
-                    )
-                    pdf = wide.to_pandas()
-                    pdf = pdf.set_index(period_col)
-                    pdf.index = pd.MultiIndex.from_tuples(
-                        [(str(solve_name), str(p)) for p in pdf.index],
-                        names=["solve", "period"],
-                    )
-                    pdf = pdf.apply(pd.to_numeric, errors="coerce")
-                    return pdf
-            except Exception:  # noqa: BLE001
-                pass
-    if work_folder is None:
+    if flex_data is None:
         return None
-    path = Path(work_folder) / "solve_data" / f"solve__{kind}_capacity_for_scaling.csv"
-    if not path.exists():
+    attr = f"p_{kind}_capacity_for_scaling"
+    param = getattr(flex_data, attr, None)
+    if param is None:
         return None
     try:
-        df = pd.read_csv(path)
-    except Exception:
+        # Param frame: columns (entity, "d", "value").  Pivot to
+        # wide ``(solve, period)``-row × entity-column shape used
+        # downstream.  ``solve`` is the active solve_name.
+        f = param.frame
+        cols = f.columns
+        # Drop value column from the pivot index set.
+        if "value" not in cols:
+            return None
+        entity_col = cols[0]
+        period_col = cols[1]
+        wide = f.pivot(
+            on=entity_col, index=period_col, values="value",
+        )
+        pdf = wide.to_pandas()
+        pdf = pdf.set_index(period_col)
+        pdf.index = pd.MultiIndex.from_tuples(
+            [(str(solve_name), str(p)) for p in pdf.index],
+            names=["solve", "period"],
+        )
+        pdf = pdf.apply(pd.to_numeric, errors="coerce")
+        return pdf
+    except Exception:  # noqa: BLE001
         return None
-    if df.empty or "solve" not in df.columns or "period" not in df.columns:
-        return None
-    df = df[df["solve"].astype(str) == str(solve_name)]
-    if df.empty:
-        return None
-    df = df.set_index(["solve", "period"])
-    # Column dtype: float.  Empty-entity columns possible if the model
-    # emitted headers but no values; ignore parsing failures.
-    df = df.apply(pd.to_numeric, errors="coerce")
-    return df
 
 
 def _apply_unscale(
     df: pd.DataFrame,
     unscale_by: str,
-    work_folder: Path | str | None,
     solve_name: str,
     *,
     flex_data: "FlexData | None" = None,
 ) -> pd.DataFrame:
     """Multiply *df* by the row scaler identified by *unscale_by*.
 
-    Handles two scaler kinds:
+    Handles two scaler kinds, both sourced from ``flex_data`` (item 163 —
+    no work-folder CSV):
 
-    * ``"node_cap"`` — ``solve_data/solve__node_capacity_for_scaling.csv`` keyed
+    * ``"node_cap"`` — ``flex_data.p_node_capacity_for_scaling``, keyed
       by (period, node).  ``df`` row index is ``(solve, period[, time])``
       and columns are node names; we broadcast the period row of the
       scaler across the time dimension.
-    * ``"group_cap"`` — ``solve_data/solve__group_capacity_for_scaling.csv``
-      keyed by (period, group).  Columns = group names.  Same
+    * ``"group_cap"`` — ``flex_data.p_group_capacity_for_scaling``, keyed
+      by (period, group).  Columns = group names.  Same
       period-broadcast for time-indexed frames; for the no-t case (only
       ``vq_capacity_margin`` today) the row index is just ``(solve,
       period)`` and the element-wise multiply aligns directly.
 
-    Missing CSV / unknown columns / Mode A (scaler = 1) all collapse to
+    A missing Param / unknown columns / Mode A (scaler = 1) all collapse to
     a safe no-op: rows without a matching scaler are unchanged.
     """
     if df.empty or df.shape[1] == 0:
@@ -1426,7 +1211,7 @@ def _apply_unscale(
     kind = {"node_cap": "node", "group_cap": "group"}.get(unscale_by)
     if kind is None:
         return df
-    scaler = _load_row_scaler(work_folder, kind, solve_name, flex_data=flex_data)
+    scaler = _load_row_scaler(kind, solve_name, flex_data=flex_data)
     if scaler is None or scaler.empty:
         return df
 
@@ -1476,7 +1261,6 @@ def write_v_obj(
     *,
     solve_name: str,
     output_dir: Path | str,
-    work_folder: Path | str | None = None,
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
 ) -> Path:
@@ -1484,15 +1268,14 @@ def write_v_obj(
 
     Model writes ``total_cost.val / scale_the_objective``.  HiGHS's
     ``getObjectiveValue()`` returns the raw (scaled) value; we undo the
-    scaling.  Agent 12: ``scale_the_objective`` is now per-solve
-    (``solve_data/scale_the_objective.csv``); pass ``work_folder`` so
-    the live value is read, else fall back to the legacy ``1e-6`` scalar.
+    scaling.  ``scale_the_objective`` is per-solve, cascade-threaded
+    (item 163: no work-folder CSV fallback); ``None``/non-positive falls
+    back to the legacy ``1e-6`` scalar.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    wf = Path(work_folder) if work_folder is not None else output_dir.parent
     inv_scale = _resolve_inv_scale_the_objective(
-        wf, scale_the_objective=scale_the_objective,
+        scale_the_objective=scale_the_objective,
     )
     # Prefer the autoscale-stashed objective when present: Layer 2's
     # ``_push_unscaled_to_highs`` calls ``h.setSolution`` to mirror the
@@ -1526,7 +1309,6 @@ def write_v_dual_invest_by_class(
     output_dir: Path | str,
     provider: "object | None" = None,
     realized_periods_csv: Path | str | None = None,
-    work_folder: Path | str | None = None,
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
 ) -> list[Path]:
@@ -1556,13 +1338,12 @@ def write_v_dual_invest_by_class(
         )
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    wf = Path(work_folder) if work_folder is not None else output_dir.parent
 
     # ``_resolve_inv_scale_the_objective`` returns ``1 / scale_the_objective``
     # (guarding None / non-positive → default 1e-6), exactly as the
     # node-balance writer uses it.
     inv_scale = _resolve_inv_scale_the_objective(
-        wf, scale_the_objective=scale_the_objective,
+        scale_the_objective=scale_the_objective,
     )
     duals = extract_variable(
         h, "v_invest", ("entity",),
@@ -1600,54 +1381,18 @@ def write_v_dual_invest_by_class(
     return paths
 
 
-def _read_weight_csv(path: Path, keys: Sequence[str]) -> pl.DataFrame | None:
-    """A weight component from a ``solve_data`` CSV (``period[, time], value``), as ``(d[, t], value)``; None
-    when absent.  CSV fallback of :func:`_price_weight` for callers without FlexData."""
-    if not path.exists():
-        return None
-    df = pd.read_csv(path, dtype=str)
-    names = {"d": ("period", "d"), "t": ("time", "step", "t")}
-    rename: dict[str, str] = {}
-    for key in keys:
-        col = next((c for c in names[key] if c in df.columns), None)
-        if col is None:
-            return None
-        rename[col] = key
-    values = [c for c in df.columns if c not in rename and c != "solve"]
-    if df.empty or not values:
-        return None
-    out = df.rename(columns={**rename, values[-1]: "value"})[list(keys) + ["value"]]
-    out["value"] = pd.to_numeric(out["value"], errors="coerce")
-    return pl.from_pandas(out)
-
-
-def _price_weight(wf: Path, flex_data: "FlexData | None", *, per_hour: bool = False,
-                  rows: "pd.Index | None" = None) -> pl.DataFrame:
+def _price_weight(flex_data: "FlexData | None", *, per_hour: bool = False) -> pl.DataFrame:
     """``(d, t, w)``, the objective weight of one unit of a per-(d,t) balance quantity
-    (:func:`flextool.engine.output._prices.price_weight_dt`).  Without FlexData it is built from the
-    ``solve_data`` CSVs when present (each absent component counts as 1) over the ``(solve, period, time)``
-    ``rows`` of the duals."""
-    from flextool.engine.output._prices import price_weight_dt, price_weight_from_components
+    (:func:`flextool.engine.output._prices.price_weight_dt`).
 
-    if flex_data is not None:
-        return price_weight_dt(flex_data, per_hour=per_hour)
-    sd = wf / "solve_data"
+    Item 163: no work-folder CSV fallback and no caller-supplied ``rows`` domain any more — every
+    production caller has ``flex_data``; a missing component on ``flex_data`` (including ``flex_data``
+    itself being ``None``) counts as weight 1 (:func:`price_weight_dt` / :func:`getattr` default), not a
+    disk read.
+    """
+    from flextool.engine.output._prices import price_weight_dt
 
-    def _per_period(values: dict[str, float]) -> pl.DataFrame | None:
-        if not values:
-            return None
-        return pl.DataFrame({"d": list(values), "value": [float(v) for v in values.values()]})
-
-    return price_weight_from_components(
-        timestep_weight=_read_weight_csv(sd / "timestep_weight.csv", ("d", "t")),
-        inflation_op=_per_period(_load_inflation_factor(wf)),
-        period_share=_per_period(_load_complete_period_share_of_year(wf)),
-        branch_weight=_read_weight_csv(sd / "pdt_branch_weight.csv", ("d", "t")),
-        step_duration=_read_weight_csv(sd / "p_step_duration.csv", ("d", "t")) if per_hour else None,
-        domain=(pl.DataFrame({"d": [str(r[1]) for r in rows], "t": [str(r[2]) for r in rows]},
-                             schema={"d": pl.Utf8, "t": pl.Utf8})
-                if rows is not None and len(rows) > 0 else None),
-    )
+    return price_weight_dt(flex_data, per_hour=per_hour)
 
 
 def _wide_to_price(df: "pd.DataFrame", weight: pl.DataFrame, *, sign: float, inv_scale: float) -> "pd.DataFrame":
@@ -1674,7 +1419,6 @@ def _wide_to_price(df: "pd.DataFrame", weight: pl.DataFrame, *, sign: float, inv
 def _divide_by_row_scaler(
     df: "pd.DataFrame",
     *,
-    wf: "Path",
     solve_name: str,
     flex_data: "FlexData | None",
 ) -> "pd.DataFrame":
@@ -1682,7 +1426,7 @@ def _divide_by_row_scaler(
     row scaling was removed, so this is a no-op kept for the parameter's contract)."""
     if df.empty:
         return df
-    scaler = _load_row_scaler(wf, "node", solve_name, flex_data=flex_data)
+    scaler = _load_row_scaler("node", solve_name, flex_data=flex_data)
     if scaler is not None and not scaler.empty:
         scaler_by_period = (
             scaler.droplevel("solve")
@@ -1716,7 +1460,6 @@ def write_v_dual_node_balance(
     solve_name: str,
     output_dir: Path | str,
     realized_dispatch_csv: Path | str | None = None,
-    work_folder: Path | str | None = None,
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
 ) -> Path:
@@ -1743,8 +1486,7 @@ def write_v_dual_node_balance(
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    wf = Path(work_folder) if work_folder is not None else output_dir.parent
-    inv_scale = _resolve_inv_scale_the_objective(wf, scale_the_objective=scale_the_objective)
+    inv_scale = _resolve_inv_scale_the_objective(scale_the_objective=scale_the_objective)
     kw = dict(solve_name=solve_name, has_time=True, source="row_dual", value_scale=1.0,
               realized_dispatch_csv=realized_dispatch_csv, flex_data=flex_data)
 
@@ -1765,7 +1507,7 @@ def write_v_dual_node_balance(
             duals["nodeBalanceBlock_eq"] = _long_duals(raw, "b_first")
             block_cols += [str(c) for c in raw.columns]
 
-    prices = node_prices(duals, flex_data, inv_scale=inv_scale, weight=_price_weight(wf, flex_data, rows=df.index))
+    prices = node_prices(duals, flex_data, inv_scale=inv_scale, weight=_price_weight(flex_data))
     nodes = [str(c) for c in df.columns]
     nodes += [c for c in block_cols if c not in set(nodes)]
     if block_cols:
@@ -1776,7 +1518,7 @@ def write_v_dual_node_balance(
         rows = [(str(d), str(t)) for _s, d, t in df.index]
         wide = wide.reindex(index=pd.MultiIndex.from_tuples(rows, names=["d", "t"]), columns=nodes)
         out = pd.DataFrame(wide.to_numpy(dtype=float), index=df.index, columns=pd.Index(nodes, name="node"))
-        out = _divide_by_row_scaler(out, wf=wf, solve_name=solve_name, flex_data=flex_data)
+        out = _divide_by_row_scaler(out, solve_name=solve_name, flex_data=flex_data)
     else:
         out = df
 
@@ -1900,7 +1642,6 @@ def write_v_dual_reserve_balance(
     solve_name: str,
     output_dir: Path | str,
     realized_dispatch_csv: Path | str | None = None,
-    work_folder: Path | str | None = None,
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
 ) -> Path:
@@ -1923,7 +1664,6 @@ def write_v_dual_reserve_balance(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    wf = Path(work_folder) if work_folder is not None else output_dir.parent
     out_path = output_dir / (
         f"v_dual_reserve__upDown__group__period__t__{solve_name}.parquet"
     )
@@ -1967,8 +1707,8 @@ def write_v_dual_reserve_balance(
 
     # Summed raw duals (0.0 where a group has no row of a family) → price per MW held for one hour; a
     # zero-weight step stays empty.
-    inv_scale = _resolve_inv_scale_the_objective(wf, scale_the_objective=scale_the_objective)
-    df = _wide_to_price(df, _price_weight(wf, flex_data, per_hour=True, rows=df.index), sign=1.0,
+    inv_scale = _resolve_inv_scale_the_objective(scale_the_objective=scale_the_objective)
+    df = _wide_to_price(df, _price_weight(flex_data, per_hour=True), sign=1.0,
                         inv_scale=inv_scale)
 
     write_lean_parquet(df, out_path)
@@ -1979,46 +1719,25 @@ def write_v_dual_reserve_balance(
     return out_path
 
 
-def _is_first_solve_from_p_model(work_folder: Path) -> bool:
-    """True iff ``solve_data/p_model.csv`` says ``solveFirst`` is 1 (or missing)."""
-    path = work_folder / "solve_data" / "p_model.csv"
-    if not path.exists():
-        return True
-    df = pd.read_csv(path)
-    matches = df.loc[df["modelParam"] == "solveFirst", "p_model"]
-    if matches.empty:
-        return True
-    return bool(int(matches.iloc[0]))
-
-
-def _actual_solve_name(work_folder: Path, fallback: str,
-                        *, provider: "object | None" = None) -> str:
-    """Return the roll-level solve name from ``solve_data/solve_current.csv``.
+def _actual_solve_name(fallback: str, *, provider: "object | None" = None) -> str:
+    """Return the roll-level solve name from the provider's ``solve_data/solve_current`` frame.
 
     In rolling-window scenarios, ``solver.run(complete_solve[solve])`` is
     invoked with the PARENT solve name (the ``complete_solve``) while
-    every phase-1 CSV in ``solve_data/`` stores the child ROLL name
-    under its ``solve`` column (the set ``solve_current`` in the model).
-    When filtering those CSVs or emitting CSV rows whose format the model
+    every per-solve frame stores the child ROLL name under its ``solve``
+    column (the set ``solve_current`` in the retired GMPL model).  When
+    filtering those frames or emitting rows whose format the model
     produced, use the ROLL name — otherwise Python output won't line up
-    with phase 3's.
+    with the model's.
+
+    Item 163: ``provider`` is the sub-solve's in-memory source; there is no
+    disk fallback.  A ``None`` provider or a missing/empty key gives
+    ``fallback`` (the ``complete_solve`` name the caller already has).
     """
-    path = work_folder / "solve_data" / "solve_current.csv"
-    # Step 1-e — Provider-aware: under the in-memory cascade the file
-    # isn't on disk, but the per-sub-solve Provider has the frame.  The
-    # transitional seed-funnel fallback in :func:`_provider_lookup`
-    # keeps unplumbed callers working during the dual-write window.
-    seeded = _provider_lookup(provider, path)
-    if seeded is not None:
-        if seeded.height == 0 or len(seeded.columns) == 0:
-            return fallback
-        return str(seeded[0, 0])
-    if not path.exists():
+    seeded = _provider_lookup(provider, "solve_data/solve_current.csv")
+    if seeded is None or seeded.height == 0 or len(seeded.columns) == 0:
         return fallback
-    df = pd.read_csv(path)
-    if df.empty or len(df.columns) == 0:
-        return fallback
-    return str(df.iloc[0, 0])
+    return str(seeded[0, 0])
 
 
 
@@ -2043,18 +1762,6 @@ def write_all_variables(
     """
     specs = specs if specs is not None else VARIABLE_SPECS
     written: list[Path] = []
-    # Derive the work folder from the realized-dispatch CSV (preferred)
-    # so custom writers (esp. write_v_obj) can find
-    # ``solve_data/scale_the_objective.csv`` at the live path.
-    _derived_wf: Path | None = (
-        Path(realized_dispatch_csv).parent.parent
-        if realized_dispatch_csv is not None
-        else (
-            Path(realized_periods_csv).parent.parent
-            if realized_periods_csv is not None
-            else None
-        )
-    )
     # Hoist the expensive HiGHS bulk fetches out of the per-spec loop.
     # extract_variable() otherwise re-materialises ``allVariableNames()``
     # (a fresh multi-million-element Python list), ``getSolution()`` (full
@@ -2113,7 +1820,6 @@ def write_all_variables(
     _custom_writers = (
         ("v_obj", lambda: write_v_obj(
             h, solve_name=solve_name, output_dir=output_dir,
-            work_folder=_derived_wf,
             flex_data=flex_data,
             scale_the_objective=scale_the_objective,
         )),
