@@ -1,11 +1,19 @@
-"""Part B (c14c, item 99): startups and shutdowns equal the change in units online.
+"""Parts B and C (c14c, item 99): startups/shutdowns equal the change in units online, and the ramp room of
+a unit with online variables is split by unit state instead of flat per declared start/stop.
 
-``online_change`` replaces the two ``>=`` rows ``online__startup`` / ``online__shutdown`` with one equality
-(``on - on_prev - su + sd = 0``); ``maxStartup`` becomes ``su <= on_t`` and ``maxShutdown`` becomes
+Part B: ``online_change`` replaces the two ``>=`` rows ``online__startup`` / ``online__shutdown`` with one
+equality (``on - on_prev - su + sd = 0``); ``maxStartup`` becomes ``su <= on_t`` and ``maxShutdown`` becomes
 ``sd <= built - on_t`` (same-period predecessor only, owner question Q-c14c-A).  Together these make an
-ORPHAN startup/shutdown (one with no matching change in units online) impossible.  Part C (ramp rows of
-online units on online capacity) is NOT in this commit; see each test's docstring for exactly what that
-means for the fake-pair claim.
+ORPHAN startup/shutdown (one with no matching change in units online) impossible.
+
+Part C (``model/core.py:_eq_ramp``, design §3): a unit with online variables now ramps on ``v_online`` /
+``v_startup`` / ``v_shutdown`` (continuing units change by at most rho-bar, a starter reaches at most SU, a
+stopper floors at F) instead of on ``existing_count`` plus a flat ``+-v_startup``/``v_shutdown`` of
+coefficient 1 -- the item-99 exploit (declaring a start/stop pair buys a full unit of ramp room for free) is
+gone because ``v_startup`` / ``v_shutdown`` now enter the ramp row with THEIR OWN physical coefficients (SU,
+F, SD'), not a flat 1.  C1-C9 below are design section 7's part-C tests; each docstring derives its expected
+numbers from the fixture's data (ml, ramp speed, step duration), independently re-solved and verified before
+being written here (never copied from the implementation's own console output).
 """
 from __future__ import annotations
 
@@ -13,7 +21,7 @@ import polars as pl
 import pytest
 
 from tests.engine._lp_rows import coef, row_bounds, row_terms
-from tests.engine._unit_db import PLANT, b64, make_db, run, utf8
+from tests.engine._unit_db import FLEXTOOL_ROOT, PLANT, b64, build, make_db, no_ratio_constraint, run, utf8
 
 pytestmark = pytest.mark.solver
 
@@ -223,3 +231,414 @@ def test_single_integer_unit_has_no_start_stop_pair(tmp_path_factory) -> None:
     # 3.76 here; after the fix the unit commits online for the whole horizon instead.
     assert sum(su_v) < 0.5
     assert sum(sd_v) < 0.5
+
+
+# ---------------------------------------------------------------------------
+# Part C (design section 3, c14c item 99): ramp rows of online units on online capacity, split by state.
+# ---------------------------------------------------------------------------
+
+_C1_VALUES = [
+    ["unit__outputNode", [PLANT, "west"], "ramp_method", b64("ramp_limit", "str")],
+    ["unit__outputNode", [PLANT, "west"], "ramp_speed_up", b64(0.005, "float")],
+    ["unit__outputNode", [PLANT, "west"], "ramp_speed_down", b64(0.005, "float")],
+    ["unit", PLANT, "min_load", b64(0.1, "float")],
+    ["node", "west", "penalty_up", b64(1000.0, "float")],
+    ["node", "west", "penalty_down", b64(1.0e9, "float")],
+]
+
+
+def _step_demand(low: float, high: float, switch: int = 25, last: int = 72) -> list:
+    """``node west inflow``: ``-low`` MW for ``t0001..t{switch-1}``, ``-high`` from ``t{switch}`` on."""
+    values = {f"t{i:04d}": (-low if i < switch else -high) for i in range(1, last + 1)}
+    return [["node", "west", "inflow", b64(_pmap(values, "time"), "map")]]
+
+
+def test_fake_starts_buy_no_ramp_room(tmp_path_factory) -> None:
+    """C1 (``uc_ramp_free_start`` data, design 7/C1 + critique item 12 -- coal_plant ALONE at west, existing
+    500 MW = unitsize fallback -> existing_count 1 exactly, no other supply at west): min_load 0.1, ramp
+    0.005/min (rho-bar = 0.005*60*1h = 0.3 on an interior hourly step), demand 100 MW t0001-t0024 then 400 MW
+    from t0025 on; ``penalty_down`` (surplus) 1e9 blocks pre-ramping ahead of the jump by dumping excess
+    early, ``penalty_up`` (shortfall) 1000 lets the physical shortfall actually show up instead of being
+    hidden by some other substitution.
+
+    Hand derivation: being online costs nothing extra (no cost is tied to v_online itself) and MORE online
+    capacity only ever helps later ramp room, so the solver pins v_online = 1 (= existing_count) throughout,
+    in particular at t0024 (flow there is exactly the 100 MW demand, 0.2 of existing).  At t0025 the unit is
+    continuing (no start helps: su = sd = 0 is optimal under the equality, see below), so the up row gives
+    flow(t0025) <= flow(t0024) + rho-bar*(on - su) = 0.2 + 0.3*1 = 0.5 (250 MW) -- 150 MW of the 400 MW
+    demanded (0.8 - 0.2 - 0.3 = 0.3, *500 MW = 150 MWh) is unserved.  Because every term of the ramp row is
+    now an exact physical bound (no more flat +-1 per declared start/stop), paying for a free start/stop pair
+    buys NOTHING here (design section 1.3: a single-output arc's pair gain is -1/2*rho*step < 0): the
+    objective is identical whether startup_cost is 0 or 1000, and with cost > 0 the solver reports zero
+    startups.
+    """
+    url0, scen0 = make_db(tmp_path_factory, alt="c1_cost0",
+                          values=_C1_VALUES + _step_demand(100.0, 400.0) + [
+                              ["unit", PLANT, "startup_method", b64("linear", "str")],
+                              ["unit", PLANT, "startup_cost", b64(0.0, "float")]],
+                          base_chain=["init", "west", "coal"])
+    step0 = list(run(tmp_path_factory, url0, scen0).values())[-1]
+    url1, scen1 = make_db(tmp_path_factory, alt="c1_cost1000",
+                          values=_C1_VALUES + _step_demand(100.0, 400.0) + [
+                              ["unit", PLANT, "startup_method", b64("linear", "str")],
+                              ["unit", PLANT, "startup_cost", b64(1000.0, "float")]],
+                          base_chain=["init", "west", "coal"])
+    step1 = list(run(tmp_path_factory, url1, scen1).values())[-1]
+
+    assert step0.solution.obj == pytest.approx(step1.solution.obj, rel=1e-6)
+    su1 = utf8(step1.solution.value("v_startup_linear")).filter(pl.col("p") == PLANT)["value"].sum()
+    assert su1 == pytest.approx(0.0, abs=TOL)
+
+    flow25 = (utf8(step1.solution.value("v_flow")).filter((pl.col("p") == PLANT) & (pl.col("t") == "t0025"))
+              ["value"][0])
+    assert flow25 * 500.0 == pytest.approx(250.0, abs=1e-5)
+    unserved25 = (utf8(step1.solution.value("vq_state_up")).filter(pl.col("t") == "t0025")["value"][0])
+    assert unserved25 == pytest.approx(150.0, abs=1e-5)
+
+
+def test_integer_fake_starts_buy_no_ramp_room(tmp_path_factory) -> None:
+    """C9: C1 with ``startup_method`` ``binary`` (the ``_integer`` family's own rows) -- same scenario, same
+    hand derivation (a single existing_count-1 integer unit has no room to be partially online, so the
+    result is the same: v_online pinned at 1 throughout, flow(t0025) = 0.5*500 = 250 MW, unserved
+    150 MWh, objective unchanged between startup_cost 0 and 1000, zero startups at cost 1000).
+
+    This fixture happens to be solved identically before and after the fix (a single always-on unit never
+    needs to declare a start here), so the objective/startup-sum checks above do not themselves fail before
+    this commit; the row-level check below does: at an interior continuing step the up row's
+    ``v_startup_integer`` coefficient is the ``_integer`` family's OWN c*(SU - rho-bar) = 1*(0.25 - 0.3) =
+    -0.05 (canonical sign +0.05; SU = min(1, 0.1 + 0.5*0.3) = 0.25 with this fixture's min_load 0.1) -- before
+    this commit every ramp row carried a flat coefficient-1 ``v_startup`` term regardless of family."""
+    url0, scen0 = make_db(tmp_path_factory, alt="c9_cost0",
+                          values=_C1_VALUES + _step_demand(100.0, 400.0) + [
+                              ["unit", PLANT, "startup_method", b64("binary", "str")],
+                              ["unit", PLANT, "startup_cost", b64(0.0, "float")]],
+                          base_chain=["init", "west", "coal"])
+    step0 = list(run(tmp_path_factory, url0, scen0).values())[-1]
+    url1, scen1 = make_db(tmp_path_factory, alt="c9_cost1000",
+                          values=_C1_VALUES + _step_demand(100.0, 400.0) + [
+                              ["unit", PLANT, "startup_method", b64("binary", "str")],
+                              ["unit", PLANT, "startup_cost", b64(1000.0, "float")]],
+                          base_chain=["init", "west", "coal"])
+    step1 = list(run(tmp_path_factory, url1, scen1).values())[-1]
+
+    assert step0.solution.obj == pytest.approx(step1.solution.obj, rel=1e-6)
+    su1 = utf8(step1.solution.value("v_startup_integer")).filter(pl.col("p") == PLANT)["value"].sum()
+    assert su1 == pytest.approx(0.0, abs=TOL)
+    flow25 = (utf8(step1.solution.value("v_flow")).filter((pl.col("p") == PLANT) & (pl.col("t") == "t0025"))
+              ["value"][0])
+    assert flow25 * 500.0 == pytest.approx(250.0, abs=1e-5)
+
+    pb = build(step1.flex_data)
+    row = row_terms(pb, "ramp_sink_up_constraint")[f"ramp_sink_up_constraint[{PLANT},coal_market,west,p2020,"
+                                                   "t0012]"]
+    assert coef(row, f"v_startup_integer[{PLANT}") == pytest.approx(0.05, abs=1e-6)
+
+
+def test_room_on_online_capacity(tmp_path_factory) -> None:
+    """C2: coal_plant split into 2 units of 250 MW (``virtual_unitsize`` 250, existing 500 -> existing_count
+    2), binary online, ramp 0.005/min on its output (rho-bar = 0.3 at an interior hourly step, c = 1 -- no
+    capacity_max_coeff authored); coal_chp left WITHOUT a startup_method (built, non-online) but given its
+    own output ramp, 0.01/min (rho-bar_chp = 0.6), existing_count_chp = 1 (virtual_unitsize unauthored falls
+    back to existing itself).  Demand 200 MW at west (needs at most one of coal_plant's 2 units).
+
+    Hand derivation, canonical row sign (a term's canonical coefficient = -(its RHS-formula value), e.g. the
+    c14a built row's ``+rho-bar*c`` RHS term shows as ``-rho-bar*c`` here): coal_plant's up row carries
+    v_online_integer at -(rho-bar*c) = -0.3*1 = -0.3 and NO existing_count term at all (RHS bound 0: all of
+    the built row's existing_count/invest/divest terms are online-row-only, i.e. dropped here).  coal_chp's
+    up row keeps the untouched c14a shape: no v_online term, RHS bound = +rho-bar_chp*c_chp*existing_count_chp
+    = 0.6*1*1 = 0.6."""
+    values = no_ratio_constraint() + [
+        ["unit", PLANT, "virtual_unitsize", b64(250.0, "float")],
+        ["unit", PLANT, "startup_method", b64("binary", "str")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_method", b64("ramp_limit", "str")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_up", b64(0.005, "float")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_down", b64(0.005, "float")],
+        ["unit__outputNode", ["coal_chp", "west"], "ramp_method", b64("ramp_limit", "str")],
+        ["unit__outputNode", ["coal_chp", "west"], "ramp_speed_up", b64(0.01, "float")],
+        ["unit__outputNode", ["coal_chp", "west"], "ramp_speed_down", b64(0.01, "float")],
+        ["node", "west", "inflow", b64(-200.0, "float")],
+    ]
+    url, scen = make_db(tmp_path_factory, alt="c2_room", values=values,
+                        base_chain=["init", "west", "coal", "coal_chp", "heat"])
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    pb = build(step.flex_data)
+
+    plant_terms = row_terms(pb, "ramp_sink_up_constraint")[f"ramp_sink_up_constraint[{PLANT},coal_market,west,"
+                                                           "p2020,t0012]"]
+    assert coef(plant_terms, f"v_online_integer[{PLANT}") == pytest.approx(-0.3)
+    plant_bounds = row_bounds(pb, "ramp_sink_up_constraint")[f"ramp_sink_up_constraint[{PLANT},coal_market,"
+                                                             "west,p2020,t0012]"]
+    assert plant_bounds[1] == pytest.approx(0.0)
+
+    chp_terms = row_terms(pb, "ramp_sink_up_constraint")["ramp_sink_up_constraint[coal_chp,coal_chp,west,"
+                                                         "p2020,t0012]"]
+    assert "v_online" not in "".join(chp_terms)
+    chp_bounds = row_bounds(pb, "ramp_sink_up_constraint")["ramp_sink_up_constraint[coal_chp,coal_chp,west,"
+                                                           "p2020,t0012]"]
+    assert chp_bounds[1] == pytest.approx(0.6)
+
+
+def test_real_start_reaches_su(tmp_path_factory) -> None:
+    """C3 (guard): coal_plant alone at west, min_load 0.3, ramp 0.005/min (rho-bar 0.3), startup_cost 10,
+    huge ``penalty_down`` (no pre-ramping/overshoot allowed); demand 0 MW t0001-t0024 then 400 MW from
+    t0025 (the unit is OFFLINE the whole first day: with demand 0 and penalty_down huge there's no reason to
+    be online, no min-load floor to satisfy).
+
+    Hand derivation: at t0025 the unit starts (su = 1): SU = min(1, ml + 1/2*ramp_up*60*1h) =
+    min(1, 0.3 + 0.5*0.3) = 0.45 -- flow(t0025) = 0.45 (225 MW).  t0026 is a continuing step (no further
+    start helps): flow <= flow(t0025) + rho-bar = 0.45 + 0.3 = 0.75 (375 MW), still short of the 400 MW (0.8)
+    demanded.  t0027: flow <= 0.75 + 0.3 = 1.05, but demand is only 0.8 and surplus is forbidden, so flow
+    settles at exactly 0.8 (400 MW) -- fully served from t0027 on."""
+    values = [
+        ["unit__outputNode", [PLANT, "west"], "ramp_method", b64("ramp_limit", "str")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_up", b64(0.005, "float")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_down", b64(0.005, "float")],
+        ["unit", PLANT, "startup_method", b64("linear", "str")],
+        ["unit", PLANT, "min_load", b64(0.3, "float")],
+        ["unit", PLANT, "startup_cost", b64(10.0, "float")],
+        ["node", "west", "penalty_up", b64(1000.0, "float")],
+        ["node", "west", "penalty_down", b64(1.0e9, "float")],
+    ] + _step_demand(0.0, 400.0)
+    url, scen = make_db(tmp_path_factory, alt="c3_start_su", values=values, base_chain=["init", "west", "coal"])
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    flow = utf8(step.solution.value("v_flow")).filter(pl.col("p") == PLANT).sort("t")
+
+    def _f(t: str) -> float:
+        return flow.filter(pl.col("t") == t)["value"][0]
+
+    assert _f("t0025") == pytest.approx(0.45, abs=1e-6)
+    assert _f("t0026") == pytest.approx(0.75, abs=1e-6)
+    assert _f("t0027") == pytest.approx(0.8, abs=1e-6)
+
+
+def test_stopper_floor_and_sd(tmp_path_factory) -> None:
+    """C4: coal_plant alone at west, min_load 0.3, ramp 0.005/min (rho-bar = 0.3, SD' = ml + 1/2*ramp_down*60*
+    1h = 0.3 + 0.15 = 0.45), startup_cost 10, huge ``penalty_down``; demand 400 MW t0001-t0023 then 0 from
+    t0024.
+
+    Hand derivation: continuing ramp-down alone only allows -0.3/step, so from the steady 0.8 the fastest a
+    CONTINUING unit reaches is 0.8 - 0.3 = 0.5 by t0024; a one-step full stop instead needs flow(t0024) <=
+    SD' = 0.45 for flow(t0025) = 0 to be feasible at all (maxFlow_online forces flow = 0 once on = 0).  Since
+    penalty_up (1000) << penalty_down (1e9), it is cheaper to take 0.35 of shortfall ONE step early
+    (t0024: 0.8 - 0.45) than to carry any surplus past the shutdown, so the solver lands flow(t0024) exactly
+    at SD' = 0.45 and shuts down cleanly at t0025 (flow 0, su/sd row ``ramp_sink_down_constraint`` at t0025
+    carries +rho-bar*c on v_online (0.3), -(rho-bar*c + F) = -(0.3+0.3) = -0.6 on v_startup (F = min_load 0.3,
+    the ONLY arc of this direct unit's output measure), and +c*SD' = +0.45 on v_shutdown -- canonical signs,
+    i.e. the negative of each RHS-formula term).  The last online (pre-shutdown) flow is therefore <= SD' =
+    0.45, exactly (not merely bounded): a looser pre-shutdown value would make t0025 = 0 infeasible."""
+    values = [
+        ["unit__outputNode", [PLANT, "west"], "ramp_method", b64("ramp_limit", "str")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_up", b64(0.005, "float")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_down", b64(0.005, "float")],
+        ["unit", PLANT, "startup_method", b64("linear", "str")],
+        ["unit", PLANT, "min_load", b64(0.3, "float")],
+        ["unit", PLANT, "startup_cost", b64(10.0, "float")],
+        ["node", "west", "penalty_up", b64(1000.0, "float")],
+        ["node", "west", "penalty_down", b64(1.0e9, "float")],
+    ] + _step_demand(400.0, 0.0)
+    url, scen = make_db(tmp_path_factory, alt="c4_stopper", values=values, base_chain=["init", "west", "coal"])
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    flow = utf8(step.solution.value("v_flow")).filter(pl.col("p") == PLANT).sort("t")
+    last_online = flow.filter(pl.col("t") == "t0024")["value"][0]
+    assert last_online == pytest.approx(0.45, abs=1e-6)
+    assert flow.filter(pl.col("t") == "t0025")["value"][0] == pytest.approx(0.0, abs=1e-6)
+
+    pb = build(step.flex_data)
+    dn = row_terms(pb, "ramp_sink_down_constraint")[f"ramp_sink_down_constraint[{PLANT},coal_market,west,"
+                                                     "p2020,t0025]"]
+    assert coef(dn, f"v_online_linear[{PLANT}") == pytest.approx(0.3)
+    assert coef(dn, f"v_startup_linear[{PLANT}") == pytest.approx(-0.6)
+    assert coef(dn, f"v_shutdown_linear[{PLANT}") == pytest.approx(0.45)
+
+
+def test_floor_by_arc_type(tmp_path_factory) -> None:
+    """C5: coefficients of v_shutdown in the UP row (= F, the arc's own per-unit-online floor, design table
+    section 1.2) by arc type, in one fixture -- coal_plant (direct unit, min_load 0.25): F = min_load = 0.25
+    (its single output arc IS the unit's whole output measure).  coal_chp (indirect, min_load 0.4,
+    ``capacity_min_coeff`` 0.5 on its west output): F = min_load*capacity_min_coeff = 0.4*0.5 = 0.2 (its own
+    ``minFlow_output_floor`` row).  coal_chp's fuel input arc (coal_market, also ramp-limited): F = 0 -- no
+    v_shutdown term in that row at all (input arcs are never the unit's output measure)."""
+    values = no_ratio_constraint() + [
+        ["unit__outputNode", [PLANT, "west"], "ramp_method", b64("ramp_limit", "str")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_up", b64(0.005, "float")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_down", b64(0.005, "float")],
+        ["unit", PLANT, "startup_method", b64("linear", "str")],
+        ["unit", PLANT, "min_load", b64(0.25, "float")],
+        ["unit__outputNode", ["coal_chp", "west"], "capacity_min_coeff", b64(0.5, "float")],
+        ["unit", "coal_chp", "startup_method", b64("linear", "str")],
+        ["unit", "coal_chp", "min_load", b64(0.4, "float")],
+        ["unit__outputNode", ["coal_chp", "west"], "ramp_method", b64("ramp_limit", "str")],
+        ["unit__outputNode", ["coal_chp", "west"], "ramp_speed_up", b64(0.002, "float")],
+        ["unit__outputNode", ["coal_chp", "west"], "ramp_speed_down", b64(0.002, "float")],
+        ["unit__inputNode", ["coal_chp", "coal_market"], "ramp_method", b64("ramp_limit", "str")],
+        ["unit__inputNode", ["coal_chp", "coal_market"], "ramp_speed_up", b64(0.002, "float")],
+        ["unit__inputNode", ["coal_chp", "coal_market"], "ramp_speed_down", b64(0.002, "float")],
+        ["node", "west", "inflow", b64(-500.0, "float")],
+        ["node", "heat", "inflow", b64(-500.0, "float")],
+    ]
+    url, scen = make_db(tmp_path_factory, alt="c5_floor", values=values,
+                        base_chain=["init", "west", "coal", "coal_chp", "heat"])
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    pb = build(step.flex_data)
+    up = row_terms(pb, "ramp_sink_up_constraint")
+    src_up = row_terms(pb, "ramp_source_up_constraint")
+
+    plant_row = up[f"ramp_sink_up_constraint[{PLANT},coal_market,west,p2020,t0012]"]
+    assert coef(plant_row, f"v_shutdown_linear[{PLANT}") == pytest.approx(0.25)
+
+    chp_row = up["ramp_sink_up_constraint[coal_chp,coal_chp,west,p2020,t0012]"]
+    assert coef(chp_row, "v_shutdown_linear[coal_chp") == pytest.approx(0.2)
+
+    fuel_row = src_up["ramp_source_up_constraint[coal_chp,coal_market,coal_chp,p2020,t0012]"]
+    assert "v_shutdown" not in "".join(fuel_row)
+
+
+def test_reserve_only_row_on_online_capacity(tmp_path_factory) -> None:
+    """C6: coal_plant online (linear), up reserve provider at west (reservation 40 MW), ramp 0.005/min on its
+    output (rho = ramp_speed*60*1h = 0.3 < 1 at the very first step t0001, which has no ramp predecessor --
+    design section 3.1's ``prundt`` row).  min_load 0.2.
+
+    Hand derivation: at a step with no predecessor, the row is a pure reserve bound: R^up <= rho*c*cap, cap =
+    v_online for an online process (c = 1, no capacity_max_coeff authored).  So the t0001 up row is exactly
+    ``v_reserve - 0.3*v_online_linear <= 0`` -- no v_flow term at all (it is not a flow_rows / continuing row)."""
+    grp = ["ru", "up", "electricity"]
+    values = [
+        ["unit__outputNode", [PLANT, "west"], "ramp_method", b64("ramp_limit", "str")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_up", b64(0.005, "float")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_down", b64(0.005, "float")],
+        ["unit", PLANT, "startup_method", b64("linear", "str")],
+        ["unit", PLANT, "min_load", b64(0.2, "float")],
+        ["reserve__upDown__group", grp, "reserve_method", b64("timeseries_only", "str")],
+        ["reserve__upDown__group", grp, "penalty_reserve", b64(5000.0, "float")],
+        ["reserve__upDown__group", grp, "reservation", b64(40.0, "float")],
+        ["reserve__upDown__unit__node", ["ru", "up", PLANT, "west"], "is_enabled", b64("yes", "str")],
+        ["reserve__upDown__unit__node", ["ru", "up", PLANT, "west"], "max_share", b64(1.0, "float")],
+        ["reserve__upDown__unit__node", ["ru", "up", PLANT, "west"], "reliability", b64(1.0, "float")],
+        ["node", "west", "inflow", b64(-200.0, "float")],
+    ]
+    entities = [["upDown", "up", None], ["reserve", "ru", None], ["reserve__upDown__group", grp, None],
+                ["reserve__upDown__unit__node", ["ru", "up", PLANT, "west"], None]]
+    url, scen = make_db(tmp_path_factory, alt="c6_reserve_row", values=values, base_chain=["init", "west", "coal"],
+                        entities=entities)
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    pb = build(step.flex_data)
+    up = row_terms(pb, "ramp_sink_up_constraint")[f"ramp_sink_up_constraint[{PLANT},coal_market,west,p2020,"
+                                                   "t0001]"]
+    bounds = row_bounds(pb, "ramp_sink_up_constraint")[f"ramp_sink_up_constraint[{PLANT},coal_market,west,"
+                                                        "p2020,t0001]"]
+    assert "v_flow" not in "".join(up)
+    assert coef(up, f"v_online_linear[{PLANT}") == pytest.approx(-0.3)
+    assert coef(up, "v_reserve[") == pytest.approx(1.0)
+    assert bounds[1] == pytest.approx(0.0)
+
+
+def test_carry_row_survives_unforeseen_shutdown(tmp_path_factory) -> None:
+    """C7 (guard; rolling horizon = jump): coal_plant alone at west, min_load unauthored (0), ramp 0.005/min;
+    demand 500 MW (= existing, full output) for t0001-t0024, then 0; availability forced to 0 ONLY at t0025.
+    Two 24h rolls (``rolling_solve_horizon`` = ``rolling_solve_jump`` = 24): roll 1 ends with the unit
+    committed at v_online = 1, flow = 1 (full, f-hat = c*c-hat exactly); roll 2's first step (t0025) is
+    unforeseen by roll 1 (its own availability = 0 forces it fully offline there).
+
+    Hand derivation (critique item 3): on the carry row, SD'_carry = max(1, f-hat/(c*c-hat)) = max(1, 1.0 /
+    (1*1.0)) = 1 exactly (the carried flow was already at the carried online count's full capacity), so the
+    down row's v_shutdown coefficient is -c*SD'_carry = -1 (canonical sign: +1, the negative of the RHS-
+    formula value) -- NOT the ml-based SD' of an interior link row.  The up row's carry-row shutdown term is
+    F = 0 at the (unknown) carried predecessor step, so it carries NO v_shutdown column at all.  Both rolls
+    must still solve to Optimal (the carry row remains feasible for any history, design section 3.3)."""
+    inflow = {f"t{i:04d}": (-500.0 if i <= 24 else 0.0) for i in range(1, 73)}
+    avail = {f"t{i:04d}": (0.0 if i == 25 else 1.0) for i in range(1, 73)}
+    values = [
+        ["unit__outputNode", [PLANT, "west"], "ramp_method", b64("ramp_limit", "str")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_up", b64(0.005, "float")],
+        ["unit__outputNode", [PLANT, "west"], "ramp_speed_down", b64(0.005, "float")],
+        ["unit", PLANT, "startup_method", b64("linear", "str")],
+        ["unit", PLANT, "availability", b64(_pmap(avail, "time"), "map")],
+        ["node", "west", "inflow", b64(_pmap(inflow, "time"), "map")],
+        ["solve", "y2020_2day_dispatch", "solve_mode", b64("rolling_window", "str")],
+        ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", b64(24.0, "float")],
+        ["solve", "y2020_2day_dispatch", "rolling_solve_jump", b64(24.0, "float")],
+    ]
+    url, scen = make_db(tmp_path_factory, alt="c7_carry", values=values, base_chain=["init", "west", "coal"])
+    steps = run(tmp_path_factory, url, scen)
+    assert len(steps) == 2
+    for name, step in steps.items():
+        assert step.solution is not None, f"{name} did not solve"
+
+    roll2 = list(steps.values())[-1]
+    pb = build(roll2.flex_data)
+    dn = row_terms(pb, "ramp_sink_down_constraint")[f"ramp_sink_down_constraint[{PLANT},coal_market,west,"
+                                                     "p2020,t0025]"]
+    up = row_terms(pb, "ramp_sink_up_constraint")[f"ramp_sink_up_constraint[{PLANT},coal_market,west,p2020,"
+                                                   "t0025]"]
+    assert coef(dn, f"v_shutdown_linear[{PLANT}") == pytest.approx(1.0)
+    assert "v_shutdown" not in "".join(up)
+
+
+def test_min_load_constant_vs_map_same_ramp_rows(tmp_path_factory) -> None:
+    """C8 (CLAUDE.md invariant #2): ``min_load`` as a constant, an equivalent uniform time map and an
+    equivalent uniform period map must give byte-identical ``ramp_*`` / ``online_change_linear`` rows --
+    checked in a single solve, a 2-roll rolling solve and the 2-day stochastic dispatch
+    (``tests/fixtures/stochastics.json``, coal_plant's existing output arc given its own ramp + online
+    overlay).  A name-based broadcaster would silently cross-join the map's silent-default ``"x"`` row against
+    the whole timeline (CLAUDE.md invariant #2); this test is the constant-vs-equivalent-map regression gate
+    for the ramp row's ``ml`` (design section 3.2 notes it must go through ``promote_param_to_dt``, same as
+    ``_min_load_share`` already does).  Guard, like C7: before this commit the ramp row never read
+    ``min_load`` at all (a flat +-1 ``v_startup``/``v_shutdown``), so the shapes were trivially identical
+    then too; this test guards the NEW ``ml`` usage against the exact class of bug CLAUDE.md invariant #2
+    warns about, it does not fail on the parent commit."""
+
+    def _row_shapes(pb) -> dict:
+        return {fam: {nm: tuple(sorted(terms.items())) for nm, terms in row_terms(pb, fam).items()}
+                for fam in ("ramp_sink_up_constraint", "ramp_sink_down_constraint", "online_change_linear")}
+
+    def _ramp_values(const: float | None = None, tmap: dict | None = None, pmap_: dict | None = None,
+                     sink: str = "west", unit: str = PLANT) -> list:
+        vals = [
+            ["unit__outputNode", [unit, sink], "ramp_method", b64("ramp_limit", "str")],
+            ["unit__outputNode", [unit, sink], "ramp_speed_up", b64(0.005, "float")],
+            ["unit__outputNode", [unit, sink], "ramp_speed_down", b64(0.005, "float")],
+            ["unit", unit, "startup_method", b64("linear", "str")],
+        ]
+        if const is not None:
+            vals.append(["unit", unit, "min_load", b64(const, "float")])
+        if tmap is not None:
+            vals.append(["unit", unit, "min_load", b64(_pmap(tmap, "time"), "map")])
+        if pmap_ is not None:
+            vals.append(["unit", unit, "min_load", b64(_pmap(pmap_, "period"), "map")])
+        return vals
+
+    # Single solve.
+    shapes = {}
+    for kind, extra in (("const", {"const": 0.2}), ("time", {"tmap": {f"t{i:04d}": 0.2 for i in range(1, 73)}}),
+                        ("period", {"pmap_": {"p2020": 0.2}})):
+        values = _ramp_values(**extra) + [["node", "west", "inflow", b64(-200.0, "float")]]
+        url, scen = make_db(tmp_path_factory, alt=f"c8_single_{kind}", values=values,
+                            base_chain=["init", "west", "coal"])
+        step = list(run(tmp_path_factory, url, scen).values())[-1]
+        shapes[kind] = _row_shapes(build(step.flex_data))
+    assert shapes["const"] == shapes["time"] == shapes["period"]
+
+    # 2-roll rolling solve.
+    roll_shapes = {}
+    for kind, extra in (("const", {"const": 0.2}), ("time", {"tmap": {f"t{i:04d}": 0.2 for i in range(1, 73)}})):
+        values = _ramp_values(**extra) + [
+            ["node", "west", "inflow", b64(-200.0, "float")],
+            ["solve", "y2020_2day_dispatch", "solve_mode", b64("rolling_window", "str")],
+            ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", b64(36.0, "float")],
+            ["solve", "y2020_2day_dispatch", "rolling_solve_jump", b64(24.0, "float")]]
+        url, scen = make_db(tmp_path_factory, alt=f"c8_roll_{kind}", values=values,
+                            base_chain=["init", "west", "coal"])
+        steps = run(tmp_path_factory, url, scen)
+        roll_shapes[kind] = {name: _row_shapes(build(s.flex_data)) for name, s in steps.items()}
+    assert roll_shapes["const"] == roll_shapes["time"]
+
+    # Stochastic 2-day dispatch.
+    stoch_shapes = {}
+    for kind, extra in (("const", {"const": 0.2, "sink": "demand_node"}),
+                        ("time", {"tmap": {f"t{i:04d}": 0.2 for i in range(1, 49)}, "sink": "demand_node"})):
+        url, scen = make_db(tmp_path_factory, alt=f"c8_stoch_{kind}", values=_ramp_values(**extra),
+                            base_chain=["base", "init", "system", "2day"],
+                            fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json")
+        step = list(run(tmp_path_factory, url, scen).values())[-1]
+        stoch_shapes[kind] = _row_shapes(build(step.flex_data))
+    assert stoch_shapes["const"] == stoch_shapes["time"]

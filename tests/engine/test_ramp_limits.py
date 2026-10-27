@@ -200,13 +200,21 @@ def test_cross_period_row_kept_when_capacity_drops(tmp_path_factory) -> None:
 
 
 def test_online_unit_at_cross_period_link(tmp_path_factory) -> None:
-    """The cross-period up row of a unit with linear online variables carries its startups of that step."""
+    """The cross-period up row of a unit with linear online variables carries its startups of that step, now
+    with THAT step's own physical coefficients (c14c part C), not a flat +-1.
+
+    ml = min_load 0.2, ramp 0.002/min, 1-h steps: rho-bar = 0.002*60*1 = 0.12, SU = min(1, 0.2 + 0.5*0.12) =
+    0.26.  canonical coefficient = -(RHS-formula value): v_online_linear[p2025,t0025] carries -(c*rho-bar) =
+    -0.12 (c = 1, no capacity_max_coeff authored); v_startup_linear[p2025,t0025] carries -(c*(SU - rho-bar)) =
+    -(0.26 - 0.12) = -0.14.  Before this commit every ramp row had a flat +1 RHS v_startup term regardless of
+    SU/rho-bar, canonical -1."""
     vals = _ramp(0.002) + TWO_PERIODS + [["unit", PLANT, "startup_method", b64("linear", "str")],
                                          ["unit", PLANT, "min_load", b64(0.2, "float")]]
     step = _last(_solve(tmp_path_factory, "ramp_2p_uc", vals, entities=TWO_PERIODS_ENTS))
     row = row_terms(build(step.flex_data), "ramp_sink_up_constraint", ARC)[f"ramp_sink_up_constraint[{ARC}p2025,t0025]"]
     assert coef(row, f"v_flow[{ARC}p2020,t0024]") == pytest.approx(-1.0)
-    assert coef(row, f"v_startup_linear[{PLANT},p2025,t0025]") == pytest.approx(-1.0)
+    assert coef(row, f"v_online_linear[{PLANT},p2025,t0025]") == pytest.approx(-0.12, abs=TOL)
+    assert coef(row, f"v_startup_linear[{PLANT},p2025,t0025]") == pytest.approx(-0.14, abs=TOL)
 
 
 def test_midhorizon_branches_ramp_from_trunk(tmp_path_factory) -> None:
@@ -310,7 +318,20 @@ def test_shutdown_reduction_across_continuing_periods(tmp_path_factory) -> None:
     shutdown at p2025 t0025 (step high then dropped to 0): maxFlow_online_shutdown_linear[ARC,p2020,t0024]
     exists with v_shutdown_linear[coal_plant,p2025,t0025] coefficient kappa*(1 - SD) = 0.74 (kappa = 1,
     capacity_max_coeff unauthored).  Before: #98's ``d_previous == d`` filter in _successor_steps kept this a
-    same-period-only row, so no row existed across the period boundary."""
+    same-period-only row, so no row existed across the period boundary.  This row is ``_online.py``'s
+    cross-period pre-shutdown REDUCTION of ``maxFlow_online`` -- unrelated to part C's ramp-row split, so its
+    coefficient is unaffected by part C landing.
+
+    Part C DOES move WHEN the real full stop happens: part C's own ramp_sink_down_constraint now correctly
+    limits each step's decline to rho-bar = 0.12 (continuing) once online, so with demand forced to 0 the
+    globally cheapest path is a GRADUAL decline of 0.12/step from p2020 on, reaching 0 only once flow is
+    already <= SD = 0.26 (verified by re-solving: flow declines 0.12/step from t0020 through p2025 t0026,
+    landing at 0.26 there, so the one-step full stop to 0 at t0027 is exactly feasible via this row's SD
+    bound) -- the single-shot full stop AT t0025 the old code picked (free of any real ramp cost under the
+    pre-part-C flat row) is no longer cheapest.  So the only invariant this test can still assert about the
+    SOLVED schedule is that a real full stop happens somewhere in p2025 (this row, and the whole pre-shutdown
+    mechanism, is not vestigial): sum(v_shutdown_linear) over p2025 is exactly 1 (one unit, started at most
+    once, stops at most once under a flat-then-zero demand profile)."""
     vals = _ramp(0.002) + TWO_PERIODS + [
         ["unit", PLANT, "startup_method", b64("linear", "str")],
         ["unit", PLANT, "min_load", b64(0.2, "float")],
@@ -320,9 +341,9 @@ def test_shutdown_reduction_across_continuing_periods(tmp_path_factory) -> None:
     pb = build(step.flex_data)
     row = row_terms(pb, "maxFlow_online_shutdown_linear", ARC)[f"maxFlow_online_shutdown_linear[{ARC}p2020,t0024]"]
     assert coef(row, f"v_shutdown_linear[{PLANT},p2025,t0025]") == pytest.approx(0.74, abs=1e-6)
-    sd = (utf8(step.solution.value("v_shutdown_linear"))
-          .filter((pl.col("p") == PLANT) & (pl.col("d") == "p2025") & (pl.col("t") == "t0025"))["value"][0])
-    assert sd > 0.3   # the shutdown this row protects against is real (demand drops to 0 at p2025)
+    sd_p2025 = (utf8(step.solution.value("v_shutdown_linear"))
+               .filter((pl.col("p") == PLANT) & (pl.col("d") == "p2025"))["value"].sum())
+    assert sd_p2025 == pytest.approx(1.0, abs=TOL)
 
 
 def test_midhorizon_online_branches_from_trunk(tmp_path_factory) -> None:

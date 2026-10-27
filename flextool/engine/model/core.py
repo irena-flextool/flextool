@@ -1961,19 +1961,35 @@ def _eq_ramp(b: _Build) -> None:
 
     # ─── EQ. ─── ramp_{sink,source}_{up,down}_constraint ─────────────────────
     # ─────────────────────────────────────────────────────────────────────────
+    # Units without online variables (as c14a):
     # v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′] + R↑[p,s,k,d,t]
-    #   ≤ +ρ · c[p,s,k,d,t] · (existing_count[p,d] + Σ_{d″} v_invest_p[p,d″] − Σ_{d″} v_divest_p[p,d″])
-    #     + v_startup[p,d,t]                                                                           (up)
+    #   ≤ +ρ̄ · c[p,s,k,d,t] · (existing_count[p,d] + Σ_{d″} v_invest_p[p,d″] − Σ_{d″} v_divest_p[p,d″])        (up)
     # v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′] − R↓[p,s,k,d,t]
-    #   ≥ −ρ · c[p,s,k,d,t] · (existing_count[p,d] + Σ v_invest_p − Σ v_divest_p) − v_shutdown[p,d,t]    (down)
-    #   ρ = ramp_speed_{dir}_{side}[p,node] · 60 · (step_duration[d′,t′] + step_duration[d,t]) / 2
-    #   ∀ (p,s,k) ∈ process_source_sink_ramp_limit_{side}_{dir}, (d,t,d′,t′) ∈ dt_ramp_link;
-    #     on a link inside one period (d′ = d) only where ρ < 1
+    #   ≥ −ρ̄ · c[p,s,k,d,t] · (existing_count[p,d] + Σ v_invest_p − Σ v_divest_p)                              (down)
+    # Units with online variables (linear or integer class), room on the units online, split by unit state:
+    # v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′] + R↑[p,s,k,d,t]
+    #   ≤ c · ( ρ̄ · (v_online[p,d,t] − v_startup[p,d,t]) + SU[p,s,k,d,t] · v_startup[p,d,t] )
+    #     − F[p,s,k,d′,t′] · v_shutdown[p,d,t]                                                                  (up)
+    # v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′] − R↓[p,s,k,d,t]
+    #   ≥ −c · ( ρ̄ · (v_online[p,d,t] − v_startup[p,d,t]) + SD′[p,s,k,d′,t′] · v_shutdown[p,d,t] )
+    #     + F[p,s,k,d,t] · v_startup[p,d,t]                                                                     (down)
+    #   ρ̄ = ramp_speed_{dir}_{side}[p,node] · 60 · (step_duration[d′,t′] + step_duration[d,t]) / 2
+    #   SU = min(1, ml[p,s,k,d,t] + ½ · ramp_speed_up_{side} · 60 · step_duration[d,t])
+    #   SD′ = min(1, ml[p,s,k,d′,t′] + ½ · ramp_speed_down_{side} · 60 · step_duration[d′,t′])
+    #   ml = min_load (output-measured arc) or x(min_load) / input_share_max (indirect unit's input arc), 0
+    #     without min_load;  F = the arc's floor per unit online (arc_floor_share): min_load on the only arc of
+    #     a unit's output measure, min_load · capacity_min_coeff on an output of a multi-output unit with
+    #     capacity_min_coeff > 0, else 0
+    #   ∀ (p,s,k) ∈ process_source_sink_ramp_limit_{side}_{dir}, (d,t,d′,t′) ∈ dt_ramp_link; on a link inside one
+    #     period (d′ = d) only where ρ̄ < 1
     # On a continuation roll the first step of a period ramps from the previous roll's realized flow
-    #   (dt_ramp_carry): v_flow[p,s,k,d′,t′] → f̂[p,s,k,d,t] (p_roll_continue_flow, a constant on the RHS) and
-    #   step_duration[d′,t′] → its carried duration.
+    #   (dt_ramp_carry): v_flow[p,s,k,d′,t′] → f̂[p,s,k,d,t] (p_roll_continue_flow, a constant), step_duration
+    #   [d′,t′] → its carried duration; for units with online variables F[d′,t′] → 0 (no shutdown term on the
+    #   up row) and SD′ → max(1, f̂[p,s,k,d,t] / (c[p,s,k,d,t] · ĉ[p])) (1 where the carried online count
+    #   ĉ = p_roll_continue_online is 0 — no stoppers then; exact and always feasible, unlike a fixed κ/c).
     # Steps without a predecessor, on arcs that hold reserve in that direction there (prundt):
-    #   R↑ ≤ ρ·c·cap (up),  −R↓ ≥ −ρ·c·cap (down),  ρ = ramp_speed · 60 · step_duration[d,t] < 1;  no startup term.
+    #   R↑ ≤ ρ·c·cap (up),  −R↓ ≥ −ρ·c·cap (down),  ρ = ramp_speed · 60 · step_duration[d,t] < 1;
+    #   cap = v_online[p,d,t] for units with online variables, built units otherwise.
     # R↑ = Σ_r v_reserve[p,r,up,k,d,t] + φ·Σ_r v_reserve[p,r,down,s,d,t]
     #   (raises the arc: up at its sink, down at its source)
     # R↓ = Σ_r v_reserve[p,r,down,k,d,t] + φ·Σ_r v_reserve[p,r,up,s,d,t]
@@ -1983,18 +1999,23 @@ def _eq_ramp(b: _Build) -> None:
     # Limits the change of a flow between two consecutive steps, plus the reserve it holds in that direction, to its
     # ramp room: ramp_speed is a share of capacity per minute and flows are step averages, so the room between two
     # step averages is the speed × the distance between the two step centres (a valid bound for every trajectory
-    # that obeys the speed; it is the tight one for a linear ramp).  A step has a predecessor (dt_ramp_link) only
-    # where it is adjacent on the timeline in the un-rolled solve: no cyclic wrap at the first step of a solve or of
-    # a period that does not continue the previous one, no row across a gap or at the start of a representative
-    # block.  Rows inside one period with ρ ≥ 1 cannot bind and are not built: the arc's capacity row (maxFlow*,
-    # with the same raising reserve and coefficient M ≤ c, availability ≤ 1) gives v_flow[t] + R↑ ≤ c·cap and
-    # v_flow[t′] ≥ 0, the floors (minFlow_*) give v_flow[t] − R↓ ≥ 0 and v_flow[t′] ≤ c·cap, with the same built
-    # capacity at both steps.  Cross-period and carried rows are always built (the capacity can differ).
+    # that obeys the speed; it is the tight one for a linear ramp).  For a unit with online variables the units
+    # online in both steps change by at most ρ̄ each, a unit starting in step t reaches at most SU (half a step's
+    # ramp above min load, the startup-step limit of maxFlow_online) and a stopping unit drops from at least its
+    # floor F; downwards a stopping unit drops at most from SD′ (the pre-shutdown limit) and a starting unit rises
+    # to at least F.  v_startup / v_shutdown are relative to the same predecessor (online_change), so a start/stop
+    # pair with online unchanged gains c·(ml − ½·ρ·Δ) − F ≤ 0 of room on the only output of a unit
+    # (research_backbone_startup_ramp.md); on an input, or on one output of a multi-output unit, a pair can still
+    # gain up to the min-load share, paid by the startup cost.  A step has a predecessor (dt_ramp_link) only where
+    # it is adjacent on the timeline in the un-rolled solve: no cyclic wrap at the first step of a solve or of a
+    # period that does not continue the previous one, no row across a gap or at the start of a representative
+    # block.  Rows inside one period with ρ̄ ≥ 1 cannot bind and are not built (unchanged from c14a: every term of
+    # the online-capacity split is still implied there, design §1.4).  Cross-period and carried rows are always
+    # built (the capacity, or the online predecessor, can differ).
     # c scales the room as the arc's capacity is scaled: capacity_max_coeff[p,k] on the sink side; on the source
     # side input_share_max[p,s], or on an indirect unit's input arc p_indirect_input_cap.  v_flow and v_reserve
-    # are in units of unitsize, existing_count = existing / unitsize.  v_startup / v_shutdown are the linear and
-    # integer UC variables where the process has them: units starting (stopping) in a step add to its upward
-    # (downward) ramp room.  Arcs with conversion_flow_coeff = 0 get no row.
+    # are in units of unitsize, existing_count = existing / unitsize.  Arcs with conversion_flow_coeff = 0 get no
+    # row.
     keys = ["p", "source", "sink"]
     for side, dir_, idx_set, ramp_speed in (
         ("sink",   "up",   d.process_source_sink_ramp_limit_sink_up,     d.p_ramp_speed_up_sink),
@@ -2035,27 +2056,38 @@ def _eq_ramp(b: _Build) -> None:
                 lhs["reserve_down"] = -b.reserve_down_to_sink
             lhs.update({k: -v for k, v in b.reserve_up_at_source.items()})
 
-        rate = Param(("p", "source", "sink", "d", "t"), rows.select(*keys, "d", "t", value=pl.col("__room")))
-        if side == "sink":
-            if d.p_process_sink_max_capacity_coef is not None:
-                rate = rate * _coef_factor(idx_set, d.p_process_sink_max_capacity_coef, ["p", "sink"])
+        # Split rows by UC class membership (design §3.2): a process has one startup method, so it belongs to
+        # at most one online class; the rest are built rows (c14a's existing_count / invest / divest terms).
+        online_rows: dict = {}
+        online_p_frames = []
+        for kind, _p_idx_k, online_set_k, v_online_k, v_startup_k, v_shutdown_k in _online.uc_classes(b):
+            sub = (_utf8_keys(rows.lazy(), ["p"])
+                   .join(_utf8_keys(online_set_k.lazy().select("p"), ["p"]).select("_p").unique(),
+                         on="_p", how="semi")
+                   .select(rows.columns).collect())
+            if sub.height > 0:
+                online_rows[kind] = (sub, v_online_k, v_startup_k, v_shutdown_k)
+                online_p_frames.append(sub.select("p").unique())
+        if online_p_frames:
+            excl_p = pl.concat(online_p_frames).unique()
+            built_rows = (_utf8_keys(rows.lazy(), ["p"])
+                          .join(_utf8_keys(excl_p.lazy(), ["p"]).select("_p"), on="_p", how="anti")
+                          .select(rows.columns).collect())
         else:
-            src_factor = _source_ramp_factor(d, idx_set)
-            if src_factor is not None:
-                rate = rate * src_factor
-        rhs: dict = {"limit": (rate * d.p_process_existing_count) * sign}
-        if b.has_invest_p:
-            rhs["invest"] = (b.invest_in_dispatch_p * rate) * sign
-        if b.has_divest_p:
-            rhs["divest"] = (b.divest_in_dispatch_p * rate) * (-sign)
-        if flow_rows.height > 0:
-            for kind, has in (("linear", b.has_online_lin), ("integer", b.has_online_int)):
-                if not has:
-                    continue
-                if up:
-                    rhs[f"startup_{kind}"] = Where(getattr(b, f"v_startup_{kind}"), flow_rows)
-                else:
-                    rhs[f"shutdown_{kind}"] = -Where(getattr(b, f"v_shutdown_{kind}"), flow_rows)
+            built_rows = rows
+
+        rhs: dict = {}
+        if built_rows.height > 0:
+            rate_built = _ramp_rate(d, idx_set, side, built_rows, keys)
+            rhs["limit"] = (rate_built * d.p_process_existing_count) * sign
+            if b.has_invest_p:
+                rhs["invest"] = (b.invest_in_dispatch_p * rate_built) * sign
+            if b.has_divest_p:
+                rhs["divest"] = (b.divest_in_dispatch_p * rate_built) * (-sign)
+        for kind, (sub, v_online_k, v_startup_k, v_shutdown_k) in online_rows.items():
+            for name, term in _online_ramp_rhs(b, idx_set, ramp_speed, side, up, sub,
+                                               v_online_k, v_startup_k, v_shutdown_k, keys).items():
+                rhs[f"{name}_{kind}"] = term
         if carried.height > 0:
             rhs["roll_continue_flow"] = Param(("p", "source", "sink", "d", "t"),
                                               carried.select(*keys, "d", "t", value=pl.col("__f_hat")))
@@ -2193,6 +2225,205 @@ def _source_ramp_factor(d, idx_set: "pl.DataFrame") -> "Param | None":
              .select(*keys, "d", "t", value=pl.coalesce(pl.col("__cap"), pl.col("__share"), pl.lit(1.0)))
              .collect())
     return Param(("p", "source", "sink", "d", "t"), frame)
+
+
+def _ramp_rate(d, idx_set: "pl.DataFrame", side: str, rows_subset: "pl.DataFrame", keys: list) -> Param:
+    """``c · ρ̄`` (or ``c · ρ`` on reserve-only rows) over ``rows_subset`` (:func:`_ramp_rows` output, any
+    ``__kind``): the per-row ramp room already scaled by the arc's capacity factor ``c`` (c14c design §3,
+    EQ. header of :func:`_eq_ramp`)."""
+    rate = Param(("p", "source", "sink", "d", "t"), rows_subset.select(*keys, "d", "t", value=pl.col("__room")))
+    if side == "sink":
+        if d.p_process_sink_max_capacity_coef is not None:
+            rate = rate * _coef_factor(idx_set, d.p_process_sink_max_capacity_coef, ["p", "sink"])
+    else:
+        src_factor = _source_ramp_factor(d, idx_set)
+        if src_factor is not None:
+            rate = rate * src_factor
+    return rate
+
+
+def _c_param_plain(d, idx_set: "pl.DataFrame", side: str) -> "Param | None":
+    """The ramp row's capacity factor ``c`` alone (without ``ρ̄``): :func:`_coef_factor` on the sink side,
+    :func:`_source_ramp_factor` on the source side.  ``None`` means 1.0 everywhere."""
+    if side == "sink":
+        if d.p_process_sink_max_capacity_coef is None:
+            return None
+        return _coef_factor(idx_set, d.p_process_sink_max_capacity_coef, ["p", "sink"])
+    return _source_ramp_factor(d, idx_set)
+
+
+def _c_values(rows: "pl.DataFrame", c_param: "Param | None", keys: list) -> "pl.DataFrame":
+    """``rows`` + ``__c`` (float, default 1.0): the plain capacity factor of each row, from ``c_param``
+    (:func:`_c_param_plain`'s output, possibly ``None`` meaning 1.0 everywhere)."""
+    if c_param is None:
+        return rows.with_columns(__c=pl.lit(1.0))
+    cf = c_param.frame
+    on = [k for k in ("p", "source", "sink", "d", "t") if k in cf.columns]
+    joined = (_utf8_keys(rows.lazy(), on)
+              .join(_utf8_keys(cf.lazy(), on).select([f"_{k}" for k in on] + [pl.col("value").alias("__c")]),
+                    on=[f"_{k}" for k in on], how="left")
+              .with_columns(pl.col("__c").fill_null(1.0))
+              .collect())
+    return joined.select(rows.columns + ["__c"])
+
+
+def _ramp_limit_share(b: "_Build", ramp_speed: Param, side: str, points: "pl.DataFrame") -> "pl.DataFrame":
+    """``(p, source, sink, d, t, value)`` over ``points`` (``p, source, sink, d, t``, dtypes of ``idx_set`` /
+    ``dt``): ``min(1, ml + ½ · ramp_speed · 60 · step_duration[d,t])`` — the startup-step (SU, called with the
+    family's own up-speed) or pre-shutdown (SD′, down-speed) output limit of a unit starting / stopping at
+    ``points`` (c14c design §1.2/§3.1).  ``ml`` via :func:`flextool.engine.model._online._min_load_share`,
+    ``input_side`` per arc (an indirect unit's input arc: ``source != p``, ``sink == p``, ``p`` in
+    ``process_indirect``); this row's own ``ramp_speed`` only — no min over sides (unlike ``maxFlow_online``,
+    which keeps the tighter of the two)."""
+    d = b.d
+    keys = ["p", "source", "sink"]
+    pts = _utf8_keys(points.lazy(), keys + ["d", "t"]).collect()
+    if pts.height == 0:
+        return pts.select(*keys, "d", "t").with_columns(value=pl.lit(0.0))
+    indirect = getattr(d, "process_indirect", None)
+    if indirect is not None and indirect.height > 0:
+        ind_p = _utf8_keys(indirect.lazy().select("p"), ["p"]).select("_p").unique().collect()
+        is_in = ((pts["_source"] != pts["_p"]) & (pts["_sink"] == pts["_p"])
+                 & pts["_p"].is_in(ind_p["_p"].to_list()))
+    else:
+        is_in = pl.Series([False] * pts.height)
+    in_rows = pts.filter(is_in)
+    out_rows = pts.filter(~is_in)
+    ml_parts = []
+    if in_rows.height > 0:
+        ml_parts.append(_online._min_load_share(b, in_rows.lazy(), input_side=True).collect())
+    if out_rows.height > 0:
+        ml_parts.append(_online._min_load_share(b, out_rows.lazy(), input_side=False).collect())
+    ml = (pl.concat(ml_parts) if ml_parts
+          else pl.DataFrame(schema={"_p": pl.Utf8, "_source": pl.Utf8, "_sink": pl.Utf8, "_d": pl.Utf8,
+                                    "_t": pl.Utf8, "__ml": pl.Float64}))
+    dur = d.p_step_duration.frame.select(
+        pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
+        pl.col("value").cast(pl.Float64).alias("__dur"))
+    speed = ramp_speed.frame.select(
+        pl.col("p").cast(pl.Utf8).alias("_p"), pl.col(side).cast(pl.Utf8).alias("_n"),
+        pl.col("value").cast(pl.Float64).alias("__speed"))
+    out = (pts.join(ml, on=["_p", "_source", "_sink", "_d", "_t"], how="left")
+           .with_columns(pl.col("__ml").fill_null(0.0))
+           .join(dur, on=["_d", "_t"], how="inner")
+           .with_columns(pl.col(f"_{side}").alias("_n"))
+           .join(speed, on=["_p", "_n"], how="inner")
+           .with_columns(value=pl.min_horizontal(
+               pl.lit(1.0), pl.col("__ml") + 0.5 * pl.col("__speed") * 60.0 * pl.col("__dur")))
+           .select(*keys, "d", "t", "value"))
+    return out
+
+
+def _predecessor_points(rows_subset: "pl.DataFrame", d) -> "pl.DataFrame":
+    """``(p, source, sink, d, t)`` at the predecessor identity of each row of ``rows_subset`` (:func:`_ramp_rows`
+    link rows: ``__d_prev`` / ``__t_prev``), in the dtypes of ``d.dt``."""
+    return rows_subset.select(
+        "p", "source", "sink",
+        pl.col("__d_prev").cast(d.dt.schema["d"]).alias("d"),
+        pl.col("__t_prev").cast(d.dt.schema["t"]).alias("t"))
+
+
+def _attach_at_predecessor(rows_subset: "pl.DataFrame", values: "pl.DataFrame", keys: list) -> "pl.DataFrame":
+    """``values`` (``p, source, sink, d, t, value``), evaluated at the predecessor identity, reattached to
+    ``rows_subset``'s OWN ``(d, t)`` via its ``__d_prev`` / ``__t_prev`` bridge (Utf8).  0 where ``rows_subset``
+    has no match (no predecessor value — the carried-predecessor callers restrict to link rows only)."""
+    left = _utf8_keys(rows_subset.lazy(), keys)
+    right = (_utf8_keys(values.lazy(), keys + ["d", "t"])
+             .select([f"_{k}" for k in keys] + [pl.col("_d").alias("__d_prev"), pl.col("_t").alias("__t_prev"),
+                                                "value"]))
+    return (left.join(right, on=[f"_{k}" for k in keys] + ["__d_prev", "__t_prev"], how="left")
+            .select(*keys, "d", "t", value=pl.col("value").fill_null(0.0)).collect())
+
+
+def _attach_at_self(rows_subset: "pl.DataFrame", values: "pl.DataFrame", keys: list) -> "pl.DataFrame":
+    """``values`` (``p, source, sink, d, t, value``) left-joined onto ``rows_subset``'s own ``(d, t)``, 0
+    where absent."""
+    left = _utf8_keys(rows_subset.lazy(), keys + ["d", "t"])
+    right = _utf8_keys(values.lazy(), keys + ["d", "t"]).select(
+        [f"_{k}" for k in keys] + ["_d", "_t", "value"])
+    return (left.join(right, on=[f"_{k}" for k in keys] + ["_d", "_t"], how="left")
+            .select(*keys, "d", "t", value=pl.col("value").fill_null(0.0)).collect())
+
+
+def _online_ramp_rhs(b: "_Build", idx_set: "pl.DataFrame", ramp_speed: Param, side: str, up: bool,
+                     sub: "pl.DataFrame", v_online_k, v_startup_k, v_shutdown_k, keys: list) -> dict:
+    """RHS terms of one UC class's rows of a ramp family, room on the units online split by unit state (c14c
+    design §3): ``{"online": ..., "startup": ..., "shutdown": ...}`` (without the ``_{kind}`` suffix the
+    caller adds; present only where non-empty).  ``sub`` is this class's rows of :func:`_ramp_rows` (any
+    ``__kind``: link / carry / reserve) — one process belongs to at most one UC class.
+    """
+    d = b.d
+    sign = 1.0 if up else -1.0
+    terms: dict = {"online": (v_online_k * _ramp_rate(d, idx_set, side, sub, keys)) * sign}
+
+    flow_kind = sub.filter(pl.col("__kind") != "reserve")
+    if flow_kind.height == 0:
+        return terms
+    link_kind = flow_kind.filter(pl.col("__kind") == "link")
+    carry_kind = flow_kind.filter(pl.col("__kind") == "carry")
+    c_param = _c_param_plain(d, idx_set, side)
+    c_vals = _c_values(flow_kind, c_param, keys)
+    floor_tbl = _unit_floors.arc_floor_share(d, idx_set)
+
+    if up:
+        # startup: c·(SU_t − ρ̄) — can be 0 or negative (keep the sign, drop exact zeros).
+        su = _ramp_limit_share(b, ramp_speed, side, flow_kind.select(*keys, "d", "t"))
+        su_coef = (c_vals.join(su.rename({"value": "__su"}), on=[*keys, "d", "t"], how="left")
+                   .with_columns(pl.col("__su").fill_null(0.0))
+                   .with_columns(value=pl.col("__c") * (pl.col("__su") - pl.col("__room")))
+                   .filter(pl.col("value") != 0.0)
+                   .select(*keys, "d", "t", "value"))
+        if su_coef.height > 0:
+            terms["startup"] = v_startup_k * Param(tuple(keys) + ("d", "t"), su_coef)
+        # shutdown: −F[d′,t′], link rows only (carry rows: F = 0, no term, design §3.3).
+        if link_kind.height > 0 and floor_tbl is not None:
+            f_prev = (_attach_at_predecessor(link_kind, floor_tbl, keys)
+                      .filter(pl.col("value") > 0.0)
+                      .with_columns(value=-pl.col("value")))
+            if f_prev.height > 0:
+                terms["shutdown"] = v_shutdown_k * Param(tuple(keys) + ("d", "t"), f_prev)
+    else:
+        # startup: c·ρ̄ + F[d,t] — the row's own step, link and carry rows alike.
+        f_self = (_attach_at_self(flow_kind, floor_tbl, keys) if floor_tbl is not None
+                 else flow_kind.select(*keys, "d", "t").with_columns(value=pl.lit(0.0)))
+        su_coef = (c_vals.join(f_self.rename({"value": "__f"}), on=[*keys, "d", "t"], how="left")
+                   .with_columns(pl.col("__f").fill_null(0.0))
+                   .with_columns(value=pl.col("__c") * pl.col("__room") + pl.col("__f"))
+                   .filter(pl.col("value") != 0.0)
+                   .select(*keys, "d", "t", "value"))
+        if su_coef.height > 0:
+            terms["startup"] = v_startup_k * Param(tuple(keys) + ("d", "t"), su_coef)
+        # shutdown: −c·SD′[d′,t′] on link rows (ml-based); −c·SD′_carry on carry rows (critique item 3:
+        #   SD′_carry = max(1, f̂ / (c · ĉ)), ĉ = p_roll_continue_online, 1.0 where ĉ = 0 — no stoppers then).
+        shutdown_parts = []
+        if link_kind.height > 0:
+            sd = _ramp_limit_share(b, ramp_speed, side, _predecessor_points(link_kind, d))
+            sd_at_row = _attach_at_predecessor(link_kind, sd, keys)
+            c_link = _c_values(link_kind, c_param, keys)
+            shutdown_parts.append(
+                c_link.join(sd_at_row.rename({"value": "__sd"}), on=[*keys, "d", "t"], how="left")
+                .with_columns(pl.col("__sd").fill_null(0.0))
+                .with_columns(value=-pl.col("__c") * pl.col("__sd"))
+                .select(*keys, "d", "t", "value"))
+        if carry_kind.height > 0:
+            rco = d.p_roll_continue_online
+            rco_df = (rco.frame.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("value").alias("__c_hat"))
+                      if rco is not None else pl.DataFrame(schema={"_p": pl.Utf8, "__c_hat": pl.Float64}))
+            c_carry = _c_values(carry_kind, c_param, keys)
+            shutdown_parts.append(
+                _utf8_keys(c_carry.lazy(), ["p"]).join(rco_df.lazy(), on="_p", how="left")
+                .with_columns(pl.col("__c_hat").fill_null(0.0))
+                .with_columns(__sd=pl.when(pl.col("__c_hat") > 0.0)
+                              .then(pl.max_horizontal(
+                                  pl.lit(1.0), pl.col("__f_hat") / (pl.col("__c") * pl.col("__c_hat"))))
+                              .otherwise(1.0))
+                .with_columns(value=-pl.col("__c") * pl.col("__sd"))
+                .select(*keys, "d", "t", "value").collect())
+        if shutdown_parts:
+            sd_all = pl.concat(shutdown_parts).filter(pl.col("value") != 0.0)
+            if sd_all.height > 0:
+                terms["shutdown"] = v_shutdown_k * Param(tuple(keys) + ("d", "t"), sd_all)
+    return terms
 
 
 def _eq_invest_max_units(b: _Build) -> None:

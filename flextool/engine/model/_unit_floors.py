@@ -189,6 +189,78 @@ def add_constraints(b: "_Build") -> None:
                rhs_terms=_rdn_terms(d, views, _restrict_selectors(sel_all, arc_rows), per_arc=True))
 
 
+def arc_floor_share(d, arcs: "pl.DataFrame") -> "pl.DataFrame | None":
+    """``(p, source, sink, d, t, value)`` over ``arcs`` (``p, source, sink``) restricted to rows whose floor is
+    > 0: the per-unit-online floor of a unit's own arc — the coefficient of ``v_online`` in that arc's OWN
+    floor row (c14c design §3, table in §1.2).  ``min_load`` on the only arc of the unit's output measure
+    ``A_p`` (:func:`unit_measured_arcs`: a direct unit's single arc, or a single-output indirect unit's
+    output); ``min_load · capacity_min_coeff`` on an output of a multi-output unit with
+    ``capacity_min_coeff[p, sink] > 0`` (its own ``minFlow_output_floor`` row); absent (no row) on every other
+    arc of ``arcs`` — other outputs of a multi-output unit without ``capacity_min_coeff``, input arcs, units
+    without ``min_load``.  Exactly the sets ``add_constraints`` above uses for ``minFlow_minload`` /
+    ``minFlow_output_floor``, so the ramp rows' floor cannot diverge from them.  ``None`` when every arc's
+    floor is 0 or ``arcs`` is empty.
+    """
+    keys = ["p", "source", "sink"]
+    minload = getattr(d, "process_minload", None)
+    if (minload is None or minload.height == 0 or getattr(d, "p_min_load", None) is None
+            or arcs is None or arcs.height == 0):
+        return None
+    measured = unit_measured_arcs(d)
+    if measured is None:
+        return None
+    req = (_utf8_keys(measured.lazy(), keys)
+           .join(_utf8_keys(arcs.lazy().select(keys), keys).select([f"_{k}" for k in keys]).unique(),
+                 on=[f"_{k}" for k in keys], how="semi")
+           .select(keys).collect())
+    if req.height == 0:
+        return None
+    on_ml = (_utf8_keys(req.lazy(), ["p"])
+             .join(_utf8_keys(minload.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi")
+             .select(keys).collect())
+    if on_ml.height == 0:
+        return None
+    a_count = measured.group_by("p", maintain_order=True).agg(pl.len().alias("__n"))
+    single_p = a_count.filter(pl.col("__n") == 1).select("p")
+    single = (_utf8_keys(on_ml.lazy(), ["p"])
+              .join(_utf8_keys(single_p.lazy(), ["p"]).select("_p").unique(), on="_p", how="semi")
+              .select(keys).collect())
+    ml_dt = promote_param_to_dt(d.p_min_load, d.dt).select(
+        pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
+        pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").cast(pl.Float64).alias("__ml"))
+    parts: list = []
+    if single.height > 0:
+        parts.append(_utf8_keys(_utf8_keys(single.lazy(), keys).join(d.dt.select("d", "t").lazy(), how="cross"),
+                                ["d", "t"])
+                     .join(ml_dt, on=["_p", "_d", "_t"], how="inner")
+                     .select(*keys, "d", "t", value=pl.col("__ml")))
+    cmin = getattr(d, "p_process_sink_min_capacity_coef", None)
+    if cmin is not None:
+        multi_p = a_count.filter(pl.col("__n") >= 2).select("p")
+        multi = (_utf8_keys(on_ml.lazy(), ["p"])
+                 .join(_utf8_keys(multi_p.lazy(), ["p"]).select("_p").unique(), on="_p", how="semi")
+                 .select(keys).collect())
+        if multi.height > 0:
+            cmin_rows = (_utf8_keys(multi.lazy(), keys)
+                         .join(cmin.frame.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"),
+                                                        pl.col("sink").cast(pl.Utf8).alias("_sink"),
+                                                        pl.col("value").alias("__cmin")),
+                               on=["_p", "_sink"], how="inner")
+                         .filter(pl.col("__cmin") > 0.0)
+                         .select(*keys, "__cmin")
+                         .collect())
+            if cmin_rows.height > 0:
+                parts.append(
+                    _utf8_keys(_utf8_keys(cmin_rows.lazy(), keys).join(d.dt.select("d", "t").lazy(), how="cross"),
+                               ["d", "t"])
+                    .join(ml_dt, on=["_p", "_d", "_t"], how="inner")
+                    .select(*keys, "d", "t", value=pl.col("__ml") * pl.col("__cmin")))
+    if not parts:
+        return None
+    out = pl.concat([p.collect() for p in parts])
+    return out if out.height > 0 else None
+
+
 def unit_measured_arcs(d) -> "pl.DataFrame | None":
     """The output-measure arcs ``A_p`` (``p, source, sink``) of every unit.
 
