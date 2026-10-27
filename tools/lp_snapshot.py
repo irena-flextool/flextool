@@ -356,6 +356,44 @@ def _patch_stoch_invest_storage(data: dict) -> dict:
                 ])
 
 
+def _patch_multi_year_reinvest_choice(data: dict) -> dict:
+    """c16a #2 probe: ``multi_year``'s coal_plant with a short lifetime (5y,
+    down from 30) and ``lifetime_method reinvest_choice`` (down from the
+    default ``reinvest_automatic``), so later solves of the chain reinvest
+    in the same entity instead of just carrying the original build forward.
+    ``invest_max_total`` stays the chain's existing 700 (``coal_invest``
+    alternative).  Exercises ``maxInvest_entity_total``'s chain-prior
+    subtraction: by solve 4, ``p_entity_invested[coal_plant]`` (every
+    solve's reinvestment, Q10) grows past 700 — the pre-fix RHS ignored it
+    and stayed 700 in every solve."""
+    return _overlay(
+        data, name="multi_year_reinvest_choice", base="multi_year",
+        values=[["unit", "coal_plant", "lifetime", 5.0],
+                ["unit", "coal_plant", "lifetime_method", "reinvest_choice"]])
+
+
+def _patch_invest_total_no_var(data: dict) -> dict:
+    """c16a #28/#43 probe (review's ``i28_skip2``): ``wind_plant`` and
+    ``battery_inverter`` switched to ``invest_no_limit`` (no entity-total
+    row of their own), leaving ``x_unit`` (new, ``invest_total``, no
+    ``invest_cost`` -> no ``v_invest`` -> no ``maxInvest_entity_total`` row
+    under #43) and the storage node ``battery`` (``invest_total`` +
+    ``invest_min_total`` 5 -> the #28 ``minInvest_entity_total_path_n`` row
+    that used to need the process-side ``edd_invest_set`` to avoid a
+    ``break`` skipping the node side entirely)."""
+    return _overlay(
+        data, name="invest_total_no_var", base="wind_battery_invest",
+        entities=[["unit", "x_unit"], ["unit__outputNode", ["x_unit", "west"]]],
+        values=[["unit", "wind_plant", "invest_method", "invest_no_limit"],
+                ["unit", "wind_plant", "invest_cost", 1000.0],
+                ["unit", "wind_plant", "lifetime", 20.0],
+                ["connection", "battery_inverter", "invest_method", "invest_no_limit"],
+                ["unit", "x_unit", "invest_method", "invest_total"],
+                ["unit", "x_unit", "invest_max_total", 10.0],
+                ["unit", "x_unit", "existing", 1.0],
+                ["node", "battery", "invest_min_total", 5.0]])
+
+
 _CHP_CHAIN = ["init", "west", "coal_chp", "heat"]
 _GAS_ENTITIES = [["commodity", "gas"], ["node", "gas_market"],
                  ["commodity__node", ["gas", "gas_market"]],
@@ -1612,6 +1650,8 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "invest_limits": _patch_invest_limits,
     "cumulative_capacity": _patch_cumulative_capacity,
     "stoch_invest_storage": _patch_stoch_invest_storage,
+    "multi_year_reinvest_choice": _patch_multi_year_reinvest_choice,
+    "invest_total_no_var": _patch_invest_total_no_var,
     "reserve_floors": _patch_reserve_floors,
     "chp_floor_linear": _patch_chp_floor_linear,
     "chp_floor_integer": _patch_chp_floor_integer,
@@ -1810,6 +1850,8 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("invest_limits", _T),
     ("cumulative_capacity", _T),
     ("stoch_invest_storage", _F + "stoch_two_period_hedge.json"),
+    ("multi_year_reinvest_choice", _T),
+    ("invest_total_no_var", _T),
     ("reserve_floors", _T),
     ("chp_floor_linear", _T),
     ("chp_floor_integer", _T),
