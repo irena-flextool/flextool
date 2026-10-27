@@ -31,6 +31,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine import build_flextool
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess.flex_data import (
     FlexData,
     build_handoff_from_solution,
@@ -87,7 +88,7 @@ def _produce_fix_price(penalty: float, tmp_path):
     (tmp_path / "solve_data").mkdir(parents=True, exist_ok=True)
     handoff = build_handoff_from_solution(
         sol, tmp_path, "parent_solve",
-        flex_data=data, parent_handoff=parent_handoff)
+        flex_data=data, parent_handoff=parent_handoff, provider=FlexDataProvider())
     return handoff
 
 
@@ -228,7 +229,7 @@ def test_fix_price_divides_out_scale_and_weights(tmp_path):
     (tmp_path / "solve_data").mkdir(parents=True, exist_ok=True)
     handoff = build_handoff_from_solution(
         sol, tmp_path, "parent_solve", flex_data=data, parent_handoff=parent_handoff,
-        scale_the_objective=s_obj)
+        provider=FlexDataProvider(), scale_the_objective=s_obj)
     fp = handoff.fix_storage_price.filter((pl.col("node") == "s") & (pl.col("step") == "t02"))
     assert fp.height == 1
     assert float(fp["p_fix_storage_price"][0]) == pytest.approx(C, rel=1e-6)

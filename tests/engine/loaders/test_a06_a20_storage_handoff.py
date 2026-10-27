@@ -2,12 +2,15 @@
 (handoff / warm-start / rolling-horizon coupling) loader tests.
 
 A.6 tests call ``flextool.engine.preprocess.flex_data._load_storage`` directly
-with hand-built minimal frames — the helper is pure (just CSV reads
+with hand-built minimal frames — the helper is pure (provider reads
 plus algebra over its inputs) so isolating it avoids needing a full
-workdir orchestration just to flip a single binding-method row.
+workdir orchestration just to flip a single binding-method row.  The
+tests write their CSVs and pass them as a provider
+(``tests._support.provider.provider_from_csv_dirs``), as production
+passes the sub-solve's provider.
 
 A.20 tests call ``_apply_db_overrides`` directly against a stub
-``InputSource`` and a stub ``source`` shim, monkey-patching the
+``InputSource``, a stub ``source`` shim and an empty provider, monkey-patching the
 ``apply_*`` callees to record their invocation order.  The pass-order
 invariants Δ.28 (1b after derived_a) and Δ.12c (existing_chain after
 derived_f) are observable purely through the ordered call list.  The
@@ -21,7 +24,9 @@ from types import SimpleNamespace
 
 import polars as pl
 
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess.flex_data import _load_storage, _apply_db_overrides
+from tests._support.provider import provider_from_csv_dirs
 
 
 # --- A.6 helpers ----------------------------------------------------
@@ -58,7 +63,8 @@ def test_blank_when_nodeState_absent_or_empty(tmp_path: Path):
     nb = _empty_nb()
 
     # (1) nodeState.csv absent.
-    out1 = _load_storage(inp, sd, dt, nb, None, None, None, None, None)
+    out1 = _load_storage(inp, sd, dt, nb, None, None, None, None, None,
+                         provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: missing file -> blank dict; every nodeState/storage key None.
     for k in ("nodeState", "nodeState_dt", "nodeState_first_dt",
               "p_state_upper", "storage_bind_within_timeblock",
@@ -67,7 +73,8 @@ def test_blank_when_nodeState_absent_or_empty(tmp_path: Path):
 
     # (2) nodeState.csv exists with header only.
     _write(sd / "nodeState.csv", "node\n")
-    out2 = _load_storage(inp, sd, dt, nb, None, None, None, None, None)
+    out2 = _load_storage(inp, sd, dt, nb, None, None, None, None, None,
+                         provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: height==0 short-circuit -> identical blank dict.
     for k in ("nodeState", "nodeState_dt", "p_state_upper",
               "storage_bind_within_timeblock"):
@@ -94,7 +101,8 @@ def test_first_dt_precedence_and_fallback(tmp_path: Path):
     # (1) Both period files populated -> fpos wins.
     _write(sd / "period_first_of_solve.csv", "period\nd2\n")
     _write(sd / "period_first.csv", "period\nd1\n")
-    out1 = _load_storage(inp, sd, dt, nb, None, None, None, None, None)
+    out1 = _load_storage(inp, sd, dt, nb, None, None, None, None, None,
+                         provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: fpos=[d2] -> group_by(n,d).agg(t.min()) on (n1,d2)
     # rows -> (n1, d2, t1).
     fdt1 = out1["nodeState_first_dt"].sort("n", "d", "t")
@@ -104,7 +112,8 @@ def test_first_dt_precedence_and_fallback(tmp_path: Path):
     # (2) Drop both period files -> lex-smallest fallback.
     (sd / "period_first_of_solve.csv").unlink()
     (sd / "period_first.csv").unlink()
-    out2 = _load_storage(inp, sd, dt, nb, None, None, None, None, None)
+    out2 = _load_storage(inp, sd, dt, nb, None, None, None, None, None,
+                         provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: dt unique d -> {d1,d2}; sort head(1) -> d1; min t over
     # (d1,*) rows is t1 -> first_dt = (n1, d1, t1).
     fdt2 = out2["nodeState_first_dt"].sort("n", "d", "t")
@@ -130,7 +139,8 @@ def test_storage_start_end_method_input_over_solve_data(tmp_path: Path):
            "node,storage_start_end_method\nn1,fix_start\n")
     _write(sd / "node__storage_start_end_method.csv",
            "node,method\nn2,fix_end\n")
-    out = _load_storage(inp, sd, dt, _empty_nb(), None, None, None, None, None)
+    out = _load_storage(inp, sd, dt, _empty_nb(), None, None, None, None, None,
+                        provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: input/ wins -> only fix_start row consumed; n2/fix_end
     # in sd/ never read -> fix_start={n1}, fix_end / fix_start_end empty.
     assert out["storage_fix_start"]["n"].to_list() == ["n1"]
@@ -163,7 +173,8 @@ def test_use_reference_value_excludes_competing_methods(tmp_path: Path):
            "n1,use_reference_value\nn2,use_reference_value\n")
     _write(inp / "node__storage_start_end_method.csv",
            "node,storage_start_end_method\nn2,fix_end\n")
-    out = _load_storage(inp, sd, dt, _empty_nb(), None, None, None, None, None)
+    out = _load_storage(inp, sd, dt, _empty_nb(), None, None, None, None, None,
+                        provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: ref-value={n1,n2} anti-join fix_end={n2} -> {n1}.
     assert out["storage_use_reference_value"] is not None
     assert out["storage_use_reference_value"]["n"].to_list() == ["n1"]
@@ -218,10 +229,9 @@ def _stub_a20_passes(monkeypatch, calls: list, *,
     *active_solve* — value the stubbed ``_read_active_solve`` returns.
     The real helper is Provider-required post Step 2.5 (it no longer
     reads ``solve_data/solve_current.csv`` from disk).  These A.20 tests
-    pre-date that refactor and drive ``_apply_db_overrides`` with a
-    workdir-only stub; monkey-patching the active-solve resolver
-    preserves their "write solve_current.csv to set the active solve"
-    idiom without needing to construct a real FlexDataProvider.
+    pass an empty provider and set the active solve through this stub
+    (the ``solve_current.csv`` they write documents the intended solve;
+    the stub is what the helper sees).
     """
     from flextool.engine.preprocess.params import _direct as _dp
     from flextool.engine.preprocess.params import _projection as _pp
@@ -285,7 +295,7 @@ def test_active_solve_none_skips_workdir_passes(tmp_path: Path, monkeypatch):
         input_dir = sd  # parent will be tmp_path
     src = _S()
 
-    _apply_db_overrides(flex_data, reader, src)
+    _apply_db_overrides(flex_data, reader, src, provider=FlexDataProvider())
     # Hand-calc: with NO solve_current.csv AND empty solve entities,
     # the helper still resolves ``workdir`` from ``input_dir.parent``
     # and reaches the active_solve=None branch.  ``_solve_in_spine(None)
@@ -326,7 +336,7 @@ def test_workdir_unresolvable_skips_to_pass_1b(tmp_path: Path, monkeypatch):
             raise RuntimeError("nope")
     flex_data = SimpleNamespace()
     reader = _StubReader()
-    _apply_db_overrides(flex_data, reader, _BadSource())
+    _apply_db_overrides(flex_data, reader, _BadSource(), provider=FlexDataProvider())
     # Hand-calc: workdir=None branch -> pass 1a, 2, 1b only; passes 3-10
     # NEVER invoked.
     assert calls == ["1a", "2", "1b"], (
@@ -353,7 +363,7 @@ def test_synthetic_solve_skips_per_solve_overrides(tmp_path: Path, monkeypatch):
 
     reader = _StubReader(pl.DataFrame({"name": ["invest_5weeks"]}))
     src = _StubSource(tmp_path)
-    _apply_db_overrides(SimpleNamespace(), reader, src)
+    _apply_db_overrides(SimpleNamespace(), reader, src, provider=FlexDataProvider())
     # Hand-calc: synthetic gate fires (active_solve='invest_5weeks_p2020'
     # NOT in Spine, but ('invest_5weeks','p2020') resolves) -> emit
     # synth_invest then 1b; return BEFORE derived_a..g + existing_chain.
@@ -391,7 +401,7 @@ def test_pass_order_invariants_b_after_a_and_existing_after_f(
 
     reader = _StubReader(pl.DataFrame({"name": ["mysolve"]}))
     src = _StubSource(tmp_path)
-    _apply_db_overrides(SimpleNamespace(), reader, src)
+    _apply_db_overrides(SimpleNamespace(), reader, src, provider=FlexDataProvider())
     # Hand-calc: full chain, no skip.  Order recorded:
     # 1a, 2, 3a, 1b, 4b, 5c, 6d, 7e, 8f, 9g, 10_existing.
     assert calls == ["1a", "2", "3a", "1b", "4b", "5c",

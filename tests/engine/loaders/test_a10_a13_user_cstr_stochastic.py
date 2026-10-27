@@ -15,7 +15,8 @@ non-anticipativity timesteps, ``period_in_use_set``) plus the
 file fallbacks and the canonical ``g`` rename.
 
 Both helpers are pure: hand-built ``Path`` directories + small CSV
-overlays isolate one transformation per test (mirrors the A.8 pattern).
+overlays, passed as a provider (``tests._support.provider.provider_from_csv_dirs``),
+isolate one transformation per test (mirrors the A.8 pattern).
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ import polars as pl
 import pytest
 
 from flextool.engine.preprocess.flex_data import _load_user_constraints, _load_stochastics
+from tests._support.provider import provider_from_csv_dirs
 
 
 # --- helpers --------------------------------------------------------
@@ -57,20 +59,20 @@ def test_user_constraints_blank_shortcut_gates(tmp_path: Path):
     dt = pl.DataFrame({"d": ["d1"], "t": ["t1"]})
 
     # (1) pss=None: earliest gate (no disk read at all).
-    out1 = _load_user_constraints(inp, pss=None, dt=dt)
+    out1 = _load_user_constraints(inp, pss=None, dt=dt, provider=provider_from_csv_dirs(inp))
     # Hand-calc: pss is None -> [None]*12.
     assert out1 == [None] * 12
 
     pss = pl.DataFrame({"p": ["p1"], "source": ["n_src"], "sink": ["n_snk"]})
 
     # (2) pss populated but constraint__sense.csv absent.
-    out2 = _load_user_constraints(inp, pss=pss, dt=dt)
+    out2 = _load_user_constraints(inp, pss=pss, dt=dt, provider=provider_from_csv_dirs(inp))
     # Hand-calc: cs_path.exists() False -> [None]*12.
     assert out2 == [None] * 12
 
     # (3) constraint__sense.csv present but header-only (height=0).
     _write(inp / "constraint__sense.csv", "constraint,sense\n")
-    out3 = _load_user_constraints(inp, pss=pss, dt=dt)
+    out3 = _load_user_constraints(inp, pss=pss, dt=dt, provider=provider_from_csv_dirs(inp))
     # Hand-calc: cs.height==0 -> [None]*12 (distinct branch from (2)).
     assert out3 == [None] * 12
 
@@ -86,7 +88,7 @@ def test_cdt_cross_with_dt_cardinality(tmp_path: Path):
     pss = pl.DataFrame({"p": ["p1"], "source": ["n_src"], "sink": ["n_snk"]})
     _write(inp / "constraint__sense.csv", "constraint,sense\nc1,equal\n")
 
-    out = _load_user_constraints(inp, pss=pss, dt=dt)
+    out = _load_user_constraints(inp, pss=pss, dt=dt, provider=provider_from_csv_dirs(inp))
     # Hand-calc: cs filtered to sense=='equal' -> 1 row (c1); cross-join
     # with 3 dt rows -> height=3.  No le/ge sense rows -> those slots None.
     cdt_eq, cdt_le, cdt_ge = out[3], out[4], out[5]
@@ -117,7 +119,7 @@ def test_flow_cstr_idx_source_plus_sink_dedup(tmp_path: Path):
            "p1,n_x,c1,2.0\n"
            "p1,n_y,c1,3.0\n")
 
-    out = _load_user_constraints(inp, pss=pss, dt=dt)
+    out = _load_user_constraints(inp, pss=pss, dt=dt, provider=provider_from_csv_dirs(inp))
     # Hand-calc: src_match -> (p1,n_x,n_y,c1,2.0); sink_match ->
     # (p1,n_x,n_y,c1,3.0); concat+group_by on (p,source,sink,c) collapses
     # the two legs into ONE index row.  flow_cstr_coef stays None
@@ -137,12 +139,10 @@ def test_flow_cstr_idx_via_provider_utf8_coef_column(tmp_path: Path):
     or polars raises ``InvalidOperationError: 'sum' operation not supported
     for dtype 'str'`` (flex_data.py:1574).
 
-    Reproduces the cascade-path schema by seeding a ``FlexDataProvider``
-    directly — disk CSV via ``read_csv_fallback`` parses ``"2.0"`` as
-    Float64 and masks the bug.
+    Reproduces the cascade-path schema by putting the all-Utf8 frame into
+    the provider directly — a CSV read parses ``"2.0"`` as Float64 and
+    masks the bug.
     """
-    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-
     inp, _ = _make_dirs(tmp_path)
     dt = pl.DataFrame({"d": ["d1"], "t": ["t1"]})
     pss = pl.DataFrame({"p": ["p1"], "source": ["n_x"], "sink": ["n_y"]})
@@ -163,7 +163,7 @@ def test_flow_cstr_idx_via_provider_utf8_coef_column(tmp_path: Path):
             "p_process_node_constraint_flow_coeff": pl.Utf8,
         },
     )
-    provider = FlexDataProvider()
+    provider = provider_from_csv_dirs(inp)  # constraint__sense
     provider.put("input/p_process_node_constraint_flow_coeff", coef_frame)
 
     out = _load_user_constraints(inp, pss=pss, dt=dt, provider=provider)
@@ -190,7 +190,7 @@ def test_flow_cstr_idx_none_when_no_match(tmp_path: Path):
            "process,node,constraint,p_process_node_constraint_flow_coeff\n"
            "p1,n_other,c1,2.0\n")
 
-    out = _load_user_constraints(inp, pss=pss, dt=dt)
+    out = _load_user_constraints(inp, pss=pss, dt=dt, provider=provider_from_csv_dirs(inp))
     # Hand-calc: n_other not in {n_src, n_snk} -> both joins height=0 ->
     # gate `src_match.height + sink_match.height > 0` is False ->
     # flow_cstr_idx stays at its initial None.
@@ -221,7 +221,7 @@ def test_branch_weights_null_fill_and_empty_csv(tmp_path: Path):
            "period,time,value\nd1,t1,\n")
     _write(sd / "pd_branch_weight.csv", "period,value\n")
 
-    out = _load_stochastics(inp, sd, dt)
+    out = _load_stochastics(inp, sd, dt, provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: null value -> fill_null(1.0) -> 1.0; left-join onto
     # base (d1,t1)=1.0 -> coalesce(value__r=1.0, value=1.0) -> 1.0.
     pdt = out["pdt_branch_weight"]
@@ -247,7 +247,7 @@ def test_period_in_use_set_none_when_no_period_column(tmp_path: Path):
     # 1 row, only `solve` column — no `period`.
     _write(sd / "period_in_use_set.csv", "solve\nsolve1\n")
 
-    out = _load_stochastics(inp, sd, dt)
+    out = _load_stochastics(inp, sd, dt, provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: df.height>0 True, but "period" not in columns -> gate
     # skips, period_in_use_set stays at its initial None.
     assert out["period_in_use_set"] is None
@@ -264,7 +264,7 @@ def test_groupStochastic_renames_first_column_to_g(tmp_path: Path):
     dt = pl.DataFrame({"d": ["d1"], "t": ["t1"]})
     _write(inp / "groupIncludeStochastics.csv", "group\ngrp1\ngrp2\n")
 
-    out = _load_stochastics(inp, sd, dt)
+    out = _load_stochastics(inp, sd, dt, provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: rename group->g, unique() over 2 distinct rows -> height=2.
     gs = out["groupStochastic"]
     assert gs is not None

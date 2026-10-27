@@ -45,6 +45,7 @@ import pytest
 
 from polar_high import Param, Problem
 from flextool.engine import build_flextool
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 from .conftest import solver_options
 
@@ -294,13 +295,14 @@ def test_fix_usage_producer_applies_slope(toy_storage_2t, tmp_path):
     parent_handoff = SolveHandoff()
     parent_handoff.fix_storage_timesteps = fs_steps  # type: ignore[attr-defined]
 
-    # Empty solve_data dir — function falls back to in-memory inputs.
+    # Empty provider (and solve_data dir) — the function falls back to in-memory inputs.
     (tmp_path / "solve_data").mkdir()
 
     handoff = build_handoff_from_solution(
         sol, tmp_path, "test_solve",
         flex_data=data,
         parent_handoff=parent_handoff,
+        provider=FlexDataProvider(),
     )
 
     assert handoff.fix_storage_usage is not None, (

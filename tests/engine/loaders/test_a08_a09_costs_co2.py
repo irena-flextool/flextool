@@ -15,8 +15,8 @@ intersection) that decide whether the constraint family fires at all;
 the live-path joins are exercised by adjacent tests / goldens already.
 
 Both helpers are pure: hand-built ``Path`` directories + small CSV
-overlays isolate one transformation per test (mirroring the A.6 / A.7
-patterns).
+overlays, passed as a provider (``tests._support.provider.provider_from_csv_dirs``),
+isolate one transformation per test (mirroring the A.6 / A.7 patterns).
 """
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ import polars as pl
 import pytest
 
 from flextool.engine.preprocess.flex_data import _load_varcost, _load_co2_cap
+from tests._support.provider import provider_from_csv_dirs
 
 
 # --- helpers --------------------------------------------------------
@@ -70,7 +71,7 @@ def test_pssdt_varCost_eff_partitions_disjoint(tmp_path: Path):
     _write(sd / "pssdt_varCost_eff_connection.csv",
            "process,source,sink,period,time\nc1,n1,n2,d1,t1\n")
 
-    out = _load_varcost(sd, _pss_one_row())
+    out = _load_varcost(sd, _pss_one_row(), provider=provider_from_csv_dirs(solve_data_dir=sd))
     # Hand-calc: each _read_pssdt_set hits its own file -> height=1 each;
     # noEff file absent -> None (no cross-fill).
     assert out["pssdt_varCost_noEff"] is None
@@ -102,7 +103,7 @@ def test_p_pssdt_varCost_drops_zeros_and_returns_none_when_all_zero(
            "process,source,sink,period,time,value\n"
            "p1,n_src,n_snk,d1,t1,2.5\n"
            "p1,n_src,n_snk,d1,t2,0.0\n")
-    out1 = _load_varcost(sd, _pss_one_row())
+    out1 = _load_varcost(sd, _pss_one_row(), provider=provider_from_csv_dirs(solve_data_dir=sd))
     # Hand-calc: cast Float64, fill_null(0), filter !=0 -> 1 row at t1=2.5.
     p = out1["p_pssdt_varCost"]
     assert p is not None
@@ -115,7 +116,7 @@ def test_p_pssdt_varCost_drops_zeros_and_returns_none_when_all_zero(
     _write(sd / "pdtProcess__source__sink__dt_varCost.csv",
            "process,source,sink,period,time,value\n"
            "p1,n_src,n_snk,d1,t1,0.0\n")
-    out2 = _load_varcost(sd, _pss_one_row())
+    out2 = _load_varcost(sd, _pss_one_row(), provider=provider_from_csv_dirs(solve_data_dir=sd))
     # Hand-calc: filter !=0 -> height=0 -> the `if sliced.height > 0` gate
     # never wraps a Param.
     assert out2["p_pssdt_varCost"] is None
@@ -147,7 +148,7 @@ def test_pdt_varCost_three_legs_independent(tmp_path: Path):
            "process,period,time,param,value\n"
            "c1,d1,t1,other_operational_cost,7.0\n")
 
-    out = _load_varcost(sd, _pss_one_row())
+    out = _load_varcost(sd, _pss_one_row(), provider=provider_from_csv_dirs(solve_data_dir=sd))
     # Hand-calc: source slice keeps only param=='other_operational_cost'
     # -> 1 row, value=4.0; key arity 4 (p,source,d,t).
     src = out["p_pdt_varCost_source"]
@@ -184,7 +185,7 @@ def test_blank_when_pss_none(tmp_path: Path):
     _write(sd / "pdtProcess.csv",
            "process,period,time,param,value\np1,d1,t1,other_operational_cost,9.0\n")
 
-    out = _load_varcost(sd, pss=None)
+    out = _load_varcost(sd, pss=None, provider=provider_from_csv_dirs(solve_data_dir=sd))
     # Hand-calc: pss is None -> blank dict; all 8 keys present and None.
     expected_keys = {
         "pssdt_varCost_noEff",
@@ -221,18 +222,19 @@ def test_co2_cap_blank_shortcuts(tmp_path: Path):
     pss_eff = pl.DataFrame({"p": ["p1"], "source": ["n1"], "sink": ["n2"]})
 
     # (1) both pss are None -> earliest gate.
-    out1 = _load_co2_cap(inp, sd, None, dt, pss_noEff=None)
+    out1 = _load_co2_cap(inp, sd, None, dt, pss_noEff=None,
+                         provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: pss_eff is None and pss_noEff is None -> 5 Nones.
     assert out1 == (None, None, None, None, None)
 
     # (2) pss_eff populated but no group_co2_max_period.csv on disk.
-    out2 = _load_co2_cap(inp, sd, pss_eff, dt)
+    out2 = _load_co2_cap(inp, sd, pss_eff, dt, provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: file absent -> 5 Nones.
     assert out2 == (None, None, None, None, None)
 
     # (3) header-only group_co2_max_period.csv -> g_max.height==0 gate.
     _write(sd / "group_co2_max_period.csv", "group\n")
-    out3 = _load_co2_cap(inp, sd, pss_eff, dt)
+    out3 = _load_co2_cap(inp, sd, pss_eff, dt, provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: g_max.height==0 -> 5 Nones (distinct code path from (2)).
     assert out3 == (None, None, None, None, None)
 
@@ -252,7 +254,7 @@ def test_co2_cap_no_priced_node_intersection_returns_none(tmp_path: Path):
     _write(inp / "group__node.csv", "group,node\ng1,n2\n")
     _write(sd / "commodity_node_co2.csv", "commodity,node\nc1,n1\n")
 
-    out = _load_co2_cap(inp, sd, pss_eff, dt)
+    out = _load_co2_cap(inp, sd, pss_eff, dt, provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: g1 -> n2 (group__node), CO2 priced n=n1 only;
     # inner join on n -> gcn height=0 -> 5 Nones.
     assert out == (None, None, None, None, None)

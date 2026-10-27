@@ -12,9 +12,11 @@ group-invest constraints) and a single direct call into
 ``flextool.engine.model._cumulative_invest._eq_group_invest_cumulative``
 to pin the all-three-required-or-no-emit guard.
 
-Both helper families are pure: they take ``Path`` arguments + a
-db_reader stub and return a dict.  Hand-built minimal solve_data
-folders isolate one transformation per test (mirroring the A.6
+Both helper families are pure: they take ``Path`` arguments, a
+db_reader stub and the provider, and return a dict.  Hand-built minimal
+solve_data folders, passed as a provider
+(``tests._support.provider.provider_from_csv_dirs``), isolate one
+transformation per test (mirroring the A.6
 storage-handoff test pattern in ``test_a06_a20_storage_handoff.py``).
 """
 from __future__ import annotations
@@ -33,20 +35,7 @@ from flextool.engine.model._cumulative_invest import (
     _eq_group_invest_cumulative,
     has_feature,
 )
-from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.input._input_source import seed_provider_from_dir
-
-
-def _provider_for_workdir(sd: Path, inp: Path) -> FlexDataProvider:
-    """Seed an in-memory provider from a test ``solve_data/`` +
-    ``input/`` for _load_invest (Step 2.5 disk-fallback removal).
-    """
-    provider = FlexDataProvider()
-    if inp.exists():
-        seed_provider_from_dir(provider, inp, "input")
-    if sd.exists():
-        seed_provider_from_dir(provider, sd, "solve_data")
-    return provider
+from tests._support.provider import provider_from_csv_dirs
 
 
 # --- helpers --------------------------------------------------------
@@ -85,7 +74,7 @@ def test_divest_only_no_invest_bypasses_blank_shortcut(tmp_path: Path):
     _write(sd / "ed_invest.csv", "entity,period\n")
     _write(sd / "ed_divest.csv", "entity,period\ne1,p1\n")
 
-    out = _load_invest(sd, dt, inp, None, db_reader=None, provider=_provider_for_workdir(sd, inp))
+    out = _load_invest(sd, dt, inp, None, db_reader=None, provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: ed_inv.height=0, ed_div.height=1 -> NOT blank;
     # ed_invest_set _hnz(0)=None, ed_divest_set _hnz(1)=frame{(e1,p1)}.
     assert out["ed_invest_set"] is None
@@ -110,7 +99,7 @@ def test_period_set_independent_from_max_period_param(tmp_path: Path):
     _write(sd / "ed_invest_period.csv", "entity,period\ne1,p1\n")
     # Intentionally NO ed_invest_max_period.csv
 
-    out = _load_invest(sd, dt, inp, None, db_reader=None, provider=_provider_for_workdir(sd, inp))
+    out = _load_invest(sd, dt, inp, None, db_reader=None, provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: period_set populated by _seed_period_set -> height=1;
     # max_period CSV absent -> _read_e_d returns None.
     assert out["ed_invest_period_set"] is not None
@@ -152,7 +141,7 @@ def test_skip_set_seeds_when_synthetic_solve(tmp_path: Path):
                 return pl.DataFrame({"name": ["mysolve"], "value": ["p2020"]})
             raise KeyError(par)
 
-    out = _load_invest(sd, dt, inp, None, db_reader=_Reader(), provider=_provider_for_workdir(sd, inp))
+    out = _load_invest(sd, dt, inp, None, db_reader=_Reader(), provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: synthetic gate fires -> skip_set_seeds=True;
     # invest_periods=['p2020'] -> NOT blank -> set fields stay None,
     # cost-param seed loaded -> ed_lifetime_fixed_cost Param at (e1,p1)=100.
@@ -186,7 +175,7 @@ def test_group_entity_solve_data_precedence_and_input_fallback(tmp_path: Path):
     _write(sd / "group_entity.csv",   "group,entity\ng1,e1\n")
     _write(inp / "group__entity.csv", "group,entity\ng1,e2\n")
 
-    out1 = _load_cumulative_invest(inp, sd, _empty_dt())
+    out1 = _load_cumulative_invest(inp, sd, _empty_dt(), provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: cascade prefers solve_data/ -> ge = {(g1, e1)}.
     ge1 = out1["group_entity"]
     assert ge1 is not None and ge1.height == 1
@@ -194,7 +183,7 @@ def test_group_entity_solve_data_precedence_and_input_fallback(tmp_path: Path):
 
     # Drop solve_data file -> input fallback wins.
     (sd / "group_entity.csv").unlink()
-    out2 = _load_cumulative_invest(inp, sd, _empty_dt())
+    out2 = _load_cumulative_invest(inp, sd, _empty_dt(), provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: solve_data absent -> next cand input/ exists -> ge = {(g1, e2)}.
     ge2 = out2["group_entity"]
     assert ge2 is not None and ge2.height == 1
@@ -223,7 +212,7 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
     sd.mkdir()
     _write(sd / "g_invest_cumulative.csv", "group\ng1\n")
 
-    out = _load_cumulative_invest(inp, sd, _empty_dt())
+    out = _load_cumulative_invest(inp, sd, _empty_dt(), provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: g_invest_cumulative read as {(g1,)}; ed_cumulative_max_capacity
     # explicitly assigned None per the Δ.12-drop contract.
     assert out["g_invest_cumulative"] is not None
@@ -275,7 +264,7 @@ def test_min_invest_total_seed_param(tmp_path: Path):
     sd.mkdir()
     _write(sd / "e_invest_min_total.csv", "entity,value\ne1,3.0\n")
 
-    out = _load_cumulative_invest(inp, sd, _empty_dt())
+    out = _load_cumulative_invest(inp, sd, _empty_dt(), provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: 1 row -> Param(("e",), {(e1,): 3.0}).
     p = out["e_invest_min_total"]
     assert p is not None
