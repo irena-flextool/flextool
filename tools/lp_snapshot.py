@@ -713,6 +713,34 @@ def _patch_co2_cap_minload(data: dict) -> dict:
                 ["group", "co2_limit", "co2_max_total", 2.5e6]])
 
 
+def _patch_flowgroup_minload_weighted(data: dict) -> dict:
+    """flowGroup cumulative flow limits on a min_load_efficiency unit under non-uniform
+    timestep weights: both the per-period and per-solve rows gain the step's timestep_weight
+    (and, for the solve row, the period's years-represented ratio), and the flow group's net
+    flow counts the min-load section fuel, same as nodeBalance_eq."""
+    return _overlay(
+        data, name="flowgroup_minload_weighted",
+        base=["init", "west", "coal", "coal_min_load", "weighted_2day"],
+        entities=[["flowGroup", "coal_fuel"],
+                  ["flowGroup__unit__node", ["coal_fuel", "coal_plant", "coal_market"]]],
+        values=[["unit", "coal_plant", "startup_method", "linear"],
+                ["unit", "coal_plant", "min_load", 0.5],
+                ["flowGroup", "coal_fuel", "min_cumulative_flow", _pmap({"p2020": -50.0})],
+                ["flowGroup", "coal_fuel", "max_cumulative_flow", 1000.0]])
+
+
+def _patch_flowgroup_stochastic_path(data: dict) -> dict:
+    """flowGroup max_cumulative_flow on the recourse fan-at-p2035 topology (base/stoch/ws/
+    na_window/divest): {max,min}Cumulative_flow_solve gains a per-leaf _path row instead of
+    one row pooling every scenario's flow against a shared cap."""
+    return _overlay(
+        data, name="flowgroup_stochastic_path",
+        base=["init", "base", "stoch", "ws", "na_window", "divest"],
+        entities=[["flowGroup", "base_flow"],
+                  ["flowGroup__unit__node", ["base_flow", "base", "elec"]]],
+        values=[["flowGroup", "base_flow", "max_cumulative_flow", 100000.0]])
+
+
 def _patch_co2_period_rolling(data: dict) -> dict:
     """co2_max_period in a rolling solve over two periods (p2020 and
     p2025, 2 days each, horizon 30 h / jump 6 h): rolls inside one
@@ -1671,6 +1699,8 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "profiles": _patch_profiles,
     "co2_period_total": _patch_co2_period_total,
     "co2_cap_minload": _patch_co2_cap_minload,
+    "flowgroup_minload_weighted": _patch_flowgroup_minload_weighted,
+    "flowgroup_stochastic_path": _patch_flowgroup_stochastic_path,
     "co2_period_rolling": _patch_co2_period_rolling,
     "negcap_indirect": _patch_negcap_indirect,
     "nested_fix_quantity": _patch_nested_fix_quantity,
@@ -1871,6 +1901,8 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("profiles", _T),
     ("co2_period_total", _T),
     ("co2_cap_minload", _T),
+    ("flowgroup_minload_weighted", _T),
+    ("flowgroup_stochastic_path", _F + "stoch_two_period_hedge.json"),
     ("co2_period_rolling", _T),
     ("negcap_indirect", _T),
     ("nested_fix_quantity", _T),
