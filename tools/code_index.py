@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import os
 import sys
 from pathlib import Path
 
@@ -118,5 +119,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except BrokenPipeError:  # output piped into head/grep that closed early
-        sys.stderr.close()
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         sys.exit(0)
