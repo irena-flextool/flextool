@@ -1588,7 +1588,7 @@ def apply_varcost_params(flex_data: object) -> None:
     time) on every solve type, while the emit seeds have no period × time tier.  The ``(p, s) ∈
     process__source`` / ``(p, k) ∈ process__sink`` gates of the emit follow from the joins (the per-side
     Params are keyed by the unit's own arcs).  Runs at the end of :func:`apply_direct_params_b`, so on
-    registered solves, synthetic sub-solves and the no-workdir return alike.  Every set is an eager frame
+    registered solves and synthetic sub-solves alike.  Every set is an eager frame
     ``[p, source, sink, d, t]`` sorted by its columns, ``p_pssdt_varCost`` an eager Param sorted the same way;
     an empty result is None (the objective term is skipped).
     """

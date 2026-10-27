@@ -14,8 +14,8 @@ A.20 tests call ``_apply_db_overrides`` directly against a stub
 ``apply_*`` callees to record their invocation order.  The pass-order
 invariants Δ.28 (1b after derived_a) and Δ.12c (existing_chain after
 derived_f) are observable purely through the ordered call list.  The
-synthetic-solve and ``workdir=None`` skip gates are verified by
-asserting which callees DID NOT fire.
+synthetic-solve skip gate is verified by asserting which callees DID NOT
+fire; a source without a workdir must raise before any pass runs.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import polars as pl
+import pytest
 
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess.flex_data import _load_storage, _apply_db_overrides
@@ -272,10 +273,10 @@ def test_active_solve_none_skips_workdir_passes(tmp_path: Path, monkeypatch):
 
     Note: the hot path (active_solve=None) reaches the
     ``_solve_in_spine`` branch (False) and then ``_resolve_synthetic_solve``
-    (None) -> falls through to the full chain.  The actual skip-gate
-    here is the workdir=None branch in the helper; we set ``source``
-    with no ``workdir`` attribute and patch the ``input_dir.parent``
-    fallback.
+    (None) -> falls through to the full chain.  No pass is skipped:
+    ``source`` has no ``workdir`` attribute, so the helper resolves the
+    workdir through the ``input_dir.parent`` fallback.  (A source with
+    neither raises; see ``test_workdir_unresolvable_raises_before_any_pass``.)
     """
     sd = tmp_path / "solve_data"
     sd.mkdir(parents=True)
@@ -303,11 +304,9 @@ def test_active_solve_none_skips_workdir_passes(tmp_path: Path, monkeypatch):
     # `if active_solve is not None and not _solve_in_spine(...)` is
     # False -> the synthetic-skip block is bypassed and we fall into
     # the full chain (1a, 2, 3a, 1b, 4b..9g, 10_existing).
-    # The actual "skip workdir passes" gate fires when source.workdir
-    # itself can't be resolved at all -> see the inner-try except.
-    # In our setup workdir IS resolved (input_dir.parent), so we expect
-    # the FULL chain to run.  The spec name is misleading; document
-    # the real behaviour.
+    # The workdir IS resolved (input_dir.parent), so the FULL chain
+    # runs.  The spec name is misleading; this documents the real
+    # behaviour.
     assert "1a" in calls and "2" in calls and "1b" in calls
     # When workdir IS resolved AND no synthetic gate fires, derived_a
     # and the rest run; this asserts the active_solve=None path does
@@ -316,13 +315,15 @@ def test_active_solve_none_skips_workdir_passes(tmp_path: Path, monkeypatch):
     assert "10_existing" in calls
 
 
-def test_workdir_unresolvable_skips_to_pass_1b(tmp_path: Path, monkeypatch):
+def test_workdir_unresolvable_raises_before_any_pass(tmp_path: Path, monkeypatch):
     """Adjunct to A20-active_solve_none_skips_workdir_passes.
 
     When BOTH ``source.workdir`` access raises AND
-    ``source.input_dir.parent`` raises, the helper sets ``workdir =
-    None`` and exits after pass 1b.  This pins the actual workdir-None
-    early-return that the spec name suggests.
+    ``source.input_dir.parent`` raises, the helper has no run work
+    folder.  Passes 3-10 need it, so running only some passes would
+    leave CSV seeds in place of DB values.  The helper must raise a
+    ``RuntimeError`` that names the missing workdir, before any pass
+    (not even 1a / 2) is invoked.
     """
     calls: list[str] = []
     _stub_a20_passes(monkeypatch, calls)
@@ -336,11 +337,10 @@ def test_workdir_unresolvable_skips_to_pass_1b(tmp_path: Path, monkeypatch):
             raise RuntimeError("nope")
     flex_data = SimpleNamespace()
     reader = _StubReader()
-    _apply_db_overrides(flex_data, reader, _BadSource(), provider=FlexDataProvider())
-    # Hand-calc: workdir=None branch -> pass 1a, 2, 1b only; passes 3-10
-    # NEVER invoked.
-    assert calls == ["1a", "2", "1b"], (
-        f"expected [1a,2,1b] got {calls}")
+    with pytest.raises(RuntimeError, match=r"_BadSource\) has no workdir"):
+        _apply_db_overrides(flex_data, reader, _BadSource(), provider=FlexDataProvider())
+    assert calls == [], f"no pass may run without a workdir; got {calls}"
+    assert vars(flex_data) == {}, "flex_data must be left untouched"
 
 
 def test_synthetic_solve_skips_per_solve_overrides(tmp_path: Path, monkeypatch):

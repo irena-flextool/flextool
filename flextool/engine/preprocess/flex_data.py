@@ -2398,8 +2398,8 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
 
     # Δ.12-drop: ``p_min_load`` produced authoritatively as a shape-correct
     # (p, d, t) Param by ``_derived.apply_derived_b`` (via
-    # ``p_min_load_pdt_from_source``); the synthetic / no-workdir early-returns
-    # in ``_apply_db_overrides`` re-wire it.  CSV seed dropped.  See
+    # ``p_min_load_pdt_from_source``); the synthetic-solve early return
+    # in ``_apply_db_overrides`` re-wires it.  CSV seed dropped.  See
     # ``specs/fix_map_reading.md`` §5.
     p_min_load = None
 
@@ -3484,7 +3484,7 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None,
     pssdt_ec = _read_pssdt_set("pssdt_varCost_eff_connection")
 
     # Δ.18 — CSV-fallback seed for ``p_pssdt_varCost``.  On every DB path (registered solves,
-    # synthetic sub-solves, the no-workdir return) ``_direct.apply_varcost_params`` overlays it and
+    # synthetic sub-solves) ``_direct.apply_varcost_params`` overlays it and
     # the four index sets above from the DB-direct per-side Params; the seeds serve CSV-only loads
     # without a DB reader.  Reads ``pdtProcess__source__sink__dt_varCost.csv``
     # (long: process, source, sink, period, time, value).  Filtering
@@ -4687,6 +4687,24 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     instead of re-reading the provider frames.  The ctx is built by
     :func:`load_flextool` from the provider before this function runs.
     """
+    # The run work folder comes first: passes 3-10 read it, and without it only a subset of the DB-direct
+    # passes could run, which would leave CSV-seeded fields in place of DB values.  Resolve it before any
+    # pass so that a source without one fails loudly instead of producing a partial overlay.
+    # CsvSource exposes ``workdir``; any other FlexInputSource exposes ``input_dir`` (= ``<workdir>/input``).
+    try:
+        workdir = source.workdir if hasattr(source, "workdir") \
+                   else source.input_dir.parent
+    except Exception:
+        workdir = None
+    if workdir is None:
+        raise RuntimeError(
+            "Cannot apply the database values to the model input: the input source "
+            f"({type(source).__name__}) has no workdir (no 'workdir' and no usable 'input_dir'). "
+            "The DB overrides need the run work folder (the folder that holds input/ and solve_data/). "
+            "Pass load_flextool a work-folder path or a source that names its work folder."
+        )
+    workdir_path = Path(workdir)
+
     from flextool.engine.preprocess.params import _direct as _dp
     from flextool.engine.preprocess.params import _projection as _pp
     from flextool.engine.preprocess.params import _derived as _drv
@@ -4720,7 +4738,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
             # that don't go through run_orchestration).
             print(f"  input pass {label}: {elapsed:.3f}s")
 
-    # Pass 1a-2: source-only Params (no workdir needed).
+    # Pass 1a-2: source-only Params (they do not read the workdir).
     # Δ.28 — pass 1 splits into 1a (dt-independent) and 1b (dt-dependent).
     # Pass 1b runs after ``apply_derived_a`` populates ``flex_data.dt``
     # so scalar / 1d_map[period] / 1d_map[time] values authored on the
@@ -4732,35 +4750,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     _loadflex_prof("apply_db_overrides:pass_projection_params")
     _timed("2  projection_params", _pp.apply_projection_params, db_reader, flex_data)
 
-    # Pass 3-9: workdir-aware Params.  Resolve the workdir from the
-    # source object (CsvSource exposes ``input_dir.parent``).
-    try:
-        workdir = source.workdir if hasattr(source, "workdir") \
-                   else source.input_dir.parent
-    except Exception:  # pragma: no cover — defensive
-        workdir = None
-    if workdir is None:
-        # Δ.28 — no workdir means apply_derived_a won't run here.  In the
-        # slow path ``flex_data.dt`` was populated by ``_load_*`` from
-        # CSV before ``_apply_db_overrides``; run pass 1b with that dt.
-        # In the fast path ``workdir`` is always non-None
-        # (``_SourceShim`` carries ``work_folder``).
-        _loadflex_prof("apply_db_overrides:pass_direct_params_b")
-        _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
-        # MINLOAD-1 (no-workdir early-return): ``apply_derived_b`` won't run
-        # on this path either, so re-wire the (p, d, t) ``p_min_load`` (the
-        # minFlow_minload floor) from the CSV-loaded ``flex_data.dt`` (see the
-        # synthetic MINLOAD-1 patch below and ``specs/fix_map_reading.md`` §5).
-        _dt_noworkdir = getattr(flex_data, "dt", None)
-        if _dt_noworkdir is not None and _dt_noworkdir.height > 0:
-            flex_data.p_min_load = _drv.p_min_load_pdt_from_source(
-                db_reader, _dt_noworkdir)
-        # PENALTY-1 (no-workdir early-return): ``apply_derived_a`` won't run either; same producer as
-        # the synthetic PENALTY-1 below, over the CSV-loaded ``dt`` (None keeps the seed).
-        from flextool.engine.preprocess.params._arithmetic import apply_penalty_params
-        apply_penalty_params(flex_data, db_reader, _dt_noworkdir)
-        return
-    workdir_path = Path(workdir)
+    # Pass 3-9: workdir-aware Params (the workdir was resolved at entry).
 
     # Δ.18 — synthetic per-sub-solve detection.  When the workdir's
     # ``solve_data/solve_current.csv`` names a solve that doesn't exist
