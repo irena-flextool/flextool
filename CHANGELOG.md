@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **Group cumulative capacity limits now subtract a group's process retirements, same as the
+  entity-level limit (#29).** A group of units/connections with a cumulative capacity limit
+  (`invest_method = cumulative_limits`) ignored its own retirements entirely; the group's capacity
+  in service only ever grew. Storage-node members are unaffected (the engine has no retirement
+  history to draw on for them, same pre-existing gap as the entity-level limit).
+
 - **Group cumulative capacity limits now read the documented `cumulative_max_capacity` /
   `cumulative_min_capacity` parameters.** Groups previously needed undocumented
   `invest_max_cumulative` / `invest_min_cumulative` values (not part of the schema) to get a

@@ -598,17 +598,19 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
     #   + Σ_{n : (g,n) ∈ group_entity} Σ_{d′ : (n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′] · state_unitsize[n]
+    #   − Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′] · unitsize[p]
     #   ≤ cumulative_max_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (max…)
     #   ≥ cumulative_min_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (min…)
     #   ∀ g ∈ g_invest_cumulative (invest_method = cumulative_limits, #5/B-Q3), d with a cap value
-    #   and some member alive in edd_invest_set
-    # Keeps the capacity of a group in a period (existing + invested and still alive) within its
-    # cumulative limits (schema "[MW or MWh]"); processes and storage nodes share one row.  Rows are
-    # restricted to (g, d) the cap's own map actually covers (#5: now a real period map, not a
-    # dummy scalar) — a period the map leaves out has no limit, matching B-Q2's default for this
-    # family (no FA-12 check here, unlike the entity-level cumulative row).  Divestments are not yet
-    # counted (#30b, next commit); capacity invested by earlier solves of a chain is not counted
-    # either (pre-existing, separate item).
+    #   and some member alive (invest) or retirable (divest) in d
+    # Keeps the capacity of a group in a period (existing + invested and still alive − every
+    # process retirement up to and including d, #30b) within its cumulative limits (schema
+    # "[MW or MWh]"); processes and storage nodes share one row.  Rows are restricted to (g, d)
+    # the cap's own map actually covers (#5: now a real period map, not a dummy scalar) — a
+    # period the map leaves out has no limit, matching B-Q2's default for this family (no FA-12
+    # check here, unlike the entity-level cumulative row).  The divest term is process-only, same
+    # as the entity-level row (#29): edd_divest_active carries no storage-node history.  Capacity
+    # invested by earlier solves of a chain is not counted (pre-existing, separate item).
     for name, sense, cap in (("maxInvestGroup_entity_cumulative", "<=", d.pd_group_cumulative_max_capacity),
                              ("minInvestGroup_entity_cumulative", ">=", d.pd_group_cumulative_min_capacity)):
         if cap is None:
@@ -618,16 +620,24 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
         if over.height == 0:
             continue
         lhs: dict = {}
-        for key, var, axis in (("invest_p", b.v_invest_p, "p"), ("invest_n", b.v_invest_n, "n")):
+        for key, var, divest, axis in (("invest_p", b.v_invest_p, b.v_divest_p, "p"),
+                                        ("invest_n", b.v_invest_n, b.v_divest_n, "n")):
             unitsize = _unitsize(d, axis)
             if var is None or unitsize is None:
                 continue
             terms = (_on_var_axis(group_entity, axis, var).filter(in_groups)
                      .join(_on_var_axis(edd, axis, var), on=axis, how="inner"))
-            if terms.height == 0:
-                continue
-            invest = _var_view(var, "__grp_cum_at", {"d": "d_invest"})
-            lhs[key] = Sum(Where(invest * unitsize, terms), over=(axis, "d_invest"))
+            if terms.height > 0:
+                invest = _var_view(var, "__grp_cum_at", {"d": "d_invest"})
+                lhs[key] = Sum(Where(invest * unitsize, terms), over=(axis, "d_invest"))
+            if axis == "p" and divest is not None and d.edd_divest_active is not None:
+                div_members = _on_var_axis(group_entity, axis, divest).filter(in_groups)
+                active_axis = _entity_rows(d.edd_divest_active, "p", div_members, axis)
+                active_axis, div_members = align_join_dtypes(active_axis, div_members, (axis,))
+                div_terms = div_members.join(active_axis, on=axis, how="inner")
+                if div_terms.height > 0:
+                    view = _var_view(divest, "__grp_cum_div", {"d": "d_divest"}, to_axis=True)
+                    lhs[f"{key}_divest"] = -Sum(Where(view * unitsize, div_terms), over=(axis, "d_divest"))
         if not lhs:
             continue
         rhs: dict = {"cap": cap}
