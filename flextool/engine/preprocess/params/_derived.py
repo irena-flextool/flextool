@@ -178,27 +178,6 @@ def _recourse_branch_axis_present() -> bool:
     return _RECOURSE_ANCHOR_PAIRS is not None
 
 
-def _recourse_usable_ctx(ctx: "object | None") -> "object | None":
-    """Return *ctx* iff its ``period_branch`` frame is usable for branch
-    expansion (≥1 row with a NON-NULL anchor), else ``None``.
-
-    On the snapshot-reload path (``load_flextool`` off a dumped workdir)
-    the SolveContext's ``period_branch`` can carry all-null ``d_anchor``
-    values; the ctx-first arms would then silently produce an empty
-    anchor map (no fan) instead of falling through to the provider CSV
-    (which is correct on that path).  Sanitizing here keeps the recourse
-    helpers robust without touching the shared dispatch-side helper.
-    """
-    if ctx is None:
-        return None
-    pb_ctx = ctx.period_branch
-    if pb_ctx.height == 0:
-        return ctx  # empty is a legitimate "fall through" signal already
-    if pb_ctx["d_anchor"].null_count() == pb_ctx.height:
-        return None
-    return ctx
-
-
 def _build_recourse_anchor_pairs(
     workdir: Path | None,
     *,
@@ -215,7 +194,6 @@ def _build_recourse_anchor_pairs(
     """
     if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
         return None
-    ctx = _recourse_usable_ctx(ctx)
     pb_df: "pl.DataFrame | None" = None
     in_use: set[str] = set()
     if ctx is not None:
@@ -512,70 +490,26 @@ def _ctx_read(
     kind: str = "solve_data",
     provider: "object | None" = None,
 ) -> "pl.DataFrame | None":
-    """Δ.12a — single funnel for workdir CSV reads inside derived helpers.
+    """Read the per-solve frame *name* (``<kind>/<stem>``) from *provider*.
 
-    When ``ctx`` is supplied, the call routes through
-    :meth:`SolveContext.read_csv` which caches by absolute path so
-    repeated reads of the same file (e.g. ``period_in_use_set.csv``,
-    ``period__branch.csv``) hit memory.  When ``ctx`` is None falls
-    back to direct ``_read_csv_file`` against the workdir — preserves
-    pre-Δ.12a behaviour for callers that haven't been wired up yet.
-
-    Returns ``None`` if the file is absent (matches the existing
-    pre-existence-check pattern most helper sites use).
-
-    BUG A4 / A2-followup fix: when *provider* is supplied alongside
-    *ctx*, consult it before falling back to ``ctx.read_csv``.  In
-    cascade mode every emitter writes into the Provider only (no disk
-    flush during a solve); ``ctx.read_csv`` then returns ``None`` for
-    every cascade-internal artefact and the caller misses files that
-    have just been produced upstream this iteration
-    (``period__branch.csv`` is the canonical regression case — the
-    stochastic-branch periods would be silently dropped from the
-    timeline).
+    *provider* is required: ``None`` raises ``ValueError`` (no work-folder
+    read).  Key present → the frame (an empty body → ``pl.DataFrame()``);
+    key absent, or no *workdir* to form the key from → ``None`` (the
+    callers' "no frame" branch).  *ctx* is unused; it stays in the
+    signature for call-site stability.
     """
-    # Resolve the path eagerly so the Provider can be consulted first
-    # regardless of which read backend (ctx / disk) we ultimately use.
-    if workdir is not None:
-        if kind == "solve_data":
-            path = Path(workdir) / "solve_data" / name
-        elif kind == "input":
-            path = Path(workdir) / "input" / name
-        else:
-            path = Path(workdir) / name
+    if provider is None:
+        raise ValueError(
+            f"_ctx_read({name!r}) requires a FlexDataProvider; it never reads the work folder on disk."
+        )
+    if workdir is None:
+        return None
+    if kind == "solve_data":
+        path = Path(workdir) / "solve_data" / name
+    elif kind == "input":
+        path = Path(workdir) / "input" / name
     else:
-        path = None
-
-    # Provider-first when supplied: in cascade mode every emitter
-    # writes into the Provider only (no disk flush during a solve), so
-    # the Provider is the authoritative carrier this iteration.
-    if provider is not None and path is not None and _provider_has_key(
-        provider, path,
-    ):
-        try:
-            return _provider_read(provider, path)
-        except pl.exceptions.NoDataError:
-            return pl.DataFrame()
-
-    # Phase 3 — provider-strict for ctx.read_csv path.  When the caller
-    # passes a *provider*, the Provider is the authoritative source for
-    # this carrier; falling through to ``ctx.read_csv`` would re-read
-    # the stale on-disk CSV (when one even exists; cascade mode skips
-    # disk emission entirely).  Return ``None`` so the caller's "no
-    # frame" branch runs — same semantics as the disk path's
-    # absent-file → None contract that ctx.read_csv preserved.
-    if provider is not None:
-        return None
-
-    if ctx is not None:
-        return ctx.read_csv(name, kind=kind)
-    if path is None:
-        return None
-    # Phase E-h — seed-aware existence check.  Bare ``path.exists()``
-    # short-circuits to None when the cascade runs with CSV emission
-    # disabled (Phase E-c default), even though the active in-memory
-    # accumulator holds the frame.  the Provider consults the
-    # seed first, so the subsequent ``_read_csv_file`` finds the data.
+        path = Path(workdir) / name
     if not _provider_has_key(provider, path):
         return None
     try:
@@ -6119,11 +6053,10 @@ def apply_derived_c(
             assert_recourse_npv_preconditions as _assert_recourse,
             dd_same_scenario_df as _dd_same_scenario_df,
         )
-        _lin_ctx = _recourse_usable_ctx(ctx)
         _c_lineage = _dd_same_scenario_df(
-            workdir, source, active_solve, ctx=_lin_ctx, provider=provider)
+            workdir, source, active_solve, ctx=ctx, provider=provider)
         _assert_recourse(workdir, source, active_solve,
-                         ctx=_lin_ctx, provider=provider)
+                         ctx=ctx, provider=provider)
     else:
         _c_lineage = None
 
@@ -7002,11 +6935,8 @@ def _expand_invest_branch_periods(period_invest: "list[str] | None",
         return period_invest
     if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
         return period_invest
-    # Sanitize the ctx (snapshot-reload all-null anchors → fall through
-    # to the provider CSV arm inside the dispatch helper).
     return _expand_branch_periods(list(period_invest), workdir,
-                                     ctx=_recourse_usable_ctx(ctx),
-                                     provider=provider)
+                                     ctx=ctx, provider=provider)
 
 
 def _dt_period_active_steps_from_workdir(
@@ -8567,19 +8497,16 @@ def apply_derived_e(
     has_state = (nodeState_df is not None
                   and getattr(nodeState_df, "height", 0) > 0)
     # Δ.9 — single BlockBundle per solve (replaces 4× CSV reads).
-    # Δ.12b — bundle-load failure is non-fatal (workdir without block
-    # CSVs is legitimate for fixtures without explicit blocks).
+    # No block frames (fixtures without explicit blocks) → ``None``; any
+    # other failure (including a missing provider) propagates.
     # Phase 2 multi-block fast-path: thread the in-memory layout (built
     # source-only by the fast loader and stashed on ``FlexData``) so
     # ``load_block_bundle`` returns a populated bundle even when the
     # workdir's solve_data/ is empty.
     fd_layout = getattr(flex_data, "block_layout", None)
-    try:
-        block_bundle = load_block_bundle(
-            workdir, block_layout=fd_layout, provider=provider,
-        )
-    except Exception:
-        block_bundle = None
+    block_bundle = load_block_bundle(
+        workdir, block_layout=fd_layout, provider=provider,
+    )
 
     # Δ.12b — assignment is unconditional for storage-only Params and
     # the rolling-handoff carriers.  ``None`` is the explicit

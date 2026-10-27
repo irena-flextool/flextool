@@ -1,8 +1,9 @@
 """Δ.12a — focused unit tests for :class:`SolveContext`.
 
-The cluster sweeps verify ``load_flextool`` end-to-end with the
-context activated; this file pins down the SolveContext API itself
-(typed fields, ``read_csv`` cache, activate / deactivate semantics).
+The cluster sweeps verify ``load_flextool`` end-to-end; this file pins
+down the SolveContext API itself: typed fields read from the provider,
+and the provider-only contract (``provider=None`` raises, a CSV in the
+work folder is never read).
 """
 from __future__ import annotations
 
@@ -11,12 +12,10 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine.input._input_source import (
-    _install_csv_cache,
-    _read_csv_file,
-)
+from flextool.engine.preprocess import _solve_context as sc
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess._solve_context import SolveContext
+from flextool.engine.preprocess.params import _derived
 from tests._support.provider import provider_from_csv_dirs
 
 
@@ -144,84 +143,68 @@ def test_solve_context_solve_first_zero(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# read_csv cache semantics
+# Provider-only contract (c24 stage 3): no disk arm, provider=None raises
 # ---------------------------------------------------------------------------
 
 
-def test_read_csv_caches_repeats(workdir: Path) -> None:
+def test_from_workdir_requires_provider(workdir: Path) -> None:
+    with pytest.raises(ValueError, match="requires a FlexDataProvider"):
+        SolveContext.from_workdir(workdir)
+
+
+@pytest.mark.parametrize("loader", ["_maybe_read", "_read_frame"])
+def test_frame_loaders_require_provider(workdir: Path, loader: str) -> None:
+    path = workdir / "solve_data" / "edd_history.csv"
+    with pytest.raises(ValueError, match="requires a FlexDataProvider"):
+        getattr(sc, loader)(path)
+
+
+def test_period_share_requires_provider(workdir: Path) -> None:
+    with pytest.raises(ValueError, match="requires a FlexDataProvider"):
+        sc._load_period_share(workdir / "solve_data")
+
+
+def test_read_active_solve_requires_provider(workdir: Path) -> None:
+    with pytest.raises(ValueError, match="requires a FlexDataProvider"):
+        sc._read_active_solve(workdir)
+
+
+def test_lazy_field_without_provider_raises(workdir: Path) -> None:
+    """A hand-built context without a provider cannot fall back to the CSVs on disk."""
+    ctx = SolveContext(workdir=workdir)
+    with pytest.raises(ValueError, match="requires a FlexDataProvider"):
+        ctx.period_in_use
+
+
+def test_csv_on_disk_is_not_read(workdir: Path) -> None:
+    """The fixture's CSVs sit on disk; an empty provider sees none of them."""
+    provider = FlexDataProvider()
+    assert sc._read_active_solve(workdir, provider=provider) is None
+    ctx = SolveContext.from_workdir(workdir, provider=provider)
+    assert ctx.solve_name is None
+    assert ctx.realized_periods == set()
+    assert ctx.period_share_of_year.height == 0
+    with pytest.raises(sc.FlexDataError):
+        ctx.period_in_use
+
+
+def test_ctx_read_requires_provider(workdir: Path) -> None:
+    with pytest.raises(ValueError, match="requires a FlexDataProvider"):
+        _derived._ctx_read(None, workdir, "period__branch.csv")
+
+
+def test_ctx_read_reads_the_provider_not_disk(workdir: Path) -> None:
+    """Disk has ``period__branch.csv``; the provider decides what ``_ctx_read`` returns."""
+    empty = FlexDataProvider()
+    assert _derived._ctx_read(None, workdir, "period__branch.csv", provider=empty) is None
     ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
-    df1 = ctx.read_csv("solve_current.csv")
-    df2 = ctx.read_csv("solve_current.csv")
-    # Same identity → cache hit.
-    assert df1 is df2
-
-
-def test_read_csv_returns_none_for_missing(workdir: Path) -> None:
-    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
-    assert ctx.read_csv("does_not_exist.csv") is None
-
-
-def test_read_csv_kind_input(workdir: Path) -> None:
-    inp = workdir / "input"
-    _write_csv(inp / "p_node.csv", ["node", "value"], [["n1", 1.0]])
-    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
-    df = ctx.read_csv("p_node.csv", kind="input")
-    assert df is not None
-    assert df.height == 1
-
-
-# ---------------------------------------------------------------------------
-# Activation / cache scoping
-# ---------------------------------------------------------------------------
-
-
-def test_activate_installs_global_cache(workdir: Path) -> None:
-    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
-    csv_path = workdir / "solve_data" / "solve_current.csv"
-    # Pre-activation: each _read_csv_file is a fresh polars.read_csv.
-    df_a = _read_csv_file(csv_path)
-    df_b = _read_csv_file(csv_path)
-    assert df_a is not df_b
-
-    ctx.activate()
-    try:
-        df_c = _read_csv_file(csv_path)
-        df_d = _read_csv_file(csv_path)
-        # Active cache → identity-stable on repeats.
-        assert df_c is df_d
-    finally:
-        ctx.deactivate()
-
-    # Post-deactivation: fresh reads again.
-    df_e = _read_csv_file(csv_path)
-    df_f = _read_csv_file(csv_path)
-    assert df_e is not df_f
-
-
-def test_context_manager_protocol(workdir: Path) -> None:
-    ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
-    csv_path = workdir / "solve_data" / "solve_current.csv"
-    with ctx:
-        df1 = _read_csv_file(csv_path)
-        df2 = _read_csv_file(csv_path)
-        assert df1 is df2
-    # After exit cache is uninstalled.
-    df3 = _read_csv_file(csv_path)
-    df4 = _read_csv_file(csv_path)
-    assert df3 is not df4
-
-
-def test_install_csv_cache_clears(workdir: Path) -> None:
-    """Direct assertion against the install / uninstall API."""
-    cache: dict[str, pl.DataFrame] = {}
-    csv_path = workdir / "solve_data" / "solve_current.csv"
-    _install_csv_cache(cache)
-    try:
-        _read_csv_file(csv_path)
-        # First read populates cache.
-        assert len(cache) == 1
-    finally:
-        _install_csv_cache(None)
+    assert _derived._ctx_read(ctx, workdir, "period__branch.csv", provider=empty) is None
+    frame = pl.DataFrame({"period": ["p2030"], "branch": ["p2030"]})
+    provider = FlexDataProvider()
+    provider.put("solve_data/period__branch", frame)
+    got = _derived._ctx_read(None, workdir, "period__branch.csv", provider=provider)
+    assert got is not None and got["period"].to_list() == ["p2030"]
+    assert _derived._ctx_read(None, None, "period__branch.csv", provider=provider) is None
 
 
 def test_solve_data_dir_property(workdir: Path) -> None:

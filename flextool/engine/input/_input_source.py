@@ -47,54 +47,14 @@ import polars as pl
 Kind = Literal["input", "solve_data"]
 
 
-_active_cache: dict[Path, pl.DataFrame] | None = None
-
-
 def _read_csv_file(path: "Path | str") -> pl.DataFrame:
-    """Single residual ``polars.read_csv`` site for the engine
-    package.
+    """The plain ``polars.read_csv`` behind :meth:`CsvSource.get`.
 
-    CSV-retirement (Γ.8.F) gates every workdir CSV read in the loader
-    path through this helper so the package-wide grep for
-    ``pl.read_csv`` returns only the ``CsvSource``-internal sites
-    (``CsvSource.get`` plus this helper).
-
-    Δ.12a — when a per-solve cache is active (set via
-    :func:`_install_csv_cache` from the ``SolveContext`` constructor),
-    repeated reads of the same absolute path hit memory.
+    CSV-retirement (Γ.8.F): the package-wide grep for ``pl.read_csv``
+    returns only the ``CsvSource``-internal sites (``CsvSource.get`` plus
+    this helper).  The loader never calls it: it reads the provider.
     """
-    if _active_cache is not None:
-        # Use the str form as cache key — avoids the per-call ``Path.resolve``
-        # syscall (which adds ~50µs each and dominates the cache miss path
-        # for small fixtures with few duplicate reads).  Different string
-        # forms of the same file (e.g. ``./x.csv`` vs ``x.csv``) miss the
-        # cache but the loader path always constructs paths from the same
-        # workdir prefix so collisions are negligible in practice.
-        key = str(path)
-        cached = _active_cache.get(key)
-        if cached is not None:
-            return cached
-        df = pl.read_csv(path)
-        _active_cache[key] = df
-        return df
     return pl.read_csv(path)
-
-
-def _install_csv_cache(cache: "dict[Path, pl.DataFrame] | None") -> None:
-    """Δ.12a — install / clear the process-level CSV-read cache.
-
-    Called by ``SolveContext.__enter__`` / ``__exit__`` (or the
-    explicit ``activate_cache`` / ``deactivate_cache`` helpers) to
-    install the per-solve cache so :func:`_read_csv_file` calls in any
-    helper hit memory on repeats.
-
-    Pass ``None`` to disable caching (default).  Multiple
-    activate/deactivate cycles within a single process are supported;
-    nesting is the caller's responsibility (typically via the SolveContext
-    context-manager boundary which is one-deep per solve).
-    """
-    global _active_cache
-    _active_cache = cache
 
 
 # ---------------------------------------------------------------------------

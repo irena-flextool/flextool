@@ -4,20 +4,19 @@
 
 This module hosts :class:`SolveContext`, the typed dataclass the
 :doc:`audit/native_data_path_design_solve_context` schematic specifies.
-It wraps the per-solve preprocessing artefacts that today live as CSVs
-under ``workdir/solve_data/`` and exposes them as in-memory polars
-frames so the override helpers (``apply_derived_a..g``) and the
-``_load_*`` family in :mod:`flextool.engine.preprocess.flex_data` no longer have
-to re-read the same files dozens of times per solve.
+It wraps the per-solve preprocessing artefacts (the ``solve_data/*``
+frames the per-solve emitters put into the sub-solve's
+:class:`~flextool.engine.preprocess._flex_data_provider.FlexDataProvider`)
+and exposes them as typed fields so the override helpers
+(``apply_derived_a..g``) and the ``_load_*`` family in
+:mod:`flextool.engine.preprocess.flex_data` read each one once per solve.
 
-:class:`SolveContext` reads the ``solve_data/*.csv`` files written by
-the per-solve preprocessing.  The point of going through this object
-is:
+:class:`SolveContext` reads only the provider; it never reads the work
+folder on disk (a ``provider=None`` raises ``ValueError``).  The point
+of going through this object is:
 
-1. **Single funnel** — every workdir CSV read goes through one place,
-   so the gross :func:`flextool.engine.input._input_source._read_csv_file`
-   call count drops dramatically (helpers consume cached frames instead
-   of re-issuing ``pl.read_csv`` every call).
+1. **Single funnel** — every per-solve frame is fetched from the
+   provider in one place and cached on the context.
 2. **Typed entry points** — the most-consumed metadata
    (``solveFirst``, ``realized_periods``, ``period_in_use``,
    ``period_branch``, ``edd_history``, etc.) is parsed once into typed
@@ -43,7 +42,6 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine.input._axis_enums import schema_dtype
-from flextool.engine.input._input_source import _install_csv_cache, _read_csv_file
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +54,9 @@ class SolveContext:
     """Typed in-memory carrier of per-solve preprocessing state.
 
     Construct via :meth:`from_workdir` to populate the typed fields from
-    a flextool workdir (the CSV-bridge path used by Δ.12a) or via the
-    plain constructor to hand-build for tests.
+    the sub-solve's provider, or via the plain constructor to hand-build
+    for tests.  Every loader needs the provider (``provider=None`` raises
+    ``ValueError``); nothing is read from the work folder on disk.
 
     All ``DataFrame`` fields are eager (``pl.DataFrame``) — helpers can
     convert via ``df.lazy()`` at the call site to keep the rest of the
@@ -66,11 +65,8 @@ class SolveContext:
     Attributes
     ----------
     workdir : Path
-        The flextool workdir.  Kept around so :meth:`read_csv` can
-        service helpers that still need a file the typed fields don't
-        cover (e.g. flexible-shape "user-defined" CSVs that genuinely
-        have no Spine analogue).  Each such read is cached so repeated
-        calls hit memory.
+        The flextool workdir.  Used only to form the provider keys
+        (``solve_data/<stem>`` / ``input/<stem>``); never read.
     solve_name : str | None
         Active solve as written to ``solve_data/solve_current.csv``.
         ``None`` for fixtures without per-solve preprocessing.
@@ -101,10 +97,9 @@ class SolveContext:
         ``[entity, period, value]`` from ``p_entity_pre_existing.csv``.
         Empty when missing.
 
-    The remaining workdir CSVs (block-layout, dtttdt, etc.) are still
-    accessed via :meth:`read_csv` — they're either covered by other
-    typed objects (:class:`BlockLayout`) or read few enough times that
-    string-keyed access is fine.
+    The remaining per-solve frames (block-layout, dtttdt, etc.) are read
+    from the provider by their own helpers (:class:`BlockLayout`,
+    ``_derived._ctx_read``).
     """
 
     workdir: Path
@@ -112,19 +107,16 @@ class SolveContext:
     solveFirst: bool = True
     realized_periods: set[str] = field(default_factory=set)
     realized_invest_periods: set[str] = field(default_factory=set)
-    # Phase 3 — Provider stashed at construction so the lazy DataFrame
-    # property loaders can consult it without re-plumbing the kwarg
-    # through every caller.  When ``provider`` is None the legacy disk
-    # path remains active (test-only fallback that goes away with
-    # Phase 4 activation).
+    # Provider stashed at construction so the lazy DataFrame property
+    # loaders can consult it without re-plumbing the kwarg through every
+    # caller.  Required: a lazy loader raises ``ValueError`` on None.
     provider: "object | None" = field(default=None, repr=False)
     # ``period_in_use`` / ``period_branch`` / ``edd_history`` /
     # ``p_entity_pre_existing`` are populated on first access via the
     # descriptor machinery below — they're DataFrame-shaped fields and
-    # each requires a CSV read.  Most
-    # parity tests only consume one or two of them, so deferring the
-    # reads until an attribute access asks for them avoids paying the
-    # IO cost upfront.
+    # each needs a provider fetch + rename.  Most consumers use only one
+    # or two of them, so the work is deferred until an attribute access
+    # asks for it.
     _period_in_use_loaded: bool = field(default=False, repr=False)
     _period_in_use: pl.DataFrame = field(
         default_factory=lambda: pl.DataFrame(
@@ -200,20 +192,6 @@ class SolveContext:
         repr=False,
     )
 
-    # Internal: ad-hoc CSV cache.  Keyed by ``str(path)`` (no syscall).
-    # Values are ``None`` when the file is absent so we don't re-stat
-    # repeatedly.
-    _csv_cache: dict[str, pl.DataFrame | None] = field(
-        default_factory=dict, repr=False
-    )
-    # Internal: process-level cache view installed by ``activate`` —
-    # a strict subset of ``_csv_cache`` (None-valued entries excluded
-    # because the ``_read_csv_file`` cache only stores successfully-
-    # read frames).  ``None`` means caching is not currently active.
-    _active_cache: "dict[str, pl.DataFrame] | None" = field(
-        default=None, repr=False
-    )
-
     # ------------------------------------------------------------------
     # Factories
     # ------------------------------------------------------------------
@@ -221,26 +199,23 @@ class SolveContext:
     @classmethod
     def from_workdir(cls, workdir: Path | str,
                       *, provider: "object | None" = None) -> "SolveContext":
-        """Construct a SolveContext from a flextool workdir.
+        """Construct a SolveContext for *workdir* from *provider*.
 
         Eagerly reads only the cheap typed scalars
         (``solve_name``, ``solveFirst``, ``realized_periods``,
-        ``realized_invest_periods``) — these come from small single-
-        column CSVs and are consumed by the apply_derived_* boundary
-        checks that gate the rest of the cascade.
+        ``realized_invest_periods``) — small single-column frames
+        consumed by the apply_derived_* boundary checks that gate the
+        rest of the cascade.
 
         The DataFrame-shaped fields (``period_in_use``, ``period_branch``,
         ``edd_history``, ``p_entity_pre_existing``) are loaded **lazily**
-        on first attribute access.  Most parity tests only consume one or
-        two,
-        so paying the IO cost upfront for a bag of frames the test
-        never touches dominates the cache savings on small fixtures.
+        on first attribute access.
 
-        Step 1-g-4b — *provider* threads the live
-        :class:`FlexDataProvider` through to the four eager scalar
-        readers so they hit the in-memory frames before falling back
-        to the seed funnel / disk.
+        *provider* (the sub-solve's :class:`FlexDataProvider`) is
+        required: ``None`` raises ``ValueError``.  *workdir* only forms
+        the provider keys; nothing is read from disk.
         """
+        _require_provider(provider, "SolveContext.from_workdir")
         wd = Path(workdir)
         sd = wd / "solve_data"
         ctx = cls(workdir=wd, provider=provider)
@@ -254,94 +229,6 @@ class SolveContext:
             provider=provider,
         )
         return ctx
-
-    # ------------------------------------------------------------------
-    # Cached CSV reader
-    # ------------------------------------------------------------------
-
-    def read_csv(
-        self,
-        relative: str | Path,
-        *,
-        kind: str = "solve_data",
-    ) -> pl.DataFrame | None:
-        """Cached read for an ad-hoc workdir CSV.
-
-        Parameters
-        ----------
-        relative : str | Path
-            Filename relative to the directory selected by *kind*.  May
-            be a bare ``foo.csv`` or a relative subpath.
-        kind : str
-            ``"solve_data"`` (default) or ``"input"`` — selects the
-            subdirectory under :attr:`workdir`.  Anything else is
-            interpreted as a workdir-rooted relative path.
-
-        Returns
-        -------
-        pl.DataFrame | None
-            The frame, or ``None`` when the file is missing.  The result
-            is cached by absolute path so subsequent calls hit memory.
-        """
-        rel = Path(relative)
-        if kind == "solve_data":
-            path = self.workdir / "solve_data" / rel
-        elif kind == "input":
-            path = self.workdir / "input" / rel
-        else:
-            path = self.workdir / rel
-        # Cache key = str(path).  Same key as ``_read_csv_file``'s active-
-        # cache so SolveContext.read_csv and direct ``_read_csv_file``
-        # calls share the cache when ``activate`` is in effect.  Avoids
-        # the per-call ``Path.resolve`` syscall.
-        key = str(path)
-        if key in self._csv_cache:
-            return self._csv_cache[key]
-        if not path.exists():
-            self._csv_cache[key] = None
-            return None
-        try:
-            df = _read_csv_file(path)
-        except pl.exceptions.NoDataError:
-            df = pl.DataFrame()
-        self._csv_cache[key] = df
-        return df
-
-    # ------------------------------------------------------------------
-    # Cache activation (process-level, scoped via context manager)
-    # ------------------------------------------------------------------
-
-    def activate(self) -> None:
-        """Δ.12a — install the read-cache so helper modules' direct
-        ``_read_csv_file`` calls hit this context's cache on repeat.
-
-        Idempotent: calling ``activate`` twice on the same context is
-        a no-op.  Pair with :meth:`deactivate` to clear, or use the
-        context-manager protocol.
-        """
-        # Build the active-cache view (DataFrame-only; absent-file
-        # entries from ``read_csv`` are dropped because
-        # ``_read_csv_file`` doesn't track absences).  Subsequent
-        # cache misses populate ``cache_view`` directly through
-        # ``_read_csv_file``; ``read_csv`` continues to populate
-        # ``_csv_cache`` with the broader (None-included) shape.
-        cache_view: dict[str, pl.DataFrame] = {
-            k: v for k, v in self._csv_cache.items() if v is not None
-        }
-        _install_csv_cache(cache_view)
-        self._active_cache = cache_view
-
-    def deactivate(self) -> None:
-        """Δ.12a — uninstall the read-cache."""
-        _install_csv_cache(None)
-        self._active_cache = None
-
-    def __enter__(self) -> "SolveContext":
-        self.activate()
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.deactivate()
 
     # ------------------------------------------------------------------
     # Lazy DataFrame fields
@@ -498,6 +385,19 @@ class SolveContext:
 # ---------------------------------------------------------------------------
 
 
+def _require_provider(provider: "object | None", consumer: str) -> None:
+    """Raise ``ValueError`` when *provider* is None.
+
+    SolveContext reads only the sub-solve's provider; there is no disk
+    fallback (c24 stage 3).
+    """
+    if provider is None:
+        raise ValueError(
+            f"{consumer} requires a FlexDataProvider; SolveContext never reads "
+            "the work folder on disk."
+        )
+
+
 def _carrier_miss(path: Path, consumer: str) -> "FlexDataError":
     """Build the strict-Provider miss error for a SolveContext loader.
 
@@ -547,51 +447,34 @@ def _provider_fetch_or_raise(
 
 def _maybe_read(path: Path,
                  *, provider: "object | None" = None) -> pl.DataFrame:
-    """Eager read returning empty frame on missing / empty CSV.
+    """Strict provider fetch of *path*'s carrier.
 
-    Provider-first: when *provider* is supplied, the carrier is fetched
-    strictly from the Provider; a missing key raises :class:`FlexDataError`.
-    Empty frames (height 0) are returned as ``pl.DataFrame()`` so callers
-    that ``if df.height == 0`` continue to short-circuit cleanly.
-
-    Disk fallback only runs when *provider* is None (the test-only path
-    that remains until Phase 4 activation makes provider mandatory).
+    A missing key raises :class:`FlexDataError`; ``provider=None`` raises
+    ``ValueError``.  Empty frames (height 0) are returned as
+    ``pl.DataFrame()`` so callers that ``if df.height == 0`` continue to
+    short-circuit cleanly.
     """
-    if provider is not None:
-        df = _provider_fetch_or_raise(provider, path, "SolveContext._maybe_read")
-        if df.height == 0:
-            return pl.DataFrame()
-        return df
-    if not path.exists():
+    _require_provider(provider, "SolveContext._maybe_read")
+    df = _provider_fetch_or_raise(provider, path, "SolveContext._maybe_read")
+    if df.height == 0:
         return pl.DataFrame()
-    try:
-        return _read_csv_file(path)
-    except pl.exceptions.NoDataError:
-        return pl.DataFrame()
+    return df
 
 
 def _read_active_solve(workdir: Path,
                         *, provider: "object | None" = None) -> str | None:
     """Mirror of ``_derived._read_active_solve``.
 
-    Provider-first read; falls back to disk when the Provider is absent
-    or doesn't carry the frame.
+    Reads ``solve_data/solve_current`` from *provider* (required:
+    ``None`` raises ``ValueError``).  Key absent or empty → ``None``.
     """
     from flextool.engine.preprocess._provider_io import _provider_key
+    _require_provider(provider, "SolveContext._read_active_solve")
     p = workdir / "solve_data" / "solve_current.csv"
-    if provider is not None and provider.has(_provider_key(p)):
-        df = provider.get(_provider_key(p))
-        if df is None or df.height == 0:
-            return None
-        col = df.columns[0]
-        return df[col][0]
-    if not p.exists():
+    if not provider.has(_provider_key(p)):
         return None
-    try:
-        df = _read_csv_file(p)
-    except pl.exceptions.NoDataError:
-        return None
-    if df.height == 0:
+    df = provider.get(_provider_key(p))
+    if df is None or df.height == 0:
         return None
     col = df.columns[0]
     return df[col][0]
@@ -605,6 +488,7 @@ def _read_solve_first(work_folder: Path,
     in order: ``solve_data/p_model.csv`` → ``input/p_model.csv`` → True.
     """
     from flextool.engine.preprocess._provider_io import _provider_key
+    _require_provider(provider, "SolveContext._read_solve_first")
 
     def _cell_str(value: "object | None") -> str:
         return "" if value is None else str(value)
@@ -630,8 +514,9 @@ def _read_solve_first(work_folder: Path,
 
 def _read_period_set(path: Path,
                       *, provider: "object | None" = None) -> set[str]:
-    """Read a single-column period CSV (header row, then one period per row)."""
+    """Read a single-column period frame (one period per row) from *provider*."""
     from flextool.engine.preprocess._provider_io import _provider_key
+    _require_provider(provider, "SolveContext._read_period_set")
 
     def _cell_str(value: "object | None") -> str:
         return "" if value is None else str(value)
@@ -653,8 +538,9 @@ def _read_period_set(path: Path,
 
 def _read_realized_dispatch_periods(path: Path,
                                      *, provider: "object | None" = None) -> set[str]:
-    """Read distinct periods from ``realized_dispatch.csv``."""
+    """Read distinct periods from ``solve_data/realized_dispatch`` in *provider*."""
     from flextool.engine.preprocess._provider_io import _provider_key
+    _require_provider(provider, "SolveContext._read_realized_dispatch_periods")
 
     def _cell_str(value: "object | None") -> str:
         return "" if value is None else str(value)
@@ -676,25 +562,14 @@ def _read_realized_dispatch_periods(path: Path,
 def _read_frame(path: Path,
                  *, provider: "object | None" = None,
                  consumer: str = "SolveContext") -> pl.DataFrame | None:
-    """Provider-first frame fetch with strict semantics.
+    """Strict provider frame fetch.
 
-    Returns the frame when present (Provider lookup if *provider* is
-    supplied; disk read when *provider* is None — the legacy test-only
-    path).  Returns ``None`` when the source genuinely yields an empty
-    body (height 0 or NoDataError).  Raises :class:`FlexDataError` when
-    a Provider is supplied but lacks the carrier.
+    Returns the frame when present, ``None`` when it is empty (height 0).
+    Raises :class:`FlexDataError` when the provider lacks the carrier and
+    ``ValueError`` when *provider* is None (no disk read).
     """
-    if provider is not None:
-        df = _provider_fetch_or_raise(provider, path, consumer)
-        if df.height == 0:
-            return None
-        return df
-    if not path.exists():
-        return None
-    try:
-        df = _read_csv_file(path)
-    except pl.exceptions.NoDataError:
-        return None
+    _require_provider(provider, consumer)
+    df = _provider_fetch_or_raise(provider, path, consumer)
     if df.height == 0:
         return None
     return df
@@ -829,47 +704,23 @@ def _load_period_share(solve_data_dir: Path,
     Audit §Category B (WriterSnapshot top-7): the cascade currently
     falls through both names at its read sites (e.g.
     ``_derived.py:7984-7988``).  Centralising the fallback here
-    gives every consumer the same semantics.
+    gives every consumer the same semantics.  *provider* is required
+    (``None`` raises ``ValueError``); no disk read.
     """
+    from flextool.engine.preprocess._provider_io import _provider_key
+    _require_provider(provider, "SolveContext._load_period_share")
     empty = pl.DataFrame(schema={"d": pl.Utf8, "value": pl.Float64})
     cand_paths = (
         solve_data_dir / "complete_period_share_of_year_calc.csv",
         solve_data_dir / "complete_period_share_of_year.csv",
     )
-    if provider is not None:
-        # Provider-strict: at least one of the canonical variants must
-        # carry the frame.  We probe ``_calc`` first (the producer's
-        # default), then the legacy non-``_calc`` name as a fallback.
-        from flextool.engine.preprocess._provider_io import _provider_key
-        for path in cand_paths:
-            key = _provider_key(path)
-            if provider.has(key):
-                df = provider.get(key)
-                if df is None or df.height == 0:
-                    continue
-                out = df
-                if "period" in out.columns:
-                    out = out.rename({"period": "d"})
-                if "value" in out.columns:
-                    out = out.with_columns(
-                        pl.col("value").cast(pl.Float64, strict=False)
-                    )
-                cols = [c for c in ("d", "value") if c in out.columns]
-                if cols:
-                    return out.select(cols)
-        # Neither variant carried a usable frame — treat as empty.
-        # ``period_share_of_year`` is genuinely optional (some fixtures
-        # skip the inflation-factor pipeline entirely); empty is the
-        # legacy semantics.
-        return empty
-    # Legacy disk path — kept until Phase 4 makes provider mandatory.
+    # Probe ``_calc`` first (the producer's default), then the
+    # non-``_calc`` name.
     for path in cand_paths:
-        if path.exists():
-            try:
-                df = _read_csv_file(path)
-            except pl.exceptions.NoDataError:
-                continue
-            if df.height == 0:
+        key = _provider_key(path)
+        if provider.has(key):
+            df = provider.get(key)
+            if df is None or df.height == 0:
                 continue
             out = df
             if "period" in out.columns:
@@ -881,6 +732,9 @@ def _load_period_share(solve_data_dir: Path,
             cols = [c for c in ("d", "value") if c in out.columns]
             if cols:
                 return out.select(cols)
+    # Neither variant carried a usable frame — treat as empty.
+    # ``period_share_of_year`` is genuinely optional (some fixtures
+    # skip the inflation-factor pipeline entirely).
     return empty
 
 

@@ -4042,12 +4042,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
             user_label="load_flextool: provider seeded",
         )
 
-    # Δ.12a — build the per-solve in-memory state (typed fields +
-    # process-level CSV cache) up front, then activate the cache so
-    # every ``_read_csv_file`` call inside the loader (``_load_time``,
-    # ``_load_node``, the helpers' ``load_data``, the apply_derived_*
-    # passes) deduplicates by absolute path.  Falls back to ``None``
-    # when no workdir is known (handoff-only callers).
+    # Δ.12a — build the per-solve typed state (``SolveContext``, read
+    # from the provider) up front so the apply_derived_* passes consume
+    # its fields.  ``None`` when no workdir is known (handoff-only callers).
     ctx = None
     ctx_workdir = workdir_for_db
     if ctx_workdir is None:
@@ -4065,8 +4062,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
             ctx = SolveContext.from_workdir(ctx_workdir, provider=provider)
         except Exception:  # pragma: no cover — defensive
             ctx = None
-    if ctx is not None:
-        ctx.activate()
 
     if _entry_rec is not None:
         _entry_rec.checkpoint(
@@ -4498,11 +4493,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # initial seed.  In Δ.5+, when every FlexData field has a DB-direct
         # helper, the CSV path will retire and these apply_* calls become
         # the primary loader.
-        # Δ.12a — ctx (with the process-level CSV-read cache activated)
-        # was constructed at the top of ``load_flextool`` so the caching
-        # benefit reaches every ``_read_csv_file`` call inside the loader
-        # (``_load_*`` family + helpers' ``load_data`` + apply_derived_*).
-        # ``deactivate`` happens in the outer ``finally`` block.
+        # Δ.12a — ctx (the provider-backed ``SolveContext``) was built at
+        # the top of ``load_flextool`` and is threaded into apply_derived_*.
         # We deliberately DEFER the FlexData → Enum sweep until AFTER
         # ``_apply_db_overrides`` (the derived-cascade).  The cascade
         # builds many scratch frames with hard-coded ``pl.Utf8`` dim
@@ -4653,8 +4645,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
         _loadflex_prof("return")
         return result
     finally:
-        if ctx is not None:
-            ctx.deactivate()
         if _stoch_tok is not None:
             deactivate_stochastic_time_source(_stoch_tok)
         if _branch_tok is not None:
@@ -4697,11 +4687,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
 
     Δ.12a — when *ctx* is supplied, helpers may consume the typed
     in-memory state (``ctx.solve_name``, ``ctx.realized_periods``, …)
-    and the cached :meth:`SolveContext.read_csv` instead of issuing
-    fresh ``_read_csv_file`` calls per invocation.  The ctx is built by
-    :func:`load_flextool` from the workdir before this function runs;
-    helpers that don't yet consume it fall through to their pre-Δ.12a
-    direct-CSV path with no behavioural change.
+    instead of re-reading the provider frames.  The ctx is built by
+    :func:`load_flextool` from the provider before this function runs.
     """
     from flextool.engine.preprocess.params import _direct as _dp
     from flextool.engine.preprocess.params import _projection as _pp
@@ -5817,10 +5804,12 @@ def build_handoff_from_solution(
     ``scale_the_objective`` is the objective scale this solve was built with (None = 1.0, as
     ``build_flextool``); the ``fix_price`` carrier divides it out of the duals.
 
-    The work folder must already have completed flextool's per-solve
-    preprocessing for ``solve_name`` (so ``solve_data/`` carries
-    ``period_first.csv``, ``solve__ed_invest.csv``,
-    ``realized_invest_periods_of_current_solve.csv``, etc.).
+    *provider* (the sub-solve's :class:`FlexDataProvider`) is required:
+    ``None`` raises ``ValueError``.  It must already carry the per-solve
+    preprocessing frames for ``solve_name`` (``solve_data/period_first``,
+    ``solve_data/solve__ed_invest``,
+    ``solve_data/realized_invest_periods_of_current_solve``, etc.);
+    *work_folder* only forms the provider keys and is never read.
     """
     import polars as pl  # local — keep this helper's import surface narrow
     # Native import — Γ.8.D moved SolveHandoff into engine.
@@ -5831,6 +5820,11 @@ def build_handoff_from_solution(
         synthetic_branch_tokens,
     )
 
+    if provider is None:
+        raise ValueError(
+            "build_handoff_from_solution requires the sub-solve's FlexDataProvider; "
+            "it never reads the work folder on disk."
+        )
     sd = work_folder / "solve_data"
     first_solve = _read_solve_first(work_folder, provider=provider)
     unitsize = _read_unitsize_long(work_folder, provider=provider)
@@ -6313,14 +6307,10 @@ def build_handoff_from_solution(
             # accumulate prior window (rename carrier schema → p/d/t): the window this solve started from, i.e. the
             # routed ``handoff/online_history`` its LP read (solve._carry_routing: the latest realised dispatch, which
             # is not the sequential predecessor after a storage / investment solve or for a realised-dispatch
-            # sibling); the predecessor's window without a Provider (unit-test synthesis).
+            # sibling).
             from flextool.engine.preprocess import _provider_keys as _K
             from flextool.engine.preprocess._provider_translators import read_handoff_frame as _read_hf
-            if provider is not None:
-                prior_hist = _read_hf(provider, _K.HANDOFF_ONLINE_HISTORY)
-            else:
-                prior_hist = (prior_handoff.online_history
-                              if prior_handoff is not None else None)
+            prior_hist = _read_hf(provider, _K.HANDOFF_ONLINE_HISTORY)
             if prior_hist is not None and prior_hist.height > 0:
                 prior_renamed = prior_hist.rename(
                     {"process": "p", "period": "d", "step": "t"}).with_columns(
