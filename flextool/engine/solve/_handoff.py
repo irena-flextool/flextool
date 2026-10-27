@@ -122,9 +122,9 @@ class SolveHandoff:
     # End-of-roll committed online commitment for rolling unit-commitment
     # carry-over — the online analog of ``roll_end_state``.  Carries the
     # realized committed-jump-end ``v_online`` (unit-count space, NOT
-    # ×unitsize) per online process so the next roll's
-    # ``online__startup`` / ``online__shutdown`` first-step rows see the
-    # prior roll's commitment as their predecessor instead of the
+    # ×unitsize) per online process so the next roll's ``online_change``
+    # first-step row (``dt_online_carry``) sees the
+    # prior roll's commitment as its predecessor instead of the
     # meaningless within-roll cyclic wrap.  Without it the startup cost is
     # re-charged at every roll boundary even when the unit stays committed.
     # Producer: prior roll's v_online_{linear,integer} at its last

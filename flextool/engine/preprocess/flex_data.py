@@ -731,7 +731,7 @@ class FlexData:
     # Rolling online-commitment carry (online analog of
     # ``p_roll_continue_state``).  Carried committed-jump-end ``v_online``
     # of the prior roll per online process; applied at the continuation
-    # roll's first ``online__startup`` / ``online__shutdown`` step as the
+    # roll's first ``online_change`` step (``dt_online_carry``) as the
     # predecessor constant so a unit that stays committed is not re-charged
     # a startup across the roll boundary.  ``None`` on the first roll /
     # non-rolling / no-online solves (→ byte-identical baseline path).
@@ -5997,7 +5997,7 @@ def build_handoff_from_solution(
     # ---- roll_end_online: committed-jump-end v_online per online process ----
     # OC1 — the online analog of ``roll_end_state`` (above).  Carries the
     # realized committed-jump-end ``v_online`` so the next roll's
-    # ``online__startup`` / ``online__shutdown`` first-step rows see the
+    # ``online_change`` first-step row (``dt_online_carry``) sees the
     # prior roll's commitment as predecessor instead of the within-roll
     # cyclic wrap (which re-charges a startup at every boundary).  Kept in
     # unit-count space (NOT ×unitsize): the online dynamics operate on

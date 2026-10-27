@@ -38,8 +38,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       stateConstantWithinBlock_eq, nodeBalanceBlock_eq (bind_intraperiod_blocks)
   Flows & capacity    maxFlow, maxFlow_negCap, maxFlow_back; maxOutputSum(_negCap);
                       dc_reference_angle_eq, dc_flow_eq [_dc_power_flow]
-  Units               max{Online,Startup,Shutdown}, online__{startup,shutdown}, maxFlow_online[_shutdown],
-                      maxFlow_back_online, maxOutputSum_online, maxInputFlow_online[_shutdown],
+  Units               max{Online,Startup,Shutdown}, online_change, maxFlow_online[_shutdown[_branch]],
+                      maxFlow_back_online, maxOutputSum_online, maxInputFlow_online[_shutdown[_branch]],
                       minimum_{uptime,downtime}, online_fix_eq [_online];
                       maxFlow_exact_{forward,reverse} (exact connections) [_exact];
                       minFlow_{minload,output_floor,reserve,reserve_arc} [_unit_floors];

@@ -1,7 +1,7 @@
 """Unit commitment: units (and connections) online, startups, shutdowns and minimum up/down times.
 
 Owns the variables v_online_*, v_startup_*, v_shutdown_* and the equations maxOnline, maxStartup,
-maxShutdown, online__startup, online__shutdown, maxFlow_online, maxFlow_online_shutdown,
+maxShutdown, online_change, maxFlow_online, maxFlow_online_shutdown,
 maxFlow_online_shutdown_branch, maxFlow_back_online, maxOutputSum_online, maxInputFlow_online,
 maxInputFlow_online_shutdown, maxInputFlow_online_shutdown_branch, minimum_uptime, minimum_downtime and
 online_fix_eq.  The ``_branch`` rows exist only at a branch point (several mid-horizon branches continuing from
@@ -39,8 +39,8 @@ def add_variables(b: "_Build") -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_online_linear[p,d,t], v_startup_linear[p,d,t], v_shutdown_linear[p,d,t] ≥ 0
     #   ∀ (p,d,t) ∈ p_online_dt, p ∈ process_online_linear
-    # Units online, starting up and shutting down (count of unitsize),
-    # continuous.
+    # Units online, and units started / shut down: the change of units online, online_change
+    # (count of unitsize), continuous.
     if b.has_online_lin:
         b.v_online_linear = m.add_var("v_online_linear", ("p", "d", "t"), b.p_olin_idx)
         b.v_startup_linear = m.add_var("v_startup_linear", ("p", "d", "t"), b.p_olin_idx)
@@ -113,40 +113,27 @@ def add_constraints(b: "_Build") -> None:
                 lhs["divest"] = divest_term
             return lhs
 
-        # ─── EQ. ─── maxOnline / maxStartup / maxShutdown_{linear,integer} ───
+        # ─── EQ. ─── maxOnline_{linear,integer} ──────────────────────────────
         # ─────────────────────────────────────────────────────────────────────
         # v_online[p,d,t] − Σ v_invest_p[p,d′] + Σ v_divest_p[p,d′]  ≤ existing_count[p,d]
-        # v_startup[p,d,t]  (same invest/divest terms)                 ≤ existing_count[p,d]
-        # v_shutdown[p,d,t] (same invest/divest terms)                 ≤ existing_count[p,d]
         #   ∀ (p,d,t) ∈ p_idx
-        # Units online, starting up or shutting down cannot exceed the units built.
+        # Units online cannot exceed the units built.
         m.add_cstr(f"maxOnline{sfx}",   over=p_idx, sense="<=",
                    lhs_terms=_lhs_with_invdiv(v_online, "online"),
                    rhs_terms={"max_units": d.p_process_existing_count})
-        m.add_cstr(f"maxStartup{sfx}",  over=p_idx, sense="<=",
-                   lhs_terms=_lhs_with_invdiv(v_startup, "startup"),
-                   rhs_terms={"max_units": d.p_process_existing_count})
-        m.add_cstr(f"maxShutdown{sfx}", over=p_idx, sense="<=",
-                   lhs_terms=_lhs_with_invdiv(v_shutdown, "shutdown"),
-                   rhs_terms={"max_units": d.p_process_existing_count})
 
-        # ─── EQ. ─── online__startup / online__shutdown_{linear,integer} ─────
-        # ─────────────────────────────────────────────────────────────────────
-        # v_startup[p,d,t] + v_online_prev[p,d,t] (+ carry[p,d,t])  ≥ v_online[p,d,t]
-        # v_shutdown[p,d,t] + v_online[p,d,t]  ≥ v_online_prev[p,d,t] (+ carry[p,d,t])
-        #   ∀ (p,d,t) ∈ p_idx
-        # Startups and shutdowns count the change in units online.  v_online_prev is the online predecessor
-        # of (p,d,t), one of (part A, #98 / N1, disjoint — each (d,t) matches at most one):
+        # The online predecessor of every (p,d,t) ∈ p_idx (part A, #98 / N1), one of three disjoint pieces
+        # (each (p,d,t) matches at most one):
         #   1. (d,t) ∈ dt_ramp_link → v_online[p,d_previous,t_previous] of the link: the interior adjacent
-        #      step (today's lag), PLUS a continuing period boundary or a mid-horizon branch's first step (#98) —
-        #      topics the cyclic lag below cannot reach (Lag only matches within the same d).
+        #      step, PLUS a continuing period boundary or a mid-horizon branch's first step (#98) — topics the
+        #      cyclic lag below cannot reach (Lag only matches within the same d).
         #   2. else (d,t) ∈ dt_online_carry → p_roll_continue_online[p], a constant: the previous roll's
         #      realized committed v_online, carried to the roll's real first step (and the forecast branches
         #      starting with it) so a unit that stays committed is not charged a new startup there (N1: this
         #      used to land on the (d,t)-name-sorted first row, not necessarily the roll's actual first step).
         #   3. else v_online[p,d,t_previous_within_solve] of dtttdt (Lag): the cyclic wrap at a solve's / a
-        #      non-continuing period's first step, steps after a timeline gap, representative-block starts —
-        #      unchanged.  0 where that lag target is not in the solve (also unchanged).
+        #      non-continuing period's first step, steps after a timeline gap, representative-block starts.
+        #      0 where that lag target is not in the solve.
         rco = d.p_roll_continue_online
         d_dtype, t_dtype = p_idx.schema["d"], p_idx.schema["t"]
         link_native = None
@@ -180,30 +167,65 @@ def add_constraints(b: "_Build") -> None:
                 excl_dt = excl[0] if len(excl) == 1 else pl.concat(excl).unique()
                 dtttdt_rest = dtttdt_rest.join(excl_dt, on=["d", "t"], how="anti")
 
-        su_lhs: dict = {"startup": v_startup}
-        sd_rhs: dict = {}
+        online_prev_terms: dict = {}
         if link_native is not None:
             v_online_prev_link = _var_view(v_online, f"__online_prev_link{sfx}",
                                            {"d": "d_previous", "t": "t_previous"}, to_axis=True)
-            link_term = Sum(Where(v_online_prev_link, link_native), over=("d_previous", "t_previous"))
-            su_lhs["online_prev_link"] = link_term
-            sd_rhs["online_prev_link"] = link_term
+            online_prev_terms["online_prev_link"] = Sum(Where(v_online_prev_link, link_native),
+                                                        over=("d_previous", "t_previous"))
         if carry_rows is not None:
             # Sparse Param at the carried boundary row(s) only; Param + Param outer-joins with 0-fill.
-            carry_param = Param(("p", "d", "t"), carry_rows)
-            su_lhs["roll_continue_online"] = carry_param
-            sd_rhs["roll_continue_online"] = carry_param
+            online_prev_terms["roll_continue_online"] = Param(("p", "d", "t"), carry_rows)
         if dtttdt_rest is not None and dtttdt_rest.height > 0:
-            v_online_lag = Lag(v_online, dtttdt_rest, "t", "t_previous_within_solve")
-            su_lhs["online_prev_lag"] = v_online_lag
-            sd_rhs["online_prev_lag"] = v_online_lag
-        m.add_cstr(f"online__startup{sfx}",  over=p_idx, sense=">=",
-                   lhs_terms=su_lhs,
-                   rhs_terms={"online_now":  v_online})
-        m.add_cstr(f"online__shutdown{sfx}", over=p_idx, sense=">=",
-                   lhs_terms={"shutdown":    v_shutdown,
-                              "online_now":  v_online},
-                   rhs_terms=sd_rhs)
+            online_prev_terms["online_prev_lag"] = Lag(v_online, dtttdt_rest, "t", "t_previous_within_solve")
+
+        # ─── EQ. ─── online_change_{linear,integer} ──────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # v_online[p,d,t] − v_online_prev[p,d,t] − v_startup[p,d,t] + v_shutdown[p,d,t]  =  0
+        #   ∀ (p,d,t) ∈ p_idx;   v_online_prev as derived above (rules 1-3)
+        # The change in units online is the units started minus the units shut down (Backbone's
+        # q_startshut).  With maxStartup / maxShutdown below, a startup without a unit coming online, or a
+        # shutdown without one going offline, is impossible; a fleet (unitsize < built) can still start and
+        # stop units in the same step (both cost nothing extra on the ramp rows of a single-output arc, part
+        # C) — a single integer unit cannot (maxStartup / maxShutdown forbid it there).
+        m.add_cstr(f"online_change{sfx}", over=p_idx, sense="==",
+                   lhs_terms={"online": v_online, "shutdown": v_shutdown},
+                   rhs_terms={"startup": v_startup, **online_prev_terms})
+
+        # ─── EQ. ─── maxStartup_{linear,integer} ─────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # v_startup[p,d,t] − v_online[p,d,t]  ≤  0                                 ∀ (p,d,t) ∈ p_idx
+        # Units started in a step are online in it.
+        m.add_cstr(f"maxStartup{sfx}", over=p_idx, sense="<=",
+                   lhs_terms={"startup": v_startup, "online_neg": -v_online})
+
+        # ─── EQ. ─── maxShutdown_{linear,integer} ─────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # v_shutdown[p,d,t] + v_online[p,d,t] − Σ v_invest_p[p,d″] + Σ v_divest_p[p,d″]  ≤  existing_count[p,d]
+        #   ∀ (p,d,t) ∈ p_idx whose online predecessor is v_online of the SAME period d (rules 1 with
+        #   d_previous = d, and 3 — owner question Q-c14c-A default)
+        # Units shut down in a step are offline in it.  Not built where the predecessor is in another period
+        # or carried from an earlier roll (capacity may differ there — a unit online at the end of the
+        # previous period / roll must still be able to "shut down" even if this step's capacity is lower);
+        # sd ≤ v_online_prev follows there from online_change + maxStartup instead (su ≤ on_t ⇒
+        # sd = su − on_t + on_prev ≤ on_prev).
+        exclude_shutdown = None
+        if link_native is not None:
+            cross_period_link = link_native.filter(pl.col("d") != pl.col("d_previous")).select("p", "d", "t")
+            if cross_period_link.height > 0:
+                exclude_shutdown = cross_period_link
+        if carry_rows is not None:
+            carry_pdt = carry_rows.select("p", "d", "t")
+            exclude_shutdown = (carry_pdt if exclude_shutdown is None
+                                else pl.concat([exclude_shutdown, carry_pdt]).unique())
+        max_shutdown_over = (p_idx if exclude_shutdown is None
+                             else p_idx.join(exclude_shutdown, on=["p", "d", "t"], how="anti"))
+        if max_shutdown_over.height > 0:
+            sd_lhs = _lhs_with_invdiv(v_shutdown, "shutdown")
+            sd_lhs["online"] = v_online
+            m.add_cstr(f"maxShutdown{sfx}", over=max_shutdown_over, sense="<=",
+                       lhs_terms=sd_lhs,
+                       rhs_terms={"max_units": d.p_process_existing_count})
 
         # ─── EQ. ─── maxFlow_online_{linear,integer} ─────────────────────────
         # ─────────────────────────────────────────────────────────────────────

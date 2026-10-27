@@ -341,8 +341,8 @@ def rolling(tmp_path_factory) -> list:
 
 def test_online_connection_rolling(rolling) -> None:
     """A8: every continuation roll carries west_east's committed online state: p_roll_continue_online has the
-    previous roll's v_online at its last realized step, and the first-step online__startup row has no wrap
-    column.  Before: no online variables for west_east next to the online coal_plant."""
+    previous roll's v_online at its last realized step, and the first-step online_change row has no cyclic-wrap
+    predecessor.  Before: no online variables for west_east next to the online coal_plant."""
     carried = 0
     for prev, nxt in zip(rolling, rolling[1:]):
         rco = nxt.flex_data.p_roll_continue_online

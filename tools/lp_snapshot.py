@@ -2479,7 +2479,7 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
         # f"...{sfx}", sfx=_{kind}
         *(f"{base}_{kind}"
           for base in ("maxOnline", "maxStartup", "maxShutdown",
-                       "online__startup", "online__shutdown",
+                       "online_change",
                        "maxFlow_online", "maxOutputSum_online",
                        "maxInputFlow_online", "maxFlow_online_shutdown",
                        "maxInputFlow_online_shutdown", "maxFlow_back_online",

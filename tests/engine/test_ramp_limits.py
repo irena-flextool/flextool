@@ -233,19 +233,21 @@ def test_midhorizon_branches_ramp_from_trunk(tmp_path_factory) -> None:
 def test_online_continues_across_period_boundary(tmp_path_factory) -> None:
     """A1.  TWO_PERIODS (p2020 t0001-24, p2025 t0025-48 of one timeline) + coal_plant linear online
     (min_load 0.2, startup_cost 100), flat demand that keeps the unit online throughout: p2025's first step's
-    online__startup row has coal_plant's v_online_linear[p2020,t0024] as its only predecessor column (part A
-    rule 1, #98).  Oracle: the unit stays online across the boundary (flat demand, no shutdown anywhere), so
-    the ``>=`` row's minimiser (startup_cost > 0) sets v_startup there to exactly max(0, on_now - on_prev) = 0.
-    Before: the row had no predecessor at p2025 t0025 (Lag only matches within the same period), so
-    v_startup there was forced to equal v_online there (~1.0), costing startup_cost x that count."""
+    online_change row has coal_plant's v_online_linear[p2020,t0024] as its only predecessor column (part A
+    rule 1, #98), coefficient -1 (on − on_prev − su + sd = 0: on_prev moved to the LHS with its sign flipped).
+    Oracle: the unit stays online across the boundary (flat demand, no shutdown anywhere), so the equality
+    forces v_startup there to exactly max(0, on_now - on_prev) = 0.  Before: the row had no predecessor at
+    p2025 t0025 (Lag only matches within the same period), so v_startup there was forced to equal v_online
+    there (~1.0), costing startup_cost x that count."""
     vals = TWO_PERIODS + [
         ["unit", PLANT, "startup_method", b64("linear", "str")],
         ["unit", PLANT, "min_load", b64(0.2, "float")],
         ["unit", PLANT, "startup_cost", b64(100.0, "float")]]
     step = _last(_solve(tmp_path_factory, "uc_2p", vals, entities=TWO_PERIODS_ENTS))
     pb = build(step.flex_data)
-    row = row_terms(pb, "online__startup_linear")[f"online__startup_linear[{PLANT},p2025,t0025]"]
-    assert coef(row, f"v_online_linear[{PLANT},p2020,t0024]") == pytest.approx(1.0)
+    row = row_terms(pb, "online_change_linear")[f"online_change_linear[{PLANT},p2025,t0025]"]
+    assert coef(row, f"v_online_linear[{PLANT},p2020,t0024]") == pytest.approx(-1.0)
+    assert coef(row, f"v_online_linear[{PLANT},p2025,t0025]") == pytest.approx(1.0)
     # exactly two v_online_linear columns: the cross-period predecessor (above) and this step's own online_now
     assert sorted(c for c in row if c.startswith("v_online_linear[")) == [
         f"v_online_linear[{PLANT},p2020,t0024]", f"v_online_linear[{PLANT},p2025,t0025]"]
@@ -259,7 +261,7 @@ def test_online_roll_carry_steps_module(tmp_path_factory) -> None:
     a2025 — a name that sorts BEFORE p2020 — coal linear online with a ramp, rolls of 16 h / jump 10), with
     startup_cost 20 (> 0 — critique item 4: with cost 0 a zero-gain start/stop pair could inflate the relation
     below past equality): on every continuation roll the online carry lands on the roll's own real first step
-    (that step's online__startup row has no OTHER v_online_linear predecessor column — only roll_continue_online
+    (that step's online_change row has no OTHER v_online_linear predecessor column — only roll_continue_online
     — and its (d, t) is exactly ``dt_online_carry``), never the (d, t)-name-sorted first row.  Relational
     oracle: over the whole realized run, in solve order (including roll boundaries), Σ v_startup ==
     Σ positive increases of the realized online trajectory (±1e-7; a nonzero startup_cost makes any zero-gain
@@ -284,9 +286,9 @@ def test_online_roll_carry_steps_module(tmp_path_factory) -> None:
         oc = utf8(s.flex_data.dt_online_carry)
         assert oc is not None and oc.height >= 1
         pb = build(s.flex_data)
-        rows = row_terms(pb, "online__startup_linear")
+        rows = row_terms(pb, "online_change_linear")
         for d, t in oc.select("d", "t").iter_rows():
-            row = rows[f"online__startup_linear[{PLANT},{d},{t}]"]
+            row = rows[f"online_change_linear[{PLANT},{d},{t}]"]
             assert len([c for c in row if c.startswith("v_online_linear[")]) == 1   # only online_now, no link
     traj_on, traj_su = [], []
     for s in steps:
@@ -325,9 +327,9 @@ def test_shutdown_reduction_across_continuing_periods(tmp_path_factory) -> None:
 
 def test_midhorizon_online_branches_from_trunk(tmp_path_factory) -> None:
     """A5.  Mid-horizon stochastic fixture (p2035 t0001-3, p2040 branches from t0004) with unit ``base`` online
-    (linear, min_load 0.2, startup_cost 50): every p2040 branch's online__startup row at its first step has
-    v_online_linear[base,p2035,t0003] as its only predecessor; no row links FROM p2035 t0001.  Before: no
-    predecessor at any branch's first step (Lag only matches within the same period)."""
+    (linear, min_load 0.2, startup_cost 50): every p2040 branch's online_change row at its first step has
+    v_online_linear[base,p2035,t0003] as its only predecessor (coefficient -1); no row links FROM p2035 t0001.
+    Before: no predecessor at any branch's first step (Lag only matches within the same period)."""
     from tests.engine._unit_db import FLEXTOOL_ROOT
 
     url, scen = make_db(tmp_path_factory, alt="uc_mid",
@@ -337,12 +339,12 @@ def test_midhorizon_online_branches_from_trunk(tmp_path_factory) -> None:
                         base_chain=["init", "base", "stoch"],
                         fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_midhorizon_nreal0.json")
     step = _last(run(tmp_path_factory, url, scen))
-    rows = row_terms(build(step.flex_data), "online__startup_linear")
+    rows = row_terms(build(step.flex_data), "online_change_linear")
     firsts = [r for r in rows if step_of(r) == ("p2040", "t0004") or (step_of(r)[1] == "t0004"
               and step_of(r)[0].startswith("p2040"))]
     assert len(firsts) >= 2
     for r in firsts:
-        assert coef(rows[r], "v_online_linear[base,p2035,t0003]") == pytest.approx(1.0)
+        assert coef(rows[r], "v_online_linear[base,p2035,t0003]") == pytest.approx(-1.0)
         d, t = step_of(r)
         assert sorted(c for c in rows[r] if c.startswith("v_online_linear[")) == sorted(
             ["v_online_linear[base,p2035,t0003]", f"v_online_linear[base,{d},{t}]"])

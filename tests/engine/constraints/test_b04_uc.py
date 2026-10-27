@@ -169,7 +169,7 @@ def test_linear_and_integer_uc_constraint_suffix_isolation():
     cstr = set(pb.cstr_names())
     # Hand-calc: every UC constraint family is suffix-namespaced.
     for base in ("maxOnline", "maxStartup", "maxShutdown",
-                 "online__startup", "online__shutdown", "maxFlow_online"):
+                 "online_change", "maxFlow_online"):
         assert f"{base}_linear" in cstr, f"missing {base}_linear"
         assert f"{base}_integer" in cstr, f"missing {base}_integer"
     # And the row counts: each suffixed family covers exactly its own

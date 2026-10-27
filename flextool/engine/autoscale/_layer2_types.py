@@ -428,10 +428,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxStartup": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/_online.py (maxShutdown_<sfx>)
     "maxShutdown": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/model/_online.py (online__startup_<sfx>)
-    "online__startup": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/model/_online.py (online__shutdown_<sfx>)
-    "online__shutdown": CstrFamily(QuantityType.DIMENSIONLESS),
+    # c14c part B — flextool/engine/model/_online.py (online_change_<sfx>): the equality that replaced
+    # online__startup_<sfx> / online__shutdown_<sfx> (two >= rows).
+    "online_change": CstrFamily(QuantityType.DIMENSIONLESS),
     # OC1 #1 sub-slice (b) — separate_dispatch sibling v_online PIN
     # (_online.py online_fix_eq_<linear|integer>; the resolver strips the UC
     # suffix to this base).  Pins the dimensionless unit-count v_online to

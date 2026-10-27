@@ -188,8 +188,8 @@ def test_coarse_unit_online_every_step(tmp_path_factory) -> None:
     for name, terms in rows.items():
         t = name[:-1].split(",")[-1]
         assert coef(terms, f"v_online_linear[liquefier_A,y2030,{t}]") < 0
-    start = row_terms(pb, "online__startup_linear", "liquefier_A,y2030,t0025")
-    terms = start["online__startup_linear[liquefier_A,y2030,t0025]"]
+    start = row_terms(pb, "online_change_linear", "liquefier_A,y2030,t0025")
+    terms = start["online_change_linear[liquefier_A,y2030,t0025]"]
     assert "v_online_linear[liquefier_A,y2030,t0024]" in terms
 
 
