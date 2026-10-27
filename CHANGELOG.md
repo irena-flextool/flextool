@@ -11,6 +11,14 @@
   the Map's `index_name` explicitly to `period` or `time` (see "How to define the temporal properties
   of the model" in the user docs) avoids the ambiguity entirely and is still recommended.
 
+- **A commodity's price ladder (`price_ladder_annual`, `price_ladder_cumulative`) is read correctly
+  regardless of how its Map levels are indexed.** A depth-2 annual ladder (the same tier prices and
+  quantities applied in every model period) was silently ignored, as was any ladder whose Map levels
+  were left with Toolbox's default index name instead of being named `tier` / `period` explicitly.
+  Two commodities authoring the ladder at different depths (one with a fixed annual price, one varying
+  by period) could also have their tier numbers and period names mixed up with each other. Every one
+  of these forms is now read correctly; naming a ladder's Map levels explicitly is no longer necessary.
+
 - **A reused work folder no longer mixes old outputs in.** Running FlexTool twice into the same
   work folder (for example, re-running in the same directory after a failed run or a `--csv-dump`
   run) could mix an earlier run's per-roll output files into the new run's results, producing wrong

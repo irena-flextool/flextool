@@ -1982,6 +1982,146 @@ def resolve_param_shape(
 
 
 # ---------------------------------------------------------------------------
+# Facet-leaf multi-depth resolution (#169) — the commodity price ladders
+# ---------------------------------------------------------------------------
+
+
+def resolve_facet_groups(
+    source: "InputSource",
+    entity_class: str,
+    parameter_name: str,
+) -> "list[ResolvedShape]":
+    """Resolve a facet-leaf parameter (the commodity price ladders) whose entities may author it at more
+    than one depth: ``commodity.price_ladder_annual`` admits both the depth-2 form (``tier -> {price,
+    quantity}``, the same ladder in every period) and the depth-3 form (``period -> tier -> {price,
+    quantity}``).
+
+    Reads each entity's raw label path via :meth:`InputSource.parameter_entity_label_paths` and groups
+    entities by path LENGTH (depth) -- never by label, which is user-set per ladder value and tells
+    nothing about depth.  With a single depth, returns ``[resolve_param_shape(source, ...)]`` unchanged
+    (no view is built).  With several depths, each group is resolved on
+    ``_view_without(source, ..., <every OTHER group's entities>, "facet_depth")``, so every view's frame
+    is unrolled from exactly one depth -- the reader's "deepest-row-wins" positional unroll
+    (:meth:`SpineDbReader._discover_index_cols`) never has to arbitrate between a depth-2 and a depth-3
+    row of the SAME parameter, which is what made the depth-2 and ``x``-labelled forms unreadable before
+    (the reader always discovered the depth-3 columns from the one deepest row and placed every other
+    row's values into them positionally).
+
+    Each element of the result is a facet :class:`ResolvedShape` (``Shape.MAP_TIER_FACET`` /
+    ``Shape.MAP_PERIOD_TIER_FACET``); a depth outside :data:`PARAM_ALLOWED_SHAPES`' allow-list is rejected
+    by :func:`resolve_param_shape` as today (``FlexToolConfigError``).  A source without
+    ``parameter_entity_label_paths`` (or that raises ``KeyError`` for this key) falls back to a single
+    whole-frame :func:`resolve_param_shape` call -- the pre-existing behaviour for every reader that
+    cannot report per-entity depths.
+    """
+    fn = getattr(source, "parameter_entity_label_paths", None)
+    if fn is not None:
+        try:
+            paths = fn(entity_class, parameter_name)
+        except KeyError:
+            paths = None
+    else:
+        paths = None
+    if paths is None:
+        resolved = resolve_param_shape(source, entity_class, parameter_name)
+        return [resolved] if resolved is not None else []
+
+    by_depth: "dict[int, list[tuple[str, ...]]]" = {}
+    for ent, path in paths.items():
+        by_depth.setdefault(len(path), []).append(ent)
+    if len(by_depth) <= 1:
+        resolved = resolve_param_shape(source, entity_class, parameter_name)
+        return [resolved] if resolved is not None else []
+
+    out: "list[ResolvedShape]" = []
+    for depth in sorted(by_depth):
+        others = frozenset(e for d, ents in by_depth.items() if d != depth for e in ents)
+        view = _view_without(source, entity_class, parameter_name, others, "facet_depth")
+        resolved = resolve_param_shape(view, entity_class, parameter_name)
+        if resolved is not None:
+            out.append(resolved)
+    return out
+
+
+def facet_long_frame(
+    resolved: "ResolvedShape",
+    period_filter: "pl.DataFrame | None",
+) -> pl.DataFrame:
+    """The long-form frame of one facet-leaf :class:`ResolvedShape`: ``[<entity cols>, (d), i, facet,
+    value]`` -- the ``d`` column is present only for :class:`Shape.MAP_PERIOD_TIER_FACET`, or when
+    *period_filter* cross-joins one in for a :class:`Shape.MAP_TIER_FACET` group (below).
+
+    The axes are taken BY POSITION, never by label: the frame's non-entity, non-value columns are in
+    depth order (the reader builds ``ent_cols + index_cols + value``, and nothing downstream reorders
+    them).  For ``MAP_PERIOD_TIER_FACET`` the first three are ``(period, tier, facet)``; for
+    ``MAP_TIER_FACET`` the first two are ``(tier, facet)``.  A facet-leaf Map's outer-level
+    ``index_name`` is user-set per value (see :func:`_recognise_facet_shape`'s own docstring), so labels
+    are never consulted here either.  Raises :class:`FlexToolConfigError` (an internal-error wording,
+    not a user-input one) when the column count does not match the shape's expected depth.
+
+    ``d`` and ``i`` are cast to Utf8 so a depth-2 group's cross-joined ``d`` (below) and a depth-3
+    group's own, raw ``d`` carry the SAME dtype when a caller concatenates several groups' frames
+    (:func:`flextool.engine.preprocess.params._direct._ladder_split` does, for a commodity that authors
+    both depths on different tiers).
+
+    When *period_filter* is given and the shape is ``MAP_TIER_FACET`` (depth 2: "the same ladder in
+    every period"), the frame is cross-joined with *period_filter*'s own periods, EXCLUDING the active
+    stochastic branch periods (:func:`flextool.engine.preprocess.params._branch.active_branch_anchor_pairs`)
+    -- the emit's "same ladder in every period" rule, restricted to the solve's periods the way
+    :func:`._direct._filter_param_by_periods` restricts it later anyway.  Branch periods are excluded so a
+    depth-2 ladder matches its depth-3 equivalent and the vectorized emit seed: neither of those gives a
+    ladder a row for a branch period today (tracked, not fixed, as design.md's O-2).
+    """
+    ent_cols = list(resolved.entity_dim_columns)
+    df = resolved.frame
+    if df is None:
+        df = pl.DataFrame(schema={c: pl.Utf8 for c in ent_cols})
+    non_val_cols = [c for c in df.columns if c not in ent_cols and c != "value"]
+
+    if resolved.shape is Shape.MAP_PERIOD_TIER_FACET:
+        if len(non_val_cols) != 3:
+            raise FlexToolConfigError(
+                f"facet_long_frame: internal error -- a MAP_PERIOD_TIER_FACET frame has "
+                f"{len(non_val_cols)} non-entity column(s) (expected 3: period, tier, facet); "
+                f"columns={non_val_cols!r}.")
+        out = df.select(
+            *ent_cols,
+            pl.col(non_val_cols[0]).cast(pl.Utf8).alias("d"),
+            pl.col(non_val_cols[1]).cast(pl.Utf8).alias("i"),
+            pl.col(non_val_cols[2]).alias("facet"),
+            "value",
+        )
+        return out
+
+    if resolved.shape is Shape.MAP_TIER_FACET:
+        if len(non_val_cols) != 2:
+            raise FlexToolConfigError(
+                f"facet_long_frame: internal error -- a MAP_TIER_FACET frame has {len(non_val_cols)} "
+                f"non-entity column(s) (expected 2: tier, facet); columns={non_val_cols!r}.")
+        out = df.select(
+            *ent_cols,
+            pl.col(non_val_cols[0]).cast(pl.Utf8).alias("i"),
+            pl.col(non_val_cols[1]).alias("facet"),
+            "value",
+        )
+        if period_filter is None or period_filter.height == 0:
+            return out
+        periods = period_filter.select(pl.col("d").cast(pl.Utf8)).unique(maintain_order=True)
+        # Function-local import: input -> preprocess, kept out of the module import order (mirrors
+        # ``_with_branch_periods`` / ``_period_time_vocab``).
+        from flextool.engine.preprocess.params._branch import active_branch_anchor_pairs
+        pairs = active_branch_anchor_pairs()
+        if pairs is not None and pairs.height > 0:
+            branch_members = pairs.get_column("br").cast(pl.Utf8).to_list()
+            periods = periods.filter(~pl.col("d").is_in(branch_members))
+        return (out.join(periods, how="cross")
+                   .select(*ent_cols, "d", "i", "facet", "value"))
+
+    raise FlexToolConfigError(
+        f"facet_long_frame: unsupported shape {resolved.shape!r} (expected a facet-leaf shape).")
+
+
+# ---------------------------------------------------------------------------
 # Broadcast helpers — produce per-(entity, d, t) and per-(entity, d) frames
 # ---------------------------------------------------------------------------
 

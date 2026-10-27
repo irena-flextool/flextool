@@ -53,7 +53,11 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine.input._param_shapes import parameter_entity_values
+from flextool.engine.input._param_shapes import (
+    facet_long_frame,
+    parameter_entity_values,
+    resolve_facet_groups,
+)
 from flextool.engine.preprocess._reserve_methods import RESERVE_METHODS_BY_PARTITION
 
 
@@ -1865,47 +1869,42 @@ def commodity_with_ladder_cumulative(source: "InputSource") -> pl.DataFrame:
               .collect())
 
 
+def _commodity_tier_pairs(source: "InputSource", parameter_name: str) -> pl.DataFrame:
+    """Distinct ``(c, i)`` pairs of a price-ladder parameter, read by shape at every depth it is
+    authored (:func:`._param_shapes.resolve_facet_groups`), never by column name — a depth-2 ladder
+    (``tier -> {price, quantity}``) has no ``period`` column at all, and an ``x``-labelled ladder has no
+    ``tier`` column either (the reader names the tier level ``x`` / ``x_2`` too when its own
+    ``index_name`` is unset), so a literal ``"tier" in cols`` check missed both and left this empty.
+    """
+    groups = resolve_facet_groups(source, "commodity", parameter_name)
+    if not groups:
+        return _empty({"c": pl.Utf8, "i": pl.Utf8})
+    ent_col = groups[0].entity_dim_columns[0]
+    frames = [facet_long_frame(g, None) for g in groups]
+    long = pl.concat(frames, how="diagonal_relaxed")
+    return (long.lazy()
+              .pipe(rename_to_axis, {ent_col: "c"})
+              .select("c", "i")
+              .unique()
+              .sort("c", "i")
+              .collect())
+
+
 def commodity__tier_ann(source: "InputSource") -> pl.DataFrame:
     """Distinct ``(c, i)`` pairs from the annual price ladder.
 
-    Schema: ``[c, i]``.  ``commodity_ladder_annual`` is a structured
-    Map(period → Map(tier → Map({"price","quantity"} → f64))).  The
-    SpineDbReader split this into ``p_ladder_ann_price`` /
-    ``p_ladder_ann_quantity`` keyed on ``(commodity, period, tier)``;
-    we project to distinct ``(c, tier)`` pairs.
+    Schema: ``[c, i]``.  ``commodity.price_ladder_annual`` is a depth-2 Map(tier → {price, quantity})
+    (the same ladder in every model period) OR a depth-3 Map(period → tier → {price, quantity}); either
+    way every tier of every commodity that authors this parameter is included, independently of the
+    active solve's periods (the depth-2 form's per-period cross-join is the emit's job, not this
+    membership projection's).
     """
-    # Use the resolved Direct frame as the source — try price first
-    # then quantity (either suffices for tier membership).
-    for parameter_name in ("price_ladder_annual",):
-        df = _try_param(source, "commodity", parameter_name)
-        if df is None:
-            continue
-        cols = df.columns
-        if "tier" in cols and "name" in cols:
-            return (df.lazy()
-                      .pipe(rename_to_axis, {"name": "c", "tier": "i"})
-                      .select("c", "i")
-                      .unique()
-                      .sort("c", "i")
-                      .collect())
-    return _empty({"c": pl.Utf8, "i": pl.Utf8})
+    return _commodity_tier_pairs(source, "price_ladder_annual")
 
 
 def commodity__tier_cum(source: "InputSource") -> pl.DataFrame:
-    """Distinct ``(c, i)`` pairs from the cumulative price ladder."""
-    for parameter_name in ("price_ladder_cumulative",):
-        df = _try_param(source, "commodity", parameter_name)
-        if df is None:
-            continue
-        cols = df.columns
-        if "tier" in cols and "name" in cols:
-            return (df.lazy()
-                      .pipe(rename_to_axis, {"name": "c", "tier": "i"})
-                      .select("c", "i")
-                      .unique()
-                      .sort("c", "i")
-                      .collect())
-    return _empty({"c": pl.Utf8, "i": pl.Utf8})
+    """Distinct ``(c, i)`` pairs from the cumulative price ladder (depth-2 only)."""
+    return _commodity_tier_pairs(source, "price_ladder_cumulative")
 
 
 # ---------------------------------------------------------------------------

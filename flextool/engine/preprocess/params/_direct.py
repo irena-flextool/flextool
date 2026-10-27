@@ -34,10 +34,13 @@ from flextool.engine.input._axis_enums import (cast_frame_axes,
                                                  get_global_axis_enums,
                                                  rename_to_axis)
 from flextool.engine.input._param_shapes import (
+    Shape,
     broadcast_to_period,
     broadcast_to_period_time,
+    facet_long_frame,
     fill_default_over_grid,
     promote_param_to_dt,
+    resolve_facet_groups,
     resolve_param_shape,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
@@ -1982,77 +1985,61 @@ def p_commodity_price_from_source(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# §1.19 — Commodity ladder split (price / quantity sub-frames).
+# §1.19 — Commodity ladder split (price / quantity sub-frames).  Δ.17c-per-c25:
 #
-# Spine schema: ``commodity.price_ladder_annual`` is a 3-level Map
-# ``(period → tier → {"price","quantity"} → f64)`` which the
-# SpineDbReader unrolls to ``[name, period, tier, x, value]`` where
-# ``x ∈ {"price", "quantity"}``.  We split it into two Params keyed
-# (c, i, d) with ``value`` being the price (resp. quantity) only.
-# ``commodity.price_ladder_cumulative`` mirrors but without period.
+# Spine schema: ``commodity.price_ladder_annual`` is EITHER a depth-2 Map
+# ``(tier → {"price","quantity"} → f64)`` -- the same ladder in every model
+# period -- OR a depth-3 Map ``(period → tier → {"price","quantity"} → f64)``.
+# ``commodity.price_ladder_cumulative`` is depth-2 only, period-agnostic.
+# Column-name detection (the pre-c25 code) misread a depth-2 ladder (no
+# ``period`` column at all) and any ``x``-labelled ladder (no ``tier`` column
+# either -- the reader names the tier level ``x``/``x_2`` too when its own
+# ``index_name`` is unset) as unreadable, and a MIX of depths on different
+# commodities as positionally scrambled (the reader discovers index columns
+# from the single deepest row and places every other row's values there by
+# position).  :func:`._param_shapes.resolve_facet_groups` reads each entity's
+# raw label PATH (never its text) and groups by depth instead, so every depth
+# is read on its own, depth-pure view.  We split the resulting long frame into
+# two Params keyed ``(c, i, d)`` (annual) / ``(c, i)`` (cumulative) with
+# ``value`` being the price (resp. quantity) only.
 
 def _ladder_split(source: "InputSource", parameter_name: str,
-                    *, with_period: bool) -> tuple[Param | None, Param | None]:
-    """Return ``(price_param, quantity_param)`` from the named ladder
-    parameter.  ``with_period=True`` means the unroll produces a
-    ``period`` column (annual ladder); ``False`` means tier-only
-    (cumulative ladder).
+                    *, period_filter: "pl.DataFrame | None") -> tuple[Param | None, Param | None]:
+    """Return ``(price_param, quantity_param)`` from the named ladder parameter, read by shape at every
+    depth it is authored.  ``period_filter`` is the active solve's ``dt`` for the annual ladder (a depth-2
+    group is cross-joined with it -- ``._param_shapes.facet_long_frame``'s "same ladder in every period"
+    rule) and ``None`` for the cumulative ladder (period-agnostic; a depth-2 group is never cross-joined).
+
+    A depth-2 annual group with ``period_filter`` ``None`` or empty (no active solve periods) gives no
+    rows for that group -- the same "nothing to broadcast over" outcome the pre-c25 seed gave in that
+    edge case, kept rather than inventing period-less ladder rows.
     """
-    try:
-        df = source.parameter_explicit("commodity", parameter_name)
-    except (KeyError, AttributeError):
-        try:
-            df = source.parameter("commodity", parameter_name)
-        except KeyError:
-            return None, None
-    if df is None or df.height == 0:
+    groups = resolve_facet_groups(source, "commodity", parameter_name)
+    if not groups:
         return None, None
-    cols = df.columns
-    needed = {"name", "tier", "value"}
-    if with_period:
-        needed.add("period")
-    if not needed.issubset(cols):
+    is_annual = parameter_name == "price_ladder_annual"
+    frames: list[pl.DataFrame] = []
+    for resolved in groups:
+        if (is_annual and resolved.shape is Shape.MAP_TIER_FACET
+                and (period_filter is None or period_filter.height == 0)):
+            continue
+        frames.append(facet_long_frame(resolved, period_filter))
+    if not frames:
         return None, None
-    # Detect the leaf-discriminator column ("x" or whatever name carries
-    # the "price"/"quantity" tag).  All non-(name, period, tier, value)
-    # columns are candidates; pick the first.
-    keep_cols = ({"name", "period", "tier", "value"} if with_period
-                  else {"name", "tier", "value"})
-    leaf_cols = [c for c in cols if c not in keep_cols]
-    if len(leaf_cols) != 1:
-        return None, None
-    leaf = leaf_cols[0]
-    rename = {"name": "c", "tier": "i"}
-    if with_period:
-        rename["period"] = "d"
-    base = (df.lazy()
-              .rename(rename)
+    long = pl.concat(frames, how="diagonal_relaxed")
+    ent_col = groups[0].entity_dim_columns[0]
+    base = (long.lazy()
+              .rename({ent_col: "c"} if ent_col != "c" else {})
               .filter(pl.col("value").is_not_null())
               .with_columns(pl.col("i").cast(pl.Utf8)))
-    out_dims = ("c", "i", "d") if with_period else ("c", "i")
-    price_lf = base.filter(pl.col(leaf) == "price").select(*out_dims, "value")
-    qty_lf   = base.filter(pl.col(leaf) == "quantity").select(*out_dims, "value")
+    out_dims = ("c", "i", "d") if "d" in long.columns else ("c", "i")
+    price_lf = base.filter(pl.col("facet") == "price").select(*out_dims, "value")
+    qty_lf   = base.filter(pl.col("facet") == "quantity").select(*out_dims, "value")
     price_df = price_lf.collect()
     qty_df = qty_lf.collect()
     p_price = Param(out_dims, price_df) if price_df.height > 0 else None
     p_qty = Param(out_dims, qty_df) if qty_df.height > 0 else None
     return p_price, p_qty
-
-
-def p_ladder_ann_price_from_source(source: "InputSource") -> Param | None:
-    return _ladder_split(source, "price_ladder_annual", with_period=True)[0]
-
-
-def p_ladder_ann_quantity_from_source(source: "InputSource") -> Param | None:
-    return _ladder_split(source, "price_ladder_annual", with_period=True)[1]
-
-
-def p_ladder_cum_price_from_source(source: "InputSource") -> Param | None:
-    return _ladder_split(source, "price_ladder_cumulative", with_period=False)[0]
-
-
-def p_ladder_cum_quantity_from_source(source: "InputSource") -> Param | None:
-    return _ladder_split(source, "price_ladder_cumulative", with_period=False)[1]
 
 
 def apply_direct_params_a(source: "InputSource",
@@ -2395,13 +2382,13 @@ def apply_direct_params_b(source: "InputSource",
     # ─── Δ.4b — commodity ladder split (price / quantity) ────────────────
     # _ladder_split returns (price, quantity) — both can be None.
     p_ann_price, p_ann_qty = _ladder_split(source, "price_ladder_annual",
-                                              with_period=True)
+                                              period_filter=dt)
     if p_ann_price is not None:
         flex_data.p_ladder_ann_price = _filter_param_by_periods(p_ann_price, dt)
     if p_ann_qty is not None:
         flex_data.p_ladder_ann_quantity = _filter_param_by_periods(p_ann_qty, dt)
     p_cum_price, p_cum_qty = _ladder_split(source, "price_ladder_cumulative",
-                                              with_period=False)
+                                              period_filter=None)
     if p_cum_price is not None:
         flex_data.p_ladder_cum_price = p_cum_price
     if p_cum_qty is not None:
