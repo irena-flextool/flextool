@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **`invest_marginal` now shows the dual of an unbuilt entity, and group investment caps/floors
+  reach their members.** For a `unit`, `connection` or `node` entity that is eligible to invest but
+  not built, `invest_marginal` (and the `unit_invest_marginal__d` / `connection_invest_marginal__d` /
+  `node_invest_marginal__d` outputs) always showed `0` (or a near-zero `-0.0`), because the output
+  writer looked up the entity's class (unit/connection/node) from a file a run never writes. That
+  value is now read from the run's own data, so an unbuilt entity shows its true (negative) marginal
+  value — negative there means it would be unprofitable to build, which is expected, not a numerical
+  artefact (see the updated description in `docs/results.md`). A binding investment cap or floor on a
+  *group* of entities is also now correctly spread to its member entities' `invest_marginal`, instead
+  of only ever applying to the group itself.
+
 - **`--csv-dump` writes the per-solve input dump again.** With
   `--csv-dump` (the GUI's "Full" debug level) each sub-solve's inputs
   were supposed to be dumped to `input/` and `solve_data/` in the work

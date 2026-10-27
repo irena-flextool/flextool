@@ -1237,24 +1237,20 @@ def write_variable_parquet(
 # ---------------------------------------------------------------------------
 
 
-def _load_entity_class(work_folder: Path, set_name: str) -> set[str]:
-    """Load the members of an entity class directly from ``input/``.
+def _entity_class_members(provider: "object | None", set_name: str) -> set[str]:
+    """Members of entity class *set_name* (``"process_unit"``, ``"process_connection"``, ``"node"``),
+    from the sub-solve's :class:`FlexDataProvider` snapshot under key ``f"input/{set_name}"``.
 
-    Sourcing from ``input/`` keeps the Category C custom writers
-    independent of phase 3 (which runs AFTER our writers inside
-    ``_run_highs``) — important for the planned phase-3 retirement.
-
-    ``set_name`` maps to files like ``input/process_unit.csv``,
-    ``input/process_connection.csv``, ``input/node.csv``.  The input
-    files are long-format with a single column named after the set.
+    Item 163: a normal run never writes ``input/{set_name}.csv``, so reading it from disk left
+    every fresh run's entity-class split empty.  The provider carries the same class sets GMPL used
+    to write.  A None provider or a missing key gives an empty set — never reads disk.
     """
-    path = work_folder / "input" / f"{set_name}.csv"
-    if not path.exists():
+    if provider is None:
         return set()
-    df = pd.read_csv(path)
-    if df.empty or len(df.columns) == 0:
+    frame = provider.get(f"input/{set_name}")
+    if frame is None or frame.is_empty() or frame.width == 0:
         return set()
-    return set(df.iloc[:, 0].astype(str).tolist())
+    return set(frame.to_series(0).cast(pl.Utf8).to_list())
 
 
 def _load_inflation_factor(
@@ -1528,6 +1524,7 @@ def write_v_dual_invest_by_class(
     *,
     solve_name: str,
     output_dir: Path | str,
+    provider: "object | None" = None,
     realized_periods_csv: Path | str | None = None,
     work_folder: Path | str | None = None,
     flex_data: "FlexData | None" = None,
@@ -1547,7 +1544,16 @@ def write_v_dual_invest_by_class(
     written reduced cost is in true NPV currency per v_invest unit —
     consistent with every row-dual writer (cf.
     :func:`write_v_dual_node_balance`).
+
+    ``provider`` is required: it supplies the entity-class membership
+    (item 163 — a normal run never writes ``input/{process_unit,
+    process_connection,node}.csv``, so that split is fixed from the
+    sub-solve's :class:`FlexDataProvider` snapshot instead of disk).
     """
+    if provider is None:
+        raise ValueError(
+            "write_v_dual_invest_by_class needs the sub-solve's FlexDataProvider (entity classes)"
+        )
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     wf = Path(work_folder) if work_folder is not None else output_dir.parent
@@ -1567,9 +1573,9 @@ def write_v_dual_invest_by_class(
     )
 
     classes = {
-        "process_unit": _load_entity_class(wf, "process_unit"),
-        "process_connection": _load_entity_class(wf, "process_connection"),
-        "node": _load_entity_class(wf, "node"),
+        "process_unit": _entity_class_members(provider, "process_unit"),
+        "process_connection": _entity_class_members(provider, "process_connection"),
+        "node": _entity_class_members(provider, "node"),
     }
     output_suffixes = {
         "process_unit": "unit",
@@ -2113,6 +2119,7 @@ def write_all_variables(
         )),
         ("v_dual_invest_{unit,connection,node}", lambda: write_v_dual_invest_by_class(
             h, solve_name=solve_name, output_dir=output_dir,
+            provider=provider,
             realized_periods_csv=realized_periods_csv,
             flex_data=flex_data,
             scale_the_objective=scale_the_objective,

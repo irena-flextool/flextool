@@ -17,8 +17,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pandas as pd
+import polars as pl
 import pytest
 
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.lean_parquet import read_lean_parquet
 from flextool.process_outputs.read_highs_solution import (
     VARIABLE_SPECS,
@@ -360,17 +362,21 @@ def test_write_v_obj_scalar(tmp_path: Path) -> None:
 def test_write_v_dual_invest_by_class_splits_entities(tmp_path: Path) -> None:
     """Produces 3 parquets; each keeps only entities matching its class.
 
+    Item 163: the entity-class membership comes from the sub-solve's
+    FlexDataProvider (``input/process_unit`` / ``input/process_connection`` /
+    ``input/node``), never from a work-folder CSV — a normal run never
+    writes those CSVs.
+
     Also pins the col-dual scaling: HiGHS returns the reduced cost in
     scaled-objective units, so the writer multiplies by
     ``1 / scale_the_objective``.  With ``scale_the_objective=1e-6`` the
     written values equal the raw col duals × 1e6.
     """
-    # input/ layout that the loader reads
-    (tmp_path / "input").mkdir()
     (tmp_path / "output_raw").mkdir()
-    (tmp_path / "input" / "process_unit.csv").write_text("process_unit\nu1\nu2\n")
-    (tmp_path / "input" / "process_connection.csv").write_text("process_connection\nc1\n")
-    (tmp_path / "input" / "node.csv").write_text("node\nn1\n")
+    provider = FlexDataProvider()
+    provider.put("input/process_unit", pl.DataFrame({"process_unit": ["u1", "u2"]}))
+    provider.put("input/process_connection", pl.DataFrame({"process_connection": ["c1"]}))
+    provider.put("input/node", pl.DataFrame({"node": ["n1"]}))
 
     h = _fake_highs(
         variable_names=[
@@ -387,7 +393,7 @@ def test_write_v_dual_invest_by_class_splits_entities(tmp_path: Path) -> None:
     paths = write_v_dual_invest_by_class(
         h, solve_name="s1",
         output_dir=tmp_path / "output_raw",
-        work_folder=tmp_path,
+        provider=provider,
         scale_the_objective=scale,
     )
     assert len(paths) == 3
@@ -407,11 +413,14 @@ def test_write_v_dual_invest_by_class_splits_entities(tmp_path: Path) -> None:
 
 def test_write_v_dual_invest_by_class_honours_custom_scale(tmp_path: Path) -> None:
     """A non-default scale_the_objective scales the reduced cost by 1/scale."""
-    (tmp_path / "input").mkdir()
     (tmp_path / "output_raw").mkdir()
-    (tmp_path / "input" / "process_unit.csv").write_text("process_unit\nu1\n")
-    (tmp_path / "input" / "process_connection.csv").write_text("process_connection\n")
-    (tmp_path / "input" / "node.csv").write_text("node\n")
+    provider = FlexDataProvider()
+    provider.put("input/process_unit", pl.DataFrame({"process_unit": ["u1"]}))
+    provider.put(
+        "input/process_connection",
+        pl.DataFrame({"process_connection": []}, schema={"process_connection": pl.Utf8}),
+    )
+    provider.put("input/node", pl.DataFrame({"node": []}, schema={"node": pl.Utf8}))
 
     h = _fake_highs(
         variable_names=["v_invest[u1,p2020]"],
@@ -422,11 +431,56 @@ def test_write_v_dual_invest_by_class_honours_custom_scale(tmp_path: Path) -> No
     write_v_dual_invest_by_class(
         h, solve_name="s1",
         output_dir=tmp_path / "output_raw",
-        work_folder=tmp_path,
+        provider=provider,
         scale_the_objective=scale,
     )
     unit_df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_invest_unit__s1.parquet")
     assert unit_df.loc[("s1", "p2020"), "u1"] == pytest.approx(5.0 / scale)
+
+
+def test_v_dual_invest_classes_ignore_input_csvs(tmp_path: Path) -> None:
+    """A stale ``input/process_connection.csv`` (left by an earlier run / dump) must not override
+    the provider's entity-class membership — item 163 T8: the writer never reads the work folder."""
+    (tmp_path / "output_raw").mkdir()
+    (tmp_path / "input").mkdir()
+    # Stale disk file: claims u1 is a connection. The writer must ignore it.
+    (tmp_path / "input" / "process_connection.csv").write_text("process_connection\nu1\n")
+
+    provider = FlexDataProvider()
+    provider.put("input/process_unit", pl.DataFrame({"process_unit": ["u1"]}))
+    provider.put(
+        "input/process_connection",
+        pl.DataFrame({"process_connection": []}, schema={"process_connection": pl.Utf8}),
+    )
+    provider.put("input/node", pl.DataFrame({"node": []}, schema={"node": pl.Utf8}))
+
+    h = _fake_highs(
+        variable_names=["v_invest[u1,p2020]"],
+        col_values=[0.0],
+        col_duals=[1.0],
+    )
+    write_v_dual_invest_by_class(
+        h, solve_name="s1",
+        output_dir=tmp_path / "output_raw",
+        provider=provider,
+        work_folder=tmp_path,
+        scale_the_objective=1e-6,
+    )
+    unit_df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_invest_unit__s1.parquet")
+    conn_df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_invest_connection__s1.parquet")
+    assert list(unit_df.columns) == ["u1"]
+    assert list(conn_df.columns) == []
+
+
+def test_write_v_dual_invest_by_class_requires_provider(tmp_path: Path) -> None:
+    """Item 163: a None provider is a wiring bug, not a tolerated absence — raise, don't silently
+    revert to an empty entity-class split."""
+    (tmp_path / "output_raw").mkdir()
+    h = _fake_highs(variable_names=["v_invest[u1,p2020]"], col_values=[0.0], col_duals=[1.0])
+    with pytest.raises(ValueError, match="FlexDataProvider"):
+        write_v_dual_invest_by_class(
+            h, solve_name="s1", output_dir=tmp_path / "output_raw", provider=None,
+        )
 
 
 def test_write_v_dual_node_balance_applies_per_period_inflation(tmp_path: Path) -> None:
