@@ -1412,7 +1412,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                        .filter(pl.col("p").is_in(pss["p"].unique())))
 
     # ``p_slope`` is produced by ``apply_derived_b.p_slope_from_source``; this provider seed is kept for
-    # synthetic per-sub-solve names. Stage 4 of the CSV reload isolation checks whether the DB overlay always wins.
+    # synthetic per-sub-solve names. The DB overlay normally wins.
     slope_long = _read_wide_per_entity(sd / "pdtProcess_slope.csv",
                                          rename={"entity":"p"},
                                          provider=provider)
@@ -1511,7 +1511,7 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     if flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None:
         return (None, None, None, None)
     # ``p_co2_content`` is produced by ``apply_direct_params``; this provider seed is kept for synthetic
-    # per-sub-solve names. Stage 4 of the CSV reload isolation checks whether the DB overlay always wins.
+    # per-sub-solve names. The DB overlay normally wins.
     p_comm = _provider_read(provider, "input/p_commodity",
                               inp / "p_commodity.csv")
     co2_content = Param(("c",),
@@ -2021,7 +2021,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         schema={"e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8})
 
     # ``p_entity_max_units`` is produced by apply_derived_c; this provider seed is kept for synthetic
-    # per-sub-solve names. Stage 4 of the CSV reload isolation checks whether the DB overlay always wins.
+    # per-sub-solve names. The DB overlay normally wins.
     p_max_units = Param(("e", "d"),
         _read_wide_e_d(sd / "p_entity_max_units.csv", provider=provider)
             .filter(pl.col("value") > 0)

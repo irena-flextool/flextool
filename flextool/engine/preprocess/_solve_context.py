@@ -389,7 +389,7 @@ def _require_provider(provider: "object | None", consumer: str) -> None:
     """Raise ``ValueError`` when *provider* is None.
 
     SolveContext reads only the sub-solve's provider; there is no disk
-    fallback (c24 stage 3).
+    fallback.
     """
     if provider is None:
         raise ValueError(

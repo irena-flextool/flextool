@@ -37,7 +37,7 @@ from flextool.engine import run_chain_from_db
 
 run_chain_from_db(
     input_db_url,
-    scenario_name=None,
+    scenario_name,  # required: None or "" raises FlexToolConfigError
     work_folder=None,
     *,
     override_provider=None,  # Callable[[], dict[str, pl.DataFrame]] | None

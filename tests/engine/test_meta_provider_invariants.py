@@ -599,13 +599,20 @@ _DISK_PROBE_ATTRS: frozenset[str] = frozenset({
     "exists", "is_file", "is_dir", "is_symlink", "isfile", "isdir",
     "read_text", "read_bytes", "iterdir", "glob", "rglob",
 })
-# ``<module>.<function>`` file readers and directory listings.
-_DISK_READ_FUNCS: frozenset[tuple[str, str]] = frozenset({
-    ("pl", "read_parquet"), ("pl", "scan_parquet"), ("pl", "read_ipc"), ("pl", "scan_ipc"),
-    ("pl", "read_json"), ("pl", "read_ndjson"), ("pl", "scan_ndjson"),
-    ("json", "load"), ("pickle", "load"),
-    ("os", "listdir"), ("os", "scandir"), ("os", "walk"),
+# ``<module>.<function>`` file readers, directory listings and stat probes.  Polars is matched under both of its
+# import names; pandas file readers (every ``read_*``) are matched separately below.
+_POLARS_FILE_READERS: frozenset[str] = frozenset({
+    "read_parquet", "scan_parquet", "read_ipc", "scan_ipc", "read_json", "read_ndjson", "scan_ndjson",
+    "read_csv", "scan_csv", "read_csv_batched", "read_excel",
 })
+_DISK_READ_FUNCS: frozenset[tuple[str, str]] = frozenset(
+    {(module, func) for module in ("pl", "polars") for func in _POLARS_FILE_READERS}
+    | {
+        ("json", "load"), ("pickle", "load"),
+        ("os", "listdir"), ("os", "scandir"), ("os", "walk"), ("os", "stat"), ("os", "lstat"),
+    }
+)
+_PANDAS_MODULE_NAMES: frozenset[str] = frozenset({"pd", "pandas"})
 # Modules whose ``open(path, mode)`` takes the path first, like the builtin.
 _PATH_FIRST_OPEN_MODULES: frozenset[str] = frozenset({"builtins", "io", "codecs", "gzip", "bz2", "lzma"})
 
@@ -677,6 +684,7 @@ def _rule_4_disk_calls(tree: ast.AST, fname: str) -> tuple[list[Violation], set[
             out.append(Violation(fname, node.lineno, f"{shown} in a read mode", hint))
         elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and (
             (func.value.id, func.attr) in _DISK_READ_FUNCS
+            or (func.value.id in _PANDAS_MODULE_NAMES and func.attr.startswith("read_"))
         ):
             out.append(Violation(fname, node.lineno, f"{func.value.id}.{func.attr}(...)", hint))
         elif isinstance(func, ast.Attribute) and func.attr in _DISK_PROBE_ATTRS:
@@ -764,6 +772,15 @@ def test_rule_4_read_allowlist_is_used() -> None:
     ("p.read_bytes()", "preprocess/flex_data.py"),
     ("pl.read_parquet(p)", "preprocess/flex_data.py"),
     ("pl.scan_parquet(p)", "model/core.py"),
+    ("pl.read_excel(p)", "preprocess/flex_data.py"),
+    ("pl.read_csv(p)", "model/core.py"),
+    ("polars.read_parquet(p)", "preprocess/flex_data.py"),
+    ("polars.scan_csv(p)", "model/core.py"),
+    ("pd.read_csv(p)", "preprocess/emit/_blocks.py"),
+    ("pd.read_excel(p)", "model/core.py"),
+    ("pandas.read_parquet(p)", "preprocess/flex_data.py"),
+    ("os.stat(p)", "preprocess/flex_data.py"),
+    ("os.lstat(p)", "model/core.py"),
     ("json.load(fh)", "preprocess/flex_data.py"),
     ("os.listdir(d)", "preprocess/flex_data.py"),
     ("d.glob('*.csv')", "preprocess/flex_data.py"),
@@ -787,6 +804,9 @@ def test_rule_4_detector_flags_every_pattern(source: str, fname: str) -> None:
     ("p.mkdir(parents=True, exist_ok=True)", "preprocess/flex_data.py"),
     ("p.exists()", "solve/_orchestration.py"),                       # (b) covers preprocess/ and model/ only
     ("json.loads(s)", "preprocess/flex_data.py"),
+    ("pd.DataFrame(rows)", "preprocess/flex_data.py"),            # pandas, but not a file read
+    ("pl.read_database(q, conn)", "preprocess/flex_data.py"),    # a DB query, not the work folder
+    ("frame.stat()", "model/core.py"),                            # only os.stat / os.lstat are stat probes
     ("provider.get('solve_data/process_exact')", "preprocess/flex_data.py"),
     ('"""read_csv_fallback was deleted"""', "preprocess/flex_data.py"),  # docstrings are not references
 ])

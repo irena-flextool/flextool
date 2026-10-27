@@ -1039,16 +1039,14 @@ def _read_input_rows(
     change the block layout.  ``provider`` is required.
 
     ``provider.get`` returns data rows only (no header) and frames never carry empty rows, so the shape matches
-    the former ``csv.reader`` loop with its header skip and blank-row filter.
+    the former ``csv.reader`` loop with its header skip and blank-row filter.  An absent key gives ``None``;
+    a provider error (``EvictedFrameError``, a READS-declaration bug) propagates.
     """
     if provider is None:
         raise ValueError(f"_read_input_rows({basename!r}) requires a FlexDataProvider; the work folder is not read")
     stem = basename[:-4] if basename.endswith(".csv") else basename
     for key in (f"input/{stem}", stem):
-        try:
-            df = provider.get(key)
-        except Exception:  # pragma: no cover — defensive only
-            df = None
+        df = provider.get(key)
         if df is None:
             continue
         return [[_cell_str(c) for c in row] for row in df.iter_rows()]
@@ -1103,10 +1101,7 @@ def emit_block_data_for_solve(
     # ``_read_input_rows`` (``input/p_group`` before bare ``p_group``); first
     # non-None frame wins; no frame → the default header below.
     for key in ("input/p_group", "p_group"):
-        try:
-            df = provider.get(key)
-        except Exception:  # pragma: no cover — defensive only
-            df = None
+        df = provider.get(key)
         if df is not None:
             p_group_header = list(df.columns)
             break
@@ -1128,10 +1123,7 @@ def emit_block_data_for_solve(
     p_group_decomp_header: list[str] | None = None
     # Same shape as the ``p_group`` header probe above.
     for key in ("input/p_group_decomposition", "p_group_decomposition"):
-        try:
-            df = provider.get(key)
-        except Exception:  # pragma: no cover — defensive only
-            df = None
+        df = provider.get(key)
         if df is not None:
             p_group_decomp_header = list(df.columns)
             break

@@ -348,7 +348,7 @@ relevant key families are declared in `engine/preprocess/_provider_keys.py`:
 
 The Provider is the contract. Disk-side CSV mirrors in `input/` + `solve_data/`
 exist only when `csv_dump=True` (a debug toggle; one folder, shared by every
-sub-solve) and are not load-bearing for any downstream phase.
+sub-solve; a Benders solve dumps its undecomposed FlexData) and are not load-bearing for any downstream phase.
 
 #### CSV dump (supported) and CSV reload (unsupported)
 

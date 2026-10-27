@@ -2511,6 +2511,22 @@ def _drive_cascade(
             self._prior_fp = None
             self._prior_solver_key = None
 
+        def _dump_solve_inputs(self, data, complete_solve_name: str) -> None:
+            """``--csv-dump``: write *data* (the sub-solve's FlexData) to ``input/`` + ``solve_data/`` in the work
+            folder; a no-op without the flag.  Called by the monolithic and the Benders sub-solve alike.
+
+            A failed debug dump does not stop the run (the LP and the outputs do not depend on it), but it is
+            logged at ERROR: the runner's logger is pinned to ERROR in ``_drive_cascade``, so a warning would
+            never be seen."""
+            if not getattr(self.state, "csv_dump", False):
+                return
+            try:
+                data.dump_csvs(self.state.paths.work_folder)
+            except Exception as exc:  # noqa: BLE001
+                self.state.logger.error(
+                    f"dump_csvs failed for {complete_solve_name}: {exc!r}"
+                )
+
         def _run_benders_solve(
             self,
             complete_solve_name: str,
@@ -2732,6 +2748,9 @@ def _drive_cascade(
             # ``v_divest_n`` to long-form (entity, d, value) frames whose
             # columns match ``polar_high.Solution.value(name)`` exactly;
             # it is ``{}`` when the model has no investment.
+            # ``--csv-dump``: dump the solve's undecomposed FlexData (the master and the regions are derived from it).
+            self._dump_solve_inputs(data, complete_solve_name)
+
             from flextool.engine.preprocess.flex_data import (
                 build_handoff_from_solution,
             )
@@ -3942,16 +3961,7 @@ def _drive_cascade(
             # cascade stays in-memory; ``--csv-dump`` materialises the
             # full FlexData → CSV snapshot for debug.
             _t_dump_start = time.perf_counter() if _phase_timing else 0.0
-            # A failed debug dump does not stop the run (the LP and the outputs do not depend on it), but it is
-            # logged at ERROR: the runner's logger is pinned to ERROR in ``_drive_cascade``, so a warning would
-            # never be seen.
-            try:
-                if getattr(self.state, "csv_dump", False):
-                    data.dump_csvs(self.state.paths.work_folder)
-            except Exception as exc:  # noqa: BLE001
-                self.state.logger.error(
-                    f"dump_csvs failed for {complete_solve_name}: {exc!r}"
-                )
+            self._dump_solve_inputs(data, complete_solve_name)
             if _phase_timing:
                 _tr.record(
                     "handoff_part",

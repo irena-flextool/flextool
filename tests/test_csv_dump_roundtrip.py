@@ -28,6 +28,9 @@ Hard rules from Step 2.5:
   ``run_chain_from_db`` itself.
 * A provider snapshot carries the objective scale the solve was built with
   (one row), so an offline reload does not need it passed separately.
+* A ``decomposition=benders`` solve dumps its (undecomposed) inputs the same
+  way, and its provider carries the scale the Benders master and regions
+  were built with.
 """
 from __future__ import annotations
 
@@ -60,6 +63,18 @@ def small_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     db_path = tmp_path_factory.mktemp("db_csv_dump") / "tests.sqlite"
     url = json_to_db(TEST_DIR / "fixtures" / "tests.json", db_path)
     migrate_database(url, up_to=40)
+    return url
+
+
+# A single ``decomposition=benders`` solve over three ``benders_regional`` groups.
+BENDERS_SCENARIO = "lh2_three_region_trade_invest"
+
+
+@pytest.fixture(scope="module")
+def benders_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    db_path = tmp_path_factory.mktemp("db_csv_dump_benders") / "lh2_trade_invest.sqlite"
+    url = json_to_db(TEST_DIR / "fixtures" / "lh2_three_region_trade_invest.json", db_path)
+    migrate_database(url)
     return url
 
 
@@ -189,6 +204,52 @@ class TestCsvDumpRoundTrip:
         last_step.flex_data_provider.snapshot_processed_inputs(workdir)
         frame = pd.read_csv(workdir / "solve_data" / "scale_the_objective.csv")
         assert frame.shape[0] == 1 and float(frame["value"].iloc[0]) == scale
+
+    @pytest.mark.solver
+    def test_csv_dump_benders_solve(
+        self,
+        benders_db_url: str,
+        tmp_path_factory: pytest.TempPathFactory,
+        dump_calls: list[Path],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A ``decomposition=benders`` solve dumps its inputs too, and its provider holds the Benders build scale.
+
+        The scale is the one the orchestrator hands to ``solve_benders`` (master and regions build with it), taken
+        from a pass-through spy, so the check is relational and does not depend on the resolved default.
+        """
+        from flextool.engine.solve import _benders
+
+        built_scales: list[float] = []
+        real_solve_benders = _benders.solve_benders
+
+        def spy(*args, **kwargs):
+            built_scales.append(kwargs["scale_the_objective"])
+            return real_solve_benders(*args, **kwargs)
+
+        monkeypatch.setattr(_benders, "solve_benders", spy)
+        workdir = tmp_path_factory.mktemp("csv_dump_benders")
+        with caplog.at_level(logging.ERROR):
+            steps = _run(benders_db_url, BENDERS_SCENARIO, workdir, csv_dump=True, keep_solutions=True)
+        assert len(steps) == 1, list(steps)
+        step = next(iter(steps.values()))
+        assert step.is_benders is True
+        assert len(built_scales) == 1, built_scales
+
+        assert dump_calls == [workdir], "the Benders solve did not run the per-sub-solve dump_csvs"
+        assert (workdir / "input" / "p_entity_unitsize.csv").is_file()
+        stamp = read_dump_stamp(workdir)
+        assert stamp is not None and "dump_csvs" in stamp["writers"], stamp
+        failed = [r.getMessage() for r in caplog.records if "dump_csvs failed" in r.getMessage()]
+        assert not failed, failed
+
+        dump = tmp_path_factory.mktemp("csv_dump_benders_snapshot")
+        step.flex_data_provider.snapshot_processed_inputs(dump)
+        # Read as text: the value is written with ``%.17g``, which pandas' default float parser does not round-trip.
+        frame = pd.read_csv(dump / "solve_data" / "scale_the_objective.csv", dtype=str)
+        assert frame.shape[0] == 1, frame
+        assert float(frame["value"].iloc[0]) == built_scales[0], frame
 
     def test_snapshot_processed_inputs_materialises_input_csvs(
         self,

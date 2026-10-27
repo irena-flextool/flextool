@@ -5,7 +5,8 @@
   were supposed to be dumped to `input/` and `solve_data/` in the work
   folder, but the setting never reached the solves, so only the
   end-of-run snapshot was written. Each sub-solve now dumps into the work
-  folder (a later sub-solve overwrites the files of an earlier one). The
+  folder (a later sub-solve overwrites the files of an earlier one); a
+  `decomposition=benders` solve dumps its whole, undecomposed input. The
   dump also keeps the solve's objective scale in
   `solve_data/scale_the_objective.csv`, which the end-of-run snapshot used
   to replace with an empty file, so the offline output writer
