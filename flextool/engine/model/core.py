@@ -1031,7 +1031,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
 
     # ─── EQ. ─── rp_inter_period_max_state / maxState_rp_start ───────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state_inter[n,d,b] + Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
+    # v_state_inter[n,d,b] + Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
     #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]  ≤  state_upper[n,d]
     #   ∀ n ∈ nodeState_rp, (d,b) ∈ rp_base_period, d ∈ period_in_use
     # v_state_rp_start[n,d,t] + (same invest/divest terms)  ≤  state_upper[n,d]
@@ -1123,6 +1123,11 @@ def _node_in_service(b: _Build, nodes: pl.DataFrame, tag: str, coef: "Param | No
     """``(Σ v_invest_n[n,d′], Σ v_divest_n[n,d′])`` over the invest / divest periods d′ in service in d,
     dims (n, d), for ``nodes``; each is None when there is no such variable or period.
 
+    Divest uses ``ndd_divest_active`` — the node analogue of ``edd_divest_active``,
+    keyed on the node Enum (never the process Enum) so a node id never cross-joins
+    against process rows.  A node retirement is permanent (no lifetime / reinvest),
+    so once active a divest stays active in every later period.
+
     ``coef`` multiplies the variable inside the sum.  ``tag`` keeps the variable-view names of different
     callers apart.
     """
@@ -1133,9 +1138,9 @@ def _node_in_service(b: _Build, nodes: pl.DataFrame, tag: str, coef: "Param | No
         alive = _entity_rows(d.edd_invest_set, "e", nodes, "n")
         if alive.height > 0:
             invested = Sum(Where(view if coef is None else view * coef, alive), over=("d_invest",))
-    if b.has_divest_n and d.edd_divest_active is not None:
+    if b.has_divest_n and d.ndd_divest_active is not None:
         view = _var_view(b.v_divest_n, "__at_divest" + tag, {"d": "d_divest"}, to_axis=True)
-        active = _entity_rows(d.edd_divest_active, "p", nodes, "n")
+        active = _entity_rows(d.ndd_divest_active, "n", nodes, "n")
         if active.height > 0:
             divested = Sum(Where(view if coef is None else view * coef, active), over=("d_divest",))
     return invested, divested
@@ -1373,7 +1378,7 @@ def _fix_start_terms(b: _Build) -> dict:
     # ─── fix_start terms (in nodeBalance_eq) ─────────────────────────────────
     #   − v_state[n,d,t]·(1 + α[n,d,t])·state_unitsize[n]
     #   + (1 − β[n,d,t])·state_start[n]·(existing[n,d] + Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]·su[n]
-    #                                    − Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]·su[n])
+    #                                    − Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]·su[n])
     #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ open-start nodes ∩ storage_fix_start, n ∉ carried
     # The first step of a node with no realised state from before the solve (carried: the nodes of
     # roll_continue_state; so the first solve of the model and of each nested level), where the state change is
@@ -1404,10 +1409,10 @@ def _fix_start_terms(b: _Build) -> dict:
         if alive.height > 0:
             term = Sum(Where(invested * start * su, alive), over=("d_invest",))
             terms["fwd_fix_invest_pos"] = term if loss is None else term * loss.keep_prev
-    if b.has_divest_n and d.edd_divest_active is not None:
+    if b.has_divest_n and d.ndd_divest_active is not None:
         divested = _var_view(b.v_divest_n, "__at_fwd_fix", {"d": "d_divest"},
                              to_axis=True)
-        active = (_entity_rows(d.edd_divest_active, "p", nodes, "n")
+        active = (_entity_rows(d.ndd_divest_active, "n", nodes, "n")
                   .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
         if active.height > 0:
             term = Sum(Where(divested * start * su, active), over=("d_divest",))
@@ -2972,7 +2977,7 @@ def _eq_max_state(b: _Build) -> None:
 
     # ─── EQ. ─── maxState ────────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state[n,d,t] + Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
+    # v_state[n,d,t] + Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
     #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]  ≤  state_upper[n,d]
     #   ∀ (n,d,t) ∈ nodeState_dt
     # Caps the storage state by the built storage capacity.  state_upper = existing / state_unitsize, so
@@ -3003,7 +3008,7 @@ def _eq_state_profiles(b: _Build) -> None:
     # ─── EQ. ─── profile_state_{upper_limit,lower_limit,fixed} ───────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] − profile[f,d,t]·av[n,d,t]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
-    #   + profile[f,d,t]·av[n,d,t]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
+    #   + profile[f,d,t]·av[n,d,t]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
     #   ≤ / ≥ / =  profile[f,d,t] · av[n,d,t] · existing[n,d] / state_unitsize[n]
     #   ∀ (n,f) ∈ node_profile_{upper,lower,fixed}, (d,t) ∈ dt
     # Bounds the storage state by a profile times the built storage capacity, in state units.
@@ -3057,7 +3062,7 @@ def _eq_storage_start_binding(b: _Build) -> None:
     # ─── EQ. ─── storage_state_start_binding ─────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] − state_start[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
-    #   + state_start[n]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
+    #   + state_start[n]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
     #   = state_start[n] · existing[n,d] / state_unitsize[n]
     #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ storage_fix_start, n ∉ carried,
     #     n ∉ bind_forward_only ∪ bind_within_timeblock ∪ bind_within_solve ∪ bind_within_period ∪ nodeStateBlock
@@ -3151,7 +3156,7 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     # ─── EQ. ─── storage_state_start_binding_cyclic_period ───────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d′,t′] − state_start[n]·Σ_{(n,d″,d′) ∈ edd_invest_set} v_invest_n[n,d″]
-    #   + state_start[n]·Σ_{(n,d″,d′) ∈ edd_divest_active} v_divest_n[n,d″]
+    #   + state_start[n]·Σ_{(n,d″,d′) ∈ ndd_divest_active} v_divest_n[n,d″]
     #   = state_start[n] · existing[n,d′] / state_unitsize[n]
     #   ∀ n ∈ storage_fix_start ∩ (bind_within_timeblock ∪ bind_within_solve ∪ bind_within_period
     #     ∪ looping nodeStateBlock), n ∉ carried, (n,d,t) ∈ nodeState_first_dt, (d′,t′) = the step (d,t) starts
@@ -3208,7 +3213,7 @@ def _eq_storage_end_binding(b: _Build) -> None:
     # ─── EQ. ─── storage_state_end_binding ───────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] − state_end[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
-    #   + state_end[n]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
+    #   + state_end[n]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
     #   = state_end[n] · existing[n,d] / state_unitsize[n]
     #   ∀ n ∈ storage_fix_end, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last, storage_solve_at_model_end,
     #     (n,d,t) ∉ the steps node_balance_fix_quantity_eq_lower / node_storage_usage_fix_le fix
@@ -3289,7 +3294,7 @@ def _eq_storage_reference_value(b: _Build) -> None:
     # ─── EQ. ─── storage_state_solve_horizon_reference_value ─────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] − reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
-    #   + reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′]
+    #   + reference_value[n,d,t]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
     #   = reference_value[n,d,t] · existing[n,d] / state_unitsize[n]
     #   ∀ n ∈ storage_use_reference_value, (n,d,t) ∈ horizon_end,
     #     (n ∈ nodeStateBlock ⇒ d ∈ period_block_chain), (n,d,t) ∉ the steps an upper-level solve fixes

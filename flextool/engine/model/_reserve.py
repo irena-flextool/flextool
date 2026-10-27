@@ -1375,7 +1375,7 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] · state_unitsize[n]
     #   + Σ_{(p,r,ud,nb,g) ∈ providers_down(n)} v_reserve[p,r,ud,nb,d,t] · unitsize[p] · duration[r,ud,g] / slope[p,d,t]
-    #   + Σ_{(n,d′,d) ∈ edd_divest_active} v_divest_n[n,d′] · state_unitsize[n]
+    #   + Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′] · state_unitsize[n]
     #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′] · state_unitsize[n]
     #   ≤ state_upper[n,d,t] · state_unitsize[n]
     #   ∀ n ∈ storage nodes of downward providers, (d,t) ∈ dt
@@ -1393,9 +1393,9 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
         slope_dn = _slope_factor(join_dn.select("p").unique(), reciprocal=True, back=back_dn)
         e_dn = Sum(Where(v_res_nb * d.p_unitsize * dur * slope_dn, join_dn), over=("p", "r", "ud", "nb", "g"))
         state_lhs: dict = {"state": v_state * us_n, "energy": e_dn}
-        if b.v_divest_n is not None and d.edd_divest_active is not None:
+        if b.v_divest_n is not None and d.ndd_divest_active is not None:
             v_div_n_at = _var_view(b.v_divest_n, "__at_reserve_down_divest", {"d": "d_divest"}, to_axis=True)
-            edd_div_n = _entity_rows(d.edd_divest_active, "p", d.nodeState, "n")
+            edd_div_n = _entity_rows(d.ndd_divest_active, "n", d.nodeState, "n")
             if edd_div_n.height > 0:
                 state_lhs["divest"] = Sum(Where(v_div_n_at, edd_div_n), over=("d_divest",)) * us_n
         if b.v_invest_n is not None and d.edd_invest_set is not None:

@@ -342,13 +342,10 @@ def _eq_cumulative_capacity(b: _Build) -> None:
     #        a period the author's own map leaves out is a configuration error (FA-12), not "no limit"
     #       
     #   min: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities ∩ cumulative_min_capacity.frame
-    #   _n: the node analogue with v_invest_n / v_divest_n and state_unitsize[n] — ``edd_divest_active``
-    #       is built only from process divestments (``pd_divest_set``; no node equivalent exists), so
-    #       the _n rows keep subtracting only the row's own period's divestment (pre-existing
-    #       limitation, unchanged by #29; tracking node divest history needs its own data plumbing).
+    #   _n: the node analogue with v_invest_n / v_divest_n, state_unitsize[n] and ``ndd_divest_active``.
     # Keeps the capacity of an entity in a period (existing + invested and still alive − every
-    # retirement up to and including d, #29, process axis only) within its cumulative limits,
-    # MW (MWh for storage nodes).  Existing capacity is a constant on the right-hand side.
+    # retirement up to and including d, #29, processes and storage nodes) within its cumulative
+    # limits, MW (MWh for storage nodes).  Existing capacity is a constant on the right-hand side.
     for name, sense, cap, var, divest, axis, param_name in (
         ("maxCumulative_capacity_p", "<=", d.ed_cumulative_max_capacity, b.v_invest_p, b.v_divest_p, "p",
          "cumulative_max_capacity"),
@@ -384,12 +381,12 @@ def _eq_cumulative_capacity(b: _Build) -> None:
         invest = _var_view(var, "__cumcap_at", {"d": "d_invest"})
         lhs: dict = {"invest_cum": Sum(Where(invest * unitsize, lifetime), over=("d_invest",))}
         if divest is not None:
-            if axis == "p" and d.edd_divest_active is not None:
+            active_frame = d.edd_divest_active if axis == "p" else d.ndd_divest_active
+            if active_frame is not None:
                 # #29: every earlier divestment still active at d, not just d's own — the maxFlow
-                # measure (core.py divest_in_dispatch_p).  ``edd_divest_active`` only ever carries
-                # process rows (built solely from ``pd_divest_set``), so this branch is process-only.
+                # measure (core.py divest_in_dispatch_p).
                 view = _var_view(divest, "__cumcap_div", {"d": "d_divest"}, to_axis=True)
-                active = _entity_rows(d.edd_divest_active, "p", rows, axis)
+                active = _entity_rows(active_frame, axis, rows, axis)
                 active, rows_div = align_join_dtypes(active, rows.select(axis, "d"), (axis, "d"))
                 active = active.join(rows_div, on=[axis, "d"], how="semi")
                 lhs["divest"] = -Sum(Where(view * unitsize, active), over=("d_divest",))
@@ -607,21 +604,21 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
     # Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
     #   + Σ_{n : (g,n) ∈ group_entity} Σ_{d′ : (n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′] · state_unitsize[n]
     #   − Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′] · unitsize[p]
+    #   − Σ_{n : (g,n) ∈ group_entity} Σ_{d′ : (n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′] · state_unitsize[n]
     #   ≤ cumulative_max_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (max…)
     #   ≥ cumulative_min_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (min…)
     #   ∀ g ∈ g_invest_cumulative (invest_method = cumulative_limits, #5/B-Q3), d with a cap value
     #   and some member alive (invest) or retirable (divest) in d
     # Keeps the capacity of a group in a period (existing + invested and still alive − every
-    # process retirement up to and including d, #30b) within its cumulative limits (schema
+    # retirement up to and including d, #30b) within its cumulative limits (schema
     # "[MW or MWh]"); processes and storage nodes share one row.  Max rows: groups that author
     # the cap at all (any period), restricted to periods the group actually has a candidate
     # (g, d) row for; FA-12 (check_max_cap) then catches a period that same group's own map
     # leaves out — mirrors the entity-level cumulative row (previously this
     # family had no FA-12 check at all, unlike the entity-level row).  Min rows: only the
     # periods an explicit value is given for (a missing min is simply "no floor", not an
-    # error).  The divest term is process-only, same as the entity-level row (#29):
-    # edd_divest_active carries no storage-node history.  Capacity invested by earlier solves
-    # of a chain is not counted (pre-existing, separate item).
+    # error).  Capacity invested by earlier solves of a chain is not counted (pre-existing,
+    # separate item).
     for name, sense, cap, param_name in (
         ("maxInvestGroup_entity_cumulative", "<=", d.pd_group_cumulative_max_capacity,
          "cumulative_max_capacity"),
@@ -650,9 +647,10 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
             if terms.height > 0:
                 invest = _var_view(var, "__grp_cum_at", {"d": "d_invest"})
                 lhs[key] = Sum(Where(invest * unitsize, terms), over=(axis, "d_invest"))
-            if axis == "p" and divest is not None and d.edd_divest_active is not None:
+            active_frame = d.edd_divest_active if axis == "p" else d.ndd_divest_active
+            if divest is not None and active_frame is not None:
                 div_members = _on_var_axis(group_entity, axis, divest).filter(in_groups)
-                active_axis = _entity_rows(d.edd_divest_active, "p", div_members, axis)
+                active_axis = _entity_rows(active_frame, axis, div_members, axis)
                 active_axis, div_members = align_join_dtypes(active_axis, div_members, (axis,))
                 div_terms = div_members.join(active_axis, on=axis, how="inner")
                 if div_terms.height > 0:

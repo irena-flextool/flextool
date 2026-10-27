@@ -671,12 +671,13 @@ def _entity_all_capacity(
         # already gives the active (d_divest, d) pairs.
         pass
 
-    if (flex_data.edd_divest_active is not None
-            and flex_data.edd_divest_active.height > 0):
-        edd_dv = flex_data.edd_divest_active.lazy()
-        cols = flex_data.edd_divest_active.columns
-        # canonical: (e, d_divest, d).  edd_divest_active uses ``p`` for
-        # the entity dim — rename to ``e``.
+    def _normalize_divest_active(df: pl.DataFrame) -> pl.LazyFrame:
+        """``(e, d_divest, d)`` Utf8, from a frame whose entity column is
+        named ``p`` (process divest) or ``n`` (storage-node divest)."""
+        lf = df.lazy()
+        cols = df.columns
+        # canonical: (e, d_divest, d).  edd_divest_active / ndd_divest_active
+        # use ``p`` / ``n`` for the entity dim — rename to ``e``.
         rename = {}
         if cols[0] not in ("e", "entity"):
             rename[cols[0]] = "e"
@@ -687,12 +688,21 @@ def _entity_all_capacity(
         if len(cols) > 2 and cols[2] != "d":
             rename[cols[2]] = "d"
         if rename:
-            edd_dv = edd_dv.rename(rename)
-        edd_dv = edd_dv.with_columns(
+            lf = lf.rename(rename)
+        return lf.with_columns(
             pl.col("e").cast(pl.Utf8),
             pl.col("d_divest").cast(pl.Utf8),
             pl.col("d").cast(pl.Utf8),
         )
+
+    _divest_active_frames = [
+        _normalize_divest_active(frame)
+        for frame in (flex_data.edd_divest_active, flex_data.ndd_divest_active)
+        if frame is not None and frame.height > 0
+    ]
+    if _divest_active_frames:
+        edd_dv = (pl.concat(_divest_active_frames, how="vertical")
+                  if len(_divest_active_frames) > 1 else _divest_active_frames[0])
         divest_contrib = (
             edd_dv.join(divest.lazy().rename({"d": "d_divest", "value": "v_dv"}),
                         on=["e", "d_divest"], how="inner")

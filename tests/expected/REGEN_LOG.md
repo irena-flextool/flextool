@@ -902,3 +902,41 @@ Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`; the r
 golden set (`coal_min_load`, `coal_min_load_MIP_wind`, `coal_min_load_wind`, `coal_unit_size_MIP_wind`,
 `coal_wind_min_uptime`, `coal_wind_min_uptime_MIP`, `network_all_tech`, `test_a_lot`, `all`) failed exactly these
 two before regenerating (7 passed unchanged).
+
+## 2026-10-28 — `network_coal_wind_battery_invest_cumulative`: `connection__dt.csv`, `costs__dt.csv`,
+`node_state__dt.csv` (storage-node divestment history fix)
+
+**Context.** The fix threads the node active-divest set (`ndd_divest_active`) through every node
+consumer site that previously read the process-only `edd_divest_active` and cast the node id
+against its process Enum (always 0 rows — CLAUDE.md invariant #2).  This scenario's `battery` node
+(`invest_method = cumulative_limits`) has both `v_invest_n` and `v_divest_n` active across its four
+periods, so it exercises several of the newly-wired sites at once: `maxState` (own + every later
+period), `{max,min}Cumulative_capacity_n` (cross-period headroom), `storage_state_start_binding_
+cyclic_period`, and the `fix_start` term of `nodeBalance_eq` — the last of these is the one that
+moves this golden. Before the fix, the fix-start energy of `battery`'s very first steps
+(`nodeState_first_dt`) used only `existing` capacity; it never netted the SAME-period invest/divest
+the solve itself decides, so the start state ignored a swing the model had already made. After the
+fix it correctly nets `(existing + invest − divest) · state_start`, giving a different (correct)
+starting state of charge in p2020.
+
+**Objective**: re-solved on the pre-fix code (consumer sites reverted to parent `c514465a`, same
+input) `total_cost.val = 9023042606.5`; on the fix, `9023040929.57` — a **9023042606.5 − 9023040929.57
+= 1677 M CUR** (rel. ≈ 1.86e-7) decrease, not an exact tie. This is not a degenerate re-shuffle: the
+corrected fix-start energy and the loosened cumulative-capacity headroom (divesting now relaxes
+`{max,min}Cumulative_capacity_n` by its own cross-period term, the same sign as the pre-existing
+own-period term) let the solver reach a marginally cheaper invest/divest/dispatch combination that
+was not reachable (or not recognised as cheaper) under the bug. `v_divest_n[battery,p2020]` moves
+44.52 MWh either side of the fix with zero direct objective coefficient (no `salvage_value` is
+configured for this node) — the change is entirely routed through capacity accounting, not a divest
+cost/reward.
+
+- `node_state__dt.csv` (`battery`): p2020 t0001–t0004 move 6.0118/6.0112/6.0106/6.0124 →
+  1.5606/1.5604/1.5603/1.5607 (corrected fix-start energy); every other period/step unchanged.
+- `costs__dt.csv`: one cell, p2020 t0004 `other operational` 45914.21 → 45913.367 (ripple of the
+  SOC shift into that step's dispatch).
+- `connection__dt.csv`: one row, p2020 t0004 `battery_inverter` 0.0024 → 0.0006 and `west_east`
+  333.1716 → 333.1733 (same ripple).
+- `unit__outputNode__dt.csv` and `unit_capacity__d.csv` are in the scenario's golden set but do not
+  move (any change is below the comparison's rounding).
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate network_coal_wind_battery_invest_cumulative`.

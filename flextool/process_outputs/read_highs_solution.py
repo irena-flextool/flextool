@@ -1600,7 +1600,7 @@ def write_v_self_discharge(
                .select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("value").alias("cap")))
         built = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8, "built": pl.Float64})
         for var, frame, ent, d_col, sign in (("v_invest", fd.edd_invest_set, "e", "d_invest", 1.0),
-                                             ("v_divest", fd.edd_divest_active, "p", "d_divest", -1.0)):
+                                             ("v_divest", fd.ndd_divest_active, "n", "d_divest", -1.0)):
             if frame is None or frame.height == 0:
                 continue
             chosen = _solution_frame(names, values, var, ("n", d_col))

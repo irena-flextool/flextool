@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Storage capacity retired in a period now stays retired in later periods.** The storage state
+  limits, the start/end and cyclic start bindings, the reserve headroom and the cumulative
+  capacity limits now subtract every earlier retirement of a storage node, and the storage
+  capacity outputs show it. Before, a storage node's retirement earned its salvage value without
+  ever reducing the storage capacity bound, so the node could still be dispatched and cycled as
+  if nothing had been retired, and in some configurations could be "retired" again and again for
+  repeated salvage.
+
 - **A flow group's net flow now counts the fuel a min-load-efficient unit draws while online,
   not only the fuel its output flow implies.** `flowGroup`-based flow limits (cumulative-over-
   the-solve, cumulative-per-period and instantaneous) used to measure a flow group's net flow as
