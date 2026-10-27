@@ -65,7 +65,7 @@ def chain_prior(d, kind: str) -> "pl.DataFrame | None":
 
     ``invest`` is ``d.p_entity_invested`` — every investment of the chain, retired or not (Q10).
     ``divest`` is ``d.p_entity_divested`` — capacity retired at realized, non-branch periods of
-    the chain only (c16a critique #1; the handoff carrier itself already excludes look-ahead and
+    the chain only (the handoff carrier itself already excludes look-ahead and
     alternative-branch periods, see ``flex_data.build_handoff_from_solution``).
     """
     param = d.p_entity_invested if kind == "invest" else d.p_entity_divested
@@ -102,8 +102,8 @@ def group_prior(group_entity: pl.DataFrame, prior: "pl.DataFrame | None", d, axi
 
     Members are every entity of ``group_entity`` that is a process (``axis="p"``) or storage node
     (``axis="n"``) — **not** restricted to entities with a variable in this solve: their earlier
-    investment/divestment still counts towards the group's chain-cumulative total (c16a design
-    §2).  Returns an empty ``[g, value]`` frame when ``prior`` is ``None``/empty or no member of
+    investment/divestment still counts towards the group's chain-cumulative total.
+    Returns an empty ``[g, value]`` frame when ``prior`` is ``None``/empty or no member of
     the axis kind has a prior entry.
     """
     out_schema = {"g": group_entity.schema["g"], "value": pl.Float64}
@@ -137,7 +137,7 @@ def leaf_rows(terms: pl.DataFrame, key: str, var: Var, d_leaf: "pl.DataFrame | N
     the scenario tree's ``(d, leaf)`` pairs (``d_leaf``), and ``rows = mask.select(key,
     "leaf").unique()``.  A ``(key, leaf)`` combination with no ``d`` (that key has no
     variable/member in that leaf) therefore gets no row at all, instead of a constants-only row
-    that would be infeasible for a ``>=`` family and a no-op for ``<=`` (c16a critique #2).
+    that would be infeasible for a ``>=`` family and a no-op for ``<=``.
     """
     if d_leaf is None or getattr(d_leaf, "height", 0) == 0:
         return False, terms.select(key).unique(), terms
@@ -155,8 +155,8 @@ def leaf_rows(terms: pl.DataFrame, key: str, var: Var, d_leaf: "pl.DataFrame | N
 def check_max_cap(over: pl.DataFrame, cap: "pl.DataFrame | None", key: str, has_period: bool,
                   *, param_name: str) -> None:
     """Raise ``FlexToolConfigError`` (FA-12) when some row of ``over`` — the rows that would get
-    a ``<=`` cap row, already restricted to entities/groups that have the variable (the #43 /
-    c16a critique #4 scope) — has no matching value in ``cap`` (the sparse Param supplying the
+    a ``<=`` cap row, already restricted to entities/groups that have the variable (the #43
+    scope) — has no matching value in ``cap`` (the sparse Param supplying the
     RHS).
 
     A row with no value there does not mean "unlimited": once some OTHER entity/group sets

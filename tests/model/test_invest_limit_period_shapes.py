@@ -275,12 +275,12 @@ def test_p_entity_max_units_config_error_propagates(tmp_path_factory, monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# c16b (#5, B-Q3) — group invest/retire limit SETS follow invest_method, not "any group with a
+# #5, B-Q3 — group invest/retire limit SETS follow invest_method, not "any group with a
 # positive value of the matching max parameter".
 
 
 def test_group_min_total_only_group_is_no_longer_silently_dropped(tmp_path_factory):
-    """Covers c16b B-Q3: ``g_invest_total`` used to be "any group with a positive
+    """Covers B-Q3: ``g_invest_total`` used to be "any group with a positive
     invest_max_total" (ignoring ``invest_method``), not method-gated.  Two groups share
     ``invest_method = invest_total``: ``ga`` sets ``invest_max_total`` (so the DB-direct override
     of ``g_invest_total`` is non-empty and wins over the CSV-emit seed, which already computes the
@@ -291,7 +291,7 @@ def test_group_min_total_only_group_is_no_longer_silently_dropped(tmp_path_facto
     ``ga`` (the one with a positive value) — ``gb`` silently dropped out of ``g_invest_total``
     even though its ``invest_method`` qualifies, so its ``invest_min_total`` floor was silently
     never enforced (no ``minInvestGroup_entity_total_path_p`` row, no error, just a wrong
-    optimum).  After the fix, ``gb`` is correctly in the set — and FA-12 (c16a, unaffected by
+    optimum).  After the fix, ``gb`` is correctly in the set — and FA-12 (unaffected by
     this fix) then correctly refuses to leave its max ambiguous: once ``ga`` sets
     ``invest_max_total``, a total-method group in the set with no value of its own reads as 0
     (silently forbidding investment) unless given one explicitly, so the solve now raises asking
@@ -311,7 +311,7 @@ def test_group_min_total_only_group_is_no_longer_silently_dropped(tmp_path_facto
     ]
     from flextool.engine.input._solve_state import FlexToolConfigError
 
-    url, scen = make_db(tmp_path_factory, alt="c16b_bq3", values=values, base_chain=DET,
+    url, scen = make_db(tmp_path_factory, alt="group_min_total_only", values=values, base_chain=DET,
                         entities=entities, fixture_json=RECOURSE_JSON)
     with pytest.raises(FlexToolConfigError, match="gb"):
         run(tmp_path_factory, url, scen)

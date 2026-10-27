@@ -952,7 +952,7 @@ def p_group_invest_max_period_from_source(source: "InputSource",
     """``group.invest_max_period`` → ``Param(("g","d"))``.
     Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
 
-    c16b fix 4(a): zero rows are kept (``filter_zero=False``) — an explicit 0 is a given value
+    Zero rows are kept (``filter_zero=False``) — an explicit 0 is a given value
     (it binds, forbidding investment that period) and must not be read back as "no limit" by
     ``check_max_cap`` (FA-12) once some other group sets ``invest_max_period``.
     """
@@ -980,7 +980,7 @@ def p_group_retire_max_period_from_source(source: "InputSource",
     """``group.retire_max_period`` → ``Param(("g","d"))``.
     Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
 
-    c16b fix 4(a): zero rows are kept (``filter_zero=False``) — see
+    Zero rows are kept (``filter_zero=False``) — see
     :func:`p_group_invest_max_period_from_source`.
     """
     resolved = resolve_param_shape(
@@ -1029,7 +1029,7 @@ def pd_min_cumulative_flow_from_source(source: "InputSource",
 
 # §1.16 — group scalar Direct Params (no period dimension)
 def p_group_invest_max_total_from_source(source: "InputSource") -> Param | None:
-    """c16b fix 4(a): ``filter_zero=False`` — see
+    """``filter_zero=False`` — see
     :func:`p_group_invest_max_period_from_source`; same reasoning for the total side."""
     return _g_scalar(source, "invest_max_total", filter_zero=False)
 
@@ -1039,7 +1039,7 @@ def p_group_invest_min_total_from_source(source: "InputSource") -> Param | None:
 
 
 def p_group_retire_max_total_from_source(source: "InputSource") -> Param | None:
-    """c16b fix 4(a): ``filter_zero=False`` — see
+    """``filter_zero=False`` — see
     :func:`p_group_invest_max_period_from_source`; same reasoning for the total side."""
     return _g_scalar(source, "retire_max_total", filter_zero=False)
 
@@ -1053,7 +1053,7 @@ def pd_group_cumulative_max_capacity_from_source(source: "InputSource",
                                                    ) -> Param | None:
     """``group.cumulative_max_capacity`` → ``Param(("g","d"))`` (#5: the schema parameter, not the
     off-schema ``invest_max_cumulative`` the engine used to read).  Zero rows are kept
-    (``filter_zero=False``, c16b critique change 1 — same reasoning as the entity reader): an
+    (``filter_zero=False``, same reasoning as the entity reader): an
     explicit 0 (a phase-out year) must bind, not read back as "no limit".
     """
     resolved = resolve_param_shape(
@@ -1229,7 +1229,7 @@ def ed_cumulative_max_capacity_from_source(source: "InputSource",
                                              period_filter: pl.DataFrame | None = None,
                                              ) -> Param | None:
     """An explicit ``cumulative_max_capacity = 0`` (a phase-out year) must bind, so zero rows are kept
-    (``filter_zero=False``, c16b critique change 1); ``check_max_cap`` (FA-12) then tells a genuinely
+    (``filter_zero=False``); ``check_max_cap`` (FA-12) then tells a genuinely
     missing period apart from an authored zero.  See :func:`ed_invest_max_period_from_source`."""
     return _e_period_param_union(source, "cumulative_max_capacity",
                                     filter_zero=False,

@@ -245,7 +245,7 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxDivest_entity_total_path", "maxDivest_entity_total_path_n",
     "maxDivestGroup_entity_total_path_p",
     "maxDivestGroup_entity_total_path_n",
-    # c16a: the group max-invest total gains the same legacy-vs-_path split
+    # The group max-invest total gains the same legacy-vs-_path split
     # (_cumulative_invest.py ``_eq_group_invest_total``).
     "maxInvestGroup_entity_total_path_p",
     "maxInvestGroup_entity_total_path_n",
@@ -264,11 +264,11 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     # _reserve.py passes the n-1 row names from the _N_1_DIRECTIONS table.
     "reserveBalance_up_n_1_eq", "reserveBalance_down_n_1_eq",
     # _cumulative_invest.py — every family passes its names from a loop table.
-    # c16b #4: {max,min}InvestGroup_entity_cumulative now has a registry entry (CstrFamily(None)).
+    # {max,min}InvestGroup_entity_cumulative now has a registry entry (CstrFamily(None)).
     "maxInvestGroup_entity_cumulative", "minInvestGroup_entity_cumulative",
     "minInvest_entity_period_p", "minInvest_entity_period_n",
     "minDivest_entity_period_p", "minDivest_entity_period_n",
-    # c16a: minInvest/minDivest entity totals are always named _path now
+    # MinInvest/minDivest entity totals are always named _path now
     # (one row per (entity, leaf), required even with a single scenario
     # leaf — see _eq_min_invest_total's EQ. header); the bare names are
     # no longer emitted.
@@ -282,7 +282,7 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "minDivestGroup_entity_period_p", "minDivestGroup_entity_period_n",
     "maxInvestGroup_entity_total_p", "maxInvestGroup_entity_total_n",
     "maxDivestGroup_entity_total_p", "maxDivestGroup_entity_total_n",
-    # c16a: minInvestGroup/minDivestGroup entity totals are always named
+    # MinInvestGroup/minDivestGroup entity totals are always named
     # _path now (one row per (group, leaf), required even with a single
     # scenario leaf); the bare names are no longer emitted.
     "minInvestGroup_entity_total_path_p", "minInvestGroup_entity_total_path_n",

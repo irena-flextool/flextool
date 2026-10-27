@@ -21,7 +21,7 @@ Each binding regime is asserted with the documented sign:
 
 The frames fed here mirror the post-``drop_levels`` runtime shapes: a
 ``period`` row index and an ``entity`` (or 'unit'/'connection'/'node' for the
-column-dual frames) column axis.  ``dual_maxInvest_total`` AND (c16a)
+column-dual frames) column axis.  ``dual_maxInvest_total`` AND
 ``dual_minInvest_total`` are both fed period-LESS (single-row
 ``RangeIndex``, the ``_V_SOLVE_ONLY`` shape — the row each mirrors is now
 one row per entity over the whole chain horizon, period summed out), and
@@ -62,17 +62,17 @@ def _base_v(periods):
     v.dual_maxInvest_total.columns.name = 'entity'
     v.dual_maxCumulative = _empty_entity(periods)
     v.dual_maxInvestGroup_period = _empty_group(periods)
-    # solve-only collapsed shape (RangeIndex) — populated per test (c16a).
+    # solve-only collapsed shape (RangeIndex) — populated per test.
     v.dual_maxInvestGroup_total = pd.DataFrame(index=pd.RangeIndex(0))
     v.dual_maxInvestGroup_total.columns.name = 'group'
     v.dual_maxInvestGroup_cumulative = _empty_group(periods)
     v.dual_minInvest_period = _empty_entity(periods)
-    # solve-only collapsed shape (RangeIndex) — populated per test (c16a).
+    # solve-only collapsed shape (RangeIndex) — populated per test.
     v.dual_minInvest_total = pd.DataFrame(index=pd.RangeIndex(0))
     v.dual_minInvest_total.columns.name = 'entity'
     v.dual_minCumulative = _empty_entity(periods)
     v.dual_minInvestGroup_period = _empty_group(periods)
-    # solve-only collapsed shape (RangeIndex) — populated per test (c16a).
+    # solve-only collapsed shape (RangeIndex) — populated per test.
     v.dual_minInvestGroup_total = pd.DataFrame(index=pd.RangeIndex(0))
     v.dual_minInvestGroup_total.columns.name = 'group'
     v.dual_minInvestGroup_cumulative = _empty_group(periods)
@@ -108,7 +108,7 @@ def test_upper_cap_binding_is_positive():
 
 
 def test_max_and_min_total_both_broadcast_period_less():
-    """c16a: ``dual_maxInvest_total`` and ``dual_minInvest_total`` are BOTH
+    """``dual_maxInvest_total`` and ``dual_minInvest_total`` are BOTH
     fed period-less (single-row ``RangeIndex``, the ``_V_SOLVE_ONLY`` shape)
     and must each broadcast across every period of the ``period_ref`` —
     the old max/min asymmetry is gone (minInvest_entity_total_path is now

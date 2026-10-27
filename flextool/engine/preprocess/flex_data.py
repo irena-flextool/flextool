@@ -5819,7 +5819,7 @@ def build_handoff_from_solution(
     period_first = _read_period_set(sd / "period_first.csv", provider=provider)
 
     # ---- divest_cumulative input: count only realized periods (mirrors the
-    # ``d in realize_invest`` invest gate above, critique c16a #1) — v_divest
+    # ``d in realize_invest`` invest gate above) — v_divest
     # rows in non-realized look-ahead periods or alternative recourse branches
     # must not inflate the chain-cumulative divest prior.
     divest_by_e: dict[str, float] = {}

@@ -1562,7 +1562,7 @@ def _g_invest_method_filter(source: "InputSource",
                               allowed: frozenset[str]) -> pl.DataFrame:
     """Distinct groups whose ``invest_method`` is in ``allowed``.  Schema: ``[g]``.
 
-    Group analogue of :func:`_e_invest_method_filter` (c16b critique change 3, #5/B-Q3): the old
+    Group analogue of :func:`_e_invest_method_filter`: the old
     ``g_invest_total`` / ``g_divest_total`` / ``g_invest_cumulative`` projections picked up any
     group with a positive ``invest_max_total`` / ``retire_max_total`` / ``invest_max_cumulative``
     value, regardless of ``invest_method`` — a group with a max total but a non-total method got
@@ -1705,18 +1705,18 @@ def group_process_node(source: "InputSource") -> pl.DataFrame:
 
 
 def g_invest_total(source: "InputSource") -> pl.DataFrame:
-    """Groups whose ``invest_method`` ∈ INVEST_TOTAL enum subset (c16b #5/B-Q3: method-gated, not
+    """Groups whose ``invest_method`` ∈ INVEST_TOTAL enum subset (method-gated, not
     "any group with a positive invest_max_total")."""
     return _g_invest_method_filter(source, _INVEST_METHODS_INVEST_TOTAL)
 
 
 def g_divest_total(source: "InputSource") -> pl.DataFrame:
-    """Groups whose ``invest_method`` ∈ DIVEST_TOTAL enum subset (c16b #5/B-Q3)."""
+    """Groups whose ``invest_method`` ∈ DIVEST_TOTAL enum subset."""
     return _g_invest_method_filter(source, _INVEST_METHODS_DIVEST_TOTAL)
 
 
 def g_invest_cumulative(source: "InputSource") -> pl.DataFrame:
-    """Groups whose ``invest_method`` is ``cumulative_limits`` (c16b #5: method-gated, not "any
+    """Groups whose ``invest_method`` is ``cumulative_limits`` (method-gated, not "any
     group with a positive off-schema invest_max_cumulative")."""
     return _g_invest_method_filter(source, _CUMULATIVE_METHODS)
 
@@ -2040,7 +2040,7 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
 _AUTHORITATIVE_SETS: tuple[str, ...] = (
     "groupCapacityMargin", "groupInertia", "groupNonSync", "process_minload",
     "process_online", "process_online_linear", "process_online_integer", "process_sink_nonSync",
-    # c16b #5/B-Q3: now method-gated (invest_method), a complete read of entity__invest_method —
+    # Method-gated (invest_method), a complete read of entity__invest_method —
     # "nothing in the DB" must not fall back to a stale/wrong seed.
     "g_invest_total", "g_divest_total", "g_invest_cumulative",
 )

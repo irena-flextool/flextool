@@ -251,7 +251,7 @@ def _eq_min_invest_total(b: _Build) -> None:
     # (Q3).  One row per entity over the chain horizon, replacing the old per-period "invested and
     # still alive" row; edd_invest_set is no longer read.  Always named _path, even with one
     # scenario leaf: a single row summed over alternative branches would let one branch meet the
-    # minimum for all, so the per-leaf row shape is load-bearing, not cosmetic (c16a critique #2).
+    # minimum for all, so the per-leaf row shape is load-bearing, not cosmetic.
     for name, var, axis in (("minInvest_entity_total_path_p", b.v_invest_p, "p"),
                             ("minInvest_entity_total_path_n", b.v_invest_n, "n")):
         unitsize = _unitsize(d, axis)
@@ -292,7 +292,7 @@ def _eq_min_divest_total(b: _Build) -> None:
     #     realized non-branch periods only)
     #   _n: the node analogue with v_divest_n and state_unitsize[n]
     # Forces the part of the minimum not retired by earlier solves of the chain to be retired in
-    # this solve (Q3).  Always named _path, for the same reason as minInvest (c16a critique #2).
+    # this solve (Q3).  Always named _path, for the same reason as minInvest.
     for name, var, axis in (("minDivest_entity_total_path_p", b.v_divest_p, "p"),
                             ("minDivest_entity_total_path_n", b.v_divest_n, "n")):
         unitsize = _unitsize(d, axis)
@@ -332,7 +332,7 @@ def _eq_cumulative_capacity(b: _Build) -> None:
     #   ≥ cumulative_min_capacity[p,d] − existing[p,d]        (minCumulative_capacity_p)
     #   max: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities, p ∈ authors(cumulative_max_capacity) —
     #        a period the author's own map leaves out is a configuration error (FA-12), not "no limit"
-    #        (c16b critique change 2)
+    #       
     #   min: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities ∩ cumulative_min_capacity.frame
     #   _n: the node analogue with v_invest_n / v_divest_n and state_unitsize[n] — ``edd_divest_active``
     #       is built only from process divestments (``pd_divest_set``; no node equivalent exists), so
@@ -360,7 +360,7 @@ def _eq_cumulative_capacity(b: _Build) -> None:
         if sense == "<=":
             # Max rows: entities that author the cap at all (any period), restricted to periods the
             # entity actually has the variable for; FA-12 then catches a period that same entity's
-            # own map leaves out (c16b critique change 1).
+            # own map leaves out.
             rows = rows_src.join(cap_dt.select(axis).unique(), on=axis, how="semi")
             if rows.height == 0:
                 continue
@@ -444,7 +444,7 @@ def _eq_group_entity_period(b: _Build) -> None:
             if terms.height == 0:
                 continue
             if sense == "<=":
-                # FA-12, c16a critique #4: only on (g, d) whose members have the variable.
+                # FA-12: only on (g, d) whose members have the variable.
                 check_max_cap(terms.select("g", "d").unique(), cap.frame, "g", True,
                               param_name=param_name)
             b.m.add_cstr(
@@ -473,7 +473,7 @@ def _eq_group_invest_total(b: _Build) -> None:
     #   ∀ g ∈ g_invest_total (, leaf)
     #   prior_inv[p] = p_entity_invested[p]  (capacity realized by all earlier solves of the
     #     chain); the group's prior sums every member of the axis kind, not only those with the
-    #     variable in THIS solve — their earlier investment still counts (c16a design §2)
+    #     variable in THIS solve — their earlier investment still counts
     #   _n: storage-node members, state_unitsize[n]
     #   max: _path (one row per (g, leaf)) only under recourse, like the entity max side.
     #   min: always _path — a plain per-group row, summed across alternative branches, would let
@@ -503,7 +503,7 @@ def _eq_group_invest_total(b: _Build) -> None:
         if terms.height == 0:
             continue
         if sense == "<=":
-            # FA-12, c16a critique #4: only on g whose members have the variable.
+            # FA-12: only on g whose members have the variable.
             check_max_cap(terms.select("g").unique(), cap.frame, "g", False, param_name=param_name)
         cap_g = Param(("g",), minus_prior(cap.frame, "g", group_prior(group_entity, prior, d, axis)))
         is_path, over, mask = leaf_rows(terms, "g", var, d_leaf)
@@ -566,7 +566,7 @@ def _eq_group_divest_total(b: _Build) -> None:
         if terms.height == 0:
             continue
         if sense == "<=":
-            # FA-12, c16a critique #4: only on g whose members have the variable.
+            # FA-12: only on g whose members have the variable.
             check_max_cap(terms.select("g").unique(), cap.frame, "g", False, param_name=param_name)
         cap_g = Param(("g",), minus_prior(cap.frame, "g", group_prior(group_entity, prior, d, axis)))
         is_path, over, mask = leaf_rows(terms, "g", var, d_leaf)
@@ -608,7 +608,7 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
     # "[MW or MWh]"); processes and storage nodes share one row.  Max rows: groups that author
     # the cap at all (any period), restricted to periods the group actually has a candidate
     # (g, d) row for; FA-12 (check_max_cap) then catches a period that same group's own map
-    # leaves out — mirrors the entity-level cumulative row (c16b review #3; previously this
+    # leaves out — mirrors the entity-level cumulative row (previously this
     # family had no FA-12 check at all, unlike the entity-level row).  Min rows: only the
     # periods an explicit value is given for (a missing min is simply "no floor", not an
     # error).  The divest term is process-only, same as the entity-level row (#29):

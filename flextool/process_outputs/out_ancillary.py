@@ -127,7 +127,7 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
     - (d) interior, binds nothing → 0.
 
     SOLVE-ONLY BROADCAST (read off ``drop_levels.py``): ``dual_maxInvest_total``,
-    ``dual_minInvest_total``, and (c16a) their group counterparts
+    ``dual_minInvest_total``, and their group counterparts
     ``dual_maxInvestGroup_total`` / ``dual_minInvestGroup_total`` — the rows
     they mirror are each now one row per entity/group over the whole chain
     horizon, period summed out — are all collapsed to a single-row
@@ -200,7 +200,7 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
     def _broadcast(df: "pd.DataFrame") -> "pd.DataFrame | None":
         """Broadcast a period-less (single-row ``RangeIndex``) dual frame
         across periods: ``period_ref`` when available, else each column's
-        own realized invest periods from ``ed_invest_idx`` (c16a: shared by
+        own realized invest periods from ``ed_invest_idx`` (shared by
         ``dual_maxInvest_total``, ``dual_minInvest_total`` and, after their
         member expansion, ``dual_{max,min}InvestGroup_total``).  ``None``
         when neither fallback is available (drop it, don't fabricate 0)."""
@@ -246,7 +246,7 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
             continue
         entity_duals.append(df.mul(-1.0))
 
-    # c16a: ``dual_minInvest_total`` is now solve-only (one row per entity
+    # ``dual_minInvest_total`` is now solve-only (one row per entity
     # over the chain horizon) — broadcast it over periods the same way as
     # ``dual_maxInvest_total`` above, instead of adding it directly.
     if not v.dual_minInvest_total.empty:
@@ -275,7 +275,7 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
                 expanded.columns.name = 'entity'
                 entity_duals.append(expanded.mul(-1.0))
 
-        # c16a: dual_{max,min}InvestGroup_total are now solve-only (one row
+        # dual_{max,min}InvestGroup_total are now solve-only (one row
         # per group over the chain horizon, like the entity-level totals).
         # Expand to member entities FIRST (still period-less), then
         # broadcast the expanded per-entity frame over periods the same way

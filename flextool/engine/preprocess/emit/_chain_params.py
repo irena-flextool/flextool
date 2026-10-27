@@ -574,7 +574,7 @@ def _compute_p_entity_capacity_max_chain(
                                        provider=provider)
     cum_max_cap = _load_ed_value_csv(solve_data_dir / "ed_cumulative_max_capacity.csv",
                                       provider=provider)
-    # c16b review #2 (mirrors `_derived.py` fix 4(b)): entities that author
+    # As in `_derived.py`: entities that author
     # cumulative_max_capacity at all (any period) — an entity absent here never set the
     # parameter, as opposed to an authored-but-zero value.
     cmc_authors = {e for (e, _d) in cum_max_cap}
@@ -643,7 +643,7 @@ def _compute_p_entity_capacity_max_chain(
                 if e in cmc_authors:
                     v = cum_max_cap.get((e, d), 0.0)
                 else:
-                    # c16b review #2: a cumulative_limits entity that never authors
+                    # A cumulative_limits entity that never authors
                     # cumulative_max_capacity (e.g. only cumulative_min_capacity, a floor with
                     # no ceiling) is unconstrained above, not pinned to v_invest = 0 — the floor
                     # would otherwise be unmeetable.
@@ -692,7 +692,7 @@ def _compute_p_entity_capacity_max_chain(
                         - all_existing.get((e, d), 0.0),
                     )
                 else:
-                    # c16b review #2: unconstrained side has no existing-capacity subtraction
+                    # Unconstrained side has no existing-capacity subtraction
                     # to add back — matches the has_no_limit_method branch below.
                     v = p_unc
             elif has_no_limit_method:

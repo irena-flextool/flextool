@@ -274,10 +274,10 @@ def test_group_invest_max_total(toy_invest_3d):
 
 
 # ---------------------------------------------------------------------------
-# c16a (#30a) — group invest totals subtract chain-cumulative prior.
+# #30a — group invest totals subtract chain-cumulative prior.
 
 def test_group_invest_totals_count_chain_prior(toy_invest_3d):
-    """Covers c16a #30a: ``maxInvestGroup_entity_total`` subtracts capacity already realized by
+    """Covers #30a: ``maxInvestGroup_entity_total`` subtracts capacity already realized by
     earlier solves of a solve chain (``p_entity_invested``), summed over the group's members —
     instead of ignoring it.
 
@@ -541,10 +541,10 @@ def test_max_invest_entity_period_dual_is_obj_per_mw(toy_invest_3d):
 
 
 # ---------------------------------------------------------------------------
-# c16a (#2, #30a) — entity invest totals subtract chain-cumulative prior.
+# #2, #30a — entity invest totals subtract chain-cumulative prior.
 
 def test_entity_invest_totals_count_chain_prior(toy_invest_3d):
-    """Covers c16a #2/#30a: ``maxInvest_entity_total`` / ``minInvest_entity_total_path_p``
+    """Covers #2/#30a: ``maxInvest_entity_total`` / ``minInvest_entity_total_path_p``
     subtract capacity already realized by earlier solves of a solve chain
     (``p_entity_invested``), instead of ignoring it.
 
@@ -608,11 +608,11 @@ def test_entity_invest_totals_count_chain_prior(toy_invest_3d):
 
 
 # ---------------------------------------------------------------------------
-# c16b (#29) — cumulative capacity rows count every earlier divestment.
+# #29 — cumulative capacity rows count every earlier divestment.
 
 
 def test_cumulative_min_counts_earlier_divest(toy_invest_3d):
-    """Covers c16b #29: ``minCumulative_capacity_p`` subtracts every earlier divestment still
+    """Covers #29: ``minCumulative_capacity_p`` subtracts every earlier divestment still
     active at the row's period, not just a divestment of the row's own period.
 
     Hand-calc: existing=3, ``cumulative_min_capacity[u,d3]=3`` (RHS = 3 − 3 = 0 with no divest).

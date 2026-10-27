@@ -28,8 +28,8 @@ def test_derivation_rule_matches_registry():
     assert set(PERIOD_TIME_PARAMS) == expected
 
 
-def test_count_is_58_split_19_dual_39_period_only():
-    assert len(PERIOD_TIME_PARAMS) == 58
+def test_count_is_60_split_19_dual_41_period_only():
+    assert len(PERIOD_TIME_PARAMS) == 60
     # 19 dual-axis: 18 with the full 2-D shape + commodity.price (two 1-D).
     dual_2d = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                if Shape.MAP_PERIOD_TIME in v}
@@ -37,10 +37,10 @@ def test_count_is_58_split_19_dual_39_period_only():
     commodity_price = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                        if Shape.MAP_TIME in v and Shape.MAP_PERIOD_TIME not in v}
     assert commodity_price == {("commodity", "price")}
-    # 39 period-only: exactly {SCALAR, MAP_PERIOD}.
+    # 41 period-only (incl. group cumulative_{max,min}_capacity): exactly {SCALAR, MAP_PERIOD}.
     period_only = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                    if set(v) == {Shape.SCALAR, Shape.MAP_PERIOD}}
-    assert len(period_only) == 39
+    assert len(period_only) == 41
     assert set(PERIOD_TIME_PARAMS) == dual_2d | commodity_price | period_only
 
 

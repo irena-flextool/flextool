@@ -312,7 +312,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxDivest_entity_total_path_n": CstrFamily(QuantityType.ENERGY),
 
     # min-invest / min-divest entity totals — group_capacity resolved
-    # via _p / _n suffix in _cumulative_invest.py.  c16a: always named
+    # via _p / _n suffix in _cumulative_invest.py.  Always named
     # _path (one row per (entity, leaf), required even with a single
     # scenario leaf — see _eq_min_invest_total's EQ. header); the bare
     # (no-_path) names are no longer emitted.
@@ -351,7 +351,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
         None, member_class_resolver="group_capacity"
     ),
     # _cumulative_invest._eq_group_invest_total / _eq_group_divest_total.
-    # c16a: the min side (both invest and divest) is always named _path now
+    # The min side (both invest and divest) is always named _path
     # (one row per (group, leaf), required even with a single scenario leaf
     # -- same reason as the entity min-total families); the bare
     # (no-_path) min names are no longer emitted.  The max side keeps the
@@ -363,8 +363,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxDivestGroup_entity_total": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
-    # Slice D per-path total caps (design §7.2 item 4 / §14, extended by
-    # c16a to the invest side and to both min families):
+    # Slice D per-path total caps (extended
+    # to the invest side and to both min families):
     # ``{max,min}{Invest,Divest}Group_entity_total_path_{p,n}`` emitted by
     # ``_cumulative_invest._eq_group_invest_total`` / ``_eq_group_divest_total``.  The
     # ``_p`` / ``_n`` member-class suffix resolves POWER vs ENERGY off
@@ -384,7 +384,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # _cumulative_invest._eq_group_invest_cumulative ({max,min}InvestGroup_entity_cumulative).
     # Mixed MW (process members) + MWh (storage-node members) row with no ``_p``/``_n`` suffix to
     # resolve a quantity type from — ``resolve_cstr_rhs_type`` raises on an unsuffixed
-    # "group_capacity" name (c16b #4), so Layer 2 must skip this family (plain row scaling only).
+    # "group_capacity" name, so Layer 2 must skip this family (plain row scaling only).
     "maxInvestGroup_entity_cumulative": CstrFamily(None),
     "minInvestGroup_entity_cumulative": CstrFamily(None),
 

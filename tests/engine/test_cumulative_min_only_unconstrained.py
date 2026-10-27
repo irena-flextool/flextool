@@ -141,7 +141,7 @@ class _FakeProvider:
 def test_chain_params_cumulative_min_only_ceiling_is_unconstrained() -> None:
     """Mirrors the ``_derived.py`` case above, but for the chain-cluster emitter
     (``_chain_params._compute_p_entity_capacity_max_chain``) used across a continuation/rolling
-    solve boundary, which carried the exact same pre-fix bug independently (c16b review #2):
+    solve boundary, which carried the exact same pre-fix bug independently:
     a ``cumulative_limits`` entity that never authors ``cumulative_max_capacity`` (floor only)
     used to be pinned to ceiling 0 in ``p_entity_max_units.csv`` AND to 0 investable headroom in
     ``p_entity_dispatch_capacity_max.csv`` (via ``invest_cum_max``).

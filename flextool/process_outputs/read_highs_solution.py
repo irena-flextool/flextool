@@ -372,7 +372,7 @@ VARIABLE_SPECS: list[VariableSpec] = [
     _invest_dual("maxInvestGroup_entity_period",     "group",  "maxInvestGroup_period",
                  derived_from=("maxInvestGroup_entity_period_p",
                                 "maxInvestGroup_entity_period_n")),
-    # c16a: maxInvestGroup_entity_total is now one row per group over the
+    # maxInvestGroup_entity_total is now one row per group over the
     # chain horizon (period summed out, like maxInvest_entity_total) —
     # has_period=False.  Under recourse it is renamed to _path (not read
     # here, same as the entity-level _path rows).
@@ -398,7 +398,7 @@ VARIABLE_SPECS: list[VariableSpec] = [
     _invest_dual("minInvest_entity_period",          "entity", "minInvest_period",
                  derived_from=("minInvest_entity_period_p",
                                 "minInvest_entity_period_n")),
-    # c16a: ``minInvest_entity_total_path_{p,n}`` is now one row per entity
+    # ``minInvest_entity_total_path_{p,n}`` is now one row per entity
     # over the whole chain horizon (period summed out, like the max-side
     # ``maxInvest_entity_total`` — model._eq_invest_total_caps), always named
     # ``_path`` even with a single scenario leaf (_cumulative_invest._eq_min_invest_total).
@@ -417,7 +417,7 @@ VARIABLE_SPECS: list[VariableSpec] = [
     _invest_dual("minInvestGroup_entity_period",     "group",  "minInvestGroup_period",
                  derived_from=("minInvestGroup_entity_period_p",
                                 "minInvestGroup_entity_period_n")),
-    # c16a: minInvestGroup_entity_total_path_{p,n} is now one row per group
+    # minInvestGroup_entity_total_path_{p,n} is now one row per group
     # over the chain horizon (period summed out, always named _path -- see
     # minInvest_entity_total_path above); has_period=False.
     _invest_dual("minInvestGroup_entity_total_path", "group",  "minInvestGroup_total",
