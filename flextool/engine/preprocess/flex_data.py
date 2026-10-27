@@ -55,6 +55,7 @@ from flextool.engine.preprocess.params._branch import (
     solve_branch_anchor_pairs,
 )
 from flextool.engine.preprocess._provider_io import _provider_key
+from flextool.engine.preprocess import _seed_strict
 
 
 def _loadflex_prof(label: str) -> None:
@@ -4503,8 +4504,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # Enum once at the end — Var construction in ``model/core.py`` and
         # the model-build cross-joins then operate on Enum-typed
         # frames.
+        _seed_armed: dict = {}
+        _seed_solve = getattr(ctx, "solve_name", None)
         if db_reader is not None:
             _loadflex_prof("before_apply_db_overrides")
+            if _seed_strict.strict_enabled():  # temporary c24 stage-4 check of the pruned seeds
+                _seed_armed = _seed_strict.arm(flex_data, _seed_solve)
             _apply_db_overrides(flex_data, db_reader, source, ctx=ctx,
                                  provider=provider)
             _loadflex_prof("after_apply_db_overrides")
@@ -4613,6 +4618,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # period's tier curve.  Runs after every producer of the ladder Params (load_data and the
         # direct-parameter pass).
         _commodity_ladder.inherit_branch_periods(flex_data, provider)
+
+        # Before the cast (and outside its guard): every armed load is checked.
+        _seed_strict.check(flex_data, _seed_armed, _seed_solve)  # no-op unless armed above
 
         # Phase 4.6 — end-of-load FlexData → Enum sweep.  With the global
         # flipped on above, the cascade emits Enum-typed dim columns
