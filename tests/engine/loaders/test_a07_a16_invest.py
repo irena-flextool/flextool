@@ -160,13 +160,18 @@ def test_skip_set_seeds_when_synthetic_solve(tmp_path: Path):
 # A.16 — _load_cumulative_invest + _eq_group_invest_cumulative
 # ====================================================================
 
-def test_group_entity_solve_data_precedence_and_input_fallback(tmp_path: Path):
-    """Covers A16-group_entity_solve_data_precedence + A16-group_entity_input_fallback.
+def test_group_entity_solve_data_only_no_input_fallback(tmp_path: Path):
+    """Covers A16-group_entity_solve_data_precedence.
+
+    ``group_entity`` reads only ``solve_data/group_entity.csv`` (written by every solve via
+    ``emit._mid_sets.emit_group_entity``; c24 S4-6 dropped the ``input/group__entity.csv``
+    fallback arm — nothing in production ever wrote that key, so it was dead).
 
     Two passes share the same minimal cumulative-set CSV:
       (1) BOTH ``solve_data/group_entity.csv`` (g1,e1) AND
-          ``input/group__entity.csv`` (g1,e2) — solve_data wins, e1 only.
-      (2) DROP the solve_data file — input fallback fires, e2 only.
+          ``input/group__entity.csv`` (g1,e2) present — solve_data wins, e1 only.
+      (2) DROP the solve_data file — ``input/group__entity.csv`` is NOT read; ``group_entity``
+          is ``None``.
     """
     inp = tmp_path / "input"
     sd = tmp_path / "solve_data"
@@ -176,18 +181,15 @@ def test_group_entity_solve_data_precedence_and_input_fallback(tmp_path: Path):
     _write(inp / "group__entity.csv", "group,entity\ng1,e2\n")
 
     out1 = _load_cumulative_invest(inp, sd, _empty_dt(), provider=provider_from_csv_dirs(inp, sd))
-    # Hand-calc: cascade prefers solve_data/ -> ge = {(g1, e1)}.
+    # Hand-calc: solve_data/ is the only source -> ge = {(g1, e1)}.
     ge1 = out1["group_entity"]
     assert ge1 is not None and ge1.height == 1
     assert ge1.sort("g", "e").row(0) == ("g1", "e1")
 
-    # Drop solve_data file -> input fallback wins.
+    # Drop solve_data file -> no fallback; group_entity is None.
     (sd / "group_entity.csv").unlink()
     out2 = _load_cumulative_invest(inp, sd, _empty_dt(), provider=provider_from_csv_dirs(inp, sd))
-    # Hand-calc: solve_data absent -> next cand input/ exists -> ge = {(g1, e2)}.
-    ge2 = out2["group_entity"]
-    assert ge2 is not None and ge2.height == 1
-    assert ge2.sort("g", "e").row(0) == ("g1", "e2")
+    assert out2["group_entity"] is None
 
 
 def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(

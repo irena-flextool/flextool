@@ -1085,7 +1085,6 @@ class FlexData:
     # the handoff extractor (preserves test paths that construct FlexData by
     # hand).
     realized_dispatch: pl.DataFrame | None = None         # (period, step)
-    period__time_last: pl.DataFrame | None = None         # (period, step)
     node__storage_nested_fix_method: pl.DataFrame | None = None  # (node, method)
 
     def dump_csvs(self,
@@ -1404,11 +1403,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     # (used in cap_pd / state_unitsize cascades).  Keep the seed.
     # TODO(Δ.12c+): when ``_load_profiles`` / ``_load_storage`` consume the
     # source-driven p_unitsize via flex_data, drop this seed read.
-    unitsize_long = _read_unitsize(_provider_pick(
-        provider,
-        ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
-        ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
-    ) or (inp / "p_entity_unitsize.csv"), provider=provider)
+    unitsize_long = _read_unitsize(sd / "p_entity_unitsize.csv", provider=provider)
     unitsize_p = (unitsize_long.pipe(rename_to_axis, {"e": "p"})
                        .filter(pl.col("p").is_in(pss["p"].unique())))
 
@@ -2715,11 +2710,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                                    sd / "p_entity_previously_invested_capacity.csv",
                                    sd / "p_entity_all_existing.csv",
                                    provider=provider)
-        unitsize_long = _read_unitsize(_provider_pick(
-            provider,
-            ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
-            ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
-        ) or (inp / "p_entity_unitsize.csv"), provider=provider)
+        unitsize_long = _read_unitsize(sd / "p_entity_unitsize.csv", provider=provider)
         state_existing = (cap_long.pipe(rename_to_axis, {"e": "n", "value": "cap"})
             .filter(pl.col("n").is_in(nodeState["n"]))
             .select("n", "d", "cap"))
@@ -3415,7 +3406,8 @@ def _load_varcost(sd: Path, pss: pl.DataFrame | None,
     the DB authors one (``if v is not None``), then ``_direct.apply_varcost_params`` builds the four index sets
     and ``p_pssdt_varCost`` from the three (the emit has no period × time tier, #74).  The loader does not seed
     those five: ``apply_varcost_params`` sets them to None before rebuilding them.  A reader-less CSV reload
-    builds them from these seeds with the same producer (``_csv_reload._field_seeds``).
+    reads those five fields unchanged from the dump in ``_csv_reload/_field_seeds.py``; it does not call
+    ``apply_varcost_params`` (the production producer).
 
       p_pdt_varCost_source  — pdtProcess_source[…,'other_operational_cost']  (p, source, d, t)
       p_pdt_varCost_sink    — pdtProcess_sink[…,'other_operational_cost']    (p, sink, d, t)
@@ -3598,31 +3590,29 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
     out["ed_invest_cumulative"] = _read_set(
         "ed_invest_cumulative", {"entity": "e", "period": "d"})
 
-    # group_entity: prefer solve_data, fallback input/group__entity.csv
+    # group_entity: solve_data/group_entity.csv (written by every solve via
+    # emit._mid_sets.emit_group_entity).  The input/group__entity.csv fallback arm nothing
+    # ever populates ("input/group__entity" has no producer) was dropped, c24 S4-6.
     ge = None
-    for cand, mapping, key in [
-        (sd / "group_entity.csv",   {"group": "g", "entity": "e"}, "solve_data/group_entity"),
-        (inp / "group__entity.csv", {"group": "g", "entity": "e"}, "input/group__entity"),
-    ]:
-        if _provider_has(provider, key, cand):
-            df = _provider_read(provider, key, cand)
-            if df.height > 0:
-                ge = df.pipe(rename_to_axis, mapping).select("g", "e").unique()
-                break
+    ge_cand, ge_mapping, ge_key = (
+        sd / "group_entity.csv", {"group": "g", "entity": "e"}, "solve_data/group_entity")
+    if _provider_has(provider, ge_key, ge_cand):
+        df = _provider_read(provider, ge_key, ge_cand)
+        if df.height > 0:
+            ge = df.pipe(rename_to_axis, ge_mapping).select("g", "e").unique()
     out["group_entity"] = ge
 
-    # group_process_node: solve_data/group_process_node.csv (preprocessed long)
-    # or input/flowGroup__process__node.csv (raw long, v58)
+    # group_process_node: input/flowGroup__process__node.csv (raw long, v58; written by the
+    # input-derivation exporter).  The solve_data/group_process_node.csv candidate nothing
+    # ever writes ("solve_data/group_process_node" has no producer) was dropped, c24 S4-6.
     gpn = None
-    for cand, mapping, key in [
-        (sd / "group_process_node.csv",  {"group": "g", "process": "p", "node": "n"}, "solve_data/group_process_node"),
-        (inp / "flowGroup__process__node.csv", {"flowGroup": "g", "process": "p", "node": "n"}, "input/flowGroup__process__node"),
-    ]:
-        if _provider_has(provider, key, cand):
-            df = _provider_read(provider, key, cand)
-            if df.height > 0:
-                gpn = df.pipe(rename_to_axis, mapping).select("g", "p", "n").unique()
-                break
+    gpn_cand = inp / "flowGroup__process__node.csv"
+    gpn_mapping = {"flowGroup": "g", "process": "p", "node": "n"}
+    gpn_key = "input/flowGroup__process__node"
+    if _provider_has(provider, gpn_key, gpn_cand):
+        df = _provider_read(provider, gpn_key, gpn_cand)
+        if df.height > 0:
+            gpn = df.pipe(rename_to_axis, gpn_mapping).select("g", "p", "n").unique()
     out["group_process_node"] = gpn
 
     out["g_invest_total"]      = _read_set("g_invest_total", {"group": "g"})
@@ -4005,8 +3995,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # Stochastic branch periods inherit the period-keyed input values of their anchor period:
         # arm the solve's (anchor, branch) pairs for the DB-direct readers before any of them runs
         # (_load_online already reads startup_cost), reset in the finally below.  Only DB reads use
-        # them; CSV-only loads have no reader.  Likewise the emit frames from which the readers take the
-        # values of entities authoring a stochastic-time map (the per-solve pbt fold).
+        # them; a reader-less load (the ``_dump_hooks`` CSV reload, no Spine DB) has no reader to
+        # arm.  Likewise the emit frames from which the readers take the values of entities
+        # authoring a stochastic-time map (the per-solve pbt fold).
         if db_reader is not None:
             _branch_tok = activate_branch_anchor_pairs(solve_branch_anchor_pairs(provider))
             # Warning dedupe kept on the run's reader: one reader serves every roll of a run.
@@ -4057,11 +4048,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
                                        sd / "p_entity_previously_invested_capacity.csv",
                                        sd / "p_entity_all_existing.csv",
                                        provider=provider)
-            unitsize_long = _read_unitsize(_provider_pick(
-                provider,
-                ("solve_data/p_entity_unitsize", sd / "p_entity_unitsize.csv"),
-                ("input/p_entity_unitsize", inp / "p_entity_unitsize.csv"),
-            ) or (inp / "p_entity_unitsize.csv"), provider=provider)
+            unitsize_long = _read_unitsize(sd / "p_entity_unitsize.csv", provider=provider)
             # p_all_entity_unitsize: unfiltered — covers processes, connections AND nodes.
             # Used by the scaling analyzer to compute the full entity-unitsize spread.
             if unitsize_long.height > 0:
@@ -4361,9 +4348,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
             flex_data.realized_dispatch = _load_handoff_aux_pair(
                 sd / "realized_dispatch.csv", ("period", "step"),
                 provider=provider)
-        flex_data.period__time_last = _load_handoff_aux_pair(
-            sd / "period__time_last.csv", ("period", "step"),
-            provider=provider)
         # ``node__storage_nested_fix_method`` lives in solve_data/ for
         # cascade solves; fall back to input/ if not yet copied.  Explicit
         # ``is None`` chain (DataFrame is non-truthy in polars).
@@ -4794,8 +4778,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # seed (emit ``pdtNode``) has no period x time tier.  The producer is
         # solve-agnostic (``source`` + the CSV-loaded ``nodeBalance`` / ``dt``)
         # and memoises the authored values on the run's ``db_reader``, so a
-        # roll pays only the ``dt`` joins.  A stochastic-time value keeps the
-        # seed, whose pbt fold carries it.
+        # roll pays only the ``dt`` joins.  Only a value the resolver cannot classify (or an
+        # empty node set / ``dt``) keeps the seed; a stochastic-time map is resolved by the
+        # producer's own per-solve fold, not left to the seed.
         from flextool.engine.preprocess.params._arithmetic import apply_penalty_params
         _loadflex_prof("apply_db_overrides:pass_synthetic_penalty")
         _timed("c.synth penalty", apply_penalty_params, flex_data, db_reader,
@@ -5162,38 +5147,28 @@ def _read_unitsize_long(work_folder: Path,
                          provider: "object | None" = None) -> dict[str, float]:
     """Read entity unitsizes as ``{entity: value}``.
 
-    Layers two sources:
+    Source: ``solve_data/p_entity_unitsize.csv`` (long, written for every solve by
+    ``emit._dispatchers._compute_p_entity_unitsize``).  Callers like
+    ``build_handoff_from_solution`` rely on ``unitsize.get(n, 1.0)``, so a missing entry
+    collapses to a factor of 1.0.
 
-    * ``input/p_entity_unitsize.csv`` — fully-populated table (wide
-      format from the .mod printf, or long-format from Python
-      preprocessing).  Used as the base.
-    * ``solve_data/p_entity_unitsize.csv`` — explicit overrides
-      written by per-solve preprocessing (long format, only entities
-      that diverge from the base).  Overlays on top.
-
-    Reading only ``solve_data/`` silently drops every entity that
-    doesn't carry an override — callers like ``build_handoff_from_solution``
-    rely on ``unitsize.get(n, 1.0)``, so a missing entry collapses to a
-    factor of 1.0 and produces handoff values off by the entity's
-    unitsize.  Mirrors v3.32.0's ``_load_unitsize`` which reads
-    ``input/p_entity_unitsize.csv`` (the populated copy).
+    (An ``input/p_entity_unitsize`` layer used to be read as a base here, for the legacy
+    .mod's wide printf.  Nothing has ever populated that provider key — dropped, c24 S4-6.)
     """
     out: dict[str, float] = {}
-    for src, key in (
-        (work_folder / "input" / "p_entity_unitsize.csv", "input/p_entity_unitsize"),
-        (work_folder / "solve_data" / "p_entity_unitsize.csv", "solve_data/p_entity_unitsize"),
-    ):
-        if not _provider_has(provider, key, src):
-            continue
+    src = work_folder / "solve_data" / "p_entity_unitsize.csv"
+    key = "solve_data/p_entity_unitsize"
+    if not _provider_has(provider, key, src):
+        return out
+    try:
+        df = _read_unitsize(src, provider=provider)
+    except Exception:  # noqa: BLE001 — best-effort fallback
+        return out
+    for r in df.iter_rows(named=True):
         try:
-            df = _read_unitsize(src, provider=provider)
-        except Exception:  # noqa: BLE001 — best-effort fallback
+            out[str(r["e"])] = float(r["value"])
+        except (TypeError, ValueError):
             continue
-        for r in df.iter_rows(named=True):
-            try:
-                out[str(r["e"])] = float(r["value"])
-            except (TypeError, ValueError):
-                continue
     return out
 
 
@@ -5520,18 +5495,14 @@ def _extract_cumulative_commodity(
                     realized_hrs[d_v] = realized_hrs.get(d_v, 0.0) + dur
 
     # Commodity unitsize (defaults 1.0 when absent — flextool default).
-    # Phase 4 (Gap F) — prefer in-memory ``flex_data.p_commodity_unitsize``.
+    # Phase 4 (Gap F) — in-memory ``flex_data.p_commodity_unitsize``.  The provider disk-fallback arm
+    # ("solve_data/p_commodity_unitsize") nothing ever writes was dropped, c24 S4-6: the exporter writes
+    # ``input/p_commodity_unitsize.csv`` (a different key, never checked here), and no producer puts
+    # the "solve_data/" key the fallback looked for.
     unitsize: dict[str, float] = {}
     cu_df = None
     if flex_data is not None and getattr(flex_data, "p_commodity_unitsize", None) is not None:
         cu_df = flex_data.p_commodity_unitsize.frame
-    else:
-        cu_path = sd / "p_commodity_unitsize.csv"
-        if _provider_has(provider, "solve_data/p_commodity_unitsize", cu_path):
-            try:
-                cu_df = _provider_read(provider, "solve_data/p_commodity_unitsize", cu_path)
-            except pl.exceptions.NoDataError:
-                cu_df = None
     if cu_df is not None and cu_df.height > 0:
         c_col = "commodity" if "commodity" in cu_df.columns else (
             "c" if "c" in cu_df.columns else "name")
@@ -6332,12 +6303,15 @@ def build_handoff_from_solution(
     # ---- cumulative_co2: per-(group, period) running total ----
     # Gap F final close-out — native compute via
     # ``_co2_accumulators.compute_co2_rolling_accumulator`` when
-    # ``flex_data`` + ``sol`` are available (cascade path).  Falls back to
-    # the disk read for legacy / test callers that only pass ``sol``.
+    # ``flex_data`` + ``sol`` are available (cascade path).  The disk-read arm for legacy / test
+    # callers that only pass ``sol`` was dropped, c24 S4-6: nothing ever writes
+    # ``solve_data/co2_cum_realized_tonnes`` (no producer puts that provider key, and
+    # ``dump_csvs`` does not emit the file either), so it was a no-op fallback.  When
+    # ``flex_data`` or ``sol`` is absent, or the native compute returns no rows, the
+    # ``prior_handoff`` carry-forward set above is the only value.
     cumulative_co2_df = None
     if prior_handoff is not None and prior_handoff.cumulative_co2 is not None:
         cumulative_co2_df = prior_handoff.cumulative_co2
-    used_native_co2 = False
     if flex_data is not None and sol is not None:
         from flextool.engine.preprocess.emit._co2_accumulators import (
             compute_co2_rolling_accumulator,
@@ -6356,22 +6330,6 @@ def build_handoff_from_solution(
                             .cast(pl.Float64, strict=False)
                             .fill_null(0.0))
                 .select("group", "period", "value"))
-            used_native_co2 = True
-    if not used_native_co2:
-        co2_path = sd / "co2_cum_realized_tonnes.csv"
-        if _provider_has(provider, "solve_data/co2_cum_realized_tonnes", co2_path):
-            try:
-                co2_df = _provider_read(provider, "solve_data/co2_cum_realized_tonnes", co2_path)
-            except pl.exceptions.NoDataError:
-                co2_df = None
-            if co2_df is not None and co2_df.height > 0 and \
-                    "p_co2_cum_realized_tonnes" in co2_df.columns:
-                cumulative_co2_df = (
-                    co2_df.with_columns(
-                        value=pl.col("p_co2_cum_realized_tonnes")
-                                .cast(pl.Float64, strict=False)
-                                .fill_null(0.0))
-                      .select("group", "period", "value"))
 
     # ---- cumulative_commodity: per-(commodity, tier, period) running mwh ----
     # Δ.11 — derive from sol when v_trade is in the LP and prior_handoff

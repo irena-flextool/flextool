@@ -1754,8 +1754,8 @@ def apply_derived_a(
     # 9. p_penalty_up / p_penalty_down (Δ.10 cluster F) ----------------
     # Dense over (nodeBalance ∪ nodeBalancePeriod) × usable_dt: the authored value (scalar, period,
     # time or period × time map, mixed across nodes), else the schema default.  A None result
-    # (stochastic-time value, unclassifiable map) keeps the seed (emit pdtNode, whose pbt fold carries a
-    # stochastic-time penalty).
+    # (unclassifiable map, or an empty node set / dt) keeps the seed (emit pdtNode); a stochastic-time
+    # map is resolved by the producer's own per-solve fold, not left to the seed.
     from flextool.engine.preprocess.params._arithmetic import apply_penalty_params
     apply_penalty_params(flex_data, source, usable_dt)
 
