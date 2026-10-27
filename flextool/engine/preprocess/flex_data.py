@@ -3369,15 +3369,24 @@ def _load_profiles(inp: Path, sd: Path, pss: pl.DataFrame | None,
     lower = pp.filter(pl.col(method_col)=="lower_limit").select("p","source","sink","profile")
     fixed = pp.filter(pl.col(method_col)=="fixed").select("p","source","sink","profile")
 
-    if "profile" in upper.columns:
-        upper = upper.pipe(rename_to_axis, {"profile": "f"})
-        lower = lower.pipe(rename_to_axis, {"profile": "f"})
-        fixed = fixed.pipe(rename_to_axis, {"profile": "f"})
-
-    # ``p_profile_value`` (f, d, t) is not seeded: on every DB path ``apply_profile_cascade`` writes it
-    # (``apply_derived_a`` step 9, PROFILE-1 on a synthetic sub-solve).  A reader-less CSV reload reads the
-    # emitted ``pdtProfile.csv`` instead (``_csv_reload._field_seeds``).
+    # profile values - file is solve, period, time, p1, p2... — wide per profile.
+    # The CSV seed is kept: ``apply_profile_cascade`` (``apply_derived_a`` step 9) is not
+    # always reached — ``dt_and_step_duration_from_source`` bails (and with it the whole
+    # of ``apply_derived_a`` past step 1) whenever the source has no ``timeset.timeset_duration``
+    # (e.g. a single-timeline model that relies on the legacy "no timeset_durations -> whole
+    # timeline" default, ``input/_timeline.py`` Rule 2). That path never reassigns
+    # ``p_profile_value``, so a scenario with ``profile_flow`` active and no DB-written
+    # timeset_duration needs this seed (c24 stage 4 follow-up, restores f5970cdb's deletion).
+    pdt_profile = sd / "pdtProfile.csv"
     profile_value = None
+    if _provider_has(provider, "solve_data/pdtProfile", pdt_profile):
+        prof_long = _read_wide_per_entity(pdt_profile, rename={"entity":"f"},
+                                            provider=provider)
+        if "profile" in upper.columns:
+            upper = upper.pipe(rename_to_axis, {"profile": "f"})
+            lower = lower.pipe(rename_to_axis, {"profile": "f"})
+            fixed = fixed.pipe(rename_to_axis, {"profile": "f"})
+        profile_value = Param(("f","d","t"), prof_long.select("f","d","t","value"))
 
     # existing_count = capacity / unitsize per (p, d).  For our scenarios
     # (no investment yet) this equals base_cap_pd.
@@ -4750,9 +4759,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # PROFILE-1 — same class of gap as SECTION-1 / MINLOAD-1.  The
         # synthetic-solve early-return skips ``apply_derived_a``, whose
         # ``apply_profile_cascade`` is the DB-direct producer of
-        # ``p_profile_value``; the loader does not seed it (the former CSV seed,
-        # emit ``pdtProfile``, had no period tier, so a period-keyed profile was
-        # read as 0 in every roll / nested sub-solve).  The cascade is
+        # ``p_profile_value``; the CSV seed (emit ``pdtProfile``) has no period
+        # tier, so a period-keyed profile (1-D period or 2-D period x time map)
+        # was read as 0 in every roll / nested sub-solve.  The cascade is
         # solve-agnostic (``source`` + the CSV-loaded ``dt`` + the per-solve
         # workdir CSVs for the stochastic and time-averaged tiers), so this
         # mirrors ``apply_derived_a`` exactly.  Per roll it costs only the

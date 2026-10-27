@@ -19,7 +19,7 @@ from polar_high import Param
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.preprocess._invest_seeds import read_invest_set
-from flextool.engine.preprocess.flex_data import _read_wide_e_d, _read_wide_per_entity
+from flextool.engine.preprocess.flex_data import _read_wide_e_d
 from flextool.engine.preprocess.params._derived import (
     process_delayed__duration_from_weight,
     process_group_inside_nonSync_from_flex,
@@ -48,11 +48,14 @@ _GROUP_SETS: tuple[str, ...] = ("groupCapacityMargin", "groupInertia", "groupNon
 _DELAY_TABLES: tuple[str, ...] = ("dtt__delay_duration", "p_process_delay_weight", "process_delayed__duration")
 
 #: The FlexData fields :func:`apply_dump_field_seeds` writes (each stage-4 deletion adds its fields).
+#: ``p_profile_value`` is not here: the c24 stage-4 follow-up restored its seed to the production loader's
+#: ``_load_profiles`` (``flex_data.py``), which runs whether or not there is a DB reader, so the reload needs
+#: no separate copy.
 SEEDED_FIELDS: tuple[str, ...] = (
     *_VARCOST_SETS, "p_pssdt_varCost",
     "p_co2_content", *_INVEST_CAP_TOTALS, *_INVEST_CAP_PERIODS, *_INVEST_MIN_TOTALS,
     *_GROUP_SETS, "process_sink_nonSync", "process_group_inside_nonSync", "process_minload",
-    "p_profile_value", *_DELAY_TABLES,
+    *_DELAY_TABLES,
 )
 
 _PSSDT_RENAME = {"process": "p", "period": "d", "time": "t"}
@@ -182,16 +185,6 @@ def _apply_group_and_minload_seeds(flex_data: object, provider: object) -> None:
         flex_data.process_minload = _process_minload(provider)
 
 
-def _profile_value(sd: Path, provider: object) -> Param | None:
-    """``solve_data/pdtProfile`` (``solve, period, time, <profile>...``, wide per profile) as ``p_profile_value``
-    ``(f, d, t)``; None when the dump has no such file."""
-    pdt_profile = sd / "pdtProfile.csv"
-    if not provider.has("solve_data/pdtProfile"):
-        return None
-    prof_long = _read_wide_per_entity(pdt_profile, rename={"entity": "f"}, provider=provider)
-    return Param(("f", "d", "t"), prof_long.select("f", "d", "t", "value"))
-
-
 def _delay_shift_table(provider: object) -> pl.DataFrame | None:
     """``solve_data/dtt__delay_duration`` as ``(d, t_source, t_sink, td)`` with Float64 ``td`` (the text column may
     read "1" or "1.0"); None when absent or empty."""
@@ -215,17 +208,16 @@ def _delay_weight(provider: object) -> Param | None:
         "p", pl.col("td").cast(pl.Float64), pl.col("value").cast(pl.Float64)))
 
 
-def _apply_profile_and_delay_seeds(flex_data: object, sd: Path, provider: object) -> None:
-    """The profile values and the delay tables (S4-5).
+def _apply_delay_seeds(flex_data: object, provider: object) -> None:
+    """The delay tables (S4-5).
 
-    ``p_profile_value`` is ``_load_profiles``' ``pdtProfile`` read and the shift table and weights
-    ``_delay.load_data``'s reads before S4-5, moved here unchanged with their gates: profile values only when the
-    loader built the profile-method sets (``process_profile_upper``), the delay tables only when a process is
+    ``_delay.load_data``'s reads before S4-5, moved here unchanged with their gate: only when a process is
     delayed.  ``process_delayed__duration`` is the production rule (``process_delayed__duration_from_weight``) on
     the seeded weights, so its ``td`` labels match the weights exactly.
+
+    ``p_profile_value`` used to be seeded alongside these (S4-5); the c24 stage-4 follow-up restored its seed to
+    the production loader instead (``flex_data.py::_load_profiles``), so it no longer needs a copy here.
     """
-    if getattr(flex_data, "process_profile_upper", None) is not None:
-        flex_data.p_profile_value = _profile_value(sd, provider)
     delayed = getattr(flex_data, "process_delayed", None)
     if delayed is not None and delayed.height > 0:
         flex_data.dtt__delay_duration = _delay_shift_table(provider)
@@ -255,15 +247,15 @@ def apply_dump_field_seeds(flex_data: object, sd: Path, inp: Path, provider: obj
       ``solve_data/process__sink_nonSync.csv``, ``process_minload`` from the dumped ``process_minload.csv`` (an
       empty set without the file) when the run has online processes, and ``process_group_inside_nonSync`` derived
       from the reloaded topology by the production rule.
-    * Profile values and delay tables (S4-5, :func:`_apply_profile_and_delay_seeds`): ``p_profile_value`` from the
-      run's emitted ``pdtProfile.csv`` when the run has profile-method arcs; ``dtt__delay_duration`` /
-      ``p_process_delay_weight`` from the emitted CSVs and ``process_delayed__duration`` derived from the weights
-      when a process is delayed.
+    * Delay tables (S4-5, :func:`_apply_delay_seeds`): ``dtt__delay_duration`` / ``p_process_delay_weight`` from
+      the emitted CSVs and ``process_delayed__duration`` derived from the weights, when a process is delayed.
+      ``p_profile_value`` is not seeded here: the production loader's own ``pdtProfile.csv`` read
+      (``flex_data.py::_load_profiles``) covers the reload too.
     """
     del inp
     _apply_co2_and_invest_seeds(flex_data, sd, provider)
     _apply_group_and_minload_seeds(flex_data, provider)
-    _apply_profile_and_delay_seeds(flex_data, sd, provider)
+    _apply_delay_seeds(flex_data, provider)
     if getattr(flex_data, "process_source_sink", None) is None:
         return
     for name in _VARCOST_SETS:

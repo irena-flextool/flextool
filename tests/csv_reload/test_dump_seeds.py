@@ -117,9 +117,8 @@ SCENARIO_OF_FIELD: dict[str, str] = {
     "process_sink_nonSync": "nonsync_internal",
     "process_group_inside_nonSync": "nonsync_internal",
     "process_minload": "coal_min_load",
-    # S4-5 profile values and delay tables.  coal_wind_inertia: wind_plant upper_limit profile; water_pump_delayed:
-    # the delayed water pump.
-    "p_profile_value": "coal_wind_inertia",
+    # S4-5 delay tables.  water_pump_delayed: the delayed water pump.  (p_profile_value is not here: the c24
+    # stage-4 follow-up restored its seed to the production loader, so the hook no longer writes it.)
     "dtt__delay_duration": "water_pump_delayed",
     "p_process_delay_weight": "water_pump_delayed",
     "process_delayed__duration": "water_pump_delayed",
@@ -434,24 +433,6 @@ def test_minload_set_when_the_run_has_online_processes(tmp_path: Path):
     assert fd.process_minload.schema == {"p": pl.Utf8}
     fd = _seeds(tmp_path / "offline", {"process_minload.csv": "process\ncoal_plant\n"}, process_online=None)
     assert fd.process_minload == "untouched"
-
-
-_PDT_PROFILE = "solve,period,time,wind,ev\ns,d1,t1,0.5,0.25\ns,d1,t2,0.75,0.0\n"
-
-
-def test_profile_values_when_the_run_has_profile_arcs(tmp_path: Path):
-    """With the loader's profile-method sets (``process_profile_upper``), ``p_profile_value`` is the emitted wide
-    ``pdtProfile.csv`` as ``(f, d, t)``; without the file it is None; without profile arcs the hook leaves it alone
-    (the loader's None).  The ``_load_profiles`` read moved here in S4-5."""
-    upper = pl.DataFrame({"p": ["w"], "source": ["w"], "sink": ["n"], "f": ["wind"]})
-    fd = _seeds(tmp_path / "file", {"pdtProfile.csv": _PDT_PROFILE}, process_profile_upper=upper)
-    assert fd.p_profile_value.dims == ("f", "d", "t")
-    assert sorted(fd.p_profile_value.frame.rows()) == [
-        ("ev", "d1", "t1", 0.25), ("ev", "d1", "t2", 0.0), ("wind", "d1", "t1", 0.5), ("wind", "d1", "t2", 0.75)]
-    fd = _seeds(tmp_path / "missing", {}, process_profile_upper=upper)
-    assert fd.p_profile_value is None
-    fd = _seeds(tmp_path / "no_arcs", {"pdtProfile.csv": _PDT_PROFILE}, process_profile_upper=None)
-    assert fd.p_profile_value == "untouched"
 
 
 _DELAY_CSVS = {
