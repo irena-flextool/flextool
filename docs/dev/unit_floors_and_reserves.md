@@ -110,20 +110,67 @@ have their own rows ("Connections and reserve" below).
 Sink-side and source-side rows of a direct arc limit the same `v_flow` and
 both carry the terms.  The rule is per arc, as the floors: upward reserve at
 an indirect unit's output does not load the ramp room of its input arcs.
-The row is `v_flow[t] − v_flow[t′] ± R ≤/≥ ±ρ·c·cap` with ρ the room of the
-pair of steps (`ramp_speed·60·(Δ′+Δ)/2`); a unit ramping down from t′ to t
-can hold its decrease in addition as upward reserve (that is what "reserve
-reduces the ramp room" means per model step; activation-time-scaled room is
-item 81).  Steps without a predecessor (`dt_ramp_link` / `dt_ramp_carry`),
+For a unit WITHOUT online variables (or a built-only row) the row is
+`v_flow[t] − v_flow[t′] ± R ≤/≥ ±ρ·c·cap` with ρ the room of the pair of
+steps (`ramp_speed·60·(Δ′+Δ)/2`) and `cap = existing_count` (±invest/divest);
+a unit ramping down from t′ to t can hold its decrease in addition as upward
+reserve (that is what "reserve reduces the ramp room" means per model step;
+activation-time-scaled room is item 81).
+
+For a unit WITH online variables (c14c part C, design §3) the room is on the
+*units online*, split by state, instead of on `existing_count` flat: the
+`existing_count`/invest/divest terms drop out of that row entirely and are
+replaced (per UC class `linear`/`integer`) by
+
+```
+up:    + c·ρ̄·v_online + c·(SU − ρ̄)·v_startup − F[t′]·v_shutdown
+down:  − c·ρ̄·v_online + (c·ρ̄ + F[t])·v_startup − c·SD′·v_shutdown
+```
+
+(`SU`/`SD′` as in "Startup / shutdown capacity reduction" below, this row's
+own side only — not the min over sides `maxFlow_online` keeps).  `F` is the
+arc's OWN per-unit-online floor (`_unit_floors.arc_floor_share`, the same
+sets `minFlow_minload` / `minFlow_output_floor` use):
+
+| arc | F |
+|---|---|
+| the only arc of the unit's output measure `A_p` (a direct unit's single arc, or a single-output indirect unit's output) | `min_load` |
+| an output of a multi-output unit with `capacity_min_coeff > 0` | `min_load · capacity_min_coeff` |
+| any other (other outputs, input arcs, units without `min_load`) | 0 |
+
+So a continuing unit's online capacity changes by at most `ρ̄` each step, a
+starter reaches at most `SU` (reusing `maxFlow_online`'s startup-step limit)
+and a stopper floors at `F` at the predecessor step; downwards a stopper
+drops at most from `SD′` and a starter rises at least to `F`.  `v_startup` /
+`v_shutdown` are relative to the SAME online predecessor `online_change`
+uses, so a start/stop pair with online unchanged gains at most
+`c·(ml − ½·ρ·Δ) − F ≤ 0` of room on a single-output arc (strictly negative:
+no free room from declaring a pair there); an input, or one output of a
+multi-output unit, can still gain up to the min-load share, paid by the
+startup cost (`research_backbone_startup_ramp.md` §1/§3).
+
+On a continuation roll's carry row (the period's first step ramping from the
+previous roll's realized flow, `dt_ramp_carry`) the predecessor is history,
+not this roll's data: the up row's stopper floor is `F = 0` (no
+`v_shutdown` term at all there — the carried step's `min_load` isn't in this
+roll), and the down row's stopper allowance is
+`SD′_carry = max(1, f̂ / (c·ĉ))` (`f̂` = the carried flow, `ĉ` =
+`p_roll_continue_online`; `1` where `ĉ = 0`, no stoppers then) — exact and
+always feasible for any history the previous roll realized, unlike a fixed
+`κ/c` guess (critique item 3).  Starters at the carry row keep `SU`/`F` as
+usual (this roll's own data).
+
+Steps without a predecessor (`dt_ramp_link` / `dt_ramp_carry`),
 where the arc holds reserve in that direction (`prundt`: at its sink in the
 same direction, at its source in the opposite one), get a reserve-only row
 `R ≤ ρ·c·cap` with ρ = `ramp_speed·60·Δ` (the linked row with
-`v_flow[t′] = v_flow[t]`).  Rows inside a period with ρ ≥ 1 are dropped also
-with reserve: `maxFlow*` carries the same R↑ and the floors (`minFlow_*`) the
-same R↓.  Units with online variables add `v_startup` / `v_shutdown` to the
-up / down rows (start despite the ramp limit), so with cheap startups the
-coupling binds only as far as startups cost (owner question Q-c14a-B).
-Connections have no ramp parameters.
+`v_flow[t′] = v_flow[t]`); `cap = v_online` for a unit with online
+variables, `existing_count` otherwise.  Rows inside a period with ρ ≥ 1 are
+dropped also with reserve: `maxFlow*` carries the same R↑ and the floors
+(`minFlow_*`) the same R↓.  Declaring a startup or shutdown no longer buys
+extra ramp or reserve room by itself (the c14a flat `+ v_startup` /
+`− v_shutdown` term is gone; Q-c14a-B is resolved by this split, not left
+open).  Connections have no ramp parameters.
 
 ## Startup / shutdown capacity reduction
 
@@ -144,13 +191,24 @@ unit's input arc):
 | row | reduction |
 |---|---|
 | base row | `κ·red_su·v_startup[t] + κ·max(0, red_sd − red_su)·v_shutdown[t⁺]` |
-| `…_shutdown_<kind>` (new, where `red_sd > 0` and t⁺ exists) | `κ·red_sd·v_shutdown[t⁺] + κ·max(0, red_su − red_sd)·v_startup[t]` |
+| `…_shutdown_<kind>` (where `red_sd > 0` and t has a UNIQUE successor t⁺) | `κ·red_sd·v_shutdown[t⁺] + κ·max(0, red_su − red_sd)·v_startup[t]` |
+| `…_shutdown_branch_<kind>` (one row PER successor, where t has SEVERAL successors — a branch point) | `κ·red_sd·v_shutdown[t⁺] + κ·max(0, red_su − red_sd)·v_startup[t]` |
 
 The pair is the exact aggregate bound for any mix of starts at t and stops at
 t⁺ (one-step runs get `min(SU, SD)`); GMPL's single row with both reductions is
-the minimum-uptime ≥ 2 form and forbids one-step runs.  t⁺ is the step whose
-`dt_ramp_link` predecessor is t in the same period: none at a period's last step,
-before a gap, a representative-block start or a roll's last step.  κ =
+the minimum-uptime ≥ 2 form and forbids one-step runs.  t⁺ ranges over every
+successor whose `dt_ramp_link` predecessor is t (c14c #98 / critique item 1):
+the same period (the original case), or the next period continuing the
+timeline (two periods on consecutive parts of one timeline, or a mid-horizon
+branch continuing from its trunk step) — none at a period's last step that
+does not continue, before a gap, a representative-block start or a roll's
+last step.  At a branch point (several mid-horizon branches continuing from
+the same trunk step) the shutdown cross-term cannot be split across the
+single base row (one `v_flow[t]` variable, one row): the base row keeps only
+its startup term there (a valid, looser bound) and `…_shutdown_branch_<kind>`
+gives the tight bound per branch instead — summing the branches' `v_shutdown`
+into one row would let several mutually-exclusive branches each buy back a
+whole unit of ramp room from the shared trunk step.  κ =
 `capacity_max_coeff` on capped arcs, `p_indirect_input_cap` on input arcs.  `ml`:
 `min_load` on output-measured arcs (direct arcs: also for an input-side ramp,
 v_flow is the output); on an indirect unit's input arc the input drawn at min

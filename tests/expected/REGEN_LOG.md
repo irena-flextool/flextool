@@ -868,3 +868,37 @@ reserve scales) and ≤ 4e-7 (rolled 1/η costs and balances).
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`; the golden subset with min_load_efficiency,
 rolling, nested and multi-solve scenarios (22) failed exactly these three before regenerating (19 passed).
+
+## 2026-10-27 — `coal_min_load`, `test_a_lot` (cycle c14c part C: ramp rows of online units on online capacity,
+split by unit state)
+
+**Context.** c14c part C (`model/core.py:_eq_ramp`) changes the ramp row of every process that has BOTH online
+variables and a ramp limit; it adds `v_online_*` columns to the `ramp_*` family's LP wherever that combination
+exists and gives `v_startup_*`/`v_shutdown_*` their physical coefficients there instead of the pre-c14c flat
++-1.  Neither `coal_min_load` nor `test_a_lot` has that combination (no process in either fixture carries a
+`ramp_method`), so part C's own code never touches either fixture's rows — confirmed by re-solving each
+scenario's full chain on the d77a21d4 pre-cycle baseline (before any of c14c's commits) and on this commit:
+`coal_min_load`'s "Total cost (calculated) full horizon" is 1145.74108333 M CUR on both, `test_a_lot`'s is
+21352.5012583 M CUR on both — byte-identical.  Both golden mismatches are therefore a PRE-EXISTING exact tie in
+each fixture's own degenerate LP that something upstream of part C (c14c parts A/B, already landed as commits
+`2f5e11ca`/`c34a2650`) nudges HiGHS onto the other side of — the design doc's own prediction ("coal_min_load
+unmoved") did not anticipate this; `test_a_lot`'s move is the one the design doc DID predict (p2035 storage /
+commodity reallocation), just with different exact cells than its worked estimate (a per-MPS estimate, per
+design section 6.1's own disclaimer).
+
+- `coal_min_load` (`unit_online__dt`): the SAME exact tie `coal_min_load_wind`/c15f's 2026-10-26 entry above
+  already documented once (`unit_online` 1.0 vs 0.964/0.938 at t0004-t0009 / t0024-t0029 — "stay fully online"
+  and "go to online 0.964/0.938 and pay a 0.036/0.062 start-up later" cost exactly the same in this fixture) —
+  it has now flipped back to the fully-online vertex.  Output flows unchanged; objective unchanged (see above).
+- `test_a_lot` (`unit__outputNode__dt`, `node__dt`, `costs__dt`): an exact-tie storage/commodity reallocation
+  within p2035 (e.g. t0010/t0011/t0013/t0016/t0025/t0027: a battery charge/discharge split between two columns
+  that sums to the same node balance either way) plus a handful of ~1e-6-relative `commodity_cost`/`co2` cells
+  (22687.0 → 22687.001 at p2020 t0001 etc. — within this file's own rtol 1e-4 gate, carried along because the
+  regen rewrites the whole csv in the current rounding format).  Full-horizon objective unchanged (see above);
+  `costs_discounted.csv` and the `cost_*_annualized__d`/`cost_*_discounted__d` csvs in this scenario's golden
+  set are untouched by the regen (not in the diff).
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`; the required c14c sub-cycle-end UC
+golden set (`coal_min_load`, `coal_min_load_MIP_wind`, `coal_min_load_wind`, `coal_unit_size_MIP_wind`,
+`coal_wind_min_uptime`, `coal_wind_min_uptime_MIP`, `network_all_tech`, `test_a_lot`, `all`) failed exactly these
+two before regenerating (7 passed unchanged).

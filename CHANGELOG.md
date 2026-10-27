@@ -1,5 +1,22 @@
 ## Unreleased
 
+- **Startups and shutdowns are exact, and the ramp limit of a unit with online variables applies to its
+  online capacity.** Startups and shutdowns are now exactly the change in units online: declaring a
+  startup or a shutdown that does not match a real change in committed units is no longer possible, and
+  declaring one no longer buys ramp room or reserve room by itself. A unit with online variables now ramps
+  on the units online in both steps, reaching at most its startup output in the step it starts and
+  dropping from at least its minimum load; a start/stop pair with online unchanged can still gain a little
+  room on an input or on one output of a multi-output unit, which its startup cost pays for. Ramp-limited
+  unit-commitment models can cost more than before (the free ramp room is gone); objectives of
+  unit-commitment models without ramp limits are unchanged.
+- **Online units continue across consecutive periods of one timeline and across rolling windows from the
+  right step.** A unit with online variables used to be charged a spurious startup where a period's first
+  step continued the previous period on the same timeline (two periods on consecutive parts of one
+  timeline, or a forecast branch continuing from its trunk step), and a continuation roll's carried
+  commitment used to land on the timeline's alphabetically first period instead of the roll's real first
+  step. Both are fixed; a unit that stays committed across either boundary is no longer re-charged a
+  startup there.
+
 - **A period or time Map with an unset/default Map index name (`index_name`) no longer drops other
   entities' values of the same parameter.** When one entity's Map had no index name set (Spine stores
   this as `x`) and its keys could not be matched to either a period or a timestep of the active solve,
