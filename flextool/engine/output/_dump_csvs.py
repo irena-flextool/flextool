@@ -10,15 +10,10 @@ The DB-loaded ``FlexData`` is the in-memory canonical;
 side-by-side ``diff -r tmpdir tests/data/work_<fixture>`` surfaces the
 divergence at file granularity.
 
-**Round-trip contract.**  After::
-
-    data = load_flextool(workdir, db_reader=reader)
-    data.dump_csvs(tmp)
-    redo = load_flextool(tmp)
-
-every ``Param`` / ``DataFrame`` field on ``data`` and ``redo`` should
-compare frame-equal up to row order.  This is the basis of
-:func:`tests.test_flex_dump_csvs_roundtrip.test_dump_csvs_roundtrip`.
+**Reload.**  The dump is for inspection.  Reloading it is unsupported
+and lives in ``flextool.engine._csv_reload`` (``copy_runner_meta`` +
+``load_from_dump``); its tests are in ``tests/csv_reload/`` (run with
+``pytest -m csv_reload tests/csv_reload/``).
 
 **Scope.**  The mapping covers every FlexData field that
 ``flextool/input.py`` reads from a single canonical CSV via a
@@ -35,16 +30,12 @@ also to ``input/`` when ``flex_data.py`` reads from there for that field.
 
 **Not in scope.**  Per-solve metadata (``solve_current.csv``,
 ``period_first_of_solve.csv``, ``solve_mode.csv``, etc.) — these are
-flextool-runner state, not FlexData fields, and the round-trip path
-doesn't need them when the source ``workdir`` is also handed to
-``load_flextool`` (we can copy them in advance).  ``dump_csvs`` will
-copy them through if a ``copy_meta_from`` argument is given (used by
-the round-trip test).
+flextool-runner state, not FlexData fields, so ``dump_csvs`` does not
+write them.
 """
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -284,10 +275,13 @@ def _write_frame(frame: pl.DataFrame, path: Path,
 
 
 def dump_csvs(data: "FlexData", workdir: Path | str,
-               *, copy_meta_from: Path | str | None = None,
-               include_heavy: bool | None = None) -> Path:
+               *, include_heavy: bool | None = None) -> Path:
     """Materialise ``data`` to ``workdir/input/`` + ``workdir/solve_data/``
     in flextool's CSV layout.
+
+    The dump is for inspection.  Reloading it is unsupported and lives in
+    ``flextool.engine._csv_reload`` (``copy_runner_meta`` +
+    ``load_from_dump``).
 
     Parameters
     ----------
@@ -295,23 +289,14 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
         The in-memory FlexData to dump.
     workdir : Path | str
         Target directory.  Created if missing.
-    copy_meta_from : Path | str, optional
-        When supplied, copies per-solve metadata files
-        (``solve_current.csv``, ``period_first_of_solve.csv``,
-        ``solve_mode.csv``, etc. — see :data:`_META_FILES_TO_COPY`)
-        from this source workdir into the target.  This is the
-        round-trip use case where the CSV reader needs metadata
-        (timeline, solve list) that isn't on FlexData but is in the
-        original workdir.
     include_heavy : bool, optional
         When ``True``, force-write the eight gigabyte-scale CSVs in
         :data:`_HEAVY_CSV_FILES` regardless of the
         ``FLEXTOOL_DUMP_CSVS`` env var.  When ``False``, force-skip
         them.  When ``None`` (default), consult the env var — set to
-        ``"1"`` to enable.  The round-trip regression test
-        (``tests/engine/test_dump_csvs_roundtrip.py``) passes
-        ``include_heavy=True`` to exercise the full debug-oracle
-        round-trip contract.
+        ``"1"`` to enable.  The reload test
+        (``tests/csv_reload/test_dump_csvs_roundtrip.py``) passes
+        ``include_heavy=True`` to dump every field.
 
     Returns
     -------
@@ -414,10 +399,6 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
     pre_existing_path = sd_dir / "solve__p_entity_pre_existing.csv"
     if not pre_existing_path.exists():
         pre_existing_path.write_text("solve,period\n")
-
-    # ─── Optional metadata copy-through ───────────────────────────────
-    if copy_meta_from is not None:
-        _copy_meta(Path(copy_meta_from), work)
 
     # ─── Dump format stamp (``_dump_meta.json``; never raises) ────────
     write_dump_stamp(work, writer="dump_csvs")
@@ -813,222 +794,3 @@ def _write_p_input_sliced(data: "FlexData", inp_dir: Path) -> None:
                                        entity_col="process",
                                        param_col="processParam")
         merged.write_csv(inp_dir / "p_process.csv")
-
-
-# ---------------------------------------------------------------------------
-# Metadata copy-through
-
-# These files are read by ``load_flextool`` but are NOT FlexData fields.
-# When a round-trip test wants the dumped workdir to reload via the CSV
-# path, it copies these from the original workdir verbatim.
-_META_FILES_TO_COPY: tuple[tuple[str, str], ...] = (
-    # (kind, filename)
-    ("solve_data", "solve_current.csv"),
-    ("solve_data", "period_first_of_solve.csv"),
-    ("solve_data", "period_first.csv"),
-    ("solve_data", "period_last.csv"),
-    ("solve_data", "period__time_last.csv"),
-    ("solve_data", "block_period_time_last.csv"),
-    ("solve_data", "step_previous.csv"),
-    ("solve_data", "p_years_d.csv"),
-    ("solve_data", "p_nested_model.csv"),
-    ("solve_data", "fix_storage_timesteps.csv"),
-    ("solve_data", "realized_invest_periods_of_current_solve.csv"),
-    ("solve_data", "stochastic_invest_method.csv"),
-    ("solve_data", "realized_dispatch.csv"),
-    ("solve_data", "p_entity_pre_existing.csv"),
-    ("solve_data", "entity.csv"),
-    ("solve_data", "entityDivest.csv"),
-    ("solve_data", "entity_block.csv"),
-    ("solve_data", "block_duration.csv"),
-    ("solve_data", "overlap_set.csv"),
-    ("solve_data", "block_step_duration.csv"),
-    ("solve_data", "period_block_set.csv"),
-    ("solve_data", "period_block_succ.csv"),
-    ("solve_data", "period_block_time.csv"),
-    ("solve_data", "period__branch.csv"),
-    ("solve_data", "first_timesteps.csv"),
-    ("solve_data", "solve_branch_weight.csv"),
-    ("input", "solve_mode.csv"),
-    ("input", "p_model.csv"),
-    ("input", "p_group.csv"),
-    ("input", "pd_group.csv"),
-    ("input", "p_flowgroup.csv"),
-    ("input", "pdt_flowgroup.csv"),
-    ("input", "process__ct_method.csv"),
-    ("input", "groupIncludeStochastics.csv"),
-    ("input", "commodity__node.csv"),
-    ("input", "group__node.csv"),
-    ("input", "group__entity.csv"),
-    ("input", "flowGroup__process__node.csv"),
-    ("input", "constraint__sense.csv"),
-    ("input", "p_constraint_constant.csv"),
-    ("input", "p_node_constraint_invested_capacity_coeff.csv"),
-    ("input", "p_process_constraint_invested_capacity_coeff.csv"),
-    ("input", "p_node_constraint_state_coeff.csv"),
-    ("input", "p_node_constraint_cumulative_pre_built_capacity_coeff.csv"),
-    ("input", "p_process_constraint_cumulative_pre_built_capacity_coeff.csv"),
-    ("input", "p_process_node_constraint_flow_coeff.csv"),
-    ("input", "p_process_source_conversion_flow_coeff.csv"),
-    ("input", "p_process_sink_conversion_flow_coeff.csv"),
-    ("input", "p_entity_unitsize.csv"),
-    ("input", "process__source__sink__profile__profile_method.csv"),
-    ("input", "node__profile__profile_method.csv"),
-    ("input", "node__storage_start_end_method.csv"),
-    ("input", "node__storage_solve_horizon_method.csv"),
-    ("input", "node__storage_binding_method.csv"),
-    ("input", "node__storage_nested_fix_method.csv"),
-    ("input", "p_reserve__upDown__group.csv"),
-    ("input", "p_process__reserve__upDown__node.csv"),
-    ("input", "groupNonSync.csv"),
-    ("input", "p_process_sink.csv"),
-    ("input", "p_process_source.csv"),
-    ("input", "node_dc_power_flow.csv"),
-    ("input", "connection_dc_power_flow.csv"),
-    ("input", "node_reference_angle.csv"),
-    ("input", "p_connection_susceptance.csv"),
-    ("input", "commodity_ladder_annual.csv"),
-    ("input", "commodity_ladder_cumulative.csv"),
-    ("input", "p_commodity_unitsize.csv"),
-    # solve_data — additional preprocessed files
-    ("solve_data", "process__method_indirect.csv"),
-    ("solve_data", "commodity_node_co2.csv"),
-    ("solve_data", "group_co2_price.csv"),
-    ("solve_data", "p_online_dt_set.csv"),
-    ("solve_data", "process_source_sink_ramp_limit_sink_up.csv"),
-    ("solve_data", "process_source_sink_ramp_limit_sink_down.csv"),
-    ("solve_data", "process_source_sink_ramp_limit_source_up.csv"),
-    ("solve_data", "process_source_sink_ramp_limit_source_down.csv"),
-    ("solve_data", "process_minload.csv"),
-    ("solve_data", "process_online_linear.csv"),
-    ("solve_data", "process_online_integer.csv"),
-    ("solve_data", "process_online.csv"),
-    ("solve_data", "ed_invest.csv"),
-    ("solve_data", "ed_divest.csv"),
-    ("solve_data", "edd_invest.csv"),
-    ("solve_data", "ed_invest_period.csv"),
-    ("solve_data", "ed_divest_period.csv"),
-    ("solve_data", "ed_invest_max_period.csv"),
-    ("solve_data", "ed_divest_max_period.csv"),
-    ("solve_data", "ed_invest_min_period.csv"),
-    ("solve_data", "ed_divest_min_period.csv"),
-    ("solve_data", "e_invest_total.csv"),
-    ("solve_data", "e_divest_total.csv"),
-    ("solve_data", "e_invest_max_total.csv"),
-    ("solve_data", "e_divest_max_total.csv"),
-    ("solve_data", "e_invest_min_total.csv"),
-    ("solve_data", "e_divest_min_total.csv"),
-    ("solve_data", "ed_lifetime_fixed_cost.csv"),
-    ("solve_data", "ed_lifetime_fixed_cost_divest.csv"),
-    ("solve_data", "ed_entity_annual_discounted.csv"),
-    ("solve_data", "ed_entity_annual_divest_discounted.csv"),
-    ("solve_data", "p_entity_max_units.csv"),
-    ("solve_data", "p_entity_period_existing_capacity.csv"),
-    ("solve_data", "p_entity_previously_invested_capacity.csv"),
-    ("solve_data", "p_entity_invested.csv"),
-    ("solve_data", "p_entity_divested.csv"),
-    ("solve_data", "ed_invest_forbidden_no_investment.csv"),
-    ("solve_data", "ed_invest_cumulative.csv"),
-    ("solve_data", "ed_cumulative_max_capacity.csv"),
-    ("solve_data", "ed_cumulative_min_capacity.csv"),
-    ("solve_data", "g_invest_total.csv"),
-    ("solve_data", "g_divest_total.csv"),
-    ("solve_data", "g_invest_cumulative.csv"),
-    ("solve_data", "gd_invest_period.csv"),
-    ("solve_data", "gd_divest_period.csv"),
-    ("solve_data", "n_fix_storage_quantity_set.csv"),
-    ("solve_data", "fix_storage_quantity.csv"),
-    ("solve_data", "p_roll_continue_state.csv"),
-    ("solve_data", "process_indirect.csv"),
-    ("solve_data", "process_input_flows.csv"),
-    ("solve_data", "process_output_flows.csv"),
-    ("solve_data", "ed_fixed_cost.csv"),
-    ("solve_data", "p_node.csv"),
-    ("solve_data", "p_process.csv"),
-    ("solve_data", "process_source_delayed.csv"),
-    ("solve_data", "process_source_undelayed.csv"),
-    ("solve_data", "process_source_sink_delayed.csv"),
-    ("solve_data", "process_source_sink_undelayed.csv"),
-    ("solve_data", "process_delayed.csv"),
-    ("solve_data", "process_delayed__duration.csv"),
-    ("solve_data", "p_process_delay_weight.csv"),
-    ("solve_data", "dtt__delay_duration.csv"),
-    ("solve_data", "commodity_with_ladder.csv"),
-    ("solve_data", "commodity_with_ladder_annual.csv"),
-    ("solve_data", "commodity_with_ladder_cumulative.csv"),
-    ("solve_data", "cnd_ladder_set.csv"),
-    ("solve_data", "cndi_ladder_set.csv"),
-    ("solve_data", "cndi_ladder_ann_set.csv"),
-    ("solve_data", "cndi_ladder_cum_set.csv"),
-    ("solve_data", "ci_ladder_cumulative.csv"),
-    ("solve_data", "commodity__tier_ann.csv"),
-    ("solve_data", "f_d_k.csv"),
-    ("solve_data", "ladder_cum_realized_mwh.csv"),
-    ("solve_data", "node_capacity_for_scaling.csv"),
-    ("solve_data", "group_capacity_for_scaling.csv"),
-    ("solve_data", "inv_group_cap.csv"),
-    ("solve_data", "group_node.csv"),
-    ("solve_data", "group_entity.csv"),
-    ("solve_data", "group_process_node.csv"),
-    ("solve_data", "process_unit.csv"),
-    ("solve_data", "process_sink_inertia.csv"),
-    ("solve_data", "process_source_inertia.csv"),
-    ("solve_data", "process__sink_nonSync.csv"),
-    ("solve_data", "process__group_inside_group_nonSync.csv"),
-    ("solve_data", "p_positive_inflow.csv"),
-    ("solve_data", "p_negative_inflow.csv"),
-    ("solve_data", "pdGroup.csv"),
-    ("solve_data", "pdGroup_capacity_margin.csv"),
-    ("solve_data", "pdGroup_inertia_limit.csv"),
-    ("solve_data", "pdGroup_penalty_capacity_margin.csv"),
-    ("solve_data", "pdGroup_penalty_inertia.csv"),
-    ("solve_data", "pdGroup_penalty_non_synchronous.csv"),
-    ("solve_data", "reserve__upDown__group.csv"),
-    ("solve_data", "reserve__upDown__group__method_timeseries.csv"),
-    ("solve_data", "reserve__upDown__group__method_dynamic.csv"),
-    ("solve_data", "reserve__upDown__group__method_n_1.csv"),
-    ("solve_data", "prundt.csv"),
-    ("solve_data", "process_reserve_upDown_node_active.csv"),
-    ("solve_data", "process_reserve_upDown_node_increase_reserve_ratio.csv"),
-    ("solve_data", "process_reserve_upDown_node_large_failure_ratio.csv"),
-    ("solve_data", "p_process_reserve_upDown_node_reliability.csv"),
-    ("solve_data", "pdtReserve_upDown_group.csv"),
-    ("solve_data", "dt_non_anticipativity_set.csv"),
-    ("solve_data", "timeline_matching_map.csv"),
-    ("solve_data", "fix_storage_quantity.csv"),
-    ("solve_data", "edd_history.csv"),
-    ("solve_data", "edd_history_invest.csv"),
-    ("solve_data", "pssdt_varCost_noEff.csv"),
-    ("solve_data", "pssdt_varCost_eff_unit_source.csv"),
-    ("solve_data", "pssdt_varCost_eff_unit_sink.csv"),
-    ("solve_data", "pssdt_varCost_eff_connection.csv"),
-    ("solve_data", "pdtProcess_source.csv"),
-    ("solve_data", "pdtProcess_sink.csv"),
-)
-
-
-def _copy_meta(src_workdir: Path, dst_workdir: Path) -> None:
-    """Copy metadata files from ``src`` to ``dst``, preserving directory.
-
-    Strategy: copy every ``.csv`` file from ``src/{input,solve_data}/``
-    that does NOT already exist in ``dst/{input,solve_data}/``.  The
-    direct-write pass has already populated the FlexData-derived files;
-    this pass fills in metadata + structural files (timeline, period
-    markers, method discriminators, header-only filter sets, etc.) that
-    the CSV reader needs but that aren't FlexData fields.
-
-    The intent is that the dumped tree is a *complete* workdir that
-    ``load_flextool`` can consume — the CSV reader's many file-existence
-    probes don't crash because every CSV in the source is mirrored.
-    """
-    for kind in ("input", "solve_data"):
-        src_dir = src_workdir / kind
-        dst_dir = dst_workdir / kind
-        if not src_dir.is_dir():
-            continue
-        dst_dir.mkdir(parents=True, exist_ok=True)
-        for src in src_dir.glob("*.csv"):
-            dst = dst_dir / src.name
-            if dst.exists():
-                continue   # direct-write or earlier copy already populated
-            shutil.copy(src, dst)

@@ -1112,32 +1112,23 @@ class FlexData:
     def dump_csvs(self,
                    workdir: "Path | str",
                    *,
-                   copy_meta_from: "Path | str | None" = None,
                    include_heavy: bool | None = None,
                    ) -> "Path":
         """Materialise this FlexData to flextool's CSV layout under ``workdir``.
 
-        See :mod:`flextool._dump_csvs` for the full mapping.  Round-trip
-        contract: ``load_flextool(dump_csvs(out))`` reproduces every
-        populated FlexData field frame-for-frame (modulo row order).
-
-        ``copy_meta_from`` is the original workdir whose per-solve
-        metadata (``solve_current.csv``, timeline reference files,
-        period-first markers, …) we copy through verbatim — these are
-        runner state, not FlexData fields, but the CSV reader needs
-        them.  When the round-trip caller has access to the original
-        workdir, pass it here.
+        See :mod:`flextool.engine.output._dump_csvs` for the full mapping.
+        The dump is for inspection.  Reloading it is unsupported and lives
+        in ``flextool.engine._csv_reload`` (``copy_runner_meta`` +
+        ``load_from_dump``).
 
         ``include_heavy`` (default ``None``) controls whether the seven
         gigabyte-scale CSVs (``p_flow_max.csv`` and friends) are
         written.  ``None`` honours the ``FLEXTOOL_DUMP_CSVS`` env var
-        (off by default); pass ``True`` to force-write them (e.g. for
-        the round-trip regression test).
+        (off by default); pass ``True`` to force-write them.
         """
         # Local import — avoids a circular import at module-load.
         from flextool.engine.output._dump_csvs import dump_csvs as _impl
-        return _impl(self, workdir, copy_meta_from=copy_meta_from,
-                     include_heavy=include_heavy)
+        return _impl(self, workdir, include_heavy=include_heavy)
 
     def __setattr__(self, name: str, value):
         # Diagnostic gate: only armed by ``_cascade_gate()`` (used by
