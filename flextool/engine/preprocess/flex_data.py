@@ -27,6 +27,8 @@ import polars as pl
 from polar_high import Param
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from flextool.engine.input._input_source import FlexInputSource, InputSource
 
 from flextool.engine.model import _group_slack
@@ -1311,7 +1313,8 @@ def _load_inflow_unmargined(sd: Path, *, provider=None) -> "Param | None":
 
 def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
                             *, source: "InputSource | None" = None,
-                            provider: "object | None" = None):
+                            provider: "object | None" = None,
+                            dump_topology: "Callable[[Path, object], dict | None] | None" = None):
     # Δ.17b Gap B: ``process_source_sink_canonical`` produces flextool's
     # preprocessing-side collapsed shape directly from Spine (DIRECT methods
     # cross-joined; INDIRECT methods kept as 2-arc form; 2way reverse arcs
@@ -1328,7 +1331,18 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
     # the canonical preprocessed CSVs (``process_source_sink.csv`` /
     # ``_eff.csv`` / ``_noEff.csv``) directly.  These mirror the
     # source-driven helper's output; the round-trip test depends on it.
-    if source is None:
+    #
+    # ``dump_topology`` (only ``flextool.engine._csv_reload`` passes it) replaces that CSV branch with the
+    # package's own copy, read from the seeded provider: ``None`` means "no processes", otherwise a dict with
+    # the five frames below.
+    if source is None and dump_topology is not None:
+        parts = dump_topology(sd, provider)
+        if parts is None:
+            return empty_return
+        pss, pss_eff, pss_noEff = parts["pss"], parts["pss_eff"], parts["pss_noEff"]
+        pss_source_canonical = parts["pss_source_canonical"]
+        pss_sink_canonical = parts["pss_sink_canonical"]
+    elif source is None:
         pss_path     = sd / "process_source_sink.csv"
         pss_eff_path = sd / "process_source_sink_eff.csv"
         pss_noe_path = sd / "process_source_sink_noEff.csv"
@@ -4164,7 +4178,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
                    *,
                    db_reader: "object | None" = None,
                    handoff: "object | None" = None,
-                   provider: "object | None" = None) -> FlexData:
+                   provider: "object | None" = None,
+                   _dump_topology: "Callable[[Path, object], dict | None] | None" = None) -> FlexData:
     """Load a :class:`FlexData` from either a workdir on disk or a
     :class:`flextool._input_source.FlexInputSource`.
 
@@ -4211,6 +4226,10 @@ def load_flextool(source: "Path | str | FlexInputSource",
     by the in-memory handoff (the in-memory handoff is the source of
     truth, even when the workdir's ``solve_data/*.csv`` already carries
     a value).
+
+    ``_dump_topology`` is private to ``flextool.engine._csv_reload`` (the unsupported CSV reload).  When given,
+    the loader builds the process topology with it instead of its own CSV branch, and it neither
+    auto-constructs a DB reader nor builds axis Enums from a ``tests.sqlite`` next to the workdir.
     """
     _loadflex_prof("enter")
     # Late-import the Protocol + adapters to avoid a circular import
@@ -4236,7 +4255,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # the axis_enums vocabulary is built so the reader can be threaded
     # with it (cast-on-emit).  ``_auto_construct_db_reader`` records the
     # intent; the actual construction lives below the axis_enums build.
-    _auto_construct_db_reader = (db_reader is None and workdir_for_db is not None)
+    _auto_construct_db_reader = (db_reader is None and workdir_for_db is not None
+                                 and _dump_topology is None)
 
     inp = source.input_dir
     sd  = source.solve_data_dir
@@ -4318,7 +4338,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         provider, "axis_enums", None,
     )
     contract = getattr(provider, "contract", None)
-    if axis_enums is None:
+    if axis_enums is None and _dump_topology is None:
         from flextool.spinedb_backend._axis_enums import (
             build_axis_enums,
             load_axis_contract,
@@ -4473,7 +4493,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         proc = _load_process_topology(inp, sd, dt,
                                        source=db_reader,
-                                       provider=provider)
+                                       provider=provider,
+                                       dump_topology=_dump_topology)
         _load_mem("load_process_topology_end",
                   "load_flextool: process topology loaded")
 

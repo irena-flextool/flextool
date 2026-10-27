@@ -82,8 +82,11 @@ import pytest
 CASCADE_ROOT = Path(__file__).resolve().parents[2] / "flextool" / "engine"
 
 # Subfolders of CASCADE_ROOT that are not cascade code.  ``autoscale/``
-# is the LP-scaling layer (no Provider access).
-EXCLUDED_SUBDIRS: frozenset[str] = frozenset({"autoscale"})
+# is the LP-scaling layer (no Provider access).  ``_csv_reload/`` is the
+# unsupported, opt-in CSV-dump reload: it reads dump CSVs from disk by
+# design and nothing in the cascade imports it (see
+# ``test_csv_reload_is_a_leaf`` below).
+EXCLUDED_SUBDIRS: frozenset[str] = frozenset({"autoscale", "_csv_reload"})
 
 # Relative paths of files skipped outright: the package root
 # ``__init__.py`` only re-exports the public API.
@@ -590,3 +593,148 @@ def test_allowlists_cover_only_existing_files() -> None:
             "PROVIDER_IMPL_FILE / PROVIDER_IMPL_ALLOWLIST / "
             "RAW_INPUT_FALLBACK_ALLOWLIST."
         )
+
+
+# ---------------------------------------------------------------------------
+# Leaf rule — nothing outside ``flextool/engine/_csv_reload/`` imports it
+# ---------------------------------------------------------------------------
+#
+# The CSV reload package is unsupported and not kept in sync with the
+# engine.  It may import the engine; the engine, the tools and the default
+# test suite must not import it (a normal test importing it would make the
+# default gate depend on unsupported code).  Its own tests live in
+# ``tests/csv_reload/`` and are the only exemption.
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CSV_RELOAD_MODULE = "flextool.engine._csv_reload"
+
+# (scan root, sub-folder of it that is exempt, minimum files the walk must see)
+LEAF_SCAN_ROOTS: tuple[tuple[str, str, int], ...] = (
+    ("flextool", "flextool/engine/_csv_reload", 250),
+    ("tools", "", 1),
+    ("tests", "tests/csv_reload", 400),
+)
+
+
+def _module_package(path: Path) -> list[str]:
+    """Package parts of the module at *path* (repo-relative), for resolving relative imports."""
+    parts = list(path.relative_to(REPO_ROOT).with_suffix("").parts)
+    return parts[:-1]  # ``pkg/__init__.py`` and ``pkg/mod.py`` both resolve ``.`` to ``pkg``
+
+
+def _names_csv_reload(module: str) -> bool:
+    return module == CSV_RELOAD_MODULE or module.startswith(CSV_RELOAD_MODULE + ".")
+
+
+def _csv_reload_imports(source: str, package: list[str]) -> list[tuple[int, str]]:
+    """(line, statement) of every import of the CSV reload package in *source*.
+
+    Detects ``import flextool.engine._csv_reload[...]``, ``from
+    flextool.engine._csv_reload[...] import ...``, ``from flextool.engine
+    import _csv_reload``, relative ``from`` imports resolved against
+    *package*, and string module names passed to ``importlib.import_module``
+    / ``__import__`` (``import_module`` with ``package=`` resolves a
+    relative name).
+    """
+    hits: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _names_csv_reload(alias.name):
+                    hits.append((node.lineno, f"import {alias.name}"))
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = package[: len(package) - (node.level - 1)] if node.level - 1 <= len(package) else []
+                module = ".".join(base + ([node.module] if node.module else []))
+            else:
+                module = node.module or ""
+            if _names_csv_reload(module) or any(
+                _names_csv_reload(f"{module}.{alias.name}") for alias in node.names
+            ):
+                hits.append((node.lineno, f"from {'.' * node.level}{node.module or ''} import ..."))
+        elif isinstance(node, ast.Call):
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
+            if name not in ("import_module", "__import__") or not node.args:
+                continue
+            arg = node.args[0]
+            if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+                continue
+            target = arg.value
+            if target.startswith("."):
+                pkg = next((kw.value.value for kw in node.keywords
+                            if kw.arg == "package" and isinstance(kw.value, ast.Constant)
+                            and isinstance(kw.value.value, str)), None)
+                if pkg is None:
+                    continue
+                dots = len(target) - len(target.lstrip("."))
+                base = pkg.split(".")
+                base = base[: len(base) - (dots - 1)]
+                target = ".".join(base + [target.lstrip(".")])
+            if _names_csv_reload(target):
+                hits.append((node.lineno, f"{name}({arg.value!r})"))
+    return hits
+
+
+def _iter_leaf_scan_files():
+    for root, exempt, _minimum in LEAF_SCAN_ROOTS:
+        exempt_dir = (REPO_ROOT / exempt) if exempt else None
+        for p in sorted((REPO_ROOT / root).rglob("*.py")):
+            if exempt_dir is not None and exempt_dir in p.parents:
+                continue
+            yield root, p
+
+
+def test_csv_reload_is_a_leaf() -> None:
+    """No module outside ``flextool/engine/_csv_reload/`` (and ``tests/csv_reload/``) imports the package.
+
+    Scans ``flextool/``, ``tools/`` and ``tests/``.  Every file must parse,
+    and each root must yield at least its minimum file count, so a broken
+    walk cannot pass silently.
+    """
+    counts = {root: 0 for root, _exempt, _minimum in LEAF_SCAN_ROOTS}
+    violations: list[str] = []
+    for root, path in _iter_leaf_scan_files():
+        counts[root] += 1
+        source = path.read_text(encoding="utf-8")
+        for line, stmt in _csv_reload_imports(source, _module_package(path)):
+            violations.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{line}: {stmt}")
+    too_few = {root: counts[root] for root, _exempt, minimum in LEAF_SCAN_ROOTS if counts[root] < minimum}
+    assert not too_few, f"leaf scan saw too few files (the walk is broken or the tree moved): {too_few}"
+    assert not violations, (
+        "flextool.engine._csv_reload (unsupported CSV reload) is imported from outside the package; only the "
+        "package itself and tests/csv_reload/ may import it:\n" + "\n".join(violations)
+    )
+
+
+@pytest.mark.parametrize("source,package", [
+    ("import flextool.engine._csv_reload", ["flextool", "engine"]),
+    ("import flextool.engine._csv_reload.load as l", ["tests"]),
+    ("from flextool.engine._csv_reload import load_from_dump", ["tools"]),
+    ("from flextool.engine._csv_reload.load import load_from_dump", ["tests", "engine"]),
+    ("from flextool.engine import _csv_reload", ["flextool", "output"]),
+    ("from . import _csv_reload", ["flextool", "engine"]),
+    ("from ._csv_reload import load_from_dump", ["flextool", "engine"]),
+    ("from .._csv_reload.load import load_from_dump", ["flextool", "engine", "output"]),
+    ("from ... import _csv_reload", ["flextool", "engine", "preprocess", "emit"]),
+    ("def f():\n    from flextool.engine._csv_reload import check_dump", ["flextool"]),
+    ("import importlib\nimportlib.import_module('flextool.engine._csv_reload')", ["tests"]),
+    ("from importlib import import_module\nimport_module('flextool.engine._csv_reload._stamp')", ["tools"]),
+    ("import importlib\nimportlib.import_module('._csv_reload', package='flextool.engine')", ["tests"]),
+    ("__import__('flextool.engine._csv_reload.load')", ["flextool"]),
+])
+def test_csv_reload_leaf_detector_flags_every_import_form(source: str, package: list[str]) -> None:
+    """Self-check: the leaf detector flags each import form (so a broken detector cannot pass silently)."""
+    assert len(_csv_reload_imports(source, package)) == 1, source
+
+
+@pytest.mark.parametrize("source,package", [
+    ("from flextool.engine import _dump_csvs", ["flextool", "engine"]),
+    ("import flextool.engine._csv_reloader", ["tests"]),
+    ("from . import _csv_reload", ["flextool", "process_outputs"]),
+    ('"""See flextool.engine._csv_reload for the reload."""', ["flextool"]),
+    ("x = 'flextool.engine._csv_reload'", ["tests"]),
+])
+def test_csv_reload_leaf_detector_ignores_non_imports(source: str, package: list[str]) -> None:
+    """Self-check: docstrings, other modules and same-named siblings elsewhere are not flagged."""
+    assert _csv_reload_imports(source, package) == [], source
