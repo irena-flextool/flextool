@@ -1511,14 +1511,9 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             flow_from_co2_priced_noEff = None
     if flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None:
         return (None, None, None, None)
-    # ``p_co2_content`` is produced by ``apply_direct_params``; this provider seed is kept for synthetic
-    # per-sub-solve names. The DB overlay normally wins.
-    p_comm = _provider_read(provider, "input/p_commodity",
-                              inp / "p_commodity.csv")
-    co2_content = Param(("c",),
-        p_comm.filter(pl.col("commodityParam")=="co2_content")
-              .pipe(rename_to_axis, {"commodity":"c","p_commodity":"value"})
-              .select("c","value"))
+    # ``p_co2_content`` is written by ``apply_direct_params_a`` on every DB path (a reader-less reload seeds it in
+    # ``_csv_reload._field_seeds``), so this slot is None.
+    co2_content = None
     # Δ.17c Gap C: ``p_co2_price`` produced authoritatively by
     # ``apply_direct_params`` via ``p_co2_price_from_source`` (uses the
     # ``_param_shapes`` resolver — full scalar / 1d_map[period] /
@@ -1924,8 +1919,11 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     ``pd_invest``, ``pd_divest``, ``nd_invest``, ``nd_divest``,
     ``edd_invest``) are skipped — :func:`apply_synthetic_invest_sets`
     populates these fields from Spine during ``_apply_db_overrides``.
-    The cost-param seeds (``ed_lifetime_fixed_cost`` etc.) and per-
-    period cap seeds remain on the CSV path.
+    The cost-param seeds (``ed_lifetime_fixed_cost`` etc.) and the per-
+    period cap sets (``ed_*_period_set``) remain on the CSV path.  The cap
+    values (``e_*_max_total``, ``ed_*_max_period``) are not seeded: the DB
+    overlay writes them on every path (a reader-less reload seeds them in
+    ``_csv_reload._field_seeds``).
     """
     blank = dict(
         ed_invest_set=None, ed_divest_set=None,
@@ -2030,7 +2028,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
                 provider, "solve_data/p_entity_max_units",
                 sd / "p_entity_max_units.csv") else None
 
-    # Δ.18 — CSV-fallback seeds for the lifetime / NPV / total / max-period
+    # Δ.18 — CSV-fallback seeds for the lifetime / NPV
     # cost cascade.  These were dropped in Δ.12-drop / Δ.17 because the
     # override chain (``apply_derived_f`` / ``apply_direct_params`` /
     # ``apply_projection_params``) is authoritative.  But for synthetic
@@ -2050,30 +2048,10 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
             return None
         return Param(("e", "d"), df.select("e", "d", "value"))
 
-    def _read_e(name: str) -> "Param | None":
-        f = sd / f"{name}.csv"
-        if not _provider_has(provider, f"solve_data/{name}", f):
-            return None
-        df = _provider_read(provider, f"solve_data/{name}", f)
-        if df.height == 0:
-            return None
-        if "entity" not in df.columns or "value" not in df.columns:
-            return None
-        return Param(("e",),
-                     df.pipe(rename_to_axis, {"entity": "e"})
-                       .with_columns(value=pl.col("value")
-                                             .cast(pl.Float64, strict=False)
-                                             .fill_null(0.0))
-                       .select("e", "value"))
-
     ed_lifetime_fc_seed       = _read_e_d("ed_lifetime_fixed_cost")
     ed_lifetime_fc_div_seed   = _read_e_d("ed_lifetime_fixed_cost_divest")
     ed_annual_disc_seed       = _read_e_d("ed_entity_annual_discounted")
     ed_annual_div_disc_seed   = _read_e_d("ed_entity_annual_divest_discounted")
-    e_invest_max_total_seed   = _read_e("e_invest_max_total")
-    e_divest_max_total_seed   = _read_e("e_divest_max_total")
-    ed_invest_max_period_seed = _read_e_d("ed_invest_max_period")
-    ed_divest_max_period_seed = _read_e_d("ed_divest_max_period")
 
     # ``ed_invest_period_set`` / ``ed_divest_period_set`` (set frames
     # of (e, d) pairs with per-period invest / divest caps) —
@@ -2134,14 +2112,14 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         ed_entity_annual_divest_discounted=ed_annual_div_disc_seed,
         e_invest_total=None,
         e_divest_total=None,
-        e_invest_max_total=e_invest_max_total_seed,
-        e_divest_max_total=e_divest_max_total_seed,
+        e_invest_max_total=None,
+        e_divest_max_total=None,
         ed_invest_period_set=_seed_period_set(sd, "ed_invest_period",
                                                 provider=provider),
         ed_divest_period_set=_seed_period_set(sd, "ed_divest_period",
                                                 provider=provider),
-        ed_invest_max_period=ed_invest_max_period_seed,
-        ed_divest_max_period=ed_divest_max_period_seed,
+        ed_invest_max_period=None,
+        ed_divest_max_period=None,
         p_entity_previously_invested_capacity=None,
         p_entity_invested=None,
         p_entity_divested=None,
@@ -3684,25 +3662,8 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
     out["ed_divest_min_period"]       = None
     out["ed_cumulative_max_capacity"] = None
     out["ed_cumulative_min_capacity"] = None
-
-    # Δ.18 — CSV-fallback seeds (override chain overlays when it has data;
-    # for synthetic per-sub-solve fixtures the snapshot CSV is the only
-    # source).
-    def _read_e_seed(name: str) -> "Param | None":
-        f = sd / f"{name}.csv"
-        if not _provider_has(provider, f"solve_data/{name}", f):
-            return None
-        df = _provider_read(provider, f"solve_data/{name}", f)
-        if df.height == 0 or "entity" not in df.columns or "value" not in df.columns:
-            return None
-        return Param(("e",),
-                     df.pipe(rename_to_axis, {"entity": "e"})
-                       .with_columns(value=pl.col("value")
-                                             .cast(pl.Float64, strict=False)
-                                             .fill_null(0.0))
-                       .select("e", "value"))
-    out["e_invest_min_total"]         = _read_e_seed("e_invest_min_total")
-    out["e_divest_min_total"]         = _read_e_seed("e_divest_min_total")
+    out["e_invest_min_total"]         = None
+    out["e_divest_min_total"]         = None
 
     # Δ.17c Gap C: ``pdt_max_instant_flow`` / ``pdt_min_instant_flow``
     # produced authoritatively by ``apply_direct_params`` via
@@ -4161,13 +4122,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
          co2_max_total_p) = _load_co2_cap_total(
             inp, sd, proc["pss_eff"], pss_noEff=proc.get("pss_noEff"),
             provider=provider)
-        if (co2_max_p is not None or co2_max_total_p is not None) and co2c is None:
-            p_comm = _provider_read(provider, "input/p_commodity",
-                                      inp / "p_commodity.csv")
-            co2c = Param(("c",),
-                p_comm.filter(pl.col("commodityParam")=="co2_content")
-                      .pipe(rename_to_axis, {"commodity":"c","p_commodity":"value"})
-                      .select("c","value"))
 
         (indir_set, indir_in, indir_out, indir_dt,
          p_source_flow_coef, p_sink_flow_coef) = _load_indirect(

@@ -37,6 +37,28 @@ from tests.engine.test_cyclic_fix_start import _lp_snapshot
 
 _TESTS_JSON = Path(__file__).resolve().parents[1] / "fixtures" / "tests.json"
 
+_PERIODS = ("p2020", "p2025", "p2030", "p2035")
+
+
+def _invest_retire_limits(cls: str, ent: str) -> list:
+    """invest_retire_period_total with non-zero min and max invest / retire limits, per period and in total (the
+    values of ``tools/lp_snapshot.py``'s ``invest_limits`` fixture)."""
+    def per(value: float) -> dict:
+        return {"index_type": "str", "index_name": "period", "data": [[d, value] for d in _PERIODS]}
+    return [
+        [cls, ent, "invest_method", "invest_retire_period_total"],
+        [cls, ent, "invest_max_period", per(400.0)],
+        [cls, ent, "invest_min_period", per(1.0)],
+        [cls, ent, "invest_max_total", 900.0],
+        [cls, ent, "invest_min_total", 2.0],
+        [cls, ent, "retire_max_period", per(20.0)],
+        [cls, ent, "retire_min_period", per(0.5)],
+        [cls, ent, "retire_max_total", 40.0],
+        [cls, ent, "retire_min_total", 1.0],
+        [cls, ent, "salvage_value", 100.0],  # without a salvage value the entity gets no divest variable
+    ]
+
+
 #: Scenarios built from ``tests.json`` plus one overlay alternative: name -> (base scenario, overlay values in
 #: ``lp_snapshot._overlay`` form).  For fields no ``tests.json`` scenario seeds.
 PATCHED_SCENARIOS: dict[str, tuple[str, list]] = {
@@ -45,6 +67,14 @@ PATCHED_SCENARIOS: dict[str, tuple[str, list]] = {
     "coal_varcost_eff_unit": ("coal", [
         ["unit__inputNode", ["coal_plant", "coal_market"], "other_operational_cost", 2.0],
         ["unit__outputNode", ["coal_plant", "west"], "other_operational_cost", 3.0],
+    ]),
+    # Every invest entity of the base (coal_plant, battery, battery_inverter) gets non-zero invest / retire minimum
+    # totals and a retire_max_period: the DB producers drop unauthored (zero) minimum rows and write per-period caps
+    # for authored entities only, while the emit's CSVs carry a row for every invest / divest entity.
+    "invest_retire_limits_all": ("network_coal_wind_battery_invest_cumulative", [
+        *_invest_retire_limits("unit", "coal_plant"),
+        *_invest_retire_limits("node", "battery"),
+        *_invest_retire_limits("connection", "battery_inverter"),
     ]),
 }
 
@@ -58,6 +88,16 @@ SCENARIO_OF_FIELD: dict[str, str] = {
     "pssdt_varCost_eff_unit_sink": "coal_varcost_eff_unit",
     "pssdt_varCost_eff_connection": "hyphenated_entity_names",
     "p_pssdt_varCost": "fusion",
+    # S4-3 direct parameters.  coal_co2_price: coal co2_content on a CO2-priced node; multi_year: coal_plant
+    # invest_max_total / invest_max_period and a divest cap; invest_retire_limits_all: the minimum totals and
+    # retire_max_period, which no tests.json scenario authors.
+    "p_co2_content": "coal_co2_price",
+    "e_invest_max_total": "multi_year",
+    "e_divest_max_total": "multi_year",
+    "ed_invest_max_period": "multi_year",
+    "ed_divest_max_period": "invest_retire_limits_all",
+    "e_invest_min_total": "invest_retire_limits_all",
+    "e_divest_min_total": "invest_retire_limits_all",
 }
 
 #: Fields where the reload legitimately differs from production: field -> reason.  None yet.
@@ -185,22 +225,30 @@ def test_seeded_fields_round_trip(scenario, dump_of, run_of):
     assert {name: d for name, d in diffs.items() if d is not None} == {}
 
 
-# --- the variable-cost seeds on hand-written dump CSVs (the A8 loader checks of the reads moved here in S4-2) ---
+# --- the hook on hand-written dump CSVs (the loader checks of the reads moved here in S4-2 and S4-3) ---
 
-def _varcost_seeds(tmp_path: Path, files: dict[str, str], *, pss: bool = True) -> SimpleNamespace:
-    sd = tmp_path / "solve_data"
+_VARCOST_FIELDS = ("pssdt_varCost_noEff", "pssdt_varCost_eff_unit_source", "pssdt_varCost_eff_unit_sink",
+                   "pssdt_varCost_eff_connection", "p_pssdt_varCost")
+
+
+def _seeds(tmp_path: Path, files: dict[str, str], *, inputs: dict[str, str] | None = None, pss: bool = True,
+           **attrs) -> SimpleNamespace:
+    """Run the hook on a stub FlexData; ``files`` / ``inputs`` are the dump's solve_data / input CSVs."""
+    sd, inp = tmp_path / "solve_data", tmp_path / "input"
     sd.mkdir(parents=True)
-    for name, text in files.items():
-        (sd / name).write_text(text)
+    inp.mkdir(parents=True)
+    for folder, texts in ((sd, files), (inp, inputs or {})):
+        for name, text in texts.items():
+            (folder / name).write_text(text)
     fd = SimpleNamespace(process_source_sink=pl.DataFrame({"p": ["p1"], "source": ["a"], "sink": ["b"]}) if pss
-                         else None, **{name: "untouched" for name in SEEDED_FIELDS})
-    apply_dump_field_seeds(fd, sd, tmp_path / "input", provider_from_csv_dirs(solve_data_dir=sd))
+                         else None, **{name: "untouched" for name in SEEDED_FIELDS}, **attrs)
+    apply_dump_field_seeds(fd, sd, inp, provider_from_csv_dirs(inp, sd))
     return fd
 
 
 def test_varcost_sets_route_to_their_own_field(tmp_path: Path):
     """Each ``pssdt_varCost_*`` set comes from its own CSV only; a set without a CSV is None."""
-    fd = _varcost_seeds(tmp_path, {
+    fd = _seeds(tmp_path, {
         "pssdt_varCost_eff_unit_source.csv": "process,source,sink,period,time\np1,n_src,p1,d1,t1\n",
         "pssdt_varCost_eff_unit_sink.csv": "process,source,sink,period,time\np1,p1,n_snk,d1,t1\n",
         "pssdt_varCost_eff_connection.csv": "process,source,sink,period,time\nc1,n1,n2,d1,t1\n",
@@ -218,18 +266,83 @@ def test_varcost_sets_route_to_their_own_field(tmp_path: Path):
 def test_varcost_param_drops_zero_rows(tmp_path: Path):
     """``p_pssdt_varCost`` keeps the non-zero rows; all-zero rows give None."""
     head = "process,source,sink,period,time,value\n"
-    fd = _varcost_seeds(tmp_path / "mixed", {
+    fd = _seeds(tmp_path / "mixed", {
         "pdtProcess__source__sink__dt_varCost.csv": head + "p1,a,b,d1,t1,2.5\np1,a,b,d1,t2,0.0\n"})
     assert fd.p_pssdt_varCost.dims == ("p", "source", "sink", "d", "t")
     assert fd.p_pssdt_varCost.frame.rows() == [("p1", "a", "b", "d1", "t1", 2.5)]
-    fd = _varcost_seeds(tmp_path / "zero", {"pdtProcess__source__sink__dt_varCost.csv": head + "p1,a,b,d1,t1,0.0\n"})
+    fd = _seeds(tmp_path / "zero", {"pdtProcess__source__sink__dt_varCost.csv": head + "p1,a,b,d1,t1,0.0\n"})
     assert fd.p_pssdt_varCost is None
 
 
 def test_varcost_seeds_skipped_without_process_arcs(tmp_path: Path):
     """No ``process_source_sink`` -> the hook writes no variable-cost field, whatever the dump holds."""
-    fd = _varcost_seeds(tmp_path, {
+    fd = _seeds(tmp_path, {
         "pssdt_varCost_noEff.csv": "process,source,sink,period,time\np1,a,b,d1,t1\n",
         "pdtProcess__source__sink__dt_varCost.csv": "process,source,sink,period,time,value\np1,a,b,d1,t1,9.0\n",
     }, pss=False)
-    assert all(getattr(fd, name) == "untouched" for name in SEEDED_FIELDS)
+    assert all(getattr(fd, name) == "untouched" for name in _VARCOST_FIELDS)
+
+
+_P_COMMODITY = "commodity,commodityParam,p_commodity\ncoal,co2_content,0.34\ncoal,price,20.0\ngas,co2_content,0.2\n"
+
+
+@pytest.mark.parametrize("gate", ["flow_from_co2_priced", "p_co2_max_period", "p_co2_max_total"])
+def test_co2_content_from_p_commodity_when_co2_priced_or_capped(tmp_path: Path, gate: str):
+    """CO2-priced flows or either CO2 cap -> ``p_co2_content`` = the ``co2_content`` rows of p_commodity."""
+    fd = _seeds(tmp_path, {}, inputs={"p_commodity.csv": _P_COMMODITY},
+                **{"flow_from_co2_priced": None, "p_co2_max_period": None, "p_co2_max_total": None, gate: "set"})
+    assert fd.p_co2_content.dims == ("c",)
+    assert sorted(fd.p_co2_content.frame.rows()) == [("coal", 0.34), ("gas", 0.2)]
+
+
+def test_co2_content_untouched_without_co2_price_or_cap(tmp_path: Path):
+    """No CO2-priced flow and no CO2 cap -> the hook leaves ``p_co2_content`` alone (the loader's None)."""
+    fd = _seeds(tmp_path, {}, inputs={"p_commodity.csv": _P_COMMODITY},
+                flow_from_co2_priced=None, p_co2_max_period=None, p_co2_max_total=None)
+    assert fd.p_co2_content == "untouched"
+
+
+_INVEST_CAP_CSVS = {
+    "e_invest_max_total.csv": "entity,value\ne1,700.0\ne2,\n",
+    "e_divest_max_total.csv": "entity,value\ne1,40.0\n",
+    "ed_invest_max_period.csv": "entity,period,value\ne1,p1,250.0\ne1,p2,0.0\n",
+    "ed_divest_max_period.csv": "solve,period,e1,e2\ns,p1,20.0,5.0\n",
+}
+
+
+@pytest.mark.parametrize("gate_csv", ["ed_invest.csv", "ed_divest.csv"])
+def test_invest_caps_when_an_invest_or_divest_set_has_rows(tmp_path: Path, gate_csv: str):
+    """``ed_invest`` or ``ed_divest`` with a row -> the four max caps; an empty value reads 0, zero rows stay, the
+    per-period caps read long or wide CSVs."""
+    fd = _seeds(tmp_path, {**_INVEST_CAP_CSVS, gate_csv: "entity,period\ne1,p1\n"})
+    assert fd.e_invest_max_total.dims == ("e",)
+    assert sorted(fd.e_invest_max_total.frame.rows()) == [("e1", 700.0), ("e2", 0.0)]
+    assert fd.e_divest_max_total.frame.rows() == [("e1", 40.0)]
+    assert fd.ed_invest_max_period.dims == ("e", "d")
+    assert sorted(fd.ed_invest_max_period.frame.rows()) == [("e1", "p1", 250.0), ("e1", "p2", 0.0)]
+    assert sorted(fd.ed_divest_max_period.frame.rows()) == [("e1", "p1", 20.0), ("e2", "p1", 5.0)]
+
+
+def test_invest_caps_untouched_without_invest_rows(tmp_path: Path):
+    """Header-only ``ed_invest`` / ``ed_divest`` -> the hook leaves the four max caps alone (the loader's None)."""
+    fd = _seeds(tmp_path, {**_INVEST_CAP_CSVS, "ed_invest.csv": "entity,period\n",
+                           "ed_divest.csv": "entity,period\n"})
+    assert all(getattr(fd, name) == "untouched" for name in
+               ("e_invest_max_total", "e_divest_max_total", "ed_invest_max_period", "ed_divest_max_period"))
+
+
+def test_invest_caps_none_when_their_csv_is_missing_or_empty(tmp_path: Path):
+    """An invest row but no / a header-only cap CSV -> that cap is None."""
+    fd = _seeds(tmp_path, {"ed_invest.csv": "entity,period\ne1,p1\n", "e_divest_max_total.csv": "entity,value\n",
+                           "ed_divest_max_period.csv": "entity,period,value\n"})
+    assert (fd.e_invest_max_total, fd.e_divest_max_total, fd.ed_invest_max_period, fd.ed_divest_max_period) == (
+        None, None, None, None)
+
+
+def test_min_invest_totals_always_read(tmp_path: Path):
+    """``e_invest_min_total`` / ``e_divest_min_total`` need no invest gate: a value casts to float, a missing CSV is
+    None (the A16 loader check of the read moved here in S4-3)."""
+    fd = _seeds(tmp_path, {"e_invest_min_total.csv": "entity,value\ne1,3.0\n"})
+    assert fd.e_invest_min_total.dims == ("e",)
+    assert fd.e_invest_min_total.frame.rows() == [("e1", 3.0)]
+    assert fd.e_divest_min_total is None

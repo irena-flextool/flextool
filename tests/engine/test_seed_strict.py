@@ -27,8 +27,9 @@ from tests._support.load import load_scenario
 
 pytestmark = pytest.mark.solver
 
-# multi_year: the last solve (y2035_5week) seeds p_co2_content, the four e_*_total and ed_invest_max_period.
-_SCENARIO = "multi_year"
+# test_a_lot: the last solve seeds groupCapacityMargin, groupInertia, process_minload, p_profile_value and the three
+# delay fields (multi_year, used until S4-3, seeds only p_profile_value of the candidates left).
+_SCENARIO = "test_a_lot"
 
 
 @pytest.fixture
@@ -53,7 +54,7 @@ def _armed_in_load(monkeypatch) -> list[dict]:
 
 def test_poison_raises_records_and_keeps_isinstance_safe(monkeypatch):
     monkeypatch.delenv("FLEXTOOL_SEED_STRICT_LOG", raising=False)
-    p = _Poison("p_co2_content", "s1")
+    p = _Poison("p_profile_value", "s1")
     uses = [
         ("height", lambda: p.height),
         ("frame", lambda: p.frame),
@@ -65,7 +66,7 @@ def test_poison_raises_records_and_keeps_isinstance_safe(monkeypatch):
         ("hasattr", lambda: hasattr(p, "frame")),
     ]
     for label, use in uses:
-        with pytest.raises(SeedPoisonError, match="p_co2_content"):
+        with pytest.raises(SeedPoisonError, match="p_profile_value"):
             use()
     assert isinstance(p, pl.DataFrame) is False
     assert type(p) is _Poison

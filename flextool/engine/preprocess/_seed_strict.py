@@ -36,16 +36,9 @@ __all__ = ["SEED_PRUNE_CANDIDATES", "SeedPoisonError", "arm", "check", "strict_e
 _LOG = logging.getLogger(__name__)
 
 #: The fields of design_stage4_rev.md §1 whose DB producer assigns the field on every DB path and whose loader
-#: seed is not yet deleted (each deletion commit drops its fields; the five varcost fields went in S4-2).
+#: seed is not yet deleted (each deletion commit drops its fields; the five varcost fields went in S4-2, the seven
+#: direct-parameter fields in S4-3).
 SEED_PRUNE_CANDIDATES: tuple[str, ...] = (
-    # direct a/b: plain assignments.
-    "p_co2_content",
-    "e_invest_max_total",
-    "e_divest_max_total",
-    "e_invest_min_total",
-    "e_divest_min_total",
-    "ed_invest_max_period",
-    "ed_divest_max_period",
     # authoritative projection sets (an empty projection assigns None).
     "groupCapacityMargin",
     "groupInertia",

@@ -248,27 +248,3 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
     _eq_group_invest_cumulative(SimpleNamespace(m=m, d=d_stub, v_invest_p=None, v_invest_n=None))
     # Hand-calc: group_entity is None -> early return; no add_cstr call.
     assert m.calls == []
-
-
-def test_min_invest_total_seed_param(tmp_path: Path):
-    """Covers A16-min_invest_total_seed_param.
-
-    ``e_invest_min_total.csv`` with one row entity=e1,value=3.0.
-    ``_read_e_seed`` casts value to Float64, fills nulls with 0.0, and
-    wraps as ``Param(("e",), ...)``.  Drives the lower-bound RHS in
-    ``_eq_min_invest_total``.
-    """
-    inp = tmp_path / "input"
-    sd = tmp_path / "solve_data"
-    inp.mkdir()
-    sd.mkdir()
-    _write(sd / "e_invest_min_total.csv", "entity,value\ne1,3.0\n")
-
-    out = _load_cumulative_invest(inp, sd, _empty_dt(), provider=provider_from_csv_dirs(inp, sd))
-    # Hand-calc: 1 row -> Param(("e",), {(e1,): 3.0}).
-    p = out["e_invest_min_total"]
-    assert p is not None
-    fr = p.frame.sort("e")
-    assert fr.height == 1
-    assert fr.row(0)[0] == "e1"
-    assert fr["value"][0] == pytest.approx(3.0, rel=1e-7)
