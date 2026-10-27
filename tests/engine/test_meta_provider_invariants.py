@@ -18,7 +18,7 @@ empty) on-disk artefact instead.  See:
 This test scans every ``*.py`` under ``flextool/engine/`` recursively
 (except the package root ``__init__.py`` and the ``autoscale/``
 subpackage) and fails if a new cascade module introduces any of the
-three rule violations below without an explicit exemption.  Allowlists
+four rule violations below without an explicit exemption.  Allowlists
 and violation reports key files by their POSIX path relative to
 ``flextool/engine/`` (e.g. ``_dump_csvs.py`` or ``output/_dump_csvs.py``).
 
@@ -28,14 +28,14 @@ Rule 1 — No disk CSV reads in cascade code
 Forbidden call shapes in cascade modules:
 
 * ``pl.read_csv(...)`` / ``pl.scan_csv(...)``
-* ``_read_csv_file(...)`` (the residual Provider-fallback helper)
+* ``_read_csv_file(...)`` (the plain read behind ``CsvSource.get``)
 * ``csv.reader(...)`` (cascade code reads frames from the Provider, never
   CSV text from a file handle)
 
-Files that legitimately read raw inputs are listed in
-``RAW_INPUT_FALLBACK_ALLOWLIST`` below, with a per-file justification.
-Files that ARE the Provider's own I/O implementation are listed in
-``PROVIDER_IMPL_ALLOWLIST``.
+Files that ARE the Provider's own I/O implementation (or a dump writer)
+are listed in ``PROVIDER_IMPL_ALLOWLIST``.  ``RAW_INPUT_FALLBACK_ALLOWLIST``
+(cascade files that read raw inputs from disk) is empty: since c24 stage 3
+the loader reads only the Provider.
 
 Rule 2 — No "photocopier" patterns
 ==================================
@@ -57,6 +57,27 @@ disk fallback for raw inputs not yet in the Provider.  These ARE
 allowed where documented, but every shim DEFINITION must carry a
 ``# CASCADE INVARIANT EXEMPT: <reason>`` comment on (or immediately
 above) its ``def`` line, or the marker phrase inside its docstring.
+
+Rule 4 — The loader and the model have no disk arms
+===================================================
+
+The main loader is provider-only (c24 stage 3): nothing in a run reads
+``input/`` or ``solve_data/`` back from the work folder, so a dump or
+stale CSVs in a reused folder cannot change a run.
+
+* (a) Anywhere in cascade code: no reference (name, attribute, import,
+  definition) to the deleted disk helpers in ``RULE_4_BANNED_NAMES``.
+* (b) In ``preprocess/`` and ``model/``: no file-system probe or read —
+  ``.exists()`` / ``.is_file()`` / ``.is_dir()`` / ``.is_symlink()``
+  (also ``os.path.exists/isfile/isdir``), ``open(...)`` / ``.open(...)``
+  in a read mode (mode absent, not a literal, or containing ``r`` or
+  ``+``), ``.read_text()`` / ``.read_bytes()``, directory listings, and
+  the polars / json file readers.  Write and append ``open`` is allowed.
+  ``RULE_4_READ_ALLOWLIST`` names the few legitimate reads by file and
+  literal path (the ``/proc/self/status`` RSS probes).
+
+``RULE_4_EXEMPT_FILES`` lists files the rule does not apply to, each
+with a reason; a test checks that every exemption is still needed.
 
 When this test fires
 ====================
@@ -116,13 +137,8 @@ PROVIDER_IMPL_ALLOWLIST: dict[str, str] = {
         "Provider implementation: defines snapshot/dump I/O."
     ),
     "input/_input_source.py": (
-        "Defines _read_csv_file itself — the canonical residual reader."
-    ),
-    "preprocess/_provider_io.py": (
-        "Off-cascade writer-port test-harness shim "
-        "(documented at module top): Provider-first with disk fallback "
-        "used exclusively by test_writer_port_phase1.  In-cascade the "
-        "Provider always carries the frame."
+        "Defines _read_csv_file (the plain read behind CsvSource.get); "
+        "no main-path caller."
     ),
     "output/_dump_csvs.py": (
         "Snapshot-writer subsystem (--csv-dump). "
@@ -133,24 +149,11 @@ PROVIDER_IMPL_ALLOWLIST: dict[str, str] = {
 }
 
 
-# Cascade files that legitimately fall back to disk for raw fixture
-# inputs (``input/*.csv``) and legacy synthetic-seed inputs not yet
-# carried by the Provider.  Each entry MUST cite why the file's reads
-# are out of scope for the current migration step.  When the input_writer
-# preprocessing layer lands in the Provider, these entries should be
-# removed and the corresponding files retro-migrated.
-RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {
-    # --- Raw input fixture readers (input/*.csv not in Provider) ---
-    "solve/_handoff.py": (
-        "Reads workdir solve-data CSV at Provider-less handoff "
-        "boundary (post-Step-2 the Provider is threaded through, "
-        "but the handoff retains a single disk read for back-compat)."
-    ),
-    "preprocess/_solve_context.py": (
-        "Reads workdir solve_data/p_model.csv and similar context "
-        "files at solve-context build time (pre-Provider)."
-    ),
-}
+# Cascade files that read raw inputs from disk.  Empty since c24 stage 3
+# (the loader, SolveContext and the handoff read only the Provider).  A
+# new entry needs a per-file justification of why the Provider cannot
+# carry the frame.
+RAW_INPUT_FALLBACK_ALLOWLIST: dict[str, str] = {}
 
 
 # Union — files exempt from Rule 1.
@@ -436,8 +439,7 @@ def test_no_disk_csv_reads_in_cascade() -> None:
             "  (a) Route the read through provider.get(name) — the "
             "canonical cascade pathway after Step 2.",
             "  (b) If this file legitimately runs OUTSIDE the cascade "
-            "(Provider impl, off-cascade test harness, --csv-dump "
-            "snapshot, raw input loader before Provider is populated), "
+            "(Provider impl, --csv-dump snapshot writer), "
             "add it to PROVIDER_IMPL_ALLOWLIST or "
             "RAW_INPUT_FALLBACK_ALLOWLIST in this file WITH a per-file "
             "justification explaining why disk reads remain.",
@@ -544,6 +546,253 @@ def test_allowlists_cover_only_existing_files() -> None:
             "PROVIDER_IMPL_FILE / PROVIDER_IMPL_ALLOWLIST / "
             "RAW_INPUT_FALLBACK_ALLOWLIST."
         )
+
+
+# ---------------------------------------------------------------------------
+# Rule 4 — the loader and the model have no disk arms (c24 stage 3)
+# ---------------------------------------------------------------------------
+
+# (a) Deleted disk helpers: a reference anywhere in cascade code brings a work-folder read back.
+RULE_4_BANNED_NAMES: frozenset[str] = frozenset({
+    "read_csv_fallback",          # provider-miss → read the CSV at the path
+    "seed_provider_from_dir",     # fill a provider from the work folder's CSVs
+    "workdir_provider_for_paths",  # provider built from the work folder for p_profile_value_lf
+    "_read_csv_file",             # the plain CSV read behind CsvSource.get
+    "_install_csv_cache",         # SolveContext's per-load CSV cache
+    "_find_scenario",             # scenario discovery from a tests.sqlite in the work folder
+    "_FIND_SCENARIO_OVERRIDES",
+    "_auto_construct_db_reader",  # SpineDbReader built from a tests.sqlite in the work folder
+    "_provider_open",             # provider-first, disk-second file handle
+    "_recourse_usable_ctx",       # snapshot-reload guard of the recourse walk
+})
+
+# Top-level folders of CASCADE_ROOT that (b) applies to.
+RULE_4_DISK_SCOPE: frozenset[str] = frozenset({"preprocess", "model"})
+
+# Files Rule 4 does not apply to (POSIX path relative to CASCADE_ROOT → reason).
+# ``test_rule_4_exemptions_are_needed`` fails when an entry no longer has a hit.
+RULE_4_EXEMPT_FILES: dict[str, str] = {
+    "input/_input_source.py": (
+        "(a) defines _read_csv_file, the plain read behind CsvSource.get; no main-path caller."
+    ),
+    "preprocess/_dump_stamp.py": (
+        "(b) reads only the dump stamp _dump_meta.json: write_dump_stamp merges an existing stamp, and "
+        "_csv_reload checks it before a reload. Never a model input."
+    ),
+}
+
+# (b) Legitimate reads: (file, literal path of the open() call) → reason.  A literal path, not a line number,
+# so the entry survives edits; ``test_rule_4_read_allowlist_is_used`` fails on an unused entry.
+RULE_4_READ_ALLOWLIST: dict[tuple[str, str], str] = {
+    ("preprocess/flex_data.py", "/proc/self/status"): (
+        "_loadflex_prof: RSS probe of the running process, only with FLEXTOOL_LOADFLEX_PROFILE=1; "
+        "not the work folder."
+    ),
+    ("model/core.py", "/proc/self/status"): (
+        "_build_prof: RSS probe of the running process, only with FLEXTOOL_BUILD_PROFILE=1; "
+        "not the work folder."
+    ),
+}
+
+# Method calls that probe or read the file system (Path.exists, os.path.isfile, Path.read_text, Path.glob, ...).
+_DISK_PROBE_ATTRS: frozenset[str] = frozenset({
+    "exists", "is_file", "is_dir", "is_symlink", "isfile", "isdir",
+    "read_text", "read_bytes", "iterdir", "glob", "rglob",
+})
+# ``<module>.<function>`` file readers and directory listings.
+_DISK_READ_FUNCS: frozenset[tuple[str, str]] = frozenset({
+    ("pl", "read_parquet"), ("pl", "scan_parquet"), ("pl", "read_ipc"), ("pl", "scan_ipc"),
+    ("pl", "read_json"), ("pl", "read_ndjson"), ("pl", "scan_ndjson"),
+    ("json", "load"), ("pickle", "load"),
+    ("os", "listdir"), ("os", "scandir"), ("os", "walk"),
+})
+# Modules whose ``open(path, mode)`` takes the path first, like the builtin.
+_PATH_FIRST_OPEN_MODULES: frozenset[str] = frozenset({"builtins", "io", "codecs", "gzip", "bz2", "lzma"})
+
+
+def _rule_4_banned_references(tree: ast.AST, fname: str) -> list[Violation]:
+    """Rule 4(a): every name, attribute, import or definition of a deleted disk helper."""
+    hint = ("deleted disk helper (c24 stage 3): read the frame from the sub-solve's FlexDataProvider; "
+            "tests use tests/_support/provider.py")
+    out: list[Violation] = []
+    for node in ast.walk(tree):
+        hits: list[str] = []
+        if isinstance(node, ast.Name):
+            hits = [node.id]
+        elif isinstance(node, ast.Attribute):
+            hits = [node.attr]
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            hits = [alias.name.rsplit(".", 1)[-1] for alias in node.names]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            hits = [node.name]
+        out.extend(Violation(fname, node.lineno, f"reference to {name}", hint)
+                   for name in hits if name in RULE_4_BANNED_NAMES)
+    return out
+
+
+def _open_mode_and_path(call: ast.Call) -> tuple[bool, str | None] | None:
+    """For an ``open`` call: (is it a read, literal path or None); None when *call* is not an ``open``."""
+    func = call.func
+    if isinstance(func, ast.Name) and func.id == "open":
+        path_first = True
+    elif isinstance(func, ast.Attribute) and func.attr == "open":
+        path_first = isinstance(func.value, ast.Name) and func.value.id in _PATH_FIRST_OPEN_MODULES
+    else:
+        return None
+    mode_pos = 1 if path_first else 0
+    mode_node = next((kw.value for kw in call.keywords if kw.arg == "mode"), None)
+    if mode_node is None and len(call.args) > mode_pos:
+        mode_node = call.args[mode_pos]
+    if mode_node is None:
+        is_read = True  # default mode "r"
+    elif isinstance(mode_node, ast.Constant) and isinstance(mode_node.value, str):
+        is_read = "r" in mode_node.value or "+" in mode_node.value
+    else:
+        is_read = True  # a computed mode cannot be shown to be a write
+    path = None
+    if path_first and call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str):
+        path = call.args[0].value
+    return is_read, path
+
+
+def _rule_4_disk_calls(tree: ast.AST, fname: str) -> tuple[list[Violation], set[str]]:
+    """Rule 4(b): file-system probes and reads; also the allow-listed literal paths that were seen."""
+    hint = ("the loader and the model read only the FlexDataProvider; if this read is not of the work folder, "
+            "add (file, literal path) to RULE_4_READ_ALLOWLIST with a reason")
+    out: list[Violation] = []
+    allowed_seen: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        opened = _open_mode_and_path(node)
+        if opened is not None:
+            is_read, path = opened
+            if not is_read:
+                continue
+            if path is not None and (fname, path) in RULE_4_READ_ALLOWLIST:
+                allowed_seen.add(path)
+                continue
+            shown = f"open({path!r})" if path is not None else "open(...)"
+            out.append(Violation(fname, node.lineno, f"{shown} in a read mode", hint))
+        elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and (
+            (func.value.id, func.attr) in _DISK_READ_FUNCS
+        ):
+            out.append(Violation(fname, node.lineno, f"{func.value.id}.{func.attr}(...)", hint))
+        elif isinstance(func, ast.Attribute) and func.attr in _DISK_PROBE_ATTRS:
+            out.append(Violation(fname, node.lineno, f".{func.attr}(...)", hint))
+    return out, allowed_seen
+
+
+def _rule_4_violations(source: str, fname: str) -> tuple[list[Violation], set[str]]:
+    """Both parts of Rule 4 for one file, ignoring RULE_4_EXEMPT_FILES (the callers apply it)."""
+    tree = ast.parse(source)
+    violations = _rule_4_banned_references(tree, fname)
+    allowed_seen: set[str] = set()
+    if fname.split("/", 1)[0] in RULE_4_DISK_SCOPE:
+        disk, allowed_seen = _rule_4_disk_calls(tree, fname)
+        violations.extend(disk)
+    return violations, allowed_seen
+
+
+def test_loader_and_model_have_no_disk_arms() -> None:
+    """Rule 4: no deleted disk helper anywhere in cascade code, and no disk probe or read in ``preprocess/`` and
+    ``model/`` (the main loader is provider-only; c24 stage 3)."""
+    violations: list[Violation] = []
+    for path in _iter_cascade_files():
+        fname = _rel(path)
+        if fname in RULE_4_EXEMPT_FILES:
+            continue
+        source, _ = _read_tree(path)
+        violations.extend(_rule_4_violations(source, fname)[0])
+    if violations:
+        pytest.fail(
+            "Disk arm in the loader or the model: nothing in a run may read input/ or solve_data/ back from the "
+            "work folder (a dump or stale CSVs in a reused folder would change the run).\n\n"
+            + "\n".join(v.format() for v in violations)
+        )
+
+
+def test_rule_4_exemptions_are_needed() -> None:
+    """Every RULE_4_EXEMPT_FILES entry exists and still has a Rule 4 hit (so the exemption is not stale)."""
+    files = {_rel(p): p for p in _iter_cascade_files()}
+    stale = []
+    for fname in RULE_4_EXEMPT_FILES:
+        if fname not in files:
+            stale.append(f"{fname} (no such file)")
+        elif not _rule_4_violations(_read_tree(files[fname])[0], fname)[0]:
+            stale.append(f"{fname} (no Rule 4 hit left)")
+    assert not stale, f"stale RULE_4_EXEMPT_FILES entries: {stale}"
+
+
+def test_rule_4_read_allowlist_is_used() -> None:
+    """Every RULE_4_READ_ALLOWLIST (file, path) entry matches an ``open`` call in that file."""
+    files = {_rel(p): p for p in _iter_cascade_files()}
+    seen: set[tuple[str, str]] = set()
+    for fname in {f for f, _ in RULE_4_READ_ALLOWLIST}:
+        if fname in files:
+            seen |= {(fname, p) for p in _rule_4_violations(_read_tree(files[fname])[0], fname)[1]}
+    unused = sorted(set(RULE_4_READ_ALLOWLIST) - seen)
+    assert not unused, f"RULE_4_READ_ALLOWLIST entries with no matching open() call: {unused}"
+
+
+@pytest.mark.parametrize("source,fname", [
+    # (a) anywhere in cascade code
+    ("from flextool.engine.input._input_source import read_csv_fallback", "output/_writer.py"),
+    ("from flextool.engine.input import _input_source\n_input_source.seed_provider_from_dir(p)", "solve/_x.py"),
+    ("workdir_provider_for_paths(paths)", "preprocess/params/_profiles.py"),
+    ("import flextool.engine.input._input_source._read_csv_file", "solve/_x.py"),
+    ("def _install_csv_cache(cache):\n    pass", "preprocess/_solve_context.py"),
+    ("x = _find_scenario", "preprocess/flex_data.py"),
+    # (b) in preprocess/ and model/
+    ("p.exists()", "preprocess/flex_data.py"),
+    ("p.is_file()", "model/_reserve.py"),
+    ("p.is_dir()", "preprocess/emit/_blocks.py"),
+    ("p.is_symlink()", "model/core.py"),
+    ("os.path.exists(p)", "preprocess/params/_derived.py"),
+    ("os.path.isfile(p)", "model/core.py"),
+    ("os.path.isdir(p)", "preprocess/_solve_context.py"),
+    ("open(p)", "preprocess/flex_data.py"),
+    ("open(p, 'r')", "model/core.py"),
+    ("open(p, mode='rb')", "preprocess/flex_data.py"),
+    ("open(p, 'r+')", "preprocess/flex_data.py"),
+    ("open(p, m)", "preprocess/flex_data.py"),
+    ("p.open()", "preprocess/emit/_blocks.py"),
+    ("p.open('r', encoding='utf-8')", "preprocess/emit/_blocks.py"),
+    ("gzip.open(p, 'rt')", "model/core.py"),
+    ("p.read_text()", "model/core.py"),
+    ("p.read_bytes()", "preprocess/flex_data.py"),
+    ("pl.read_parquet(p)", "preprocess/flex_data.py"),
+    ("pl.scan_parquet(p)", "model/core.py"),
+    ("json.load(fh)", "preprocess/flex_data.py"),
+    ("os.listdir(d)", "preprocess/flex_data.py"),
+    ("d.glob('*.csv')", "preprocess/flex_data.py"),
+    ("d.iterdir()", "model/core.py"),
+    # an allow-listed literal path in another file, or another path in an allow-listed file
+    ("open('/proc/self/status')", "model/_reserve.py"),
+    ("open('/proc/self/maps')", "model/core.py"),
+])
+def test_rule_4_detector_flags_every_pattern(source: str, fname: str) -> None:
+    """Self-check: Rule 4 flags each banned name and each disk-read form exactly once."""
+    assert len(_rule_4_violations(source, fname)[0]) == 1, source
+
+
+@pytest.mark.parametrize("source,fname", [
+    ("open('/proc/self/status')", "model/core.py"),                 # RULE_4_READ_ALLOWLIST
+    ("open('/proc/self/status')", "preprocess/flex_data.py"),       # RULE_4_READ_ALLOWLIST
+    ("p.open('a', encoding='utf-8')", "preprocess/_provider_translators.py"),  # append
+    ("open(p, 'w')", "preprocess/flex_data.py"),
+    ("open(p, mode='wb')", "model/core.py"),
+    ("p.write_text('x')", "preprocess/flex_data.py"),
+    ("p.mkdir(parents=True, exist_ok=True)", "preprocess/flex_data.py"),
+    ("p.exists()", "solve/_orchestration.py"),                       # (b) covers preprocess/ and model/ only
+    ("json.loads(s)", "preprocess/flex_data.py"),
+    ("provider.get('solve_data/process_exact')", "preprocess/flex_data.py"),
+    ('"""read_csv_fallback was deleted"""', "preprocess/flex_data.py"),  # docstrings are not references
+])
+def test_rule_4_detector_ignores_allowed_forms(source: str, fname: str) -> None:
+    """Self-check: allow-listed reads, writes, other folders, string mentions and provider reads are not flagged."""
+    assert _rule_4_violations(source, fname)[0] == [], source
 
 
 # ---------------------------------------------------------------------------

@@ -95,17 +95,23 @@ dependencies.
 ### `scenario_workdir` — on-demand cascade fixture
 
 `scenario_workdir(scenario_name, db_fixture="main")`, defined in
-`tests/engine/conftest.py`, is the session-scoped fixture that
+`tests/conftest.py`, is the session-scoped fixture that
 replaced the historical `tests/engine/data/work_*/` snapshot
-pattern. For a requested `(scenario, db_fixture)` pair it:
+pattern. It shares one cached run with `scenario_run` (which returns the
+`tests._support.load.ScenarioRun` instead of the folder). For a requested
+`(scenario, db_fixture)` pair it:
 
 1. Resolves `db_fixture` against the per-fixture session-scoped DB
    (built once per session from the matching JSON).
-2. Runs the full cascade with `csv_dump=True` + `keep_solutions=True`
-   in a `tmp_path_factory` workdir.
-3. Snapshots the last orchestration step's `flex_data_provider` so the
-   on-disk CSV layout matches what the legacy disk fixtures shipped.
-4. Caches the resulting work-folder per `(scenario, db_fixture)` —
+2. Runs the full cascade (`tests._support.load.run_scenario`:
+   `csv_dump=False`, `keep_solutions=True`) in a `tmp_path_factory`
+   work folder.
+3. Copies the DB to `tests.sqlite` and snapshots the last step's
+   provider into `input/` + `solve_data/`, for tests that read those
+   files. Nothing in a run reads them back: to get a sub-solve's
+   `FlexData`, use `scenario_run` + `load_scenario` (the production
+   loader call: the step's provider + a DB reader).
+4. Caches the result per `(scenario, db_fixture)` —
    each scenario pays its ~2 s cascade cost once per test session
    regardless of how many tests consume it.
 
@@ -246,8 +252,10 @@ The `smoke` marker is attached automatically to scenarios in
 
 `csv_reload` is attached by `tests/csv_reload/conftest.py` to every test
 in that folder: tests that load a CSV work folder (a provider snapshot, a
-`dump_csvs` tree, hand-written CSVs) with a provider-less `load_flextool`,
-which production never does. The default `addopts` (`-m 'not csv_reload'`)
+`dump_csvs` tree, hand-written CSVs) with the unsupported
+`flextool.engine._csv_reload.load_from_dump` (a provider seeded from the
+folder's CSVs), which production never does: `load_flextool` needs the
+sub-solve's provider and a DB reader, and never reads the work folder. The default `addopts` (`-m 'not csv_reload'`)
 deselects them, and because a command-line `-m` replaces that one, the
 conftest also skips them unless the `-m` expression names `csv_reload`.
 Run them with `pytest -m csv_reload tests/csv_reload/`.

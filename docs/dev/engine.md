@@ -87,16 +87,22 @@ The loaders are stacked on two protocols defined in `_input_source.py`:
 
 | Source | Implementation | When used |
 |---|---|---|
-| `CsvSource` | `_input_source.py` | Loads from an on-disk `input/` + `solve_data/` workdir. Used by tests and by `load_flextool(path_or_csv_source)` against pre-built fixture workdirs. |
+| `CsvSource` | `_input_source.py` | Path wrapper for a sub-solve's work folder (`input/` + `solve_data/`). `load_flextool(path_or_csv_source, provider=..., db_reader=...)` forms the provider keys from its directories and reads the provider, never the files. |
 | `SpineDbReader` | `_spinedb_reader.py` | The DB-direct reader — returns one polars frame per `(entity_class, parameter_name)` pair, no CSV roundtrip. Consumed by the override chain in `_apply_db_overrides` and by the live cascade entry point `run_chain_from_db`. |
 | `InMemoryReader` | `_inmemory_reader.py` | Same `InputSource` protocol as `SpineDbReader`, but driven by an in-memory dict-of-frames fixture. The vehicle for fast unit tests under `tests/engine/`. |
 
-`FlexInputSource` (CSV-shaped) and `InputSource` (per-parameter frame)
-are deliberately two protocols, not one: the legacy CSV reader path
-walks directories, the DB-direct path requests one parameter at a time.
-They coexist — `load_flextool` accepts either, and a Spine DB load
-typically uses both (CSV side for the bulky pre-computed sets, DB side
-for the parameters the override chain owns).
+`FlexInputSource` (work-folder shaped) and `InputSource` (per-parameter
+frame) are deliberately two protocols, not one: the first names the
+sub-solve's directories (the paths the provider keys are formed from), the
+second requests one parameter at a time from the DB. `load_flextool` takes
+both: the work folder (`source`) and a required `db_reader`. The bulky
+pre-computed sets come from the sub-solve's `FlexDataProvider`, the
+parameters the override chain owns from the reader. The loader is
+provider-only: it never reads `input/` or `solve_data/` on disk, so a dump
+or stale CSVs in a reused work folder cannot change a run (Rule 4 of
+`tests/engine/test_meta_provider_invariants.py`). Only the unsupported
+`flextool.engine._csv_reload.load_from_dump` loads from CSVs (it seeds a
+provider from them first).
 
 ### Per-field shapes
 
@@ -320,7 +326,7 @@ Representative entries:
 | `_pdt_params.py` | The full `pdt_*` family (online indices, varCost frames, …). |
 | `_period_calc.py` | `p_period_share`, `complete_period_share_of_year`, `p_timeline_duration_in_years`. |
 | `_reserve_sets.py` | Reserve-up / reserve-down set machinery for `_reserve.py`. |
-| `_provider_io.py` | The single Provider-funnel (`_emit`, `_provider_key`, `_provider_open`) every emitter routes through. |
+| `_provider_io.py` (in `preprocess/`) | The shared Provider helpers every emitter routes through: `_emit` (register a frame), `_provider_key` (path → key), `_provider_lookup_positional` (provider-only read with positional column rename). |
 | `_vectorize.py` | Shared per-roll vectorize helpers: the entity × dt and entity × period grids (carrying `__eo` / `__to` / `__po` order keys), the dict→lookup lift, the stochastic / parent-period fold, and the `repr()`-based value rendering. |
 
 ### Vectorized per-roll emit
@@ -376,8 +382,8 @@ indirection used by older parity tests, and the transitional
 `write_*` aliases that wrapped `emit_*` during the migration; the
 `emit_*(provider, ...)` signature is now the only call shape and the
 meta-test
-`tests/engine/test_meta_provider_invariants.py` forbids disk
-reads from any cascade module.
+`tests/engine/test_meta_provider_invariants.py` forbids CSV reads
+in cascade modules and any disk read in `preprocess/` and `model/`.
 
 The architectural consequence is that there is no longer a disk-side
 hand-off path *inside* the cascade. The Provider is the contract:
@@ -620,13 +626,16 @@ solve's `polar_high` Solution plus the per-solve metadata in
 `solve_data/`. The cascade transports the carriers through the
 Provider's `HANDOFF_*` keys (see
 [FlexDataProvider and override translator](#flexdataprovider-and-override-translator));
-the `solve_data/<solve>/*.csv` mirrors only exist under
-`csv_dump=True` and are not load-bearing for any downstream phase.
+the `solve_data/*.csv` mirrors only exist under `csv_dump=True` (one
+folder, shared by every sub-solve) and are not load-bearing for
+any downstream phase.
 
 After a solve the `handoff/*` keys keep what that solve **consumed** (the
 translated and routed carriers), so `load_flextool(work_folder,
-provider=<post-solve provider>)`, or a reload of the provider's csv dump,
-rebuilds the LP that was solved.  The solve's own (**produced**)
+provider=<post-solve provider>, db_reader=<the run's reader>)`
+(`tests._support.load.load_scenario`), or the unsupported reload of the
+provider's csv dump (`_csv_reload.load_from_dump`), rebuilds the LP that
+was solved.  The solve's own (**produced**)
 `SolveHandoff` is written beside them under `produced_handoff/*`
 (`translate_produced_handoff_to_provider`; e.g. the final
 `produced_handoff/cumulative_commodity.csv` of a rolling ladder); nothing
@@ -967,12 +976,12 @@ small. Repeating the table from
 | Symbol | Notes |
 |---|---|
 | `FlexData` | The single input dataclass. Everything else either produces it, consumes it, or transforms it in place. Modifying its field list is the cardinal extension act. |
-| `load_flextool(source, ...)` | CSV-shaped loader. Source may be a `Path`, a `str`, or a `CsvSource`. Accepts an optional `InputSource` override for migrated parameters. In the live cascade it is driven by `_drive_cascade` against a pre-built workdir whose Provider serves every read in-memory. |
+| `load_flextool(source, *, provider, db_reader, handoff=None)` | Builds `FlexData` for one sub-solve from its `FlexDataProvider` + `SpineDbReader`. `source` (a `Path`, a `str`, or a `CsvSource`) is the work folder; it only forms the provider keys and is never read. Without `provider` or `db_reader` it raises `FlexToolConfigError`. In the live cascade `_drive_cascade` passes both. |
 | `build_flextool(m, d, *, include_existing_fixed_cost=False, scale_the_objective=1.0)` | The model build. `m` is a fresh `Problem` / `WarmProblem`; `d` is the populated `FlexData`. Returns `None`; mutates `m` in place. |
 | `run_chain(steps, ...)` | Thin compat shim around `run_chain_from_db`. Kept for callers that still hand-construct `ChainStep` lists. |
 | `run_chain_from_db(input_db_url, scenario_name, work_folder, ...)` | The canonical multi-solve driver. Fills the Provider and the `RunnerState` from the DB, then calls `run_orchestration`, which walks the sub-solves and threads `SolveHandoff` between them. |
 | `run_orchestration(state, work_folder, ...)` | One layer below `run_chain_from_db`. Takes a pre-built `RunnerState` (with `SolveConfig` and `TimelineConfig` already resolved) and drives the cascade. The intended entry point from the GUI / Spine Toolbox layer. |
-| `SolveHandoff` | The carrier dataclass. Optional fields covering invest / divest / fix-storage / cumulative ladders / roll-end state (incl. the upward variant). `is_empty()` returns True when nothing fired. Populated by `build_handoff_from_solution` (in `flex_data.py`); the older disk-read `capture_post_solve` constructor was retired when the cascade fell through to Provider/CSV reads in all production paths. |
+| `SolveHandoff` | The carrier dataclass. Optional fields covering invest / divest / fix-storage / cumulative ladders / roll-end state (incl. the upward variant). `is_empty()` returns True when nothing fired. Populated by `build_handoff_from_solution` (in `flex_data.py`, from the solution and the sub-solve's provider, which it requires); the older disk-read `capture_post_solve` constructor was retired. |
 | `OrchestrationStep` | Per-solve result. Carries `solve_name`, `solution`, `handoff`, `warm_used`. |
 | `ChainStep` | Per-sub-solve result of the compat shim. Same shape as `OrchestrationStep`. |
 | `FlexInputSource` / `CsvSource` | The CSV-shaped source protocol family. |
@@ -1008,13 +1017,13 @@ file:
   should never silently coerce `None` into an empty frame.
 - **Provider is authoritative; CSVs are debug-only.** Cross-phase
   data inside the cascade moves through `FlexDataProvider`. The
-  `solve_data/<solve>/*.csv` mirrors only exist under `csv_dump=True`
+  `input/` + `solve_data/` CSV mirrors only exist under `csv_dump=True`
   and are not load-bearing — the meta-test
-  `tests/engine/test_meta_provider_invariants.py` forbids
-  disk reads from any cascade module.
+  `tests/engine/test_meta_provider_invariants.py` forbids CSV reads in
+  cascade modules and any disk read in `preprocess/` and `model/`.
 - **One funnel per source.** All Provider reads inside emitter
-  modules go through `_provider_io._provider_open` /
-  `_provider_key`. All Spine DB reads go through
+  modules go through `_provider_io._provider_key` /
+  `_provider_lookup_positional`. All Spine DB reads go through
   `SpineDbReader.parameter()`. Adding a new reader site is a smell;
   route through the existing funnel.
 - **Fail loud on schema surprises.** The codebase prefers

@@ -1301,22 +1301,16 @@ def _read_p_entity_all_existing_csv(workdir: Path | None,
                                        *,
                                        provider: "object | None" = None,
                                        ) -> pl.DataFrame | None:
-    """Γ.6.D — direct read of ``solve_data/p_entity_all_existing.csv``.
+    """Γ.6.D — read ``solve_data/p_entity_all_existing`` from *provider*.
 
-    Returns ``[e, d, value]`` or None when the CSV is absent.  Used by
-    helpers that need the chained existing capacity (incl. multi-solve
-    handoff) without recomputing it from raw ``entity.existing``.
+    Returns ``[e, d, value]``, or None when *workdir* is None or the
+    provider does not carry the frame.  Used by helpers that need the
+    chained existing capacity (incl. multi-solve handoff) without
+    recomputing it from raw ``entity.existing``.
 
-    Phase E-h — seed-aware existence check.  When the cascade runs with
-    CSV emission disabled (default since Phase E-c), the writer-port
-    ``write_p_entity_existing_chain`` captures the frame into the active
-    in-memory accumulator but skips disk emission, so a bare
-    ``p.exists()`` returns False and this function would mistakenly fall
-    back to the raw-existing source path — producing the wrong
-    ``p_flow_upper_existing`` / ``p_process_existing_count`` (no
-    lifetime-cumulative chain, no handoff state).  Using
-    the Provider keeps the chained-CSV path live when the seed
-    has the frame, and ``_read_csv_file`` then reads from the seed.
+    ``emit_p_entity_existing_chain`` (``emit/_chain_params.py``) puts the
+    frame into the provider; *workdir* only forms the key, nothing is
+    read from disk.
     """
     if workdir is None:
         return None

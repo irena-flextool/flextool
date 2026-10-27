@@ -177,7 +177,8 @@ def test_coarse_rp_storage_closure_fires(rp_data) -> None:
     (``rp_inter_period_cyclic``) fires with NON-EMPTY rows in BOTH the
     monolith AND every region subproblem — the structure these Benders RP
     tests exist to exercise (a nulled RP label would silently drop it and
-    under-constrain the LP; see ``test_rp_label_roundtrip``)."""
+    under-constrain the LP; see
+    ``tests/engine/test_rp_label_roundtrip.py::test_rp_labels_survive_production_load``)."""
     pbm = Problem()
     build_flextool(pbm, rp_data)
     assert _closure_rows(pbm) > 0, (

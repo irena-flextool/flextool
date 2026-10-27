@@ -923,8 +923,9 @@ def scenario_workdir(_scenario_run_factory):
     (``keep_solutions`` keeps every step's provider for ``load_scenario``).
 
     To get a sub-solve's FlexData, use ``scenario_run`` +
-    :func:`tests._support.load.load_scenario` (the production loader call),
-    not ``load_flextool(work)`` (a CSV reload of the snapshot).
+    :func:`tests._support.load.load_scenario` (the production loader call:
+    the step's provider + a DB reader).  ``load_flextool(work)`` alone raises,
+    and the loader never reads the snapshot CSVs.
     """
     def factory(scenario_name: str, db_fixture: str = "main") -> Path:
         return _scenario_run_factory(scenario_name, db_fixture).work_folder

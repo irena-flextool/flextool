@@ -3,10 +3,11 @@
 This module hosts **two** Protocols, used by separate phases of the
 DB-direct migration:
 
-* :class:`FlexInputSource` — the **CSV-shaped** source used for the
-  fixture / pre-built-workdir path (:class:`CsvSource`).  Materialises
-  flextool's ``input/`` + ``solve_data/`` CSV layout on disk;
-  ``load_flextool`` walks them with ``polars.read_csv``.
+* :class:`FlexInputSource` — the **work-folder-shaped** source
+  (:class:`CsvSource`): names a sub-solve's ``input/`` + ``solve_data/``
+  directories.  ``load_flextool`` uses the paths only to form the
+  provider keys (``input/<stem>``, ``solve_data/<stem>``); it reads every
+  frame from the sub-solve's :class:`FlexDataProvider`, never the files.
 * :class:`InputSource` — the **per-(entity_class, parameter_name)
   frame** Protocol introduced in Γ.1 of the deeper DB-direct migration
   (audit/db_direct_param_map.md §4.3).  Implementations
@@ -16,25 +17,24 @@ DB-direct migration:
   defaults applied per §4.5.  This is the abstraction Γ.1/Γ.2/Γ.3
   helpers compose against.
 
-The two Protocols coexist: ``FlexInputSource`` keeps the existing
-CSV-shaped loader for fixture workdirs, while ``InputSource`` is the
-DB-direct abstraction used by the live cascade
-(:func:`flextool.engine.run_chain_from_db`).
+The two Protocols coexist: :func:`flextool.engine.preprocess.flex_data.load_flextool` takes a
+``FlexInputSource`` (or a plain work-folder ``Path``, wrapped as a :class:`CsvSource`) for the key paths and
+a required ``InputSource`` (``db_reader``, a :class:`SpineDbReader` in a run; only ``_csv_reload`` loads without
+one) for the DB-direct parameters; the live cascade (:func:`flextool.engine.run_chain_from_db`) passes both
+plus the sub-solve's provider.
 
-CSV-shaped source notes:
-
-Today's downstream consumer (:func:`flextool.engine.preprocess.flex_data.load_flextool`) reads
-CSVs via ``polars.read_csv`` directly off the directory tree, so the
-Protocol exposes both:
+Work-folder source notes:
 
 * :pyattr:`FlexInputSource.input_dir` and
-  :pyattr:`FlexInputSource.solve_data_dir` — Paths to the materialised
-  CSV directories (the existing reader walks these as before).
-* :meth:`FlexInputSource.get` — convenience accessor for callers that
-  want a frame by ``(kind, name)`` without dealing with paths.
+  :pyattr:`FlexInputSource.solve_data_dir` — the directory Paths the
+  loader forms provider keys from.  The loader does not read them: a
+  dump or stale CSVs in a reused work folder cannot change a run.
+* :meth:`FlexInputSource.get` — reads a frame by ``(kind, name)`` from
+  the directory (``CsvSource.get``: the CSV file).  Part of the
+  Protocol; no main-path caller.
 
 For :class:`CsvSource` the directories are just ``workdir/input`` and
-``workdir/solve_data`` with no materialisation work.
+``workdir/solve_data``.
 """
 from __future__ import annotations
 
@@ -175,11 +175,11 @@ class InputSource(Protocol):
 
 @runtime_checkable
 class FlexInputSource(Protocol):
-    """Protocol every input-source must satisfy.
+    """Protocol of the work-folder source passed to ``load_flextool``.
 
-    Once :pyattr:`input_dir` / :pyattr:`solve_data_dir` return, the
-    directories must be populated and ready for the existing CSV
-    reader to walk.
+    :pyattr:`input_dir` / :pyattr:`solve_data_dir` name the sub-solve's
+    directories; the loader forms provider keys from them and reads
+    nothing there.
     """
 
     @property
@@ -199,11 +199,10 @@ class FlexInputSource(Protocol):
 
 
 class CsvSource:
-    """Wraps a flextool workdir on disk (the pre-DB-migration layout).
+    """Wraps a flextool work folder path (``<workdir>/input`` + ``<workdir>/solve_data``).
 
-    Construction is trivial and read-only; both directories must exist
-    or be missing in the same way they would be when calling
-    ``load_flextool(workdir)`` directly.
+    Construction is trivial and touches no file.  ``load_flextool(workdir, ...)`` wraps a plain path in a
+    ``CsvSource`` to form the provider keys; only :meth:`get` reads a CSV, and the loader never calls it.
     """
 
     def __init__(self, workdir: Path | str):

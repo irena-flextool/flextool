@@ -122,7 +122,9 @@ The reference catalogue entry is `group.decomposition_method` in
 `benders_regional` (the `_region` suffix makes the geographic flavour
 explicit, leaving naming room for any future temporal variant). The
 source of truth is
-`flextool/engine/solve/_region_filter.py:load_decomposition_method`.
+`flextool/engine/solve/_region_filter.py:load_decomposition_method`, which
+reads the sub-solve provider's `input/p_group_decomposition` frame (a
+provider is required; the work folder is never read).
 
 ### 2.3 Half-flow rewriting
 
@@ -280,7 +282,7 @@ solving — useful for inspecting how the rewriter sees a given region.
 | `Coupling`, `_build_arcs`, the master + cut loop | same |
 | `master_network_data` (network-only reduced FlexData for the master) | `flextool/engine/solve/_region_filter.py` |
 | `RegionSplit`, `HalfFlow`, `split` | same |
-| `load_decomposition_method` (reads ``decomposition_method`` from solve_data) | same |
+| `load_decomposition_method` (reads ``decomposition_method`` from the provider's `input/p_group_decomposition`) | same |
 | `WarmProblem.add_cut_row` / `add_recourse_col` / `solve(retry_on_unknown=…)` | `polar_high` (external) |
 
 The per-solve routing lives in `flextool/engine/solve/_orchestration.py`
@@ -464,8 +466,7 @@ Engine wiring:
   `SolveHandoff.realized_invest` / `realized_existing` /
   `fix_storage` / `fix_storage_timesteps`.
 - The child's preprocessing reads from `state.handoffs[parent_name]`
-  (in-memory by default) or from the legacy
-  `solve_data_<parent>/fix_storage_*.csv` (fallback).
+  (in memory; there is no disk fallback).
 
 The single-matching-period rename quirk: when a child solve's period
 set intersects its parent's by exactly one period, the child is

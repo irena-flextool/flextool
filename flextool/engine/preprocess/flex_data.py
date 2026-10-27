@@ -4058,10 +4058,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             ctx_workdir = None
     if ctx_workdir is not None:
         from flextool.engine.preprocess._solve_context import SolveContext
-        try:
-            ctx = SolveContext.from_workdir(ctx_workdir, provider=provider)
-        except Exception:  # pragma: no cover — defensive
-            ctx = None
+        ctx = SolveContext.from_workdir(ctx_workdir, provider=provider)
 
     if _entry_rec is not None:
         _entry_rec.checkpoint(

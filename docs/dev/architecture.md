@@ -237,12 +237,12 @@ Exported from `flextool.engine` (`__init__.py`):
 |---|---|
 | `FlexData` | Input dataclass — polars frames + `polar_high.Param`s. Sets unprefixed, parameters `p_*`. Full inventory in `_param_shapes.py`. |
 | `FlexDataProvider` | In-memory transport surface (`preprocess/_flex_data_provider.py`; not re-exported). Keys are declared in `_provider_keys.py` (no `.csv` suffix). All cross-phase data moves through it. |
-| `load_flextool(source)` | Build `FlexData` from a workdir (CSV layout) or from a Provider-backed source. |
+| `load_flextool(source, *, provider, db_reader)` | Build `FlexData` for one sub-solve from its `FlexDataProvider` + `SpineDbReader`; `source` (the work folder) only forms the provider keys. Never reads the work folder. |
 | `build_flextool(m, d, ...)` | Feature-conditional LP/MIP construction on a `Problem` / `WarmProblem`. |
 | `run_chain_from_db(...)` / `run_chain(...)` | Run a DB scenario end to end, threading `SolveHandoff` between sub-solves (`run_chain` is an older wrapper returning `ChainStep`s). |
 | `run_orchestration(state, work_folder, ...)` | Native cascade coordinator: reads `RunnerState`, drives the rolling / nested / stochastic cascade, returns one `OrchestrationStep` per solve. |
 | `SolveHandoff` | Cross-solve carrier (invest / divest / storage / roll-state / CO2 ladder / commodity ladder / cumulative sim-hours / history sets). |
-| `SpineDbReader` / `InMemoryReader` / `CsvSource` / `FlexInputSource` / `InputSource` | Input adapters — production Spine DB, in-memory test fixture, or workdir CSVs. |
+| `SpineDbReader` / `InMemoryReader` / `CsvSource` / `FlexInputSource` / `InputSource` | Input adapters — production Spine DB, in-memory test fixture, or the work-folder path wrapper (`CsvSource`: the loader takes its directories as key paths and reads the provider). |
 
 #### Solve modes
 
@@ -346,16 +346,18 @@ relevant key families are declared in `engine/preprocess/_provider_keys.py`:
 - `SOLVE_DATA_*` — per-solve sets and parameters that the derivation
   layer produces.
 
-The Provider is the contract. Disk-side CSV mirrors in `solve_data/<solve>/`
-exist only when `csv_dump=True` (a debug toggle) and are not load-bearing
-for any downstream phase.
+The Provider is the contract. Disk-side CSV mirrors in `input/` + `solve_data/`
+exist only when `csv_dump=True` (a debug toggle; one folder, shared by every
+sub-solve) and are not load-bearing for any downstream phase.
 
 #### CSV dump (supported) and CSV reload (unsupported)
 
 `--csv-dump` / the GUI "Full" debug level, `FlexData.dump_csvs` and
 `FlexDataProvider.snapshot_processed_inputs` write a CSV dump for inspection. Both writers stamp the folder with
 `_dump_meta.json` (`dump_format`, FlexTool version, schema version, git hash; `preprocess/_dump_stamp.py`). The
-writers are supported; nothing in a run reads a dump back.
+writers are supported; nothing in a run reads a dump back. The main loader is provider-only: it never reads `input/` or
+`solve_data/` on disk, so a dump or stale CSVs in a reused work folder cannot change a run
+(`test_loader_and_model_have_no_disk_arms` in `tests/engine/test_meta_provider_invariants.py`).
 
 Reloading a model from a dump lives only in `flextool/engine/_csv_reload/`: `load_from_dump(dump_dir, *, db_url=None,
 scenario=None, force=False)`, `copy_runner_meta`, and the offline output writer (`python -m
@@ -800,7 +802,7 @@ warm-start because of this flag.
 
 ```
 work_folder/
-├── solve_data/<solve>/        Debug-only mirrors of cascade state
+├── input/, solve_data/        Debug-only mirrors of cascade state
 │                                (csv_dump=True path). Not load-bearing.
 ├── output_parquet/<scenario>/ Canonical results — one parquet per output.
 ├── output_csv/<scenario>/     Optional CSV mirror of the parquets.

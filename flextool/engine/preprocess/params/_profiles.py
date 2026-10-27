@@ -40,9 +40,9 @@ output value is picked by the first matching branch:
 
 Branches 1 and 2 require the per-solve scaffolding ``period__branch``,
 ``solve_branch__time_branch``, ``first_timesteps``, and
-``groupIncludeStochastics`` / membership tables.  Δ.7 keeps these in the
-workdir-CSV layer for the stochastic path; the chain-runner inputs are
-preserved.  The deterministic path (branches 3-5) is fully native.
+``groupIncludeStochastics`` / membership tables, read from the sub-solve's
+provider (``solve_data/*`` / ``input/*`` keys; the work folder on disk is never
+read).  The deterministic path (branches 3-5) is fully native.
 
 Architectural notes
 -------------------
@@ -52,16 +52,15 @@ Architectural notes
   as guarding against non-canonical Map keys (``x``/``i`` from
   zero-``index_name`` Spine values) by returning ``None`` and falling
   back to the CSV path.  Cluster C drops the predicate: the stochastic
-  3d_map case is now handled explicitly via the per-solve CSV, the
+  3d_map case is now handled explicitly via the per-solve provider frames, the
   deterministic cases are handled via per-row dispatch on the raw
   parameter value's runtime type rather than column-name sniffing.
 * **Lazy polars throughout.**  Every helper returns a
   :class:`pl.LazyFrame`; the public ``apply_profile_cascade`` boundary
   collects once.
-* **Per-solve workdir CSVs for tiers 1 and 2.**  Mirroring Cluster B's
-  ``edd_history`` / ``ppec_handoff`` boundary (Δ.6), the stochastic
-  scaffolding lives in ``solve_data/*.csv`` until the chain runner
-  surfaces it in-memory (Δ.8+).
+* **Per-solve provider frames for tiers 1 and 2.**  The stochastic
+  scaffolding comes from the provider's ``solve_data/*`` keys (the
+  per-solve emit), not from typed FlexData fields.
 """
 from __future__ import annotations
 
@@ -187,7 +186,7 @@ def _classify_profile_rows(source: "InputSource") -> dict[str, str]:
             # as a multi-row variant of "time" here; the resolver knows.
             out[name] = "period_time"
         else:
-            # Generic / stochastic 3d_map — defer to workdir-CSV path.
+            # Generic / stochastic 3d_map — defer to the per-solve pbt_profile frame.
             out[name] = "stochastic"
     return out
 
@@ -226,7 +225,7 @@ def _tier_for_value(v: object) -> str:
             if outer_idx == "period":
                 return "period_time"
             # 2d_map without "period" as the outer key — treat as
-            # stochastic (defer to CSV) for safety.
+            # stochastic (defer to the per-solve pbt_profile frame) for safety.
             return "stochastic"
         # Deeper than 2 → 3d_map (branch × time_start × t).
         return "stochastic"
@@ -274,12 +273,12 @@ def _profile_time_lf(source: "InputSource",
     Tier 3 of the cascade: profile values keyed by ``t`` only,
     broadcast over the dispatch periods of dt.
 
-    Prefers ``workdir/solve_data/pt_profile.csv`` (per-solve averaged
-    values written by ``TimelineConfig.create_averaged_timeseries``)
+    Prefers the provider's ``solve_data/pt_profile`` frame (per-solve
+    averaged values from ``TimelineConfig.create_averaged_timeseries``)
     when present — those values are aggregated to the solve's
     ``new_stepduration``, matching the dispatch timeline.  Falls back
-    to the raw Spine ``profile.profile`` parameter when the CSV is
-    absent (e.g. tests that bypass the runner).
+    to the raw Spine ``profile.profile`` parameter when the provider
+    lacks the frame (e.g. tests that bypass the runner).
 
     The Spine fallback path: the source column may be ``t`` (when
     ``index_name='time'``) or ``i`` (default index name).  Either way
@@ -292,7 +291,7 @@ def _profile_time_lf(source: "InputSource",
     if not time_profiles:
         return pl.LazyFrame(schema=empty_schema)
 
-    # Prefer per-solve averaged CSV when the runner has produced it.
+    # Prefer the per-solve averaged frame when the runner has produced it.
     if workdir is not None:
         csv_path = Path(workdir) / "solve_data" / "pt_profile.csv"
         if _provider_has_key(provider, csv_path):
@@ -469,7 +468,7 @@ def _profile_scalar_lf(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# Tier-1 / tier-2 builders (stochastic — workdir-CSV-fed)
+# Tier-1 / tier-2 builders (stochastic — fed from the provider's per-solve frames)
 # ---------------------------------------------------------------------------
 
 
@@ -482,16 +481,16 @@ def _profile_stochastic_lf(workdir: Path | None,
 
     Branches 1 and 2 of flextool's ``write_pdtProfile`` cascade.
 
-    Per-solve scaffolding consumed (workdir/solve_data/):
+    Per-solve scaffolding consumed (provider keys; *workdir* only forms them):
 
-    * ``period__branch.csv`` — (anchor, branch) tuples; defines parents.
-    * ``solve_branch__time_branch.csv`` — (anchor, time_branch); the
+    * ``solve_data/period__branch`` — (anchor, branch) tuples; defines parents.
+    * ``solve_data/solve_branch__time_branch`` — (anchor, time_branch); the
       stochastic-fold's outer-time-branch axis.
-    * ``first_timesteps.csv`` — (anchor, time_start); the
+    * ``solve_data/first_timesteps`` — (anchor, time_start); the
       stochastic-fold's outer-time-start axis.
-    * ``input/pbt_profile.csv`` — (profile, branch, time_start, time,
+    * ``input/pbt_profile`` — (profile, branch, time_start, time,
       value) — the 3d_map values themselves.
-    * ``input/groupIncludeStochastics.csv`` + relationship CSVs — gate
+    * ``input/groupIncludeStochastics`` + relationship frames — gate
       Branch 1 (per-profile is_stoch flag).
 
     Output: lazy frame ``[f, d, t, value]`` covering only the
@@ -614,8 +613,8 @@ def _profile_stochastic_lf(workdir: Path | None,
 def _read_pairs(path: Path, key_col: str, val_col: str,
                   *, provider: "object | None" = None,
                   ) -> dict[str, list[str]]:
-    """Read a 2-col CSV into ``{key: [val, …]}``.  Empty / missing →
-    ``{}``.
+    """Read a 2-col provider frame (key formed from *path*) into
+    ``{key: [val, …]}``.  Empty / missing → ``{}``.
     """
     if not _provider_has_key(provider, path):
         return {}
