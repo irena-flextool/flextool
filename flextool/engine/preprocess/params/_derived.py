@@ -4398,6 +4398,9 @@ def p_entity_max_units_from_source(source: "InputSource",
 
     # cumulative_max_capacity[e, d]: constant or period map via the shape resolver, default 0.
     cmc_map = _ed_period_value_map(source, "cumulative_max_capacity", piu)
+    # c16b fix 4(b): entities that author cumulative_max_capacity at all (any period) — an entity
+    # absent here never set the parameter, as opposed to an authored-but-zero value.
+    cmc_authors = {e for (e, _d) in cmc_map}
     # ed_invest_cumulative: ed_invest pairs with cumulative_limits method.
     ed_invest_cumulative = {(e, d) for (e, d) in ed_invest.iter_rows()
                              if "cumulative_limits" in methods_by_e.get(e, set())}
@@ -4423,7 +4426,16 @@ def p_entity_max_units_from_source(source: "InputSource",
             if d not in period_set:
                 continue  # defensive; piu is the period_in_use list
             if (e, d) in ed_invest_cumulative:
-                v = cmc_map.get((e, d), 0.0)
+                if e in cmc_authors:
+                    v = cmc_map.get((e, d), 0.0)
+                else:
+                    # c16b fix 4(b): a cumulative_limits entity that never authors
+                    # cumulative_max_capacity (e.g. only cumulative_min_capacity, a floor with no
+                    # ceiling) is unconstrained above, not pinned to v_invest = 0 — the floor would
+                    # otherwise be unmeetable.  The real ceiling (if any) is still enforced by
+                    # {max,min}Cumulative_capacity_{p,n} (_cumulative_invest.py); this value only
+                    # bounds the variable itself.
+                    v = existing_map.get((e, d), 0.0) + p_unc
             else:
                 v = existing_map.get((e, d), 0.0)
                 in_period = (e, d) in ed_invest_period

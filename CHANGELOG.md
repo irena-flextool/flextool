@@ -1,5 +1,18 @@
 ## Unreleased
 
+- **An explicit `invest_max_period` / `retire_max_period` / `invest_max_total` /
+  `retire_max_total` of 0 on a group now binds, instead of being misread as "no limit" once
+  another group sets the same parameter.** This was the same "an authored zero is a given value"
+  gap already fixed for the entity-level versions, carried over to the group readers.
+
+- **A `cumulative_limits` entity (unit, connection or storage node) with only a
+  `cumulative_min_capacity` floor and no `cumulative_max_capacity` ceiling can invest again.**
+  Such an entity used to be pinned at zero investable capacity — forbidding the very investment
+  needed to reach its own floor — because the internal ceiling used to default to 0 when nobody
+  authored a maximum. It is now unconstrained above (the actual limit, if any, is still enforced
+  by the cumulative-capacity constraint itself); an entity that also authors a
+  `cumulative_max_capacity` is unaffected.
+
 - **Group cumulative capacity limits now subtract a group's process retirements, same as the
   entity-level limit (#29).** A group of units/connections with a cumulative capacity limit
   (`invest_method = cumulative_limits`) ignored its own retirements entirely; the group's capacity

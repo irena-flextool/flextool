@@ -951,11 +951,15 @@ def p_group_invest_max_period_from_source(source: "InputSource",
                                             ) -> Param | None:
     """``group.invest_max_period`` → ``Param(("g","d"))``.
     Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
+
+    c16b fix 4(a): zero rows are kept (``filter_zero=False``) — an explicit 0 is a given value
+    (it binds, forbidding investment that period) and must not be read back as "no limit" by
+    ``check_max_cap`` (FA-12) once some other group sets ``invest_max_period``.
     """
     resolved = resolve_param_shape(
         source, "group", "invest_max_period", period_filter=period_filter)
     return broadcast_to_period(
-        resolved, "g", period_filter, filter_zero=True)
+        resolved, "g", period_filter, filter_zero=False)
 
 
 def p_group_invest_min_period_from_source(source: "InputSource",
@@ -975,11 +979,14 @@ def p_group_retire_max_period_from_source(source: "InputSource",
                                             ) -> Param | None:
     """``group.retire_max_period`` → ``Param(("g","d"))``.
     Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
+
+    c16b fix 4(a): zero rows are kept (``filter_zero=False``) — see
+    :func:`p_group_invest_max_period_from_source`.
     """
     resolved = resolve_param_shape(
         source, "group", "retire_max_period", period_filter=period_filter)
     return broadcast_to_period(
-        resolved, "g", period_filter, filter_zero=True)
+        resolved, "g", period_filter, filter_zero=False)
 
 
 def p_group_retire_min_period_from_source(source: "InputSource",
@@ -1022,7 +1029,9 @@ def pd_min_cumulative_flow_from_source(source: "InputSource",
 
 # §1.16 — group scalar Direct Params (no period dimension)
 def p_group_invest_max_total_from_source(source: "InputSource") -> Param | None:
-    return _g_scalar(source, "invest_max_total")
+    """c16b fix 4(a): ``filter_zero=False`` — see
+    :func:`p_group_invest_max_period_from_source`; same reasoning for the total side."""
+    return _g_scalar(source, "invest_max_total", filter_zero=False)
 
 
 def p_group_invest_min_total_from_source(source: "InputSource") -> Param | None:
@@ -1030,7 +1039,9 @@ def p_group_invest_min_total_from_source(source: "InputSource") -> Param | None:
 
 
 def p_group_retire_max_total_from_source(source: "InputSource") -> Param | None:
-    return _g_scalar(source, "retire_max_total")
+    """c16b fix 4(a): ``filter_zero=False`` — see
+    :func:`p_group_invest_max_period_from_source`; same reasoning for the total side."""
+    return _g_scalar(source, "retire_max_total", filter_zero=False)
 
 
 def p_group_retire_min_total_from_source(source: "InputSource") -> Param | None:
