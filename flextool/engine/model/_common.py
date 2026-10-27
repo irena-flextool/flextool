@@ -50,6 +50,106 @@ def _entity_rows(frame: pl.DataFrame, ent_col: str, members: pl.DataFrame,
             .pipe(rename_to_axis, {ent_col: axis}))
 
 
+def _entities_of_kind(d, e_set: pl.DataFrame, axis: str) -> pl.DataFrame:
+    """Rows of ``e_set`` (keyed on e) whose entity is a process (axis p) or a storage node (axis n)."""
+    members, col = (d.process_source_sink, "p") if axis == "p" else (d.nodeState, "n")
+    if not _has_rows(members):
+        return e_set.head(0)
+    return e_set.filter(pl.col("e").is_in(members[col].unique()))
+
+
+def chain_prior(d, kind: str) -> "pl.DataFrame | None":
+    """``[e, value]``: capacity realized (``kind="invest"``) or retired (``kind="divest"``) by all
+    earlier solves of a solve chain, per entity.  ``None`` when the carrier Param is absent (a
+    single solve, or the first solve of a chain, with nothing yet realized/retired).
+
+    ``invest`` is ``d.p_entity_invested`` — every investment of the chain, retired or not (Q10).
+    ``divest`` is ``d.p_entity_divested`` — capacity retired at realized, non-branch periods of
+    the chain only (c16a critique #1; the handoff carrier itself already excludes look-ahead and
+    alternative-branch periods, see ``flex_data.build_handoff_from_solution``).
+    """
+    param = d.p_entity_invested if kind == "invest" else d.p_entity_divested
+    return None if param is None else param.frame
+
+
+def minus_prior(cap: pl.DataFrame, key: str, prior: "pl.DataFrame | None") -> pl.DataFrame:
+    """``cap`` (indexed on ``key``, with a float ``"value"`` column) with
+    ``value = max(0, value − prior[key])``, by a left join on ``key``.
+
+    ``prior`` has two columns: an entity/group key (named ``"e"`` from :func:`chain_prior`, or
+    ``"g"`` from :func:`group_prior`) and ``"value"``; it is renamed to ``key`` and its dtype cast
+    to ``cap[key]``'s dtype (``strict=False``, as :func:`_entity_rows` does — the wider
+    entity-union vocabulary casts down to the narrower axis one) before the join.  Rows of
+    ``cap`` with no matching ``prior`` row are unchanged (prior = 0).  ``None`` / empty ``prior``
+    is a no-op.  Vectorized (no ``map_elements``), per the vectorized-outputs rule.
+    """
+    if prior is None or prior.height == 0:
+        return cap
+    prior_key_col = next(c for c in prior.columns if c != "value")
+    if prior_key_col != key:
+        prior = prior.rename({prior_key_col: key})
+    dtype = cap.schema[key]
+    if prior.schema[key] != dtype:
+        prior = prior.with_columns(pl.col(key).cast(dtype, strict=False))
+    return (cap.join(prior, on=key, how="left", suffix="_prior")
+            .with_columns(value=pl.col("value") - pl.col("value_prior").fill_null(0.0))
+            .with_columns(value=pl.when(pl.col("value") < 0).then(0.0).otherwise(pl.col("value")))
+            .drop("value_prior"))
+
+
+def group_prior(group_entity: pl.DataFrame, prior: "pl.DataFrame | None", d, axis: str) -> pl.DataFrame:
+    """``[g, value] = Σ_{e ∈ g, e of axis kind} prior[e]``.
+
+    Members are every entity of ``group_entity`` that is a process (``axis="p"``) or storage node
+    (``axis="n"``) — **not** restricted to entities with a variable in this solve: their earlier
+    investment/divestment still counts towards the group's chain-cumulative total (c16a design
+    §2).  Returns an empty ``[g, value]`` frame when ``prior`` is ``None``/empty or no member of
+    the axis kind has a prior entry.
+    """
+    out_schema = {"g": group_entity.schema["g"], "value": pl.Float64}
+    if prior is None or prior.height == 0:
+        return pl.DataFrame(schema=out_schema)
+    members = _entities_of_kind(d, group_entity, axis)
+    if members.height == 0:
+        return pl.DataFrame(schema=out_schema)
+    dtype = members.schema["e"]
+    if prior.schema["e"] != dtype:
+        prior = prior.with_columns(pl.col("e").cast(dtype, strict=False))
+    out = (members.join(prior, on="e", how="inner")
+           .group_by("g").agg(pl.col("value").sum()))
+    return out if out.height > 0 else pl.DataFrame(schema=out_schema)
+
+
+def leaf_rows(over: pl.DataFrame, key: str, var: Var, d_leaf: "pl.DataFrame | None"
+             ) -> tuple[bool, pl.DataFrame, pl.DataFrame]:
+    """``(is_path, rows, mask)`` for the ``Σ_d`` block shared by every ``*_total`` family.
+
+    ``over`` is keyed on ``key`` (no ``"d"`` column) and already restricted to rows that have the
+    variable (callers apply the #43 restriction before calling this).  With one scenario leaf (or
+    no ``d_leaf``) returns ``(False, over, over)`` — the legacy shape: ``Sum(Where(var *
+    unitsize, over), over=("d",))`` sums every period ``var`` has for each ``key``.
+
+    With several leaves (recourse) returns ``(True, rows, mask)``: ``mask`` is the actual ``(key,
+    d, leaf)`` triples — ``var``'s own ``(key, d)`` support, restricted to ``over``'s keys, joined
+    to the scenario tree's ``(d, leaf)`` pairs (``d_leaf``) — and ``rows =
+    mask.select(key, "leaf").unique()``.  A ``(key, leaf)`` combination with no ``d`` (that key has
+    no variable in that leaf) therefore gets no row at all, instead of a constants-only row that
+    would be infeasible for a ``>=`` family and a no-op for ``<=`` (c16a critique #2).
+    """
+    if d_leaf is None or getattr(d_leaf, "height", 0) == 0:
+        return False, over, over
+    d_dtype = var.frame.schema["d"]
+    leaves_all = (d_leaf if d_leaf.schema["d"] == d_dtype
+                  else d_leaf.with_columns(pl.col("d").cast(d_dtype, strict=False)))
+    leaves = leaves_all.join(var.frame.select("d").unique(), on="d", how="semi")
+    if leaves.height == 0 or leaves["leaf"].n_unique() <= 1:
+        return False, over, over
+    key_d = over.join(var.frame.select(key, "d").unique(), on=key, how="inner")
+    mask = key_d.join(leaves_all, on="d", how="inner")
+    rows = mask.select(key, "leaf").unique()
+    return True, rows, mask
+
+
 def _utf8_keys(lf: "pl.LazyFrame", keys) -> "pl.LazyFrame":
     """Add ``_<k>`` Utf8 copies of ``keys`` — join keys that bridge Enum
     vocabulary edges between frames built by different producers."""

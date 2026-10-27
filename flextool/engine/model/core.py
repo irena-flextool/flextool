@@ -93,6 +93,9 @@ from flextool.engine.model._common import (
     _indirect_sum_arcs,
     _utf8_keys,
     _var_view,
+    chain_prior,
+    leaf_rows,
+    minus_prior,
 )
 from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.model._pdt_join import (
@@ -2526,68 +2529,48 @@ def _eq_invest_total_caps(b: _Build) -> None:
     m, d = b.m, b.d
     d_leaf = getattr(d, "d_leaf", None)
 
-    # Capacity realized by earlier solves of a solve chain, per entity.  Invest: the largest previously
-    # invested capacity over the periods.  Divest: p_entity_divested, except on the first solve of a chain
-    # (p_nested_solve_first is None for a single solve, True on the first solve, False after it).
-    prior_invest: dict[str, float] = {}
-    if d.p_entity_previously_invested_capacity is not None:
-        prior_invest = dict(d.p_entity_previously_invested_capacity.frame
-                            .group_by("e").agg(pl.col("value").max())
-                            .rows())
-    prior_divest: dict[str, float] = {}
-    if d.p_entity_divested is not None and getattr(d, "p_nested_solve_first", None) is False:
-        prior_divest = dict(d.p_entity_divested.frame.rows())
-
-    def _minus_prior(cap_frame: pl.DataFrame, key_col: str, prior: dict[str, float]) -> pl.DataFrame:
-        """``cap_frame`` with ``value -= prior[key]``, clipped at 0."""
-        if not prior:
-            return cap_frame
-        return (cap_frame
-                .with_columns(value=pl.col("value") - pl.col(key_col).map_elements(
-                    lambda k: prior.get(k, 0.0), return_dtype=pl.Float64))
-                .with_columns(value=pl.when(pl.col("value") < 0).then(0.0).otherwise(pl.col("value"))))
+    # Capacity realized (invested) or retired (divested) by all earlier solves of a solve chain,
+    # per entity (Q10) — every investment of the chain counts, retired or not; retirements count
+    # whether or not a later solve re-invests in the same entity.
+    prior_invest = chain_prior(d, "invest")
+    prior_divest = chain_prior(d, "divest")
 
     # ─── EQ. ─── max{Invest,Divest}_entity_total[_path][_n] ──────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_d v_invest_p[p,d] · unitsize[p]  ≤  max(0, invest_max_total[p] − prior_invest[p])   ∀ p ∈ e_invest_total
-    # Σ_d v_divest_p[p,d] · unitsize[p]  ≤  max(0, divest_max_total[p] − prior_divest[p])   ∀ p ∈ e_divest_total
-    #   _n: the node analogues with v_invest_n / v_divest_n and state_unitsize[n]
-    #   _path: one row per (entity, leaf), Σ_d over the periods of the leaf
-    # Caps the capacity built or retired over the horizon.  With one scenario leaf (deterministic) the row
-    # is the plain total; with several (recourse) it becomes the _path row, the per-entity cap applying to
-    # each scenario path.  prior_invest[e] = max_d p_entity_previously_invested_capacity[e,d] (one row per
-    # entity, so the tightest per-period cap of a non-decreasing schedule).  p_entity_invested is not
-    # subtracted (known limitation).
-    for active, total_set, max_total, members, axis, var, legacy_name, path_name, label, prior in (
-        (b.has_invest_p, d.e_invest_total, d.e_invest_max_total, d.process_source_sink, "p", b.v_invest_p,
+    # Σ_{d ∈ D(leaf)} v_invest_p[p,d] · unitsize[p]  ≤  max(0, invest_max_total[p] − prior_inv[p])
+    #   ∀ p ∈ e_invest_total ∩ P(v_invest_p) (, leaf)
+    # Σ_{d ∈ D(leaf)} v_divest_p[p,d] · unitsize[p]  ≤  max(0, divest_max_total[p] − prior_div[p])
+    #   ∀ p ∈ e_divest_total ∩ P(v_divest_p) (, leaf)
+    #   prior_inv[e] = p_entity_invested[e]  (capacity realized by all earlier solves of the
+    #     chain, retired or not); prior_div[e] = p_entity_divested[e]  (capacity retired by all
+    #     earlier solves of the chain, at realized non-branch periods only)
+    #   _n: v_invest_n / v_divest_n with state_unitsize[n];  _path: one row per (entity, leaf),
+    #     D(leaf) = periods of the leaf, only for (entity, leaf) pairs that have the variable
+    # Caps the amount built (retired) over the chain; reinvestments count, retirements do not
+    # reduce it.  Capacity in service is cumulative_max_capacity.  Rows only for entities that have
+    # the variable in this solve (#43).  If a user realizes a period in one solve and invests in it
+    # again in a later one, it is counted twice in prior_inv — same as the old (now-removed)
+    # max_d(p_entity_previously_invested_capacity) form; no fixture does this.
+    for active, total_set, max_total, axis, var, legacy_name, path_name, label, prior in (
+        (b.has_invest_p, d.e_invest_total, d.e_invest_max_total, "p", b.v_invest_p,
          "maxInvest_entity_total", "maxInvest_entity_total_path", "invest_total", prior_invest),
-        (b.has_divest_p, d.e_divest_total, d.e_divest_max_total, d.process_source_sink, "p", b.v_divest_p,
+        (b.has_divest_p, d.e_divest_total, d.e_divest_max_total, "p", b.v_divest_p,
          "maxDivest_entity_total", "maxDivest_entity_total_path", "divest_total", prior_divest),
-        (b.has_invest_n, d.e_invest_total, d.e_invest_max_total, d.nodeState, "n", b.v_invest_n,
+        (b.has_invest_n, d.e_invest_total, d.e_invest_max_total, "n", b.v_invest_n,
          "maxInvest_entity_total_n", "maxInvest_entity_total_path_n", "invest_total", prior_invest),
-        (b.has_divest_n, d.e_divest_total, d.e_divest_max_total, d.nodeState, "n", b.v_divest_n,
+        (b.has_divest_n, d.e_divest_total, d.e_divest_max_total, "n", b.v_divest_n,
          "maxDivest_entity_total_n", "maxDivest_entity_total_path_n", "divest_total", prior_divest),
     ):
         if not active or not _has_rows(total_set) or max_total is None:
             continue
-        over_e = _entity_rows(total_set, "e", members, axis)
+        over_e = total_set.pipe(rename_to_axis, {"e": axis}).join(
+            var.frame.select(axis).unique(), on=axis, how="semi")
         if over_e.height == 0:
             continue
-        cap = Param((axis,), _minus_prior(max_total.frame.pipe(rename_to_axis, {"e": axis}), axis, prior))
+        cap = Param((axis,), minus_prior(max_total.frame.pipe(rename_to_axis, {"e": axis}), axis, prior))
         unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
-        # (d, leaf) pairs of the scenario tree, restricted to the periods var exists in.
-        leaf_periods = None
-        if d_leaf is not None and getattr(d_leaf, "height", 0) > 0:
-            d_dtype = var.frame.schema["d"]
-            leaf_periods = (d_leaf if d_leaf.schema["d"] == d_dtype
-                            else d_leaf.with_columns(pl.col("d").cast(d_dtype, strict=False)))
-            leaf_periods = leaf_periods.join(var.frame.select("d").unique(), on="d", how="semi")
-        if leaf_periods is None or leaf_periods.height == 0 or leaf_periods["leaf"].n_unique() <= 1:
-            name, over, mask = legacy_name, over_e, over_e
-        else:
-            name = path_name
-            mask = over_e.join(leaf_periods, how="cross")
-            over = over_e.join(leaf_periods.select("leaf").unique().sort("leaf"), how="cross")
+        is_path, over, mask = leaf_rows(over_e, axis, var, d_leaf)
+        name = path_name if is_path else legacy_name
         m.add_cstr(
             name,
             over      = over,

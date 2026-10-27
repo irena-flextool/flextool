@@ -126,12 +126,14 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
       the reduced cost is ≥0, so negate → NEGATIVE (unprofitable to build).
     - (d) interior, binds nothing → 0.
 
-    ASYMMETRY (read off ``drop_levels.py``): ``dual_maxInvest_total`` is in
-    ``_V_SOLVE_ONLY`` — it is collapsed to a single-row ``RangeIndex(1)``
-    (period-less) and so must be broadcast across the period axis of its
-    siblings before combining.  ``dual_minInvest_total`` is in ``_V_DROP`` —
-    after dropping the solve level it retains a ``period`` index and is
-    ALREADY per-(entity, period), so it is added directly without broadcast.
+    SOLVE-ONLY BROADCAST (read off ``drop_levels.py``): both
+    ``dual_maxInvest_total`` and ``dual_minInvest_total`` (c16a: the min
+    side moved to ``_V_SOLVE_ONLY`` alongside the max side — the row it
+    mirrors, ``minInvest_entity_total_path_{p,n}``, is now one row per
+    entity over the whole chain horizon, period summed out, same shape as
+    the max-side total) are collapsed to a single-row ``RangeIndex(1)``
+    (period-less) and so must be broadcast across the period axis of a
+    sibling before combining.
 
     The broadcast period axis is taken from a per-period sibling dual when
     one is non-empty; otherwise (a binding total cap is the SOLE family, so
@@ -170,7 +172,6 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
                 v.dual_minInvest_period,
                 v.dual_maxCumulative,
                 v.dual_minCumulative,
-                v.dual_minInvest_total,
                 v.dual_invest_unit,
                 v.dual_invest_connection,
                 v.dual_invest_node,
@@ -229,12 +230,38 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
         entity_duals.append(df.mul(-1.0))
 
     # (c) Min-side ``>=`` duals: raw > 0 → negate → NEGATIVE.
-    #     ``dual_minInvest_total`` is ALREADY per-(entity, period) — add it
-    #     directly, NO broadcast (the max-total asymmetry above).
-    for df in (v.dual_minInvest_period, v.dual_minInvest_total, v.dual_minCumulative):
+    for df in (v.dual_minInvest_period, v.dual_minCumulative):
         if df.empty:
             continue
         entity_duals.append(df.mul(-1.0))
+
+    # c16a: ``dual_minInvest_total`` is now solve-only (one row per entity
+    # over the chain horizon) — broadcast it over periods the same way as
+    # ``dual_maxInvest_total`` above, instead of adding it directly.
+    df = v.dual_minInvest_total
+    if not df.empty:
+        if period_ref is not None:
+            df = pd.DataFrame(
+                {c: df.iloc[0][c] for c in df.columns},
+                index=period_ref.index,
+            )
+            df.columns.name = 'entity'
+            entity_duals.append(df.mul(-1.0))
+        elif ed_invest_idx is not None:
+            cols = {}
+            row = df.iloc[0]
+            for c in df.columns:
+                periods = ed_invest_idx[
+                    ed_invest_idx.get_level_values('entity') == c
+                ].get_level_values('period').unique()
+                if len(periods) == 0:
+                    continue
+                cols[c] = pd.Series(row[c], index=periods)
+            if cols:
+                df = pd.DataFrame(cols)
+                df.index.name = 'period'
+                df.columns.name = 'entity'
+                entity_duals.append(df.mul(-1.0))
 
     # (b)/(c) group caps/floors: expand group → member entities, then negate.
     if not v.group_entity_invest.empty:

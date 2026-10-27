@@ -312,13 +312,16 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxDivest_entity_total_path_n": CstrFamily(QuantityType.ENERGY),
 
     # min-invest / min-divest entity totals — group_capacity resolved
-    # via _p / _n suffix in _cumulative_invest.py.
-    # _cumulative_invest._eq_min_invest_total (minInvest_entity_total_{p,n})
-    "minInvest_entity_total": CstrFamily(
+    # via _p / _n suffix in _cumulative_invest.py.  c16a: always named
+    # _path (one row per (entity, leaf), required even with a single
+    # scenario leaf — see _eq_min_invest_total's EQ. header); the bare
+    # (no-_path) names are no longer emitted.
+    # _cumulative_invest._eq_min_invest_total (minInvest_entity_total_path_{p,n})
+    "minInvest_entity_total_path": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
-    # _cumulative_invest._eq_min_divest_total (minDivest_entity_total_{p,n})
-    "minDivest_entity_total": CstrFamily(
+    # _cumulative_invest._eq_min_divest_total (minDivest_entity_total_path_{p,n})
+    "minDivest_entity_total_path": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
 

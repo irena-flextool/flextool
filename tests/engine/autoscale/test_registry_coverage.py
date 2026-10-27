@@ -264,8 +264,12 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     # registry entry yet (reachable only with off-schema group parameters).
     "minInvest_entity_period_p", "minInvest_entity_period_n",
     "minDivest_entity_period_p", "minDivest_entity_period_n",
-    "minInvest_entity_total_p", "minInvest_entity_total_n",
-    "minDivest_entity_total_p", "minDivest_entity_total_n",
+    # c16a: minInvest/minDivest entity totals are always named _path now
+    # (one row per (entity, leaf), required even with a single scenario
+    # leaf — see _eq_min_invest_total's EQ. header); the bare names are
+    # no longer emitted.
+    "minInvest_entity_total_path_p", "minInvest_entity_total_path_n",
+    "minDivest_entity_total_path_p", "minDivest_entity_total_path_n",
     "maxCumulative_capacity_p", "maxCumulative_capacity_n",
     "minCumulative_capacity_p", "minCumulative_capacity_n",
     "maxInvestGroup_entity_period_p", "maxInvestGroup_entity_period_n",

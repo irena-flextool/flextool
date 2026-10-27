@@ -16,8 +16,16 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Expr, Var
 
-from flextool.engine.input._axis_enums import align_join_dtypes
-from flextool.engine.model._common import _has_rows, _var_view
+from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
+from flextool.engine.model._common import (
+    _entities_of_kind,
+    _has_rows,
+    _var_view,
+    chain_prior,
+    group_prior,
+    leaf_rows,
+    minus_prior,
+)
 
 if TYPE_CHECKING:
     from flextool.engine.model.core import _Build
@@ -64,14 +72,6 @@ def _unitsize(d, axis: str) -> Param | None:
     if axis == "p":
         return d.p_unitsize
     return None if d.p_state_unitsize is None else Param(("n",), d.p_state_unitsize.frame)
-
-
-def _entities_of_kind(d, e_set: pl.DataFrame, axis: str) -> pl.DataFrame:
-    """Rows of ``e_set`` (keyed on e) whose entity is a process (axis p) or a storage node (axis n)."""
-    members, col = (d.process_source_sink, "p") if axis == "p" else (d.nodeState, "n")
-    if not _has_rows(members):
-        return e_set.head(0)
-    return e_set.filter(pl.col("e").is_in(members[col].unique()))
 
 
 def _on_var_axis(frame: pl.DataFrame, axis: str, var: Var) -> pl.DataFrame:
@@ -231,70 +231,84 @@ def _eq_min_entity_period(b: _Build) -> None:
 
 
 def _eq_min_invest_total(b: _Build) -> None:
-    """minInvest_entity_total_{p,n}: capacity invested and still alive, from below."""
+    """minInvest_entity_total_path_{p,n}: capacity invested over the chain, from below."""
     d = b.d
-    e_set, cap, edd = d.e_invest_total, d.e_invest_min_total, d.edd_invest_set
-    if not _has_rows(e_set) or cap is None or edd is None:
+    e_set, cap = d.e_invest_total, d.e_invest_min_total
+    if not _has_rows(e_set) or cap is None:
         return
+    d_leaf = getattr(d, "d_leaf", None)
+    prior = chain_prior(d, "invest")
 
-    # ─── EQ. ─── minInvest_entity_total_{p,n} ────────────────────────────────
+    # ─── EQ. ─── minInvest_entity_total_path_{p,n} ───────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]  ≥ invest_min_total[p]
-    #   ∀ p ∈ e_invest_total ∩ processes, d with (p,·,d) ∈ edd_invest_set
+    # Σ_{d ∈ D(leaf)} v_invest_p[p,d] · unitsize[p]  ≥  max(0, invest_min_total[p] − prior_inv[p])
+    #   ∀ p ∈ e_invest_total ∩ P(v_invest_p) with invest_min_total (, leaf)
+    #   prior_inv[p] = p_entity_invested[p]  (capacity realized by all earlier solves of the chain)
     #   _n: the node analogue with v_invest_n and state_unitsize[n]
-    # In every period, the capacity invested in the periods still alive then is at least the minimum.
-    # Capacity invested by earlier solves of a chain is not counted.  When the process side has
-    # min-total entities but none of them has an edd_invest_set row, the node side is skipped as well
-    # (known limitation).
-    for name, var, axis in (("minInvest_entity_total_p", b.v_invest_p, "p"),
-                            ("minInvest_entity_total_n", b.v_invest_n, "n")):
+    # The part of the minimum not met by earlier solves of the chain must be met in this solve
+    # (Q3).  One row per entity over the chain horizon, replacing the old per-period "invested and
+    # still alive" row; edd_invest_set is no longer read.  Always named _path, even with one
+    # scenario leaf: a single row summed over alternative branches would let one branch meet the
+    # minimum for all, so the per-leaf row shape is load-bearing, not cosmetic (c16a critique #2).
+    for name, var, axis in (("minInvest_entity_total_path_p", b.v_invest_p, "p"),
+                            ("minInvest_entity_total_path_n", b.v_invest_n, "n")):
         unitsize = _unitsize(d, axis)
         if var is None or unitsize is None:
             continue
-        members = _entities_of_kind(d, e_set, axis).rename({"e": axis})
+        members = _entities_of_kind(d, e_set, axis).pipe(rename_to_axis, {"e": axis})
         if members.height == 0:
             continue
-        lifetime = (edd.rename({"e": axis}).join(members, on=axis, how="inner")
-                    .filter(pl.col(axis).is_in(var.frame[axis].unique())))
-        if lifetime.height == 0:
-            break
-        invest = _var_view(var, "__cuminv_total_at", {"d": "d_invest"})
+        over_e = members.join(var.frame.select(axis).unique(), on=axis, how="semi")
+        if over_e.height == 0:
+            continue
+        cap_param = Param((axis,), minus_prior(cap.frame.pipe(rename_to_axis, {"e": axis}), axis, prior))
+        _, over, mask = leaf_rows(over_e, axis, var, d_leaf)
         b.m.add_cstr(
             name,
-            over      = lifetime.select(axis, "d").unique(),
+            over      = over,
             sense     = ">=",
-            lhs_terms = {"invest_total": Sum(Where(invest * unitsize, lifetime), over=("d_invest",))},
-            rhs_terms = {"cap":          Param((axis,), cap.frame.rename({"e": axis}))},
+            lhs_terms = {"invest_total": Sum(Where(var * unitsize, mask), over=("d",))},
+            rhs_terms = {"cap":          cap_param},
         )
 
 
 def _eq_min_divest_total(b: _Build) -> None:
-    """minDivest_entity_total_{p,n}: capacity retired over the horizon, from below."""
+    """minDivest_entity_total_path_{p,n}: capacity retired over the chain, from below."""
     d = b.d
     e_set, cap = d.e_divest_total, d.e_divest_min_total
     if not _has_rows(e_set) or cap is None:
         return
+    d_leaf = getattr(d, "d_leaf", None)
+    prior = chain_prior(d, "divest")
 
-    # ─── EQ. ─── minDivest_entity_total_{p,n} ────────────────────────────────
+    # ─── EQ. ─── minDivest_entity_total_path_{p,n} ───────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_d v_divest_p[p,d] · unitsize[p]  ≥ divest_min_total[p]   ∀ p ∈ e_divest_total ∩ processes
+    # Σ_{d ∈ D(leaf)} v_divest_p[p,d] · unitsize[p]  ≥  max(0, divest_min_total[p] − prior_div[p])
+    #   ∀ p ∈ e_divest_total ∩ P(v_divest_p) with divest_min_total (, leaf)
+    #   prior_div[p] = p_entity_divested[p]  (capacity retired by earlier solves of the chain, at
+    #     realized non-branch periods only)
     #   _n: the node analogue with v_divest_n and state_unitsize[n]
-    # Forces a minimum capacity to be retired over the horizon.  Capacity divested by earlier solves of
-    # a chain is not counted.
-    for name, var, axis in (("minDivest_entity_total_p", b.v_divest_p, "p"),
-                            ("minDivest_entity_total_n", b.v_divest_n, "n")):
+    # Forces the part of the minimum not retired by earlier solves of the chain to be retired in
+    # this solve (Q3).  Always named _path, for the same reason as minInvest (c16a critique #2).
+    for name, var, axis in (("minDivest_entity_total_path_p", b.v_divest_p, "p"),
+                            ("minDivest_entity_total_path_n", b.v_divest_n, "n")):
         unitsize = _unitsize(d, axis)
         if var is None or unitsize is None:
             continue
-        members = _entities_of_kind(d, e_set, axis).rename({"e": axis})
+        members = _entities_of_kind(d, e_set, axis).pipe(rename_to_axis, {"e": axis})
         if members.height == 0:
             continue
+        over_e = members.join(var.frame.select(axis).unique(), on=axis, how="semi")
+        if over_e.height == 0:
+            continue
+        cap_param = Param((axis,), minus_prior(cap.frame.pipe(rename_to_axis, {"e": axis}), axis, prior))
+        _, over, mask = leaf_rows(over_e, axis, var, d_leaf)
         b.m.add_cstr(
             name,
-            over      = members,
+            over      = over,
             sense     = ">=",
-            lhs_terms = {"divest_total": Sum(Where(var * unitsize, members), over=("d",))},
-            rhs_terms = {"cap":          Param((axis,), cap.frame.rename({"e": axis}))},
+            lhs_terms = {"divest_total": Sum(Where(var * unitsize, mask), over=("d",))},
+            rhs_terms = {"cap":          cap_param},
         )
 
 

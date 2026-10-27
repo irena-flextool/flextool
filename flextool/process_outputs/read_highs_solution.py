@@ -393,19 +393,19 @@ VARIABLE_SPECS: list[VariableSpec] = [
     _invest_dual("minInvest_entity_period",          "entity", "minInvest_period",
                  derived_from=("minInvest_entity_period_p",
                                 "minInvest_entity_period_n")),
-    # ``minInvest_entity_total`` is NOT name-symmetric with its max-side
-    # counterpart: the process arm carries the ``_p`` suffix
-    # (``minInvest_entity_total_p``, _cumulative_invest._eq_min_invest_total) rather than
-    # the bare name ``maxInvest_entity_total`` keeps.  More importantly, the
-    # min invest-total constraint is indexed per ``(entity, period)`` —
-    # ``over = (p|n, d)`` (_cumulative_invest._eq_min_invest_total) with the LHS
-    # summing over ``d_invest`` — so it KEEPS a period axis.  The max-side
-    # total sums the period out (``Sum(over=("d",))``, model._eq_invest_total_caps) and is
-    # therefore ``has_period=False``.  We use the default ``has_period=True``
-    # to match the actual min constraint's row bracket.
-    _invest_dual("minInvest_entity_total",           "entity", "minInvest_total",
-                 derived_from=("minInvest_entity_total_p",
-                                "minInvest_entity_total_n")),
+    # c16a: ``minInvest_entity_total_path_{p,n}`` is now one row per entity
+    # over the whole chain horizon (period summed out, like the max-side
+    # ``maxInvest_entity_total`` — model._eq_invest_total_caps), always named
+    # ``_path`` even with a single scenario leaf (_cumulative_invest._eq_min_invest_total).
+    # ``has_period=False`` to match the row bracket; the old per-(entity,
+    # period) "invested and still alive" shape is gone.  Under recourse this
+    # row is per (entity, leaf) — not read for duals here, same as the
+    # existing entity ``_path`` max rows (CHANGELOG: the group min-total
+    # shadow price under recourse is dropped the same way, see below).
+    _invest_dual("minInvest_entity_total_path",      "entity", "minInvest_total",
+                 has_period=False,
+                 derived_from=("minInvest_entity_total_path_p",
+                                "minInvest_entity_total_path_n")),
     _invest_dual("minCumulative_capacity",           "entity", "minCumulative",
                  derived_from=("minCumulative_capacity_p",
                                 "minCumulative_capacity_n")),

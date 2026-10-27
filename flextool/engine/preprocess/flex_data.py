@@ -5755,7 +5755,7 @@ def build_handoff_from_solution(
 
     # ---- v_invest / v_divest from polar_high ----
     invest_by_ed: dict[tuple[str, str], float] = {}
-    divest_by_e: dict[str, float] = {}
+    divest_by_ed: dict[tuple[str, str], float] = {}
     for var_name, entity_col in (("v_invest_p", "p"), ("v_invest_n", "n")):
         if var_name in sol._vars:
             df = sol.value(var_name)
@@ -5772,7 +5772,8 @@ def build_handoff_from_solution(
                 if v <= 1e-12:
                     continue
                 e = str(r[entity_col])
-                divest_by_e[e] = divest_by_e.get(e, 0.0) + v
+                dd = str(r["d"])
+                divest_by_ed[(e, dd)] = divest_by_ed.get((e, dd), 0.0) + v
 
     # ---- Slice D (H, §10.1): EXPLICIT non-realized invest drop ----
     # ``invest_by_ed`` collects every solved v_invest row, including
@@ -5798,6 +5799,17 @@ def build_handoff_from_solution(
             )
         invest_by_ed = {k: v for k, v in invest_by_ed.items()
                         if k[1] not in _synth_handoff}
+        _dropped_div = {k: v for k, v in divest_by_ed.items()
+                        if k[1] in _synth_handoff}
+        if _dropped_div:
+            logging.getLogger("flextool.engine.preprocess.flex_data").debug(
+                "recourse handoff: dropping %d non-realized divest rows, "
+                "total capacity %.6g (periods %s)",
+                len(_dropped_div), sum(_dropped_div.values()),
+                sorted({k[1] for k in _dropped_div}),
+            )
+        divest_by_ed = {k: v for k, v in divest_by_ed.items()
+                        if k[1] not in _synth_handoff}
 
     # ---- iteration set: prior keys ∪ entity × iteration_periods ----
     realize_invest = _read_realize_invest_periods(
@@ -5805,6 +5817,15 @@ def build_handoff_from_solution(
         provider=provider,
     )
     period_first = _read_period_set(sd / "period_first.csv", provider=provider)
+
+    # ---- divest_cumulative input: count only realized periods (mirrors the
+    # ``d in realize_invest`` invest gate above, critique c16a #1) — v_divest
+    # rows in non-realized look-ahead periods or alternative recourse branches
+    # must not inflate the chain-cumulative divest prior.
+    divest_by_e: dict[str, float] = {}
+    for (_e, _d), _v in divest_by_ed.items():
+        if _d in realize_invest:
+            divest_by_e[_e] = divest_by_e.get(_e, 0.0) + _v
     if first_solve:
         realized_periods = _read_realized_dispatch_periods(
             sd / "realized_dispatch.csv", provider=provider)

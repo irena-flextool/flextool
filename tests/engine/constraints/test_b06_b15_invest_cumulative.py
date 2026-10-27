@@ -41,6 +41,8 @@ from polar_high import Param, Problem
 from flextool.engine import build_flextool
 from flextool.engine.model._pdt_join import compute_nodeBalance_dt
 
+from tests.engine._lp_rows import row_bounds
+
 from .conftest import solver_options
 
 
@@ -421,3 +423,70 @@ def test_max_invest_entity_period_dual_is_obj_per_mw(toy_invest_3d):
     # Guard against silent regression to the pre-divided convention: under
     # the OLD form the U=2 dual would have been 2 x the obj/MW value.
     assert dual_u != pytest.approx(expected_dual * 2.0, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# c16a (#2, #30a) — entity invest totals subtract chain-cumulative prior.
+
+def test_entity_invest_totals_count_chain_prior(toy_invest_3d):
+    """Covers c16a #2/#30a: ``maxInvest_entity_total`` / ``minInvest_entity_total_path_p``
+    subtract capacity already realized by earlier solves of a solve chain
+    (``p_entity_invested``), instead of ignoring it.
+
+    Hand-calc: ``invest_max_total = 5``, ``invest_min_total = 4``,
+    ``p_entity_invested[u] = 3`` (realized by an earlier solve of the chain —
+    ``p_entity_previously_invested_capacity`` stays ``None``, i.e. that
+    capacity was retired before this solve and is no longer alive, but it
+    still counts towards the chain-cumulative totals).  max RHS =
+    max(0, 5 - 3) = 2; min RHS = max(0, 4 - 3) = 1.  Invest cost > 0 and no
+    demand ⇒ cost-min invests exactly the floor: Σ_d v_invest = 1.
+
+    Before the fix (on the parent commit): no prior is subtracted, so the
+    max row's RHS stays 5, and the per-period "invested and still alive"
+    min rows (cumulative ``edd_invest_set``, as in
+    ``test_group_invest_max_total``) force the earliest period's row
+    (Σ_{d_invest ≤ d1} v_invest ≥ 4) to invest the whole floor at d1 — the
+    later periods' cumulative rows are then already satisfied — so
+    Σ_d v_invest = 4.
+    """
+    d = toy_invest_3d
+    periods = ["d1", "d2", "d3"]
+    # Cumulative edd_invest_set (d_invest ≤ d): the realistic lifetime shape
+    # the OLD per-period "alive" min rows assumed (mirrors
+    # test_group_invest_max_total's setup).  The NEW code no longer reads
+    # edd_invest_set at all, so this only matters for the fail-before check.
+    edd_invest_set = pl.DataFrame([
+        {"e": "u", "d_invest": d_inv, "d": dd}
+        for d_inv in periods for dd in periods
+        if periods.index(d_inv) <= periods.index(dd)
+    ])
+    e_invest_total = pl.DataFrame({"e": ["u"]})
+    e_invest_max_total = Param(("e",), pl.DataFrame({"e": ["u"], "value": [5.0]}))
+    e_invest_min_total = Param(("e",), pl.DataFrame({"e": ["u"], "value": [4.0]}))
+    p_entity_invested = Param(("e",), pl.DataFrame({"e": ["u"], "value": [3.0]}))
+    data = dataclasses.replace(d,
+        edd_invest_set=edd_invest_set,
+        e_invest_total=e_invest_total,
+        e_invest_max_total=e_invest_max_total,
+        e_invest_min_total=e_invest_min_total,
+        p_entity_invested=p_entity_invested,
+    )
+    pb, sol = _solve(data)
+    assert sol.optimal
+    cstr = set(pb.cstr_names())
+    assert "maxInvest_entity_total" in cstr
+    assert "minInvest_entity_total_path_p" in cstr
+
+    max_bounds = row_bounds(pb, "maxInvest_entity_total")
+    assert len(max_bounds) == 1
+    (_lb, ub), = max_bounds.values()
+    assert ub == pytest.approx(2.0, rel=1e-7)
+
+    min_bounds = row_bounds(pb, "minInvest_entity_total_path_p")
+    assert len(min_bounds) == 1
+    (lb, _ub), = min_bounds.values()
+    assert lb == pytest.approx(1.0, rel=1e-7)
+
+    v_inv = sol.value("v_invest_p")
+    total = float(v_inv["value"].sum())
+    assert total == pytest.approx(1.0, rel=1e-7)

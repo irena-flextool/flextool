@@ -14,11 +14,13 @@ _V_DROP = [
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
     'dual_maxInvest_period', 'dual_maxCumulative',
     'dual_maxInvestGroup_period', 'dual_maxInvestGroup_total', 'dual_maxInvestGroup_cumulative',
-    # Investment-floor (min-side) duals — all keep a ('solve', 'period')
-    # index (the min invest-total constraint, unlike max-total, retains its
-    # period axis), so every family drops the solve level here rather than
-    # collapsing to solve-only.
-    'dual_minInvest_period', 'dual_minInvest_total', 'dual_minCumulative',
+    # Investment-floor (min-side) duals — keep a ('solve', 'period') index,
+    # so every family drops the solve level here rather than collapsing to
+    # solve-only.  c16a: ``dual_minInvest_total`` moved to ``_V_SOLVE_ONLY``
+    # below — the row it mirrors (``minInvest_entity_total_path_{p,n}``) is
+    # now one row per entity over the whole chain horizon (period summed
+    # out), like ``dual_maxInvest_total``, not per (entity, period).
+    'dual_minInvest_period', 'dual_minCumulative',
     'dual_minInvestGroup_period', 'dual_minInvestGroup_total', 'dual_minInvestGroup_cumulative',
     'dual_co2_max_period',
 ]
@@ -28,6 +30,9 @@ _V_DROP = [
 # ``dual_co2_max_total`` below.
 _V_SOLVE_ONLY = [
     'dual_maxInvest_total',
+    # c16a: minInvest_entity_total_path_{p,n} is now one row per entity
+    # over the chain horizon (no period axis) — see the comment above.
+    'dual_minInvest_total',
 ]
 
 # Parameters: droplevel('solve') + deduplicate with keep='last'.
@@ -145,7 +150,8 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
 
     # Solve-only indexes (``dual_co2_max_total`` historically, plus
     # ``dual_maxInvest_total`` which became solve-only when its reader
-    # arity was fixed): collapse to a single row (last solve wins).
+    # arity was fixed, and ``dual_minInvest_total`` since c16a): collapse
+    # to a single row (last solve wins).
     for attr in [*_V_SOLVE_ONLY, 'dual_co2_max_total']:
         obj = getattr(v, attr)
         if not obj.empty:
