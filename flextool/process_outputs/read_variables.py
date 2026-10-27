@@ -31,11 +31,18 @@ from flextool.process_outputs.read_highs_solution import empty_variable_frame
 from flextool.process_outputs.solve_order import load_solve_order
 
 
-def read_variables(output_dir):
+def read_variables(output_dir, *, group_entity_invest: pd.DataFrame):
     """Read all variable outputs into a :class:`SimpleNamespace`.
 
     ``output_dir`` is the ``output_raw/`` path.  ``input/`` is resolved
-    as a sibling folder (needed for ``group_entity_invest.csv``).
+    as a sibling folder (legacy CSV pathway only).
+
+    ``group_entity_invest`` (item 163 addendum) is the caller-supplied
+    ``(group, entity)`` frame — the sub-solve's FlexDataProvider never
+    reads ``input/group_entity_invest.csv`` from disk, because no
+    normal run writes it (see :func:`flextool.process_outputs.write_outputs._group_entity_invest`).
+    It is set on the returned namespace regardless of which pathway
+    below produced the rest of ``v``.
     """
     output_path = Path(output_dir)
     work_folder = output_path.parent
@@ -44,10 +51,13 @@ def read_variables(output_dir):
     # Prefer the CSV pathway when its output is present.  Fall back to
     # the per-solve parquets when ``v_flow.csv`` is absent.
     if (output_path / "v_flow.csv").exists():
-        return _read_from_csv(output_path, input_path)
-    if any(output_path.glob("v_flow__*.parquet")):
-        return _read_from_parquet(output_path, input_path)
-    return _read_from_csv(output_path, input_path)
+        v = _read_from_csv(output_path, input_path)
+    elif any(output_path.glob("v_flow__*.parquet")):
+        v = _read_from_parquet(output_path, input_path)
+    else:
+        v = _read_from_csv(output_path, input_path)
+    v.group_entity_invest = group_entity_invest
+    return v
 
 
 def _stream_concat_parts(parts: list[Path], *, zero_fill: bool = True) -> pd.DataFrame:
@@ -376,16 +386,10 @@ def _read_from_parquet(parquet_dir: Path, input_path: Path) -> SimpleNamespace:
     v.dual_co2_max_period = _read("v_dual_co2_max_period", ("group",), has_time=False)
     v.dual_co2_max_total = _read("v_dual_co2_max_total", ("group",), has_period=False, has_time=False)
 
-    # ``group_entity_invest`` is a static map (solveFirst-only) written
-    # during phase 1 directly to ``input/`` — same as the CSV pathway.
-    # Δ.31: tolerate absence (the polars cascade doesn't always emit
-    # this file; downstream code only consumes it for the
-    # ``maxInvestGroup`` family which is empty without group invest).
-    gei_path = input_path / "group_entity_invest.csv"
-    if gei_path.exists():
-        v.group_entity_invest = pd.read_csv(gei_path)
-    else:
-        v.group_entity_invest = pd.DataFrame(columns=["group", "entity"])
+    # ``group_entity_invest`` is set by the caller (``read_variables``) from the
+    # sub-solve's FlexDataProvider — item 163 addendum; no polars producer
+    # writes ``input/group_entity_invest.csv``, so a disk read here was always
+    # empty on a fresh run.
     return v
 
 

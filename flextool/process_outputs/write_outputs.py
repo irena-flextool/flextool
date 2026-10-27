@@ -10,6 +10,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend; must precede any pyplot import
 import pandas as pd
+import polars as pl
 import yaml
 from spinedb_api import DatabaseMapping, from_database, Array
 
@@ -322,6 +323,34 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
         setattr(s, attr, mi)
 
 
+def _group_entity_invest(provider) -> pd.DataFrame:
+    """``{(g, e) in group_entity : g in group_invest}`` — the GMPL definition (``flextool.mod``
+    l.5194-5198), read from the sub-solve's :class:`FlexDataProvider` snapshot.
+
+    Item 163 addendum: nothing in the polars cascade writes ``input/group_entity_invest.csv`` (only
+    the retired GMPL model did, on the first solve), so a fresh run's copy of that file was always
+    absent and the group invest cap/floor duals were never spread to their member entities. The
+    Provider keys ``solve_data/group_entity`` (``group, entity``) and ``solve_data/group_invest``
+    (``group``) are the in-memory equivalents the cascade already builds every run. An absent key on
+    either side gives an empty ``(group, entity)`` frame.
+    """
+    empty = pd.DataFrame(columns=["group", "entity"])
+    ge = _provider_lookup_df(provider, "solve_data", "group_entity")
+    if ge is None or ge.is_empty() or ge.width < 2:
+        return empty
+    gi = _provider_lookup_df(provider, "solve_data", "group_invest")
+    if gi is None or gi.is_empty() or gi.width < 1:
+        return empty
+    ge = ge.rename({ge.columns[0]: "group", ge.columns[1]: "entity"}).with_columns(
+        pl.col("group").cast(pl.Utf8), pl.col("entity").cast(pl.Utf8),
+    )
+    gi = gi.rename({gi.columns[0]: "group"}).with_columns(pl.col("group").cast(pl.Utf8))
+    joined = ge.join(gi.select("group"), on="group", how="semi")
+    if joined.is_empty():
+        return empty
+    return joined.select(["group", "entity"]).to_pandas()
+
+
 def _read_outputs(
     output_dir,
     *,
@@ -372,7 +401,7 @@ def _read_outputs(
         p = union_params(last_par, output_dir)
         s = union_sets(last_s, output_dir)
         _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
-        v = read_variables(output_dir)
+        v = read_variables(output_dir, group_entity_invest=_group_entity_invest(flex_data_provider))
         return p, s, v
     if solve_steps is not None:
         if solution is None:
@@ -382,7 +411,7 @@ def _read_outputs(
         p = read_parameters_multi(solve_steps, solution)
         s = read_sets_multi(solve_steps, solution)
         _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
-        v = read_variables(output_dir)
+        v = read_variables(output_dir, group_entity_invest=_group_entity_invest(flex_data_provider))
         return p, s, v
     if flex_data is None or solution is None:
         raise ValueError(
@@ -392,7 +421,7 @@ def _read_outputs(
     p = read_parameters(flex_data, solution, solve_name=solve_name or "solve")
     s = read_sets(flex_data, solution, solve_name=solve_name or "solve")
     _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
-    v = read_variables(output_dir)
+    v = read_variables(output_dir, group_entity_invest=_group_entity_invest(flex_data_provider))
     return p, s, v
 
 

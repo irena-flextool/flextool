@@ -29,7 +29,7 @@ if str(TEST_DIR) not in sys.path:
 from db_utils import json_to_db  # noqa: E402
 
 from flextool.engine import run_chain_from_db  # noqa: E402
-from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402
+from flextool.process_outputs.write_outputs import _group_entity_invest, write_outputs  # noqa: E402
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 
 TESTS_JSON = TEST_DIR / "fixtures" / "tests.json"
@@ -167,5 +167,23 @@ def test_csv_dump_does_not_change_outputs(
     diffs = diff_output_trees(plain, dumped, scenario)
     assert diffs == [], f"{scenario}: csv_dump changed the output set: {diffs}"
 
-# T3 (group_entity_invest from the provider) is added in commit 163-2, once
-# flextool.process_outputs.write_outputs._group_entity_invest exists.
+
+# ---------------------------------------------------------------------------
+# T3 — group_entity_invest from the provider
+# ---------------------------------------------------------------------------
+
+
+def test_group_entity_invest_comes_from_the_provider(
+    tests_db_url: str, tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """``multi_year_one_solve``'s ``group_entity_invest`` — the GMPL definition ``{(g,e) in
+    group_entity : g in group_invest}`` — must equal the JSON: group ``wind_coal`` invests in
+    ``coal_plant`` and ``wind_plant`` (``group__unit`` rows with ``invest_method`` ``invest_total``
+    on ``wind_coal``). Before the fix this was always empty (no polars producer writes
+    ``input/group_entity_invest.csv``)."""
+    work = tmp_path_factory.mktemp("c24_163_t3")
+    last = _run_cli_like(tests_db_url, "multi_year_one_solve", work)
+
+    gei = _group_entity_invest(last.flex_data_provider)
+    pairs = set(zip(gei["group"], gei["entity"]))
+    assert pairs == {("wind_coal", "coal_plant"), ("wind_coal", "wind_plant")}
