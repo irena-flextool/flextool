@@ -2347,12 +2347,6 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
                                        "solve_data/process_online_integer",
                                        p_online_int_path) else
                     pl.DataFrame(schema={"p": pl.Utf8}))
-    p_minload_path = sd / "process_minload.csv"
-    p_minload = (_provider_read(provider, "solve_data/process_minload",
-                                  p_minload_path).pipe(rename_to_axis, {"process": "p"})
-                 if _provider_has(provider, "solve_data/process_minload",
-                                   p_minload_path) else
-                 pl.DataFrame(schema={"p": pl.Utf8}))
 
     # ct_method: min_load_efficiency rows.  Canonical input file is
     # ``input/process__ct_method.csv`` with columns (process, ct_method);
@@ -2517,7 +2511,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         process_online=p_online,
         process_online_linear=p_online_lin,
         process_online_integer=p_online_int,
-        process_minload=p_minload,
+        process_minload=None,  # the projection pass (_AUTHORITATIVE_SETS) writes it
         process_min_load_eff=p_min_load_eff,
         p_online_dt=p_odt,
         pdt_online_linear=pdt_online_lin,

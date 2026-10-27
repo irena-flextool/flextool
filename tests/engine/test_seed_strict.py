@@ -27,8 +27,8 @@ from tests._support.load import load_scenario
 
 pytestmark = pytest.mark.solver
 
-# test_a_lot: the last solve seeds groupCapacityMargin, groupInertia, process_minload, p_profile_value and the three
-# delay fields (multi_year, used until S4-3, seeds only p_profile_value of the candidates left).
+# test_a_lot: the last solve seeds p_profile_value and the three delay fields of the candidates left after S4-4
+# (multi_year, used until S4-3, seeds only p_profile_value of them).
 _SCENARIO = "test_a_lot"
 
 

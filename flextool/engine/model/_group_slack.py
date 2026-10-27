@@ -56,14 +56,6 @@ _FIELDS: tuple[str, ...] = (
 )
 
 
-def _read_csv_or_none(p: Path, *, provider=None) -> pl.DataFrame | None:
-    """The provider's frame for ``p``; None when missing or empty."""
-    df = _provider_get(provider, p)
-    if df is None or df.height == 0:
-        return None
-    return df
-
-
 def _read_inertia_constants(inp: Path, *, provider=None) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
     """``(sink_df, source_df)``: the non-zero ``inertia_constant`` rows of ``p_process_sink.csv`` /
     ``p_process_source.csv`` as ``(p, sink|source, value)``, each None when absent.
@@ -97,19 +89,13 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
 
     The caller merges the dict into FlexData.  Every field of ``_FIELDS`` is present; missing files give
     None.  The group limits, penalties, inertia constants and signed inflows are filled by the direct- and
-    derived-parameter passes, not here.  ``inp`` / ``sd`` are the input and solve_data directories (files
-    are read through ``provider``); the other positional arguments are accepted for the loader's uniform
-    call and unused.
+    derived-parameter passes, not here.  The three group sets and ``process_sink_nonSync`` come from the
+    projection pass (``apply_projection_params``) and ``process_group_inside_nonSync`` from
+    ``_derived.process_group_inside_nonSync_from_flex``; they stay None here.  ``inp`` / ``sd`` are the
+    input and solve_data directories (files are read through ``provider``); the other positional arguments
+    are accepted for the loader's uniform call and unused.
     """
     out = {f: None for f in _FIELDS}
-
-    # Group sets from the method / flag files, which the input derivation fills with the groups whose
-    # capacity_margin_method is manual / has_inertia is yes / has_non_synchronous is yes.  A limit
-    # authored without its method or flag does not make a group.
-    for field in ("groupCapacityMargin", "groupInertia", "groupNonSync"):
-        df = _provider_get(provider, inp / f"{field}.csv")
-        if df is not None and df.height > 0:
-            out[field] = df.rename({df.columns[0]: "g"}).select("g").unique()
 
     # group_node: solve_data/group_node.csv, else the raw input/group__node.csv; the first with rows wins.
     gn = None
@@ -164,19 +150,6 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
         out["process_sink_inertia"] = sink_df.select("p", "sink").unique()
     if src_df is not None:
         out["process_source_inertia"] = src_df.select("p", "source").unique()
-
-    # Non-synchronous infeed arcs, and the (process, group) pairs whose flows stay inside the group.
-    p_sink_ns = _read_csv_or_none(sd / "process__sink_nonSync.csv", provider=provider)
-    if p_sink_ns is not None:
-        out["process_sink_nonSync"] = p_sink_ns.rename({"process": "p"}).select("p", "sink").unique()
-    p_grp_inside = _read_csv_or_none(sd / "process__group_inside_group_nonSync.csv", provider=provider)
-    if p_grp_inside is not None:
-        rn = {}
-        if "process" in p_grp_inside.columns:
-            rn["process"] = "p"
-        if "group" in p_grp_inside.columns:
-            rn["group"] = "g"
-        out["process_group_inside_nonSync"] = p_grp_inside.rename(rn).select("p", "g").unique()
 
     return out
 

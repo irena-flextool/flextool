@@ -20,6 +20,7 @@ from polar_high import Param
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.preprocess._invest_seeds import read_invest_set
 from flextool.engine.preprocess.flex_data import _read_wide_e_d
+from flextool.engine.preprocess.params._derived import process_group_inside_nonSync_from_flex
 
 #: The variable-cost index sets and ``p_pssdt_varCost`` (S4-2): production builds them with
 #: ``_direct.apply_varcost_params`` from the DB-direct per-side Params.
@@ -36,10 +37,15 @@ _INVEST_CAP_TOTALS: tuple[str, ...] = ("e_invest_max_total", "e_divest_max_total
 _INVEST_CAP_PERIODS: tuple[str, ...] = ("ed_invest_max_period", "ed_divest_max_period")
 _INVEST_MIN_TOTALS: tuple[str, ...] = ("e_invest_min_total", "e_divest_min_total")
 
+#: The group sets of the capacity margin, inertia and non-synchronous limits (S4-4): production writes them in
+#: ``_projection.apply_projection_params`` (``_AUTHORITATIVE_SETS``).
+_GROUP_SETS: tuple[str, ...] = ("groupCapacityMargin", "groupInertia", "groupNonSync")
+
 #: The FlexData fields :func:`apply_dump_field_seeds` writes (each stage-4 deletion adds its fields).
 SEEDED_FIELDS: tuple[str, ...] = (
     *_VARCOST_SETS, "p_pssdt_varCost",
     "p_co2_content", *_INVEST_CAP_TOTALS, *_INVEST_CAP_PERIODS, *_INVEST_MIN_TOTALS,
+    *_GROUP_SETS, "process_sink_nonSync", "process_group_inside_nonSync", "process_minload",
 )
 
 _PSSDT_RENAME = {"process": "p", "period": "d", "time": "t"}
@@ -125,6 +131,50 @@ def _apply_co2_and_invest_seeds(flex_data: object, sd: Path, provider: object) -
         setattr(flex_data, name, _e_param(provider, name))
 
 
+def _frame_or_none(provider: object, key: str) -> pl.DataFrame | None:
+    """The provider's frame under ``key``; None when absent or without rows."""
+    if not provider.has(key):
+        return None
+    df = provider.get(key)
+    return df if df.height > 0 else None
+
+
+def _group_set(provider: object, name: str) -> pl.DataFrame | None:
+    """``input/<name>`` (one column of group names) as a ``(g,)`` set; None when absent or empty."""
+    df = _frame_or_none(provider, f"input/{name}")
+    return None if df is None else df.rename({df.columns[0]: "g"}).select("g").unique()
+
+
+def _process_sink_nonsync(provider: object) -> pl.DataFrame | None:
+    """``solve_data/process__sink_nonSync`` as ``(p, sink)``; None when absent or empty."""
+    df = _frame_or_none(provider, "solve_data/process__sink_nonSync")
+    return None if df is None else df.rename({"process": "p"}).select("p", "sink").unique()
+
+
+def _process_minload(provider: object) -> pl.DataFrame:
+    """``solve_data/process_minload`` as a ``(p,)`` set; an empty ``(p,)`` frame when the dump has no file."""
+    key = "solve_data/process_minload"
+    if not provider.has(key):
+        return pl.DataFrame(schema={"p": pl.Utf8})
+    return provider.get(key).pipe(rename_to_axis, {"process": "p"})
+
+
+def _apply_group_and_minload_seeds(flex_data: object, provider: object) -> None:
+    """The group sets, the non-synchronous arcs and groups' internal transfers, and the min-load units (S4-4).
+
+    The three group sets and ``process_sink_nonSync`` are ``_group_slack.load_data``'s reads before S4-4 and
+    ``process_minload`` ``_load_online``'s read (only when the run has online processes), moved here unchanged.
+    ``process_group_inside_nonSync`` is the production rule (``process_group_inside_nonSync_from_flex``) on the
+    reloaded ``process_source_sink`` / ``group_node`` and the seeded ``groupNonSync``.
+    """
+    for name in _GROUP_SETS:
+        setattr(flex_data, name, _group_set(provider, name))
+    flex_data.process_sink_nonSync = _process_sink_nonsync(provider)
+    flex_data.process_group_inside_nonSync = process_group_inside_nonSync_from_flex(flex_data)
+    if getattr(flex_data, "process_online", None) is not None:
+        flex_data.process_minload = _process_minload(provider)
+
+
 def apply_dump_field_seeds(flex_data: object, sd: Path, inp: Path, provider: object) -> None:
     """Seed :data:`SEEDED_FIELDS` on ``flex_data`` from the seeded ``provider``.
 
@@ -142,9 +192,15 @@ def apply_dump_field_seeds(flex_data: object, sd: Path, inp: Path, provider: obj
       ``_load_cumulative_invest``'s ``e_*_min_total`` reads before S4-3, moved here): ``p_co2_content`` from the
       dumped ``input/p_commodity.csv`` when the run has CO2-priced flows or a CO2 cap; the max caps from the run's
       ``solve_data`` CSVs when ``ed_invest`` or ``ed_divest`` has a row; the min totals always.
+    * Group sets and min-load units (S4-4, :func:`_apply_group_and_minload_seeds`): ``groupCapacityMargin`` /
+      ``groupInertia`` / ``groupNonSync`` from the dump's ``input/<field>.csv``, ``process_sink_nonSync`` from
+      ``solve_data/process__sink_nonSync.csv``, ``process_minload`` from the dumped ``process_minload.csv`` (an
+      empty set without the file) when the run has online processes, and ``process_group_inside_nonSync`` derived
+      from the reloaded topology by the production rule.
     """
     del inp
     _apply_co2_and_invest_seeds(flex_data, sd, provider)
+    _apply_group_and_minload_seeds(flex_data, provider)
     if getattr(flex_data, "process_source_sink", None) is None:
         return
     for name in _VARCOST_SETS:

@@ -59,15 +59,15 @@ def _invest_retire_limits(cls: str, ent: str) -> list:
     ]
 
 
-#: Scenarios built from ``tests.json`` plus one overlay alternative: name -> (base scenario, overlay values in
-#: ``lp_snapshot._overlay`` form).  For fields no ``tests.json`` scenario seeds.
-PATCHED_SCENARIOS: dict[str, tuple[str, list]] = {
+#: Scenarios built from ``tests.json`` plus one overlay alternative: name -> (base scenario or alternative chain,
+#: overlay values, new entities), in ``lp_snapshot._overlay`` form.  For fields no ``tests.json`` scenario seeds.
+PATCHED_SCENARIOS: dict[str, tuple[str | list[str], list, list]] = {
     # coal_plant converts coal_market -> west with an efficiency, so its arc is in process_source_sink_eff: an
     # input-side and an output-side other_operational_cost seed pssdt_varCost_eff_unit_source / _sink.
     "coal_varcost_eff_unit": ("coal", [
         ["unit__inputNode", ["coal_plant", "coal_market"], "other_operational_cost", 2.0],
         ["unit__outputNode", ["coal_plant", "west"], "other_operational_cost", 3.0],
-    ]),
+    ], []),
     # Every invest entity of the base (coal_plant, battery, battery_inverter) gets non-zero invest / retire minimum
     # totals and a retire_max_period: the DB producers drop unauthored (zero) minimum rows and write per-period caps
     # for authored entities only, while the emit's CSVs carry a row for every invest / divest entity.
@@ -75,7 +75,17 @@ PATCHED_SCENARIOS: dict[str, tuple[str, list]] = {
         *_invest_retire_limits("unit", "coal_plant"),
         *_invest_retire_limits("node", "battery"),
         *_invest_retire_limits("connection", "battery_inverter"),
-    ]),
+    ], []),
+    # lp_snapshot's nonsync_internal_dc without its is_DC line: a non-synchronous group {west, east} with flagged
+    # wind; west_east runs inside the group.  No tests.json scenario has a non-synchronous group.  (With an is_DC
+    # connection the projected ``connection_dc_power_flow`` has a row; the dump writes it with a ``connection``
+    # column, and the reload's ``_dc_power_flow.load_data`` reads ``process``, so the reload fails.)
+    "nonsync_internal": (["init", "west", "coal", "wind", "network"], [
+        ["group", "gwe", "has_non_synchronous", "yes"],
+        ["group", "gwe", "non_synchronous_limit", 0.3],
+        ["group", "gwe", "penalty_non_synchronous", 4000.0],
+        ["unit__outputNode", ["wind_plant", "west"], "is_non_synchronous", "yes"],
+    ], [["group", "gwe"], ["group__node", ["gwe", "west"]], ["group__node", ["gwe", "east"]]]),
 }
 
 #: field -> a scenario whose last solve seeds it (``tests.json`` or :data:`PATCHED_SCENARIOS`).  Must name exactly
@@ -98,6 +108,15 @@ SCENARIO_OF_FIELD: dict[str, str] = {
     "ed_divest_max_period": "invest_retire_limits_all",
     "e_invest_min_total": "invest_retire_limits_all",
     "e_divest_min_total": "invest_retire_limits_all",
+    # S4-4 group sets and min-load units.  capacity_margin: a manual capacity-margin group; coal_wind_inertia: an
+    # inertia group; nonsync_internal: the non-synchronous group, its flagged arcs and the internal line;
+    # coal_min_load: coal_plant online with min_load.
+    "groupCapacityMargin": "capacity_margin",
+    "groupInertia": "coal_wind_inertia",
+    "groupNonSync": "nonsync_internal",
+    "process_sink_nonSync": "nonsync_internal",
+    "process_group_inside_nonSync": "nonsync_internal",
+    "process_minload": "coal_min_load",
 }
 
 #: Fields where the reload legitimately differs from production: field -> reason.  None yet.
@@ -128,10 +147,10 @@ def run_of(tmp_path_factory, scenario_run, test_solver_config_dir):
             from flextool.update_flextool.db_migration import migrate_database
             from tests.db_utils import json_to_db
 
-            base, values = PATCHED_SCENARIOS[scenario]
+            base, values, entities = PATCHED_SCENARIOS[scenario]
             root = tmp_path_factory.mktemp(f"_root_{scenario}")
             data = _lp_snapshot()._overlay(json.loads(_TESTS_JSON.read_text()), name=scenario, base=base,
-                                           values=values)
+                                           values=values, entities=entities)
             (root / "db.json").write_text(json.dumps(data))
             url = json_to_db(root / "db.json", root / "db.sqlite")
             migrate_database(url)
@@ -225,7 +244,7 @@ def test_seeded_fields_round_trip(scenario, dump_of, run_of):
     assert {name: d for name, d in diffs.items() if d is not None} == {}
 
 
-# --- the hook on hand-written dump CSVs (the loader checks of the reads moved here in S4-2 and S4-3) ---
+# --- the hook on hand-written dump CSVs (the loader checks of the reads moved here in S4-2, S4-3 and S4-4) ---
 
 _VARCOST_FIELDS = ("pssdt_varCost_noEff", "pssdt_varCost_eff_unit_source", "pssdt_varCost_eff_unit_sink",
                    "pssdt_varCost_eff_connection", "p_pssdt_varCost")
@@ -346,3 +365,66 @@ def test_min_invest_totals_always_read(tmp_path: Path):
     assert fd.e_invest_min_total.dims == ("e",)
     assert fd.e_invest_min_total.frame.rows() == [("e1", 3.0)]
     assert fd.e_divest_min_total is None
+
+
+def test_group_sets_come_from_the_flag_files(tmp_path: Path):
+    """The three group sets are the groups in the method / flag files (``input/groupCapacityMargin.csv``,
+    ``groupInertia.csv``, ``groupNonSync.csv``); limit values do not make a group (#69).  The A14 loader check of
+    the reads moved here in S4-4."""
+    fd = _seeds(tmp_path, {
+        "pdGroup_capacity_margin.csv": "period,g1,g3\nd1,0.0,0.5\n",
+        "pdGroup.csv": "group,param,period,value\ng3,inertia_limit,d1,5.0\ng_other,non_synchronous_limit,d1,0.3\n",
+    }, inputs={
+        "groupCapacityMargin.csv": "groupCapacityMargin\ng1\ng2\ng1\n",
+        "groupInertia.csv": "groupInertia\ng1\n",
+        "groupNonSync.csv": "groupNonSync\ng_sync_only\n",
+    })
+    assert fd.groupCapacityMargin.columns == ["g"]
+    assert sorted(fd.groupCapacityMargin["g"].to_list()) == ["g1", "g2"]
+    assert fd.groupInertia["g"].to_list() == ["g1"]
+    assert fd.groupNonSync["g"].to_list() == ["g_sync_only"]
+
+
+def test_limits_without_flag_files_give_no_group_sets(tmp_path: Path):
+    """Limit values without the flag files give None sets (#69); a header-only flag file is the same as none."""
+    fd = _seeds(tmp_path, {
+        "pdGroup_capacity_margin.csv": "period,g1,g2\nd1,0.0,0.5\n",
+        "pdGroup_inertia_limit.csv": "period,g1\nd1,5.0\n",
+        "pdGroup.csv": "group,param,period,value\ng_other,non_synchronous_limit,d1,0.3\n",
+    }, inputs={"groupInertia.csv": "groupInertia\n"})
+    assert (fd.groupCapacityMargin, fd.groupInertia, fd.groupNonSync) == (None, None, None)
+
+
+def test_non_sync_arcs_and_internal_transfers(tmp_path: Path):
+    """``process_sink_nonSync`` is the dump's ``process__sink_nonSync.csv`` as ``(p, sink)`` (duplicates dropped);
+    ``process_group_inside_nonSync`` follows the production rule on the reloaded topology: p1 (a -> b) has a source
+    and a different sink node in the non-synchronous group g = {a, b}, so it is inside g; a dumped
+    ``process__group_inside_group_nonSync.csv`` is not read."""
+    files = {"process__sink_nonSync.csv": "process,sink\nw1,a\nw1,a\nc1,b\n",
+             "process__group_inside_group_nonSync.csv": "process,group\nstale,g\n"}
+    fd = _seeds(tmp_path / "in", files, inputs={"groupNonSync.csv": "groupNonSync\ng\n"},
+                group_node=pl.DataFrame({"g": ["g", "g"], "n": ["a", "b"]}))
+    assert fd.process_sink_nonSync.columns == ["p", "sink"]
+    assert sorted(fd.process_sink_nonSync.rows()) == [("c1", "b"), ("w1", "a")]
+    assert fd.process_group_inside_nonSync.rows() == [("p1", "g")]
+    # Only the source a is in g = {a}: p1 crosses the boundary, nothing is inside.
+    fd = _seeds(tmp_path / "out", files, inputs={"groupNonSync.csv": "groupNonSync\ng\n"},
+                group_node=pl.DataFrame({"g": ["g"], "n": ["a"]}))
+    assert fd.process_group_inside_nonSync is None
+    # No non-synchronous group: no internal transfers, and no arc file gives no arcs.
+    fd = _seeds(tmp_path / "none", {}, group_node=pl.DataFrame({"g": ["g"], "n": ["a"]}))
+    assert (fd.groupNonSync, fd.process_sink_nonSync, fd.process_group_inside_nonSync) == (None, None, None)
+
+
+def test_minload_set_when_the_run_has_online_processes(tmp_path: Path):
+    """With online processes, ``process_minload`` is the dumped ``process_minload.csv`` as a ``(p,)`` set, or an
+    empty ``(p,)`` set without the file; without online processes the hook leaves it alone (the loader's None)."""
+    online = pl.DataFrame({"p": ["coal_plant"]})
+    fd = _seeds(tmp_path / "file", {"process_minload.csv": "process\ncoal_plant\n"}, process_online=online)
+    assert fd.process_minload.columns == ["p"]
+    assert fd.process_minload["p"].to_list() == ["coal_plant"]
+    fd = _seeds(tmp_path / "missing", {}, process_online=online)
+    assert fd.process_minload.height == 0
+    assert fd.process_minload.schema == {"p": pl.Utf8}
+    fd = _seeds(tmp_path / "offline", {"process_minload.csv": "process\ncoal_plant\n"}, process_online=None)
+    assert fd.process_minload == "untouched"

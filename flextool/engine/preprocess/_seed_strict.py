@@ -37,16 +37,9 @@ _LOG = logging.getLogger(__name__)
 
 #: The fields of design_stage4_rev.md §1 whose DB producer assigns the field on every DB path and whose loader
 #: seed is not yet deleted (each deletion commit drops its fields; the five varcost fields went in S4-2, the seven
-#: direct-parameter fields in S4-3).
+#: direct-parameter fields in S4-3, the five authoritative sets and process_group_inside_nonSync in S4-4).
 SEED_PRUNE_CANDIDATES: tuple[str, ...] = (
-    # authoritative projection sets (an empty projection assigns None).
-    "groupCapacityMargin",
-    "groupInertia",
-    "groupNonSync",
-    "process_sink_nonSync",
-    "process_minload",
     # derived.
-    "process_group_inside_nonSync",
     "p_profile_value",
     "dtt__delay_duration",
     "p_process_delay_weight",
