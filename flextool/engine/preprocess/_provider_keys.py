@@ -117,8 +117,8 @@ SOLVE_DATA_RP_WEIGHTS = "solve_data/rp_weights"
 
 
 # ---------------------------------------------------------------------------
-# input/ keys — populated by ``seed_provider_from_dir(kind="input")`` and
-# the input_derivation modules.  Subset listed; expand as call sites grow.
+# input/ keys — populated by the DB-direct input writers and the
+# input_derivation modules.  Subset listed; expand as call sites grow.
 # ---------------------------------------------------------------------------
 
 INPUT_COMMODITY_LADDER_ANNUAL = "input/commodity_ladder_annual"

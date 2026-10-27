@@ -111,7 +111,7 @@ class BlockBundle:
 
 
 # ---------------------------------------------------------------------------
-# Workdir bridge — load BlockBundle from solve_data/ CSVs
+# Provider load — BlockBundle from the per-solve block frames
 # ---------------------------------------------------------------------------
 
 
@@ -121,25 +121,24 @@ def load_block_bundle(
     block_layout: "BlockLayout | None" = None,
     provider: "object | None" = None,
 ) -> BlockBundle | None:
-    """Load a :class:`BlockBundle` from a Provider (preferred) or an
-    in-memory layout.
+    """Load a :class:`BlockBundle` from an in-memory layout or a Provider.
 
     When ``block_layout`` is supplied, wrap that layout directly.  Otherwise route through
-    :meth:`BlockLayout.load_from_solve_data` against *provider* (or an ephemeral Provider seeded from
-    ``workdir/solve_data`` for off-cascade callers).
+    :meth:`BlockLayout.load_from_solve_data` against *provider*; ``provider=None`` raises
+    ``ValueError`` (no ``solve_data/`` disk read).  *workdir* is retained for call
+    compatibility and is not read.
 
-    Returns ``None`` if neither input yields a non-empty layout.
+    Returns ``None`` if the layout is empty.
     """
     if block_layout is not None:
         if block_layout.is_empty():
             return None
         return BlockBundle(layout=block_layout)
-    if provider is None and workdir is None:
-        return None
-    if provider is None and workdir is not None:
-        sd = Path(workdir) / "solve_data"
-        if not sd.exists():
-            return None
+    if provider is None:
+        raise ValueError(
+            "load_block_bundle requires a FlexDataProvider (or a block_layout); "
+            "it never reads solve_data/ on disk."
+        )
     sd = (
         Path(workdir) / "solve_data" if workdir is not None
         else Path(".")

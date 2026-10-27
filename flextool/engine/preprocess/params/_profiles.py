@@ -756,9 +756,14 @@ def p_profile_value_lf(source: "InputSource",
         ``flex_data.dt`` / ``dt_and_step_duration_from_source``.
     workdir
         Optional ``Path`` for the per-solve workdir.  Required for
-        stochastic profile resolution (tiers 1-2) which read
-        per-solve scaffolding from ``solve_data/``.  When omitted, the
-        stochastic tiers are skipped (tiers 3-5 still emit).
+        stochastic profile resolution (tiers 1-2), whose per-solve
+        scaffolding (``solve_data/`` / ``input/`` keys) is read from
+        *provider*.  When omitted, the stochastic tiers are skipped
+        (tiers 3-5 still emit).
+    provider
+        :class:`FlexDataProvider` carrying that scaffolding.  Required
+        when *workdir* is given (``ValueError`` otherwise); optional
+        for the DB-only form.
     """
     if dt is None:
         return pl.LazyFrame(schema={
@@ -771,28 +776,15 @@ def p_profile_value_lf(source: "InputSource",
                 .select(alias_to_axis("d", "d"), alias_to_axis("t", "t"))
                 .unique())
 
-    # Provider-less workdir callers (e.g. cluster C parity tests) get an
-    # auto-built ephemeral Provider for the per-solve scaffolding the
-    # stochastic / averaged-time tiers consult.  The cascade modules
-    # themselves remain disk-read-free (meta-test
-    # ``test_meta_provider_invariants.py``); the disk reads happen in
-    # ``_provider_io.workdir_provider_for_paths`` which is on the
-    # PROVIDER_IMPL_ALLOWLIST.
+    # The stochastic / averaged-time tiers read the per-solve scaffolding
+    # from *provider* only (never from ``workdir`` on disk), so a workdir
+    # without a provider is a caller error.  The DB-only form
+    # (``workdir=None``, no provider) stays valid: tiers 3-5 need neither.
     if workdir is not None and provider is None:
-        from flextool.engine.preprocess._provider_io import workdir_provider_for_paths
-        provider = workdir_provider_for_paths(workdir, [
-            "solve_data/period__branch.csv",
-            "solve_data/solve_branch__time_branch.csv",
-            "solve_data/first_timesteps.csv",
-            "solve_data/pt_profile.csv",
-            "input/pbt_profile.csv",
-            "input/groupIncludeStochastics.csv",
-            "input/group__process.csv",
-            "input/group__node.csv",
-            "input/process__profile__profile_method.csv",
-            "input/node__profile__profile_method.csv",
-            "input/process__node__profile__profile_method.csv",
-        ])
+        raise ValueError(
+            "p_profile_value_lf: a workdir needs a FlexDataProvider for the "
+            "per-solve scaffolding; the work folder on disk is never read."
+        )
 
     tiers = _classify_profile_rows(source)
     scalar_profiles = sorted(p for p, t in tiers.items() if t == "scalar")

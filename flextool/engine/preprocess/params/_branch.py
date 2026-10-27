@@ -1589,7 +1589,7 @@ def _read_solve_data_csv(workdir: Path | None,
     cascade through the Provider, so this reader routes through
     ``provider.get`` and never touches disk.  The caller owns ensuring
     the Provider carries the true emitted CSVs — in tests the fixtures
-    seed the Provider from the workdir (``seed_provider_from_dir`` /
+    seed the Provider from the workdir (``provider_from_csv_dirs`` /
     ``_mk_provider``); at the Slice D activation site the same
     solve_data frames the rest of the cascade already consumes are in
     the Provider by construction.  ``workdir`` is retained in the

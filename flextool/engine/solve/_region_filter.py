@@ -128,47 +128,26 @@ def load_decomposition_method(
     *,
     provider: "object | None" = None,
 ) -> dict[str, str]:
-    """Return ``{group: method}`` from
-    ``input/p_group_decomposition.csv`` (Step 2.6 Provider-first).
+    """Return ``{group: method}`` from the Provider key
+    ``input/p_group_decomposition``.
 
-    Resolution order:
-
-    1. *provider* carries ``input/p_group_decomposition`` →
-       read from memory.
-    2. *provider* is ``None`` AND *work_dir* points at a workdir with
-       the file on disk → seed an ephemeral Provider from that
-       directory and serve from memory.
-    3. Otherwise → ``{}``.
+    *provider* is required (``provider=None`` raises ``ValueError``);
+    a provider without the key → ``{}``.  *work_dir* is retained for
+    call compatibility and is not read — the work folder on disk is
+    never consulted.
 
     The whole-system loader doesn't surface the decomposition_method
     parameter in :class:`FlexData` because it's only used by the
     decomposition driver itself; this helper plus the Provider keep
     it out of cascade memory until the driver needs it.
     """
+    if provider is None:
+        raise ValueError(
+            "load_decomposition_method requires a FlexDataProvider; it "
+            "never reads input/p_group_decomposition.csv on disk."
+        )
     key = "input/p_group_decomposition"
-    df: pl.DataFrame | None = None
-    if provider is not None and provider.has(key):
-        df = provider.get(key)
-    elif provider is None and work_dir is not None:
-        # Off-cascade test bridge: seed from disk via the centralised
-        # helper so Rule 1 of test_meta_provider_invariants stays clean
-        # (no bare ``pl.read_csv`` / ``_read_csv_file`` in this module).
-        path = Path(work_dir) / "input" / "p_group_decomposition.csv"
-        if not path.exists():
-            return {}
-        from flextool.engine.preprocess._flex_data_provider import (
-            FlexDataProvider,
-        )
-        from flextool.engine.input._input_source import (
-            seed_provider_from_dir,
-        )
-        local = FlexDataProvider()
-        seed_provider_from_dir(
-            local, Path(work_dir) / "input", "input",
-            names=("p_group_decomposition",),
-        )
-        if local.has(key):
-            df = local.get(key)
+    df: pl.DataFrame | None = provider.get(key) if provider.has(key) else None
     if df is None or df.height == 0:
         return {}
     cols = df.columns
@@ -191,7 +170,8 @@ def discover_regions(
     provider: "object | None" = None,
 ) -> list[str]:
     """Return the list of group names with
-    ``decomposition_method=benders_regional``."""
+    ``decomposition_method=benders_regional`` (Provider-only; see
+    :func:`load_decomposition_method`)."""
     methods = load_decomposition_method(work_dir, provider=provider)
     return sorted(g for g, m in methods.items() if m == "benders_regional")
 

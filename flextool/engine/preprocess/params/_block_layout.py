@@ -52,11 +52,10 @@ DEFAULT_BLOCK = "default"
 
 # Seven per-solve block CSV stems written by
 # ``flextool.engine.preprocess.emit._blocks.write_block_data`` and consumed by
-# :meth:`BlockLayout.load_from_solve_data`.  Defined as a module
-# constant so the off-cascade workdir bridge can seed only these files
-# into the ephemeral Provider (without picking up unrelated workdir
-# artefacts like ``solve_progress.csv`` whose ragged shape would fail
-# the strict CSV reader).
+# :meth:`BlockLayout.load_from_solve_data` (as ``solve_data/<stem>``
+# Provider keys).  Tests that build a Provider from a dumped
+# ``solve_data/`` folder seed only these stems (unrelated artefacts like
+# ``solve_progress.csv`` have a ragged shape the strict reader rejects).
 _BLOCK_CSV_STEMS: tuple[str, ...] = (
     "entity_block",
     "block_duration",
@@ -1019,7 +1018,7 @@ class BlockLayout:
 
 
     # ------------------------------------------------------------------
-    # CSV bridge — load from flextool's solve_data/ CSVs
+    # Provider load — the per-solve block frames (solve_data/ keys)
     # ------------------------------------------------------------------
 
     @classmethod
@@ -1035,19 +1034,14 @@ class BlockLayout:
         Step 2.5 Phase A: ``blocks.write_block_data`` is now patched
         into ``_PATCH_MODULES`` so the seven per-solve block frames
         live in the Provider after the cascade's preprocessing pass.
-        Callers MUST pass *provider*.  When only a workdir is available
-        (off-cascade tests, transitional bridges), use
-        :func:`flextool.engine.input._input_source.seed_provider_from_dir`
-        on ``workdir/"solve_data"`` to construct an ephemeral Provider
-        first.
+        Callers MUST pass *provider*; ``provider=None`` raises
+        ``ValueError`` (this method never reads ``solve_data/`` on disk).
 
         Parameters
         ----------
         solve_data_dir : Path
-            Retained for symmetry with the legacy signature; unused
-            when *provider* carries every requested key.  The
-            classmethod will refuse to read disk directly — the
-            workdir-bridge contract is now Provider-only.
+            Retained for symmetry with the legacy signature; unused.
+            The classmethod never reads disk — it is Provider-only.
         missing_ok : bool
             When True (default), missing Provider keys produce empty
             frames.  When False, raise ``KeyError`` on the first
@@ -1062,25 +1056,9 @@ class BlockLayout:
             from ``block_step_duration_frame`` rows.
         """
         if provider is None:
-            # Off-cascade bridge path: seed an ephemeral Provider from
-            # the workdir CSV directory and serve from that.  Cascade
-            # callers always pass *provider* explicitly; this branch is
-            # reserved for tests and the legacy ``load_block_bundle``
-            # contract.  Centralised here so the Rule 1 audit can stay
-            # strict — no bare ``pl.read_csv`` / ``_read_csv_file`` in
-            # this module.
-            from pathlib import Path as _Path
-            from flextool.engine.preprocess._flex_data_provider import (
-                FlexDataProvider,
-            )
-            from flextool.engine.input._input_source import (
-                seed_provider_from_dir,
-            )
-            sd_dir = _Path(solve_data_dir)
-            provider = FlexDataProvider()
-            seed_provider_from_dir(
-                provider, sd_dir, "solve_data",
-                names=_BLOCK_CSV_STEMS,
+            raise ValueError(
+                "BlockLayout.load_from_solve_data requires a FlexDataProvider; "
+                "it never reads solve_data/ on disk."
             )
 
         def _read(name: str, schema: dict) -> pl.DataFrame:

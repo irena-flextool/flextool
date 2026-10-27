@@ -111,8 +111,8 @@ def _recourse_invest_active(
     flag CSV reaches the cascade exclusively through the Provider, never
     from disk.  On the snapshot-reload path (``load_flextool`` off a
     dumped workdir) the Provider is seeded from ``solve_data/`` before
-    the cascade runs (``flex_data.load_flextool`` →
-    ``seed_provider_from_dir``), so it carries this key by construction;
+    the cascade runs (``_csv_reload.load_from_dump``), so it carries
+    this key by construction;
     cascade entry points always thread an explicit Provider.  Tests that
     exercise the flag seed the Provider from the workdir the same way.
     ``workdir`` is retained in the signature only to key the canonical

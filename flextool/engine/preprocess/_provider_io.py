@@ -93,49 +93,8 @@ def _provider_lookup_positional(
     return out
 
 
-def workdir_provider_for_paths(
-    workdir: "Path | str",
-    paths: "list[Path | str]",
-):
-    """Build a :class:`FlexDataProvider` carrying the listed *paths*
-    from *workdir*.
-
-    Used by cascade entry points that accept a bare ``workdir`` and need
-    to materialise Provider keys for the per-solve scaffolding the
-    cascade reads via :func:`_provider_lookup_positional` /
-    ``_provider_read``.
-    Each entry in *paths* is interpreted relative to *workdir* (or
-    treated as absolute if already absolute).  Missing files are skipped
-    silently — the cascade modules tolerate missing keys by their own
-    empty-frame contract.
-
-    This helper lives in ``_provider_io.py`` (which is on the
-    meta-test's ``PROVIDER_IMPL_ALLOWLIST``) so the cascade modules
-    themselves remain free of disk reads.  The frames are stored under
-    the parent-qualified Provider key (``"<parent>/<stem>"``) computed
-    by :func:`_provider_key`.
-    """
-    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-
-    workdir = Path(workdir)
-    provider = FlexDataProvider()
-    for entry in paths:
-        p = Path(entry)
-        if not p.is_absolute():
-            p = workdir / p
-        if not p.exists():
-            continue
-        try:
-            df = pl.read_csv(p)
-        except Exception:
-            continue
-        provider.put(_provider_key(p), df)
-    return provider
-
-
 __all__ = [
     "_emit",
     "_provider_key",
     "_provider_lookup_positional",
-    "workdir_provider_for_paths",
 ]

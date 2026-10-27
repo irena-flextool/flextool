@@ -38,15 +38,10 @@ For :class:`CsvSource` the directories are just ``workdir/input`` and
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
 import polars as pl
-import polars.exceptions as pl_exc
-
-
-_LOGGER = logging.getLogger(__name__)
 
 
 Kind = Literal["input", "solve_data"]
@@ -83,73 +78,6 @@ def _read_csv_file(path: "Path | str") -> pl.DataFrame:
         _active_cache[key] = df
         return df
     return pl.read_csv(path)
-
-
-def seed_provider_from_dir(
-    provider,
-    directory: "Path | str",
-    kind: str,
-    *,
-    names: "tuple[str, ...] | None" = None,
-) -> int:
-    """Off-cascade test/bridge helper: populate *provider* by reading
-    CSV files under *directory* and keying them under both
-    ``"<stem>"`` and ``"{kind}/<stem>"``.
-
-    Mirrors the dual-key convention used by :func:`capture_frames`.
-    Returns the count of files seeded.  Missing directories are a
-    no-op (return 0).  Callers in cascade code must NOT reach for
-    this helper: it exists for test fixtures, region-decomposition
-    seeding, and the off-cascade workdir bridge.
-
-    Parameters
-    ----------
-    provider
-        :class:`FlexDataProvider` to populate.
-    directory
-        Source directory.
-    kind
-        Prefix for the parent-qualified key (``"input"`` or
-        ``"solve_data"``).
-    names
-        Optional explicit allow-list of stems (without ``.csv``) to
-        consume.  When ``None`` every ``*.csv`` is read.  Use the
-        explicit form to skip non-canonical files in directories that
-        also carry ragged or human-readable artefacts (e.g.
-        ``solve_progress.csv``).
-    """
-    d = Path(directory)
-    if not d.exists() or not d.is_dir():
-        return 0
-    if names is not None:
-        targets = [d / f"{n}.csv" for n in names if (d / f"{n}.csv").exists()]
-    else:
-        targets = sorted(d.glob("*.csv"))
-    seeded = 0
-    for p in targets:
-        try:
-            df = _read_csv_file(p)
-            provider.put(f"{kind}/{p.stem}", df)
-        except (pl_exc.ComputeError, pl_exc.NoDataError) as exc:
-            _LOGGER.warning(
-                "seed_provider_from_dir: skipping malformed CSV %s "
-                "(%s: %s)",
-                p,
-                type(exc).__name__,
-                exc,
-            )
-            continue
-        except Exception as exc:  # noqa: BLE001 — log + continue for stray files
-            _LOGGER.warning(
-                "seed_provider_from_dir: skipping unreadable CSV %s "
-                "(%s: %s)",
-                p,
-                type(exc).__name__,
-                exc,
-            )
-            continue
-        seeded += 1
-    return seeded
 
 
 def _install_csv_cache(cache: "dict[Path, pl.DataFrame] | None") -> None:
