@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **Flow-group cumulative flow limits now weight each time step the same way every operational
+  cost does, instead of by its duration alone.** `max_cumulative_flow` / `min_cumulative_flow`
+  (per period and over the whole solve) used to multiply a step's net flow by its duration only;
+  a representative-period step's own weight (and, for the whole-solve limit, how many years a
+  period represents) used to drop out, so an under- or over-represented step counted as a full,
+  unweighted hour. Under stochastic recourse, the whole-solve limit now applies separately to
+  each scenario path instead of pooling every branch's flow into one row, so one branch's
+  surplus can no longer cover another branch's deficit; this matches how every other
+  per-scenario limit in the model already works.
+
 - **An explicit `invest_max_period` / `retire_max_period` / `invest_max_total` /
   `retire_max_total` of 0 on a group now binds, instead of being misread as "no limit" once
   another group sets the same parameter.** This was the same "an authored zero is a given value"

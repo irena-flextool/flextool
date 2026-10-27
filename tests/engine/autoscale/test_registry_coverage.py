@@ -288,6 +288,10 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "minInvestGroup_entity_total_path_p", "minInvestGroup_entity_total_path_n",
     "minDivestGroup_entity_total_path_p", "minDivestGroup_entity_total_path_n",
     "maxCumulative_flow_solve", "minCumulative_flow_solve",
+    # {max,min}Cumulative_flow_solve gains a per-leaf _path row under recourse
+    # (_cumulative_invest.py ``_eq_cumulative_flow_solve``, ``leaf_rows``), same shape as the
+    # entity/group total families above.
+    "maxCumulative_flow_solve_path", "minCumulative_flow_solve_path",
     "maxCumulative_flow_period", "minCumulative_flow_period",
     "maxInstant_flow", "minInstant_flow",
     "fix_v_invest_no_investment_eq_p", "fix_v_invest_no_investment_eq_n",

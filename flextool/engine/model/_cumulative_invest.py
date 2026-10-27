@@ -670,54 +670,116 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
 
 
 def _eq_cumulative_flow_solve(b: _Build) -> None:
-    """{max,min}Cumulative_flow_solve: net flow into a flow group summed over the solve."""
+    """{max,min}Cumulative_flow_solve[_path]: net flow into a flow group, weighted like an
+    operational cost, summed over the solve (or, under recourse, over each scenario path)."""
     d = b.d
     flow = _group_flow(b)
     if flow is None:
         return
-    hours_in_solve = float(d.p_step_duration.frame["value"].sum())
+    caps = [(name, sense, cap) for name, sense, cap in
+            (("maxCumulative_flow_solve", "<=", d.p_group_max_cumulative_flow),
+             ("minCumulative_flow_solve", ">=", d.p_group_min_cumulative_flow))
+            if cap is not None and cap.frame.height > 0]
+    if not caps:
+        return
+    from flextool.engine.model.core import _check_covers_dt
 
-    # ─── EQ. ─── {max,min}Cumulative_flow_solve ──────────────────────────────
+    _check_covers_dt(d, "p_timestep_weight", "flow-group cumulative flow limits")
+    _check_covers_dt(d, "p_period_share", "flow-group cumulative flow limits", positive=True)
+    _check_covers_dt(d, "p_years_represented_d", "flow-group cumulative flow limits")
+
+    # r[d] = (years_represented[d] / period_share[d]), normalised to 1.0 at its own maximum, so
+    # equal periods (tw=1, one years_represented per period) give r=1 and the row stays
+    # byte-identical to the legacy unweighted-hours measure (co2_max_total uses the same ratio,
+    # without the normalisation it does not need: its RHS is per-g already, this one isn't).
+    ratio = (d.p_years_represented_d.frame.rename({"value": "years"})
+             .join(d.p_period_share.frame.rename({"value": "share"}), on="d", how="inner")
+             .with_columns(ratio=pl.col("years") / pl.col("share")))
+    r_max = float(ratio["ratio"].max())
+    r_frame = ratio.with_columns(value=pl.col("ratio") / r_max).select("d", "value")
+    r_param = Param(("d",), r_frame)
+    w_y_frame = (d.p_step_duration.frame.rename({"value": "sd"})
+                 .join(d.p_timestep_weight.frame.rename({"value": "tw"}), on=["d", "t"], how="inner")
+                 .join(r_frame.rename({"value": "r"}), on="d", how="inner")
+                 .with_columns(value=pl.col("sd") * pl.col("tw") * pl.col("r"))
+                 .select("d", "t", "value"))
+    d_leaf = getattr(d, "d_leaf", None)
+    dt_periods = d.p_step_duration.frame.select("d").unique()
+
+    # ─── EQ. ─── {max,min}Cumulative_flow_solve[_path] ───────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{(d,t)} F[g,d,t] · Δt[d,t]  ≤ max_cumulative_flow[g] · Σ_{(d,t)} Δt[d,t]   (max…)
-    #                               ≥ min_cumulative_flow[g] · Σ_{(d,t)} Δt[d,t]   (min…)
-    #   ∀ g with a max / min_cumulative_flow
-    #   F = net flow into the group (_group_flow), Δt = step_duration
-    # Limits the energy flowing into a flow group over the solve to an average power times the hours of
-    # the solve.  The steps are weighted by step_duration only (no rp or years-represented weights);
-    # eff source flows carry the slope but no conversion_flow_coeff, and the min-load section input is
-    # not counted (known limitation).
-    for name, sense, cap in (("maxCumulative_flow_solve", "<=", d.p_group_max_cumulative_flow),
-                             ("minCumulative_flow_solve", ">=", d.p_group_min_cumulative_flow)):
-        if cap is None or cap.frame.height == 0:
-            continue
+    # Σ_{d,t} F[g,d,t]·w_y[d,t]  ≤ max_cumulative_flow[g] · Σ_{d,t} w_y[d,t]   (max…)
+    #                            ≥ min_cumulative_flow[g] · Σ_{d,t} w_y[d,t]   (min…)
+    #   ∀ g with a max / min_cumulative_flow (, per leaf under recourse)
+    #   F = net flow into the group (_group_flow)
+    #   w_y[d,t] = step_duration[d,t]·timestep_weight[d,t]·r[d]
+    #   r[d] = (years_represented[d]/period_share[d]) / max_d′(years_represented[d′]/period_share[d′])
+    # Limits the energy flowing into a flow group over the solve to an average power times the
+    # weighted hours of the solve — the same weighting every operational cost term already
+    # carries (op_factor), so a representative period or an unequal roll window does not
+    # under/over-count its hours.  Under recourse each scenario path gets its own row (_path, one
+    # per (g, leaf), leaf_rows): a plain per-group row, summed across branches, would let one
+    # branch's surplus cover another's deficit.  Constraints carry no stochastic branch weight —
+    # each branch must respect the limit on its own, unlike the objective (owner decision).  Eff
+    # source flows carry the slope but no conversion_flow_coeff, and the min-load section input
+    # is not counted (known limitation).
+    for name, sense, cap in caps:
+        terms = cap.frame.select("g").unique().join(dt_periods, how="cross").select("g", "d")
+        is_path, over, mask = leaf_rows(terms, "g", b.v_flow, d_leaf)
+        row_name = f"{name}_path" if is_path else name
+        leaf_cols = ["g", "leaf"] if is_path else ["g"]
+        mask_cols = ["g", "d", "leaf"] if is_path else ["g", "d"]
+        rhs_hours = (mask.select(mask_cols).join(w_y_frame, on="d", how="inner")
+                     .group_by(leaf_cols).agg(pl.col("value").sum()))
+        cap_rhs = Param(
+            tuple(leaf_cols),
+            cap.frame.select("g", "value").rename({"value": "cap_v"})
+               .join(rhs_hours, on="g", how="inner")
+               .with_columns(value=pl.col("cap_v") * pl.col("value"))
+               .select(*leaf_cols, "value"))
         b.m.add_cstr(
-            name,
-            over      = cap.frame.select("g").unique(),
+            row_name,
+            over      = over,
             sense     = sense,
-            lhs_terms = {"flow_int": Sum(flow * d.p_step_duration, over=("d", "t"))},
-            rhs_terms = {"cap":      Param(("g",), cap.frame.with_columns(value=pl.col("value") * hours_in_solve))},
+            lhs_terms = {"flow_int": Sum(Where(flow * d.p_step_duration * d.p_timestep_weight * r_param, mask),
+                                         over=("d", "t"))},
+            rhs_terms = {"cap":      cap_rhs},
         )
 
 
 def _eq_cumulative_flow_period(b: _Build) -> None:
-    """{max,min}Cumulative_flow_period: net flow into a flow group summed over each period."""
+    """{max,min}Cumulative_flow_period: net flow into a flow group, weighted like an operational
+    cost, summed over each period."""
     d = b.d
     flow = _group_flow(b)
     if flow is None:
         return
-    hours_in_period = (d.p_step_duration.frame
-                       .group_by("d").agg(pl.col("value").sum())
-                       .rename({"value": "hours_in_period"}))
+    caps = [cap for cap in (d.pd_max_cumulative_flow, d.pd_min_cumulative_flow)
+            if cap is not None and cap.frame.height > 0]
+    if not caps:
+        return
+    from flextool.engine.model.core import _check_covers_dt
+
+    _check_covers_dt(d, "p_timestep_weight", "flow-group cumulative flow limits")
+
+    hours_in_period = (d.p_step_duration.frame.rename({"value": "sd"})
+                       .join(d.p_timestep_weight.frame.rename({"value": "tw"}), on=["d", "t"], how="inner")
+                       .group_by("d").agg((pl.col("sd") * pl.col("tw")).sum().alias("hours_in_period")))
 
     # ─── EQ. ─── {max,min}Cumulative_flow_period ─────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_t F[g,d,t] · Δt[d,t]  ≤ max_cumulative_flow[g,d] · Σ_t Δt[d,t]   (max…)
-    #                         ≥ min_cumulative_flow[g,d] · Σ_t Δt[d,t]   (min…)
+    # Σ_t F[g,d,t]·sd[d,t]·tw[d,t]  ≤ max_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (max…)
+    #                               ≥ min_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (min…)
     #   ∀ (g,d) with a max / min_cumulative_flow
-    #   F = net flow into the group (_group_flow), Δt = step_duration
-    # Limits the energy flowing into a flow group in each period to an average power times the hours of
-    # the period.  Same weighting and flow terms as the _solve rows.
+    #   F = net flow into the group (_group_flow); sd = step_duration, tw = timestep_weight
+    # Limits the energy flowing into a flow group in each period to an average power times the
+    # weighted hours of the period — the same timestep_weight every operational cost term already
+    # carries (op_factor), so a representative-period step does not count as a full unweighted
+    # hour.  A branch period that authors no value of its own reads its anchor's value
+    # (broadcast_to_period's branch-period inheritance); it still gets its own (g,d) row here, not
+    # merged with the anchor's — the continuation fan always starts at a solve's first step
+    # (_branch.py, d_leaf_lf), so no period is ever split into an anchor fragment and a branch
+    # fragment within one solve, and there is nothing to merge.
     for name, sense, cap in (("maxCumulative_flow_period", "<=", d.pd_max_cumulative_flow),
                              ("minCumulative_flow_period", ">=", d.pd_min_cumulative_flow)):
         if cap is None or cap.frame.height == 0:
@@ -729,7 +791,7 @@ def _eq_cumulative_flow_period(b: _Build) -> None:
             name,
             over      = cap.frame.select("g", "d").unique(),
             sense     = sense,
-            lhs_terms = {"flow_int": Sum(flow * d.p_step_duration, over=("t",))},
+            lhs_terms = {"flow_int": Sum(flow * d.p_step_duration * d.p_timestep_weight, over=("t",))},
             rhs_terms = {"cap":      Param(("g", "d"), rhs)},
         )
 

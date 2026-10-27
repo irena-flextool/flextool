@@ -398,9 +398,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     ),
 
     # Group-level cumulative / period / instant flow — POWER.
-    # _cumulative_invest._eq_cumulative_flow_solve / _eq_cumulative_flow_period
+    # _cumulative_invest._eq_cumulative_flow_solve / _eq_cumulative_flow_period.  The solve family
+    # gets a per-leaf _path row under recourse (leaf_rows), same RHS quantity as the legacy row.
     "maxCumulative_flow_solve": CstrFamily(QuantityType.POWER),
     "minCumulative_flow_solve": CstrFamily(QuantityType.POWER),
+    "maxCumulative_flow_solve_path": CstrFamily(QuantityType.POWER),
+    "minCumulative_flow_solve_path": CstrFamily(QuantityType.POWER),
     "maxCumulative_flow_period": CstrFamily(QuantityType.POWER),
     "minCumulative_flow_period": CstrFamily(QuantityType.POWER),
     # _cumulative_invest._eq_instant_flow ({max,min}Instant_flow)
