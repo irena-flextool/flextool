@@ -3,7 +3,7 @@
 ``load_flextool`` builds the topology from the DB reader when it has one.  A dump reloaded without a DB has only
 the preprocessed CSVs, so :func:`pss_from_dump` reads ``solve_data/process_source_sink{,_eff,_noEff}`` and
 ``solve_data/process_{source,sink}`` from the provider that :func:`seed_provider_from_dump` filled.  The loader
-calls it through its private ``_dump_topology`` hook.
+calls it through its private ``_dump_hooks.topology`` hook.
 """
 from __future__ import annotations
 

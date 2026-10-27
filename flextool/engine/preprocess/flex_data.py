@@ -3960,7 +3960,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
                    db_reader: "object | None" = None,
                    handoff: "object | None" = None,
                    provider: "object | None" = None,
-                   _dump_topology: "Callable[[Path, object], dict | None] | None" = None) -> FlexData:
+                   _dump_hooks: "object | None" = None) -> FlexData:
     """Load a :class:`FlexData` from either a workdir on disk or a
     :class:`flextool._input_source.FlexInputSource`.
 
@@ -3996,9 +3996,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
     truth, even when the workdir's ``solve_data/*.csv`` already carries
     a value).
 
-    Private: ``_dump_topology`` is passed only by ``flextool.engine._csv_reload.load_from_dump`` (the unsupported
-    CSV reload); the loader then builds the process topology with it when there is no reader.  It is also the only
-    way to load without a reader.
+    Private: ``_dump_hooks`` is passed only by ``flextool.engine._csv_reload.load_from_dump`` (the unsupported
+    CSV reload), and it is the only way to load without a reader.  It carries two callables: ``topology(sd,
+    provider)`` builds the process topology when there is no reader, and ``field_seeds(flex_data, sd, inp,
+    provider)`` runs where the DB overlay (``_apply_db_overrides``) would run on a reader-less load; it seeds the
+    fields that only that overlay writes in production.
     """
     _loadflex_prof("enter")
     # Late-import the Protocol + adapters to avoid a circular import
@@ -4025,7 +4027,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         raise FlexToolConfigError(
             "load_flextool needs the sub-solve's FlexDataProvider (the cascade passes it from _drive_cascade). "
             "Loading a model from a CSV dump is unsupported; see flextool.engine._csv_reload.load_from_dump.")
-    if db_reader is None and _dump_topology is None:
+    if db_reader is None and _dump_hooks is None:
         raise FlexToolConfigError(
             "load_flextool needs db_reader (a SpineDbReader for the scenario); only flextool.engine._csv_reload "
             "may load without one.")
@@ -4138,7 +4140,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         proc = _load_process_topology(inp, sd, dt,
                                        source=db_reader,
                                        provider=provider,
-                                       dump_topology=_dump_topology)
+                                       dump_topology=(_dump_hooks.topology
+                                                      if _dump_hooks is not None else None))
         _load_mem("load_process_topology_end",
                   "load_flextool: process topology loaded")
 
@@ -4576,6 +4579,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
                     _wd_yr = None
                 flex_data.p_years_represented_d = _years_represented_boundary(
                     getattr(flex_data, "dt", None), db_reader, provider, _wd_yr)
+        elif _dump_hooks is not None:
+            # Reader-less CSV reload: the reload's own seeds of the fields the overlay above writes.
+            _dump_hooks.field_seeds(flex_data, sd, inp, provider)
 
         # Δ.11 — overlay in-memory handoff carriers onto the FlexData
         # built so far.  Replaces the previous post-load ``apply_handoff``

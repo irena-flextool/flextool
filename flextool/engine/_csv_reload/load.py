@@ -1,14 +1,28 @@
 """Rebuild a :class:`FlexData` from a CSV dump folder (unsupported; see the package docstring)."""
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
+from flextool.engine._csv_reload._field_seeds import apply_dump_field_seeds
 from flextool.engine._csv_reload._seed import seed_provider_from_dump
 from flextool.engine._csv_reload._stamp import check_dump, warn_reload
 from flextool.engine._csv_reload._topology import pss_from_dump
 from flextool.engine.input._spinedb_reader import SpineDbReader
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess.flex_data import FlexData, load_flextool
+
+
+@dataclass(frozen=True)
+class _DumpHooks:
+    """The private ``load_flextool(_dump_hooks=)`` argument: the reload's process topology and field seeds."""
+
+    topology: Callable[[Path, object], dict | None]
+    field_seeds: Callable[[object, Path, Path, object], None]
+
+
+_DUMP_HOOKS = _DumpHooks(topology=pss_from_dump, field_seeds=apply_dump_field_seeds)
 
 
 def _load(dump_dir: Path | str, *, db_url: str | None, scenario: str | None, force: bool,
@@ -21,7 +35,7 @@ def _load(dump_dir: Path | str, *, db_url: str | None, scenario: str | None, for
     provider = FlexDataProvider()
     seed_provider_from_dump(provider, dump_dir)
     reader = SpineDbReader(db_url, scenario=scenario) if db_url is not None else None
-    fd = load_flextool(Path(dump_dir), provider=provider, db_reader=reader, _dump_topology=pss_from_dump)
+    fd = load_flextool(Path(dump_dir), provider=provider, db_reader=reader, _dump_hooks=_DUMP_HOOKS)
     return fd, provider
 
 
