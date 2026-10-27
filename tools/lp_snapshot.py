@@ -13,10 +13,19 @@ Usage::
     python tools/lp_snapshot.py snapshot _audit_reports/lp_baseline
     python tools/lp_snapshot.py snapshot OUT --fixtures base,coal_min_load -j 4
 
+    # work-folder modes (any combination; plain = none of them)
+    python tools/lp_snapshot.py snapshot OUT --fixtures base --csv-dump
+    python tools/lp_snapshot.py snapshot OUT --fixtures conn_online_regular \
+        --dirty-with conn_exact_flow
+    python tools/lp_snapshot.py snapshot OUT --fixtures base,multi_year \
+        --dirty-with self --dirty-sqlite self
+
     # Tier A: byte compare (exit 1 on any difference / missing file)
     python tools/lp_snapshot.py compare _audit_reports/lp_baseline OUT
     # Tier B: same model up to row/column permutation, keyed by name
     python tools/lp_snapshot.py compare BASE NEW --canonical [--rtol 1e-12]
+    # restrict either tier to some fixture dirs (subset vs a full base)
+    python tools/lp_snapshot.py compare BASE NEW --fixtures base,multi_year
 
     # constraint-family coverage of a snapshot (family -> fixtures)
     python tools/lp_snapshot.py coverage _audit_reports/lp_baseline
@@ -46,6 +55,37 @@ How it works
   are built from earlier solutions.  A solve name built more than once
   (rolling windows) gets ``__2``, ``__3``, ... suffixes in build order;
   ``manifest.json`` lists the files in build order and is compared too.
+* Work-folder modes (``snapshot`` options; the captured target run is
+  otherwise the plain run, and MPS naming / ``manifest.json`` are the
+  same).  The mode line goes into each fixture's ``_run.log``.
+
+  ``--csv-dump``
+      The target runs with ``csv_dump=True`` and, after the run, the last
+      step's provider is written with ``snapshot_processed_inputs(work)``,
+      as the CLI ``--csv-dump`` does.
+  ``--dirty-with FIXTURE|self``
+      CSV dirt only.  Before the captured run, FIXTURE (``self`` = the
+      target fixture itself) is built from its JSON (+ patch) into its own
+      DB file and run in the same work folder, uncaptured, with
+      ``csv_dump=True, keep_solutions=True, warm=False``.  Then every
+      step's ``flex_data.dump_csvs(work, include_heavy=True)`` is written
+      in step order (later steps win per file, as a per-sub-solve dump
+      does) and the last step's provider ``snapshot_processed_inputs(work)``.
+      No ``tests.sqlite`` is written.
+  ``--dirty-sqlite FIXTURE|self``
+      ``tests.sqlite`` dirt only: FIXTURE's DB file (``self`` = the
+      target's own DB) is copied to ``work/tests.sqlite`` before the
+      captured run (after any ``--dirty-with`` run).
+
+  What the dirt can show: same-model CSV dirt (``--dirty-with self``)
+  changes no LP even where the loader reads disk, because the dumped
+  values equal the live ones; it is a regression guard, not a
+  fail-before.  A different model's CSVs can (``conn_online_regular``
+  after ``conn_exact_flow``).  A ``tests.sqlite`` that holds the target's
+  scenario makes the loader build axis Enums from it; that changes the LP
+  of some fixtures (``conn_online_regular`` with ``self``) and leaves
+  others byte-identical; a DB without the scenario is ignored.  A target
+  that fails under dirt is reported as FAILED like any other fixture.
 * ``coverage`` greps every ``add_cstr`` name in COVERAGE_SOURCES (plus
   the hand-resolved dynamic names in DYNAMIC_CSTR_NAMES) and reports
   which fixtures emit rows of each family; UNREACHABLE lists families no
@@ -1743,29 +1783,84 @@ def _safe(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.+-]", "_", name)
 
 
-def _worker(json_name: str, scenario: str, patch: str, out_dir: Path) -> int:
-    os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
-    sys.path.insert(0, str(TESTS_DIR))
-    import warnings
-
+def _build_fixture_db(fx: Fixture, tmp_path: Path, stem: str) -> tuple[str, Path]:
+    """Build ``fx``'s Spine DB (JSON + patch, then migrated) as
+    ``tmp_path/<stem>.sqlite``; return its URL and file path."""
     from db_utils import json_to_db  # tests/db_utils.py
 
-    import importlib
-
-    from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
     from flextool.update_flextool.initialize_database import (
         initialize_database,
     )
 
+    data = json.loads((REPO / fx.json).read_text())
+    data = PATCHES[fx.patch](data)
+    src_json = tmp_path / f"{stem}.json"
+    src_json.write_text(json.dumps(data))
+    db_path = tmp_path / f"{stem}.sqlite"
+    if fx.json.startswith(CANONICAL_PREFIX):
+        # canonical how-to JSON (export_database format)
+        if fx.patch != "none":
+            raise ValueError("patches apply to tests/fixtures JSON only")
+        initialize_database(str(src_json), str(db_path))
+        url = f"sqlite:///{db_path.resolve().as_posix()}"
+    else:
+        url = json_to_db(src_json, db_path)
+    # same defensive migration the test DB fixtures apply
+    migrate_database(url)
+    return url, db_path
+
+
+def _dirty_work_folder(dirtier: Fixture, tmp_path: Path, work: Path,
+                       solver_cfg: Path) -> None:
+    """``--dirty-with``: run ``dirtier`` in ``work`` (uncaptured) and leave
+    its CSVs there: every step's ``dump_csvs`` in step order, then the last
+    step's provider snapshot."""
+    from flextool.engine import run_chain_from_db
+
+    url, _ = _build_fixture_db(dirtier, tmp_path, "dirtier")
+    steps = run_chain_from_db(
+        input_db_url=url,
+        scenario_name=dirtier.scenario,
+        work_folder=work,
+        solver_config_dir=solver_cfg,
+        warm=False,
+        keep_solutions=True,
+        csv_dump=True,
+    )
+    if not steps:
+        raise RuntimeError(f"dirtier {dirtier.name!r} returned no steps")
+    for step in steps.values():
+        if step.flex_data is not None:
+            step.flex_data.dump_csvs(work, include_heavy=True)
+    last = next(reversed(list(steps.values())))
+    if last.flex_data_provider is None:
+        raise RuntimeError(f"dirtier {dirtier.name!r}: last step has no provider")
+    last.flex_data_provider.snapshot_processed_inputs(work)
+
+
+def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
+            csv_dump: bool = False, dirty_with: str = "",
+            dirty_sqlite: str = "") -> int:
+    os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
+    sys.path.insert(0, str(TESTS_DIR))
+    import warnings
+
+    import importlib
+
+    from flextool.engine import run_chain_from_db
+
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest: list[dict] = []
     used: dict[str, int] = {}
+    capture = {"on": False}  # off during a --dirty-with run
     model_mod = importlib.import_module(MODEL_MODULE)
     original = model_mod.build_flextool
 
     def capturing_build_flextool(m, d, *args, **kwargs):
         result = original(m, d, *args, **kwargs)
+        if not capture["on"]:
+            return result
         solve = _solve_name_from_stack()
         stem = _safe(solve)
         used[stem] = used.get(stem, 0) + 1
@@ -1785,36 +1880,40 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path) -> int:
         return result
 
     model_mod.build_flextool = capturing_build_flextool
+    by_name = _fixture_by_name()
+    target = Fixture("target", json_name, scenario, patch)
 
     with tempfile.TemporaryDirectory(prefix="lp_snapshot_") as tmp:
         tmp_path = Path(tmp)
-        data = json.loads((REPO / json_name).read_text())
-        data = PATCHES[patch](data)
-        src_json = tmp_path / "fixture.json"
-        src_json.write_text(json.dumps(data))
-        db_path = tmp_path / "fixture.sqlite"
-        if json_name.startswith(CANONICAL_PREFIX):
-            # canonical how-to JSON (export_database format)
-            if patch != "none":
-                raise ValueError("patches apply to tests/fixtures JSON only")
-            initialize_database(str(src_json), str(db_path))
-            url = f"sqlite:///{db_path.resolve().as_posix()}"
-        else:
-            url = json_to_db(src_json, db_path)
-        # same defensive migration the test DB fixtures apply
-        migrate_database(url)
+        url, db_path = _build_fixture_db(target, tmp_path, "fixture")
         solver_cfg = tmp_path / "solver_config"
         solver_cfg.mkdir()
         shutil.copy(TESTS_DIR / "highs.opt", solver_cfg / "highs.opt")
         work = tmp_path / "work"
         work.mkdir()
-        run_chain_from_db(
+        if dirty_with:
+            _dirty_work_folder(by_name[dirty_with], tmp_path, work, solver_cfg)
+        if dirty_sqlite:
+            if dirty_sqlite == "self":
+                sqlite_src = db_path
+            else:
+                _, sqlite_src = _build_fixture_db(by_name[dirty_sqlite],
+                                                  tmp_path, "sqlite_dirt")
+            shutil.copy(sqlite_src, work / "tests.sqlite")
+        capture["on"] = True
+        steps = run_chain_from_db(
             input_db_url=url,
             scenario_name=scenario,
             work_folder=work,
             solver_config_dir=solver_cfg,
             warm=False,
+            csv_dump=csv_dump,
         )
+        capture["on"] = False
+        if csv_dump and steps:
+            last = next(reversed(list(steps.values())))
+            if last.flex_data_provider is not None:
+                last.flex_data_provider.snapshot_processed_inputs(work)
 
     if not manifest:
         print("ERROR: no Problem was built through build_flextool",
@@ -1829,7 +1928,33 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path) -> int:
 # snapshot
 # ---------------------------------------------------------------------------
 
-def _run_fixture(fx: Fixture, out_root: Path) -> tuple[str, int, float, str]:
+@dataclass(frozen=True)
+class WorkMode:
+    """Work-folder mode of a snapshot (all off = plain)."""
+    csv_dump: bool = False
+    dirty_with: str = ""    # fixture name, "self" or "" (none)
+    dirty_sqlite: str = ""  # fixture name, "self" or "" (none)
+
+    def describe(self) -> str:
+        parts = (["csv-dump"] if self.csv_dump else []) + (
+            [f"dirty-with={self.dirty_with}"] if self.dirty_with else []) + (
+            [f"dirty-sqlite={self.dirty_sqlite}"] if self.dirty_sqlite else [])
+        return " ".join(parts) or "plain"
+
+    def worker_args(self, fx: Fixture) -> list[str]:
+        """Worker CLI flags; ``self`` resolves to ``fx`` (CSV dirt) or stays
+        ``self`` (the worker copies the target's own DB file)."""
+        out = ["--csv-dump"] if self.csv_dump else []
+        if self.dirty_with:
+            out += ["--dirty-with",
+                    fx.name if self.dirty_with == "self" else self.dirty_with]
+        if self.dirty_sqlite:
+            out += ["--dirty-sqlite", self.dirty_sqlite]
+        return out
+
+
+def _run_fixture(fx: Fixture, out_root: Path,
+                 mode: WorkMode = WorkMode()) -> tuple[str, int, float, str]:
     out_dir = out_root / fx.name
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -1839,13 +1964,15 @@ def _run_fixture(fx: Fixture, out_root: Path) -> tuple[str, int, float, str]:
     env["FLEXTOOL_SKIP_SOLVER_PROBE"] = "1"
     cmd = [sys.executable, str(Path(__file__).resolve()), "_worker",
            "--json", fx.json, "--scenario", fx.scenario,
-           "--patch", fx.patch, "--out", str(out_dir)]
+           "--patch", fx.patch, "--out", str(out_dir),
+           *mode.worker_args(fx)]
     t0 = time.monotonic()
     proc = subprocess.run(cmd, env=env, cwd=str(REPO),
                           capture_output=True, text=True)
     dt = time.monotonic() - t0
     (out_dir / "_run.log").write_text(
-        f"PYTHONHASHSEED={env['PYTHONHASHSEED']}\nexit={proc.returncode}\n"
+        f"PYTHONHASHSEED={env['PYTHONHASHSEED']}\nmode={mode.describe()}\n"
+        f"exit={proc.returncode}\n"
         f"seconds={dt:.1f}\n--- stdout ---\n{proc.stdout}\n"
         f"--- stderr ---\n{proc.stderr}\n")
     tail = "" if proc.returncode == 0 else proc.stderr.strip()[-2000:]
@@ -1865,10 +1992,19 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
         fixtures = [by_name[n] for n in names]
     else:
         fixtures = list(FIXTURES)
+    mode = WorkMode(csv_dump=args.csv_dump, dirty_with=args.dirty_with,
+                    dirty_sqlite=args.dirty_sqlite)
+    bad = [n for n in (mode.dirty_with, mode.dirty_sqlite)
+           if n and n != "self" and n not in by_name]
+    if bad:
+        print(f"unknown dirt fixtures: {bad}", file=sys.stderr)
+        return 2
+    print(f"mode: {mode.describe()}", flush=True)
     t0 = time.monotonic()
     failed = []
     with cf.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futs = [pool.submit(_run_fixture, fx, out_root) for fx in fixtures]
+        futs = [pool.submit(_run_fixture, fx, out_root, mode)
+                for fx in fixtures]
         for fut in cf.as_completed(futs):
             name, rc, dt, tail = fut.result()
             n_mps = len(list((out_root / name).glob("*.mps")))
@@ -2101,6 +2237,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
     rel_b = {p.relative_to(new) for pat in ("*/*.mps", "*/manifest.json")
              for p in new.glob(pat)}
     n_same = n_diff = n_missing = 0
+    if args.fixtures:
+        wanted = {n.strip() for n in args.fixtures.split(",") if n.strip()}
+        rel_a = {r for r in rel_a if r.parts[0] in wanted}
+        rel_b = {r for r in rel_b if r.parts[0] in wanted}
+        for name in sorted(wanted):
+            for label, d in (("base", base), ("new", new)):
+                if not (d / name / "manifest.json").is_file():
+                    print(f"MISSING fixture in {label}: {name}")
+                    n_missing += 1
     for rel in sorted(rel_a | rel_b):
         pa, pb = base / rel, new / rel
         if rel not in rel_b:
@@ -2334,6 +2479,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="comma-separated subset of fixture names")
     sp.add_argument("-j", "--jobs", type=int,
                     default=max(1, min(8, (os.cpu_count() or 2) // 2)))
+    sp.add_argument("--csv-dump", action="store_true",
+                    help="run with csv_dump=True + provider snapshot")
+    sp.add_argument("--dirty-with", default="", metavar="FIXTURE|self",
+                    help="first run FIXTURE in the work folder and leave its "
+                         "CSVs (no tests.sqlite)")
+    sp.add_argument("--dirty-sqlite", default="", metavar="FIXTURE|self",
+                    help="copy FIXTURE's DB to work/tests.sqlite (no CSVs)")
     sp.set_defaults(func=cmd_snapshot)
 
     sp = sub.add_parser("compare", help="compare two snapshots")
@@ -2343,6 +2495,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="compare up to row/column permutation, by name")
     sp.add_argument("--rtol", type=float, default=0.0,
                     help="relative float tolerance (canonical mode)")
+    sp.add_argument("--fixtures", default="",
+                    help="comma-separated fixture dirs to compare (each must "
+                         "exist in both)")
     sp.set_defaults(func=cmd_compare)
 
     sp = sub.add_parser("coverage", help="constraint family -> fixtures")
@@ -2357,8 +2512,12 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--scenario", required=True)
     sp.add_argument("--patch", default="none")
     sp.add_argument("--out", required=True)
-    sp.set_defaults(func=lambda a: _worker(a.json, a.scenario, a.patch,
-                                           Path(a.out)))
+    sp.add_argument("--csv-dump", action="store_true")
+    sp.add_argument("--dirty-with", default="")
+    sp.add_argument("--dirty-sqlite", default="")
+    sp.set_defaults(func=lambda a: _worker(
+        a.json, a.scenario, a.patch, Path(a.out), csv_dump=a.csv_dump,
+        dirty_with=a.dirty_with, dirty_sqlite=a.dirty_sqlite))
 
     args = ap.parse_args(argv)
     return int(args.func(args) or 0)
