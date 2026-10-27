@@ -2242,6 +2242,13 @@ def _drive_cascade(
             "the underlying FlexToolRunner.  Use run_chain_from_db for "
             "the canonical end-to-end path that wires this for you."
         )
+    if db_url is None or scenario_name is None:
+        raise FlexToolConfigError(
+            f"_drive_cascade needs db_url and scenario_name (got db_url={db_url!r}, "
+            f"scenario_name={scenario_name!r}): every sub-solve loads its parameters through a "
+            "SpineDbReader for that scenario, and the cascade has no reader-less mode. Use "
+            "run_chain_from_db(input_db_url, scenario_name)."
+        )
     _drive_rec = get_phase_recorder()
     _drive_logger = state.logger
     runner = runner_factory()
@@ -2282,67 +2289,66 @@ def _drive_cascade(
     )
 
     # Δ.12c — build a SpineDbReader once and reuse it across the cascade.
-    # When db_url + scenario_name are supplied (run_chain_from_db wires
-    # them), the override chain fires for every per-solve load — covering
-    # the seeds the workdir CSV path can't provide once Δ.12-drop /
-    # Δ.12c have retired the redundant CSVs.  When the caller didn't
-    # supply them, we fall back to load_flextool's per-call autoresolve
-    # (which works for fixtures whose work_folder follows the
-    # ``work_<scenario>`` convention).
-    cascade_db_reader = None
-    if db_url is not None and scenario_name is not None:
-        from flextool.engine.input._spinedb_reader import SpineDbReader
-        # Phase 4.6 — thread axis_enums + contract from the cascade
-        # provider if available so the reader casts on emit.
-        _cip_for_reader = getattr(state, "cascade_input_provider", None)
-        _cascade_axis_enums = getattr(_cip_for_reader, "axis_enums", None) \
-            if _cip_for_reader is not None else None
-        _cascade_contract = getattr(_cip_for_reader, "contract", None) \
-            if _cip_for_reader is not None else None
-        try:
-            cascade_db_reader = SpineDbReader(
-                db_url, scenario=scenario_name,
-                axis_enums=_cascade_axis_enums,
-                contract=_cascade_contract,
-            )
-        except Exception:  # noqa: BLE001
-            cascade_db_reader = None
-        if _drive_rec is not None:
-            _drive_rec.checkpoint(
-                "cascade_spinedb_reader_constructed", _drive_logger,
-                user_label="Inputs prepared",
-            )
+    # The override chain fires for every per-solve load through it.  A
+    # reader that cannot be built stops the run: without it every load
+    # would silently run without the DB overrides and build a wrong LP.
+    from flextool.engine.input._spinedb_reader import SpineDbReader
+    # Phase 4.6 — thread axis_enums + contract from the cascade
+    # provider if available so the reader casts on emit.
+    _cip_for_reader = getattr(state, "cascade_input_provider", None)
+    _cascade_axis_enums = getattr(_cip_for_reader, "axis_enums", None) \
+        if _cip_for_reader is not None else None
+    _cascade_contract = getattr(_cip_for_reader, "contract", None) \
+        if _cip_for_reader is not None else None
+    try:
+        cascade_db_reader = SpineDbReader(
+            db_url, scenario=scenario_name,
+            axis_enums=_cascade_axis_enums,
+            contract=_cascade_contract,
+        )
+    except Exception as exc:  # noqa: BLE001 — any failure is re-raised with context
+        raise FlexToolConfigError(
+            f"Could not open the input database {db_url} for scenario {scenario_name!r}: "
+            f"{type(exc).__name__}: {exc}. Check that the database file exists, is not locked "
+            "by another program, is migrated to the current FlexTool version, and contains "
+            "this scenario."
+        ) from exc
+    if _drive_rec is not None:
+        _drive_rec.checkpoint(
+            "cascade_spinedb_reader_constructed", _drive_logger,
+            user_label="Inputs prepared",
+        )
 
-        # ``input/p_all_entity_unitsize`` — solve-invariant entity-unitsize
-        # cascade (virtual_unitsize OR existing OR 1000.0) over ALL entities
-        # (unit ∪ node ∪ connection).  Computed ONCE here against the
-        # whole-model (unfiltered-scenario) ``cascade_db_reader`` and seeded
-        # into the cascade-input Provider, which every per-sub-solve Provider
-        # copies frame-by-frame (see ``_run_model`` seed loop).  This
-        # (a) avoids the per-roll recompute in ``apply_derived_b`` and
-        # (b) gives the output reader a complete carrier covering every
-        # entity — including invest candidates absent from the LAST solve's
-        # pss/invest sets — so ``read_parameters`` no longer KeyErrors on
-        # such entities.  ``_cip`` is the same Provider object forwarded onto
-        # ``runner.state.cascade_input_provider`` above and read back by the
-        # cascade as ``cascade_input_provider``.
-        if cascade_db_reader is not None and _cip is not None:
-            try:
-                from flextool.engine.preprocess.params._derived import (
-                    _entity_unitsize_lf,
-                )
-                _all_us_df = (
-                    _entity_unitsize_lf(cascade_db_reader)
-                    .rename({"us": "value"})
-                    .collect()
-                )
-                if _all_us_df.height > 0:
-                    _cip.put("input/p_all_entity_unitsize", _all_us_df)
-            except Exception:  # noqa: BLE001
-                # Non-fatal: the per-solve ``apply_derived_b`` fallback
-                # recomputes ``p_all_entity_unitsize`` from ``source`` and
-                # the output reader falls back to its reconstruction path.
-                pass
+    # ``input/p_all_entity_unitsize`` — solve-invariant entity-unitsize
+    # cascade (virtual_unitsize OR existing OR 1000.0) over ALL entities
+    # (unit ∪ node ∪ connection).  Computed ONCE here against the
+    # whole-model (unfiltered-scenario) ``cascade_db_reader`` and seeded
+    # into the cascade-input Provider, which every per-sub-solve Provider
+    # copies frame-by-frame (see ``_run_model`` seed loop).  This
+    # (a) avoids the per-roll recompute in ``apply_derived_b`` and
+    # (b) gives the output reader a complete carrier covering every
+    # entity — including invest candidates absent from the LAST solve's
+    # pss/invest sets — so ``read_parameters`` no longer KeyErrors on
+    # such entities.  ``_cip`` is the same Provider object forwarded onto
+    # ``runner.state.cascade_input_provider`` above and read back by the
+    # cascade as ``cascade_input_provider``.
+    if _cip is not None:
+        try:
+            from flextool.engine.preprocess.params._derived import (
+                _entity_unitsize_lf,
+            )
+            _all_us_df = (
+                _entity_unitsize_lf(cascade_db_reader)
+                .rename({"us": "value"})
+                .collect()
+            )
+            if _all_us_df.height > 0:
+                _cip.put("input/p_all_entity_unitsize", _all_us_df)
+        except Exception:  # noqa: BLE001
+            # Non-fatal: the per-solve ``apply_derived_b`` fallback
+            # recomputes ``p_all_entity_unitsize`` from ``source`` and
+            # the output reader falls back to its reconstruction path.
+            pass
 
     # W4b — register the engine-automatic realized-dispatch sibling for
     # every eligible ``separate_dispatch`` top-level solve, BEFORE
@@ -4459,8 +4465,10 @@ def run_chain_from_db(
     ----------
     input_db_url : str | Path
         Spine SQLite URL or path.  A bare path is upgraded to ``sqlite:///``.
-    scenario_name : str, optional
-        Scenario filter to apply.  ``None`` picks the first scenario.
+    scenario_name : str
+        The scenario to run.  Required: every sub-solve loads its
+        parameters through a SpineDbReader filtered to this scenario.
+        ``None`` or ``""`` raises :class:`FlexToolConfigError`.
     work_folder : Path | str, optional
         Where to materialise the CSVs.  ``None`` uses an auto-cleaned
         tempdir.
@@ -4491,7 +4499,19 @@ def run_chain_from_db(
     dict[str, OrchestrationStep]
         Mapping ``complete_solve_name → OrchestrationStep``.  Iterate
         in insertion order to walk the chain.
+
+    Raises
+    ------
+    FlexToolConfigError
+        When ``scenario_name`` is missing, or the input database cannot be
+        opened for that scenario.
     """
+    if not scenario_name:
+        raise FlexToolConfigError(
+            f"run_chain_from_db needs scenario_name (got {scenario_name!r}) for the input database "
+            f"{input_db_url}: every sub-solve loads its parameters through a SpineDbReader filtered "
+            "to that scenario. Pass the scenario to run (CLI: --scenario-name)."
+        )
     from flextool.engine.input._db_loader import FlexToolRunner
 
     if logger is None:

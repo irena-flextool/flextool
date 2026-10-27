@@ -860,14 +860,20 @@ def main():
     # handles every scheme.
 
     # Resolve scenario_name when omitted: pull it from the DB's
-    # active filter.  ``run_chain_from_db`` accepts a None scenario
-    # but downstream ``SolveConfig.load_from_db_url`` requires a
-    # concrete name, so fix it up here.
+    # active filter.  ``run_chain_from_db`` requires a concrete
+    # scenario (it never picks one), so stop here when there is none.
     if not scenario_name:
         with DatabaseMapping(input_db_url) as db_map:
             _filters = db_map.get_filter_configs()
             if _filters:
                 scenario_name = name_from_dict(_filters[0])
+    if not scenario_name:
+        logging.error(
+            "No scenario to run for %s: pass --scenario-name, or use a database URL "
+            "that carries a scenario filter (Spine Toolbox: connect a scenario filter "
+            "to the tool).", input_db_url,
+        )
+        sys.exit(1)
 
     # Header block — one aligned key/value pair per line, blank lines
     # before and after, so the user has a self-contained summary of
@@ -875,7 +881,7 @@ def main():
     _header_pairs = [
         ("Work dir", str(work_folder)),
         ("DB URL", str(input_db_url)),
-        ("Scenario", scenario_name if scenario_name else "(unresolved)"),
+        ("Scenario", scenario_name),
         ("Output", str(args.output_location or output_path)),
     ]
     _header_keyw = max(len(k) for k, _ in _header_pairs) + 2

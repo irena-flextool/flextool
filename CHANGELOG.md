@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **A run that cannot read its database stops with an error.** When the
+  input database could not be opened for the scenario (for example locked
+  by another program or not migrated to the current version), the run
+  went on without the database's settings and finished normally with a
+  wrong model. It now stops with an error that names the database and the
+  scenario. A run without a scenario also stops: the command line asks for
+  `--scenario-name` (or, in Spine Toolbox, a scenario filter on the tool)
+  instead of failing later with an unrelated message.
+
 - **A nested *fix_usage* caps windows with no storage use.** With
   `storage_nested_fix_method` *fix_usage*, a dispatch period whose matching
   storage-solve window had zero storage usage got no usage cap at all
