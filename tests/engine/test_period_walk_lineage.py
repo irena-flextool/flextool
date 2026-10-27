@@ -52,7 +52,7 @@ from flextool.engine.preprocess.params._walks import (
     period_walk_iterator,
 )
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.input._input_source import seed_provider_from_dir
+from tests._support.provider import provider_from_csv_dirs
 
 
 # ---------------------------------------------------------------------------
@@ -418,12 +418,8 @@ def _det_reader(wf: Path):
 
 
 def _provider(wf: Path) -> FlexDataProvider:
-    provider = FlexDataProvider()
-    if (wf / "input").exists():
-        seed_provider_from_dir(provider, wf / "input", "input")
-    if (wf / "solve_data").exists():
-        seed_provider_from_dir(provider, wf / "solve_data", "solve_data")
-    return provider
+    """Every ``input/`` and ``solve_data/`` CSV of the solved workdir, put into a provider."""
+    return provider_from_csv_dirs(wf / "input", wf / "solve_data")
 
 
 def _period_lists(wf: Path, reader, provider):

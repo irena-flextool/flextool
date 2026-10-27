@@ -2,7 +2,7 @@
 
 These tests pin the behaviour of ``BlockLayout`` against fixture
 CSV data under ``tests/engine/data/work_*``: column shapes,
-the ``load_from_solve_data`` CSV bridge, the ``from_source``
+the ``load_from_solve_data`` provider loader, the ``from_source``
 constructor, and degenerate / multi-block invariants.
 
 Coverage
@@ -18,7 +18,7 @@ Coverage
   blocks (default / hourly_group / daily_group); asserts
   ``overlap_set``, per-block step-duration, and mixed-block arcs.
 
-* **CSV-bridge / source-only parity** —
+* **solve_data-loader / source-only parity** —
   ``BlockLayout.load_from_solve_data`` and ``BlockLayout.from_source``
   must produce multiset-equal frames on the LH2 fixture, and the
   trivial layout on ``work_base``.
@@ -40,14 +40,24 @@ import polars as pl
 import pytest
 
 from flextool.engine.preprocess.params._block_layout import (
+    _BLOCK_CSV_STEMS,
     DEFAULT_BLOCK,
     BlockLayout,
 )
 from flextool.engine.input._solve_state import ActiveTimeEntry
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+from tests._support.provider import provider_from_csv_dirs
 
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
+
+
+def _load_solve_data(sd: Path) -> BlockLayout:
+    """``BlockLayout.load_from_solve_data`` on the block CSVs of a solved workdir's ``solve_data/``,
+    put into a provider (the loader reads only the provider it is given)."""
+    return BlockLayout.load_from_solve_data(
+        sd, provider=provider_from_csv_dirs(solve_data_dir=sd, names=_BLOCK_CSV_STEMS))
 
 
 # ---------------------------------------------------------------------------
@@ -388,19 +398,19 @@ def test_aggregate_timeline_chunks_without_raising() -> None:
 
 
 def test_load_from_solve_data_bridge_work_lh2(scenario_workdir) -> None:
-    """``BlockLayout.load_from_solve_data`` reads the on-disk CSVs into
-    the same frame surface as the live ``build`` would produce.
+    """``BlockLayout.load_from_solve_data`` reads the block frames of a
+    solved workdir's ``solve_data/`` (put into a provider) into the same
+    frame surface as the live ``build`` would produce.
 
-    Used as a transitional bridge while the orchestrator still drives
-    flextool's ``write_block_data_for_solve``.  This test pins the
-    invariant on a multi-block fixture so the bridge stays compatible
-    with the live builder (i.e., callers can swap one for the other).
+    This test pins the invariant on a multi-block fixture so the loader
+    stays compatible with the live builder (i.e., callers can swap one
+    for the other).
     """
     workdir = scenario_workdir("lh2_three_region", db_fixture="lh2")
 
     inputs = _build_inputs_from_fixture(workdir)
     built = _run_port(inputs)
-    loaded = BlockLayout.load_from_solve_data(workdir / "solve_data")
+    loaded = _load_solve_data(workdir / "solve_data")
 
     # Frames match (multiset comparison — row order in some frames is
     # insertion-determined and not load-bearing).
@@ -422,11 +432,12 @@ def test_load_from_solve_data_bridge_work_lh2(scenario_workdir) -> None:
     assert built.block_step_duration == loaded.block_step_duration
 
 
-def test_load_from_solve_data_missing_directory_returns_empty() -> None:
-    """``missing_ok=True`` (default): a non-existent solve_data/
+def test_load_from_solve_data_missing_keys_returns_empty() -> None:
+    """``missing_ok=True`` (default): a provider without the block frames
     yields an empty BlockLayout (every frame height 0)."""
     layout = BlockLayout.load_from_solve_data(
         DATA / "no_such_directory_for_blockslayout",
+        provider=FlexDataProvider(),
     )
     assert layout.is_empty()
 
@@ -492,7 +503,7 @@ def test_block_layout_from_source_matches_load_from_solve_data_lh2(
     db = fixture / "tests.sqlite"
 
     # CSV-loader baseline.
-    bl_csv = BlockLayout.load_from_solve_data(fixture / "solve_data")
+    bl_csv = _load_solve_data(fixture / "solve_data")
 
     # Source-only constructor.
     reader = SpineDbReader(str(db), scenario="lh2_three_region")
@@ -572,7 +583,7 @@ def test_block_layout_from_source_single_block_fixture(scenario_workdir):
     assert (ov["fraction"] == 1.0).all()
 
     # CSV-loader bridge produces the same trivial frames.
-    bl_csv = BlockLayout.load_from_solve_data(fixture / "solve_data")
+    bl_csv = _load_solve_data(fixture / "solve_data")
     if bl_csv.block_step_duration_frame.height > 0:
         assert (
             _sorted_rows(bl_src.block_step_duration_frame)

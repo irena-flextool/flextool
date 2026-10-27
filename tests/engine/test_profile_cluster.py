@@ -41,6 +41,7 @@ from flextool.engine.preprocess.params._profiles import (
     p_profile_value_from_source_v2,
     _classify_profile_rows,
 )
+from tests._support.provider import provider_from_csv_dirs
 
 
 HERE = Path(__file__).resolve().parent
@@ -51,6 +52,22 @@ DATA = HERE / "data"
 from _parity_sweep import PARITY_SWEEP_CASES  # noqa: E402
 
 PARITY_CASES = [(legacy, scen, dbf) for legacy, scen, dbf in PARITY_SWEEP_CASES]
+
+# The per-solve scaffolding the stochastic / averaged-time tiers of ``p_profile_value_lf`` read
+# (solve_data: period__branch, solve_branch__time_branch, first_timesteps, pt_profile; input: the rest).
+# ``names`` applies to both folders; the two extra keys this adds (``input/pt_profile``,
+# ``solve_data/pbt_profile``) are never looked up.
+_PROFILE_SCAFFOLD_STEMS = (
+    "period__branch", "solve_branch__time_branch", "first_timesteps", "pt_profile",
+    "pbt_profile", "groupIncludeStochastics", "group__process", "group__node",
+    "process__profile__profile_method", "node__profile__profile_method",
+    "process__node__profile__profile_method",
+)
+
+
+def _workdir_provider(work: Path):
+    """The cascade inputs ``p_profile_value_lf`` reads from a solved workdir, put into a provider."""
+    return provider_from_csv_dirs(work / "input", work / "solve_data", names=_PROFILE_SCAFFOLD_STEMS)
 
 
 def _frames_equal(a: pl.DataFrame | None,
@@ -135,7 +152,8 @@ def test_p_profile_value_lazy_vs_csv(
     siu = pl.read_csv(siu_path)
     dt = siu.select(d=pl.col("period"), t=pl.col("step"))
 
-    lazy = p_profile_value_lf(reader, dt, workdir=work).collect()
+    lazy = p_profile_value_lf(reader, dt, workdir=work,
+                              provider=_workdir_provider(work)).collect()
     csv = pl.read_csv(csv_path).rename(
         {"profile": "f", "period": "d", "time": "t"})
 
@@ -333,7 +351,8 @@ def test_p_profile_value_stochastic_branches(
     siu = pl.read_csv(work / "solve_data" / "steps_in_use.csv")
     dt = siu.select(d=pl.col("period"), t=pl.col("step"))
 
-    lazy = p_profile_value_lf(reader, dt, workdir=work).collect()
+    lazy = p_profile_value_lf(reader, dt, workdir=work,
+                              provider=_workdir_provider(work)).collect()
     csv = pl.read_csv(csv_path).rename(
         {"profile": "f", "period": "d", "time": "t"})
 

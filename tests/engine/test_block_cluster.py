@@ -17,7 +17,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine.preprocess.params._block_layout import DEFAULT_BLOCK
+from flextool.engine.preprocess.params._block_layout import _BLOCK_CSV_STEMS, DEFAULT_BLOCK
 from flextool.engine.preprocess.params._block import (
     dtttdt_block_interior_lf,
     flow_from_n_frame,
@@ -26,6 +26,8 @@ from flextool.engine.preprocess.params._block import (
     nodeState_last_dt_lf,
 )
 from flextool.engine.input._input_source import _read_csv_file
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+from tests._support.provider import provider_from_csv_dirs
 
 
 HERE = Path(__file__).resolve().parent
@@ -60,6 +62,13 @@ def _resolve_work(work: str, scenario_workdir) -> "Path":
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _bundle(workdir_path: Path):
+    """``load_block_bundle`` on the block CSVs of a solved workdir's ``solve_data/``, put into a
+    provider (the loader reads only the provider it is given)."""
+    provider = provider_from_csv_dirs(solve_data_dir=workdir_path / "solve_data", names=_BLOCK_CSV_STEMS)
+    return load_block_bundle(workdir_path, provider=provider)
 
 
 def _frames_equal(a: pl.DataFrame, b: pl.DataFrame, *,
@@ -149,7 +158,7 @@ def test_nodeState_last_dt_parity(work: str, scenario_workdir) -> None:
     nodeState = _read_csv_file(ns_path).rename({"node": "n"})
     if nodeState.height == 0:
         return
-    bundle = load_block_bundle(workdir_path)
+    bundle = _bundle(workdir_path)
     if bundle is None:
         return
     bptl_f = bundle.layout.block_period_time_last_frame
@@ -194,9 +203,9 @@ def test_multi_block_flow_to_n_keeps_every_arc(scenario_workdir) -> None:
     assert ("electrolyser_A", "h2_A") in sinks and ("liquefier_A", "lh2_A") in sinks
 
 
-def test_no_workdir_returns_none() -> None:
-    """``load_block_bundle(None)`` returns ``None`` cleanly."""
-    bundle = load_block_bundle(None)
+def test_no_block_data_returns_none() -> None:
+    """``load_block_bundle`` on a provider without block frames returns ``None`` cleanly."""
+    bundle = load_block_bundle(None, provider=FlexDataProvider())
     assert bundle is None
 
 
@@ -244,9 +253,8 @@ def test_block_bundle_group_steps(scenario_workdir) -> None:
     """The bundle's layout carries each node's group and the group steps:
     lh2's daily_group is 24 h; a fixture without groups has the default block
     only."""
-    single = load_block_bundle(scenario_workdir("coal"))
-    multi = load_block_bundle(
-        scenario_workdir("lh2_three_region", db_fixture="lh2"))
+    single = _bundle(scenario_workdir("coal"))
+    multi = _bundle(scenario_workdir("lh2_three_region", db_fixture="lh2"))
     assert single is not None and multi is not None
     assert set(single.layout.block_step_duration) == {DEFAULT_BLOCK}
     assert multi.layout.block_step_duration["daily_group"] == 24.0

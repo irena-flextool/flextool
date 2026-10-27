@@ -4,8 +4,8 @@ flextool's test exercises ``write_timeset_cost_weight`` — the
 solve-side writer that normalizes per-timestep weights so the
 period-sum equals ``n_active_steps`` (so a uniform input reproduces
 weight=1 per step).  polar_high doesn't have an equivalent writer; it
-*consumes* the canonical ``timestep_weight.csv`` on disk via
-:func:`flextool.engine.preprocess.flex_data._load_time`.
+*consumes* the canonical ``solve_data/timestep_weight`` frame (from its
+provider) via :func:`flextool.engine.preprocess.flex_data._load_time`.
 
 Porting strategy (loader-side instead of writer-side, per gap-B6
 guidance "polar_high's loader already handles the inputs but should
@@ -16,7 +16,8 @@ verify the same correctness assertions"):
    index; ``timestep_weight.csv`` with the canonical
    ``period,time,weight`` header; the inflation / period_share
    files needed to make ``_load_time`` succeed).
-2. Drive ``_load_time`` and inspect ``p_timestep_weight.frame``.
+2. Put that folder into a provider, drive ``_load_time`` with it and
+   inspect ``p_timestep_weight.frame``.
 3. Assert the same correctness invariants the flextool writer-test
    pins:
    * The handoff example {0.4, 0.8, 1.2, 1.6} loads verbatim.
@@ -39,17 +40,12 @@ import pytest
 
 from flextool.engine.preprocess.flex_data import _load_time
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.input._input_source import seed_provider_from_dir
+from tests._support.provider import provider_from_csv_dirs
 
 
 def _provider_for(sd: Path) -> FlexDataProvider:
-    """Seed an in-memory provider from a test ``solve_data/`` directory
-    (Step 2.5 — _load_time no longer has a disk-only fallback).
-    """
-    provider = FlexDataProvider()
-    if sd.exists():
-        seed_provider_from_dir(provider, sd, "solve_data")
-    return provider
+    """The test's ``solve_data/`` CSVs, put into a provider (``_load_time`` reads only its provider)."""
+    return provider_from_csv_dirs(solve_data_dir=sd)
 
 
 def _write_steps_in_use(sd: Path, period_steps: dict[str, list[str]]) -> None:
