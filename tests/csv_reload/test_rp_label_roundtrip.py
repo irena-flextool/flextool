@@ -14,67 +14,73 @@ collapses ``v_state_inter``'s index → the seasonal-closure constraints
 (``rp_inter_period_cyclic`` / ``_balance``) are silently dropped → the LP
 solves an under-constrained, too-cheap problem.
 
-This test pins the contract that ``load_flextool`` reproduces the emitted
-RP labels faithfully AND that the seasonal-closure constraint therefore
-fires with a non-empty index.  It exercises BOTH the disk-CSV reload
-(bare-Path ``load_flextool``) and — mirroring production
-(``_orchestration.py`` ``load_flextool(..., provider=...)``) — the
-in-memory Provider reload; both must produce identical, non-null RP frames
-and the same closure row count.
+This test pins the contract that the disk-CSV reload
+(``_csv_reload.load_from_dump`` of the run's stamped work folder, with a DB
+reader on the run's DB) reproduces the emitted RP labels faithfully AND that
+the seasonal-closure constraint therefore fires with a non-empty index; and
+that it agrees with the FlexData the cascade itself built for the last
+sub-solve (production: provider + DB reader).  Both must produce identical,
+non-null RP frames and the same closure row count.
 
 Moved from ``tests/engine/test_rp_label_roundtrip.py`` (c24 S1-8): the
-disk-CSV reload (``via_provider=False``) and the disk-vs-provider agreement
-check.  The production-path half (provider + DB reader, axis Enums on) is
+disk-CSV reload (formerly ``via_provider=False``) and the disk-vs-production
+agreement check.  The production-path half (provider + DB reader, axis Enums on) is
 ``tests/engine/test_rp_label_roundtrip.py::test_rp_labels_survive_production_load``.
 """
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
-from urllib.parse import urlparse
 
 import polars as pl
 import pytest
 
 from polar_high import Problem
 
-from flextool.engine import build_flextool, load_flextool
+from flextool.engine import build_flextool
+from flextool.engine._csv_reload import load_from_dump
+
+_SCENARIO = "lh2_three_region_rp_invest"
 
 
 @pytest.fixture(scope="module")
 def rp_build(tmp_path_factory, lh2_rp_invest_db_url, test_solver_config_dir):
     """Run the full cascade for the RP-invest fixture and return
-    ``(workdir, provider)`` — the workdir carries the emitted CSVs on
-    disk and ``provider`` is the live in-memory sub-solve Provider
-    (kept via ``keep_solutions=True``), so the test can compare the two
-    reload paths."""
+    ``(workdir, db_url, flex_data)`` — the workdir carries the emitted
+    CSVs on disk (provider snapshot, stamped) and ``flex_data`` is the
+    FlexData the cascade built for the last sub-solve (kept via
+    ``keep_solutions=True``), so the test can compare the disk reload
+    with production."""
     from flextool.engine.solve._orchestration import run_chain_from_db
 
     parent = tmp_path_factory.mktemp("_root_rp_roundtrip")
-    wf = parent / "work_lh2_three_region_rp_invest"
+    wf = parent / f"work_{_SCENARIO}"
     wf.mkdir()
     steps = run_chain_from_db(
         input_db_url=lh2_rp_invest_db_url,
-        scenario_name="lh2_three_region_rp_invest",
+        scenario_name=_SCENARIO,
         work_folder=wf,
         solver_config_dir=test_solver_config_dir,
         csv_dump=True,
         keep_solutions=True,
     )
-    _src = urlparse(lh2_rp_invest_db_url).path
-    if len(_src) >= 3 and _src[0] == "/" and _src[2] == ":":
-        _src = _src[1:]  # Windows '/C:/...' -> 'C:/...'
-    shutil.copy(_src, wf / "tests.sqlite")
     last_step = next(reversed(list(steps.values())))
     provider = getattr(last_step, "flex_data_provider", None)
     assert provider is not None
+    assert last_step.flex_data is not None
     provider.snapshot_processed_inputs(wf)
-    return wf, provider
+    return wf, lh2_rp_invest_db_url, last_step.flex_data
 
 
 def _read_csv_labels(sd: Path, name: str, col: str) -> set[str]:
     df = pl.read_csv(sd / f"{name}.csv")
     return set(df[col].cast(pl.Utf8).to_list())
+
+
+def _utf8_dims(frame: pl.DataFrame) -> pl.DataFrame:
+    """Cast Enum / Categorical columns to Utf8 (dtype-only difference between loads)."""
+    return frame.with_columns(
+        pl.col(c).cast(pl.Utf8) for c, t in frame.schema.items() if isinstance(t, (pl.Enum, pl.Categorical))
+    )
 
 
 def _closure_rows(data) -> int:
@@ -90,9 +96,8 @@ def _closure_rows(data) -> int:
     return total
 
 
-@pytest.mark.parametrize("via_provider", [False])
-def test_rp_labels_survive_load(rp_build, via_provider):
-    wf, provider = rp_build
+def test_rp_labels_survive_load(rp_build):
+    wf, db_url, _ = rp_build
     sd = wf / "solve_data"
 
     # The emitted CSVs on disk DO carry the labels (so any nulling is a
@@ -102,7 +107,7 @@ def test_rp_labels_survive_load(rp_build, via_provider):
     assert emitted_base and all(b is not None for b in emitted_base)
     assert emitted_rep and all(r is not None for r in emitted_rep)
 
-    data = load_flextool(wf, provider=provider if via_provider else None)
+    data = load_from_dump(wf, db_url=db_url, scenario=_SCENARIO)
 
     # --- The RP label columns round-trip NON-NULL and equal to the emit.
     def labels(field, col):
@@ -134,12 +139,12 @@ def test_rp_labels_survive_load(rp_build, via_provider):
 
 
 def test_disk_and_provider_reload_agree(rp_build):
-    """The disk-CSV reload and the in-memory Provider reload (the
-    production path) produce byte-identical RP label frames and the same
-    closure row count."""
-    wf, provider = rp_build
-    disk = load_flextool(wf)
-    mem = load_flextool(wf, provider=provider)
+    """The disk-CSV reload and the cascade's own FlexData (the production
+    path: provider + DB reader) produce identical RP label frames (compared
+    as Utf8: the reload builds no axis Enums) and the same closure row
+    count."""
+    wf, db_url, mem = rp_build
+    disk = load_from_dump(wf, db_url=db_url, scenario=_SCENARIO)
 
     for field, cols in (
         ("rp_base_first", ("b", "d")),
@@ -150,8 +155,8 @@ def test_disk_and_provider_reload_agree(rp_build):
     ):
         dv = getattr(disk, field)
         mv = getattr(mem, field)
-        df = getattr(dv, "frame", dv).select(cols).sort(cols)
-        mf = getattr(mv, "frame", mv).select(cols).sort(cols)
+        df = _utf8_dims(getattr(dv, "frame", dv).select(cols)).sort(cols)
+        mf = _utf8_dims(getattr(mv, "frame", mv).select(cols)).sort(cols)
         assert df.equals(mf), f"{field} differs between disk and provider reload"
 
     assert _closure_rows(disk) == _closure_rows(mem) > 0

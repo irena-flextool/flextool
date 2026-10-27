@@ -2,7 +2,7 @@
 (Flow Profile Bounds) and A.12 (Multi-Flow Conversion / CHP) loader
 tests.
 
-Entry point: ``flextool.engine.load_flextool(workdir)``.  These
+Entry point: ``flextool.engine._csv_reload.load_from_dump(workdir)``.  These
 sections share the ``process`` + ``process__source__sink`` foundation;
 two consolidated tests cover the weakest indirect spots flagged in
 ``02_coverage_map.md``:
@@ -18,13 +18,13 @@ two consolidated tests cover the weakest indirect spots flagged in
     ``_read_wide_per_entity`` AND the ``existing_count`` rename
     contract.
 
-The base seed (``data/work_base``) is dispatch-only with no processes;
-to drive the CSV-only branch of ``_load_process_topology`` (so the
-overlays are honoured rather than overridden by ``SpineDbReader``) the
-seed's ``tests.sqlite`` is removed from the tmp_path copy first.
+The base seed (``data/work_base``) is dispatch-only with no processes.
+``load_from_dump`` without ``db_url`` builds no DB reader (it never looks
+at the copied ``tests.sqlite``), so the overlays are honoured.
 
 Reload-only seeds (c24 S1-7): both tests drive the reader-less CSV branch
-(``_load_process_topology``'s ``if source is None:`` arm, flex_data.py).
+(``_load_process_topology`` with ``source is None``: the package's
+``_csv_reload._topology.pss_from_dump``).
 On the production path (provider + DB reader) the pss family comes from
 ``process_source_sink_canonical(source)`` and the profile partition / the
 existing count from the DB cascades; put into a provider clone of
@@ -40,15 +40,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from flextool.engine import load_flextool
-
-
-def _strip_db(workdir):
-    """Force ``_load_process_topology``'s CSV-only branch by removing the
-    auto-resolved ``tests.sqlite`` from the tmp copy.  Without this the
-    loader silently constructs a ``SpineDbReader`` from the seed DB and
-    bypasses the overlays."""
-    (workdir / "tests.sqlite").unlink()
+from flextool.engine._csv_reload import load_from_dump
 
 
 def _write(workdir, rel: str, content: str) -> None:
@@ -74,7 +66,6 @@ def test_chp_2in_2out_indirect_with_zero_coef_and_nondefault_sink_coef(tiny_work
     ``west`` carries commodity ``elec`` so flow_to_commodity must pick
     up exactly the (u1,u1,west,elec) row).
     """
-    _strip_db(tiny_workdir)
     _write(tiny_workdir, "solve_data/process_source_sink.csv",
         "process,source,sink\n"
         "u1,coal,u1\nu1,gas,u1\nu1,u1,heat\nu1,u1,west\n")
@@ -103,7 +94,7 @@ def test_chp_2in_2out_indirect_with_zero_coef_and_nondefault_sink_coef(tiny_work
         "process,source,sink,period,time,value\n"
         "u1,coal,u1,p2020,t0001,5.0\n")
 
-    d = load_flextool(tiny_workdir)
+    d = load_from_dump(tiny_workdir)
 
     # A.12 process_indirect: unique on process, single row.
     # Hand-calc: process__method_indirect has one process u1.
@@ -159,7 +150,6 @@ def test_profile_method_partition_with_legacy_wide_pdtProfile(tiny_workdir):
     existing capacity (200) divided by unitsize (10) pins
     ``p_process_existing_count`` at 20.
     """
-    _strip_db(tiny_workdir)
     _write(tiny_workdir, "solve_data/process_source_sink.csv",
         "process,source,sink\nu1,west,heat\n")
     _write(tiny_workdir, "solve_data/process_source_sink_eff.csv",
@@ -189,7 +179,7 @@ def test_profile_method_partition_with_legacy_wide_pdtProfile(tiny_workdir):
         "process,source,sink,period,time,value\n"
         "u1,west,heat,p2020,t0001,5.0\n")
 
-    d = load_flextool(tiny_workdir)
+    d = load_from_dump(tiny_workdir)
 
     # A.11 partition: each method extracts exactly its single row.
     # Hand-calc: filter on method == upper_limit yields just (u1,west,heat,prof_a).

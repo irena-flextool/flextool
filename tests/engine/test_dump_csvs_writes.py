@@ -14,7 +14,7 @@ def test_dump_csvs_creates_expected_layout(tmp_path, scenario_run):
     """``dump_csvs`` creates ``input/`` + ``solve_data/`` subdirs."""
     run = scenario_run("coal")
     out_dir = tmp_path / "dumped_layout"
-    run.last_flex_data.dump_csvs(out_dir, copy_meta_from=run.work_folder)
+    run.last_flex_data.dump_csvs(out_dir)
     assert (out_dir / "input").is_dir()
     assert (out_dir / "solve_data").is_dir()
     # At least the foundational time-keeping CSV is always written.

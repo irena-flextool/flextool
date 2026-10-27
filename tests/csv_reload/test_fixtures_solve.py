@@ -7,22 +7,22 @@ from __future__ import annotations
 
 import polars as pl
 
-from flextool.engine import load_flextool
+from flextool.engine._csv_reload import load_from_dump
 
 from .conftest import write_csv
 
 
 def test_tiny_workdir_loads(tiny_workdir):
-    """The seed workdir must load through ``load_flextool`` cleanly.
+    """The seed workdir must load through ``load_from_dump`` cleanly.
 
     This is the contract: any loader test that starts from
     ``tiny_workdir`` and overlays a CSV via :func:`write_csv` is then
-    safe to call ``load_flextool(tiny_workdir)`` without secondary
+    safe to call ``load_from_dump(tiny_workdir)`` without secondary
     setup.
 
     Reload-only (c24 S1-7): a reader-less CSV load; moved to tests/csv_reload/ by c24 S1-8.
     """
-    data = load_flextool(tiny_workdir)
+    data = load_from_dump(tiny_workdir)
     # Required-always fields populated.
     assert data.dt is not None
     assert data.dt.height > 0

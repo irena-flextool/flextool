@@ -1,7 +1,9 @@
 """CSV reload contract tests: opt-in, run with ``pytest -m csv_reload tests/csv_reload/``.
 
 These tests load a CSV work folder (a provider snapshot, a ``dump_csvs``
-tree or hand-written CSVs) with a provider-less ``load_flextool`` call.
+tree or hand-written CSVs) with the unsupported reload package
+``flextool.engine._csv_reload`` (``load_from_dump``; a ``dump_csvs`` tree
+first gets the run's metadata CSVs with ``copy_runner_meta``).
 Production never does that: it loads every sub-solve from the in-memory
 provider with a DB reader (``tests/_support/load.py::load_scenario``).
 They pin the CSV reload path (``--csv-dump`` debugging, the reload-only
@@ -19,7 +21,8 @@ Reload-only fixtures of the loader tests (moved from
 
 * ``tiny_workdir(tmp_path)`` copies the session-cached ``base`` work
   folder (provider snapshot CSVs + ``tests.sqlite``) into ``tmp_path``;
-  ``load_flextool(tiny_workdir)`` is a reader-less CSV load of it.
+  ``load_from_dump(tiny_workdir)`` is a reader-less CSV load of it (the
+  copy keeps the work folder's dump stamp).
 * ``write_csv(workdir, name, rows)`` writes a CSV overlay under the
   matching sub-directory (bare names → ``solve_data/``).
 """
@@ -59,8 +62,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 def tiny_workdir(tmp_path: Path, scenario_workdir) -> Path:
     """Copy the session-cached ``base`` work folder into ``tmp_path / 'work'``.
 
-    Reload-only: ``load_flextool(tiny_workdir)`` reads the snapshot CSVs
-    without a DB reader (the folder is not named ``work_<scenario>``).
+    Reload-only: ``load_from_dump(tiny_workdir)`` reads the snapshot CSVs
+    without a DB reader (no ``db_url``; the copied ``tests.sqlite`` is unused).
     Production-path loader tests use ``tiny_run``
     (``tests/engine/loaders/conftest.py``).
     """

@@ -1,15 +1,13 @@
 """The ``--csv-dump`` reload keeps the real (un-margined) demand of the group rows.
 
 Moved from ``tests/engine/test_group_limits_real_demand.py`` (c24 S1-8): the
-FlexData reloaded from a ``dump_csvs`` tree with ``load_flextool(out,
-db_reader=…)`` (no provider) has the same real inflow and builds the same
+FlexData reloaded from a ``dump_csvs`` tree with
+``_csv_reload.load_from_dump(out, db_url=…, scenario=…)`` has the same real inflow and builds the same
 non-sync and capacity-margin rows as the cascade's.  The writer half
 (``dump_csvs`` writes ``pdtNodeInflow_unmargined.csv``) stays there as
 ``test_csv_dump_writes_real_demand``.
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -28,10 +26,8 @@ def test_csv_dump_keeps_real_demand(tmp_path_factory) -> None:
     """With a margin, ``dump_csvs`` writes ``pdtNodeInflow_unmargined.csv``: the FlexData reloaded from the
     dump (with the DB reader, which runs the derived passes) has the same real inflow and builds the same
     non-sync and capacity-margin rows as the original."""
-    from urllib.parse import urlparse
-
-    from flextool.engine import SpineDbReader, load_flextool, run_chain_from_db
-    from flextool.engine.output._dump_csvs import _copy_meta
+    from flextool.engine import run_chain_from_db
+    from flextool.engine._csv_reload import copy_runner_meta, load_from_dump
 
     ents, vals = _group("gm", ["west"], flagged=[("wind_plant", "west")])
     url, scen = make_db(tmp_path_factory, alt="rd_dump", values=vals + _multiplier("west", 1.1),
@@ -45,8 +41,8 @@ def test_csv_dump_keeps_real_demand(tmp_path_factory) -> None:
     out = tmp_path_factory.mktemp("rd_dumped")
     original.dump_csvs(out, include_heavy=True)      # the FlexData fields only
     assert (out / "solve_data" / "pdtNodeInflow_unmargined.csv").exists(), "dump_csvs must write the real inflow"
-    _copy_meta(wf, out)                                 # + the runner metadata the CSV reader needs
-    redo = load_flextool(out, db_reader=SpineDbReader(Path(urlparse(url).path), scen))
+    copy_runner_meta(wf, out)                           # + the runner metadata the CSV reader needs
+    redo = load_from_dump(out, db_url=url, scenario=scen)
     assert redo.p_inflow_unmargined is not None, "pdtNodeInflow_unmargined.csv not dumped"
     key = ["n", "d", "t"]
     assert utf8(redo.p_inflow_unmargined.frame).sort(key).equals(utf8(original.p_inflow_unmargined.frame).sort(key))

@@ -1,8 +1,8 @@
 """Surface A.4 (Online / Unit-Commitment) and A.5 (Ramp-Rate) loader tests on reload-only seeds.
 
 Moved from ``tests/engine/loaders/test_a04_a05_online_ramp.py`` (c24 S1-8).
-They overlay CSVs on a copied work folder without ``tests.sqlite`` and load
-it reader-less (``load_flextool(workdir)``):
+They overlay CSVs on a copied work folder and load it reader-less
+(``_csv_reload.load_from_dump(workdir)``, no ``db_url``):
 
 * the online tests: ``process_online`` / ``_linear`` / ``_integer`` /
   ``process_minload`` are ``_AUTHORITATIVE_SETS`` and
@@ -25,31 +25,29 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine import load_flextool
+from flextool.engine._csv_reload import load_from_dump
 
 
 @pytest.fixture(scope="function")
 def online_workdir(tmp_path: Path, scenario_workdir) -> Path:
     """Copy of the ``coal_min_load`` workdir (1 online process w/
-    min_load_eff) minus ``tests.sqlite`` so the loader takes the
-    CSV-only branch and honours overlays of ``solve_data/process_*.csv``.
+    min_load_eff); the reader-less ``load_from_dump`` honours overlays of
+    ``solve_data/process_*.csv``.
     """
     target = tmp_path / "work_coal_min_load"
     shutil.copytree(scenario_workdir("coal_min_load"), target)
-    (target / "tests.sqlite").unlink()
     return target
 
 
 @pytest.fixture(scope="function")
 def ramp_workdir(tmp_path: Path, scenario_workdir) -> Path:
-    """Copy of the ``coal_ramp_limit`` workdir minus ``tests.sqlite`` —
+    """Copy of the ``coal_ramp_limit`` workdir —
     the seed has exactly one ``sink_up`` row and three header-only
     direction files, ideal for the all-four-direction-independence
     assertion.
     """
     target = tmp_path / "work_coal_ramp_limit"
     shutil.copytree(scenario_workdir("coal_ramp_limit"), target)
-    (target / "tests.sqlite").unlink()
     return target
 
 
@@ -78,7 +76,7 @@ def test_online_empty_and_partition_and_missing_int_file(online_workdir):
     """
     # (1) Empty-gate — overwrite to header-only.
     _write(online_workdir, "solve_data/process_online.csv", "process\n")
-    data = load_flextool(online_workdir)
+    data = load_from_dump(online_workdir)
     # Hand-calc: empty process_online.csv -> every online key None.
     for key in ("process_online", "process_online_linear",
                 "process_online_integer", "process_minload",
@@ -93,7 +91,7 @@ def test_online_empty_and_partition_and_missing_int_file(online_workdir):
     _write(online_workdir, "solve_data/process_online.csv",
            "process\ncoal_plant\n")
     (online_workdir / "solve_data" / "process_online_integer.csv").unlink()
-    data = load_flextool(online_workdir)
+    data = load_from_dump(online_workdir)
     # Hand-calc: linear set is the verbatim 1-row frame from CSV.
     assert data.process_online_linear["p"].to_list() == ["coal_plant"]
     # Hand-calc: missing integer file -> empty {p:Utf8} frame, not None.
@@ -119,7 +117,7 @@ def test_minload_set_and_min_load_eff_filter(online_workdir):
            "process,ct_method\n"
            "coal_plant,min_load_efficiency\n"
            "p2,linear\n")
-    data = load_flextool(online_workdir)
+    data = load_from_dump(online_workdir)
     # Hand-calc: process_minload set is loaded verbatim from seed
     # (single coal_plant row).
     assert data.process_minload["p"].to_list() == ["coal_plant"]
@@ -148,13 +146,13 @@ def test_ct_method_alias_and_inp_over_sd_precedence(online_workdir):
            "process,ct_method\ncoal_plant,min_load_efficiency\n")
     _write(online_workdir, "solve_data/process__ct_method.csv",
            "process,method\nother_p,min_load_efficiency\n")
-    data = load_flextool(online_workdir)
+    data = load_from_dump(online_workdir)
     # Hand-calc: input/ wins -> only coal_plant retained.
     assert data.process_min_load_eff["p"].to_list() == ["coal_plant"]
 
     # Now drop input/ -> sd/ method-alias is read.
     (online_workdir / "input" / "process__ct_method.csv").unlink()
-    data = load_flextool(online_workdir)
+    data = load_from_dump(online_workdir)
     # Hand-calc: sd/ method alias detected -> only other_p retained.
     assert data.process_min_load_eff["p"].to_list() == ["other_p"]
 
@@ -176,7 +174,7 @@ def test_ramp_blank_paths_pss_none_and_all_empty_and_speed_none(
     production path in :func:`test_ramp_blank_when_pss_none`.
     """
     # (1) pss=None branch: tiny seed has header-only pss CSV.
-    data = load_flextool(tiny_workdir)
+    data = load_from_dump(tiny_workdir)
     # Hand-calc: pss None -> blank dict, every ramp key None.
     for key in ("process_source_sink_ramp_limit_sink_up",
                 "process_source_sink_ramp_limit_sink_down",
@@ -192,7 +190,7 @@ def test_ramp_blank_paths_pss_none_and_all_empty_and_speed_none(
         _write(ramp_workdir,
                f"solve_data/process_source_sink_ramp_limit_{dirn}.csv",
                "process,source,sink\n")
-    data = load_flextool(ramp_workdir)
+    data = load_from_dump(ramp_workdir)
     # Hand-calc: every _read_set returns None -> any() False -> blank.
     for key in ("process_source_sink_ramp_limit_sink_up",
                 "process_source_sink_ramp_limit_sink_down",
@@ -205,7 +203,7 @@ def test_ramp_blank_paths_pss_none_and_all_empty_and_speed_none(
     _write(ramp_workdir,
            "solve_data/process_source_sink_ramp_limit_sink_up.csv",
            "process,source,sink\ncoal_plant,coal_market,west\n")
-    data = load_flextool(ramp_workdir)
+    data = load_from_dump(ramp_workdir)
     # Hand-calc: set populated -> not the blank branch; per Δ.12 drop
     # all four ramp_speed Params still None.
     assert data.process_source_sink_ramp_limit_sink_up.height == 1

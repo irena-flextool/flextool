@@ -2,9 +2,8 @@
 
 Moved from ``tests/engine/test_scenario_workdir.py`` (c24 S1-8):
 
-  - The workdir's content is loadable by a provider-less ``load_flextool``
-    (a CSV reload of the snapshot, with the reader auto-built from
-    ``tests.sqlite``).
+  - The workdir's content is loadable by ``_csv_reload.load_from_dump``
+    (a CSV reload of the snapshot, with a DB reader on the run's DB).
   - When the gitignored data/work_<scen>/ exists, the fixture's output
     matches it modulo solver outputs.
 """
@@ -20,11 +19,11 @@ HERE = Path(__file__).resolve().parent
 DATA_DIR = HERE.parent / "engine" / "data"
 
 
-def test_scenario_workdir_loads_with_load_flextool(scenario_workdir):
-    from flextool.engine.preprocess.flex_data import load_flextool
+def test_scenario_workdir_loads_with_load_from_dump(scenario_run):
+    from flextool.engine._csv_reload import load_from_dump
 
-    work = scenario_workdir("base")
-    data = load_flextool(work)
+    run = scenario_run("base")
+    data = load_from_dump(run.work_folder, db_url=run.db_url, scenario=run.scenario)
     assert data is not None
 
 

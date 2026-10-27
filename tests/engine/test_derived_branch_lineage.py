@@ -12,8 +12,9 @@ cols ``period,branch``) and call the builders with a temp workdir.
 T9 pins the region-filter pass-through.  T10-T12 are integration
 assertions on the 4.0.3 multi-period stochastic fixture
 (``tests/fixtures/stoch_two_period.json``), including the first
-stochastic dump/reload round-trip (T12 — pins the ``_copy_meta`` glob
-behavior the always-on builders depend on).
+stochastic dump round-trip (T12 — the lineage rebuild inputs survive a
+``dump_csvs``; the dump → reload half, with the run-metadata copy, is in
+``tests/csv_reload/test_derived_branch_lineage.py``).
 """
 from __future__ import annotations
 
@@ -482,35 +483,31 @@ def test_t11_enum_hygiene(stoch_enum_data):
 
 
 def test_t12_stoch_dump_keeps_lineage_inputs(stoch_run, stoch_wf, tmp_path):
-    """T12 writer half (F2, r3 — regression pin of the ``_copy_meta`` glob):
-    dump the cascade's stochastic FlexData with ``copy_meta_from``, assert
-    ``solve_branch__time_branch.csv`` is in the dumped tree (glob copy),
-    and assert the lineage frames REBUILD identically from the dumped
-    workdir's CSVs (no §3.1.1 inconsistency raise): every rebuild input
-    survives a dump.  First stochastic dump round-trip in the suite —
-    existing round-trip tests cover deterministic fixtures only.
+    """T12 writer half (F2, r3): dump the cascade's stochastic FlexData and
+    assert the lineage frames REBUILD identically from the CSVs on disk
+    (no §3.1.1 inconsistency raise).  ``period_in_use_set`` is a FlexData
+    field, so ``dump_csvs`` writes it; ``period__branch`` and
+    ``solve_branch__time_branch`` are runner metadata (not FlexData
+    fields), read here from the run's work folder.  First stochastic dump
+    round-trip in the suite — existing round-trip tests cover
+    deterministic fixtures only.
 
-    The builders run directly against the dumped CSVs.  The reload half
-    (a provider-less ``load_flextool`` of the dumped tree) is in
+    The builders run directly against the CSVs.  The reload half (the
+    run-metadata copy into the dump with ``copy_runner_meta`` and a
+    ``load_from_dump`` of the dumped tree) is in
     ``tests/csv_reload/test_derived_branch_lineage.py`` (c24 S1-8)."""
     fd = stoch_run.last_flex_data
     out_dir = tmp_path / "dumped"
-    fd.dump_csvs(out_dir, copy_meta_from=stoch_wf)
-    assert (out_dir / "solve_data"
-            / "solve_branch__time_branch.csv").exists(), (
-        "_copy_meta glob no longer copies solve_branch__time_branch."
-        "csv — the always-on lineage builders would raise when the "
-        "cascade runs against the dumped tree"
-    )
-    # F2 substance: the builders, fed the DUMPED workdir's CSVs,
-    # rebuild both frames identically — i.e. every rebuild input
-    # survived the dump (period__branch.csv, period_in_use_set.csv,
-    # solve_branch__time_branch.csv).
+    fd.dump_csvs(out_dir)
+    # F2 substance: the builders, fed the dumped FlexData field plus the
+    # run's metadata CSVs, rebuild both frames identically — i.e. the
+    # rebuild input the FlexData carries survived the dump.
     prov = FlexDataProvider()
-    for stem in ("period__branch", "period_in_use_set",
-                 "solve_branch__time_branch"):
-        p = out_dir / "solve_data" / f"{stem}.csv"
-        assert p.exists(), f"rebuild input {stem}.csv missing from dump"
+    for stem, folder in (("period__branch", stoch_wf),
+                         ("period_in_use_set", out_dir),
+                         ("solve_branch__time_branch", stoch_wf)):
+        p = folder / "solve_data" / f"{stem}.csv"
+        assert p.exists(), f"rebuild input {stem}.csv missing from {folder}"
         prov.put(f"solve_data/{stem}", pl.read_csv(p))
     dd_rebuilt = dd_same_scenario_df(out_dir, provider=prov)
     pd_rebuilt = pd_non_anticipativity_df(out_dir, provider=prov)

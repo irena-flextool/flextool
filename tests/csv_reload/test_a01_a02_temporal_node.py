@@ -2,7 +2,7 @@
 
 Moved from ``tests/engine/loaders/test_a01_a02_temporal_node.py`` (c24 S1-8).
 Each test overlays one CSV on a copy of the ``base`` work folder
-(``tiny_workdir``) and loads it reader-less (``load_flextool(tiny_workdir)``).
+(``tiny_workdir``) and loads it reader-less (``load_from_dump(tiny_workdir)``).
 On the production path (provider + DB reader) ``apply_derived_a``
 (``params/_derived.py``) re-derives ``dt`` / ``p_step_duration`` (from the
 DB timeline, unless ``solve.new_stepduration`` is set), ``p_period_share`` /
@@ -16,7 +16,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from flextool.engine import load_flextool
+from flextool.engine._csv_reload import load_from_dump
 
 from .conftest import write_csv
 
@@ -55,10 +55,10 @@ def test_step_duration_string_cast_and_scattered_periods(tiny_workdir):
     Reload-only seed (c24 S1-7): see the module docstring; moved to tests/csv_reload/ by c24 S1-8.
     """
     _write_scattered_periods(tiny_workdir, {"p2020": 3.5, "p2030": 1.5})
-    data = load_flextool(tiny_workdir)
+    data = load_from_dump(tiny_workdir)
     # Hand-calc: dt = exactly the 4 input rows, no cross-product.
-    # Phase 4: data.dt's d/t columns are Enum (post-vocab activation);
-    # cast the expected frame's columns to match the live cascade dtypes.
+    # load_from_dump builds no axis Enums: schema_dtype(None, ...) is the
+    # Utf8 dim dtype the reload produces.
     from flextool.engine.input._axis_enums import schema_dtype
     expected_dt = pl.DataFrame({
         "d": ["p2020", "p2020", "p2030", "p2030"],
@@ -85,7 +85,7 @@ def test_scattered_periods_window_fraction(tiny_workdir):
     Reload-only seed (c24 S1-7): see the module docstring; moved to tests/csv_reload/ by c24 S1-8.
     """
     _write_scattered_periods(tiny_workdir, {"p2020": 3.5, "p2030": 6.0})
-    data = load_flextool(tiny_workdir)
+    data = load_from_dump(tiny_workdir)
     share = data.p_period_share.frame.sort("d")
     assert [str(x) for x in share["d"]] == ["p2020", "p2030"]
     assert share["value"].to_list() == pytest.approx([3.5 / 8760, 6.0 / 8760], rel=1e-12)
@@ -107,7 +107,7 @@ def test_period_share_without_a_dt_period_raises(tiny_workdir):
     """
     write_csv(tiny_workdir, "steps_in_use.csv", _SCATTERED_STEPS)  # the seed's share has p2020 only
     with pytest.raises(ValueError, match=r"p_period_share has no row for dt periods \['p2030'\]"):
-        load_flextool(tiny_workdir)
+        load_from_dump(tiny_workdir)
 
 
 def test_timestep_weight_strict_false_scientific_notation(tiny_workdir):
@@ -125,7 +125,7 @@ def test_timestep_weight_strict_false_scientific_notation(tiny_workdir):
     write_csv(tiny_workdir, "timestep_weight.csv", [
         {"period": "p2020", "time": "t0001", "value": "1.5e-3"},
     ])
-    data = load_flextool(tiny_workdir)
+    data = load_from_dump(tiny_workdir)
     rp = data.p_timestep_weight.frame.sort(["d", "t"])
     # Hand-calc: t0001 override 1.5e-3, t0002 default 1.0.
     assert rp["value"].to_list() == pytest.approx([1.5e-3, 1.0], rel=1e-7)
@@ -154,7 +154,7 @@ def test_pdtNode_penalty_extraction_empty_up_cast_down(tiny_workdir):
         {"node": "west", "param": "penalty_down",
          "period": "p2020", "time": "t0002", "value": None},
     ])
-    data = load_flextool(tiny_workdir)
+    data = load_from_dump(tiny_workdir)
     # Hand-calc: no penalty_up rows in pdtNode -> empty Param frame.
     assert data.p_penalty_up.frame.height == 0
     dn = data.p_penalty_down.frame.sort(["n", "d", "t"])

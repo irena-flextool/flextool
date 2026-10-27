@@ -3,7 +3,9 @@
 Moved from ``tests/engine/test_native_cascade.py`` (c24 S1-8): the
 folders ``tests/engine/data/work_step_duration_{1,3}`` are gitignored
 hand-written CSV inputs loaded without a DB or a provider, so these are
-CSV-reload tests; they skip wherever the folders are absent.
+CSV-reload tests; they skip wherever the folders are absent.  A
+hand-written folder carries no dump stamp, so ``load_from_dump`` is
+called with ``force=True``.
 """
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine import load_flextool
+from flextool.engine._csv_reload import load_from_dump
 from tests.engine.test_native_cascade import _solve_data
 
 pytestmark = pytest.mark.solver
@@ -27,7 +29,7 @@ def _solve_csv_folder(workdir: Path) -> float:
     inputs, so these are CSV-reload tests, not production-path loads; they
     skip wherever the folders are absent.
     """
-    return _solve_data(load_flextool(workdir), str(workdir))
+    return _solve_data(load_from_dump(workdir, force=True), str(workdir))
 
 
 def test_step_duration_1_handcomputed():
