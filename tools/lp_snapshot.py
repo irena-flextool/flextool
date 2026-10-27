@@ -857,6 +857,17 @@ def _patch_ramp_two_periods(data: dict) -> dict:
                     values=_RAMP_COAL + _two_period_values())
 
 
+def _patch_uc_two_periods(data: dict) -> dict:
+    """ramp_two_periods with coal_plant online (linear, min_load 0.2, startup_cost 100): item 98 / N1 repro —
+    before the online-predecessor fix, p2025's first step has no online predecessor across the continuing
+    period boundary and is charged a full startup even though the unit stays online across it."""
+    data = _patch_ramp_two_periods(data)
+    return _overlay(data, name="uc_two_periods", base="ramp_two_periods",
+                    values=[["unit", "coal_plant", "startup_method", "linear"],
+                            ["unit", "coal_plant", "min_load", 0.2],
+                            ["unit", "coal_plant", "startup_cost", 100.0]])
+
+
 def _patch_ramp_rolling(data: dict) -> dict:
     """coal ramp in the rolling fullYear dispatch with horizon 36 and jump
     24: every continuation roll ramps from the previous roll's flow."""
@@ -879,6 +890,36 @@ def _patch_ramp_chp_integer(data: dict) -> dict:
     return data
 
 
+def _patch_ramp_chp_linear(data: dict) -> dict:
+    """As ramp_chp_integer with startup_method linear: ramp rows split on a linear multi-output unit's floored
+    output (capacity_min_coeff 0.5) and its unfloored fuel input arc."""
+    data = _chp_floor(data, "ramp_chp_linear", "linear")
+    vals = (_ramp_on("unit__inputNode", ["coal_chp", "coal_market"], 0.002)
+            + _ramp_on("unit__outputNode", ["coal_chp", "west"], 0.002))
+    for cls, ent, param, val in vals:
+        data["parameter_values"].append([cls, ent, param, _pack(val), "ramp_chp_linear"])
+    return data
+
+
+_RAMP_COAL_FREE_START = [
+    ["unit__outputNode", ["coal_plant", "west"], "ramp_method", "ramp_limit"],
+    ["unit__outputNode", ["coal_plant", "west"], "ramp_speed_up", 0.005],
+    ["unit__outputNode", ["coal_plant", "west"], "ramp_speed_down", 0.005],
+]
+
+
+def _patch_uc_ramp_free_start(data: dict) -> dict:
+    """coal_plant alone at west (linear online, min_load 0.1, ramp 0.005/min, startup_cost 0), demand stepping
+    100 -> 400 MW at t0025: item 99 repro — a fake start/stop pair buys free ramp room on this single-output
+    arc today (C1)."""
+    return _overlay(data, name="uc_ramp_free_start", base=["init", "west", "coal"],
+                    values=_RAMP_COAL_FREE_START + [
+                        ["unit", "coal_plant", "startup_method", "linear"],
+                        ["unit", "coal_plant", "min_load", 0.1],
+                        ["unit", "coal_plant", "startup_cost", 0.0],
+                        ["node", "west", "inflow", _tmap([-100.0] * 24 + [-400.0] * 24)]])
+
+
 def _patch_ramp_rp(data: dict) -> dict:
     """coal ramp on a representative-period timeset whose two 24-step blocks
     (t0001, t0025) are adjacent on the timeline: no ramp row links them."""
@@ -899,6 +940,17 @@ def _patch_ramp_midhorizon(data: dict) -> dict:
     p2040 branches continue from p2035's last step."""
     return _overlay(data, name="ramp_midhorizon", base="midhorizon",
                     values=_ramp_on("unit__outputNode", ["base", "elec"], 0.002))
+
+
+def _patch_uc_midhorizon(data: dict) -> dict:
+    """ramp_midhorizon with unit ``base`` online (linear, min_load 0.2, startup_cost 50): several p2040
+    branches continue from the same p2035 trunk step, so that step's online predecessor (the trunk's online)
+    and ramp pre-shutdown successor fan out to several branches (critique item 1's branch-point fix)."""
+    data = _patch_ramp_midhorizon(data)
+    return _overlay(data, name="uc_midhorizon", base="ramp_midhorizon",
+                    values=[["unit", "base", "startup_method", "linear"],
+                            ["unit", "base", "min_load", 0.2],
+                            ["unit", "base", "startup_cost", 50.0]])
 
 
 def _patch_ramp_stoch_rolling(data: dict) -> dict:
@@ -1584,10 +1636,14 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "ramp_blocks": _patch_ramp_blocks,
     "ramp_reserve_online": _patch_ramp_reserve_online,
     "ramp_two_periods": _patch_ramp_two_periods,
+    "uc_two_periods": _patch_uc_two_periods,
     "ramp_rolling": _patch_ramp_rolling,
     "ramp_chp_integer": _patch_ramp_chp_integer,
+    "ramp_chp_linear": _patch_ramp_chp_linear,
+    "uc_ramp_free_start": _patch_uc_ramp_free_start,
     "ramp_rp": _patch_ramp_rp,
     "ramp_midhorizon": _patch_ramp_midhorizon,
+    "uc_midhorizon": _patch_uc_midhorizon,
     "ramp_stoch_rolling": _patch_ramp_stoch_rolling,
     "ramp_6h": _patch_ramp_6h,
     "ramp_blocks_2h": _patch_ramp_blocks_2h,
@@ -1778,10 +1834,14 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("ramp_blocks", _T),
     ("ramp_reserve_online", _T),
     ("ramp_two_periods", _T),
+    ("uc_two_periods", _T),
     ("ramp_rolling", _T),
     ("ramp_chp_integer", _T),
+    ("ramp_chp_linear", _T),
+    ("uc_ramp_free_start", _T),
     ("ramp_rp", _T),
     ("ramp_midhorizon", _F + "stoch_two_period_midhorizon_nreal0.json"),
+    ("uc_midhorizon", _F + "stoch_two_period_midhorizon_nreal0.json"),
     ("ramp_stoch_rolling", _F + "stochastics.json"),
     ("ramp_6h", _T),
     ("ramp_blocks_2h", _T),
