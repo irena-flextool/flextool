@@ -263,9 +263,9 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "non_anticipativity_divest_p", "non_anticipativity_divest_n",
     # _reserve.py passes the n-1 row names from the _N_1_DIRECTIONS table.
     "reserveBalance_up_n_1_eq", "reserveBalance_down_n_1_eq",
-    # _cumulative_invest.py — every family passes its names from a loop
-    # table.  {max,min}InvestGroup_entity_cumulative is left out: it has no
-    # registry entry yet (reachable only with off-schema group parameters).
+    # _cumulative_invest.py — every family passes its names from a loop table.
+    # c16b #4: {max,min}InvestGroup_entity_cumulative now has a registry entry (CstrFamily(None)).
+    "maxInvestGroup_entity_cumulative", "minInvestGroup_entity_cumulative",
     "minInvest_entity_period_p", "minInvest_entity_period_n",
     "minDivest_entity_period_p", "minDivest_entity_period_n",
     # c16a: minInvest/minDivest entity totals are always named _path now

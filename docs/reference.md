@@ -415,6 +415,8 @@ Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [
 - `invest_max_period` - [MW or MWh] Maximum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes.
 - `invest_min_total` - [MW or MWh] Minimum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. 
 - `invest_min_period` - [MW or MWh] Minimum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes.
+- `cumulative_max_capacity` - [MW or MWh] Maximum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period. Only applies when `invest_method` is `cumulative_limits`.
+- `cumulative_min_capacity` - [MW or MWh] Minimum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period. Only applies when `invest_method` is `cumulative_limits`.
 
 ### Transfer method override for connections in a group
 

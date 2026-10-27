@@ -1037,12 +1037,28 @@ def p_group_retire_min_total_from_source(source: "InputSource") -> Param | None:
     return _g_scalar(source, "retire_min_total")
 
 
-def p_group_invest_max_cumulative_from_source(source: "InputSource") -> Param | None:
-    return _g_scalar(source, "invest_max_cumulative")
+def pd_group_cumulative_max_capacity_from_source(source: "InputSource",
+                                                   period_filter: pl.DataFrame | None = None,
+                                                   ) -> Param | None:
+    """``group.cumulative_max_capacity`` → ``Param(("g","d"))`` (#5: the schema parameter, not the
+    off-schema ``invest_max_cumulative`` the engine used to read).  Zero rows are kept
+    (``filter_zero=False``, c16b critique change 1 — same reasoning as the entity reader): an
+    explicit 0 (a phase-out year) must bind, not read back as "no limit".
+    """
+    resolved = resolve_param_shape(
+        source, "group", "cumulative_max_capacity", period_filter=period_filter)
+    return broadcast_to_period(resolved, "g", period_filter, filter_zero=False)
 
 
-def p_group_invest_min_cumulative_from_source(source: "InputSource") -> Param | None:
-    return _g_scalar(source, "invest_min_cumulative")
+def pd_group_cumulative_min_capacity_from_source(source: "InputSource",
+                                                   period_filter: pl.DataFrame | None = None,
+                                                   ) -> Param | None:
+    """``group.cumulative_min_capacity`` → ``Param(("g","d"))`` (#5).  Zero rows dropped (a missing
+    min means no floor, same as the entity reader).
+    """
+    resolved = resolve_param_shape(
+        source, "group", "cumulative_min_capacity", period_filter=period_filter)
+    return broadcast_to_period(resolved, "g", period_filter, filter_zero=True)
 
 
 def p_group_max_cumulative_flow_from_source(source: "InputSource") -> Param | None:
@@ -2224,6 +2240,8 @@ def apply_direct_params_b(source: "InputSource",
         (p_group_retire_min_period_from_source, "p_group_retire_min_period"),
         (pd_max_cumulative_flow_from_source, "pd_max_cumulative_flow"),
         (pd_min_cumulative_flow_from_source, "pd_min_cumulative_flow"),
+        (pd_group_cumulative_max_capacity_from_source, "pd_group_cumulative_max_capacity"),
+        (pd_group_cumulative_min_capacity_from_source, "pd_group_cumulative_min_capacity"),
     ):
         setattr(flex_data, field,
                 _filter_param_by_periods(fn(source, period_filter=dt), dt))
@@ -2234,10 +2252,6 @@ def apply_direct_params_b(source: "InputSource",
         (p_group_invest_min_total_from_source, "p_group_invest_min_total"),
         (p_group_retire_max_total_from_source, "p_group_retire_max_total"),
         (p_group_retire_min_total_from_source, "p_group_retire_min_total"),
-        (p_group_invest_max_cumulative_from_source,
-            "p_group_invest_max_cumulative"),
-        (p_group_invest_min_cumulative_from_source,
-            "p_group_invest_min_cumulative"),
         (p_group_max_cumulative_flow_from_source, "p_group_max_cumulative_flow"),
         (p_group_min_cumulative_flow_from_source, "p_group_min_cumulative_flow"),
     ):

@@ -381,13 +381,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "minDivestGroup_entity_total_path": CstrFamily(
         None, member_class_resolver="group_capacity"
     ),
-    # _cumulative_invest._eq_group_invest_cumulative ({max,min}InvestGroup_entity_cumulative)
-    "maxInvestGroup_entity_cumulative": CstrFamily(
-        None, member_class_resolver="group_capacity"
-    ),
-    "minInvestGroup_entity_cumulative": CstrFamily(
-        None, member_class_resolver="group_capacity"
-    ),
+    # _cumulative_invest._eq_group_invest_cumulative ({max,min}InvestGroup_entity_cumulative).
+    # Mixed MW (process members) + MWh (storage-node members) row with no ``_p``/``_n`` suffix to
+    # resolve a quantity type from — ``resolve_cstr_rhs_type`` raises on an unsuffixed
+    # "group_capacity" name (c16b #4), so Layer 2 must skip this family (plain row scaling only).
+    "maxInvestGroup_entity_cumulative": CstrFamily(None),
+    "minInvestGroup_entity_cumulative": CstrFamily(None),
 
     # Cumulative capacity per-entity — `_p` / `_n` suffix.
     # _cumulative_invest._eq_cumulative_capacity ({max,min}Cumulative_capacity_{p,n})

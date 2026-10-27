@@ -1554,6 +1554,29 @@ _INVEST_METHODS_DIVEST_TOTAL: frozenset[str] = frozenset((
     "retire_total", "retire_period_total",
     "invest_retire_total", "invest_retire_period_total",
 ))
+# Mirror ``_mid_sets.py:673`` / the schema's ``invest_methods`` enum.
+_CUMULATIVE_METHODS: frozenset[str] = frozenset(("cumulative_limits",))
+
+
+def _g_invest_method_filter(source: "InputSource",
+                              allowed: frozenset[str]) -> pl.DataFrame:
+    """Distinct groups whose ``invest_method`` is in ``allowed``.  Schema: ``[g]``.
+
+    Group analogue of :func:`_e_invest_method_filter` (c16b critique change 3, #5/B-Q3): the old
+    ``g_invest_total`` / ``g_divest_total`` / ``g_invest_cumulative`` projections picked up any
+    group with a positive ``invest_max_total`` / ``retire_max_total`` / ``invest_max_cumulative``
+    value, regardless of ``invest_method`` — a group with a max total but a non-total method got
+    total rows it never asked for, and a total-method group with only a min total lost its min row
+    once another group set a max.  Filtering by method instead (as the CSV-emit reference's
+    ``emit_invest_total_sets`` already does) fixes both.
+    """
+    df = _try_param(source, "group", "invest_method")
+    if df is None:
+        return _empty({"g": pl.Utf8})
+    return (df.lazy()
+              .filter(pl.col("value").is_in(list(allowed)))
+              .select(alias_to_axis("name", "g"))
+              .unique().sort("g").collect())
 
 
 def _e_invest_method_filter(source: "InputSource",
@@ -1681,33 +1704,21 @@ def group_process_node(source: "InputSource") -> pl.DataFrame:
     return pl.concat(parts).unique().sort("g", "p", "n").collect()
 
 
-def _g_param_set(source: "InputSource", parameter_name: str,
-                  positive_only: bool = True) -> pl.DataFrame:
-    """Distinct groups with a (positive) value for the named parameter.
-    Handles both scalar and 1d_map(period) shapes.  Schema: ``[g]``.
-    """
-    df = _try_param(source, "group", parameter_name)
-    if df is None:
-        return _empty({"g": pl.Utf8})
-    flt = df.lazy()
-    if positive_only:
-        flt = flt.filter(pl.col("value") > 0)
-    return (flt.select(alias_to_axis("name", "g"))
-                .unique()
-                .sort("g")
-                .collect())
-
-
 def g_invest_total(source: "InputSource") -> pl.DataFrame:
-    return _g_param_set(source, "invest_max_total")
+    """Groups whose ``invest_method`` ∈ INVEST_TOTAL enum subset (c16b #5/B-Q3: method-gated, not
+    "any group with a positive invest_max_total")."""
+    return _g_invest_method_filter(source, _INVEST_METHODS_INVEST_TOTAL)
 
 
 def g_divest_total(source: "InputSource") -> pl.DataFrame:
-    return _g_param_set(source, "retire_max_total")
+    """Groups whose ``invest_method`` ∈ DIVEST_TOTAL enum subset (c16b #5/B-Q3)."""
+    return _g_invest_method_filter(source, _INVEST_METHODS_DIVEST_TOTAL)
 
 
 def g_invest_cumulative(source: "InputSource") -> pl.DataFrame:
-    return _g_param_set(source, "invest_max_cumulative")
+    """Groups whose ``invest_method`` is ``cumulative_limits`` (c16b #5: method-gated, not "any
+    group with a positive off-schema invest_max_cumulative")."""
+    return _g_invest_method_filter(source, _CUMULATIVE_METHODS)
 
 
 # NB: the instant-flow constraint support (``gdt_*InstantFlow``) used to
@@ -2029,6 +2040,9 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
 _AUTHORITATIVE_SETS: tuple[str, ...] = (
     "groupCapacityMargin", "groupInertia", "groupNonSync", "process_minload",
     "process_online", "process_online_linear", "process_online_integer", "process_sink_nonSync",
+    # c16b #5/B-Q3: now method-gated (invest_method), a complete read of entity__invest_method —
+    # "nothing in the DB" must not fall back to a stale/wrong seed.
+    "g_invest_total", "g_divest_total", "g_invest_cumulative",
 )
 
 

@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **Group cumulative capacity limits now read the documented `cumulative_max_capacity` /
+  `cumulative_min_capacity` parameters.** Groups previously needed undocumented
+  `invest_max_cumulative` / `invest_min_cumulative` values (not part of the schema) to get a
+  cumulative-capacity constraint; the documented, schema parameters were silently ignored. Also,
+  which groups get a total/cumulative investment or retirement limit is now determined by each
+  group's `invest_method`, matching the entity-level behaviour, instead of by "any group with a
+  positive value of the matching limit parameter": a group with a limit value but a different
+  (or no) method no longer gets rows it never asked for, and a group whose method does call for a
+  total limit no longer loses its own row just because another group happens to set the same
+  parameter.
+
 - **Cumulative capacity limits now subtract every earlier retirement, not just a retirement of
   the row's own period.** `cumulative_max_capacity` / `cumulative_min_capacity` on a unit,
   connection or storage node compare existing plus invested plus retired capacity against a

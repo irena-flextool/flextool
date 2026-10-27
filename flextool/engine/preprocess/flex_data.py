@@ -980,8 +980,8 @@ class FlexData:
     p_group_invest_min_total: Param | None = None         # (g,)
     p_group_retire_max_total: Param | None = None         # (g,)
     p_group_retire_min_total: Param | None = None         # (g,)
-    p_group_invest_max_cumulative: Param | None = None    # (g,)
-    p_group_invest_min_cumulative: Param | None = None    # (g,)
+    pd_group_cumulative_max_capacity: Param | None = None  # (g, d)
+    pd_group_cumulative_min_capacity: Param | None = None  # (g, d)
     p_group_max_cumulative_flow: Param | None = None      # (g,)
     p_group_min_cumulative_flow: Param | None = None      # (g,)
     pd_max_cumulative_flow: Param | None = None           # (g, d)
@@ -3664,7 +3664,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
     # ``p_group_retire_max_period`` / ``p_group_retire_min_period`` /
     # ``p_group_invest_max_total`` / ``p_group_invest_min_total`` /
     # ``p_group_retire_max_total`` / ``p_group_retire_min_total`` /
-    # ``p_group_invest_max_cumulative`` / ``p_group_invest_min_cumulative`` /
+    # ``pd_group_cumulative_max_capacity`` / ``pd_group_cumulative_min_capacity`` /
     # ``p_group_max_cumulative_flow`` / ``p_group_min_cumulative_flow`` /
     # ``pd_max_cumulative_flow`` / ``pd_min_cumulative_flow``
     # all produced authoritatively by ``apply_direct_params`` (Δ.4b).
@@ -3692,8 +3692,8 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
     out["p_group_invest_min_total"]       = None
     out["p_group_retire_max_total"]       = None
     out["p_group_retire_min_total"]       = None
-    out["p_group_invest_max_cumulative"]  = None
-    out["p_group_invest_min_cumulative"]  = None
+    out["pd_group_cumulative_max_capacity"] = None
+    out["pd_group_cumulative_min_capacity"] = None
     out["p_group_max_cumulative_flow"]    = None
     out["p_group_min_cumulative_flow"]    = None
     out["pd_max_cumulative_flow"]         = None

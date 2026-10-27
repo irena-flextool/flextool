@@ -247,16 +247,15 @@ def _invest_retire_values(cls: str, ent: str, scale: float) -> list:
     ]
 
 
-# ``group`` has no retire_* parameters in the schema, yet the engine reads
-# group retire_{max,min}_{period,total} (p_group_retire_*, g_divest_total)
-# and invest_{max,min}_cumulative (p_group_invest_*_cumulative,
-# g_invest_cumulative).  Registering them as extra parameter definitions
-# in the patched JSON is the only way to reach those constraint families.
+# ``group`` has no retire_* parameters in the schema, yet the engine reads group
+# retire_{max,min}_{period,total} (p_group_retire_*, g_divest_total).  Registering them as extra
+# parameter definitions in the patched JSON is the only way to reach those constraint families.
+# c16b #5: group cumulative_{max,min}_capacity dropped from this list — they ARE schema parameters
+# (the engine used to read an off-schema invest_{max,min}_cumulative instead; fixed).
 _OFF_SCHEMA_GROUP_PARAMS = [
     ["group", name, "off-schema: read by the engine, absent from the schema"]
     for name in ("retire_max_period", "retire_min_period",
-                 "retire_max_total", "retire_min_total",
-                 "invest_max_cumulative", "invest_min_cumulative")
+                 "retire_max_total", "retire_min_total")
 ]
 
 
@@ -276,8 +275,9 @@ def _group_limit_values(g: str) -> list:
 
 def _patch_invest_limits(data: dict) -> dict:
     """Entity + group invest/retire limits (min and max, period and total),
-    off-schema group cumulative invest caps, flowGroup cumulative/instant
-    flow limits — multi-period single-solve invest model."""
+    group cumulative capacity limits (schema parameters, c16b #5),
+    flowGroup cumulative/instant flow limits — multi-period single-solve
+    invest model."""
     return _overlay(
         data, name="invest_limits",
         base="network_coal_wind_battery_invest_cumulative",
@@ -290,8 +290,8 @@ def _patch_invest_limits(data: dict) -> dict:
                 + _invest_retire_values("node", "battery", 1.0)
                 + _group_limit_values("inv_g")
                 + [["group", "cum_g", "invest_method", "cumulative_limits"],
-                   ["group", "cum_g", "invest_max_cumulative", 50000.0],
-                   ["group", "cum_g", "invest_min_cumulative", 1.0],
+                   ["group", "cum_g", "cumulative_max_capacity", 50000.0],
+                   ["group", "cum_g", "cumulative_min_capacity", 1.0],
                    ["flowGroup", "to_west_node", "max_cumulative_flow", 5000.0],
                    ["flowGroup", "to_west_node", "min_cumulative_flow", 1.0],
                    ["flowGroup", "to_west_node", "max_instant_flow", 5000.0],

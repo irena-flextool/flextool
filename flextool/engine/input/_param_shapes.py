@@ -284,6 +284,10 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("group", "invest_min_period"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "retire_max_period"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "retire_min_period"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    # c16b #5: group.cumulative_{max,min}_capacity — schema "Constant or period", same shapes as
+    # the entity-level cumulative_max_capacity / cumulative_min_capacity.
+    ("group", "cumulative_max_capacity"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("group", "cumulative_min_capacity"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("flowGroup", "max_cumulative_flow"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("flowGroup", "min_cumulative_flow"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # ─── unit: period-only Params (no time variant) ──────────────────────

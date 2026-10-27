@@ -272,3 +272,46 @@ def test_p_entity_max_units_config_error_propagates(tmp_path_factory, monkeypatc
         assert calls
         # The generic handler keeps the CSV seed (correct for a deterministic period map).
         assert _rows(_last(steps).flex_data, "p_entity_max_units", "e", "peaker") == {d: 20.0 for d in DET_PERIODS}
+
+
+# ---------------------------------------------------------------------------
+# c16b (#5, B-Q3) — group invest/retire limit SETS follow invest_method, not "any group with a
+# positive value of the matching max parameter".
+
+
+def test_group_min_total_only_group_is_no_longer_silently_dropped(tmp_path_factory):
+    """Covers c16b B-Q3: ``g_invest_total`` used to be "any group with a positive
+    invest_max_total" (ignoring ``invest_method``), not method-gated.  Two groups share
+    ``invest_method = invest_total``: ``ga`` sets ``invest_max_total`` (so the DB-direct override
+    of ``g_invest_total`` is non-empty and wins over the CSV-emit seed, which already computes the
+    correct, method-gated set — the override must agree with it); ``gb`` sets only
+    ``invest_min_total``, no max at all.
+
+    Before the fix, the override's ``_g_param_set(source, "invest_max_total")`` picked up only
+    ``ga`` (the one with a positive value) — ``gb`` silently dropped out of ``g_invest_total``
+    even though its ``invest_method`` qualifies, so its ``invest_min_total`` floor was silently
+    never enforced (no ``minInvestGroup_entity_total_path_p`` row, no error, just a wrong
+    optimum).  After the fix, ``gb`` is correctly in the set — and FA-12 (c16a, unaffected by
+    this fix) then correctly refuses to leave its max ambiguous: once ``ga`` sets
+    ``invest_max_total``, a total-method group in the set with no value of its own reads as 0
+    (silently forbidding investment) unless given one explicitly, so the solve now raises asking
+    for ``gb``'s own ``invest_max_total`` (or a non-total method) instead of silently dropping the
+    floor.  Both are correct; the silent, wrong-answer failure mode is gone either way.
+    """
+    entities = [["group", "ga", None], ["group", "gb", None],
+                ["group__unit", ["ga", "peaker"], None],
+                ["group__unit", ["gb", "peaker"], None]]
+    values = [
+        method("peaker", "invest_period"),
+        ["unit", "peaker", "invest_max_period", M(100)],
+        method("ga", "invest_total", cls="group"),
+        ["group", "ga", "invest_max_total", S(50.0)],
+        method("gb", "invest_total", cls="group"),
+        ["group", "gb", "invest_min_total", S(95.0)],
+    ]
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    url, scen = make_db(tmp_path_factory, alt="c16b_bq3", values=values, base_chain=DET,
+                        entities=entities, fixture_json=RECOURSE_JSON)
+    with pytest.raises(FlexToolConfigError, match="gb"):
+        run(tmp_path_factory, url, scen)

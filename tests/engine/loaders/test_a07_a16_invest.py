@@ -238,7 +238,7 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
         pd_max_cumulative_flow=None, pd_min_cumulative_flow=None,
         group_process_node=None,
         edd_invest_set=None,
-        p_group_invest_max_cumulative=None,
+        pd_group_cumulative_max_capacity=None,
     )
     # Hand-calc: g_invest_cumulative non-empty -> has_feature returns True.
     assert has_feature(d_stub) is True

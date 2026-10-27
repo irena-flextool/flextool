@@ -807,8 +807,6 @@ _PARAMETER_SPECS: list[dict] = [
                     ("group", "inertia_limit"),
                     ("group", "invest_max_total"),
                     ("group", "invest_min_total"),
-                    ("group", "invest_max_cumulative"),
-                    ("group", "invest_min_cumulative"),
                     ("group", "non_synchronous_limit"),
                     ("group", "penalty_capacity_margin"),
                     ("group", "penalty_inertia"),

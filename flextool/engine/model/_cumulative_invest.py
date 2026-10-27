@@ -588,26 +588,34 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
         return
     in_groups = pl.col("g").is_in(g_set["g"].unique())
     # (g, d): the periods in which some member of the group has investments alive.
-    over = (group_entity.rename({"e": "_e"}).filter(in_groups)
-            .join(edd.rename({"e": "_e"}), on="_e", how="inner")
-            .select("g", "d").unique())
-    if over.height == 0:
+    base_over = (group_entity.rename({"e": "_e"}).filter(in_groups)
+                 .join(edd.rename({"e": "_e"}), on="_e", how="inner")
+                 .select("g", "d").unique())
+    if base_over.height == 0:
         return
 
     # ─── EQ. ─── {max,min}InvestGroup_entity_cumulative ──────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
     #   + Σ_{n : (g,n) ∈ group_entity} Σ_{d′ : (n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′] · state_unitsize[n]
-    #   ≤ group_invest_max_cumulative[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (max…)
-    #   ≥ group_invest_min_cumulative[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (min…)
-    #   ∀ g ∈ g_invest_cumulative, d with some member alive in edd_invest_set
+    #   ≤ cumulative_max_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (max…)
+    #   ≥ cumulative_min_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (min…)
+    #   ∀ g ∈ g_invest_cumulative (invest_method = cumulative_limits, #5/B-Q3), d with a cap value
+    #   and some member alive in edd_invest_set
     # Keeps the capacity of a group in a period (existing + invested and still alive) within its
-    # cumulative limits; processes and storage nodes share one row.  Divestments and capacity invested by
-    # earlier solves of a chain are not counted.  Missing from the autoscale registry and reachable only
-    # with off-schema group parameters.
-    for name, sense, cap in (("maxInvestGroup_entity_cumulative", "<=", d.p_group_invest_max_cumulative),
-                             ("minInvestGroup_entity_cumulative", ">=", d.p_group_invest_min_cumulative)):
+    # cumulative limits (schema "[MW or MWh]"); processes and storage nodes share one row.  Rows are
+    # restricted to (g, d) the cap's own map actually covers (#5: now a real period map, not a
+    # dummy scalar) — a period the map leaves out has no limit, matching B-Q2's default for this
+    # family (no FA-12 check here, unlike the entity-level cumulative row).  Divestments are not yet
+    # counted (#30b, next commit); capacity invested by earlier solves of a chain is not counted
+    # either (pre-existing, separate item).
+    for name, sense, cap in (("maxInvestGroup_entity_cumulative", "<=", d.pd_group_cumulative_max_capacity),
+                             ("minInvestGroup_entity_cumulative", ">=", d.pd_group_cumulative_min_capacity)):
         if cap is None:
+            continue
+        cap_frame, over = align_join_dtypes(cap.frame, base_over, ("g",))
+        over = over.join(cap_frame.select("g", "d").unique(), on=["g", "d"], how="semi")
+        if over.height == 0:
             continue
         lhs: dict = {}
         for key, var, axis in (("invest_p", b.v_invest_p, "p"), ("invest_n", b.v_invest_n, "n")):
