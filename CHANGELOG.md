@@ -1,5 +1,26 @@
 ## Unreleased
 
+- **A commodity price ladder in a rolling solve no longer crashes the solve, and its annual tier
+  quantity is now scaled to how much of the year the solve actually covers.** The annual tier
+  quantity is a per-year amount, but a short or rolling solve used to compare it against the
+  un-annualised MWh bought in that solve, so a solve covering only part of a year could spend a
+  whole year's cheap-tier allowance in that short window. The per-period cap is now scaled by the
+  solve's own share of the modelled year, and no longer carries a running balance across rolls
+  (each roll gets its own share of the period, the same choice already made for `co2_max_period`
+  in a rolling solve) — this also removes the crash a cumulative price ladder's rolling carry
+  could hit once purchases grew past its remaining quantity.
+
+- **A commodity bought on a price ladder by a unit with a minimum-load efficiency curve now
+  counts the extra fuel that unit burns at part load.** The ladder's purchase balance used to
+  count only the full-load fuel use, so such a unit's actual fuel draw could exceed what the
+  ladder tiers had accounted for.
+
+- **The cost outputs now show what a commodity price ladder actually cost.** A commodity priced
+  on a ladder used to be excluded entirely from the reported commodity cost (or, if it also had a
+  flat price authored, priced at that flat price instead of what the ladder tiers actually cost) —
+  so the reported operating cost could disagree with the solved objective. The commodity cost
+  output is now priced from the ladder purchase at the tier price actually paid.
+
 - **A multi-flow unit with availability below 1 can now reach its derated full output.** The fuel
   (input) arc of such a unit used to cap its flow at availability times the full-load fuel need,
   which is tighter than the fuel the unit actually draws at derated full output whenever it has a
