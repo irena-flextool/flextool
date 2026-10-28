@@ -599,6 +599,7 @@ class SpineDBBackend:
         header: str,
         filter_in_type: Iterable[str] | None = None,
         filter_out_index: str | None = None,
+        filter_in_index: str | None = None,
         filter_in_value: Any = None,
         no_value: bool = False,
         param_print: bool = False,
@@ -615,6 +616,12 @@ class SpineDBBackend:
         ``no_value`` /
         ``no_entity`` / ``param_print`` / ``param_loc`` schema shaping
         flags — but returns a polars frame instead of writing CSV.
+
+        ``filter_in_index`` is the mirror of ``filter_out_index``: when
+        set, a map row is kept only when its outer ``index_name`` equals
+        it (a scalar / array / non-map row is unaffected — the check
+        lives inside the ``ptype == "map"`` branch, same as
+        ``filter_out_index``).
         """
         if self._db is None:
             raise RuntimeError("SpineDBBackend is closed")
@@ -796,6 +803,11 @@ class SpineDBBackend:
                 if (
                     filter_out_index
                     and param["parsed_value"].index_name == filter_out_index
+                ):
+                    continue
+                if (
+                    filter_in_index
+                    and param["parsed_value"].index_name != filter_in_index
                 ):
                     continue
                 if (

@@ -204,10 +204,28 @@ def run(
                     raise RuntimeError("_PARAMETER_SPECS: input/timeline.csv must precede input/pd_process.csv")
                 # The period twins of the ``pt_process`` parameters (and ``startup_cost``) also catch silent-``x``
                 # time maps; drop their timestep-keyed rows (a timestep is never a period) so they neither pollute
-                # ``periodAll`` nor get copied into the per-roll ``pd_process`` lookups.
-                frame = frame.filter(
-                    ~(pl.col("processParam").is_in(list(PD_PROCESS_DROP_TIMESTEP_KEYS))
-                      & pl.col("period").is_in(timesteps)))
+                # ``periodAll`` nor get copied into the per-roll ``pd_process`` lookups. An explicitly
+                # period-labelled row (``index_name: "period"``) is never a silent-``x`` leak even when its key
+                # happens to also be a timestep name (#76) — re-read the spec filtered to that index and keep any
+                # row it names.
+                key_cols = ["process", "processParam", "period"]
+                explicit_period = backend.parameter_values(**{**kwargs, "filter_in_index": "period"})
+                is_explicit = (
+                    frame.join(
+                        explicit_period.select(key_cols).unique().with_columns(
+                            pl.lit(True).alias("__explicit")),
+                        on=key_cols, how="left",
+                    )["__explicit"].fill_null(False)
+                )
+                drop = (
+                    pl.col("processParam").is_in(list(PD_PROCESS_DROP_TIMESTEP_KEYS))
+                    & pl.col("period").is_in(timesteps)
+                )
+                frame = (
+                    frame.with_columns(is_explicit.alias("__explicit"))
+                    .filter(~drop | pl.col("__explicit"))
+                    .drop("__explicit")
+                )
             provider.put(_provider_key(spec["filename"]), frame)
         _mem("spine_db_read_end", "Spine DB loaded")
 
