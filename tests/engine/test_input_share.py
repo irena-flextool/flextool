@@ -8,15 +8,21 @@ fuel follows the outputs through ``conversion_indirect``::
 
 Each input arc ``s`` carries the limit::
 
-    in_s ≤ input_share_max_s · L_s · availability · capacity
-    L_s  = (slope · W + section) · delay_factor / src_conv_s
+    in_s ≤ input_share_max_s · L_s · a · capacity
+    L_s  = (slope · W(1) + section) · delay_factor / src_conv_s
+    a    = x(availability) = (slope · W(availability) + section) / (slope · W(1) + section)
 
-``W`` is the most output-side fuel energy per unit of capacity the outputs
-can demand under ``Σ out ≤ capacity`` and ``out_k ≤ capacity_max_coeff_k ·
+``W(y)`` is the most output-side fuel energy per unit of capacity the outputs
+can demand under ``Σ out ≤ y · capacity`` and ``out_k ≤ capacity_max_coeff_k ·
 capacity`` (greedy: outputs by descending ``conv_k``, each filled up to
 ``min(capacity_max_coeff_k, remaining)``).  ``input_share_max`` (default 1)
 is the largest share of the full-load fuel the input may supply: with 1 the
-input alone runs the unit at full output (no effective limit).
+input alone runs the unit at full output (no effective limit).  ``a``
+replaces plain availability on the input arc (#102): the min-load section is
+drawn per unit online, not per available unit, so ``availability · L`` would
+cap the derated full output of a unit with a section; ``a`` is credited that
+section only when the unit has an online variable.  ``a = availability``
+when every output shares one ``conversion_flow_coeff`` (``W(y) = y``).
 
 How the limit is applied:
 
@@ -24,7 +30,7 @@ How the limit is applied:
   a per-element ``v_flow`` upper bound, and NO ``maxFlow`` row on the arc;
 * unit WITH them: a ``maxFlow`` row
   ``v_flow − M·Σv_invest + M·Σv_divest ≤ M·existing/unitsize``,
-  ``M = input_share_max · L · availability`` (the invest term used to carry
+  ``M = input_share_max · L · a`` (the invest term used to carry
   multiplier 1 — fuel needs ``L`` per unit of new capacity).
 
 Fixtures: ``tests.json`` + an override alternative, built from JSON (never
@@ -328,6 +334,56 @@ def test_share_binds_without_investment_as_variable_bound(
     out_ub = upper.filter((pl.col("p") == UNIT)
                           & (pl.col("source") == UNIT))["ub"]
     assert out_ub.is_infinite().all(), "output arcs must keep +inf bounds"
+
+
+# ── Unequal output coefficients: the fuel bound uses x(availability) ────
+def test_unequal_output_coefficients_use_fuel_share_without_online_var(
+        tmp_path_factory) -> None:
+    """``coal_chp`` without a ``startup_method`` (no online variable), west
+    ``conversion_flow_coeff`` 2.0 capped at 0.5 of capacity, heat 0.2 capped
+    at 0.5, availability 0.8.  Filling the fuel width by descending
+    ``conversion_flow_coeff``: ``W(0.8)`` fills west first (``min(0.5, 0.8)
+    = 0.5``), then heat (``min(0.5, 0.8 − 0.5) = 0.3``) →
+    ``W(0.8) = 2.0·0.5 + 0.2·0.3 = 1.06``; ``W(1) = 2.0·0.5 + 0.2·0.5 = 1.1``.
+    No section (``constant_efficiency``): the coal fuel bound is
+    ``slope · W(1) · x(0.8) · capacity = slope · W(0.8) · capacity``, not
+    ``slope · W(1) · availability · capacity`` (#102 also over-restricted a
+    unit with no online variable at all when its outputs' coefficients
+    differ)."""
+    url, scen = _make_db(
+        tmp_path_factory, alt="unequal_shares_avail",
+        values=_no_ratio_constraint() + [
+            _demand("west", CAPACITY), _demand("heat", 0.0),
+            ["unit", UNIT, "availability", _b64(0.8, "float")],
+            ["unit__outputNode", [UNIT, "west"], "conversion_flow_coeff", _b64(2.0, "float")],
+            ["unit__outputNode", [UNIT, "west"], "capacity_max_coeff", _b64(0.5, "float")],
+            ["unit__outputNode", [UNIT, "heat"], "conversion_flow_coeff", _b64(0.2, "float")],
+            ["unit__outputNode", [UNIT, "heat"], "capacity_max_coeff", _b64(0.5, "float")],
+        ])
+    step = _solve(tmp_path_factory, url, scen)
+    fd = step.flex_data
+    for attr in ("process_online_linear", "process_online_integer"):
+        online = getattr(fd, attr, None)
+        if online is not None and online.height > 0:
+            assert UNIT not in _utf8(online, ("p",))["p"].to_list(), \
+                f"{UNIT} must have no online variable in this test"
+
+    pb = _build(fd)
+    arcs = _max_flow_arcs(pb)
+    assert (UNIT, COAL, UNIT) not in arcs, "bound-path fuel arc kept a row"
+
+    us = float(_utf8(fd.p_unitsize.frame, ("p",))
+               .filter(pl.col("p") == UNIT)["value"][0])
+    v_flow = pb._vars["v_flow"]
+    assert v_flow.has_elementwise_bounds
+    upper = (_utf8(v_flow.frame).with_columns(ub=pl.Series(v_flow.col_upper())))
+    fuel_ub = upper.filter((pl.col("p") == UNIT) & (pl.col("source") == COAL)
+                           & (pl.col("sink") == UNIT))["ub"]
+    w_avail = 2.0 * 0.5 + 0.2 * 0.3  # W(0.8) = 1.06
+    expected = (1.0 / EFFICIENCY) * w_avail * CAPACITY / us
+    assert fuel_ub.len() == fd.dt.height
+    assert fuel_ub.to_list() == pytest.approx([expected] * fuel_ub.len(),
+                                              rel=1e-9)
 
 
 # ── Share 0.3 with investment: a maxFlow row scaling with built capacity ─

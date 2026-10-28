@@ -1800,14 +1800,16 @@ def _eq_max_flow(b: _Build) -> None:
     #   + M·Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
     #   ≤ M · existing[p,d] / unitsize[p]
     #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∉ flow_bound_arcs or (p,s,k) ∈ reserve_down_input_arcs
-    #   M = capacity_max_coeff[p,s,k] · availability[p,d,t]
+    #   M = capacity_max_coeff[p,s,k] · availability[p,d,t] on capped / uncapped arcs
     #   φ = 1 where v_flow is the input (k = p), 1/slope[p,d,t] on a direct unit's input→output arc
     #       (s ≠ p ≠ k); both reserve terms only for units (connections: connection_reserve_*, _reserve)
     # Caps every flow by the built capacity of its process (units of unitsize).
-    # On indirect-unit input arcs M = input_share_max · full-load input ·
-    # availability; uncapped arcs (conversion_flow_coeff = 0) have M = 1 and
-    # RHS = p_flow_upper.  Input arcs of units without invest/divest are
-    # bounded on v_flow instead (flow_bound_arcs).  The reserve terms are the
+    # On indirect-unit input arcs M = input_share_max · full-load input · a, a = x(availability) =
+    # (slope·W(a₀) + section)/(slope·W(1) + section) (a₀ = availability, W(y) the output-side fuel width
+    # filled to y, section only for a unit with an online variable); a ≥ availability (never tighter than
+    # the physical derated input), = availability when every output shares one conversion_flow_coeff (#102).
+    # Uncapped arcs (conversion_flow_coeff = 0) have M = 1 and RHS = p_flow_upper.  Input arcs of units
+    # without invest/divest are bounded on v_flow instead (flow_bound_arcs).  The reserve terms are the
     # reserve that raises the flow: upward reserve held at the sink, and
     # downward reserve held at the source of a unit (it consumes more),
     # converted to the arc's flow.  A bound input arc gets this row as well
@@ -3846,9 +3848,13 @@ def _max_flow_rhs(d, inv_procs: "pl.DataFrame | None" = None,
       availability or capacity coefficient.
     * **input**: input arcs of indirect (multi-flow) units.  Their capacity is the maximum sum of the
       outputs (maxOutputSum) and conversion_indirect ties the inputs to the outputs.  An input arc s is
-      limited to M_s · (existing/unitsize + Σ v_invest − Σ v_divest), M_s = p_indirect_input_cap ·
-      availability (input_share_max times the full-load input per unit of capacity; with the default
-      share 1 the input alone could run the unit at full output, so the limit is a loose bound).
+      limited to M_s · (existing/unitsize + Σ v_invest − Σ v_divest), M_s = p_indirect_input_cap · a
+      (input_share_max times the full-load input per unit of capacity; with the default share 1 the
+      input alone could run the unit at full output, so the limit is a loose bound).  ``a`` is
+      ``x(availability)`` (:func:`flextool.engine.model._online._fuel_share`), the input drawn at derated
+      full output per unit of full-load input — the min-load section is drawn per unit online, so plain
+      availability would cap the derated full output of a min_load_efficiency unit (fed the ``__av``
+      column computed below, the section credited only where the unit has an online variable; #102).
       Processes without invest/divest variables in this solve (``inv_procs``) have a constant capacity:
       M_s · existing/unitsize becomes a v_flow upper bound and the arc gets no maxFlow row.  Processes
       with them keep the row, their invest/divest terms carrying M_s.
@@ -3977,7 +3983,7 @@ def _max_flow_rhs(d, inv_procs: "pl.DataFrame | None" = None,
                                    pl.col("__mult").alias("value"))]
     slices = [cap_frame.select("p", "source", "sink", "d", "t", "value")]
 
-    # ── input: M × existing/us, M = input cap × availability ────────────
+    # ── input: M × existing/us, M = input cap × a, a = x(availability) ──
     var_upper = None
     bound_arcs = None
     if inputs.height > 0:
@@ -3997,7 +4003,25 @@ def _max_flow_rhs(d, inv_procs: "pl.DataFrame | None" = None,
                        .select("_p", "_source", "_sink", "d", "t",
                                pl.col("value").alias("__m")),
                        on=["_p", "_source", "_sink", "d", "t"], how="left"))
-        in_frame = (_with_availability(in_lf)
+        in_lf = _utf8_keys(_with_availability(in_lf), ["d", "t"])
+        if avail is not None:
+            # a = x(availability) on every indirect unit's input arc (not only online units, #102); feed
+            # _fuel_share the __av already joined above as its level, so the bound and the online rows
+            # (_online._input_availability_share) read the same availability.  The section is credited
+            # only to units with an online variable (_online.add_variables): a non-online
+            # min_load_efficiency unit's balance equation applies no section.
+            online_frames = [f for f in (getattr(d, "process_online_linear", None),
+                                         getattr(d, "process_online_integer", None))
+                             if _has_rows(f)]
+            online_p = (pl.concat([_utf8_keys(f.lazy().select("p"), ["p"]).select("_p")
+                                   for f in online_frames]).unique()
+                        if online_frames else pl.LazyFrame(schema={"_p": pl.Utf8}))
+            levels = in_lf.select("_p", "_d", "_t", pl.col("__av").alias("__y")).unique()
+            x = _online._fuel_share(d, levels, online_p)
+            in_lf = (in_lf
+                     .join(x, on=["_p", "_d", "_t"], how="left")
+                     .with_columns(__av=pl.coalesce(pl.col("__x"), pl.col("__av"))))
+        in_frame = (in_lf
                     .with_columns(__mult=pl.col("__m") * pl.col("__av"))
                     .with_columns(value=pl.col("__ex") * pl.col("__mult"))
                     .select("p", "source", "sink", "d", "t", "value",

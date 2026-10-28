@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **A multi-flow unit with availability below 1 can now reach its derated full output.** The fuel
+  (input) arc of such a unit used to cap its flow at availability times the full-load fuel need,
+  which is tighter than the fuel the unit actually draws at derated full output whenever it has a
+  minimum-load fuel section or outputs with different per-output coefficients — so the unit's
+  output could fall short of availability times capacity even though nothing else limited it.
+  The fuel arc's limit now matches the fuel the unit actually needs at that output level, so a
+  unit with availability below 1 reaches its full derated output.
+
 - **Period x time maps of unit/connection efficiency, min_load, efficiency_at_min_load and
   availability are now honoured in rolling, nested and stochastic-rolling solves, not only a
   single solve.** A genuine two-dimensional map (period, then time within each period) of one of

@@ -668,7 +668,7 @@ def _min_load_share(b: "_Build", base: "pl.LazyFrame", *, input_side: bool) -> "
     rows = base.select(cols).join(ml, on=["_p", "_d", "_t"], how="left").with_columns(pl.col("__y").fill_null(0.0))
     if not input_side:
         return rows.select(*cols, pl.col("__y").alias("__ml"))
-    out = rows.join(_fuel_share(b, rows.select("_p", "_d", "_t", "__y").unique()), on=["_p", "_d", "_t"], how="left")
+    out = rows.join(_fuel_share(d, rows.select("_p", "_d", "_t", "__y").unique()), on=["_p", "_d", "_t"], how="left")
     share = getattr(d, "p_process_source_input_share_max", None)
     if share is not None:
         out = (out.join(share.frame.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"),
@@ -699,20 +699,23 @@ def _input_availability_share(b: "_Build", arcs: "pl.DataFrame") -> "pl.DataFram
         ou = ou.join(av, on=["_p", "_d", "_t"], how="left").with_columns(pl.col("__y").fill_null(1.0))
     else:
         ou = ou.with_columns(__y=pl.lit(1.0))
-    x = _fuel_share(b, ou.select("_p", "_d", "_t", "__y").unique())
+    x = _fuel_share(d, ou.select("_p", "_d", "_t", "__y").unique())
     return (ou.join(x, on=["_p", "_d", "_t"], how="left")
             .select(*keys, "d", "t", value=pl.coalesce(pl.col("__x"), pl.col("__y")))
             .collect())
 
 
-def _fuel_share(b: "_Build", levels: "pl.LazyFrame") -> "pl.LazyFrame":
-    """``(_p, _d, _t, __x)`` for ``levels`` ``(_p, _d, _t, __y)`` (Utf8 keys): the input an indirect unit online
+def _fuel_share(d, levels: "pl.LazyFrame", online_p: "pl.LazyFrame | None" = None) -> "pl.LazyFrame":
+    """``(_p, _d, _t, __x)`` for ``levels`` ``(_p, _d, _t, __y)`` (Utf8 keys): the input an indirect unit
     draws at output level y per unit of its full-load input,
     ``x(y) = (slope · W(y) + section) / (slope · W(1) + section)``, ``W(y)`` the output-side fuel width filled up to
     y (outputs in descending conversion_flow_coeff order, each up to its capacity_max_coeff — the most fuel the
-    outputs can draw at that output level, as in ``p_indirect_input_cap``), section only for ``min_load_efficiency``
-    units.  ``__x`` null where the unit has no fuel width (no output data)."""
-    d = b.d
+    outputs can draw at that output level, as in ``p_indirect_input_cap``), section only for a
+    ``min_load_efficiency`` unit that also has an online variable — its balance equation applies no section
+    without one, so crediting it here would let the input bound run ahead of the actual fuel draw.  ``online_p``
+    (``_p`` Utf8) restricts the section credit to those units; ``None`` keeps every ``min_load_efficiency`` unit
+    (the caller has already restricted ``levels`` to online units).  ``__x`` null where the unit has no fuel width
+    (no output data)."""
     empty = pl.LazyFrame(schema={"_p": pl.Utf8, "_d": pl.Utf8, "_t": pl.Utf8, "__x": pl.Float64})
     outs = getattr(d, "process_output_flows", None)
     if outs is None or outs.height == 0:
@@ -755,6 +758,8 @@ def _fuel_share(b: "_Build", levels: "pl.LazyFrame") -> "pl.LazyFrame":
     w = w.join(slope, on=["_p", "_d", "_t"], how="left") if slope is not None else w.with_columns(__slope=pl.lit(None))
     if sec is not None and _has_rows(getattr(d, "process_min_load_eff", None)):
         mle = d.process_min_load_eff.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p")).unique()
+        if online_p is not None:
+            mle = mle.join(online_p, on="_p", how="semi")
         w = (w.join(sec, on=["_p", "_d", "_t"], how="left")
              .join(mle.with_columns(__mle=pl.lit(True)), on="_p", how="left")
              .with_columns(__sec=pl.when(pl.col("__mle")).then(pl.col("__sec").fill_null(0.0)).otherwise(0.0)))

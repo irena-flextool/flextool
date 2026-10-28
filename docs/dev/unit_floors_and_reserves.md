@@ -43,7 +43,12 @@ the capacity rows, with coefficient 1 (`v_flow` and `v_reserve` are both in
 output units of unitsize):
 
 * built capacity, units: `maxFlow` (per arc) and `maxOutputSum`
-  (sum of an indirect unit's outputs);
+  (sum of an indirect unit's outputs).  On an indirect unit's INPUT arc
+  `maxFlow`'s M (`core._max_flow_rhs`) uses `x(availability)` in place of
+  plain availability — the min-load section is drawn per unit online, not
+  per available unit, credited only to a unit with an online variable
+  (#102; same `x` as `maxInputFlow_online` below, computed once and shared);
+
 * online capacity, units with online variables (`_online.py`):
   `maxFlow_online_<kind>`: `v_flow + Σ_r Rup ≤ v_online·avail·cap_max_coeff`
   per capped arc, and `maxOutputSum_online_<kind>`:

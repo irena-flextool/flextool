@@ -16,7 +16,7 @@ import polars as pl
 import pytest
 
 from tests.engine._lp_rows import coef, row_terms, step_of
-from tests.engine._unit_db import CHP, COAL, PLANT, b64, build, make_db, run, utf8
+from tests.engine._unit_db import CHP, COAL, PLANT, b64, build, make_db, run, unitsize, utf8
 
 pytestmark = pytest.mark.solver
 
@@ -292,18 +292,21 @@ def _x(fd, y: float) -> float:
 
 def test_input_limit_keeps_derated_full_output(tmp_path_factory) -> None:
     """coal_chp (min_load_efficiency, availability 0.8, demand far above capacity, online all the time): the
-    maxInputFlow_online rows of its ramp-limited fuel arc must not cap the derated full output.  Their online
-    coefficient is input_cap · x(0.8) (the section is drawn per unit online), so the output with the input ramp
-    equals the output without it (0.7593 units: the fuel arc's own v_flow bound, input_cap · availability ·
-    capacity, still applies — item 102).  Before: input_cap · 0.8 · online capped the output at 0.7455 units."""
+    fuel arc's online coefficient (maxInputFlow_online, ramp-limited case) and its v_flow upper bound
+    (constant-capacity case, no ramp limit) are both input_cap · x(0.8) — the section is drawn per unit
+    online, not per available unit — so the output reaches the true derated full output, 0.8 × capacity,
+    with or without the ramp limit (#102).  Before: the v_flow bound alone used input_cap · 0.8, capping
+    the no-ramp output below 0.8 × capacity even though the ramp-limited case (already fixed, review F2)
+    did not."""
     no_ramp = _last(_solve(tmp_path_factory, "av_noramp", _chp_mle(0.8, ramp=False),
                            chain=("init", "west", "coal_chp", "heat")))
     with_ramp = _last(_solve(tmp_path_factory, "av_ramp", _chp_mle(0.8, ramp=True),
                              chain=("init", "west", "coal_chp", "heat")))
     f0 = _vals(no_ramp, "v_flow", CHP, {"sink": "west"})
     f1 = _vals(with_ramp, "v_flow", CHP, {"sink": "west"})
-    assert min(f0.values()) > 0.75
+    cap_units = 1000.0 / unitsize(no_ramp, CHP)  # coal_chp existing 1000 MW (module docstring)
     for k in f0:
+        assert f0[k] == pytest.approx(0.8 * cap_units, rel=1e-6), k
         assert f1[k] == pytest.approx(f0[k], abs=1e-6), k
     fd = with_ramp.flex_data
     cap = float(utf8(fd.p_indirect_input_cap.frame).filter((pl.col("p") == CHP) & (pl.col("source") == COAL))
