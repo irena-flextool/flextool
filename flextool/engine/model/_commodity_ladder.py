@@ -280,17 +280,26 @@ def _eq_ladder_balance(b: _Build) -> None:
     # ─── EQ. ─── commodity_ladder_balance ────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_i v_trade[c,n,d,i] · commodity_unitsize[c]
-    #   = Σ_{(p,n,k,c) ∈ flow_from_commodity_eff, t}   v_flow[p,n,k,d,t] · unitsize[p] · slope[p,d,t] · w[d,t]
+    #   = Σ_{(p,n,k,c) ∈ flow_from_commodity_eff, t}
+    #       (v_flow[p,n,k,d,t] · unitsize[p] · slope[p,d,t] + v_online[p,d,t] · section[p,d,t] · unitsize[p]) · w[d,t]
     #   + Σ_{(p,n,k,c) ∈ flow_from_commodity_noEff, t} v_flow[p,n,k,d,t] · unitsize[p] · w[d,t]
     #   − Σ_{(p,s,n,c) ∈ flow_to_commodity, t}         v_flow[p,s,n,d,t] · unitsize[p] · w[d,t]
     #   ∀ (c,n,d) ∈ cnd_ladder;   w = step_duration · timestep_weight
     # The period's net purchase of commodity c at node n (buy − sell, MWh) is split into price tiers.
-    # A term is absent when its flow set is empty or there are no processes.
+    # The efficiency-arc term uses the shared fuel measure _eff_fuel_input (core.py), so min_load_efficiency
+    # units' part-load section fuel counts toward the tiers too, same as commodity_cost_eff / co2_price_eff
+    # / the CO2 caps (#56) — before this fix a ladder commodity bought by such a unit was under-counted by
+    # the part-load fuel.  A term is absent when its flow set is empty or there are no processes.
+    from flextool.engine.model.core import _eff_fuel_input
+
     rhs: dict = {}
     weight = d.p_step_duration * d.p_timestep_weight
     if v_flow is not None and _has_rows(d.flow_from_commodity_eff):
         idx = d.flow_from_commodity_eff.with_columns(n=pl.col("source")).select("p", "source", "sink", "c", "n")
-        rhs["buy_eff"] = Sum(Where(v_flow * d.p_unitsize * d.p_slope, idx) * weight, over=("p", "source", "sink", "t"))
+        fuel = None
+        for _key, term in _eff_fuel_input(b, idx):
+            fuel = term if fuel is None else fuel + term
+        rhs["buy_eff"] = Sum(fuel * weight, over=("p", "source", "sink", "t"))
     if v_flow is not None and _has_rows(d.flow_from_commodity_noEff):
         idx = d.flow_from_commodity_noEff.with_columns(n=pl.col("source")).select("p", "source", "sink", "c", "n")
         rhs["buy_noEff"] = Sum(Where(v_flow * d.p_unitsize, idx) * weight, over=("p", "source", "sink", "t"))
@@ -318,22 +327,30 @@ def _eq_tier_cap_annual(b: _Build) -> None:
 
     # ─── EQ. ─── ladder_tier_cap_annual_roll ─────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_n v_trade[c,n,d,i] · commodity_unitsize[c]  ≤  quantity_ann[c,i,d] · f_d_k[d] − realized[c,i,d]
+    # Σ_n v_trade[c,n,d,i] · commodity_unitsize[c]  ≤  quantity_ann[c,i,d] · period_share[d] · window_fraction[d]
     #   ∀ (c,i,d) with (c,n,d,i) ∈ cndi_ladder_ann and quantity_ann[c,i,d] < 1e29
-    # Caps what tier i supplies in period d.  f_d_k = share of the period simulated by the end of this
-    # solve (factor 1 when absent); realized = tier MWh bought by earlier solves (0 when absent).
-    # Unlimited tiers (quantity ≥ 1e29) get no row.  Branch periods of a stochastic solve use their
-    # anchor period's quantity (and price) unless they have their own (inherit_branch_periods).
-    rhs: dict = {"cap": (d.p_ladder_ann_quantity * d.p_f_d_k if d.p_f_d_k is not None
-                         else d.p_ladder_ann_quantity)}
-    if d.p_ladder_cum_realized_mwh is not None:
-        rhs["realized"] = -d.p_ladder_cum_realized_mwh
+    # quantity_ann is a per-YEAR amount (GMPL "per-year MWh"): period_share[d] scales it down to this
+    # period's own share of the modelled year, matching the price term's inflation_op/period_share
+    # annualisation (#89) — a 48h solve of a 48h period gets 48h/8760 of the annual tier, not the whole
+    # year's worth.  window_fraction[d] (1 outside rolling) further scales it to the share of the
+    # period's hours this roll's own window covers (same window-share idea as co2_max_period,
+    # core.py _eq_co2_max_period).  Deliberately no cross-roll carry/realized subtraction: each roll's
+    # share is a self-contained, always-nonnegative budget, so it can never drive the row infeasible
+    # (#143) — a period resolved over several overlapping look-ahead rolls can draw a little more than
+    # its strict annual share in aggregate, the same approximate-compliance trade-off co2_max_period
+    # already accepts (see core.py's F4 note there).  Unlimited tiers (quantity ≥ 1e29) get no row.
+    # Branch periods of a stochastic solve use their anchor period's quantity (and price) unless they
+    # have their own (inherit_branch_periods).
+    window_fraction = getattr(d, "p_window_fraction", None)
+    cap = d.p_ladder_ann_quantity * d.p_period_share
+    if window_fraction is not None:
+        cap = cap * window_fraction
     b.m.add_cstr(
         "ladder_tier_cap_annual_roll",
         over      = cndi_ann_finite.select("c", "i", "d").unique(),
         sense     = "<=",
         lhs_terms = {"trade": Sum(Where(b.v_trade * _commodity_unitsize_param(d), cndi_ann_finite), over=("n",))},
-        rhs_terms = rhs,
+        rhs_terms = {"cap": cap},
     )
 
 
@@ -357,19 +374,39 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
     # realized = tier MWh bought by earlier solves (0 when absent).  Unlimited tiers get no row.
     cndi_cum_finite = d.cndi_ladder_cum.join(ci_cum_finite, on=["c", "i"], how="inner")
     sum_f_d_k = float(d.p_f_d_k.frame["value"].sum()) if d.p_f_d_k is not None else 1.0
-    rhs: dict = {"cap": d.p_ladder_cum_quantity * sum_f_d_k}
+
+    # ─── EQ. ─── ladder_tier_cap_cumulative_roll ─────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{n,d} v_trade[c,n,d,i] · commodity_unitsize[c]  ≤  remaining[c,i]
+    #   remaining[c,i] = max(quantity_cum[c,i] · Σ_d f_d_k[d] − Σ_d realized[c,i,d], 0)
+    #   ∀ (c,i) ∈ ci_ladder_cumulative with quantity_cum[c,i] < 1e29;  (c,n,d,i) ∈ cndi_ladder_cum
+    # Caps what tier i supplies over all periods.  Σ_d f_d_k is a scalar (1 when f_d_k is absent);
+    # realized = tier MWh bought by earlier rolls/solves (0 when absent).  f_d_k measures progress to
+    # the end of a roll's own (look-ahead-extended) horizon, so an early roll's cap can be more generous
+    # than a later roll's conservative, realized-only accounting of the same ground — carried "realized"
+    # MWh can then land above what that later roll's own quantity·Σf_d_k computes, which used to leave a
+    # negative right-hand side and crash the solve (#143).  Clamping the remaining budget at 0 keeps the
+    # row feasible (a tier simply closes once it is spent, instead of going negative); the deeper fix —
+    # keeping f_d_k from overshooting within a roll's own look-ahead — is left as a follow-up (see the
+    # design note). Unlimited tiers get no row.
+    cap_df = (ci_cum_finite.join(d.p_ladder_cum_quantity.frame, on=["c", "i"], how="left")
+              .select("c", "i", cap=pl.col("value") * sum_f_d_k))
     if d.p_ladder_cum_realized_mwh is not None:
         realized_ci = (d.p_ladder_cum_realized_mwh.frame
-                       .group_by(["c", "i"]).agg(pl.col("value").sum())
-                       .select("c", "i", "value"))
-        rhs["realized"] = -Param(("c", "i"), realized_ci)
+                       .group_by(["c", "i"]).agg(pl.col("value").sum().alias("realized")))
+        cap_df = cap_df.join(realized_ci, on=["c", "i"], how="left").with_columns(
+            pl.col("realized").fill_null(0.0))
+    else:
+        cap_df = cap_df.with_columns(realized=pl.lit(0.0))
+    cap_df = cap_df.with_columns(
+        value=(pl.col("cap") - pl.col("realized")).clip(lower_bound=0.0)).select("c", "i", "value")
     b.m.add_cstr(
         "ladder_tier_cap_cumulative_roll",
         over      = ci_cum_finite,
         sense     = "<=",
         lhs_terms = {"trade": Sum(Where(b.v_trade * _commodity_unitsize_param(d), cndi_cum_finite),
                                   over=("n", "d"))},
-        rhs_terms = rhs,
+        rhs_terms = {"cap": Param(("c", "i"), cap_df)},
     )
 
 
