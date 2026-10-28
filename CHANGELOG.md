@@ -1,5 +1,18 @@
 ## Unreleased
 
+- **A unit with a single input and a single output now honours its per-arc `conversion_flow_coeff`
+  in its fuel use, cost and CO2, not only a multi-flow unit.** The input/output coefficient on
+  `unit--inputNode` / `unit--outputNode` used to be applied only on a unit with several input or
+  output flows; on the common one-input-one-output unit it was silently ignored (the model solved
+  to a byte-identical LP whatever the coefficient was set to). The coefficient is now folded into
+  the unit's fuel-use curve, the same way a multi-flow unit already applies it, so a non-default
+  coefficient now changes the reported input flow, fuel cost and CO2 of such a unit. A unit with a
+  minimum-load efficiency curve and a non-default output coefficient should note that its authored
+  `efficiency` / `efficiency_at_min_load` are then no longer exactly its energy efficiency at full
+  or minimum load (see the updated `conversion_flow_coeff` documentation). A coefficient of 0
+  keeps its existing "uncapped edge" meaning rather than being folded in, now with a warning
+  naming the affected unit.
+
 - **Storage capacity retired in a period now stays retired in later periods.** The storage state
   limits, the start/end and cyclic start bindings, the reserve headroom and the cumulative
   capacity limits now subtract every earlier retirement of a storage node, and the storage
