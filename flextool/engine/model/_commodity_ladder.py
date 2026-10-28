@@ -327,30 +327,44 @@ def _eq_tier_cap_annual(b: _Build) -> None:
 
     # ─── EQ. ─── ladder_tier_cap_annual_roll ─────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_n v_trade[c,n,d,i] · commodity_unitsize[c]  ≤  quantity_ann[c,i,d] · period_share[d] · window_fraction[d]
+    # Σ_n v_trade[c,n,d,i] · commodity_unitsize[c]
+    #   ≤  quantity_ann[c,i,d] · period_share[d] · f_d_k[d] − realized_ann[c,i,d]
     #   ∀ (c,i,d) with (c,n,d,i) ∈ cndi_ladder_ann and quantity_ann[c,i,d] < 1e29
     # quantity_ann is a per-YEAR amount (GMPL "per-year MWh"): period_share[d] scales it down to this
     # period's own share of the modelled year, matching the price term's inflation_op/period_share
     # annualisation (#89) — a 48h solve of a 48h period gets 48h/8760 of the annual tier, not the whole
-    # year's worth.  window_fraction[d] (1 outside rolling) further scales it to the share of the
-    # period's hours this roll's own window covers (same window-share idea as co2_max_period,
-    # core.py _eq_co2_max_period).  Deliberately no cross-roll carry/realized subtraction: each roll's
-    # share is a self-contained, always-nonnegative budget, so it can never drive the row infeasible
-    # (#143) — a period resolved over several overlapping look-ahead rolls can draw a little more than
-    # its strict annual share in aggregate, the same approximate-compliance trade-off co2_max_period
-    # already accepts (see core.py's F4 note there).  Unlimited tiers (quantity ≥ 1e29) get no row.
+    # year's worth.  f_d_k[d] (1 outside rolling) further scales it to the share of the period's own
+    # hours reached by the end of this roll's horizon (f_d_k already measures exactly that — see
+    # p_f_d_k_from_source) — the quantity allocated so far, as of this roll.  realized_ann[c,i,d] (the
+    # same per-(c,i,d) carried-purchases Param the cumulative ladder uses, 0 when absent) is what
+    # earlier rolls already bought against that allocation, so the remaining budget can never go
+    # negative: an earlier roll could buy at most up to its own (earlier) horizon end and realized
+    # only part of that (#143's fix applies here too — no clamp needed, the row is feasible by
+    # construction instead of approximately-compliant). Unlimited tiers (quantity ≥ 1e29) get no row.
     # Branch periods of a stochastic solve use their anchor period's quantity (and price) unless they
     # have their own (inherit_branch_periods).
-    window_fraction = getattr(d, "p_window_fraction", None)
-    cap = d.p_ladder_ann_quantity * d.p_period_share
-    if window_fraction is not None:
-        cap = cap * window_fraction
+    keys = cndi_ann_finite.select("c", "i", "d").unique()
+    cap_df = (keys.join(d.p_ladder_ann_quantity.frame.rename({"value": "quantity"}), on=["c", "i", "d"], how="left")
+              .join(d.p_period_share.frame.rename({"value": "share"}), on="d", how="left"))
+    if d.p_f_d_k is not None:
+        cap_df = (cap_df.join(d.p_f_d_k.frame.rename({"value": "fdk"}), on="d", how="left")
+                  .with_columns(pl.col("fdk").fill_null(1.0)))
+    else:
+        cap_df = cap_df.with_columns(fdk=pl.lit(1.0))
+    cap_df = cap_df.with_columns(cap=pl.col("quantity") * pl.col("share") * pl.col("fdk"))
+    if d.p_ladder_cum_realized_mwh is not None:
+        cap_df = (cap_df.join(d.p_ladder_cum_realized_mwh.frame.rename({"value": "realized"}),
+                              on=["c", "i", "d"], how="left")
+                  .with_columns(pl.col("realized").fill_null(0.0)))
+    else:
+        cap_df = cap_df.with_columns(realized=pl.lit(0.0))
+    cap_df = cap_df.with_columns(value=pl.col("cap") - pl.col("realized")).select("c", "i", "d", "value")
     b.m.add_cstr(
         "ladder_tier_cap_annual_roll",
-        over      = cndi_ann_finite.select("c", "i", "d").unique(),
+        over      = keys,
         sense     = "<=",
         lhs_terms = {"trade": Sum(Where(b.v_trade * _commodity_unitsize_param(d), cndi_ann_finite), over=("n",))},
-        rhs_terms = {"cap": cap},
+        rhs_terms = {"cap": Param(("c", "i", "d"), cap_df)},
     )
 
 
@@ -370,25 +384,19 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
     # Σ_{n,d} v_trade[c,n,d,i] · commodity_unitsize[c]
     #   ≤  quantity_cum[c,i] · Σ_d f_d_k[d] − Σ_d realized[c,i,d]
     #   ∀ (c,i) ∈ ci_ladder_cumulative with quantity_cum[c,i] < 1e29;  (c,n,d,i) ∈ cndi_ladder_cum
-    # Caps what tier i supplies over all periods.  Σ_d f_d_k is a scalar (1 when f_d_k is absent);
-    # realized = tier MWh bought by earlier solves (0 when absent).  Unlimited tiers get no row.
+    # Caps what tier i supplies over all periods.  Σ_d f_d_k sums over every period the chain has
+    # ever touched — not just the ones still active this roll — because p_f_d_k_from_source folds a
+    # finished period back in at 1.0 once it leaves period_in_use, instead of dropping it; without
+    # that, Σ_d f_d_k used to reset to the new period's own local progress each time the chain moved
+    # on, while realized kept climbing, eventually driving this row negative (#143).  "quantity
+    # allocated up to the end of this roll's horizon" is now monotone non-decreasing across rolls —
+    # the same requirement #89's fix gives the annual cap — and realized (what earlier rolls actually
+    # bought, always ≤ what their own, earlier horizon end allocated) can never exceed it, so the row
+    # is feasible by construction; no clamp.  Σ_d f_d_k is a scalar (1 when f_d_k is absent); realized
+    # = tier MWh bought by earlier solves (0 when absent).  Unlimited tiers get no row.
     cndi_cum_finite = d.cndi_ladder_cum.join(ci_cum_finite, on=["c", "i"], how="inner")
     sum_f_d_k = float(d.p_f_d_k.frame["value"].sum()) if d.p_f_d_k is not None else 1.0
 
-    # ─── EQ. ─── ladder_tier_cap_cumulative_roll ─────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{n,d} v_trade[c,n,d,i] · commodity_unitsize[c]  ≤  remaining[c,i]
-    #   remaining[c,i] = max(quantity_cum[c,i] · Σ_d f_d_k[d] − Σ_d realized[c,i,d], 0)
-    #   ∀ (c,i) ∈ ci_ladder_cumulative with quantity_cum[c,i] < 1e29;  (c,n,d,i) ∈ cndi_ladder_cum
-    # Caps what tier i supplies over all periods.  Σ_d f_d_k is a scalar (1 when f_d_k is absent);
-    # realized = tier MWh bought by earlier rolls/solves (0 when absent).  f_d_k measures progress to
-    # the end of a roll's own (look-ahead-extended) horizon, so an early roll's cap can be more generous
-    # than a later roll's conservative, realized-only accounting of the same ground — carried "realized"
-    # MWh can then land above what that later roll's own quantity·Σf_d_k computes, which used to leave a
-    # negative right-hand side and crash the solve (#143).  Clamping the remaining budget at 0 keeps the
-    # row feasible (a tier simply closes once it is spent, instead of going negative); the deeper fix —
-    # keeping f_d_k from overshooting within a roll's own look-ahead — is left as a follow-up (see the
-    # design note). Unlimited tiers get no row.
     cap_df = (ci_cum_finite.join(d.p_ladder_cum_quantity.frame, on=["c", "i"], how="left")
               .select("c", "i", cap=pl.col("value") * sum_f_d_k))
     if d.p_ladder_cum_realized_mwh is not None:
@@ -398,8 +406,7 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
             pl.col("realized").fill_null(0.0))
     else:
         cap_df = cap_df.with_columns(realized=pl.lit(0.0))
-    cap_df = cap_df.with_columns(
-        value=(pl.col("cap") - pl.col("realized")).clip(lower_bound=0.0)).select("c", "i", "value")
+    cap_df = cap_df.with_columns(value=pl.col("cap") - pl.col("realized")).select("c", "i", "value")
     b.m.add_cstr(
         "ladder_tier_cap_cumulative_roll",
         over      = ci_cum_finite,

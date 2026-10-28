@@ -403,6 +403,19 @@ def emit_period_calculated_params(
         num = p_ladder_cum.get(d, 0.0) + sum_step_dur_by_period.get(d, 0.0)
         denom = complete_share_lookup.get(d, 0.0) * HOURS_PER_YEAR
         f_d_k_rows.append((d, num / denom))
+    # A period only leaves `period_in_use` once the rolling chain has moved past it, which (periods
+    # are visited in order, never revisited) only happens once it is fully realised — at that point
+    # its frozen p_ladder_cum entry already equals its own complete hours, i.e. its true f_d_k is
+    # exactly 1.0.  Fold those periods back in instead of letting them drop out of the domain: the
+    # cumulative-ladder cap (`_eq_tier_cap_cumulative`) sums f_d_k over every period the chain has
+    # ever touched, not just the ones still active this roll, so dropping a finished period here
+    # made that sum reset to the new period's own local progress each time the chain advanced,
+    # while the realized-purchases carrier kept climbing — eventually driving the cap's row negative
+    # (#143's root cause).
+    period_in_use_set = set(period_in_use)
+    for d in p_ladder_cum:
+        if d not in period_in_use_set:
+            f_d_k_rows.append((d, 1.0))
     _emit_keyed(provider, "solve_data/f_d_k.csv",
                 ("period", "value"), f_d_k_rows)
 

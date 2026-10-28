@@ -5,10 +5,14 @@
   quantity is a per-year amount, but a short or rolling solve used to compare it against the
   un-annualised MWh bought in that solve, so a solve covering only part of a year could spend a
   whole year's cheap-tier allowance in that short window. The per-period cap is now scaled by the
-  solve's own share of the modelled year, and no longer carries a running balance across rolls
-  (each roll gets its own share of the period, the same choice already made for `co2_max_period`
-  in a rolling solve) — this also removes the crash a cumulative price ladder's rolling carry
-  could hit once purchases grew past its remaining quantity.
+  solve's own share of the modelled year and of the roll's progress through it, minus what earlier
+  rolls already bought against that same allowance — so each roll's budget is exactly what the
+  model has allocated so far, never more, never less. The cumulative price ladder's rolling carry
+  used to be able to drive a later roll's remaining budget negative and crash the solve once a
+  chained run moved from one modelled period into the next; the real cause was that the per-roll
+  progress measure feeding the cap's running total silently dropped a period's contribution the
+  moment the chain finished it, instead of keeping it. Both ladders' running totals now account for
+  every period the chain has ever simulated, so the remaining budget can never go negative.
 
 - **A commodity bought on a price ladder by a unit with a minimum-load efficiency curve now
   counts the extra fuel that unit burns at part load.** The ladder's purchase balance used to

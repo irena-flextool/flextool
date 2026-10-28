@@ -9816,7 +9816,12 @@ def p_f_d_k_from_source(
         f_d_k[d] = (p_ladder_cum_sim_hours[d] + sum_t step_duration[d, t])
                  / (complete_period_share_of_year[d] * 8760)
 
-    Domain: ``period_in_use``.  Inputs:
+    Domain: ``period_in_use``, plus one row per period that the chain has already finished and
+    dropped from ``period_in_use`` (value 1.0 — a period only leaves ``period_in_use`` once it is
+    fully realised, so its f_d_k is exactly 1.0 from then on).  Carrying those rows forward instead
+    of letting the period vanish from the domain is what lets ``_eq_tier_cap_cumulative``'s
+    ``Σ_d f_d_k`` accumulate monotonically across period boundaries, rather than resetting to the
+    new period's own local progress each time the chain advances (#143).  Inputs:
 
     * ``solve_data/steps_in_use.csv`` — per-(d, t) step duration sum.
     * ``solve_data/ladder_cum_sim_hours.csv`` — handoff carrier; default
@@ -9944,6 +9949,19 @@ def p_f_d_k_from_source(
                 .with_columns(value=(pl.col("cum") + pl.col("sum_step"))
                                        / (pl.col("share") * HOURS_PER_YEAR))
                 .select("d", "value"))
+    if cum_lf is not None:
+        # A period leaves `period_in_use` only once the rolling chain has moved past it, which
+        # (periods are visited in order, never revisited) only happens once it is fully realised —
+        # at that point its frozen `cum_sim_hours` already equals its own complete hours, i.e. its
+        # true f_d_k is exactly 1.0.  Folding those periods back in (instead of letting them drop
+        # out of the domain) is what keeps Σ_d f_d_k monotone across period boundaries for
+        # ladder_tier_cap_cumulative_roll, whose Σ_d f_d_k must accumulate over every period the
+        # chain has ever touched, not reset to the current period's own local progress each time
+        # the chain advances to a new one (#143's root cause).
+        completed_lf = (cum_lf.select("d").unique()
+                         .join(piu_lf.select("d"), on="d", how="anti")
+                         .with_columns(value=pl.lit(1.0, dtype=pl.Float64)))
+        out_lf = pl.concat([out_lf, completed_lf], how="vertical_relaxed")
     out = out_lf.collect()
     if out.height == 0:
         return None
