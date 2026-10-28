@@ -30,7 +30,14 @@ def compute_costs(par, s, v, r) -> None:
     # entry — so intersect here to avoid KeyError when an arc references
     # a price-less commodity (e.g. coal_chp where coal has only a
     # co2_content row).  Legacy behaviour: cost contribution is 0.
-    available_commodities = pd.Index(par.commodity_price.columns).unique()
+    # Commodities priced on a price ladder (price_ladder_annual /
+    # price_ladder_cumulative) are excluded here and priced from v_trade
+    # below instead (#57) — the LP objective skips them in the flat
+    # commodity-price term (model/core.py _obj_commodity), so the flat-price
+    # output must too, or the ladder commodity would be double-priced (or,
+    # without a flat `price` authored, silently cost nothing at all).
+    ladder_commodities = getattr(s, 'commodity_with_ladder', pd.Index([], name='commodity'))
+    available_commodities = pd.Index(par.commodity_price.columns).unique().difference(ladder_commodities)
     commodity_node = s.commodity_node[
         s.commodity_node.get_level_values('commodity').isin(available_commodities)
     ]
@@ -58,6 +65,58 @@ def compute_costs(par, s, v, r) -> None:
     flow_to_commodity_node.columns = flow_to_commodity_node.columns.join(commodity_price.columns)
     flow_to_commodity = flow_to_commodity_node.T.groupby('commodity').sum().T
     r.sales_commodity_dt = flow_to_commodity.mul(commodity_price).mul(step_x_rp, axis=0)
+
+    # --- Commodity price ladder (#57): price the tiers from v_trade ---
+    # v_trade[c, n, d, i] is decided once per period (no time axis), so its
+    # cost is annualised the way the LP objective annualises it
+    # (inflation_op/period_share · the period's branch weight,
+    # model/_commodity_ladder.py objective_terms) and then spread across the
+    # period's (d, t) rows proportionally to step_x_rp, so it folds into
+    # cost_commodity_dt / cost_commodity_d / costOper_dt / costOper_d (and
+    # out_costs.py's per-(d, t) commodity_cost output) the same way every
+    # other commodity cost does, with no separate annualisation of its own.
+    trade = getattr(v, 'trade', None)
+    if trade is not None and not trade.empty and len(ladder_commodities) > 0:
+        trade = trade.loc[:, trade.columns.get_level_values('commodity').isin(ladder_commodities)]
+    if trade is not None and not trade.empty:
+        unitsize = par.commodity_unitsize.reindex(trade.columns.get_level_values('commodity')).fillna(1.0)
+        unitsize.index = trade.columns
+        mwh = trade.mul(unitsize, axis=1)
+
+        # Tier price: the period-varying annual ladder price where authored, else the period-constant
+        # cumulative ladder price (broadcast over every period present in mwh).
+        tiers = mwh.columns.droplevel('node')
+        ann_price = par.ladder_price_ann.reindex(index=mwh.index, columns=tiers)
+        cum_price = pd.DataFrame(
+            np.tile(par.ladder_price_cum.reindex(tiers).to_numpy(), (len(mwh.index), 1)),
+            index=mwh.index, columns=tiers,
+        )
+        price = ann_price.fillna(cum_price)
+        price.columns = mwh.columns
+
+        # Branch weight is per period (pd_branch_weight keeps its 'solve' level — drop_levels does not
+        # touch it, _weight_by_branch below mirrors this same lookup); default 1.0 outside stochastic solves.
+        bw_series = getattr(par, 'pd_branch_weight', None)
+        bw_map: dict[str, float] = {}
+        if bw_series is not None:
+            for idx, val in bw_series.items():
+                period = idx[-1] if isinstance(idx, tuple) else idx
+                bw_map[str(period)] = float(val)
+        bw = pd.Series(
+            [bw_map.get(str(p), 1.0) for p in mwh.index], index=mwh.index,
+        )
+        ladder_cost_d = mwh.mul(price).mul(bw, axis=0)
+        ladder_cost_d.columns = tiers
+        ladder_cost_d = ladder_cost_d.T.groupby('commodity').sum().T
+
+        # Spread each period's ladder cost across its (d, t) rows proportionally to step_x_rp — the
+        # model requires a uniform branch weight within a ladder period, so this is a pure
+        # step_duration x timestep_weight share and reconciles to ladder_cost_d exactly on re-summing.
+        share = step_x_rp.div(step_x_rp.groupby(level='period').transform('sum'))
+        ladder_cost_dt = ladder_cost_d.reindex(share.index.get_level_values('period'))
+        ladder_cost_dt.index = share.index
+        ladder_cost_dt = ladder_cost_dt.mul(share, axis=0)
+        r.cost_commodity_dt = r.cost_commodity_dt.add(ladder_cost_dt, fill_value=0.0)
 
     r.cost_commodity_d = r.cost_commodity_dt.groupby('period').sum()
     r.sales_commodity_d = r.sales_commodity_dt.groupby('period').sum()

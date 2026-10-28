@@ -898,6 +898,11 @@ def read_sets(
             ("flow_to_commodity", "sink"),
         ),
     )
+    # Commodities priced on a ladder (price_ladder_annual / price_ladder_cumulative) — calc_costs excludes
+    # them from the flat commodity_price term and prices them from v_trade instead (#57).
+    s.commodity_with_ladder = _index_or_empty(
+        getattr(flex_data, "commodity_with_ladder", None), dim="c", name="commodity",
+    )
     s.commodity_node_co2 = _commodity_node_from_flex(
         flex_data,
         attrs=(

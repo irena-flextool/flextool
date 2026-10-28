@@ -11,6 +11,10 @@ _V_DROP = [
     'q_state_up', 'q_state_down', 'q_reserve',
     'q_inertia', 'q_non_synchronous', 'q_state_up_group', 'q_capacity_margin',
     'invest', 'divest',
+    # trade (v_trade, commodity price ladder, #57): period-only, same
+    # rolling treatment as invest/divest — the committing roll's tier
+    # purchase for a period wins over an earlier look-ahead roll's.
+    'trade',
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
     'dual_maxInvest_period', 'dual_maxCumulative',
     'dual_maxInvestGroup_period', 'dual_maxInvestGroup_cumulative',
@@ -57,6 +61,9 @@ _PAR_DROP = [
     'process_slope', 'process_section',
     'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',
     'node_inflow', 'commodity_price', 'group_co2_price',
+    # ladder_price_ann (commodity price ladder, #57): authored per period, invariant across rolls that
+    # touch the same period — same keep='last' bucket as commodity_price for symmetry.
+    'ladder_price_ann',
     'reserve_upDown_group_reservation',
     'reserve_upDown_group_shortfall_scale', 'profile',
     'entity_annual_discounted', 'entity_annual_divest_discounted',

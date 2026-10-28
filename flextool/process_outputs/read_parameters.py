@@ -263,6 +263,44 @@ def _empty_pdtX_multi_col(
     return out
 
 
+def _empty_pdX_multi_col(
+    *, col_names: tuple[str, ...],
+) -> pd.DataFrame:
+    """Empty DataFrame with ``(solve, period)`` row index and an empty
+    column MultiIndex of ``len(col_names)`` levels.
+    """
+    idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
+    out = pd.DataFrame(index=idx, dtype=float)
+    out.columns = pd.MultiIndex.from_arrays([[]] * len(col_names), names=list(col_names))
+    return out
+
+
+def _pdX_multi_col(
+    param,
+    *,
+    solve_name: str,
+    col_dims: tuple[str, ...],
+    col_names: tuple[str, ...],
+) -> pd.DataFrame:
+    """Param ``(*col_dims, d)`` → wide pandas with row ``(solve, period)`` ×
+    column MultiIndex over ``col_dims``.
+
+    Period-only sibling of :func:`_pdtX_multi_col` (no time axis).  Used for
+    the commodity-ladder tier prices, which are decided once per period, not
+    per (d, t) (#57).
+    """
+    if param is None or param.frame.height == 0:
+        return _empty_pdX_multi_col(col_names=col_names)
+    pl_df = with_solve_column(param.frame, solve_name)
+    return wide_multi_col(
+        pl_df,
+        row_dims=("solve", "d"),
+        col_dims=col_dims,
+        row_names=("solve", "period"),
+        col_names=col_names,
+    )
+
+
 def _pdtX_multi_col(
     param,
     *,
@@ -1214,6 +1252,33 @@ def read_parameters(
         flex_data.p_co2_price, solve_name=solve_name,
         entity_dim="g", col_name="group", flex_data=flex_data,
     )
+
+    # Commodity price ladder (#57): tier prices priced from v_trade, not the
+    # flat commodity_price term.  ladder_price_ann varies per period (solve,
+    # period) × (commodity, tier); ladder_price_cum is one price per
+    # (commodity, tier), the same in every period.  commodity_unitsize is the
+    # v_trade → MWh scale, defaulting to 1.0 for every ladder commodity when
+    # unset (same default _commodity_unitsize_param applies in the LP).
+    p.ladder_price_ann = _pdX_multi_col(
+        flex_data.p_ladder_ann_price, solve_name=solve_name,
+        col_dims=("c", "i"), col_names=("commodity", "tier"),
+    )
+    _cum_price = getattr(flex_data, "p_ladder_cum_price", None)
+    p.ladder_price_cum = (
+        series_with_multi_index(_cum_price.frame, dims=("c", "i"), names=("commodity", "tier"))
+        if _cum_price is not None and _cum_price.frame.height > 0
+        else pd.Series(dtype=float, index=pd.MultiIndex.from_arrays([[], []], names=("commodity", "tier")))
+    )
+    _cwl = getattr(flex_data, "commodity_with_ladder", None)
+    _unitsize = getattr(flex_data, "p_commodity_unitsize", None)
+    if _unitsize is not None and _unitsize.frame.height > 0:
+        p.commodity_unitsize = series_with_index(_unitsize.frame, dim="c", name="commodity")
+    elif _cwl is not None and _cwl.height > 0:
+        p.commodity_unitsize = pd.Series(
+            1.0, index=pd.Index(_cwl.to_pandas()["c"].tolist(), name="commodity"),
+        )
+    else:
+        p.commodity_unitsize = pd.Series(dtype=float, index=pd.Index([], name="commodity"))
 
     # reserve_upDown_group_reservation — multi-column (r, ud, g).
     p.reserve_upDown_group_reservation = _pdtX_multi_col(
