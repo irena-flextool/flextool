@@ -200,3 +200,30 @@ def test_progress_callback_streams_per_iteration(ti_data, monolith) -> None:
     assert abs(last["lower_bound"] - res.lower_bound) <= 1e-3 * max(
         1.0, abs(res.lower_bound)
     )
+
+
+def test_region_subproblems_carry_no_trade_pipe_invest_total_cap(ti_data, tmp_path) -> None:
+    """The master owns the trade pipes' investment, so each pipe's ``invest_max_total`` cap
+    (``maxInvest_entity_total``) is a master row only.  A region subproblem keeps a dangling
+    ``v_invest_p`` column for a pipe it does not dispatch (the pipe is not in its
+    ``process_source_sink``); it must not get a cap row for it -- that row is redundant at
+    best and constants-only at worst (no unitsize for a pipe the region does not touch), and
+    it perturbs the region LP and hence the Benders cuts."""
+    built: list[tuple[set[str], object]] = []
+
+    def build_problem(pb, d):
+        build_flextool(pb, d)
+        mps = tmp_path / f"region_{len(built)}.mps"
+        pb.write_mps(str(mps), emit_names=True)
+        lines = mps.read_text().splitlines()
+        rows = lines[lines.index("ROWS") + 1:lines.index("COLUMNS")]
+        built.append(({r.split()[1] for r in rows}, d))
+
+    solve_benders(ti_data, _REGIONS, max_iters=1, tol=1e-4, master="flextool",
+                  build_problem=build_problem)
+    assert len(built) == len(_REGIONS)
+    for row_names, d in built:
+        flowing = set(d.process_source_sink["p"].cast(pl.Utf8).unique().to_list())
+        assert not (_TRADE_CONNS & flowing), "fixture premise: regions do not dispatch the pipes"
+        capped = {r[r.index("[") + 1:-1] for r in row_names if r.startswith("maxInvest_entity_total")}
+        assert capped <= flowing, f"maxInvest_entity_total rows for non-dispatched entities {capped - flowing}"
