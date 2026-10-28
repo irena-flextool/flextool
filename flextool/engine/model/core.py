@@ -2754,8 +2754,9 @@ def _eff_fuel_input(b: _Build, arcs: pl.DataFrame) -> list[tuple[str, Expr]]:
 
     ``[("eff", v_flow·unitsize·slope)]`` plus, for min_load_efficiency units, ``("section_lin" |
     "section_int", v_online·section·unitsize)``, each restricted to ``arcs``; MWh/h per (arc, d, t), unweighted.
-    Shared by the commodity cost (commodity_cost_eff), the CO2 price (co2_price_eff) and both CO2 caps
-    (co2_max_period, co2_max_total), so their fuel measure cannot drift apart.
+    Shared by the commodity cost (commodity_cost_eff), the CO2 price (co2_price_eff), both CO2 caps
+    (co2_max_period, co2_max_total) and the commodity ladder balance (commodity_ladder_balance,
+    _commodity_ladder.py), so their fuel measure cannot drift apart.
     """
     d = b.d
     terms: list[tuple[str, Expr]] = [("eff", Where(b.v_flow * d.p_unitsize * d.p_slope, arcs))]
