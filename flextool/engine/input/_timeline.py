@@ -664,7 +664,9 @@ class TimelineConfig:
 
         * ``pt_node_inflow.csv`` and ``pbt_node_inflow.csv`` →
           ``"sum"`` (inflow energies sum across coarsened steps).
-        * Every other ``pt_*.csv`` / ``pbt_*.csv`` → ``"average"``.
+        * Every other ``pt_*.csv`` / ``pbt_*.csv``, plus ``pdt_process.csv`` (the genuine period × time
+          map of the efficiency family — the group key includes its leading ``period`` column, found by
+          name like every other column before ``time``) → ``"average"``.
         * Rows with parameter ``"storage_state_reference_value"`` are
           ALWAYS bypassed (line 474) — they're per-step state targets
           rather than time-integrated quantities.
@@ -693,6 +695,7 @@ class TimelineConfig:
             "pt_group.csv": "average",
             "pt_node.csv": "average",
             "pt_process.csv": "average",
+            "pdt_process.csv": "average",
             "pt_profile.csv": "average",
             "pt_process_source.csv": "average",
             "pt_process_sink.csv": "average",

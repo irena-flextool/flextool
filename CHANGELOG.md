@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **Period x time maps of unit/connection efficiency, min_load, efficiency_at_min_load and
+  availability are now honoured in rolling, nested and stochastic-rolling solves, not only a
+  single solve.** A genuine two-dimensional map (period, then time within each period) of one of
+  these parameters used to be read correctly only by a solve with no rolls or nested sub-solves;
+  every roll or nested sub-solve fell back to the parameter's constant / fold default instead,
+  changing the unit's or connection's efficiency, minimum load and availability (and so its fuel
+  use, cost and feasibility) for the rest of the model run. A period x time map now gives the
+  same result in every roll and sub-period as the equivalent single solve.
+- Fixed a related case where a period sharing a name with one of the model's own timesteps could
+  lose an explicitly period-labelled map value on rolling / nested sub-solves.
+
 - **A unit with a single input and a single output now honours its per-arc `conversion_flow_coeff`
   in its fuel use, cost and CO2, not only a multi-flow unit.** The input/output coefficient on
   `unit--inputNode` / `unit--outputNode` used to be applied only on a unit with several input or

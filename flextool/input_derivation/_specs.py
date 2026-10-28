@@ -619,6 +619,28 @@ _PARAMETER_SPECS: list[dict] = [
         "param_print": True,
     },
     {
+        # Genuine 2-D maps of the same parameters: outer index "period", inner index "time". Neither
+        # ``pt_process`` (``filter_out_index: "period"`` drops a period-outer map) nor ``pd_process``
+        # (``filter_in_type: ["1d_map"]`` rejects a 2-D map's dimension count) carries one, so without this
+        # spec a period × time map of the efficiency family reached no tier of the emit ``pdtProcess``
+        # cascade on rolling / nested / stochastic-rolling sub-solves (Q13). ``filter_out_index: "time"``
+        # rejects the (disallowed) time-outer shape.
+        "cl_pars": [("unit", "efficiency"),
+                    ("unit", "efficiency_at_min_load"),
+                    ("unit", "min_load"),
+                    ("unit", "availability"),
+                    ("connection", "efficiency"),
+                    ("connection", "efficiency_at_min_load"),
+                    ("connection", "min_load"),
+                    ("connection", "other_operational_cost"),
+                    ("connection", "availability")],
+        "header": "process,processParam,period,time,pdt_process",
+        "filename": "input/pdt_process.csv",
+        "filter_in_type": ["2d_map"],
+        "filter_out_index": "time",
+        "param_print": True,
+    },
+    {
         "cl_pars": [("unit__outputNode", "is_non_synchronous")],
         "header": "process,sink",
         "filename": "input/process__sink_nonSync_unit.csv",

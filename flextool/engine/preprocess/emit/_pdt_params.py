@@ -144,6 +144,7 @@ def derive_pdtProcess(input_dir: Path, solve_data_dir: Path,
         group_entity_csv=input_dir / "group__process.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
         param_def1=PROCESS_PARAM_DEF1,
+        pdt_csv=input_dir / "pdt_process.csv",
         provider=provider,
     )
     domain = _read_pairs(
@@ -214,6 +215,7 @@ def derive_pdtProcess_vectorized(input_dir: Path, solve_data_dir: Path,
         group_entity_csv=input_dir / "group__process.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
         param_def1=PROCESS_PARAM_DEF1,
+        pdt_csv=input_dir / "pdt_process.csv",
         provider=provider,
     )
     domain = _read_pairs(
@@ -226,6 +228,8 @@ def derive_pdtProcess_vectorized(input_dir: Path, solve_data_dir: Path,
 
     grid = build_entity_dt_grid(domain, dt, key_cols=key_cols)
 
+    pdt_df = lift_dict_to_lookup(
+        lookup._pdt, ["process", "param", "period", "time"], "v_pdt")
     pd_df = lift_dict_to_lookup(
         lookup._pd, ["process", "param", "period"], "v_pd")
     pt_df = lift_dict_to_lookup(
@@ -248,6 +252,7 @@ def derive_pdtProcess_vectorized(input_dir: Path, solve_data_dir: Path,
 
     out = (
         grid
+        .join(pdt_df, on=out_cols, how="left")
         .join(pd_df, on=["process", "param", "period"], how="left")
         .join(pt_df, on=["process", "param", "time"], how="left")
         .join(p_df, on=["process", "param"], how="left")
@@ -262,6 +267,7 @@ def derive_pdtProcess_vectorized(input_dir: Path, solve_data_dir: Path,
     out = out.with_columns(
         coalesce_value([
             pl.col("v_fold"),   # branches 1-2 (fold)
+            pl.col("v_pdt"),    # branch 2b (period x time map, Q13)
             pl.col("v_pd"),     # branch 3 (period-first)
             pl.col("v_pt"),     # branch 4
             pl.col("v_p"),      # branch 5

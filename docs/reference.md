@@ -242,15 +242,15 @@ Units convert energy (or matter) from one form to another (e.g. open cycle gas t
 
 - Capacity: `existing`, the maximum sum of outputs flows, (and the investment and retirement parameters below). Constant or period.
 - Technical: `efficiency`, `min_load`, `efficiency_at_min_load`, `min_uptime`, `min_downtime`
-	- `efficiency` - [factor] Efficiency of the unit. Constant, period, time or stochastic time.
+	- `efficiency` - [factor] Efficiency of the unit. Constant, period, time, period+time or stochastic time.
 	- `min_uptime` - [hours] Minimum time the unit must stay online after starting up. Requires `minimum_time_method` set to *min_uptime* or *both*. The constraint uses a backward-looking formulation that accounts for variable timestep durations. In rolling window models, the solve horizon overlap should be at least as long as the longest `min_uptime`. Constant.
 	- `min_downtime` - [hours] Minimum time the unit must stay offline after shutting down. Requires `minimum_time_method` set to *min_downtime* or *both*. Same considerations as `min_uptime`. Constant.
-	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant, period, time or stochastic time. Applied once per unit, for all timesteps:
+	- `min_load` - [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant, period, time, period+time or stochastic time. Applied once per unit, for all timesteps:
   
       - the sum of the unit's output flows >= min_load * online capacity
       
       The output flows are the ones that define the unit's capacity: all outputs with a non-zero `conversion_flow_coeff` (for a unit with one input and one output, its single flow; for a unit without outputs, its input). Inputs never have their own minimum: a unit with several inputs can run on any mix of them (use `input_share_min` to require a share of an input). The floor is not scaled by `availability`, so a unit whose availability falls below `min_load` cannot be online. `capacity_min_coeff` on an output does not lower this floor; to lower or switch off the minimum load, lower `min_load` (0 switches it off; no value means 0, so a unit with an online variable does not need a `min_load`). Downward reserve (and upward reserve at an input node, i.e. reduced consumption) offered by the unit cannot take its outputs below this floor (see [Reserves](#reserves)).
-	- `efficiency_at_min_load` - [e.g. 0.4 means 40%] Efficiency of a `min_load_efficiency` unit at its minimum load; the fuel use is linear between minimum load at this efficiency and full load at `efficiency`. Matters only for a unit with a `min_load` above 0 (with `min_load` 0 the unit uses `efficiency`). Without a value (or for the periods or timesteps a map leaves out) the unit uses `efficiency` at minimum load too, i.e. a flat curve as with *constant_efficiency*, while its minimum load still applies; a warning names such units. Constant or time.
+	- `efficiency_at_min_load` - [e.g. 0.4 means 40%] Efficiency of a `min_load_efficiency` unit at its minimum load; the fuel use is linear between minimum load at this efficiency and full load at `efficiency`. Matters only for a unit with a `min_load` above 0 (with `min_load` 0 the unit uses `efficiency`). Without a value (or for the periods or timesteps a map leaves out) the unit uses `efficiency` at minimum load too, i.e. a flat curve as with *constant_efficiency*, while its minimum load still applies; a warning names such units. Constant, period, time or period+time.
 
 
   - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant, period, time, period+time or stochastic time.
@@ -363,7 +363,7 @@ Connections can transfer energy between two nodes. Parameters for the connection
 ### Main data items for connections
 
 - `existing` - [MW] Existing capacity. Constant or period.
-- `efficiency` - [factor, typically between 0-1] Efficiency of a connection. Constant, period or time.
+- `efficiency` - [factor, typically between 0-1] Efficiency of a connection. Constant, period, time or period+time.
 - `delay` - [hours] Not yet applied to connections (planned). A connection `delay` is ignored: the connection is modelled exactly as if no delay were set (the flow arrives in the same time step) and the model prints a warning naming the connection. To model a delayed flow between two nodes, use a unit with `delay` instead.
 - `startup_cost` - [CUR/MW] Cost of starting up one MW of virtual capacity (used when `startup_method` activates online variables on the connection).
 - `reactance` - [p.u.] Per-unit reactance of the transmission line. Used for DC power flow when the enclosing `group__node` has `transfer_method = dc_power_flow_with_angles`.

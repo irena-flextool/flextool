@@ -192,11 +192,14 @@ def test_vectorized_pdtProcess_exercises_pbt_fold(tmp_path):
     )
 
 
-def _branch_provider(pd_rows: dict, p_rows: dict, pbt_rows: list):
+def _branch_provider(pd_rows: dict, p_rows: dict, pbt_rows: list, pt_rows: "dict | None" = None,
+                      pdt_rows: "dict | None" = None):
     """Synthetic stochastic provider: anchor ``d1`` with one branch period ``d1_b``
     (``period__branch`` (d1, d1), (d1, d1_b)); ``d1`` has time branch ``b1``."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
+    pt_rows = pt_rows or {}
+    pdt_rows = pdt_rows or {}
     provider = FlexDataProvider()
 
     def put(parent: str, stem: str, df: pl.DataFrame) -> None:
@@ -211,13 +214,18 @@ def _branch_provider(pd_rows: dict, p_rows: dict, pbt_rows: list):
         [(*k, v) for k, v in pd_rows.items()], schema={
             "process": pl.Utf8, "param": pl.Utf8, "period": pl.Utf8,
             "value": pl.Float64}, orient="row"))
-    put("input", "pt_process", pl.DataFrame(schema={
-        "process": pl.Utf8, "param": pl.Utf8, "time": pl.Utf8,
-        "value": pl.Float64}))
+    put("input", "pt_process", pl.DataFrame(
+        [(*k, v) for k, v in pt_rows.items()], schema={
+            "process": pl.Utf8, "param": pl.Utf8, "time": pl.Utf8,
+            "value": pl.Float64}, orient="row"))
     put("input", "p_process", pl.DataFrame(
         [(*k, v) for k, v in p_rows.items()], schema={
             "process": pl.Utf8, "param": pl.Utf8, "value": pl.Float64},
         orient="row"))
+    put("input", "pdt_process", pl.DataFrame(
+        [(*k, v) for k, v in pdt_rows.items()], schema={
+            "process": pl.Utf8, "param": pl.Utf8, "period": pl.Utf8, "time": pl.Utf8,
+            "value": pl.Float64}, orient="row"))
     put("solve_data", "first_timesteps", pl.DataFrame({
         "period": ["d1", "d1_b"], "time_start": ["s1", "s1"]}))
     put("solve_data", "solve_branch__time_branch", pl.DataFrame({
@@ -229,7 +237,7 @@ def _branch_provider(pd_rows: dict, p_rows: dict, pbt_rows: list):
     put("input", "groupIncludeStochastics", pl.DataFrame(schema={
         "group": pl.Utf8}))
     procs = sorted({k[0] for k in pd_rows} | {k[0] for k in p_rows}
-                   | {r[0] for r in pbt_rows})
+                   | {r[0] for r in pbt_rows} | {k[0] for k in pt_rows} | {k[0] for k in pdt_rows})
     put("solve_data", "process_TimeParam_in_use", pl.DataFrame({
         "process": procs, "param": ["oc"] * len(procs)}))
     put("solve_data", "steps_in_use", pl.DataFrame({
@@ -247,12 +255,19 @@ def test_vectorized_pdtProcess_branch_period_inherits_anchor_pd(tmp_path):
     * ``v``: ``d1_b`` authors its own ``pd`` row (9.0) → it wins.
     * ``w``: anchor ``pd`` 5.0 plus a ``pbt`` parent-fold hit for ``d1_b``
       (branch ``b1`` of the anchor) → the fold (7.0) still wins.
+    * ``x``: a genuine period x time (``pdt``) row for the anchor on top of
+      a ``pd`` row AND a ``pt`` row of the same param — the pdt tier
+      outranks both on the anchor, and ``d1_b`` (no pdt row of its own)
+      inherits the anchor's pdt row rather than falling through to ``pd``.
     """
     provider = _branch_provider(
         pd_rows={("u", "oc", "d1"): 3.0, ("v", "oc", "d1"): 4.0,
-                 ("v", "oc", "d1_b"): 9.0, ("w", "oc", "d1"): 5.0},
+                 ("v", "oc", "d1_b"): 9.0, ("w", "oc", "d1"): 5.0,
+                 ("x", "oc", "d1"): 10.0},
         p_rows={("u", "oc"): 1.0},
-        pbt_rows=[("w", "oc", "b1", "s1", "t1", 7.0)])
+        pbt_rows=[("w", "oc", "b1", "s1", "t1", 7.0)],
+        pt_rows={("x", "oc", "t1"): 20.0},
+        pdt_rows={("x", "oc", "d1", "t1"): 30.0})
     inp = tmp_path / "input"
     sdd = tmp_path / "solve_data"
     df_legacy = derive_pdtProcess(inp, sdd, provider=provider)
@@ -264,6 +279,8 @@ def test_vectorized_pdtProcess_branch_period_inherits_anchor_pd(tmp_path):
     assert leg[("v", "d1")] == repr(4.0), leg
     assert leg[("v", "d1_b")] == repr(9.0), leg
     assert leg[("w", "d1_b")] == repr(7.0), leg
+    assert leg[("x", "d1")] == repr(30.0), "pdt must outrank pd and pt on the anchor"
+    assert leg[("x", "d1_b")] == repr(30.0), "d1_b must inherit the anchor's pdt row, not fall through to pd"
     assert df_vec.equals(df_legacy), (
         f"branch-period pd: vectorized != legacy.\n"
         f"legacy:\n{df_legacy}\nvec:\n{df_vec}")

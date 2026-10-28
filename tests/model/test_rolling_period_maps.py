@@ -274,6 +274,133 @@ def test_period_maps_on_nested_investment_sub_solves(tmp_path_factory) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Q13: a genuine period x time (2-D) map of the efficiency family reaches every path, the same as the
+# equivalent 1-D time map (single solve was already equal before the fix; rolling / nested / stochastic
+# rolling fell through to the scalar / def1 / 0 default because neither ``pd_process`` nor ``pt_process``
+# carries a 2-D map).
+
+
+def _mild_curve(base: float, times: list) -> dict:
+    """A +-5% curve of *base* over *times* — any shape works; what matters is that the 2-D map and the
+    1-D time map author the SAME per-time value, so an equal result proves the 2-D map reached the
+    right tier."""
+    return {t: round(base * (0.95 + 0.0006 * i), 6) for i, t in enumerate(times)}
+
+
+def _eff_family_values(times: list, as_2d: bool) -> list:
+    def v(base):
+        curve = _mild_curve(base, times)
+        return ptmap({PERIOD: curve}) if as_2d else tmap(curve)
+
+    return [
+        ["unit", "coal_plant", "efficiency", v(0.5)],
+        ["unit", "hydro_plant", "efficiency", v(1.5)],
+        ["unit", "gas_plant", "conversion_method", b64("min_load_efficiency", "str")],
+        ["unit", "gas_plant", "startup_method", b64("linear", "str")],
+        ["unit", "gas_plant", "min_load", v(0.3)],
+        ["unit", "gas_plant", "efficiency_at_min_load", v(0.6)],
+        ["unit", "gas_plant", "availability", v(0.8)],
+        ["connection", "link", "existing", scalar(100.0)],
+        ["connection", "link", "transfer_method", b64("regular", "str")],
+        ["connection", "link", "efficiency", v(0.7)],
+    ]
+
+
+def test_period_time_2d_maps_equal_time_maps_in_rolls(tmp_path_factory) -> None:
+    """Rolling (``1week_rolling``): a 2-D map ``{period1: {t: v}}`` of unit efficiency / min_load /
+    efficiency_at_min_load / availability and connection efficiency gives the same ``p_slope``,
+    ``p_section``, ``p_flow_upper``, ``p_indirect_input_cap`` and objective as the equivalent 1-D time
+    map, in every roll."""
+    as_2d = _roll(tmp_path_factory, _eff_family_values(T168, as_2d=True))
+    as_1d = _roll(tmp_path_factory, _eff_family_values(T168, as_2d=False))
+    _assert_rolls(as_2d)
+    assert list(as_2d) == list(as_1d)
+    for name, s2 in as_2d.items():
+        d2, d1 = s2.flex_data, as_1d[name].flex_data
+        for field in ("p_slope", "p_section", "p_flow_upper", "p_indirect_input_cap"):
+            assert _canon(getattr(d2, field)).equals(_canon(getattr(d1, field))), (name, field)
+        assert s2.solution.obj == pytest.approx(as_1d[name].solution.obj, rel=1e-9), name
+
+
+def test_period_time_2d_maps_equal_time_maps_on_nested_investment_sub_solves(tmp_path_factory) -> None:
+    """Nested investment (``invest_5weeks``): the same property on the per-period sub-solves. The
+    representative timestep names are shared across ``NESTED_PERIODS`` (discovered from the existing
+    scalar baseline), so the same curve is authored as one ``pdt_process`` block per period (2-D) and as
+    a single ``pt_process`` curve (1-D)."""
+    baseline = _nested(tmp_path_factory, as_map=False)
+    times = sorted({t for step in baseline.values() for t in _frame(step.flex_data.dt)["t"].to_list()})
+    assert times
+
+    def v(base, as_2d):
+        curve = _mild_curve(base, times)
+        return ptmap({p: curve for p in NESTED_PERIODS}) if as_2d else tmap(curve)
+
+    def values(as_2d: bool) -> list:
+        return [["unit", "coal_plant", "efficiency", v(0.5, as_2d)],
+                ["unit", "coal_plant", "conversion_method", b64("min_load_efficiency", "str")],
+                ["unit", "coal_plant", "startup_method", b64("linear", "str")],
+                ["unit", "coal_plant", "min_load", v(0.3, as_2d)],
+                ["unit", "coal_plant", "efficiency_at_min_load", v(0.4, as_2d)],
+                ["solve", "invest_5weeks", "contains_solves",
+                 b64({"type": "array", "value_type": "str", "data": []}, "array")]]
+
+    def run_nested(as_2d: bool) -> dict:
+        key = json.dumps(["nested_q13", as_2d, times])
+        if key not in _RUNS:
+            url, scen = make_db(tmp_path_factory, alt=f"c8_{len(_RUNS)}", values=values(as_2d),
+                                base_chain=NESTED_CHAIN, fixture_json=TESTS_JSON)
+            _RUNS[key] = run(tmp_path_factory, url, scen)
+        return _RUNS[key]
+
+    as_2d, as_1d = run_nested(True), run_nested(False)
+    assert list(as_2d) == list(as_1d) == [f"invest_5weeks_{p}" for p in NESTED_PERIODS]
+    for name, s2 in as_2d.items():
+        d2, d1 = s2.flex_data, as_1d[name].flex_data
+        for field in ("p_slope", "p_section", "p_flow_upper"):
+            assert _canon(getattr(d2, field)).equals(_canon(getattr(d1, field))), (name, field)
+        assert s2.solution.obj == pytest.approx(as_1d[name].solution.obj, rel=1e-9), name
+
+
+def test_period_time_2d_maps_equal_time_maps_in_stochastic_rolling(tmp_path_factory) -> None:
+    """Stochastic rolling (``test_stochastic_time_params``'s ``1_week_rolling_wind`` vehicle):
+    ``coal_plant`` is a stochastic-group entity, so its rolls mint branch periods even though the 2-D
+    map authored here is not itself stochastic — a branch period without its own ``pdt`` row must
+    inherit the anchor's, exactly like the ``pd`` tier does."""
+    from tests.model.test_stochastic_time_params import (
+        _reserve_entities, _roll_values, _run, ROLLING, STOCH_NODE, STOCH_UNIT,
+    )
+
+    def v(base, as_2d):
+        curve = _mild_curve(base, T168)
+        return ptmap({PERIOD: curve}) if as_2d else tmap(curve)
+
+    def values(as_2d: bool) -> list:
+        return _roll_values(labelled=False) + [
+            ["unit", "coal_plant", "conversion_method", b64("min_load_efficiency", "str")],
+            ["unit", "coal_plant", "startup_method", b64("linear", "str")],
+            ["unit", "coal_plant", "efficiency", v(0.5, as_2d)],
+            ["unit", "coal_plant", "min_load", v(0.3, as_2d)],
+            ["unit", "coal_plant", "efficiency_at_min_load", v(0.6, as_2d)],
+        ]
+
+    entities = STOCH_UNIT + STOCH_NODE + _reserve_entities(second=True)
+    as_2d = _run(tmp_path_factory, ROLLING, values(True), entities)
+    as_1d = _run(tmp_path_factory, ROLLING, values(False), entities)
+    assert list(as_2d) == list(as_1d)
+    rolls = [k for k in as_2d if "_roll_" in k]
+    assert len(rolls) == 7, list(as_2d)
+    for name in rolls:
+        d2, d1 = as_2d[name].flex_data, as_1d[name].flex_data
+        periods = set(_canon(d2.p_slope).filter(pl.col("p") == "coal_plant")["d"].to_list())
+        assert periods - {PERIOD}, (name, periods)  # branch periods present: inheritance tier exercised
+        for field in ("p_slope", "p_section"):
+            c2 = _canon(getattr(d2, field)).filter(pl.col("p") == "coal_plant")
+            c1 = _canon(getattr(d1, field)).filter(pl.col("p") == "coal_plant")
+            assert c2.equals(c1), (name, field)
+        assert as_2d[name].solution.obj == pytest.approx(as_1d[name].solution.obj, rel=1e-9), name
+
+
+# ---------------------------------------------------------------------------
 # Silent-``x`` time maps of the efficiency family stay out of ``pd_process`` and ``periodAll``
 
 

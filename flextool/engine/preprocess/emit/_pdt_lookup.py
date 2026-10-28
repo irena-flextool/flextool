@@ -115,6 +115,25 @@ def _read_p(path: Path,
     return out
 
 
+def _read_pdt(path: Path,
+               *, provider: "object | None" = None) -> dict[tuple[str, str, str, str], float]:
+    """5-col frame: (entity, param, period, time, value)."""
+    out: dict[tuple[str, str, str, str], float] = {}
+    df = provider.get(_provider_key(path))
+    if df is None:
+        return out
+    for row in df.iter_rows():
+        if len(row) < 5:
+            continue
+        c0, c1, c2, c3 = _cell_str(row[0]), _cell_str(row[1]), _cell_str(row[2]), _cell_str(row[3])
+        if c0 and c1 and c2 and c3:
+            try:
+                out[(c0, c1, c2, c3)] = float(row[4])
+            except (ValueError, TypeError):
+                continue
+    return out
+
+
 def _read_pt(path: Path,
               *, provider: "object | None" = None) -> dict[tuple[str, str, str], float]:
     """4-col frame: (entity, param, time, value)."""
@@ -401,14 +420,26 @@ class PdLookup:
 # ---------------------------------------------------------------------------
 
 class PdtLookup:
-    """Mod's 7/9-branch ``pdtProcess`` / ``pdtNode`` resolution.
+    """Mod's 7/9-branch ``pdtProcess`` / ``pdtNode`` resolution, plus the ``pdtProcess``-only genuine
+    period × time (``pdt``) tier (Q13).
 
-    Outer index ``(e, param, d, t)``.  Branches in order:
+    Outer index ``(e, param, d, t)``.  Cascade:
+
+        value[e, param, d, t] = fold | pdt[e, param, d, t] | pd[e, param, d] | pt[e, param, t]
+                               | p[e, param] | def1 | class_default | 0
+
+    Branches in order:
 
       1. stochastic-fold: e ∈ groupStochastic-flagged group — sum pbt rows
          over ts ∈ first_timesteps[d], tb ∈ solve_branch[d].
       2. parent-period-fold: for each pe with (pe, d) ∈ period__branch,
          sum pbt rows over ts ∈ first_timesteps[d], tb ∈ solve_branch[pe].
+      2b. pdt row (``pdtProcess`` only — ``pdt_csv`` is ``None`` for
+         ``pdtNode``): a genuine 2-D period × time map, read before
+         pd/pt so it outranks the 1-D tiers for an entity that authors
+         more than one shape of the same parameter.  A stochastic branch
+         period without its own pdt row uses its anchor period's row
+         (:func:`inherit_pd_branch_periods`, same as the pd tier).
       3-4. pt or pd row (order toggled by ``time_first_priority``;
          pdtNode prefers time, pdtProcess prefers period).  A stochastic
          branch period without a pd row of its own uses its anchor
@@ -431,6 +462,7 @@ class PdtLookup:
         group_entity_csv: Path,
         group_stochastic_csv: Path,
         param_def1: frozenset[str],
+        pdt_csv: "Path | None" = None,
         time_first_priority: bool = False,
         class_default_values: dict[str, float] | None = None,
         *,
@@ -440,11 +472,14 @@ class PdtLookup:
         self._pd = _read_pd(pd_csv, provider=provider)
         self._pt = _read_pt(pt_csv, provider=provider)
         self._p = _read_p(p_csv, provider=provider)
+        self._pdt = _read_pdt(pdt_csv, provider=provider) if pdt_csv is not None else {}
         self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d, key_cols=["e", "param", "d"],
                                              period_pos=2, periods=list(self._ts_for_d))
+        self._pdt = inherit_pd_branch_periods(self._pdt, self._pe_for_d, key_cols=["e", "param", "d", "t"],
+                                              period_pos=2, periods=list(self._ts_for_d))
         groups_stoch = frozenset(_read_singles(group_stochastic_csv, provider=provider))
         self._stoch_entity: set[str] = set()
         ge_df = provider.get(_provider_key(group_entity_csv))
@@ -489,6 +524,10 @@ class PdtLookup:
                             hit = True
             if hit:
                 return total
+        # Branch 2b: genuine period x time map (``pdtProcess`` only; always empty for ``pdtNode``).
+        v = self._pdt.get((e, param, d, t))
+        if v is not None:
+            return v
         # Branches 3-4: pt vs pd order toggle.
         if self._time_first:
             v = self._pt.get((e, param, t))
