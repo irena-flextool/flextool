@@ -267,7 +267,7 @@ def test_min_load_and_availability_shapes_same_lp(tmp_path_factory, solve_kind) 
 
 
 # ---------------------------------------------------------------------------
-# input-arc online limit at derated full output (review F2)
+# input-arc online limit at derated full output
 
 
 def _chp_mle(avail: float, *, ramp: bool, extra=None) -> list:
@@ -296,7 +296,7 @@ def test_input_limit_keeps_derated_full_output(tmp_path_factory) -> None:
     (constant-capacity case, no ramp limit) are both input_cap · x(0.8) — the section is drawn per unit
     online, not per available unit — so the output reaches the true derated full output, 0.8 × capacity,
     with or without the ramp limit (#102).  Before: the v_flow bound alone used input_cap · 0.8, capping
-    the no-ramp output below 0.8 × capacity even though the ramp-limited case (already fixed, review F2)
+    the no-ramp output below 0.8 × capacity even though the ramp-limited case (already fixed by the online input rows)
     did not."""
     no_ramp = _last(_solve(tmp_path_factory, "av_noramp", _chp_mle(0.8, ramp=False),
                            chain=("init", "west", "coal_chp", "heat")))
