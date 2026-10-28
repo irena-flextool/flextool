@@ -4,8 +4,9 @@ Mirrors ``_co2_tonnes_this_roll``: for each realized ``(d, t)``
 (``flex_data.realized_dispatch``), per ``v_flow[p, source, sink, d, t]``
 whose ``source`` is a CO2 commodity node — add
 ``content/1000 * value * us * dur * rpw`` (noEff) or that × ``slope``
-× ``fc_sink/fc_source`` (eff, ``p`` ∈ ``process_unit``); per row whose
-``sink`` is a CO2 node — subtract the same flow piece (no slope).
+(eff — ``slope`` already carries a direct unit's conversion_flow_coeff
+ratio, #10 / Q12); per row whose ``sink`` is a CO2 node — subtract the
+same flow piece (no slope).
 Attribute to groups via ``group_node``; combine with the prior roll's
 accumulator carried in the Provider under ``K.HANDOFF_CUMULATIVE_CO2``
 (populated by ``_provider_translators.translate_handoff_to_provider``).
@@ -166,10 +167,6 @@ def compute_co2_rolling_accumulator(
     ).with_columns(branch=lit_axis("noEff", "branch"))
     pss = pl.concat([pss_eff, pss_noeff], how="diagonal")
 
-    process_unit = _set_frame(
-        getattr(flex_data, "process_unit", None), "p",
-    ).with_columns(is_unit=pl.lit(True))
-
     co2_content = _param_frame(
         getattr(flex_data, "p_co2_content", None), "c",
     ).select("c", pl.col("value").alias("content"))
@@ -198,15 +195,6 @@ def compute_co2_rolling_accumulator(
     slope = _param_frame(
         getattr(flex_data, "p_slope", None), "p", "d", "t",
     ).select("p", "d", "t", pl.col("value").alias("slope"))
-
-    fc_source = _param_frame(
-        getattr(flex_data, "p_process_source_conversion_flow_coeff", None),
-        "p", "source",
-    ).select("p", "source", pl.col("value").alias("fc_source"))
-    fc_sink = _param_frame(
-        getattr(flex_data, "p_process_sink_conversion_flow_coeff", None),
-        "p", "sink",
-    ).select("p", "sink", pl.col("value").alias("fc_sink"))
 
     gn_full = _set_frame(
         getattr(flex_data, "group_node", None), "g", "n",
@@ -253,9 +241,6 @@ def compute_co2_rolling_accumulator(
     vf = _ljoin(vf, p_rp_weight, {"rpw": 1.0}, on=["d", "t"])
     vf = _ljoin(vf, unitsize, {"us": 1.0}, left_on="p", right_on="p_us")
     vf = _ljoin(vf, slope, {"slope": 1.0}, on=["p", "d", "t"])
-    vf = _ljoin(vf, fc_sink, {"fc_sink": 1.0}, on=["p", "sink"])
-    vf = _ljoin(vf, fc_source, {"fc_source": 1.0}, on=["p", "source"])
-    vf = _ljoin(vf, process_unit, {"is_unit": False}, on="p")
 
     # Emission branch (source ∈ CO2 nodes).  Skip rows whose pss isn't
     # categorised (branch null) — mirrors the legacy "skip uncategorised".
@@ -268,14 +253,8 @@ def compute_co2_rolling_accumulator(
         .filter(pl.col("content_emis") != 0.0)
         .filter(pl.col("branch").is_not_null())
         .with_columns(
-            coeff=pl.when(pl.col("branch") == "eff")
-                    .then(pl.when(pl.col("is_unit"))
-                            .then(pl.col("fc_sink")
-                                  / pl.when(pl.col("fc_source") != 0.0)
-                                      .then(pl.col("fc_source"))
-                                      .otherwise(1.0))
-                            .otherwise(1.0))
-                    .otherwise(1.0),
+            # ``slope`` already carries a direct unit's conversion_flow_coeff ratio (#10 / Q12),
+            # so no separate fc_sink/fc_source coefficient is applied on top of it.
             slope_used=pl.when(pl.col("branch") == "eff")
                          .then(pl.col("slope")).otherwise(1.0),
         )
@@ -283,7 +262,7 @@ def compute_co2_rolling_accumulator(
             contribution=(
                 pl.col("content_emis") / 1000.0
                 * pl.col("value") * pl.col("us") * pl.col("dur")
-                * pl.col("rpw") * pl.col("slope_used") * pl.col("coeff")),
+                * pl.col("rpw") * pl.col("slope_used")),
             attr_node=pl.col("source"),
         )
         .select("attr_node", alias_to_axis("d", "period"), "contribution"))

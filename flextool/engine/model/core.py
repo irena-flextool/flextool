@@ -1172,6 +1172,9 @@ def _eq_node_balance(b: _Build) -> None:
     #   slope[p,d,t] = 1/eta − section[p,d,t]   (= (1/eta − min_load/eta_min) / (1 − min_load))
     #     for min_load_efficiency units (eta = efficiency, default 1; min_load = 0 where not authored;
     #     eta_min = efficiency_at_min_load, else efficiency); slope = 1/eta and no section for the other units
+    #   on a direct (one-input, one-output) unit, slope and section above are further scaled by
+    #     k_sink/k_src (slope) and 1/k_src (section) — the unit's output/input conversion_flow_coeff
+    #     (default 1 each; a zero coefficient keeps its uncapped-edge meaning instead, unscaled)
     # Energy conservation per node and time step, in MWh.  Storage nodes add
     # the state change; the previous step t⁻ depends on storage_binding_method.
     # nodeStateBlock nodes are balanced per timeset block (nodeBalanceBlock_eq),
@@ -2546,14 +2549,15 @@ def _eq_invest_total_caps(b: _Build) -> None:
     # ─── EQ. ─── max{Invest,Divest}_entity_total[_path][_n] ──────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{d ∈ D(leaf)} v_invest_p[p,d] · unitsize[p]  ≤  max(0, invest_max_total[p] − prior_inv[p])
-    #   ∀ p ∈ e_invest_total ∩ P(v_invest_p) (, leaf)
+    #   ∀ p ∈ e_invest_total ∩ process_source_sink ∩ P(v_invest_p) (, leaf)
     # Σ_{d ∈ D(leaf)} v_divest_p[p,d] · unitsize[p]  ≤  max(0, divest_max_total[p] − prior_div[p])
-    #   ∀ p ∈ e_divest_total ∩ P(v_divest_p) (, leaf)
+    #   ∀ p ∈ e_divest_total ∩ process_source_sink ∩ P(v_divest_p) (, leaf)
     #   prior_inv[e] = p_entity_invested[e]  (capacity realized by all earlier solves of the
     #     chain, retired or not); prior_div[e] = p_entity_divested[e]  (capacity retired by all
     #     earlier solves of the chain, at realized non-branch periods only)
-    #   _n: v_invest_n / v_divest_n with state_unitsize[n];  _path: one row per (entity, leaf),
-    #     D(leaf) = periods of the leaf, only for (entity, leaf) pairs that have the variable
+    #   _n: v_invest_n / v_divest_n with state_unitsize[n], n ∈ nodeState
+    #   _path: one row per (entity, leaf), D(leaf) = periods of the leaf, only for (entity, leaf)
+    #     pairs that have the variable
     # Caps the amount built (retired) over the chain; reinvestments count, retirements do not
     # reduce it.  Capacity in service is cumulative_max_capacity.  Rows only for entities that have
     # the variable in this solve (#43).  If a user realizes a period in one solve and invests in it
@@ -2575,7 +2579,13 @@ def _eq_invest_total_caps(b: _Build) -> None:
     ):
         if not active or not _has_rows(total_set) or max_total is None:
             continue
-        over_e = total_set.pipe(rename_to_axis, {"e": axis}).join(
+        # Entities with flows (process_source_sink) or a state (nodeState) AND the variable: a
+        # Benders region subproblem carries dangling v_invest_p columns of the coupling pipes the
+        # master owns; their cap row belongs to the master only.
+        members = d.process_source_sink if axis == "p" else d.nodeState
+        if not _has_rows(members):
+            continue
+        over_e = _entity_rows(total_set, "e", members, axis).join(
             var.frame.select(axis).unique(), on=axis, how="semi")
         if over_e.height == 0:
             continue
@@ -2613,6 +2623,7 @@ def _eq_conversion(b: _Build) -> None:
     #   slope[p,d,t] = 1/eta − section[p,d,t]   (= (1/eta − min_load/eta_min) / (1 − min_load))
     #     for min_load_efficiency units (eta = efficiency, default 1; min_load = 0 where not authored;
     #     eta_min = efficiency_at_min_load, else efficiency); slope = 1/eta and no section for the other units
+    #     (indirect units never fold conv_in/conv_out into slope/section themselves — see conv_in/conv_out below)
     # Energy balance of an indirect (multi-flow) unit: weighted input equals weighted output times the slope.
     # conv_in / conv_out = source / sink conversion_flow_coeff (default 1); unequal sink coefficients express
     # e.g. the heat/electricity trade-off of an extraction CHP.  The first input sum covers undelayed units;

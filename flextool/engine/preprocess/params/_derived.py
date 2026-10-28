@@ -2810,6 +2810,12 @@ def p_slope_from_source(source: "InputSource",
     (min_load, efficiency_at_min_load) and (1.0, efficiency); per
     audit §3.3.4 / entity_period_calc_params.py:1209-1306.
 
+    On a direct (one-input, one-output) unit, the slope above is further scaled by
+    ``k_sink/k_src``, the unit's output/input ``conversion_flow_coeff`` (default 1 each; #10 / Q12),
+    folded in by :func:`_arithmetic._direct_flow_coef_ratio` — the same ratio the rolling emit seed
+    (``emit._period_params._derive_conversion_trio``) applies.  A zero coefficient keeps its
+    uncapped-edge meaning instead (ratio left at 1, with a warning naming the unit).
+
     Time-varying efficiency Maps are broadcast to the (d, t) grid;
     scalar efficiency is broadcast to the full grid.
 
@@ -2889,6 +2895,17 @@ def p_slope_from_source(source: "InputSource",
                 .then(_mle_slope(pl.col("eta"), pl.col("eta_min"), pl.col("min_load")))
               .otherwise(1.0 / pl.col("eta"))
     )
+    # #10 / Q12: fold a direct unit's output/input conversion_flow_coeff ratio into its slope —
+    # slope = slope⁰·k_sink/k_src (Q-A; _arithmetic._direct_flow_coef_ratio is the shared direct-set
+    # definition with the rolling emit seed, _period_params._derive_conversion_trio).
+    from flextool.engine.preprocess.params._arithmetic import _direct_flow_coef_ratio
+    ratio = _direct_flow_coef_ratio(source)
+    if ratio.height > 0:
+        base = (base.join(ratio.lazy(), on="p", how="left")
+                     .with_columns(
+                         slope=pl.when(pl.col("k_sink").is_not_null())
+                                 .then(pl.col("slope") * pl.col("k_sink") / pl.col("k_src"))
+                                 .otherwise(pl.col("slope"))))
     out = (base.select("p", "d", "t", pl.col("slope").alias("value"))
                 .sort("p", "d", "t")
                 .collect())
@@ -4561,9 +4578,17 @@ def p_section_from_source(source: "InputSource",
         eta_min = efficiency_at_min_load, else efficiency (_mle_eta_min: a flat curve, section exactly 0)
 
     i.e. 1/eta − slope.  Unrounded, and the term ``p_slope_from_source`` subtracts from 1/eta, so the full-load
-    input slope + section is 1/eta (the old flextool rounding of 1/eta and of the slope to 6 decimals left
-    slope + section ≠ 1/eta, #140).  Other ct_methods → no section row; None
+    input slope⁰ + section⁰ is 1/eta (the old flextool rounding of 1/eta and of the slope to 6 decimals left
+    slope⁰ + section⁰ ≠ 1/eta, #140).  Other ct_methods → no section row; None
     when there is no min_load_efficiency unit.
+
+    On a direct (one-input, one-output) unit, the section above is further divided by ``k_src``, the
+    unit's input ``conversion_flow_coeff`` (default 1; #10 / Q12, Q-A — the section is per unit of
+    native output capacity, not weighted by the sink coefficient).  With ``k_src`` ≠ 1 the folded
+    slope + section no longer sums to 1/eta — the identity above is for the unfolded slope⁰/section⁰
+    only.  Folded by :func:`_arithmetic._direct_flow_coef_ratio`, shared with
+    ``p_slope_from_source`` and the rolling emit seed; a zero ``k_src``/``k_sink`` keeps its
+    uncapped-edge meaning instead (ratio left at 1).
     """
     if dt is None or dt.height == 0:
         return None
@@ -4587,8 +4612,19 @@ def p_section_from_source(source: "InputSource",
     base = (base.join(eta_lf, on=["p", "d", "t"], how="left") if eta_lf is not None
             else base.with_columns(eta=pl.lit(None).cast(pl.Float64)))
     base = _mle_curve_inputs(source, dt, base.with_columns(eta=pl.col("eta").fill_null(1.0)))
+    base = base.with_columns(section=_mle_section(pl.col("eta"), pl.col("eta_min"), pl.col("min_load")))
+    # #10 / Q12: fold a direct unit's output/input conversion_flow_coeff ratio into its section —
+    # section = section⁰/k_src (Q-A default; see p_slope_from_source).  No warning here — the DB-direct
+    # zero-coefficient warning is emitted once, by p_slope_from_source.
+    from flextool.engine.preprocess.params._arithmetic import _direct_flow_coef_ratio
+    ratio = _direct_flow_coef_ratio(source, warn=False)
+    if ratio.height > 0:
+        base = (base.join(ratio.lazy().select("p", "k_src"), on="p", how="left")
+                     .with_columns(
+                         section=pl.when(pl.col("k_src").is_not_null())
+                                   .then(pl.col("section") / pl.col("k_src"))
+                                   .otherwise(pl.col("section"))))
     out = (base
-                .with_columns(section=_mle_section(pl.col("eta"), pl.col("eta_min"), pl.col("min_load")))
                 .select("p", "d", "t", pl.col("section").alias("value"))
                 .sort("p", "d", "t")
                 .collect())

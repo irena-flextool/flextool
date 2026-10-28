@@ -84,6 +84,10 @@ from flextool.engine.preprocess.params._derived import (
     _node_unitsize_lf,
     _try_param,
 )
+from flextool.engine.preprocess.params._projection import (
+    process_source_sink_eff,
+    process_unit,
+)
 
 if TYPE_CHECKING:
     from flextool.engine.input._input_source import InputSource
@@ -417,6 +421,97 @@ def _flow_coef_from_source(source: "InputSource",
     if merged.height == 0:
         return zero, None
     return zero, Param(("p", node_role), merged)
+
+
+# ---------------------------------------------------------------------------
+# #10 / Q12 — conversion_flow_coeff ratio on direct (one-input, one-output)
+# units, folded into p_slope / p_section.
+# ---------------------------------------------------------------------------
+#
+# GMPL scaled the fuel-side slope of a direct unit by its output/input
+# conversion_flow_coeff ratio (flextool.mod:1993, 2074, 2233, 2299, 2373,
+# 2786, 4082); the (p, d, t) producers read only p_slope / p_section, never
+# the coefficient Params (built for indirect units only), so the ratio was a
+# no-op for direct units.  :func:`_direct_flow_coef_ratio` is the single
+# definition shared by the DB-direct producers below and the rolling emit
+# seed (``emit._period_params._derive_conversion_trio``).
+
+
+def _direct_flow_coef_ratio(source: "InputSource", *, warn: bool = True) -> pl.DataFrame:
+    """Per-direct-unit ``conversion_flow_coeff`` ratio for folding into the
+    (p, d, t) slope / section terms.
+
+    Direct unit = a process that is both unit-typed
+    (:func:`_projection.process_unit`) and efficiency-bearing
+    (:func:`_projection.process_source_sink_eff` — the DIRECT ct_methods'
+    collapsed single ``(p, source, sink)`` row), joined on ``p`` alone: a
+    direct unit has exactly one input arc and one output arc, so no
+    additional join key is needed.  This is the shared definition the
+    classifier's ``klass == "unit" ∧ fork == "fork_no"`` must not be used
+    for instead — that also matches output-only / input-only units (and
+    would disagree with the rolling emit seed's own set, built from the
+    same ``process_unit`` / ``process_source_sink_eff`` CSVs).
+
+    ``k_src`` / ``k_sink`` are each unit's single ``unit__inputNode`` /
+    ``unit__outputNode`` ``conversion_flow_coeff`` (default 1.0).  A zero
+    coefficient keeps its "uncapped edge" meaning rather than folding into a
+    division by zero or a free input: the ratio for that unit is left at
+    1.0 (unfolded).  ``warn`` gates the one zero-coefficient warning so a
+    build that calls this helper from both ``p_slope_from_source`` and
+    ``p_section_from_source`` logs it once (``p_section_from_source`` passes
+    ``warn=False``); the rolling emit seed never warns (the DB-direct build
+    already did).
+
+    Returns ``[p, k_src, k_sink]``, zero-safe (both columns 1.0 where
+    either coefficient was authored as 0).  Empty when there are no direct
+    units.
+    """
+    pu = process_unit(source)
+    pse = process_source_sink_eff(source)
+    if pu.height == 0 or pse.height == 0:
+        return pl.DataFrame(schema={"p": pl.Utf8, "k_src": pl.Float64, "k_sink": pl.Float64})
+    direct = pu.lazy().join(pse.lazy().select("p", "source", "sink"), on="p", how="inner")
+
+    def _coef(relationship_class: str, side_col: str, value_col: str) -> "pl.LazyFrame | None":
+        df = _try_param(source, relationship_class, "conversion_flow_coeff")
+        if df is None:
+            return None
+        cols = df.columns
+        unit_col = "unit" if "unit" in cols else cols[0]
+        node_col = "node" if "node" in cols else cols[1]
+        return df.lazy().select(
+            alias_to_axis(unit_col, "p"),
+            alias_to_axis(node_col, side_col),
+            pl.col("value").cast(pl.Float64).alias(value_col),
+        )
+
+    k_src_lf = _coef("unit__inputNode", "source", "k_src")
+    base = (direct.join(k_src_lf, on=["p", "source"], how="left") if k_src_lf is not None
+            else direct.with_columns(k_src=pl.lit(None).cast(pl.Float64)))
+    k_sink_lf = _coef("unit__outputNode", "sink", "k_sink")
+    base = (base.join(k_sink_lf, on=["p", "sink"], how="left") if k_sink_lf is not None
+            else base.with_columns(k_sink=pl.lit(None).cast(pl.Float64)))
+    out = (base
+             .with_columns(k_src=pl.col("k_src").fill_null(1.0),
+                           k_sink=pl.col("k_sink").fill_null(1.0))
+             .select("p", "k_src", "k_sink")
+             .sort("p")
+             .collect())
+    zero = out.filter((pl.col("k_src") == 0.0) | (pl.col("k_sink") == 0.0))
+    if zero.height > 0:
+        if warn:
+            logger.warning(
+                "conversion_flow_coeff is 0 on direct unit(s) %s: keeping the uncapped-edge "
+                "meaning there (the k_sink/k_src ratio is not folded into slope/section for "
+                "that unit) rather than dividing by zero or scaling the input to zero.",
+                sorted(zero["p"].cast(pl.Utf8).to_list()),
+            )
+        both_zero = (pl.col("k_src") == 0.0) | (pl.col("k_sink") == 0.0)
+        out = out.with_columns(
+            k_src=pl.when(both_zero).then(1.0).otherwise(pl.col("k_src")),
+            k_sink=pl.when(both_zero).then(1.0).otherwise(pl.col("k_sink")),
+        )
+    return out
 
 
 def p_process_source_conversion_flow_coeff_from_source(

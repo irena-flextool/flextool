@@ -66,21 +66,10 @@ def compute_capacity_and_flows(par, s, v, r) -> None:
         if (method in s.method_1var_per_way and
                 p not in s.process_profile and
                 orig_source == always_source and orig_sink != always_sink):
+            # ``slope[p]`` already carries the direct unit's output/input conversion_flow_coeff
+            # ratio (#10 / Q12 — folded at the source by ``p_slope_from_source`` /
+            # ``_derive_conversion_trio``), so no separate coefficient division is applied here.
             flow_val = flow_val.mul(slope[p], axis=0)
-            if p in s.process_unit:
-                # FlexData only populates
-                # ``p_process_{sink,source}_conversion_flow_coeff`` when a
-                # non-default value is present (default = 1.0).  Use a safe
-                # lookup so direct-method units without explicit coefficients
-                # (the common case) divide by 1.0 instead of raising
-                # KeyError.
-                sink_coef = par.process_sink_conversion_flow_coeff.get(
-                    (p, orig_sink), 1.0,
-                )
-                src_coef = par.process_source_conversion_flow_coeff.get(
-                    (p, orig_source), 1.0,
-                )
-                flow_val /= (sink_coef * src_coef)
             if (p, 'min_load_efficiency') in s.process__ct_method:
                 flow_val = flow_val.add(r.process_online_dt[p] * section[p] * unitsize[p], axis=0)
         r.flow_dt[p, always_source, always_sink] = flow_val

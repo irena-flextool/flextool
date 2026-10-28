@@ -1021,9 +1021,10 @@ def _derive_conversion_trio(
     section as the single solve and slope + section = 1/eta (#140):
 
         conv_rate = 1/eta
-        section   = min_load · (1/eta_min − 1/eta) / (1 − min_load)  (min_load_efficiency only; min_load 0 → 0)
-        slope     = 1/eta − section                                  (min_load_efficiency)
+        section⁰  = min_load · (1/eta_min − 1/eta) / (1 − min_load)  (min_load_efficiency only; min_load 0 → 0)
+        slope⁰    = 1/eta − section⁰                                  (min_load_efficiency)
                   = conv_rate                                        (other processes)
+        slope = slope⁰·k_sink/k_src, section = section⁰/k_src        (#10 / Q12: direct units only)
 
     The slope and section values are computed for the second frame; we share
     the intermediate dicts here so the work isn't duplicated across three independent
@@ -1035,6 +1036,28 @@ def _derive_conversion_trio(
                       provider=provider)
     )
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    # #10 / Q12: direct-unit conversion_flow_coeff ratio, keyed on p — same direct-set definition
+    # (process_unit ∩ p of process_source_sink_eff) as _arithmetic._direct_flow_coef_ratio.  A zero
+    # coefficient keeps its uncapped-edge meaning (ratio 1.0, unfolded); no warning here — the
+    # DB-direct producer (p_slope_from_source) already logs the one zero-coefficient warning.
+    process_unit_set = frozenset(
+        _read_singles(input_dir / "process_unit.csv", provider=provider)
+    )
+    pss_eff_arcs = {
+        p: (src, snk) for (p, src, snk) in
+        _read_triples(solve_data_dir / "process_source_sink_eff.csv", provider=provider)
+    }
+    src_coef = _read_pair_value_dict(
+        input_dir / "p_process_source_conversion_flow_coeff.csv", provider=provider)
+    sink_coef = _read_pair_value_dict(
+        input_dir / "p_process_sink_conversion_flow_coeff.csv", provider=provider)
+    direct_ratio: dict[str, tuple[float, float]] = {}
+    for p in process_unit_set & pss_eff_arcs.keys():
+        src, snk = pss_eff_arcs[p]
+        k_src = src_coef.get((p, src), 1.0)
+        k_sink = sink_coef.get((p, snk), 1.0)
+        direct_ratio[p] = (1.0, 1.0) if (k_src == 0.0 or k_sink == 0.0) else (k_src, k_sink)
 
     eff: dict[tuple[str, str, str], float] = {}
     min_load: dict[tuple[str, str, str], float] = {}
@@ -1089,6 +1112,7 @@ def _derive_conversion_trio(
     for p in processes:
         if p not in process_minload:
             continue
+        k_src, k_sink = direct_ratio.get(p, (1.0, 1.0))
         for (d, t) in dt:
             cr = conv_rate.get((p, d, t), 0.0)
             ml = min_load.get((p, d, t), 0.0)
@@ -1097,13 +1121,16 @@ def _derive_conversion_trio(
             em = eff_min.get((p, d, t)) or eff.get((p, d, t), 0.0)
             denom = 1.0 - ml
             # The float operations of ``_derived._mle_section`` / ``_mle_slope`` in their order (byte parity with
-            # the single solve); a flat curve (em = eff) gives a section of exactly 0.
+            # the single solve); a flat curve (em = eff) gives a section of exactly 0.  Fold the direct-unit
+            # ratio onto the unfolded section⁰/slope⁰ afterwards (#10 / Q12), same order as
+            # ``_derived.p_section_from_source`` / ``p_slope_from_source``.
             v = ml * ((1.0 / em if em else 0.0) - cr) / denom if (ml != 0.0 and denom) else 0.0
-            mle_slope[(p, d, t)] = cr - v
+            slope0 = cr - v
+            mle_slope[(p, d, t)] = slope0 * k_sink / k_src
             sec_p.append(p)
             sec_d.append(d)
             sec_t.append(t)
-            sec_v.append(repr(v))
+            sec_v.append(repr(v / k_src))
     section_frame = _utf8_frame({
         "process": sec_p, "period": sec_d, "time": sec_t, "value": sec_v,
     })
@@ -1115,9 +1142,10 @@ def _derive_conversion_trio(
     sl_v: list[str] = []
     for p in processes:
         in_min = p in process_minload
+        k_src, k_sink = direct_ratio.get(p, (1.0, 1.0))
         for (d, t) in dt:
             cr = conv_rate.get((p, d, t), 0.0)
-            v = mle_slope.get((p, d, t), cr) if in_min else cr
+            v = mle_slope.get((p, d, t), cr * k_sink / k_src) if in_min else cr * k_sink / k_src
             sl_p.append(p)
             sl_d.append(d)
             sl_t.append(t)
@@ -1784,6 +1812,31 @@ def _read_triples(path: Path,
         c0, c1, c2 = _cell_str(row[0]), _cell_str(row[1]), _cell_str(row[2])
         if c0 and c1 and c2:
             out.append((c0, c1, c2))
+    return out
+
+
+def _read_pair_value_dict(path: Path,
+                          *, provider: "object | None" = None,
+                          ) -> dict[tuple[str, str], float]:
+    """Read a ``(process, node, value)`` CSV into ``dict[(process, node)] = float(value)``.
+
+    Mirrors :func:`_read_triples` but parses the third column as a float; used for the
+    direct-unit ``conversion_flow_coeff`` fold (#10 / Q12) in :func:`_derive_conversion_trio`.
+    """
+    out: dict[tuple[str, str], float] = {}
+    df = provider.get(_provider_key(path))
+    if df is None:
+        return out
+    for row in df.iter_rows():
+        if len(row) < 3:
+            continue
+        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
+        if not (c0 and c1):
+            continue
+        try:
+            out[(c0, c1)] = float(row[2])
+        except (ValueError, TypeError):
+            continue
     return out
 
 
