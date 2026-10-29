@@ -618,6 +618,22 @@ class FlexData:
     flow_to_co2_capped_total: pl.DataFrame | None = None
     p_co2_max_total: Param | None = None         # (g,)
 
+    # ─── CO2 cap rolling / chained carry (#38, Q22) ────────────────────────
+    # co2_max_period and co2_max_total each got the full cap again on every roll / chained solve (no
+    # accumulator fed the LP) — over-allowing roughly by the number of rolls.  The owner's fix (Q15,
+    # reused for Q22) mirrors the commodity ladder's realized-based carried budget: this roll's cap is
+    # "budget allocated up to the end of this roll's horizon minus what earlier rolls/solves realized",
+    # never negative by construction.  p_co2_f_d_k is the raw solve_data/f_d_k.csv Param (d,) — the
+    # same per-period "share of d's hours reached by the end of this roll's horizon" the ladder's
+    # annual tier cap uses, read independently of the ladder gate (f_d_k.csv is always emitted).
+    # p_co2_cum_realized_tonnes (g, d) is the cumulative_co2 handoff carrier, net of removal credits
+    # (#19). co2_horizon_fraction_reached is the whole-chain fraction (years_represented-weighted) that
+    # p_co2_max_total scales by. See _load_co2_rolling_carry and model/core.py's co2_max_period /
+    # co2_max_total EQ headers.
+    p_co2_f_d_k: Param | None = None             # (d,)
+    p_co2_cum_realized_tonnes: Param | None = None  # (g, d)
+    co2_horizon_fraction_reached: float = 1.0
+
     # ─── Indirect-conversion (CHP) ────────────────────────────────────────
     process_indirect: pl.DataFrame | None = None
     process_input_flows: pl.DataFrame | None = None
@@ -1740,6 +1756,70 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     if flow_eff is None and flow_noEff is None:
         return (None, None, None, None, None)
     return (g_max, flow_eff, flow_noEff, p_cap, flow_to_co2_capped_total)
+
+
+def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
+    """``(p_co2_f_d_k, p_co2_cum_realized_tonnes, horizon_fraction_reached)`` for the CO2 cap
+    rolling / chained carry (#38, Q22).
+
+    ``p_co2_f_d_k`` — the raw ``solve_data/f_d_k.csv`` Param ``(d,)``: the same per-period "share of
+    d's hours reached by the end of this roll's horizon" the commodity ladder's annual tier cap uses
+    (``_commodity_ladder._eq_tier_cap_annual``), read straight off the Provider — the file is always
+    emitted — rather than through ``flex_data.p_f_d_k``, which stays ``None`` without a price-ladder
+    commodity (``p_f_d_k_from_source`` gates on that). ``None`` when the file is absent or empty;
+    consumers then treat every period as fully reached (1.0), the pre-fix behaviour.
+
+    ``p_co2_cum_realized_tonnes`` — tonnes already realized per ``(group, period)``, net of removal
+    credits (#19): the ``cumulative_co2`` handoff carrier (``preprocess/emit/_co2_accumulators.py``).
+    ``None`` on the first solve of a chain (no prior carrier); consumers then treat realized as 0.
+
+    ``horizon_fraction_reached`` — ``Σ_d years_represented[d]·f_d_k[d] / Σ_d years_represented[d]``,
+    over every period of the whole chain (``solve_data/p_years_represented.csv``, the solve's static
+    period→year map, not dt-pruned — the same un-pruned source the ladder's cumulative tier cap reads
+    for its own carried weight, ``p_ladder_cum_weight``). The fraction of the chain's total represented
+    years reached by the end of this roll — scales ``co2_max_total``'s fixed whole-horizon budget down
+    to "allocated so far". ``1.0`` (the old, full-cap-every-roll behaviour) outside rolling / chained
+    solves, or when either CSV is unavailable (a fixture that skips the derived-param pass).
+    """
+    if provider is None:
+        return None, None, 1.0
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
+
+    fdk_df = None
+    if _provider_has(provider, "solve_data/f_d_k", sd / "f_d_k.csv"):
+        raw = _provider_read(provider, "solve_data/f_d_k", sd / "f_d_k.csv")
+        if raw is not None and raw.height > 0 and {"period", "value"}.issubset(raw.columns):
+            fdk_df = (raw.pipe(rename_to_axis, {"period": "d"})
+                      .with_columns(pl.col("value").cast(pl.Float64, strict=False))
+                      .select("d", "value"))
+            if fdk_df.height == 0:
+                fdk_df = None
+    p_fdk = Param(("d",), fdk_df) if fdk_df is not None else None
+
+    realized_raw = read_handoff_frame(provider, K.HANDOFF_CUMULATIVE_CO2)
+    p_realized = None
+    if realized_raw is not None and realized_raw.height > 0:
+        realized_df = (realized_raw.pipe(rename_to_axis, {"group": "g", "period": "d"})
+                       .with_columns(pl.col("value").cast(pl.Float64, strict=False))
+                       .select("g", "d", "value"))
+        if realized_df.height > 0:
+            p_realized = Param(("g", "d"), realized_df)
+
+    fraction_reached = 1.0
+    if _provider_has(provider, "solve_data/p_years_represented", sd / "p_years_represented.csv"):
+        pyr = _provider_read(provider, "solve_data/p_years_represented", sd / "p_years_represented.csv")
+        if pyr is not None and pyr.height > 0 and {"period", "p_years_represented"}.issubset(pyr.columns):
+            years = (pyr.pipe(rename_to_axis, {"period": "d"})
+                     .with_columns(pl.col("p_years_represented").cast(pl.Float64, strict=False))
+                     .group_by("d").agg(pl.col("p_years_represented").sum().alias("years")))
+            total_years = float(years["years"].sum())
+            if total_years > 0.0 and fdk_df is not None:
+                reached = (years.join(fdk_df.rename({"value": "fdk"}), on="d", how="left")
+                           .with_columns(pl.col("fdk").fill_null(0.0)))
+                fraction_reached = min(
+                    float((reached["years"] * reached["fdk"]).sum()) / total_years, 1.0)
+    return p_fdk, p_realized, fraction_reached
 
 
 def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
@@ -4196,6 +4276,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
          co2_max_total_p, flow_co2_cap_total_rem) = _load_co2_cap_total(
             inp, sd, proc["pss_eff"], pss_noEff=proc.get("pss_noEff"),
             pss=proc.get("pss"), provider=provider)
+        co2_f_d_k, co2_cum_realized, co2_horizon_fraction = _load_co2_rolling_carry(
+            sd, provider=provider)
 
         (indir_set, indir_in, indir_out, indir_dt,
          p_source_flow_coef, p_sink_flow_coef) = _load_indirect(
@@ -4389,6 +4471,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
             flow_from_co2_capped_total_noEff = flow_co2_cap_total_noEff,
             flow_to_co2_capped_total = flow_co2_cap_total_rem,
             p_co2_max_total = co2_max_total_p,
+            p_co2_f_d_k = co2_f_d_k,
+            p_co2_cum_realized_tonnes = co2_cum_realized,
+            co2_horizon_fraction_reached = co2_horizon_fraction,
 
             process_indirect = indir_set,
             process_input_flows = indir_in,

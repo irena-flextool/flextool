@@ -1,5 +1,18 @@
 ## Unreleased
 
+- **A group's per-period and whole-horizon CO2 caps now carry a remaining budget across the rolls
+  of a rolling solve and across the solves of a chain, instead of re-granting the full cap every
+  time.** Both caps used to recompute the allowed emissions from the fixed input cap on every roll
+  / solve, with no memory of what had already happened, so a period touched by several rolling
+  windows could be allowed its full per-window share on each of them — over-allowing roughly in
+  proportion to the number of rolls or chained solves touching it. Each roll's / solve's cap is now
+  "the budget allocated up to the end of this roll's horizon, minus what earlier rolls or solves
+  already emitted" (the same mechanism the commodity price ladder's rolling budget already used),
+  so the remaining room only ever shrinks by what was actually realized. A single, non-rolling,
+  non-chained solve is unaffected. The internal CO2 accumulator that tracks realized emissions
+  across rolls also now counts a min-load-efficiency unit's part-load fuel, which it previously
+  missed.
+
 - **A flow into a CO2-priced or CO2-capped node now earns a removal credit, instead of being
   ignored by the solve while the results already reported it as a credit.** Modelling CO2 removal
   (e.g. direct air capture or bio-energy with carbon capture) as a flow into a CO2-content

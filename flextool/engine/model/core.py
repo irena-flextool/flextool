@@ -184,10 +184,13 @@ def _check_covers_dt(d, field: str, feature: str, *, positive: bool = False) -> 
     """Raise if the (d,)-keyed Param ``field`` lacks a period of ``dt`` (or, with ``positive``, has a
     value that is not finite and above 0).
 
-    co2_max_total multiplies each period's emissions by its years (``p_years_represented_d``) and
-    co2_max_period scales each period's cap by its window fraction (``p_window_fraction``); a period
-    without a row would silently drop out of the cap, and a zero fraction would set the cap to 0.  The
-    loader builds both Params over the dt periods, so a gap is a loader bug."""
+    co2_max_total multiplies each period's emissions by its years (``p_years_represented_d``); a period
+    without a row would silently drop out of the cap.  ``p_window_fraction`` is still required /
+    validated here for co2_max_period (CO2_CAP) even though its cap row no longer multiplies by it
+    directly (#38, Q22 replaced that with the cumulative ``p_co2_f_d_k`` carry, see
+    ``_co2_period_cap_with_carry``) — the check is cheap dt-completeness insurance kept for whatever
+    else may still read it. A zero fraction would set a window-fraction-driven cap to 0.  The loader
+    builds both Params over the dt periods, so a gap is a loader bug."""
     frame = getattr(d, field).frame
     have = set(frame["d"].cast(pl.Utf8).to_list())
     missing = [p for p in d.dt["d"].cast(pl.Utf8).unique(maintain_order=True).to_list() if p not in have]
@@ -2774,6 +2777,46 @@ def _eff_fuel_input(b: _Build, arcs: pl.DataFrame) -> list[tuple[str, Expr]]:
     return terms
 
 
+def _co2_period_cap_with_carry(d) -> Param:
+    """co2_max_period's remaining budget (Q22): allocated up to the end of this roll's horizon minus
+    what earlier rolls already realized -- the commodity ladder's realized-based carried-budget pattern
+    (#89/#143), reused here because, unmodified, ``co2_max_period`` has the exact bug #38 names for
+    ``co2_max_total``: a period that straddles several overlapping rolling windows (e.g. a 30h window on
+    a 6h jump) gets the FULL per-window cap again on every one of those rolls, since nothing carries
+    what was already realized -- over-allowing roughly by the number of rolls touching the period.
+
+    cap[g,d] = co2_max_period[g,d]·f_d_k[d] − co2_cum_realized_tonnes[g,d] / period_share[d]
+
+    f_d_k[d] -- ``p_co2_f_d_k``, the raw ``solve_data/f_d_k.csv`` Param, 1.0 when it has no row for
+    ``d`` or is absent entirely (the old, full-cap-every-roll behaviour) -- is the per-period "share of
+    d's hours reached by the end of this roll's horizon": CUMULATIVE across rolls (folds a finished
+    period in at 1.0, #143), unlike ``p_window_fraction`` (still validated for dt-completeness, no
+    longer used here), which only measures this roll's OWN window and is not safe to subtract a
+    cross-roll realized carrier against (it can shrink roll-to-roll independent of what was realized,
+    driving the remainder negative). Dividing the realized carrier by period_share clears the same
+    /period_share the EQ's own LHS carries, so the row is, after that cancels, "this roll's own raw
+    window emissions ≤ rate[g,d]·(hours reached so far) − realized tonnes" — feasible by construction:
+    an earlier roll could only realize part of its own, smaller, earlier allocation.
+    """
+    keys = d.group_d_co2_capped.select("g", "d").unique()
+    cap = keys.join(d.p_co2_max_period.frame.rename({"value": "cap"}), on=["g", "d"], how="left")
+    fdk = getattr(d, "p_co2_f_d_k", None)
+    if fdk is not None:
+        cap = (cap.join(fdk.frame.rename({"value": "fdk"}), on="d", how="left")
+               .with_columns(pl.col("fdk").fill_null(1.0)))
+    else:
+        cap = cap.with_columns(fdk=pl.lit(1.0))
+    cap = cap.join(d.p_period_share.frame.rename({"value": "share"}), on="d", how="left")
+    realized = getattr(d, "p_co2_cum_realized_tonnes", None)
+    if realized is not None:
+        cap = (cap.join(realized.frame.rename({"value": "realized"}), on=["g", "d"], how="left")
+               .with_columns(pl.col("realized").fill_null(0.0)))
+    else:
+        cap = cap.with_columns(realized=pl.lit(0.0))
+    cap = cap.with_columns(value=pl.col("cap") * pl.col("fdk") - pl.col("realized") / pl.col("share"))
+    return Param(("g", "d"), cap.select("g", "d", "value"))
+
+
 def _eq_co2_max_period(b: _Build) -> None:
     """CO2 emission cap per period."""
     if not b.has_co2_cap:
@@ -2788,14 +2831,15 @@ def _eq_co2_max_period(b: _Build) -> None:
     #     · co2_content[c]·w[d,t]
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_noEff, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
     #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
-    #   ≤ co2_max_period[g,d] · window_fraction[d]
+    #   ≤ co2_max_period[g,d] · f_d_k[d]  −  co2_cum_realized_tonnes[g,d] / period_share[d]
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
-    #   window_fraction[d] = (Σ_t step_duration[d,t] / 8760) / period_share[d]  (1 outside rolling solves)
     # Caps the annualised CO2 emissions of a group in each period (tonnes per year): dividing by
-    # window_fraction, the LHS is the emissions of the solve's own steps of d annualised over their hours.
-    # In a rolling solve period_share is the complete solve's share, so the cap is scaled to the roll's
-    # window (realized part and look-ahead, per period); the dual keeps the objective's weighting.  Each
-    # roll caps the rate of its window, not the realized total of the period.  Emissions come from
+    # period_share, the LHS is the emissions of the solve's own steps of d annualised over their hours.
+    # The RHS (_co2_period_cap_with_carry) is this period's remaining budget as of this roll: f_d_k[d]
+    # (1 outside rolling / chained solves) is the cumulative share of d's hours reached by the end of
+    # this roll's horizon, and the realized carrier (0 on the first solve of a chain) is what earlier
+    # rolls / solves already emitted for this exact period, net of removal credits (#19) — never
+    # negative by construction (#38, Q22; see the helper's own docstring).  Emissions come from
     # the fuel that processes draw from the group's nodes when it carries a CO2-emitting commodity c,
     # measured as in co2_price_eff (_eff_fuel_input): on eff processes the output flow times slope plus,
     # for min_load_efficiency units (linear and integer v_online), the section fuel of the units online.
@@ -2830,8 +2874,37 @@ def _eq_co2_max_period(b: _Build) -> None:
         over      = d.group_d_co2_capped,
         sense     = "<=",
         lhs_terms = lhs,
-        rhs_terms = {"cap": d.p_co2_max_period * d.p_window_fraction},
+        rhs_terms = {"cap": _co2_period_cap_with_carry(d)},
     )
+
+
+def _co2_total_cap_with_carry(d) -> Param:
+    """co2_max_total's remaining budget (#38): allocated up to the end of this roll's horizon minus
+    what earlier rolls / chained solves already realized -- same carried-budget pattern as
+    :func:`_co2_period_cap_with_carry`.  Unlike the ladder's ``quantity_cum`` (a per-year rate that
+    needs replicating across the years elapsed so far), ``co2_max_total`` is already an absolute
+    tonnes-over-the-whole-horizon cap, so its allocated-so-far share needs only the horizon-fraction
+    scaling, no further annualisation.
+
+    cap[g] = co2_max_total[g] · horizon_fraction_reached  −  Σ_d co2_cum_realized_tonnes[g,d]
+
+    horizon_fraction_reached (``flex_data.co2_horizon_fraction_reached``, 1.0 outside rolling / chained
+    solves) is Σ_d years_represented[d]·f_d_k[d] / Σ_d years_represented[d] over every period of the
+    whole chain (not just this roll's own dt) — the years_represented-weighted share of the chain's
+    total represented years reached by the end of this roll.  Realized is summed over every period
+    (unlike the per-period cap, this is a single whole-horizon budget) and is net of removal credits
+    (#19); 0 on the first solve of a chain.
+    """
+    cap = (d.group_co2_max_total.select("g").unique()
+           .join(d.p_co2_max_total.frame.rename({"value": "cap"}), on="g", how="left")
+           .with_columns(cap=pl.col("cap") * d.co2_horizon_fraction_reached))
+    realized = getattr(d, "p_co2_cum_realized_tonnes", None)
+    if realized is not None:
+        realized_g = realized.frame.group_by("g").agg(pl.col("value").sum().alias("realized"))
+        cap = cap.join(realized_g, on="g", how="left").with_columns(pl.col("realized").fill_null(0.0))
+    else:
+        cap = cap.with_columns(realized=pl.lit(0.0))
+    return Param(("g",), cap.with_columns(value=pl.col("cap") - pl.col("realized")).select("g", "value"))
 
 
 def _eq_co2_max_total(b: _Build) -> None:
@@ -2849,15 +2922,19 @@ def _eq_co2_max_total(b: _Build) -> None:
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total_noEff, d,t}
     #     v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
     #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped_total, d,t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
-    #   ≤ co2_max_total[g]
+    #   ≤ co2_max_total[g] · horizon_fraction_reached  −  Σ_d co2_cum_realized_tonnes[g,d]
     #   ∀ g ∈ group_co2_max_total;   w_y = step_duration · timestep_weight / period_share · years_represented[d]
     # Caps the CO2 emissions of a group over the horizon the solve represents (tonnes): each period's
     # annualised emissions (as in co2_max_period, section fuel included) times the years the period
     # represents, summed over the periods — the measure of the model CO2 output.  years_represented is not
-    # discounted.  Each solve of a chain and each roll of a rolling solve gets the full cap for only its
-    # own periods / window, so there the cap binds more loosely than intended (known limitation).  The
-    # removal term (#19, Q14) mirrors co2_max_period's: flows into the same group's node(s), unsplit, no
-    # slope; it only loosens the cap.
+    # discounted.  The RHS (_co2_total_cap_with_carry) is the remaining budget as of this roll: without it,
+    # each solve of a chain and each roll of a rolling solve got the FULL cap again for only its own
+    # periods / window, over-allowing roughly by the number of rolls / chained solves (#38) — fixed the
+    # same way the commodity ladder's cumulative tier cap was (#89/#143): horizon_fraction_reached scales
+    # the fixed whole-horizon budget down to what's allocated so far, and the realized carrier (0 on the
+    # first solve of a chain) — net of removal credits (#19) — is subtracted; never negative by
+    # construction.  The removal term (#19, Q14) mirrors co2_max_period's: flows into the same group's
+    # node(s), unsplit, no slope; it only loosens the cap.
     lhs: dict = {}
     if b.has_co2_cap_total_eff:
         for key, term in _eff_fuel_input(b, d.flow_from_co2_capped_total):
@@ -2889,7 +2966,7 @@ def _eq_co2_max_total(b: _Build) -> None:
         over      = d.group_co2_max_total,
         sense     = "<=",
         lhs_terms = lhs,
-        rhs_terms = {"cap": d.p_co2_max_total},
+        rhs_terms = {"cap": _co2_total_cap_with_carry(d)},
     )
 
 
