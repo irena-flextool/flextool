@@ -75,11 +75,14 @@ def _flex_data_of(tmp_path_factory, data: dict, scenario: str, tag: str, *, step
 
 def _patch_ladder_ann_depth2_exact(data: dict) -> dict:
     """``coal_ladder_annual``'s depth-3 ladder, re-authored as the depth-2 form with EXACTLY the same tier
-    values (including tier 2's genuine ``Infinity`` quantity -- ``tools/lp_snapshot.py``'s own
+    values (including tier 3's genuine ``Infinity`` quantity -- ``tools/lp_snapshot.py``'s own
     ``ladder_ann_depth2`` patch uses ``1e30`` instead, an approximation that is LP-equivalent but not
-    byte-equal to the labelled twin's raw value, which this test compares directly)."""
+    byte-equal to the labelled twin's raw value, which this test compares directly).  Depth 2 is
+    period-invariant, which matches the base fixture exactly because its depth-3 ladder repeats the same
+    three tiers for every period."""
     ladder = {"index_type": "str", "rank": 2, "index_name": "x",
-              "data": [["1", _tier(20.0, 1.0)], ["2", _tier(30.0, float("inf"))]]}
+              "data": [["1", _tier(20.0, 100000.0)], ["2", _tier(25.0, 100000.0)],
+                       ["3", _tier(30.0, float("inf"))]]}
     data["parameter_values"] = [
         v for v in data["parameter_values"]
         if not (v[0] == "commodity" and v[1] == "coal" and v[2] == "price_ladder_annual"
@@ -108,7 +111,8 @@ def _patch_ladder_cum_silent_exact(data: dict) -> dict:
     values (see ``_patch_ladder_ann_depth2_exact``'s docstring for why this doesn't reuse
     ``tools/lp_snapshot.py``'s own ``ladder_cum_silent`` patch)."""
     ladder = {"index_type": "str", "rank": 2, "index_name": "x",
-              "data": [["1", _tier(20.0, 1.0)], ["2", _tier(30.0, float("inf"))]]}
+              "data": [["1", _tier(20.0, 1000000.0)], ["2", _tier(25.0, 1000000.0)],
+                       ["3", _tier(30.0, float("inf"))]]}
     data["parameter_values"] = [
         v for v in data["parameter_values"]
         if not (v[0] == "commodity" and v[1] == "coal" and v[2] == "price_ladder_cumulative"
@@ -135,10 +139,14 @@ def test_cumulative_x_on_both_levels_matches_labelled(tmp_path_factory):
 def _patch_ladder_ann_all_x(data: dict) -> dict:
     """``coal_ladder_annual``'s depth-3 ladder, re-authored with ``index_name="x"`` on every level (period,
     tier AND facet) instead of just the facet.  Before the fix: ``[name, x, x_2, x_3, value]``, with no
-    ``period`` or ``tier`` column at all, so the literal column-name check returned ``(None, None)``."""
+    ``period`` or ``tier`` column at all, so the literal column-name check returned ``(None, None)``.
+    The base fixture repeats the same three tiers for every one of its four periods (p2020, p2025, p2030,
+    p2035), so this re-authoring must do the same to stay an exact match of the labelled twin."""
+    tier_map = {"type": "map", "index_type": "str", "rank": 2, "index_name": "x",
+                "data": [["1", _tier(20.0, 100000.0)], ["2", _tier(25.0, 100000.0)],
+                         ["3", _tier(30.0, float("inf"))]]}
     ladder = {"index_type": "str", "rank": 3, "index_name": "x",
-              "data": [["p2020", {"type": "map", "index_type": "str", "rank": 2, "index_name": "x",
-                                  "data": [["1", _tier(20.0, 1.0)], ["2", _tier(30.0, float("inf"))]]}]]}
+              "data": [[p, tier_map] for p in ("p2020", "p2025", "p2030", "p2035")]}
     data["parameter_values"] = [
         v for v in data["parameter_values"]
         if not (v[0] == "commodity" and v[1] == "coal" and v[2] == "price_ladder_annual"
@@ -184,10 +192,12 @@ def test_mixed_depths_each_commodity_keeps_its_own(tmp_path_factory):
     data = _patch_ladder_mixed_depths(data)
     fd = _flex_data_of(tmp_path_factory, data, "ladder_mixed_depths", "lad_d")
 
-    # coal: depth-3, one row per authored tier (p2020 only, as authored).
+    # coal: depth-3, one row per authored tier (p2020 only -- the sole period realized by
+    # ``coal_ladder_annual``'s non-rolling base solve, even though tests.json's ``ladder_ann_on``
+    # authors the same three tiers for p2025/p2030/p2035 too for the rolling-chain debug cases).
     coal_rows = fd.p_ladder_ann_price.frame.filter(pl.col("c").cast(pl.Utf8) == "coal").sort("i")
-    assert coal_rows["d"].to_list() == ["p2020", "p2020"]
-    assert coal_rows["value"].to_list() == [20.0, 30.0]
+    assert coal_rows["d"].to_list() == ["p2020", "p2020", "p2020"]
+    assert coal_rows["value"].to_list() == [20.0, 25.0, 30.0]
 
     # coal2: depth-2, cross-joined with every one of the solve's own periods.
     coal2_rows = fd.p_ladder_ann_price.frame.filter(pl.col("c").cast(pl.Utf8) == "coal2").sort("i", "d")
@@ -197,7 +207,7 @@ def test_mixed_depths_each_commodity_keeps_its_own(tmp_path_factory):
     assert coal2_rows.filter(pl.col("i") == "2")["value"].to_list() == [60.0] * len(solve_periods)
 
     tiers = fd.commodity__tier_ann.sort("c", "i")
-    assert tiers.filter(pl.col("c").cast(pl.Utf8) == "coal")["i"].to_list() == ["1", "2"]
+    assert tiers.filter(pl.col("c").cast(pl.Utf8) == "coal")["i"].to_list() == ["1", "2", "3"]
     assert tiers.filter(pl.col("c").cast(pl.Utf8) == "coal2")["i"].to_list() == ["1", "2"]
 
 

@@ -1635,7 +1635,8 @@ def _patch_ladder_ann_depth2(data: dict) -> dict:
                 "data": [["price", price], ["quantity", quantity]]}
 
     ladder = {"index_type": "str", "rank": 2, "index_name": "tier",
-              "data": [["1", tier(20.0, 1.0)], ["2", tier(30.0, 1e30)]]}
+              "data": [["1", tier(20.0, 100000.0)], ["2", tier(25.0, 100000.0)],
+                       ["3", tier(30.0, 1e30)]]}
     data["parameter_values"] = [
         v for v in data["parameter_values"]
         if not (v[0] == "commodity" and v[1] == "coal" and v[2] == "price_ladder_annual" and v[4] == "ladder_ann_on")]
@@ -1670,7 +1671,8 @@ def _patch_ladder_cum_silent(data: dict) -> dict:
                 "data": [["price", price], ["quantity", quantity]]}
 
     ladder = {"index_type": "str", "rank": 2, "index_name": "x",
-              "data": [["1", tier(20.0, 1.0)], ["2", tier(30.0, 1e30)]]}
+              "data": [["1", tier(20.0, 1000000.0)], ["2", tier(25.0, 1000000.0)],
+                       ["3", tier(30.0, 1e30)]]}
     data["parameter_values"] = [
         v for v in data["parameter_values"]
         if not (v[0] == "commodity" and v[1] == "coal" and v[2] == "price_ladder_cumulative"

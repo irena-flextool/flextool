@@ -10,9 +10,10 @@ fixture and verify the extraction.
 The ``work_commodity_ladder_cumulative`` fixture is the natural test:
 
 * 2-day single-period dispatch (48 hourly timesteps × 1 h step duration).
-* Coal commodity with a 2-tier price ladder (cumulative variant):
-    - tier 1: 20 €/MWh capped at 1 MWh cumulative,
-    - tier 2: 30 €/MWh, +∞ cap (absorbs overflow).
+* Coal commodity with a 3-tier price ladder (cumulative variant):
+    - tier 1: 20 €/MWh capped at 1,000,000 MWh cumulative,
+    - tier 2: 25 €/MWh capped at 1,000,000 MWh cumulative,
+    - tier 3: 30 €/MWh, +∞ cap (absorbs overflow).
 * Single solve → no prior_handoff; the carriers are this-roll-only.
 
 Hand-derivation
@@ -27,11 +28,15 @@ Per the legacy ladder rolling accumulator algorithm:
     cum_sim_hours[p2020]                = 48             (this-roll = horizon)
     cumulative_commodity[coal, 1, p2020] = Σ_n v_trade[coal, n, p2020, 1]
                                               × unitsize[coal] × fraction
-                                          ≈ 1.0          (tier 1 binds at cap)
 
-Tier 2 (quantity = 1e30 infinity sentinel) is intentionally excluded
+The 2-day coal demand is far below the 1,000,000 MWh tier-1 cap, so
+tier 1 absorbs it all without binding; tier 2 (finite, also unused)
+materialises at 0.  The exact MWh total is cross-checked against
+``v_trade`` directly in the test below rather than hard-coded here.
+
+Tier 3 (quantity = 1e30 infinity sentinel) is intentionally excluded
 from the carrier — B1 parity with the legacy
-``_load_finite_ladder_tiers`` filter.  The
+``_load_finite_ladder_tiers`` filter, which only keeps finite tiers.  The
 mod's ``p_ladder_cum_realized_mwh`` defaults to 0 for any
 unspecified ``(c, i, d)`` triple so an infinite-cap tier's absent
 row collapses to the same 0-default the on-disk format produces.
@@ -110,38 +115,39 @@ def test_cumulative_commodity_extracted_from_v_trade(_fixture):
     B1 — infinite-cap tiers (quantity >= 1e29 sentinel) are filtered
     out of the carrier, mirroring legacy
     ``write_ladder_rolling_accumulators`` which only persists rows for
-    ``_load_finite_ladder_tiers``.  This fixture has tier-1 (quantity =
-    1.0) finite and tier-2 (quantity = 1e30) infinite, so only the
-    tier-1 row materialises.  The mod's ``p_ladder_cum_realized_mwh``
-    defaults to 0 for unspecified ``(c, i, d)`` triples so infinite
-    tiers are silently 0 anyway — the on-disk byte parity stays intact.
+    ``_load_finite_ladder_tiers``.  This fixture has tier-1 and tier-2
+    (quantity = 1,000,000 each) finite and tier-3 (quantity = 1e30)
+    infinite, so a row materialises for every finite tier regardless of
+    whether it is actually used — only the infinite tier-3 is excluded.
+    The 2-day coal demand is well under the tier-1 cap, so all of it
+    lands in tier 1 and tier 2's row is present but 0.
     """
     sol, handoff, _run, _data, _provider = _fixture
     carrier = handoff.cumulative_commodity
     assert carrier is not None, (
         "cumulative_commodity must be populated for a fixture with "
         "v_trade + ci_ladder_cumulative")
-    # Fixture: tier-1 finite (cap = 1 MWh), tier-2 infinite (1e30 sentinel).
-    # Only finite tiers materialise in the carrier (B1 parity with legacy
-    # ``_load_finite_ladder_tiers``).
-    assert carrier.height == 1, (
-        f"one finite tier → one carrier row, got {carrier.height}")
+    # Fixture: tier-1/2 finite (cap = 1,000,000 MWh each) both
+    # materialise; tier-3 is infinite (1e30 sentinel) and excluded.
+    assert carrier.height == 2, (
+        f"two finite tiers → two carrier rows, got {carrier.height}")
     by_tier = {(r["commodity"], int(r["tier"])): float(r["p_ladder_cum_realized_mwh"])
                   for r in carrier.iter_rows(named=True)}
 
-    # Hand check: tier 1 binds at the 1 MWh cumulative cap.
-    assert abs(by_tier[("coal", 1)] - 1.0) < 1e-6, (
-        f"hand-derived tier-1 mwh = 1.0; got {by_tier[('coal', 1)]}")
-    # Tier 2 (infinite cap) is intentionally absent — the mod defaults
+    # Tier 3 (infinite cap) is intentionally absent — the mod defaults
     # ``p_ladder_cum_realized_mwh`` to 0 for unspecified rows.
-    assert ("coal", 2) not in by_tier, (
-        "infinite-cap tier 2 must NOT appear in carrier; got "
-        f"{by_tier.get(('coal', 2))}")
+    assert ("coal", 3) not in by_tier, (
+        "infinite-cap tier 3 must NOT appear in carrier; got "
+        f"{by_tier.get(('coal', 3))}")
+    # Tier 2 is finite but unused for this fixture's demand — its row
+    # is present with an explicit 0, not omitted.
+    assert by_tier.get(("coal", 2)) == 0.0, (
+        f"unused finite tier 2 should be present at 0; got {by_tier.get(('coal', 2))}")
 
     # Independent re-derivation from v_trade for the parity
     # cross-check (mirror of the extractor's algorithm, computed
     # without going through the SolveHandoff carrier path).  Restricted
-    # to finite tiers (tier-1 only) to match the carrier's filter.
+    # to finite tiers (tier-1 and tier-2) to match the carrier's filter.
     v_trade = sol.value("v_trade")
     # All timesteps realized → fraction = 1.0; unitsize defaults to 1.0
     # since p_commodity_unitsize.csv is absent for this fixture.
@@ -150,9 +156,12 @@ def test_cumulative_commodity_extracted_from_v_trade(_fixture):
         c = str(r["c"])
         i = int(r["i"])
         v = float(r["value"])
-        if (c, i) != ("coal", 1):
+        if c != "coal" or i not in (1, 2):
             continue
         expected[(c, i)] = expected.get((c, i), 0.0) + v
+    assert expected[("coal", 1)] < 1_000_000.0, (
+        "tier 1 should not bind at its cap for this 2-day fixture; "
+        f"got {expected[('coal', 1)]}")
     for key, exp_v in expected.items():
         got = by_tier.get(key)
         assert got is not None, f"missing carrier row for {key}"
@@ -191,10 +200,18 @@ def test_cumulative_carriers_propagate_with_prior_handoff(_fixture):
     assert abs(csh.get("p2020", 0.0) - 48.0) < 1e-9, (
         f"this-roll cum_sim_hours[p2020]=48; got {csh.get('p2020')}")
     # cumulative_commodity: prior (coal, 1, p2019)=12 carried;
-    # this-roll (coal, 1, p2020)≈1.0 added independently.
+    # this-roll (coal, 1, p2020) is added independently of the prior
+    # value — cross-check against the same roll's own v_trade total
+    # (hand-derived the same way as test_cumulative_commodity_extracted_from_v_trade)
+    # rather than a hard-coded MWh literal.
     cc = {(r["commodity"], int(r["tier"]), r["period"]): float(r["p_ladder_cum_realized_mwh"])
               for r in handoff2.cumulative_commodity.iter_rows(named=True)}
     assert cc.get(("coal", 1, "p2019")) == 12.0, (
         f"prior commodity p2019 row must carry; got {cc.get(('coal', 1, 'p2019'))}")
-    assert abs(cc.get(("coal", 1, "p2020"), 0.0) - 1.0) < 1e-6, (
-        f"this-roll (coal, 1, p2020)≈1.0; got {cc.get(('coal', 1, 'p2020'))}")
+    this_roll_tier1 = (
+        sol.value("v_trade")
+        .filter((pl.col("c") == "coal") & (pl.col("i") == "1"))["value"].sum()
+    )
+    assert abs(cc.get(("coal", 1, "p2020"), 0.0) - this_roll_tier1) < 1e-6, (
+        f"this-roll (coal, 1, p2020) should equal Σ v_trade[coal,1]="
+        f"{this_roll_tier1}; got {cc.get(('coal', 1, 'p2020'))}")

@@ -200,16 +200,16 @@ def test_build_axis_enums_parameter_keys_i_runtime_depth(
     """``i`` enum cardinality matches the runtime-discovered tier count
     of the ``commodity.price_ladder_*`` maps.  Uses the ``coal_ladder_annual``
     scenario (formerly ``work_commodity_ladder_annual``) which has a
-    known 2-tier ladder so this gates the discovery logic instead of
+    known 3-tier ladder so this gates the discovery logic instead of
     measuring "≥1"."""
     fixture = scenario_workdir("coal_ladder_annual")
     backend_ladder = SpineDBBackend(str(fixture / "tests.sqlite"))
     try:
         enums = build_axis_enums(backend_ladder, contract)
         i_vocab = enums["i"].categories.to_list()
-        # coal_ladder_annual has a 2-tier ladder (keys "1", "2").
-        assert i_vocab == ["1", "2"], (
-            f"i axis vocab should be ['1','2']; got {i_vocab}"
+        # coal_ladder_annual has a 3-tier ladder (keys "1", "2", "3").
+        assert i_vocab == ["1", "2", "3"], (
+            f"i axis vocab should be ['1','2','3']; got {i_vocab}"
         )
     finally:
         backend_ladder.close()
