@@ -94,6 +94,30 @@ def _dual(step) -> list[float]:
     return step.solution.constraint_dual("co2_max_period")["dual"].to_list()
 
 
+def _carry(fd, d: str) -> tuple[float, float, float]:
+    """``(f_d_k[d], co2_cum_realized_tonnes[d], period_share[d])`` as carried into this roll's build
+    (c18b, #38, Q22) -- the inputs ``_co2_period_cap_with_carry`` (``model/core.py``) turns into the
+    roll's RHS: ``cap[d] = co2_max_period[d]*f_d_k[d] - co2_cum_realized_tonnes[d]/period_share[d]``, so
+    in raw (non-annualised) tonnes the roll's own-window emissions must satisfy
+    ``emissions[d] <= co2_max_period[d]*f_d_k[d]*period_share[d] - co2_cum_realized_tonnes[d]``.
+    Defaults (1.0, 0.0) match the helper's own fallback: a period outside ``f_d_k`` is fully reached
+    (pre-chain / pre-rolling behaviour); the first roll of a chain carries no realized total yet."""
+    fdk_p = getattr(fd, "p_co2_f_d_k", None)
+    fdk = 1.0
+    if fdk_p is not None:
+        row = utf8(fdk_p.frame).filter(pl.col("d") == d)
+        if row.height > 0:
+            fdk = float(row["value"][0])
+    realized_p = getattr(fd, "p_co2_cum_realized_tonnes", None)
+    realized = 0.0
+    if realized_p is not None:
+        row = utf8(realized_p.frame).filter(pl.col("d") == d)
+        if row.height > 0:
+            realized = float(row["value"][0])
+    share = float(utf8(fd.p_period_share.frame).filter(pl.col("d") == d)["value"][0])
+    return fdk, realized, share
+
+
 def _roll(i: int) -> str:
     return f"{SOLVE}_roll_{i}"
 
@@ -123,19 +147,36 @@ def test_rolling_without_lookahead_equals_single_solve(tmp_path_factory) -> None
         assert d_roll == pytest.approx(d_single, rel=1e-6), st.solve_name
 
 
-def test_each_roll_caps_its_window(tmp_path_factory) -> None:
-    """Rolling 24 h / 12 h: each roll's window emissions, annualised over the window's hours, equal the cap
-    (binding); the window fraction is 24/48 for the first three rolls and 12/48 for the truncated last one."""
+def test_cumulative_budget_caps_each_rolls_window(tmp_path_factory) -> None:
+    """Rolling 24 h / 12 h (window > jump, so windows overlap): the owner's carried budget (c18b, #38,
+    Q22) -- allocation through this roll's horizon end minus what earlier rolls already realized -- caps
+    each roll's own-window emissions, not the flat per-window rate a pre-c18b check would impose:
+    ``emissions[p2020] <= co2_max_period[p2020]*f_d_k[p2020]*period_share[p2020] -
+    co2_cum_realized_tonnes[p2020]`` (raw tonnes; see ``_carry``'s docstring for the derivation from
+    ``_co2_period_cap_with_carry``).
+
+    Roll 0's window [0,24) is allowed the full cap through hour 24 (f_d_k=0.5): 3.0e6*0.5*(48/8760) =
+    8219.18 t, all of it unrealized slack since nothing was realized before roll 0 -- the window emits
+    exactly that (binding).  Only its first 12 h get realized (jump=12), locking in 3154.88 t of that
+    8219.18 t allowance; the other 5064.30 t was look-ahead that never became realized, so the realized
+    carrier into roll 1 is only 3154.88 t.  Roll 1's window [12,36) is then allowed up to hour 36
+    (f_d_k=0.75): 3.0e6*0.75*(48/8760) - 3154.88 = 9173.89 t -- MORE than the 8219.18 t a flat per-window
+    rate would allow over its own 24 h, because roll 0's unrealized look-ahead slack was never charged
+    against the realized carrier and so remains available to roll 1.  This is the intended behaviour
+    (never violates the cumulative budget, which is what this test checks), not a regression of the old
+    (pre-c18b) ``test_each_roll_caps_its_window``, which asserted the flat per-window rate directly and
+    no longer holds."""
     cap = 3.0e6
     rolls = list(_run(tmp_path_factory, "co2roll_roll24", [_cap({"p2020": cap})] + _rolling(24.0, 12.0)).values())
     assert [_fraction(st.flex_data) for st in rolls] == [{"p2020": f} for f in (0.5, 0.5, 0.5, 0.25)]
     for st in rolls:
         p = st.flex_data.p_window_fraction
         assert p.frame.equals(p.frame.sort("d"))
-        hours = _hours(st.flex_data)["p2020"]
-        rate = _tonnes(st)["p2020"] * 8760 / hours
-        assert rate <= cap * (1 + 1e-9), st.solve_name
-        assert rate == pytest.approx(cap, rel=1e-6), st.solve_name
+        fdk, realized, share = _carry(st.flex_data, "p2020")
+        lhs = _tonnes(st)["p2020"]
+        rhs = cap * fdk * share - realized
+        assert lhs <= rhs * (1 + 1e-9) + 1e-6, st.solve_name
+        assert lhs == pytest.approx(rhs, rel=1e-6), st.solve_name
 
 
 # ---------------------------------------------------------------------------
@@ -174,12 +215,17 @@ def test_rolls_across_a_period_boundary(boundary_runs) -> None:
                 7: {"p2020": 6 / 48, "p2025": 24 / 48}, 15: {"p2025": 6 / 48}}
     for i, want in expected.items():
         assert _fraction(cold[_roll(i)].flex_data) == pytest.approx(want, rel=1e-12), i
-    # (b) each roll and period: annualised window emissions within that period's cap
+    # (b) each roll and period: the owner's carried cumulative budget (c18b, #38, Q22), not the old flat
+    # per-window rate -- an overlapping window can legitimately absorb an earlier roll's unrealized
+    # look-ahead slack (see test_cumulative_budget_caps_each_rolls_window's derivation), so this checks
+    # the cumulative invariant (``_carry``) directly instead.
     for i in range(16):
         st = cold[_roll(i)]
-        hours = _hours(st.flex_data)
         for d, e in _tonnes(st).items():
-            assert e * 8760 / hours[d] <= CAPS[d] * (1 + 1e-9), (i, d)
+            fdk, realized, share = _carry(st.flex_data, d)
+            rhs = CAPS[d] * fdk * share - realized
+            assert e <= rhs * (1 + 1e-9) + 1e-6, (i, d)
+            assert e == pytest.approx(rhs, rel=1e-6), (i, d)
     # (c) warm == cold; no roll reuses the previous roll's LP (its ``dt`` labels shift)
     for i in range(16):
         assert not hot[_roll(i)].warm_used, f"roll {i} reused an LP built for another window"
