@@ -713,6 +713,34 @@ def _patch_co2_cap_minload(data: dict) -> dict:
                 ["group", "co2_limit", "co2_max_total", 2.5e6]])
 
 
+def _patch_co2_stoch_total(data: dict) -> dict:
+    """co2_max_total (group__node = coal_market) on the stochastic 2-day dispatch -- Q16 (#52)
+    per-path proof: before the fix the whole-horizon cap summed every forecast branch's
+    emissions into one shared row (over-tightens by about the branch count)."""
+    return _overlay(
+        data, name="co2_stoch_total", base="2_day_stochastic_dispatch",
+        entities=[["group", "co2_limit"],
+                  ["group__node", ["co2_limit", "coal_market"]]],
+        values=[["commodity", "coal", "co2_content", 0.34],
+                ["group", "co2_limit", "co2_method", "total"],
+                ["group", "co2_limit", "co2_max_total", 1.0e6]])
+
+
+def _patch_ladder_stoch_cumulative(data: dict) -> dict:
+    """price_ladder_cumulative on the coal commodity of the stochastic 2-day dispatch -- Q16
+    (#58) per-path proof: before the fix the tier's cumulative cap summed every forecast
+    branch's f_d_k into one shared row (RHS = Q times the branch count, not Q once)."""
+    ladder = {"index_type": "str", "rank": 2, "index_name": "tier",
+              "data": [["1", {"type": "map", "index_type": "str", "rank": 1,
+                               "data": [["price", 20.0], ["quantity", 1000000.0]]}],
+                       ["2", {"type": "map", "index_type": "str", "rank": 1,
+                              "data": [["price", 30.0], ["quantity", float("inf")]]}]]}
+    return _overlay(
+        data, name="ladder_stoch_cumulative", base="2_day_stochastic_dispatch",
+        values=[["commodity", "coal", "price_method", "price_ladder_cumulative"],
+                ["commodity", "coal", "price_ladder_cumulative", ladder]])
+
+
 def _patch_flowgroup_minload_weighted(data: dict) -> dict:
     """flowGroup cumulative flow limits on a min_load_efficiency unit under non-uniform
     timestep weights: both the per-period and per-solve rows gain the step's timestep_weight
@@ -1782,6 +1810,8 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "sd_silent": _patch_sd_silent,
     "timeline_default": _patch_timeline_default,
     "ladder_cum_silent": _patch_ladder_cum_silent,
+    "co2_stoch_total": _patch_co2_stoch_total,
+    "ladder_stoch_cumulative": _patch_ladder_stoch_cumulative,
 }
 
 
@@ -1984,6 +2014,8 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("sd_silent", _T),
     ("timeline_default", _T),
     ("ladder_cum_silent", _T),
+    ("co2_stoch_total", _F + "stochastics.json"),
+    ("ladder_stoch_cumulative", _F + "stochastics.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

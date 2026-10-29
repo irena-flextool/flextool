@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **A group's whole-horizon CO2 cap and a commodity price ladder's cumulative tier cap now apply
+  separately to each path of a stochastic solve, instead of being shared across every forecast
+  branch.** Both caps used to sum every forecast branch's emissions or purchases into a single
+  row, so a solve with several alternative futures let them collectively spend several times the
+  intended budget between them (one shared row instead of one per branch). Each cap now gets one
+  row per scenario path: the whole-horizon CO2 cap keeps the same remaining budget on each path
+  (the forecast branches are alternative futures, not consecutive years to divide the budget
+  across); the commodity ladder's cumulative cap gives each path its own share of the budget,
+  weighted by the periods that path actually covers. A deterministic solve, or a stochastic solve
+  with no CO2 total cap or cumulative ladder tier, is unaffected.
+
 - **A group's per-period and whole-horizon CO2 caps now carry a remaining budget across the rolls
   of a rolling solve and across the solves of a chain, instead of re-granting the full cap every
   time.** Both caps used to recompute the allowed emissions from the fixed input cap on every roll

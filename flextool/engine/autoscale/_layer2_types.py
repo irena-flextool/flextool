@@ -434,6 +434,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "co2_max_period": CstrFamily(QuantityType.EMISSION_MASS),
     # flextool/engine/model/core.py _eq_co2_max_total
     "co2_max_total": CstrFamily(QuantityType.EMISSION_MASS),
+    # Q16 (#52) per-path row: _eq_co2_max_total passes the constraint name as a variable (legacy vs
+    # "_path"), so the literal-grep test cannot see it.  Registered EXACTLY, same reason as the
+    # entity/group total-cap _path families above.
+    "co2_max_total_path": CstrFamily(QuantityType.EMISSION_MASS),
 
     # ── Unit-commitment (online / startup / shutdown / minimum times).
     # All DIMENSIONLESS — they bound counts.
@@ -542,6 +546,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "ladder_tier_cap_annual_roll": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/_commodity_ladder.py _eq_tier_cap_cumulative
     "ladder_tier_cap_cumulative_roll": CstrFamily(QuantityType.ENERGY),
+    # Q16 (#58) per-path row: _eq_tier_cap_cumulative passes the constraint name as a variable
+    # (legacy vs "_path"), so the literal-grep test cannot see it.  Registered EXACTLY, same reason
+    # as the entity/group total-cap _path families.
+    "ladder_tier_cap_cumulative_roll_path": CstrFamily(QuantityType.ENERGY),
 
     # ── Forbid-invest rows.  RHS = 0 by construction; skip per-row.
     # _cumulative_invest._eq_fix_no_investment

@@ -441,7 +441,8 @@ def _eq_tier_cap_annual(b: _Build) -> None:
 
 
 def _eq_tier_cap_cumulative(b: _Build) -> None:
-    """ladder_tier_cap_cumulative_roll: purchase per tier over the horizon up to the tier's quantity."""
+    """ladder_tier_cap_cumulative_roll[_path]: purchase per tier over the horizon up to the
+    tier's quantity, one row per scenario path under recourse."""
     d = b.d
     if (not _has_rows(d.ci_ladder_cumulative) or d.p_ladder_cum_quantity is None
             or not _has_rows(d.cndi_ladder_cum)):
@@ -450,56 +451,115 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
     ci_cum_finite = d.ci_ladder_cumulative.join(finite, on=["c", "i"], how="inner")
     if ci_cum_finite.height == 0:
         return
-
-    # ─── EQ. ─── ladder_tier_cap_cumulative_roll ─────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{n,d} v_trade[c,n,d,i] · commodity_unitsize[c]
-    #   ≤  quantity_cum[c,i] · Σ_d (years_represented[d] · realized_hours[d] / 8760) − Σ_d realized[c,i,d]
-    #   ∀ (c,i) ∈ ci_ladder_cumulative with quantity_cum[c,i] < 1e29;  (c,n,d,i) ∈ cndi_ladder_cum
-    # Caps what tier i supplies over the whole modelled horizon.  quantity_cum, like quantity_ann, is a
-    # per-modelled-YEAR amount: Σ_d (years_represented[d] · realized_hours[d] / 8760) is the real-
-    # calendar-years-equivalent of representative dispatch simulated so far — realized_hours[d]/8760
-    # annualises each period's own realized representative-sample hours up to a full calendar year
-    # (the hours-form of period_share[d]·f_d_k[d], #89's annualisation), and years_represented[d] then
-    # multiplies that by the number of real calendar years period d stands for (co2_max_total scales its
-    # emissions cap the same way, docs: "each period's annualised emissions times the years it
-    # represents"); without it a period block representing several years was charged for only one
-    # (p_ladder_cum_weight, load_data).  Sums over every period the chain has ever touched — not just
-    # the ones still active this roll — the same reason f_d_k itself is read from a provider CSV that
-    # folds finished periods back in (#143): without that, this sum would reset to the new period's own
-    # local progress each time the chain moved on, while realized kept climbing, eventually driving this
-    # row negative.  "quantity allocated up to the end of this roll's horizon" is monotone non-
-    # decreasing across rolls — the same requirement #89's fix gives the annual cap — and realized (what
-    # earlier rolls actually bought, always ≤ what their own, earlier horizon end allocated) can never
-    # exceed it, so the row is feasible by construction; no clamp.  p_ladder_cum_weight is a scalar sum
-    # (1 per period of Σ f_d_k, the pre-years_represented-fix formula, when load_data couldn't build the
-    # years_represented/realized_hours Param — e.g. a synthetic fixture that skips the derived-param
-    # pass); realized = tier MWh bought by earlier solves (0 when absent).  Unlimited tiers get no row.
     cndi_cum_finite = d.cndi_ladder_cum.join(ci_cum_finite, on=["c", "i"], how="inner")
-    if d.p_ladder_cum_weight is not None and d.p_ladder_cum_weight.frame.height > 0:
-        sum_weight = float(d.p_ladder_cum_weight.frame["value"].sum())
-    elif d.p_f_d_k is not None:
-        sum_weight = float(d.p_f_d_k.frame["value"].sum())
-    else:
-        sum_weight = 1.0
 
-    cap_df = (ci_cum_finite.join(d.p_ladder_cum_quantity.frame, on=["c", "i"], how="left")
-              .select("c", "i", cap=pl.col("value") * sum_weight))
+    # Q16 (#58): with several scenario leaves (recourse), ``quantity_cum · Σ_d weight[d]`` summed
+    # the weight of every forecast branch into ONE shared row, letting the branches buy N× the tier
+    # between them.  one_leaf gates on whether v_trade itself spans >1 leaf (see below); a
+    # deterministic / single-leaf solve keeps the legacy scalar shape, byte-identical.
+    d_leaf = getattr(d, "d_leaf", None)
+    leaf_pairs = None
+    if d_leaf is not None and d_leaf.height > 0:
+        d_dtype = b.v_trade.frame.schema["d"]
+        leaves_all = (d_leaf if d_leaf.schema["d"] == d_dtype
+                      else d_leaf.with_columns(pl.col("d").cast(d_dtype, strict=False)))
+        leaves = leaves_all.join(b.v_trade.frame.select("d").unique(), on="d", how="semi")
+        if leaves.height > 0 and leaves["leaf"].n_unique() > 1:
+            leaf_pairs = leaves_all
+    one_leaf = leaf_pairs is None
+
+    # weight_frame: the per-d years-equivalent weight the legacy scalar summed whole (see the EQ.
+    # header); None only in the degenerate fixture that skips the derived-param pass (flat 1.0 then).
+    if d.p_ladder_cum_weight is not None and d.p_ladder_cum_weight.frame.height > 0:
+        weight_frame = d.p_ladder_cum_weight.frame
+    elif d.p_f_d_k is not None:
+        weight_frame = d.p_f_d_k.frame
+    else:
+        weight_frame = None
+
     if d.p_ladder_cum_realized_mwh is not None:
         realized_ci = (d.p_ladder_cum_realized_mwh.frame
                        .group_by(["c", "i"]).agg(pl.col("value").sum().alias("realized")))
+    else:
+        realized_ci = None
+
+    if one_leaf:
+        # ─── EQ. ─── ladder_tier_cap_cumulative_roll ─────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # Σ_{n,d} v_trade[c,n,d,i] · commodity_unitsize[c]
+        #   ≤  quantity_cum[c,i] · Σ_d (years_represented[d] · realized_hours[d] / 8760) − Σ_d realized[c,i,d]
+        #   ∀ (c,i) ∈ ci_ladder_cumulative with quantity_cum[c,i] < 1e29;  (c,n,d,i) ∈ cndi_ladder_cum
+        # Caps what tier i supplies over the whole modelled horizon.  quantity_cum, like quantity_ann, is a
+        # per-modelled-YEAR amount: Σ_d (years_represented[d] · realized_hours[d] / 8760) is the real-
+        # calendar-years-equivalent of representative dispatch simulated so far — realized_hours[d]/8760
+        # annualises each period's own realized representative-sample hours up to a full calendar year
+        # (the hours-form of period_share[d]·f_d_k[d], #89's annualisation), and years_represented[d] then
+        # multiplies that by the number of real calendar years period d stands for (co2_max_total scales its
+        # emissions cap the same way, docs: "each period's annualised emissions times the years it
+        # represents"); without it a period block representing several years was charged for only one
+        # (p_ladder_cum_weight, load_data).  Sums over every period the chain has ever touched — not just
+        # the ones still active this roll — the same reason f_d_k itself is read from a provider CSV that
+        # folds finished periods back in (#143): without that, this sum would reset to the new period's own
+        # local progress each time the chain moved on, while realized kept climbing, eventually driving this
+        # row negative.  "quantity allocated up to the end of this roll's horizon" is monotone non-
+        # decreasing across rolls — the same requirement #89's fix gives the annual cap — and realized (what
+        # earlier rolls actually bought, always ≤ what their own, earlier horizon end allocated) can never
+        # exceed it, so the row is feasible by construction; no clamp.  p_ladder_cum_weight is a scalar sum
+        # (1 per period of Σ f_d_k, the pre-years_represented-fix formula, when load_data couldn't build the
+        # years_represented/realized_hours Param — e.g. a synthetic fixture that skips the derived-param
+        # pass); realized = tier MWh bought by earlier solves (0 when absent).  Unlimited tiers get no row.
+        sum_weight = float(weight_frame["value"].sum()) if weight_frame is not None else 1.0
+        cap_df = (ci_cum_finite.join(d.p_ladder_cum_quantity.frame, on=["c", "i"], how="left")
+                  .select("c", "i", cap=pl.col("value") * sum_weight))
+        if realized_ci is not None:
+            cap_df = cap_df.join(realized_ci, on=["c", "i"], how="left").with_columns(
+                pl.col("realized").fill_null(0.0))
+        else:
+            cap_df = cap_df.with_columns(realized=pl.lit(0.0))
+        cap_df = cap_df.with_columns(value=pl.col("cap") - pl.col("realized")).select("c", "i", "value")
+        b.m.add_cstr(
+            "ladder_tier_cap_cumulative_roll",
+            over      = ci_cum_finite,
+            sense     = "<=",
+            lhs_terms = {"trade": Sum(Where(b.v_trade * _commodity_unitsize_param(d), cndi_cum_finite),
+                                      over=("n", "d"))},
+            rhs_terms = {"cap": Param(("c", "i"), cap_df)},
+        )
+        return
+
+    # _path (Q16, #58): one row per (c, i, leaf).  The LHS sums only the leaf's own periods (a
+    # shared pre-reveal trunk period belongs to every leaf, fanned in via the ``(d, leaf)`` join —
+    # same as the invest/divest _path families' leaf_rows pattern).  The RHS mirrors the legacy
+    # formula but weighs only the leaf's own periods: ``quantity_cum[c,i] · Σ_{d∈leaf} weight[d]``
+    # (recommended option (a) of #58) — a trunk period's weight is counted once per leaf (correct:
+    # each leaf's path genuinely includes that period's own dispatch), never pooled across leaves
+    # (the bug).  realized stays a single chain-wide carry per (c,i), shared across leaves (it is
+    # what one earlier, already-resolved past actually bought, independent of which future branch
+    # this solve now explores).
+    cndi_leaf = cndi_cum_finite.join(leaf_pairs, on="d", how="inner")
+    leaves_list = leaf_pairs.select("leaf").unique()
+    over = ci_cum_finite.join(leaves_list, how="cross")
+    if weight_frame is not None:
+        per_leaf_weight = (weight_frame.join(leaf_pairs, on="d", how="inner")
+                           .group_by("leaf").agg(pl.col("value").sum().alias("weight")))
+    else:
+        per_leaf_weight = leaves_list.with_columns(weight=pl.lit(1.0))
+    cap_df = (ci_cum_finite.join(d.p_ladder_cum_quantity.frame, on=["c", "i"], how="left")
+              .join(per_leaf_weight, how="cross")
+              .with_columns(cap=pl.col("value") * pl.col("weight")))
+    if realized_ci is not None:
         cap_df = cap_df.join(realized_ci, on=["c", "i"], how="left").with_columns(
             pl.col("realized").fill_null(0.0))
     else:
         cap_df = cap_df.with_columns(realized=pl.lit(0.0))
-    cap_df = cap_df.with_columns(value=pl.col("cap") - pl.col("realized")).select("c", "i", "value")
+    cap_df = cap_df.with_columns(value=pl.col("cap") - pl.col("realized")).select("c", "i", "leaf", "value")
     b.m.add_cstr(
-        "ladder_tier_cap_cumulative_roll",
-        over      = ci_cum_finite,
+        "ladder_tier_cap_cumulative_roll_path",
+        over      = over,
         sense     = "<=",
-        lhs_terms = {"trade": Sum(Where(b.v_trade * _commodity_unitsize_param(d), cndi_cum_finite),
+        lhs_terms = {"trade": Sum(Where(b.v_trade * _commodity_unitsize_param(d), cndi_leaf),
                                   over=("n", "d"))},
-        rhs_terms = {"cap": Param(("c", "i"), cap_df)},
+        rhs_terms = {"cap": Param(("c", "i", "leaf"), cap_df)},
     )
 
 

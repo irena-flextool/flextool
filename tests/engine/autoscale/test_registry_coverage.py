@@ -295,6 +295,11 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxCumulative_flow_period", "minCumulative_flow_period",
     "maxInstant_flow", "minInstant_flow",
     "fix_v_invest_no_investment_eq_p", "fix_v_invest_no_investment_eq_n",
+    # Q16 (#52, #58) per-path stochastic caps — model/core.py ``_eq_co2_max_total`` and
+    # _commodity_ladder.py ``_eq_tier_cap_cumulative`` pass the constraint name as a variable
+    # (legacy vs "_path"), so the literal grep above cannot see the "_path" shape.
+    "co2_max_total", "co2_max_total_path",
+    "ladder_tier_cap_cumulative_roll", "ladder_tier_cap_cumulative_roll_path",
 ]
 
 

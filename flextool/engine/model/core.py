@@ -2908,22 +2908,44 @@ def _co2_total_cap_with_carry(d) -> Param:
 
 
 def _eq_co2_max_total(b: _Build) -> None:
-    """CO2 emission cap over all periods."""
+    """CO2 emission cap over all periods, one row per scenario path under recourse."""
     if not b.has_co2_cap_total:
         return
     m, d = b.m, b.d
     v_flow = b.v_flow
+    d_leaf = getattr(d, "d_leaf", None)
 
-    # ─── EQ. ─── co2_max_total ───────────────────────────────────────────────
+    # Q16 (#52): with several scenario leaves, restrict the Σ to each leaf's own periods instead
+    # of summing every forecast branch into one shared row (over-tightens the budget by about the
+    # number of forecast branches).  ``terms`` spans every (g, d) of the group × the solve's whole
+    # in-use domain (d_leaf's own d column, not just v_flow's: the min-load section-fuel term reads
+    # v_online, whose d-domain can differ from v_flow's, #38/c18b) so no in-use period is dropped.
+    # ``leaf_rows`` gates on whether v_flow itself spans >1 leaf (deterministic / single-leaf solves
+    # degenerate to the legacy shape, byte-identical).
+    if d_leaf is not None and _has_rows(d_leaf):
+        terms = d.group_co2_max_total.select("g").unique().join(
+            d_leaf.select("d").unique(), how="cross")
+        is_path, over, mask = leaf_rows(terms, "g", v_flow, d_leaf)
+    else:
+        is_path, over, mask = False, d.group_co2_max_total, None
+
+    def _leafify(arcs: "pl.DataFrame | None") -> "pl.DataFrame | None":
+        """``arcs`` (p, source, sink, c, g) fanned to (…, d, leaf) via ``mask`` — a no-op (and no
+        byte change) outside recourse."""
+        if arcs is None or not is_path:
+            return arcs
+        return arcs.join(mask.select("g", "d", "leaf"), on="g", how="inner")
+
+    # ─── EQ. ─── co2_max_total[_path] ────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total, d,t}
+    # Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total, d∈D(leaf),t}
     #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
     #     · co2_content[c]·w_y[d,t]
-    #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total_noEff, d,t}
+    #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total_noEff, d∈D(leaf),t}
     #     v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
-    #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped_total, d,t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
+    #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped_total, d∈D(leaf),t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
     #   ≤ co2_max_total[g] · horizon_fraction_reached  −  Σ_d co2_cum_realized_tonnes[g,d]
-    #   ∀ g ∈ group_co2_max_total;   w_y = step_duration · timestep_weight / period_share · years_represented[d]
+    #   ∀ g ∈ group_co2_max_total (, leaf);   w_y = step_duration · timestep_weight / period_share · years_represented[d]
     # Caps the CO2 emissions of a group over the horizon the solve represents (tonnes): each period's
     # annualised emissions (as in co2_max_period, section fuel included) times the years the period
     # represents, summed over the periods — the measure of the model CO2 output.  years_represented is not
@@ -2935,9 +2957,17 @@ def _eq_co2_max_total(b: _Build) -> None:
     # first solve of a chain) — net of removal credits (#19) — is subtracted; never negative by
     # construction.  The removal term (#19, Q14) mirrors co2_max_period's: flows into the same group's
     # node(s), unsplit, no slope; it only loosens the cap.
+    # _path (Q16, #52): under recourse every forecast branch got its own copy of the whole-horizon
+    # budget summed into ONE row, letting N branches spend N× the cap between them (the stochastic
+    # fan is parallel futures, not N consecutive years).  One row per (g, leaf) fixes it: the LHS
+    # sums only the leaf's own periods (shared pre-reveal trunk periods belong to every leaf, same
+    # as the invest/divest _path families); the RHS is the SAME remaining whole-horizon budget
+    # repeated per leaf (horizon_fraction_reached and the realized carry are chain-wide, not
+    # per-branch quantities — the carry is kept exactly as _co2_total_cap_with_carry computes it,
+    # same as the entity/group total-cap _path families reuse their own bare cap per leaf).
     lhs: dict = {}
     if b.has_co2_cap_total_eff:
-        for key, term in _eff_fuel_input(b, d.flow_from_co2_capped_total):
+        for key, term in _eff_fuel_input(b, _leafify(d.flow_from_co2_capped_total)):
             lhs[f"emissions_{key}"] = Sum(
                 term
                 * d.p_co2_content
@@ -2947,7 +2977,7 @@ def _eq_co2_max_total(b: _Build) -> None:
             )
     if b.has_co2_cap_total_noEff:
         lhs["emissions_noEff"] = Sum(
-            Where(v_flow * d.p_unitsize, d.flow_from_co2_capped_total_noEff)
+            Where(v_flow * d.p_unitsize, _leafify(d.flow_from_co2_capped_total_noEff))
             * d.p_co2_content
             * d.p_step_duration * d.p_timestep_weight / d.p_period_share
             * d.p_years_represented_d,
@@ -2955,18 +2985,25 @@ def _eq_co2_max_total(b: _Build) -> None:
         )
     if _has_rows(getattr(d, "flow_to_co2_capped_total", None)):
         lhs["removal"] = -Sum(
-            Where(v_flow * d.p_unitsize, d.flow_to_co2_capped_total)
+            Where(v_flow * d.p_unitsize, _leafify(d.flow_to_co2_capped_total))
             * d.p_co2_content
             * d.p_step_duration * d.p_timestep_weight / d.p_period_share
             * d.p_years_represented_d,
             over=("p", "source", "sink", "c", "d", "t"),
         )
+    cap_scalar = _co2_total_cap_with_carry(d)
+    if is_path:
+        name = "co2_max_total_path"
+        cap_param = Param(("g", "leaf"), over.join(cap_scalar.frame, on="g", how="left"))
+    else:
+        name = "co2_max_total"
+        cap_param = cap_scalar
     m.add_cstr(
-        "co2_max_total",
-        over      = d.group_co2_max_total,
+        name,
+        over      = over,
         sense     = "<=",
         lhs_terms = lhs,
-        rhs_terms = {"cap": _co2_total_cap_with_carry(d)},
+        rhs_terms = {"cap": cap_param},
     )
 
 
