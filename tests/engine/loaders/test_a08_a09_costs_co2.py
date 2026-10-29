@@ -137,7 +137,8 @@ def test_co2_cap_blank_shortcuts(tmp_path: Path):
     + A9-co2_cap_empty_group_max_period_csv.
 
     Three blank-shortcut paths sharing one fixture; each returns the
-    canonical 5-tuple of Nones.
+    canonical 6-tuple of Nones (c18a added the removal-credit frame,
+    ``flow_to_co2_capped``, as the 6th element).
 
     1. ``pss_eff=None`` AND ``pss_noEff=None`` -> early gate (no disk).
     2. ``pss_eff`` populated but ``group_co2_max_period.csv`` absent.
@@ -150,19 +151,19 @@ def test_co2_cap_blank_shortcuts(tmp_path: Path):
     # (1) both pss are None -> earliest gate.
     out1 = _load_co2_cap(inp, sd, None, dt, pss_noEff=None,
                          provider=provider_from_csv_dirs(inp, sd))
-    # Hand-calc: pss_eff is None and pss_noEff is None -> 5 Nones.
-    assert out1 == (None, None, None, None, None)
+    # Hand-calc: pss_eff is None and pss_noEff is None -> 6 Nones.
+    assert out1 == (None, None, None, None, None, None)
 
     # (2) pss_eff populated but no group_co2_max_period.csv on disk.
     out2 = _load_co2_cap(inp, sd, pss_eff, dt, provider=provider_from_csv_dirs(inp, sd))
-    # Hand-calc: file absent -> 5 Nones.
-    assert out2 == (None, None, None, None, None)
+    # Hand-calc: file absent -> 6 Nones.
+    assert out2 == (None, None, None, None, None, None)
 
     # (3) header-only group_co2_max_period.csv -> g_max.height==0 gate.
     _write(sd / "group_co2_max_period.csv", "group\n")
     out3 = _load_co2_cap(inp, sd, pss_eff, dt, provider=provider_from_csv_dirs(inp, sd))
-    # Hand-calc: g_max.height==0 -> 5 Nones (distinct code path from (2)).
-    assert out3 == (None, None, None, None, None)
+    # Hand-calc: g_max.height==0 -> 6 Nones (distinct code path from (2)).
+    assert out3 == (None, None, None, None, None, None)
 
 
 def test_co2_cap_no_priced_node_intersection_returns_none(tmp_path: Path):
@@ -171,7 +172,8 @@ def test_co2_cap_no_priced_node_intersection_returns_none(tmp_path: Path):
     ``group_co2_max_period.csv`` names group g1; ``group__node.csv``
     maps g1 -> n2; ``commodity_node_co2.csv`` covers n1 only.  The
     3-way join produces ``gcn`` height=0 -> the helper must return
-    the 5-tuple of Nones rather than emitting an empty constraint.
+    the 6-tuple of Nones (c18a's ``flow_to_co2_capped`` 6th element included)
+    rather than emitting an empty constraint.
     """
     inp, sd = _make_dirs(tmp_path)
     dt = pl.DataFrame({"d": ["d1"], "t": ["t1"]})
@@ -182,5 +184,5 @@ def test_co2_cap_no_priced_node_intersection_returns_none(tmp_path: Path):
 
     out = _load_co2_cap(inp, sd, pss_eff, dt, provider=provider_from_csv_dirs(inp, sd))
     # Hand-calc: g1 -> n2 (group__node), CO2 priced n=n1 only;
-    # inner join on n -> gcn height=0 -> 5 Nones.
-    assert out == (None, None, None, None, None)
+    # inner join on n -> gcn height=0 -> 6 Nones.
+    assert out == (None, None, None, None, None, None)
