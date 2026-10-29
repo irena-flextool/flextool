@@ -129,6 +129,7 @@ def _has_invest_rows(sd: Path, provider: object) -> bool:
 def _apply_co2_and_invest_seeds(flex_data: object, sd: Path, provider: object) -> None:
     """The CO2-content and invest / divest cap seeds (the loader's reads before S4-3, moved here unchanged)."""
     if (getattr(flex_data, "flow_from_co2_priced", None) is not None
+            or getattr(flex_data, "flow_to_co2_priced", None) is not None
             or getattr(flex_data, "p_co2_max_period", None) is not None
             or getattr(flex_data, "p_co2_max_total", None) is not None):
         flex_data.p_co2_content = _co2_content(provider)

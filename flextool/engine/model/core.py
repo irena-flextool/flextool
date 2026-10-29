@@ -447,7 +447,11 @@ def _prepare(b: _Build) -> None:
     # ── feature flags ──
     b.has_proc = _has_rows(d.process_source_sink)
     b.has_indirect = _has_rows(d.process_indirect)
-    b.has_co2_price = _has_rows(d.flow_from_co2_priced)
+    # (#19) A group can be priced purely for its removal credit (no emitting
+    # flow at all) — widen the flag so that case still activates the price
+    # term; _obj_co2_price guards each side independently.
+    b.has_co2_price = (_has_rows(d.flow_from_co2_priced)
+                        or _has_rows(getattr(d, "flow_to_co2_priced", None)))
     b.has_co2_cap_eff = _has_rows(d.flow_from_co2_capped)
     b.has_co2_cap_noEff = _has_rows(getattr(d, "flow_from_co2_capped_noEff", None))
     b.has_co2_cap = b.has_co2_cap_eff or b.has_co2_cap_noEff
@@ -2783,6 +2787,7 @@ def _eq_co2_max_period(b: _Build) -> None:
     #     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
     #     · co2_content[c]·w[d,t]
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_noEff, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
+    #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
     #   ≤ co2_max_period[g,d] · window_fraction[d]
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
     #   window_fraction[d] = (Σ_t step_duration[d,t] / 8760) / period_share[d]  (1 outside rolling solves)
@@ -2794,7 +2799,9 @@ def _eq_co2_max_period(b: _Build) -> None:
     # the fuel that processes draw from the group's nodes when it carries a CO2-emitting commodity c,
     # measured as in co2_price_eff (_eff_fuel_input): on eff processes the output flow times slope plus,
     # for min_load_efficiency units (linear and integer v_online), the section fuel of the units online.
-    # noEff processes take neither slope nor section (applying them would over-count).
+    # noEff processes take neither slope nor section (applying them would over-count).  The removal term
+    # (#19, Q14) subtracts flows into the same group's node(s) — e.g. DAC/BECCS — unsplit, no slope, same
+    # measure as flow_to_co2_priced; it only loosens the cap, never tightens it.
     lhs: dict = {}
     if b.has_co2_cap_eff:
         for key, term in _eff_fuel_input(b, d.flow_from_co2_capped):
@@ -2807,6 +2814,13 @@ def _eq_co2_max_period(b: _Build) -> None:
     if b.has_co2_cap_noEff:
         lhs["emissions_noEff"] = Sum(
             Where(v_flow * d.p_unitsize, d.flow_from_co2_capped_noEff)
+            * d.p_co2_content
+            * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
+            over=("p", "source", "sink", "c", "t"),
+        )
+    if _has_rows(getattr(d, "flow_to_co2_capped", None)):
+        lhs["removal"] = -Sum(
+            Where(v_flow * d.p_unitsize, d.flow_to_co2_capped)
             * d.p_co2_content
             * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
             over=("p", "source", "sink", "c", "t"),
@@ -2834,13 +2848,16 @@ def _eq_co2_max_total(b: _Build) -> None:
     #     · co2_content[c]·w_y[d,t]
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total_noEff, d,t}
     #     v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
+    #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped_total, d,t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
     #   ≤ co2_max_total[g]
     #   ∀ g ∈ group_co2_max_total;   w_y = step_duration · timestep_weight / period_share · years_represented[d]
     # Caps the CO2 emissions of a group over the horizon the solve represents (tonnes): each period's
     # annualised emissions (as in co2_max_period, section fuel included) times the years the period
     # represents, summed over the periods — the measure of the model CO2 output.  years_represented is not
     # discounted.  Each solve of a chain and each roll of a rolling solve gets the full cap for only its
-    # own periods / window, so there the cap binds more loosely than intended (known limitation).
+    # own periods / window, so there the cap binds more loosely than intended (known limitation).  The
+    # removal term (#19, Q14) mirrors co2_max_period's: flows into the same group's node(s), unsplit, no
+    # slope; it only loosens the cap.
     lhs: dict = {}
     if b.has_co2_cap_total_eff:
         for key, term in _eff_fuel_input(b, d.flow_from_co2_capped_total):
@@ -2854,6 +2871,14 @@ def _eq_co2_max_total(b: _Build) -> None:
     if b.has_co2_cap_total_noEff:
         lhs["emissions_noEff"] = Sum(
             Where(v_flow * d.p_unitsize, d.flow_from_co2_capped_total_noEff)
+            * d.p_co2_content
+            * d.p_step_duration * d.p_timestep_weight / d.p_period_share
+            * d.p_years_represented_d,
+            over=("p", "source", "sink", "c", "d", "t"),
+        )
+    if _has_rows(getattr(d, "flow_to_co2_capped_total", None)):
+        lhs["removal"] = -Sum(
+            Where(v_flow * d.p_unitsize, d.flow_to_co2_capped_total)
             * d.p_co2_content
             * d.p_step_duration * d.p_timestep_weight / d.p_period_share
             * d.p_years_represented_d,
@@ -3531,10 +3556,11 @@ def _obj_commodity(b: _Build) -> Expr | None:
 
 
 def _obj_co2_price(b: _Build) -> Expr | None:
-    """CO2 emission cost of processes with an efficiency."""
+    """CO2 emission cost of processes with an efficiency, net of removal credit."""
     if not b.has_co2_price:
         return None
     d = b.d
+    terms: list[Expr] = []
 
     # ─── OBJ. ─── co2_price_eff ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -3543,10 +3569,24 @@ def _obj_co2_price(b: _Build) -> Expr | None:
     #     · co2_content[c] · co2_price[g,d,t] · w_op[d,t]
     # Cost of the CO2 emitted when processes with an efficiency draw a CO2-bearing commodity c from a
     # node of a CO2-priced group g; content in t/MWh, price in currency/t.  The section term exists
-    # for min_load_efficiency units only.  Flows into priced nodes earn no removal credit (known
-    # limitation).
-    return _sum_terms([Sum(term * d.p_co2_content * d.p_co2_price * b.op_factor)
-                       for _key, term in _eff_fuel_input(b, d.flow_from_co2_priced)])
+    # for min_load_efficiency units only.
+    if _has_rows(d.flow_from_co2_priced):
+        terms.extend(Sum(term * d.p_co2_content * d.p_co2_price * b.op_factor)
+                     for _key, term in _eff_fuel_input(b, d.flow_from_co2_priced))
+
+    # ─── OBJ. ─── co2_removal_credit ─────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # − Σ_{(p,s,k,c,g) ∈ flow_to_co2_priced, (d,t)}
+    #     v_flow[p,s,k,d,t]·unitsize[p] · co2_content[c] · co2_price[g,d,t] · w_op[d,t]
+    # Credit for flows into the group's priced commodity node(s) — removal (e.g. DAC/BECCS modelled
+    # as a flow into a CO2-content commodity node of the priced group g).  No slope or section term:
+    # the delivered flow is the physical quantity removed, not a fuel input (mirrors flow_to_commodity,
+    # the commodity-sale term).  Ported from GMPL's "Receiving credits for removing CO2" (#19, Q14).
+    if _has_rows(getattr(d, "flow_to_co2_priced", None)):
+        terms.append(-Sum(
+            Where(b.v_flow * d.p_unitsize, d.flow_to_co2_priced)
+            * d.p_co2_content * d.p_co2_price * b.op_factor))
+    return _sum_terms(terms)
 
 
 def _obj_co2_price_noEff(b: _Build) -> Expr | None:

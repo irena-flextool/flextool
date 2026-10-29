@@ -584,6 +584,11 @@ class FlexData:
     # ─── CO2 price ────────────────────────────────────────────────────────
     flow_from_co2_priced: pl.DataFrame | None = None
     flow_from_co2_priced_noEff: pl.DataFrame | None = None
+    # (#19) Removal credit: sink-side flow into a CO2-priced commodity node
+    # — (p, source, sink, c, g), no eff/noEff split (straight v_flow *
+    # unitsize, mirrors flow_to_commodity; GMPL .mod:2047-2050 sums the
+    # unsplit process_source_sink, no slope).
+    flow_to_co2_priced: pl.DataFrame | None = None
     p_co2_content: Param | None = None           # (c,)
     p_co2_price: Param | None = None             # (g, d, t)
 
@@ -591,6 +596,10 @@ class FlexData:
     group_co2_max_period: pl.DataFrame | None = None
     flow_from_co2_capped: pl.DataFrame | None = None        # eff partition (slope)
     flow_from_co2_capped_noEff: pl.DataFrame | None = None  # noEff partition (no slope)
+    # (#19) Removal credit: sink-side flow into a CO2-capped node of the same
+    # group — (p, source, sink, c, g), unsplit (no slope); reduces the cap's
+    # LHS (GMPL .mod:3988-3991).
+    flow_to_co2_capped: pl.DataFrame | None = None
     p_co2_max_period: Param | None = None        # (g, d)
     group_d_co2_capped: pl.DataFrame | None = None
 
@@ -604,6 +613,9 @@ class FlexData:
     group_co2_max_total: pl.DataFrame | None = None              # (g,)
     flow_from_co2_capped_total: pl.DataFrame | None = None       # eff partition
     flow_from_co2_capped_total_noEff: pl.DataFrame | None = None # noEff partition
+    # (#19) Removal credit for the total cap, sibling of flow_to_co2_capped
+    # (GMPL .mod:4047-4052).
+    flow_to_co2_capped_total: pl.DataFrame | None = None
     p_co2_max_total: Param | None = None         # (g,)
 
     # ─── Indirect-conversion (CHP) ────────────────────────────────────────
@@ -1475,17 +1487,18 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
 def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                      pss_noEff: pl.DataFrame | None = None,
                      *,
+                     pss: pl.DataFrame | None = None,
                      provider: "object | None" = None):
     if pss_eff is None:
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     files = ["group_co2_price.csv", "commodity_node_co2.csv", "pdtGroup.csv"]
     if not all(_provider_has(provider, f"solve_data/{Path(f).stem}", sd / f)
                 for f in files):
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     g_price = _provider_read(provider, "solve_data/group_co2_price",
                               sd / "group_co2_price.csv").pipe(rename_to_axis, {"group": "g"})
     if g_price.height == 0:
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
                               sd / "commodity_node_co2.csv").pipe(rename_to_axis, {"commodity":"c","node":"n"})
     g_node = _provider_read(provider, "input/group__node",
@@ -1511,8 +1524,21 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             .select("p","source","sink","c","g"))
         if flow_from_co2_priced_noEff.height == 0:
             flow_from_co2_priced_noEff = None
-    if flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None:
-        return (None, None, None, None)
+    # (#19) Removal credit: sink-side flow into the SAME priced node/group —
+    # unsplit (eff + noEff together, like flow_to_commodity), no slope: the
+    # delivered flow is the physical quantity removed, not a fuel input.
+    flow_to_co2_priced = None
+    if pss is not None and pss.height > 0:
+        flow_to_co2_priced = (pss
+            .join(gcn_e, left_on="sink", right_on="n", how="inner")
+            .select("p","source","sink","c","g"))
+        if flow_to_co2_priced.height == 0:
+            flow_to_co2_priced = None
+    # A pure-removal group (no emitting flow at all, only a removal credit)
+    # still needs the price term active — don't drop it here.
+    if (flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None
+            and flow_to_co2_priced is None):
+        return (None, None, None, None, None)
     # ``p_co2_content`` is written by ``apply_direct_params_a`` on every DB path (a reader-less reload seeds it in
     # ``_csv_reload._field_seeds``), so this slot is None.
     co2_content = None
@@ -1523,22 +1549,23 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     # Local CSV slice dropped.
     co2_price = None
     return (flow_from_co2_priced, flow_from_co2_priced_noEff,
-            co2_content, co2_price)
+            co2_content, co2_price, flow_to_co2_priced)
 
 
 def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                    dt: pl.DataFrame,
                    pss_noEff: pl.DataFrame | None = None,
                    *,
+                   pss: pl.DataFrame | None = None,
                    provider: "object | None" = None):
     if pss_eff is None and pss_noEff is None:
-        return (None, None, None, None, None)
+        return (None, None, None, None, None, None)
     p = sd / "group_co2_max_period.csv"
     if not _provider_has(provider, "solve_data/group_co2_max_period", p):
-        return (None, None, None, None, None)
+        return (None, None, None, None, None, None)
     g_max = _provider_read(provider, "solve_data/group_co2_max_period", p).pipe(rename_to_axis, {"group":"g"})
     if g_max.height == 0:
-        return (None, None, None, None, None)
+        return (None, None, None, None, None, None)
     cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
                               sd / "commodity_node_co2.csv").pipe(rename_to_axis, {"commodity":"c","node":"n"})
     g_node = _provider_read(provider, "input/group__node",
@@ -1547,10 +1574,19 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                 .join(cn_co2, on="n", how="inner")
                 .select("g","c","n"))
     if gcn.height == 0:
-        return (None, None, None, None, None)
+        return (None, None, None, None, None, None)
     # Cross-axis join setup (Pattern 2): up-cast gcn.n (n axis) to ``e``
     # so the join against pss.source (e axis) is a native Enum match.
     gcn_e = gcn.with_columns(cast_dim(pl.col("n"), None, "e"))
+    # (#19) Removal credit: sink-side flow into the SAME capped node/group —
+    # unsplit (no slope), mirrors flow_to_co2_priced.  Reduces the cap's LHS.
+    flow_to_co2_capped = None
+    if pss is not None and pss.height > 0:
+        flow_to_co2_capped = (pss.select("p","source","sink")
+            .join(gcn_e, left_on="sink", right_on="n", how="inner")
+            .select("p","source","sink","c","g"))
+        if flow_to_co2_capped.height == 0:
+            flow_to_co2_capped = None
     # The .mod's co2_max_period sums emissions over (p, source, sink)
     # for processes whose source is a CO2-priced node — but with
     # different formulae for eff vs noEff.  eff is multiplied by
@@ -1575,8 +1611,13 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             .select("p","source","sink","c","g"))
         if noeff.height > 0:
             flow_from_co2_capped_noEff = noeff
+    # Unlike the price term, a cap with no emitting flow at all (pure
+    # removal) never binds — removal only makes the LHS more negative
+    # against a positive cap — so there's no need to keep the constraint
+    # active for a removal-only group; the original emitting-flow gate is
+    # kept as-is.
     if flow_from_co2_capped_eff is None and flow_from_co2_capped_noEff is None:
-        return (None, None, None, None, None)
+        return (None, None, None, None, None, None)
     # Δ.17c Gap C: ``p_co2_max_period`` produced authoritatively by
     # ``apply_direct_params`` via ``p_co2_max_period_from_source`` (uses
     # the ``_param_shapes`` resolver — scalar / 1d_map[period] cascade
@@ -1584,12 +1625,13 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     co2_max_period = None
     period = dt.select("d").unique()
     return (g_max, flow_from_co2_capped_eff, flow_from_co2_capped_noEff,
-            co2_max_period, g_max.join(period, how="cross"))
+            co2_max_period, g_max.join(period, how="cross"), flow_to_co2_capped)
 
 
 def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                           pss_noEff: pl.DataFrame | None = None,
                           *,
+                          pss: pl.DataFrame | None = None,
                           provider: "object | None" = None):
     """Sibling of :func:`_load_co2_cap` for the multi-period total cap.
 
@@ -1604,16 +1646,18 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     taking the maximum (all rows carry the same value when authored as
     a scalar).
 
-    Returns a 4-tuple (g_max_total, flow_eff, flow_noEff, p_co2_max_total).
+    Returns a 5-tuple (g_max_total, flow_eff, flow_noEff, p_co2_max_total,
+    flow_to_co2_capped_total) — the last is the (#19) removal credit:
+    sink-side flow into the same capped group's node(s), unsplit (no slope).
     """
     if pss_eff is None and pss_noEff is None:
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     p = sd / "group_co2_max_total.csv"
     if not _provider_has(provider, "solve_data/group_co2_max_total", p):
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     g_max = _provider_read(provider, "solve_data/group_co2_max_total", p).pipe(rename_to_axis, {"group": "g"})
     if g_max.height == 0:
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
                               sd / "commodity_node_co2.csv").pipe(
         rename_to_axis, {"commodity": "c", "node": "n"})
@@ -1624,7 +1668,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                 .join(cn_co2, on="n", how="inner")
                 .select("g", "c", "n"))
     if gcn.height == 0:
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     flow_eff = None
     flow_noEff = None
     if pss_eff is not None and pss_eff.height > 0:
@@ -1639,8 +1683,19 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             .select("p", "source", "sink", "c", "g"))
         if noeff.height > 0:
             flow_noEff = noeff
+    # (#19) Removal credit — same cap group's node(s), unsplit, no slope
+    # (mirrors flow_to_co2_capped).  A pure-removal group never binds the
+    # cap (removal only loosens it), so the original emitting-flow gate
+    # below is left as-is.
+    flow_to_co2_capped_total = None
+    if pss is not None and pss.height > 0:
+        rem = (pss.select("p", "source", "sink")
+            .join(gcn, left_on="sink", right_on="n", how="inner")
+            .select("p", "source", "sink", "c", "g"))
+        if rem.height > 0:
+            flow_to_co2_capped_total = rem
     if flow_eff is None and flow_noEff is None:
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     # Read the cap value from pdGroup.csv (param='co2_max_total').  Legacy
     # preprocessing writes one row per (group, period) by broadcasting the
     # Spine scalar; we collapse via max() per group (all per-period rows
@@ -1665,7 +1720,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     if p_cap is None:
         # Without a non-zero cap there's nothing to bind — bail out so
         # the consumer leaves ``has_co2_cap_total`` false.
-        return (None, None, None, None)
+        return (None, None, None, None, None)
     # Restrict the gate set to groups that actually carry a cap value.
     cap_groups = p_cap.frame.select("g")
     g_max = g_max.join(cap_groups, on="g", how="inner")
@@ -1677,9 +1732,14 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
         flow_noEff = flow_noEff.join(cap_groups, on="g", how="inner")
         if flow_noEff.height == 0:
             flow_noEff = None
+    if flow_to_co2_capped_total is not None:
+        flow_to_co2_capped_total = flow_to_co2_capped_total.join(
+            cap_groups, on="g", how="inner")
+        if flow_to_co2_capped_total.height == 0:
+            flow_to_co2_capped_total = None
     if flow_eff is None and flow_noEff is None:
-        return (None, None, None, None)
-    return (g_max, flow_eff, flow_noEff, p_cap)
+        return (None, None, None, None, None)
+    return (g_max, flow_eff, flow_noEff, p_cap, flow_to_co2_capped_total)
 
 
 def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
@@ -4125,16 +4185,17 @@ def load_flextool(source: "Path | str | FlexInputSource",
                            .join(proc["pss"], on="p", how="inner")
                            .select("p", "source", "sink", "d", "value"))
 
-        flow_co2_p, flow_co2_p_noEff, co2c, co2pr = _load_co2_price(
+        flow_co2_p, flow_co2_p_noEff, co2c, co2pr, flow_co2_p_rem = _load_co2_price(
             inp, sd, proc["pss_eff"], proc.get("pss_noEff"),
-            provider=provider)
-        g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped = _load_co2_cap(
+            pss=proc.get("pss"), provider=provider)
+        (g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped,
+         flow_co2_cap_rem) = _load_co2_cap(
             inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"),
-            provider=provider)
+            pss=proc.get("pss"), provider=provider)
         (g_co2_max_total, flow_co2_cap_total, flow_co2_cap_total_noEff,
-         co2_max_total_p) = _load_co2_cap_total(
+         co2_max_total_p, flow_co2_cap_total_rem) = _load_co2_cap_total(
             inp, sd, proc["pss_eff"], pss_noEff=proc.get("pss_noEff"),
-            provider=provider)
+            pss=proc.get("pss"), provider=provider)
 
         (indir_set, indir_in, indir_out, indir_dt,
          p_source_flow_coef, p_sink_flow_coef) = _load_indirect(
@@ -4312,18 +4373,21 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
             flow_from_co2_priced = flow_co2_p,
             flow_from_co2_priced_noEff = flow_co2_p_noEff,
+            flow_to_co2_priced = flow_co2_p_rem,
             p_co2_content = co2c,
             p_co2_price = co2pr,
 
             group_co2_max_period = g_co2_max,
             flow_from_co2_capped = flow_co2_cap,
             flow_from_co2_capped_noEff = flow_co2_cap_noEff,
+            flow_to_co2_capped = flow_co2_cap_rem,
             p_co2_max_period = co2_max_p,
             group_d_co2_capped = g_d_capped,
 
             group_co2_max_total = g_co2_max_total,
             flow_from_co2_capped_total = flow_co2_cap_total,
             flow_from_co2_capped_total_noEff = flow_co2_cap_total_noEff,
+            flow_to_co2_capped_total = flow_co2_cap_total_rem,
             p_co2_max_total = co2_max_total_p,
 
             process_indirect = indir_set,

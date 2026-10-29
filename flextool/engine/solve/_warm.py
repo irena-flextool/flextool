@@ -80,10 +80,12 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "pd_neg_cap",
     # CO2.
     "flow_from_co2_priced", "flow_from_co2_priced_noEff",
+    "flow_to_co2_priced",
     "group_co2_max_period", "flow_from_co2_capped",
     "flow_from_co2_capped_noEff", "group_d_co2_capped",
+    "flow_to_co2_capped",
     "group_co2_max_total", "flow_from_co2_capped_total",
-    "flow_from_co2_capped_total_noEff",
+    "flow_from_co2_capped_total_noEff", "flow_to_co2_capped_total",
     # Indirect (CHP).
     "process_indirect", "process_input_flows",
     "process_output_flows", "process_indirect_dt",
