@@ -192,7 +192,17 @@ def compute_costs(par, s, v, r) -> None:
 
     # Group CO2
     s.group_node_co2 = s.group_node[s.group_node.get_level_values('group').isin(s.group_co2_limit.union(s.group_co2_price))]
-    group_process_co2_columns = r.process_emissions_co2_dt.columns.join(s.group_node_co2)
+    # Inner join: a process/node with no co2-priced/capped group at all (the physical-emissions-only
+    # case #_physical_co2_emission_pieces widened process_emissions_co2_dt to cover) has no group to
+    # price it against.  Index.join's default how='left' would keep it with group=NaN, and the NaN
+    # group's price reindexes to NaN too — summed into cost_process_co2_dt's groupby('process').sum()
+    # below, which treats an all-NaN group as 0 (pandas sum() skips NaN) rather than leaving the
+    # process out, emitting a spurious all-zero 'co2' cost column/row for every process without a
+    # priced group.  group_co2_dt / cost_co2_dt (grouped by 'group') are unaffected either way: a
+    # NaN group key is already dropped by groupby('group'), so it never contributed to a real group's
+    # total — only the unconditionally-physical emissions outputs above (process_emissions_co2_d etc.)
+    # cover the ungrouped case, same as before this join existed.
+    group_process_co2_columns = r.process_emissions_co2_dt.columns.join(s.group_node_co2, how='inner')
     r.group_process_emissions_co2_dt = pd.DataFrame(index=r.process_emissions_co2_dt.index, columns=group_process_co2_columns)
     for col in group_process_co2_columns:
         r.group_process_emissions_co2_dt[col] = r.process_emissions_co2_dt[col[:4]]

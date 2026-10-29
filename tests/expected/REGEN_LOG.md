@@ -940,3 +940,41 @@ cost/reward.
   move (any change is below the comparison's rounding).
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate network_coal_wind_battery_invest_cumulative`.
+
+## 2026-10-29 — `multi_year_wind_no_investment/summary_solve.csv` + `multi_year_wind_growth_cap/summary_solve.csv`
+
+**Context.** `b4175321` fixed physical CO2 reporting to count emissions from every `co2_content`
+commodity consumer regardless of whether a `group` prices or caps CO2 on its node (previously a
+coal unit with no priced/capped group reported 0 Mt — a real under-count, not a reporting choice:
+docs/results.md's "model" CO2 total is "across all groups and units"). Both scenarios burn coal
+with no priced/capped CO2 group, so their `summary_solve.csv` "CO2 [Mt]" row moved off its stale
+`0` once the fix landed:
+
+- `multi_year_wind_no_investment`: `0` → `10.776`.
+- `multi_year_wind_growth_cap`: `0` → `5.53675`.
+
+**Side investigation (same commit, same `_physical_co2_emission_pieces` widening).** The widened
+`process__commodity__node_co2` set also fed `calc_costs.py`'s per-process CO2 *cost* calculation
+(`cost_process_co2_dt`), which joined on `s.group_node_co2` with pandas `Index.join`'s default
+`how='left'` — so a process with no priced/capped group at all (like these two scenarios' coal
+unit) kept a row with `group=NaN` instead of being dropped, and `group_co2_price` has no column for
+a `NaN` group, so the price resolved to `NaN`; `cost_process_co2_dt`'s `groupby('process').sum()`
+then turned that all-`NaN` column into a spurious **0.0** (pandas `sum()` skips `NaN`), emitting a
+new all-zero `co2` category column in `cost_unit_annualized__d.csv` / `costs__dt.csv` etc. for 10
+other scenarios in the full sweep. That is not a real reporting choice either — the column added
+no information (always exactly 0) and existed only because of the left-join artifact. Fixed in
+`flextool/process_outputs/calc_costs.py` by changing the join to `how='inner'` (a process with no
+real co2-priced/capped group is simply excluded from the per-process CO2 *cost* breakdown, same as
+before `b4175321` — the model-wide physical emissions output is untouched, since it is read from
+`process_emissions_co2_dt` before this join runs). No golden regen needed for those 10 scenarios:
+with the join fixed, their `cost_unit_annualized__d.csv` / `costs__dt.csv` output matches the
+existing (pre-`b4175321`) golden shape exactly.
+
+**Verification.** `--regenerate` on each of the two scenarios above also perturbed one `costs__dt.csv`
+cell each (`commodity_cost` at `p2020 t0001`/`t0004`, ~1e-5 relative — solver-vertex noise, well
+within the `rtol=1e-4` comparison and already passing without a regen); that unrelated drift was
+discarded (restored from the committed golden) so only the intended `summary_solve.csv` CO2 change
+is regenerated here.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate multi_year_wind_no_investment` and
+`pytest tests/test_scenarios.py --regenerate multi_year_wind_growth_cap`.

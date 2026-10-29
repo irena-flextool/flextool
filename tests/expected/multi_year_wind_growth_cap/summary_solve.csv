@@ -1,4 +1,4 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-10-25 22:29:44.323311+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-10-29 10:15:35.178770+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
@@ -19,6 +19,6 @@ Period,p2020,p2025,p2030,p2035
 "Investment discount factor",4.53998578738,3.73153738295,3.06705172493,2.52089295055
 
 Emissions
-"CO2 [Mt]",0,"System-wide annualized CO2 emissions for realized periods"
+"CO2 [Mt]",5.53675,"System-wide annualized CO2 emissions for realized periods"
 
 "Slack variables multiplied by timestep duration (creating or removing energy/matter, creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"
