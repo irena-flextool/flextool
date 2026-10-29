@@ -11,8 +11,10 @@ Attribute to groups via ``group_node``; combine with the prior roll's
 accumulator carried in the Provider under ``K.HANDOFF_CUMULATIVE_CO2``
 (populated by ``_provider_translators.translate_handoff_to_provider``).
 
-``min_load_efficiency``'s section term is deferred (same MVP as legacy
-— warn and under-report).
+``min_load_efficiency``'s section term (v_online × section × unitsize, mirroring core.py's
+``_eff_fuel_input``) is included on the source-side branch when ``flex_data.p_section`` is available;
+otherwise it is omitted and a warning logged (under-reports, LP cap binds slightly tighter than the
+carried figure says).
 """
 from __future__ import annotations
 
@@ -207,11 +209,12 @@ def compute_co2_rolling_accumulator(
           }))
 
     pmle = _set_frame(getattr(flex_data, "process_min_load_eff", None), "p")
-    if pmle.height > 0:
+    if pmle.height > 0 and getattr(flex_data, "p_section", None) is None:
         _logger.warning(
             "compute_co2_rolling_accumulator: model uses min_load_efficiency "
-            "on %d process(es); native compute under-reports their section "
-            "term (LP cap binds slightly tighter). Affected: %s",
+            "on %d process(es) but p_section is unavailable; native compute "
+            "under-reports their section term (LP cap binds slightly "
+            "tighter). Affected: %s",
             pmle.height,
             sorted(pmle["p"].cast(pl.Utf8).to_list())[:10],
         )
@@ -284,7 +287,58 @@ def compute_co2_rolling_accumulator(
         )
         .select("attr_node", alias_to_axis("d", "period"), "contribution"))
 
-    contrib = pl.concat([emis, rem], how="vertical")
+    # Min-load efficiency section fuel (v_online_linear / v_online_integer × section × unitsize),
+    # mirroring core.py's _eff_fuel_input section_lin / section_int terms: the LP's CO2 cap rows
+    # (co2_price_eff, co2_max_period, co2_max_total) count this on top of the eff slope term above, so
+    # the carried realized-so-far figure (#38, Q22) must too, or it would understate what the LP
+    # actually counted and loosen the next roll's carried budget.  Only the source-side (emission)
+    # branch has a section term -- the removal branch has none in the LP either.  Restricted to eff
+    # arcs via ``pss``'s own branch tag, same as the slope term.
+    minload = pl.DataFrame(schema={
+        "attr_node": schema_dtype(None, "n"), "period": schema_dtype(None, "d"),
+        "contribution": pl.Float64,
+    })
+    if pmle.height > 0 and getattr(flex_data, "p_section", None) is not None:
+        section_arcs = (pss.filter(pl.col("branch") == "eff").select("p", "source", "sink")
+                        .join(pmle, on="p", how="inner")
+                        .join(cn_emis, on="source", how="inner"))
+        if section_arcs.height > 0:
+            online_long = None
+            sol_vars = getattr(sol, "_vars", {}) or {}
+            for var_name in ("v_online_linear", "v_online_integer"):
+                if var_name in sol_vars:
+                    vd = sol.value(var_name)
+                    if vd is not None and vd.height > 0:
+                        online_long = (vd.select("p", "d", "t", "value") if online_long is None
+                                       else pl.concat([online_long, vd.select("p", "d", "t", "value")],
+                                                       how="vertical"))
+            if online_long is not None and online_long.height > 0:
+                online = (online_long
+                    .join(realized_dt, on=["d", "t"], how="inner")
+                    .join(section_arcs, on="p", how="inner"))
+                if online.height > 0:
+                    p_section = _param_frame(flex_data.p_section, "p", "d", "t").select(
+                        "p", "d", "t", pl.col("value").alias("section"))
+                    online = (online.join(p_section, on=["p", "d", "t"], how="left")
+                              .with_columns(pl.col("section").fill_null(0.0))
+                              .join(p_step_duration, on=["d", "t"], how="left")
+                              .with_columns(pl.col("dur").fill_null(0.0)))
+                    online = _ljoin(online, p_rp_weight, {"rpw": 1.0}, on=["d", "t"])
+                    online = _ljoin(online, unitsize, {"us": 1.0}, left_on="p", right_on="p_us")
+                    online = (online.join(co2_emis, on="c_emis", how="left")
+                        .with_columns(pl.col("content_emis").fill_null(0.0))
+                        .filter(pl.col("content_emis") != 0.0)
+                        .with_columns(
+                            contribution=(
+                                pl.col("content_emis") / 1000.0
+                                * pl.col("value") * pl.col("section")
+                                * pl.col("us") * pl.col("dur") * pl.col("rpw")),
+                            attr_node=pl.col("source"))
+                        .select("attr_node", alias_to_axis("d", "period"), "contribution"))
+                    if online.height > 0:
+                        minload = online
+
+    contrib = pl.concat([emis, rem, minload], how="vertical")
     if contrib.height == 0:
         return _passthrough_prior(prior_cumulative_co2, co2_groups)
 
