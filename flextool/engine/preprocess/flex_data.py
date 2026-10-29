@@ -1035,6 +1035,7 @@ class FlexData:
     p_commodity_unitsize: Param | None = None                    # (c,)
     p_f_d_k: Param | None = None                                 # (d,)
     p_ladder_cum_realized_mwh: Param | None = None               # (c, i, d)
+    p_ladder_cum_weight: Param | None = None                     # (d,)
 
     # ─── Stochastic / multi-branch operational data (A6) ─────────────────
     # All fields populated only when the active solve actually runs a

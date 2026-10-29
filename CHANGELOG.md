@@ -23,6 +23,17 @@
   moment the chain finished it, instead of keeping it. Both ladders' running totals now account for
   every period the chain has ever simulated, so the remaining budget can never go negative.
 
+- **The cumulative price ladder's running budget now accounts for how much of a modelled year
+  each period's own dispatch covers, and how many real years that period stands for.** Like the
+  annual tier's quantity, the cumulative tier's quantity is a per-modelled-year amount, but its
+  running budget used to credit a period's full allowance for every period the chain touched,
+  regardless of how much of a year that period's own simulated hours cover or how many real
+  calendar years the period represents — so a multi-year or representative-sample chain could let
+  the cumulative cap run far more permissive than intended, never actually binding. The budget is
+  now scaled the same way as the annual tier's (by the period's own share of a modelled year) and
+  further by the number of real years that period represents, so the two ladders' running budgets
+  are on a comparable footing.
+
 - **A commodity bought on a price ladder by a unit with a minimum-load efficiency curve now
   counts the extra fuel that unit burns at part load.** The ladder's purchase balance used to
   count only the full-load fuel use, so such a unit's actual fuel draw could exceed what the

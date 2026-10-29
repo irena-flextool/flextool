@@ -1,11 +1,22 @@
 """Parity test for the commodity price-ladder cumulative variant.
 
 Fixture: ``tests/data/work_commodity_ladder_cumulative`` — coal scenario
-with ``price_method = price_ladder_cumulative`` and a 2-tier ladder
-(tier 1: 20 €/MWh capped at 1 MWh cumulative; tier 2: 30 €/MWh, +∞).
+with ``price_method = price_ladder_cumulative`` and a 3-tier ladder
+(tier 1: 20 €/MWh, tier 2: 25 €/MWh, both capped at 1,000,000 MWh
+cumulative; tier 3: 30 €/MWh, +∞).
 
-On a single-period non-rolling solve the cumulative cap reduces to
-the pre-refactor form (Σ f_d_k = 1.0, no prior accumulator).
+Hand-derivation of the binding cap (``_eq_tier_cap_cumulative``,
+``flextool/engine/model/_commodity_ladder.py``): on this single-period,
+non-rolling solve (``y2020_2day_dispatch``, 48 realized hours of
+``p2020``) the cap is each tier's cumulative quantity times
+``years_represented[p2020] (= 1.0, no multi-year chain here) ×
+realized_hours[p2020] (= 48) / 8760``:
+
+    cap[tier] = 1,000,000 × 1.0 × 48 / 8760 = 5479.452054794521
+
+Both finite tiers share that cap (same 1,000,000 quantity), so tier 1
+and tier 2 both saturate at ~5479.45 MWh and the +∞ tier 3 absorbs the
+rest of the coal demand.
 """
 import polars as pl
 
@@ -24,8 +35,9 @@ SCENARIO = "coal_ladder_cumulative"
 def test_commodity_ladder_cumulative_parity(scenario_run):
     """polar_high obj == flextool's HiGHS objective for the cumulative ladder.
 
-    Also confirms the per-tier v_trade decomposition: tier 1 binds at
-    its 1-MWh cumulative cap and tier 2 (+∞) absorbs the rest.
+    Also confirms the per-tier v_trade decomposition: tiers 1 and 2
+    both bind at their ~5479.45 MWh cumulative cap (hand-derived in the
+    module docstring) and tier 3 (+∞) absorbs the rest.
     """
     run = scenario_run(SCENARIO)
     work = run.work_folder
@@ -52,10 +64,15 @@ def test_commodity_ladder_cumulative_parity(scenario_run):
     )
     tier1_total = v_trade.filter(pl.col("i") == "1")["value"].sum()
     tier2_total = v_trade.filter(pl.col("i") == "2")["value"].sum()
-    assert 0.5 < tier1_total < 1.5, (
-        f"tier 1 should bind at ~1 MWh cap, got {tier1_total}")
-    assert tier2_total > 100.0, (
-        f"tier 2 (+∞) should absorb overflow, got {tier2_total}")
+    tier3_total = v_trade.filter(pl.col("i") == "3")["value"].sum()
+    # Hand-derived cap (module docstring): 1,000,000 × 1.0 × 48 / 8760 ≈ 5479.452.
+    expected_cap = 1_000_000.0 * 1.0 * 48.0 / 8760.0
+    assert abs(tier1_total - expected_cap) < 1e-6, (
+        f"tier 1 should bind at the hand-derived cap {expected_cap}; got {tier1_total}")
+    assert abs(tier2_total - expected_cap) < 1e-6, (
+        f"tier 2 should also bind at the hand-derived cap {expected_cap}; got {tier2_total}")
+    assert tier3_total > 100.0, (
+        f"tier 3 (+∞) should absorb the overflow past tiers 1 and 2, got {tier3_total}")
 
     # r_cost_ladder proxy: Σ price[c,i] × v_trade[c,n,d,i] must be > 0.
     # Cumulative ladder has no period dimension — the same per-tier price

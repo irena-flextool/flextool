@@ -29,10 +29,15 @@ Per the legacy ladder rolling accumulator algorithm:
     cumulative_commodity[coal, 1, p2020] = Σ_n v_trade[coal, n, p2020, 1]
                                               × unitsize[coal] × fraction
 
-The 2-day coal demand is far below the 1,000,000 MWh tier-1 cap, so
-tier 1 absorbs it all without binding; tier 2 (finite, also unused)
-materialises at 0.  The exact MWh total is cross-checked against
-``v_trade`` directly in the test below rather than hard-coded here.
+Both finite tiers share the same 1,000,000 MWh quantity, so both bind
+at the same cap: ``quantity_cum × years_represented[p2020] ×
+realized_hrs[p2020] / 8760 = 1,000,000 × 1.0 × 48 / 8760 ≈ 5479.452``
+(the years_represented/realized-hours annualisation
+``_eq_tier_cap_cumulative`` applies, mirroring the annual cap's
+period_share annualisation, #89).  Tier 3 (+∞) absorbs the rest of
+the 2-day coal demand.  The exact MWh totals are cross-checked
+against ``v_trade`` directly in the test below rather than hard-coded
+here.
 
 Tier 3 (quantity = 1e30 infinity sentinel) is intentionally excluded
 from the carrier — B1 parity with the legacy
@@ -117,10 +122,11 @@ def test_cumulative_commodity_extracted_from_v_trade(_fixture):
     ``write_ladder_rolling_accumulators`` which only persists rows for
     ``_load_finite_ladder_tiers``.  This fixture has tier-1 and tier-2
     (quantity = 1,000,000 each) finite and tier-3 (quantity = 1e30)
-    infinite, so a row materialises for every finite tier regardless of
-    whether it is actually used — only the infinite tier-3 is excluded.
-    The 2-day coal demand is well under the tier-1 cap, so all of it
-    lands in tier 1 and tier 2's row is present but 0.
+    infinite, so a row materialises for every finite tier -- only the
+    infinite tier-3 is excluded.  Both finite tiers bind at the same
+    hand-derived cap (module docstring, ≈5479.452 MWh): the 2-day coal
+    demand exceeds even their combined cap, so tiers 1 and 2 both
+    saturate and the rest spills into the (excluded) tier 3.
     """
     sol, handoff, _run, _data, _provider = _fixture
     carrier = handoff.cumulative_commodity
@@ -139,10 +145,13 @@ def test_cumulative_commodity_extracted_from_v_trade(_fixture):
     assert ("coal", 3) not in by_tier, (
         "infinite-cap tier 3 must NOT appear in carrier; got "
         f"{by_tier.get(('coal', 3))}")
-    # Tier 2 is finite but unused for this fixture's demand — its row
-    # is present with an explicit 0, not omitted.
-    assert by_tier.get(("coal", 2)) == 0.0, (
-        f"unused finite tier 2 should be present at 0; got {by_tier.get(('coal', 2))}")
+    # Both finite tiers bind at the same hand-derived cap (module
+    # docstring): 1,000,000 × 1.0 × 48 / 8760 ≈ 5479.452054794521.
+    expected_cap = 1_000_000.0 * 1.0 * 48.0 / 8760.0
+    assert abs(by_tier.get(("coal", 1), 0.0) - expected_cap) < 1e-6, (
+        f"tier 1 should bind at {expected_cap}; got {by_tier.get(('coal', 1))}")
+    assert abs(by_tier.get(("coal", 2), 0.0) - expected_cap) < 1e-6, (
+        f"tier 2 should also bind at {expected_cap}; got {by_tier.get(('coal', 2))}")
 
     # Independent re-derivation from v_trade for the parity
     # cross-check (mirror of the extractor's algorithm, computed
@@ -159,9 +168,6 @@ def test_cumulative_commodity_extracted_from_v_trade(_fixture):
         if c != "coal" or i not in (1, 2):
             continue
         expected[(c, i)] = expected.get((c, i), 0.0) + v
-    assert expected[("coal", 1)] < 1_000_000.0, (
-        "tier 1 should not bind at its cap for this 2-day fixture; "
-        f"got {expected[('coal', 1)]}")
     for key, exp_v in expected.items():
         got = by_tier.get(key)
         assert got is not None, f"missing carrier row for {key}"

@@ -99,6 +99,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *, provider=None) -> dict
         p_commodity_unitsize=None,
         p_f_d_k=None,
         p_ladder_cum_realized_mwh=None,
+        p_ladder_cum_weight=None,
     )
 
     cwl = _read_single_col(provider, "solve_data/commodity_with_ladder", "commodity", "c")
@@ -183,6 +184,49 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *, provider=None) -> dict
                .select("c", "i", "d", "value"))
         p_realized = Param(("c", "i", "d"), rel)
 
+    # p_ladder_cum_weight[d]: years_represented[d] * realized_hours_through_this_roll[d] / 8760 -- the
+    # real-calendar-years-equivalent of a period's dispatch simulated so far, used by the cumulative tier
+    # cap to annualise + replicate-across-years its quantity (see _eq_tier_cap_cumulative's header).
+    # ``p_period_share`` / ``p_years_represented_d`` (the model-wide, dt-scoped Params the annual cap
+    # uses) are both pruned to the current roll's own dt once a period leaves period_in_use, which is
+    # exactly wrong for a cap that must keep every period the chain has ever touched (the same reason
+    # f_d_k itself is read from a provider CSV that folds finished periods back in, #143). So this reads
+    # two sources that are NOT dt-pruned: ``solve_data/p_years_represented.csv`` (the solve's static
+    # period->year map, identical on every roll) for years_represented, and the realized-hours handoff
+    # (``cum_sim_hours``, already retained across rolls by #143's own fix) + this roll's own
+    # ``hours_in_period.csv`` for realized_hours_through_this_roll. realized_hours[d] is 0 for an
+    # untouched period, so including the whole years_represented domain (even periods not yet reached)
+    # is harmless. None when the inputs are absent (e.g. a synthetic fixture that skips the derived-param
+    # pass) -- the cap row then falls back to the plain Sigma f_d_k of the pre-fix formula.
+    p_cum_weight = None
+    pyr_raw = _provider_get(provider, "solve_data/p_years_represented.csv")
+    if pyr_raw is not None and {"period", "p_years_represented"}.issubset(pyr_raw.columns):
+        years_by_d = (pyr_raw.select("period", "p_years_represented")
+                      .rename({"period": "d"})
+                      .with_columns(pl.col("p_years_represented").cast(pl.Float64))
+                      .group_by("d").agg(pl.col("p_years_represented").sum().alias("years")))
+        prior_hours: dict[str, float] = {}
+        prior = read_handoff_frame(provider, K.HANDOFF_CUM_SIM_HOURS)
+        if prior is not None and "period" in prior.columns:
+            col = "p_ladder_cum_sim_hours" if "p_ladder_cum_sim_hours" in prior.columns else "value"
+            prior_hours = dict(zip(prior["period"].to_list(),
+                                   prior[col].cast(pl.Float64).to_list()))
+        this_roll_hours: dict[str, float] = {}
+        hip = _provider_get(provider, "solve_data/hours_in_period.csv")
+        if hip is not None and {"period", "value"}.issubset(hip.columns):
+            this_roll_hours = dict(zip(hip["period"].to_list(),
+                                       hip["value"].cast(pl.Float64).to_list()))
+        all_d = set(years_by_d["d"].to_list()) | set(prior_hours) | set(this_roll_hours)
+        if all_d:
+            from flextool.engine.input._constants import HOURS_PER_YEAR
+            years_lookup = dict(zip(years_by_d["d"].to_list(), years_by_d["years"].to_list()))
+            rows = [
+                {"d": dd, "value": years_lookup.get(dd, 1.0)
+                          * (prior_hours.get(dd, 0.0) + this_roll_hours.get(dd, 0.0)) / HOURS_PER_YEAR}
+                for dd in all_d
+            ]
+            p_cum_weight = Param(("d",), pl.DataFrame(rows))
+
     return dict(
         commodity_with_ladder=cwl,
         commodity_with_ladder_annual=cwla,
@@ -201,6 +245,7 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *, provider=None) -> dict
         p_commodity_unitsize=None,
         p_f_d_k=p_f_d_k,
         p_ladder_cum_realized_mwh=p_realized,
+        p_ladder_cum_weight=p_cum_weight,
     )
 
 
@@ -382,23 +427,37 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
     # ─── EQ. ─── ladder_tier_cap_cumulative_roll ─────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{n,d} v_trade[c,n,d,i] · commodity_unitsize[c]
-    #   ≤  quantity_cum[c,i] · Σ_d f_d_k[d] − Σ_d realized[c,i,d]
+    #   ≤  quantity_cum[c,i] · Σ_d (years_represented[d] · realized_hours[d] / 8760) − Σ_d realized[c,i,d]
     #   ∀ (c,i) ∈ ci_ladder_cumulative with quantity_cum[c,i] < 1e29;  (c,n,d,i) ∈ cndi_ladder_cum
-    # Caps what tier i supplies over all periods.  Σ_d f_d_k sums over every period the chain has
-    # ever touched — not just the ones still active this roll — because p_f_d_k_from_source folds a
-    # finished period back in at 1.0 once it leaves period_in_use, instead of dropping it; without
-    # that, Σ_d f_d_k used to reset to the new period's own local progress each time the chain moved
-    # on, while realized kept climbing, eventually driving this row negative (#143).  "quantity
-    # allocated up to the end of this roll's horizon" is now monotone non-decreasing across rolls —
-    # the same requirement #89's fix gives the annual cap — and realized (what earlier rolls actually
-    # bought, always ≤ what their own, earlier horizon end allocated) can never exceed it, so the row
-    # is feasible by construction; no clamp.  Σ_d f_d_k is a scalar (1 when f_d_k is absent); realized
-    # = tier MWh bought by earlier solves (0 when absent).  Unlimited tiers get no row.
+    # Caps what tier i supplies over the whole modelled horizon.  quantity_cum, like quantity_ann, is a
+    # per-modelled-YEAR amount: Σ_d (years_represented[d] · realized_hours[d] / 8760) is the real-
+    # calendar-years-equivalent of representative dispatch simulated so far — realized_hours[d]/8760
+    # annualises each period's own realized representative-sample hours up to a full calendar year
+    # (the hours-form of period_share[d]·f_d_k[d], #89's annualisation), and years_represented[d] then
+    # multiplies that by the number of real calendar years period d stands for (co2_max_total scales its
+    # emissions cap the same way, docs: "each period's annualised emissions times the years it
+    # represents"); without it a period block representing several years was charged for only one
+    # (p_ladder_cum_weight, load_data).  Sums over every period the chain has ever touched — not just
+    # the ones still active this roll — the same reason f_d_k itself is read from a provider CSV that
+    # folds finished periods back in (#143): without that, this sum would reset to the new period's own
+    # local progress each time the chain moved on, while realized kept climbing, eventually driving this
+    # row negative.  "quantity allocated up to the end of this roll's horizon" is monotone non-
+    # decreasing across rolls — the same requirement #89's fix gives the annual cap — and realized (what
+    # earlier rolls actually bought, always ≤ what their own, earlier horizon end allocated) can never
+    # exceed it, so the row is feasible by construction; no clamp.  p_ladder_cum_weight is a scalar sum
+    # (1 per period of Σ f_d_k, the pre-years_represented-fix formula, when load_data couldn't build the
+    # years_represented/realized_hours Param — e.g. a synthetic fixture that skips the derived-param
+    # pass); realized = tier MWh bought by earlier solves (0 when absent).  Unlimited tiers get no row.
     cndi_cum_finite = d.cndi_ladder_cum.join(ci_cum_finite, on=["c", "i"], how="inner")
-    sum_f_d_k = float(d.p_f_d_k.frame["value"].sum()) if d.p_f_d_k is not None else 1.0
+    if d.p_ladder_cum_weight is not None and d.p_ladder_cum_weight.frame.height > 0:
+        sum_weight = float(d.p_ladder_cum_weight.frame["value"].sum())
+    elif d.p_f_d_k is not None:
+        sum_weight = float(d.p_f_d_k.frame["value"].sum())
+    else:
+        sum_weight = 1.0
 
     cap_df = (ci_cum_finite.join(d.p_ladder_cum_quantity.frame, on=["c", "i"], how="left")
-              .select("c", "i", cap=pl.col("value") * sum_f_d_k))
+              .select("c", "i", cap=pl.col("value") * sum_weight))
     if d.p_ladder_cum_realized_mwh is not None:
         realized_ci = (d.p_ladder_cum_realized_mwh.frame
                        .group_by(["c", "i"]).agg(pl.col("value").sum().alias("realized")))
