@@ -24,6 +24,8 @@ Deterministic / single-branch solves have ``pdt_branch_weight`` absent
 ``× 1.0`` no-op, so all non-stochastic outputs are byte-identical.
 """
 
+import pandas as pd
+
 
 def weight_dt_by_branch(frame, pdt_weight):
     """Multiply a ``(solve, period, time)``-indexed cost frame/Series by
@@ -46,3 +48,33 @@ def weight_dt_by_branch(frame, pdt_weight):
     if getattr(frame, "ndim", 2) == 1:
         return frame.mul(factors)
     return frame.mul(factors, axis=0)
+
+
+def unweight_period_by_branch(frame, pd_weight):
+    """Divide a ``period``-indexed frame/Series by that period's branch
+    weight (item 120): the per-period CO2 cap's row isn't branch-weighted
+    while the objective's CO2-price term is, so the raw dual is the
+    path's own price TIMES its branch probability -- the same shrinkage
+    the node-balance dual had before c15c's fix (``write_v_dual_node_balance``).
+
+    ``pd_weight`` is ``par.pd_branch_weight`` -- a ``(solve, period)``-
+    indexed Series that keeps its ``solve`` level (``drop_levels`` does not
+    touch it; see ``calc_costs.py``'s commodity-ladder pricing for the same
+    pattern).  Reduced here to a plain ``{str(period): weight}`` map (last
+    solve wins on a period repeated across rolls -- tolerated the same way
+    elsewhere); any period missing a row (deterministic / non-forecast
+    periods, and the pre-reveal trunk) defaults to ``1.0`` → a no-op.
+    """
+    if (frame is None or pd_weight is None
+            or getattr(pd_weight, "empty", False) or getattr(frame, "empty", False)):
+        return frame
+    bw_map: dict[str, float] = {}
+    for idx, val in pd_weight.items():
+        period = idx[-1] if isinstance(idx, tuple) else idx
+        bw_map[str(period)] = float(val)
+    bw = pd.Series(
+        [bw_map.get(str(p), 1.0) for p in frame.index], index=frame.index,
+    )
+    if getattr(frame, "ndim", 2) == 1:
+        return frame.div(bw)
+    return frame.div(bw, axis=0)

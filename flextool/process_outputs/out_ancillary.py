@@ -356,6 +356,8 @@ def co2_duals(par, s, v, r, debug):
     """
     import pandas as pd
 
+    from flextool.process_outputs._branch_weight import unweight_period_by_branch
+
     results = []
     periods = s.d_realized_period
 
@@ -364,6 +366,13 @@ def co2_duals(par, s, v, r, debug):
         co2_period_price = (-v.dual_co2_max_period).astype(float)
         co2_period_price = co2_period_price.div(
             par.inflation_factor_operations_yearly, axis=0
+        )
+        # Item 120: undo the branch probability the raw dual carries (the
+        # cap row isn't branch-weighted, the objective's price term is) so
+        # each scenario path reports its OWN price, not price × branch
+        # weight -- the per-path analogue of c15c's node-price fix.
+        co2_period_price = unweight_period_by_branch(
+            co2_period_price, getattr(par, 'pd_branch_weight', None),
         )
         co2_period_price.columns.name = 'group'
         co2_period_price.index.name = 'period'
