@@ -127,9 +127,12 @@ def _v_flow() -> pl.DataFrame:
 
 
 # Hand calc (emission branch, noEff → slope=coeff=1):
-#   content/1000 * value * us * dur * rpw
-#   = 100/1000 * 10 * 5 * 2 * 1 = 0.1 * 100 = 10.0 tonnes
-_EXPECTED_TONNES = 10.0
+#   content * value * us * dur * rpw
+#   = 100 * 10 * 5 * 2 * 1 = 10000.0 tonnes
+# (co2_content is already CO2 tons per MWh, docs/reference.md -- no further unit conversion; a
+# stray /1000 here used to undercount a thousandfold against what the LP's own co2_max_period /
+# co2_max_total / co2_price_eff rows count directly, #38.)
+_EXPECTED_TONNES = 10000.0
 
 
 @pytest.mark.parametrize("unitsize_axis", ["e", "p"])
