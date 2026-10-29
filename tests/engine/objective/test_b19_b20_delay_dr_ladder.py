@@ -128,18 +128,25 @@ def _add_fuel_ladder_annual(
 
 def test_b20_3_ladder_annualisation_factor_isolated(toy_1n1p_1d2t):
     """Covers B20-3 — change ``inflation_op`` and ``period_share`` and
-    verify ladder cost scales by ``inflation_op / period_share``.
+    verify ladder cost scales by ``inflation_op / period_share``, including
+    the tier-1 cap itself (#89: the cap is also a per-YEAR quantity, scaled
+    down by the period's own share of the year — ``quantity_ann · period_share
+    · f_d_k``, ``_eq_tier_cap_annual``).
 
-    Setup: demand = 10 MWh × 2 steps = 20 MWh total.  Tier 1 cap=8
-    @ 5 €/MWh; tier 2 unlimited @ 80 €/MWh.  Optimal split:
-    v_trade[1]=8, v_trade[2]=12.
+    Setup: demand = 10 MWh × 2 steps = 20 MWh total.  Tier 1 cap=8 (at
+    share=1) @ 5 €/MWh; tier 2 unlimited @ 80 €/MWh.
 
-    Hand-calc baseline (infl=1, share=1): ladder = (8·5 + 12·80) = 1000.
-    Hand-calc scaled (infl=1.2, share=0.4): ladder = 1000·(1.2/0.4) = 3000.
-    Δ ladder = 2000.  The legacy commodity-price=1·20 term is suppressed
-    on FUEL (ladder commodity), so any obj difference equals Δ ladder.
-    A regression that flipped operator (× share instead of / share) would
-    yield 1000·1.2·0.4 = 480 instead of 3000.
+    Hand-calc baseline (infl=1, share=1, f_d_k=1): cap = 8·1·1 = 8, so
+    v_trade=[8, 12]; ladder = 8·5 + 12·80 = 1000.
+
+    Hand-calc scaled (infl=1.2, share=0.4, f_d_k=1): cap = 8·0.4·1 = 3.2
+    (the cap shrinks with the period's share too), so v_trade=[3.2, 16.8];
+    raw ladder = 3.2·5 + 16.8·80 = 16 + 1344 = 1360; annualised by
+    infl/share = 1.2/0.4 = 3.0: ladder = 1360·3.0 = 4080.
+
+    Δ ladder = 4080 − 1000 = 3080.  The legacy commodity-price=1·20 term is
+    suppressed on FUEL (ladder commodity), so any obj difference equals
+    Δ ladder.
     """
     base = _add_fuel_ladder_annual(
         toy_1n1p_1d2t, tier1_price=5.0, tier1_cap=8.0, tier2_price=80.0)
@@ -152,15 +159,19 @@ def test_b20_3_ladder_annualisation_factor_isolated(toy_1n1p_1d2t):
     _, sb = _solve(base)
     _, sp = _solve(pert)
 
-    # Sanity: tier split is the binding-cap optimum.
-    vt = sb.value("v_trade").sort("i")["value"].to_list()
-    assert vt == pytest.approx([8.0, 12.0], rel=1e-7), (
-        f"v_trade {vt} != [8, 12] — cap setup off")
+    # Sanity: baseline tier split is the binding-cap optimum (cap=8 at share=1).
+    vt_b = sb.value("v_trade").sort("i")["value"].to_list()
+    assert vt_b == pytest.approx([8.0, 12.0], rel=1e-7), (
+        f"v_trade {vt_b} != [8, 12] — cap setup off")
     # Sanity: baseline obj == pure ladder cost (legacy term suppressed).
     assert float(sb.obj) == pytest.approx(1000.0, rel=1e-7)
-    # Hand-calc: Δobj from infl/share perturbation = ladder · (3.0 - 1.0)
-    # = 1000 · 2 = 2000.
-    assert float(sp.obj) - float(sb.obj) == pytest.approx(2000.0, rel=1e-7)
+    # Sanity: the perturbed cap shrinks with period_share (8·0.4 = 3.2), so the
+    # tier split moves too.
+    vt_p = sp.value("v_trade").sort("i")["value"].to_list()
+    assert vt_p == pytest.approx([3.2, 16.8], rel=1e-7), (
+        f"v_trade {vt_p} != [3.2, 16.8] — tier-1 cap did not scale by period_share")
+    # Hand-calc: Δobj = 4080 − 1000 = 3080 (see docstring).
+    assert float(sp.obj) - float(sb.obj) == pytest.approx(3080.0, rel=1e-7)
 
 
 # ---------------------------------------------------------------------------

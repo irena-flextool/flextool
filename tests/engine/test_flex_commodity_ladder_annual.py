@@ -28,9 +28,14 @@ def test_commodity_ladder_annual_parity(scenario_run):
     """polar_high obj == flextool's HiGHS objective for the annual ladder.
 
     Also confirms the per-tier v_trade decomposition: the cheap finite
-    tier 1 binds at its 1-MWh cap, and the +∞ tier 2 absorbs the
+    tier 1 binds at its cap, and the +∞ tier 2 absorbs the
     overflow.  This pins the entire algebra (variables × balance × cap
     × per-tier price) end-to-end.
+
+    Tier 1's authored quantity is a per-calendar-YEAR amount (100 000 MWh,
+    ``_augment_phase3d.py``); ``_eq_tier_cap_annual`` scales it down to this
+    2-day period's own share of the year (#89): 100 000 · 2/365 =
+    547.945205... MWh — the period's actual tier-1 cap.
     """
     run = scenario_run(SCENARIO)
     work = run.work_folder
@@ -48,7 +53,8 @@ def test_commodity_ladder_annual_parity(scenario_run):
         f"flextool={flextool_obj}, rel={rel:.3e}"
     )
 
-    # v_trade splits across tiers — tier 1 binds at the 1 MWh cap, tier
+    # v_trade splits across tiers — tier 1 binds at its period-share-scaled
+    # cap (see docstring: 100 000 · 2/365 = 547.945205... MWh), tier
     # 2 (+∞) absorbs overflow at the 30 €/MWh price.
     v_trade = sol.value("v_trade").sort("c", "n", "d", "i")
     # Pre-Tier-4 backfill: nail down v_trade column structure so the smoke
@@ -57,10 +63,11 @@ def test_commodity_ladder_annual_parity(scenario_run):
         f"v_trade missing expected (commodity=c, node=n, tier=i) columns: "
         f"got {v_trade.columns}"
     )
+    tier1_cap = 100_000.0 * 2.0 / 365.0  # 547.945205...
     tier1_total = v_trade.filter(pl.col("i") == "1")["value"].sum()
     tier2_total = v_trade.filter(pl.col("i") == "2")["value"].sum()
-    assert 0.5 < tier1_total < 1.5, (
-        f"tier 1 should bind at ~1 MWh cap, got {tier1_total}")
+    assert tier1_total == pytest.approx(tier1_cap, rel=1e-9), (
+        f"tier 1 should bind at its period-share-scaled cap {tier1_cap}, got {tier1_total}")
     assert tier2_total > 100.0, (
         f"tier 2 (+∞) should absorb overflow, got {tier2_total}")
 
