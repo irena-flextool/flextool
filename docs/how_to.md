@@ -716,6 +716,8 @@ To set a price one needs to create set the co2_method parameter to *price* (cons
 
 Alternatively one can set a limit on the co2 used by setting the `co2_method` parameter to *period* or *total* and setting the `co2_max_period` (periodic map [tCO2/a], annual emissions in each period) parameter or `co2_max_total` (constant [tCO2], emissions over the whole solve: annual emissions times `years_represented`, summed over the periods) parameter. 
 
+A flow into a node of the same `group` (instead of out of it) is treated as CO2 removal: it earns `co2_content × co2_price` as a credit against the price, and it is subtracted from the group's `co2_max_period` / `co2_max_total` emissions. This is how a direct-air-capture or bio-energy-with-carbon-capture process should be modelled — as a process whose output flow delivers into the group's CO2-content commodity node.
+
 There methods can be combined by setting the `co2_method` to *price_period*, *price_total*, *period_total* or *price_period_total*.
 
 

@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **A flow into a CO2-priced or CO2-capped node now earns a removal credit, instead of being
+  ignored by the solve while the results already reported it as a credit.** Modelling CO2 removal
+  (e.g. direct air capture or bio-energy with carbon capture) as a flow into a CO2-content
+  commodity's node, where that node belongs to a group with an active CO2 price or cap, used to
+  cost and count nothing in the solve itself — even though the emission reports already netted the
+  removal off the group's total, so the reported numbers and the solve's incentives disagreed. The
+  flow now earns `co2_content × co2_price` as a negative cost (reducing the objective) and reduces
+  the same group's emission caps, matching the emission reports and the documented "CO2 price is
+  added to the price of the commodity" behaviour. Models that never route a flow into a CO2-priced
+  or capped node are unaffected.
+
 - **CO2 emission outputs now report physical emissions even when no group prices or caps CO2.**
   The model-wide and per-unit/connection CO2 outputs used to come from the same flow set the LP
   builds for a priced or capped CO2 group — so a commodity with a `co2_content` row, but no group

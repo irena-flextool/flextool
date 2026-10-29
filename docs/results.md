@@ -47,7 +47,7 @@ For stochastic models the parquets carry only the **realised / committed** resul
     - *fixed cost invested* — M[CUR] fixed O&M for newly invested capacity
     - *fixed cost reduction of divestments* — M[CUR] fixed O&M removed by divestments
     - *commodity cost* / *commodity sales* — M[CUR] cost of buying / revenue from selling commodities
-    - *co2* — M[CUR] cost of CO2 emissions caused by commodities with CO2 content
+    - *co2* — M[CUR] cost of CO2 emissions caused by commodities with CO2 content, net of the removal credit (negative cost) for flows into the same priced group's node(s)
     - *other operational* — M[CUR] other variable O&M costs
     - *starts* — M[CUR] start-up costs
     - *upward / downward slack penalty* — M[CUR] cost of involuntary demand reduction / increase
@@ -85,7 +85,7 @@ The categories mirror the system [Costs](#costs) decomposition, restricted to th
 Attribution rules (matching the LP objective):
 
 - **Fuel / commodity cost** is attributed to the **consuming process** — the unit or connection that draws the commodity — not to the source node.
-- **CO2 cost** for a process is the **sum over every priced group the process touches**, so a flow that contributes emissions to several priced groups carries the full cost of each.
+- **CO2 cost** for a process is the **sum over every priced group the process touches**, so a flow that contributes emissions to several priced groups carries the full cost of each. A flow into a priced group's node (removal) carries a negative cost (credit) the same way.
 
 By construction these tables are purely additive collapses of the same per-entity intermediates the system summary uses, so **summing any category over all entities reproduces the system summary**: the `unit` + `connection` + `node` contributions for a given category and period add up to the matching `cost_annualized` / `cost_discounted_total` category value (`annualized_costs_d_p` / `costs_discounted_d_p` in the parquet store).
 
