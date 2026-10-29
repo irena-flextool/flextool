@@ -37,6 +37,13 @@ def _dt_periods(fd) -> list[str]:
     return utf8(fd.dt.select("d"))["d"].unique(maintain_order=True).to_list()
 
 
+def _inflation_op_by_period(fd) -> dict[str, float]:
+    assert fd.p_inflation_op is not None
+    frame = utf8(fd.p_inflation_op.frame)
+    assert frame["d"].is_unique().all()
+    return dict(frame.select("d", "value").iter_rows())
+
+
 def test_branch_periods_get_anchor_years(tmp_path_factory) -> None:
     """Two-period stochastic solve, 5 years per period: the anchors and every forecast branch get 5.0."""
     url, scen = make_db(tmp_path_factory, alt="yrd_stoch", base_chain=["init", "base", "stoch"],
@@ -50,6 +57,29 @@ def test_branch_periods_get_anchor_years(tmp_path_factory) -> None:
     years = _years_by_period(fd)
     assert years == {d: 5.0 for d in periods}
     assert list(years) == periods
+
+
+def test_branch_periods_get_anchor_inflation_op(tmp_path_factory) -> None:
+    """Two-period stochastic solve, 5 years per period, zero inflation rate (the fixture's default):
+    ``p_inflation_op`` must be 5.0 on every forecast branch period, matching its anchor — not the 1.0
+    a branch got before the anchor's ``years_represented`` rows were threaded to it (#51).  The
+    branches carry all the solve weight, so a 1.0 there under-weights every operating cost ×5 relative
+    to the investment side, which is annualised over the full 5 years at the anchor."""
+    url, scen = make_db(tmp_path_factory, alt="yrd_stoch_infl", base_chain=["init", "base", "stoch"],
+                        fixture_json=STOCH_JSON,
+                        values=[["solve", "stoch_2p", "years_represented", _years({"p2035": 5.0, "p2040": 5.0})]])
+    steps = list(run(tmp_path_factory, url, scen).values())
+    assert len(steps) == 1
+    fd = steps[0].flex_data
+    periods = _dt_periods(fd)
+    assert {"p2035", "p2035_high", "p2035_low", "p2040", "p2040_high", "p2040_low"} <= set(periods)
+    infl = _inflation_op_by_period(fd)
+    years = _years_by_period(fd)
+    assert infl == {d: 5.0 for d in periods}
+    # Relational: every branch's op-cost weight equals its anchor's.
+    assert infl["p2035_high"] == infl["p2035_low"] == infl["p2035"]
+    assert infl["p2040_high"] == infl["p2040_low"] == infl["p2040"]
+    assert infl == years  # zero inflation rate: p_inflation_op collapses to years_represented
 
 
 def test_rolling_sub_solves_get_parent_years(tmp_path_factory) -> None:

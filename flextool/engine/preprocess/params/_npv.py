@@ -1074,6 +1074,8 @@ def p_inflation_op_from_source(source: "InputSource",
                                     active_solve: str | None,
                                     period_in_use: list[str],
                                     period_universe: list[str] | None = None,
+                                    *,
+                                    provider: "object | None" = None,
                                     ) -> "Param | None":
     """Public entry: ``p_inflation_op[d]`` over ``period_in_use``.
 
@@ -1081,12 +1083,26 @@ def p_inflation_op_from_source(source: "InputSource",
     :func:`._derived.p_inflation_op_full_cascade_from_source`.
     Replaces the workdir read of ``solve_data/p_inflation_factor_operations_yearly.csv``
     when wired through :func:`apply_npv`.
+
+    ``provider`` — forwarded to :func:`_inflation_factors_lf` /
+    :func:`_years_for_period_lf` so a stochastic branch period reads its
+    anchor's ``years_represented`` rows from the canonical
+    ``solve_data/p_years_represented.csv`` (the same arm the recourse
+    annuity walk in ``._walks.period_walk_iterator`` already uses via
+    this same ``_inflation_factors_lf`` helper).  Without it every
+    branch period falls back to the source arm's un-copied rows and is
+    under-weighted relative to its anchor (#51).  This is a direct
+    per-``d`` lookup (no window sum over ``d_all``), so there is no
+    double-counting to guard against here — unlike the annuity walk,
+    which already applies its own scenario-lineage dedup before
+    aggregating the same factor over a lifetime window.
     """
     if not period_in_use:
         return None
     if period_universe is None:
         period_universe = period_in_use
-    factors_lf = _inflation_factors_lf(source, active_solve, period_universe)
+    factors_lf = _inflation_factors_lf(source, active_solve, period_universe,
+                                        provider=provider)
     out = (pl.LazyFrame({"d": period_in_use})
               .with_columns(alias_to_axis("d", "d"))
               .join(factors_lf, on="d", how="left")
@@ -1327,7 +1343,8 @@ def apply_npv(flex_data: object,
 
     # 1. p_inflation_op (None == no inflation data → field stays default).
     flex_data.p_inflation_op = p_inflation_op_from_source(
-        source, active_solve, period_in_use, period_universe)
+        source, active_solve, period_in_use, period_universe,
+        provider=provider)
 
     # 2. p_ed_fixed_cost — None == no period_with_history (single-solve
     #    fixtures with no historical periods); legitimate "no data" outcome.

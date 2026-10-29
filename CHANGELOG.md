@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **A non-recourse stochastic solve's operating costs now get the same `years_represented` weight
+  as the investment side, instead of being weighted one year regardless of how many years the
+  period represents.** Every forecast branch period (the ones carrying the solve's probability
+  weight) used to fall back to one year per period for `p_inflation_op` even when its anchor
+  period represented several years, while the investment side was still annualised over the full
+  span — under-weighting every operating cost relative to investment by the same factor. Branch
+  periods now read their anchor's years the same way the investment annuity side already does. A
+  deterministic solve, a rolling solve, or a stochastic solve with `years_represented = 1`
+  (every stochastic fixture in the regression suite) is unaffected.
+
 - **A flow into a CO2-priced or CO2-capped node now nets against the group's emissions the way
   the solve does, instead of only when the same process both emits and removes at the same node.**
   The removal credit's CO2 cost and emission outputs used to require the crediting flow to belong
