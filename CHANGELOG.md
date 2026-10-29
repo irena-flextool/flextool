@@ -1,5 +1,33 @@
 ## Unreleased
 
+- **A flow into a CO2-priced or CO2-capped node now nets against the group's emissions the way
+  the solve does, instead of only when the same process both emits and removes at the same node.**
+  The removal credit's CO2 cost and emission outputs used to require the crediting flow to belong
+  to the very process (and node) that also emits, so a removal process (e.g. direct air capture)
+  distinct from whatever emits in the group went uncredited in the reports, even though the solve
+  itself already gave it the credit. The credit is now attributed to the process that delivers it,
+  and nets against the group's total the same way the LP objective and caps do. Models with no
+  removal flow, or where removal and emission happen to be the same process and node, are
+  unaffected.
+
+- **The per-period CO2 price for a rolling solve now averages the rolls that realize a period,
+  weighted by the hours each roll keeps of it, instead of only reporting the last roll's price.**
+  When a period's hours are split across more than one rolling window, each window's own shadow
+  price covered only its own slice of the period; reporting just the last window's price silently
+  dropped every earlier window's realized hours. A period realized by a single roll is unaffected.
+
+- **The per-period CO2 price in a stochastic solve no longer comes out multiplied by the branch's
+  probability.** The per-period CO2 cap isn't weighted by the branch probability the way the
+  objective's CO2 price term is, so the raw shadow price was the path's true price times its own
+  branch weight — each path now reports its own price, the same fix item #120 flags for the node
+  price fixed in an earlier cycle. A deterministic solve is unaffected.
+
+- **The model-wide and per-group CO2 totals in a stochastic solve now report each scenario path
+  separately, instead of adding every forecast branch's emissions into one pooled number.** The
+  anchor's shared history and every branch's own periods used to be summed together as if they
+  were one timeline, counting several alternative futures' emissions against a single total. A
+  deterministic solve, or a stochastic solve with only one scenario path, is unaffected.
+
 - **A group's whole-horizon CO2 cap and a commodity price ladder's cumulative tier cap now apply
   separately to each path of a stochastic solve, instead of being shared across every forecast
   branch.** Both caps used to sum every forecast branch's emissions or purchases into a single

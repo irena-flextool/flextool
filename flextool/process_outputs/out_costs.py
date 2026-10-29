@@ -328,11 +328,35 @@ def CO2(par, s, v, r, debug):
     """Annualized CO2 Mt for groups by period"""
     results = []
 
-    # Calculate CO2 emissions in Mt
-    total_co2 = ((r.emissions_co2_d * par.years_represented_d) / 1000000).sum(axis=0)
-    co2_summary = pd.DataFrame(index=["CO2 [Mt]"], columns=["model_wide"], data=total_co2)
-    co2_summary.index.name = 'param_CO2'
-    co2_summary.columns.name = 'scope'
+    # Calculate CO2 emissions in Mt.  Summing every period into ONE number
+    # pools the anchor's shared trunk together with every forecast branch's
+    # own periods -- in a genuinely multi-leaf stochastic solve that counts
+    # N parallel futures' emissions as if they were one timeline (Q16,
+    # #52/#58; the output-side analogue of the LP cap bug c18c fixed with
+    # per-path ``_path`` rows).  ``s.d_leaf`` maps every period to the
+    # leaf(ves) that reference it (a pre-reveal trunk period belongs to
+    # every leaf); gate on >1 distinct leaf so a deterministic / single-
+    # leaf solve keeps the legacy single "model_wide" column, byte-
+    # identical.
+    co2_mt = (r.emissions_co2_d * par.years_represented_d) / 1000000
+    leaves = (s.d_leaf.get_level_values('leaf').unique()
+              if not s.d_leaf.empty else [])
+    if len(leaves) > 1:
+        totals = {
+            leaf: co2_mt.reindex(
+                s.d_leaf[s.d_leaf.get_level_values('leaf') == leaf]
+                 .get_level_values('period').unique()
+            ).sum()
+            for leaf in leaves
+        }
+        co2_summary = pd.DataFrame(totals, index=["CO2 [Mt]"])
+        co2_summary.index.name = 'param_CO2'
+        co2_summary.columns.name = 'path'
+    else:
+        total_co2 = co2_mt.sum(axis=0)
+        co2_summary = pd.DataFrame(index=["CO2 [Mt]"], columns=["model_wide"], data=total_co2)
+        co2_summary.index.name = 'param_CO2'
+        co2_summary.columns.name = 'scope'
     results.append((co2_summary, 'CO2__'))
 
     # Process co2 emissions (annualized — plot rule 'y' weights by years_represented for horizon totals)
