@@ -1,12 +1,12 @@
 """Per-roll CO2 rolling accumulator emission (Gap F close-out).
 
-Mirrors ``_co2_tonnes_this_roll``: for each realized ``(d, t)``
-(``flex_data.realized_dispatch``), per ``v_flow[p, source, sink, d, t]``
-whose ``source`` is a CO2 commodity node — add
-``content/1000 * value * us * dur * rpw`` (noEff) or that × ``slope``
-(eff — ``slope`` already carries a direct unit's conversion_flow_coeff
-ratio, #10 / Q12); per row whose ``sink`` is a CO2 node — subtract the
-same flow piece (no slope).
+For each realized ``(d, t)`` (``flex_data.realized_dispatch``), per ``v_flow[p, source, sink, d, t]``
+whose ``source`` is a CO2 commodity node — add ``content * value * us * dur * rpw`` (noEff) or that ×
+``slope`` (eff — ``slope`` already carries a direct unit's conversion_flow_coeff ratio, #10 / Q12); per
+row whose ``sink`` is a CO2 node — subtract the same flow piece (no slope).  No further unit conversion:
+``co2_content`` is already CO2 tons per MWh (``docs/reference.md``), the same measure core.py's
+``co2_max_period`` / ``co2_max_total`` / ``co2_price_eff`` rows use directly — an extra ``/1000`` here
+would silently undercount the carried realized total a thousandfold against what the LP itself counts.
 Attribute to groups via ``group_node``; combine with the prior roll's
 accumulator carried in the Provider under ``K.HANDOFF_CUMULATIVE_CO2``
 (populated by ``_provider_translators.translate_handoff_to_provider``).
@@ -42,11 +42,22 @@ _logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _read_co2_max_total_groups(
+def _read_co2_capped_groups(
     work_folder: Path,
     *, provider: "object | None" = None,
 ) -> set[str]:
-    """Active ``co2_max_total`` cap groups from ``input/group__co2_method.csv``.
+    """Active CO2-*capped* groups (``co2_max_period`` or ``co2_max_total``, #38, Q22) from
+    ``input/group__co2_method.csv``.
+
+    Both caps' carried-budget RHS (``_co2_period_cap_with_carry``, ``_co2_total_cap_with_carry`` in
+    ``model/core.py``) need this roll's realized tonnes, so the gate is the union of
+    ``_leaf_sets._CO2_MAX_PERIOD_METHOD`` and ``_leaf_sets._CO2_MAX_TOTAL_METHOD`` — every method that
+    carries an actual cap (plain ``price``/``price_period``/``price_total`` excluded: pricing alone has
+    no RHS to carry).  Originally gated on ``_CO2_MAX_TOTAL_METHOD`` alone, which silently dropped every
+    period-only-capped group (``co2_method="period"``, no ``"total"``): the realized carrier came back
+    empty for them every roll, so ``co2_max_period``'s cap re-granted its own fraction-scaled allocation
+    with nothing subtracted (#38 regression caught by
+    ``test_co2_max_period_rolling.py::test_rolling_without_lookahead_equals_single_solve``).
 
     Provider-only after Step 2.5 Phase C — returns an empty set if
     the Provider doesn't carry the frame.  Cascade callers always
@@ -57,10 +68,14 @@ def _read_co2_max_total_groups(
     df = provider.get("input/group__co2_method")
     if df.height == 0 or {"group", "co2_method"} - set(df.columns):
         return set()
+    from flextool.engine.preprocess.emit._leaf_sets import (
+        _CO2_MAX_PERIOD_METHOD,
+        _CO2_MAX_TOTAL_METHOD,
+    )
+    capped_methods = _CO2_MAX_PERIOD_METHOD | _CO2_MAX_TOTAL_METHOD
     return set(
-        df.filter(pl.col("co2_method").is_in(
-            ["total", "price_total", "period_total", "price_period_total"]
-        ))["group"].cast(pl.Utf8).to_list()
+        df.filter(pl.col("co2_method").is_in(list(capped_methods)))
+        ["group"].cast(pl.Utf8).to_list()
     )
 
 
@@ -126,7 +141,7 @@ def compute_co2_rolling_accumulator(
     Returns ``[group, period, p_co2_cum_realized_tonnes]``.  Empty frame
     when no CO2-cap group is active.
     """
-    co2_groups = _read_co2_max_total_groups(work_folder, provider=provider)
+    co2_groups = _read_co2_capped_groups(work_folder, provider=provider)
     if not co2_groups:
         return pl.DataFrame(schema=_SCHEMA_OUT)
 
@@ -263,7 +278,7 @@ def compute_co2_rolling_accumulator(
         )
         .with_columns(
             contribution=(
-                pl.col("content_emis") / 1000.0
+                pl.col("content_emis")
                 * pl.col("value") * pl.col("us") * pl.col("dur")
                 * pl.col("rpw") * pl.col("slope_used")),
             attr_node=pl.col("source"),
@@ -280,7 +295,7 @@ def compute_co2_rolling_accumulator(
         .filter(pl.col("content_rem") != 0.0)
         .with_columns(
             contribution=(
-                -pl.col("content_rem") / 1000.0
+                -pl.col("content_rem")
                 * pl.col("value") * pl.col("us") * pl.col("dur")
                 * pl.col("rpw")),
             attr_node=pl.col("sink"),
@@ -330,7 +345,7 @@ def compute_co2_rolling_accumulator(
                         .filter(pl.col("content_emis") != 0.0)
                         .with_columns(
                             contribution=(
-                                pl.col("content_emis") / 1000.0
+                                pl.col("content_emis")
                                 * pl.col("value") * pl.col("section")
                                 * pl.col("us") * pl.col("dur") * pl.col("rpw")),
                             attr_node=pl.col("source"))
