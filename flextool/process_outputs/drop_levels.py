@@ -27,7 +27,9 @@ _V_DROP = [
     # the max-side totals, not per (entity/group, period).
     'dual_minInvest_period', 'dual_minCumulative',
     'dual_minInvestGroup_period', 'dual_minInvestGroup_cumulative',
-    'dual_co2_max_period',
+    # dual_co2_max_period moved to its own hour-weighted reduction below
+    # (Q22) -- a period that straddles several rolling windows needs an
+    # average over the rolls that realize it, not "last roll wins".
 ]
 
 # Variables with a solve-only row index — must collapse to a single
@@ -145,6 +147,49 @@ def _reduce_share_per_period(csoy: pd.Series) -> pd.Series:
     return csoy.groupby(level=0, sort=False).max()
 
 
+def _co2_period_price_weighted(
+    v_dual: pd.DataFrame, step_duration: pd.Series, dt_realize_dispatch: pd.MultiIndex,
+) -> pd.DataFrame:
+    """Hour-weighted average of ``dual_co2_max_period`` across rolls (Q22).
+
+    A period that straddles several rolling windows (the roll boundary
+    falls inside the period, not at its edge) gets one dual per roll that
+    touches it -- each roll's own sub-LP shadow price for its own slice of
+    the period.  ``keep='last'`` (the plain ``_V_DROP`` treatment every
+    other roll-overlapping dual gets) would report only the LAST roll's
+    price and silently drop every earlier roll's realized hours. Q22
+    instead weights each roll's price by the hours THAT roll keeps
+    (realizes) of the period, and averages.
+
+    Weight[solve, period] = Σ step_duration[solve, period, t] over the
+    (period, t) pairs ``dt_realize_dispatch`` marks realized for that
+    solve.  A roll that only sees period d as look-ahead (never commits a
+    result for it) contributes zero weight and is excluded entirely.
+
+    Deterministic / single-roll solves have exactly one (solve, period)
+    row per period, so the weight cancels and this is a no-op -- byte-
+    identical to the prior ``keep='last'`` dedup.
+    """
+    has_solve = 'solve' in v_dual.index.names
+    if v_dual.empty or not has_solve:
+        return v_dual.droplevel('solve') if has_solve else v_dual
+    sd_realized = step_duration[step_duration.index.isin(dt_realize_dispatch)]
+    weight = sd_realized.groupby(level=['solve', 'period']).sum()
+    weight = weight.reindex(v_dual.index, fill_value=0.0)
+    weighted = v_dual.mul(weight, axis=0)
+    num = weighted.groupby(level='period').sum()
+    den = weight.groupby(level='period').sum()
+    out = num.div(den, axis=0)
+    # Defensive: a period with zero total realized weight across every
+    # roll that touches it shouldn't happen for a genuinely realized
+    # period, but fall back to a plain mean rather than a silent 0/0 NaN.
+    zero_den = den.index[den == 0.0]
+    if len(zero_den) > 0:
+        plain = v_dual.groupby(level='period').mean()
+        out.loc[zero_den] = plain.loc[zero_den]
+    return out
+
+
 def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     """Strip the 'solve' level from all time-indexed variables, parameters and sets.
 
@@ -158,6 +203,14 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
         if obj.index.duplicated().any():
             obj = obj[~obj.index.duplicated(keep='last')]
         setattr(v, attr, obj)
+
+    # dual_co2_max_period (Q22): hour-weighted average across rolls instead
+    # of the plain keep='last' dedup above -- see _co2_period_price_weighted.
+    # par.step_duration / s.dt_realize_dispatch are still solve-indexed here
+    # (their own drops happen further down).
+    v.dual_co2_max_period = _co2_period_price_weighted(
+        v.dual_co2_max_period, par.step_duration, s.dt_realize_dispatch,
+    )
 
     # Solve-only indexes (``dual_co2_max_total`` historically, plus
     # ``dual_maxInvest_total`` which became solve-only when its reader
