@@ -1,4 +1,4 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-10-08 11:32:21.167739+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-10-29 17:38:21.621660+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
@@ -19,7 +19,11 @@ Period,period1,period1_lower,period1_mid,period1_realized,period1_upper
 "Investment discount factor",1,1,1,1,1
 
 Emissions
-"CO2 [Mt]",0,"System-wide annualized CO2 emissions for realized periods"
+"CO2 [Mt] (__anchor)",0,"System-wide annualized CO2 emissions for realized periods, scenario path __anchor"
+"CO2 [Mt] (lower)",0,"System-wide annualized CO2 emissions for realized periods, scenario path lower"
+"CO2 [Mt] (mid)",0,"System-wide annualized CO2 emissions for realized periods, scenario path mid"
+"CO2 [Mt] (realized)",0,"System-wide annualized CO2 emissions for realized periods, scenario path realized"
+"CO2 [Mt] (upper)",0,"System-wide annualized CO2 emissions for realized periods, scenario path upper"
 
 "Slack variables multiplied by timestep duration (creating or removing energy/matter, creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"
 Created, demand_node, period1, 1.44e+05

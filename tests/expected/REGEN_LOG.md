@@ -978,3 +978,18 @@ is regenerated here.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate multi_year_wind_no_investment` and
 `pytest tests/test_scenarios.py --regenerate multi_year_wind_growth_cap`.
+
+## 2026-10-29 — `2_day_stochastic_dispatch/summary_solve.csv`
+
+**Context.** c18d (#52, "report model-wide and group CO2 per scenario path, not pooled across
+branches") split `summary_solve.csv`'s single pooled `"CO2 [Mt]"` row into one row per scenario
+path under recourse. This fixture's solve has several forecast branches (`__anchor`, `lower`,
+`mid`, `realized`, `upper`), so its one `"CO2 [Mt]",0,"System-wide annualized CO2 emissions for
+realized periods"` row became five: `"CO2 [Mt] (<path>)",0,"...realized periods, scenario path
+<path>"` for each path — all still `0` (this scenario has no active `co2_content`/CO2 group, so
+the value itself is unaffected, only the row count and label). No other row or file changed:
+`costs__dt.csv` (also gated in this scenario's `csvs`) diffed only in float-literal formatting
+(`0.0`/`-0` vs `0`) already inside the numeric comparison's tolerance — regenerating it re-wrote
+byte-identical content, confirmed by `git diff --stat` showing zero changes to that file.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate 2_day_stochastic_dispatch`.
