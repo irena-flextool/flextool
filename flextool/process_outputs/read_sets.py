@@ -95,6 +95,7 @@ def _commodity_node_from_flex(
     flex_data: "FlexData",
     *,
     attrs: Sequence[tuple[str, str]],
+    extra_pieces: Sequence[pl.DataFrame] = (),
 ) -> pd.MultiIndex:
     """Derive a ``(commodity, node)`` MultiIndex from FlexData flow_* frames.
 
@@ -103,8 +104,11 @@ def _commodity_node_from_flex(
     polars frame with at least columns ``c`` and ``node_column``.  The
     union of ``(c, node_column)`` across all listed frames is returned
     as a deterministic, deduplicated ``pd.MultiIndex`` with names
-    ``("commodity", "node")``.  Returns an empty MultiIndex when no
-    listed field is populated.
+    ``("commodity", "node")``.  ``extra_pieces`` are already-projected
+    frames (columns ``commodity``, ``node``) folded into the same union —
+    used to add rows that don't come from a plain ``flex_data`` attribute
+    (e.g. a pre-filtered set).  Returns an empty MultiIndex when nothing
+    is populated.
 
     All Enum columns are cast to Utf8 before crossing the pandas
     boundary to avoid Enum-vs-Utf8 join-key mismatches downstream
@@ -124,6 +128,9 @@ def _commodity_node_from_flex(
                 pl.col(node_col).cast(pl.Utf8).alias("node"),
             )
         )
+    for fr in extra_pieces:
+        if fr is not None and fr.height > 0:
+            pieces.append(fr.select("commodity", "node"))
     if not pieces:
         return empty_multi_index(["commodity", "node"])
     df = (
@@ -154,11 +161,80 @@ _CO2_EMISSION_FLOW_ATTRS: tuple[tuple[str, str], ...] = (
     ("flow_from_co2_capped_total_noEff", "source"),
 )
 
+# Flow frames that carry EVERY commodity-consuming arc (built once per
+# process-topology load, unconditionally — unlike ``_CO2_EMISSION_FLOW_ATTRS``
+# above, which is only populated when a ``group`` prices or caps CO2).  Used
+# to recover the physical emissions of a commodity with a ``co2_content`` row
+# but no active price/cap group — see ``_physical_co2_emission_pieces``.
+_UNGATED_COMMODITY_FLOW_ATTRS: tuple[str, ...] = (
+    "flow_from_commodity_eff",
+    "flow_from_commodity_noEff",
+)
+
+
+def _co2_content_commodities(flex_data: "FlexData") -> list[str]:
+    """Commodities with a nonzero ``co2_content`` row.
+
+    Independent of whether any ``group`` prices or caps CO2 for them —
+    a commodity's ``co2_content`` makes it a physical emitter on its own
+    (docs/results.md "CO2 emissions": the ``model`` total is "across all
+    groups and units", not conditioned on a priced/capped group).
+    """
+    p = getattr(flex_data, "p_co2_content", None)
+    frame = getattr(p, "frame", None) if p is not None else None
+    if frame is None or frame.height == 0:
+        return []
+    c_col = "c" if "c" in frame.columns else "commodity"
+    if c_col not in frame.columns or "value" not in frame.columns:
+        return []
+    return (
+        frame.filter(pl.col("value") != 0.0)
+             .select(c_col).unique().to_series().cast(pl.Utf8).to_list()
+    )
+
+
+def _physical_co2_emission_pieces(
+    flex_data: "FlexData",
+) -> list[pl.DataFrame]:
+    """``(process, commodity, node)`` rows for every flow that consumes a
+    ``co2_content`` commodity, regardless of whether a price/cap group is
+    active for it.
+
+    ``flow_from_co2_priced`` / ``flow_from_co2_capped`` (and their noEff /
+    total siblings) are empty whenever no ``group`` prices or caps CO2 —
+    which silently zeroed every emissions output (model/group/process)
+    for a scenario that sets ``commodity.co2_content`` but has no priced
+    or capped group on the commodity's node.  ``flow_from_commodity_eff``
+    / ``flow_from_commodity_noEff`` carry every commodity-consuming arc
+    unconditionally, so filtering those to the co2-content commodities
+    recovers the physical emissions the price/cap-gated sets miss.
+    """
+    co2_c = _co2_content_commodities(flex_data)
+    if not co2_c:
+        return []
+    pieces: list[pl.DataFrame] = []
+    for field_name in _UNGATED_COMMODITY_FLOW_ATTRS:
+        fr = getattr(flex_data, field_name, None)
+        if fr is None or fr.height == 0:
+            continue
+        c_col = "c" if "c" in fr.columns else "commodity"
+        if c_col not in fr.columns or "source" not in fr.columns or "p" not in fr.columns:
+            continue
+        sub = fr.filter(pl.col(c_col).cast(pl.Utf8).is_in(co2_c))
+        if sub.height > 0:
+            pieces.append(sub.select(
+                pl.col("p").cast(pl.Utf8).alias("process"),
+                pl.col(c_col).cast(pl.Utf8).alias("commodity"),
+                pl.col("source").cast(pl.Utf8).alias("node"),
+            ))
+    return pieces
+
 
 def _process_commodity_node_from_flex(
     flex_data: "FlexData",
     *,
     attrs: Sequence[tuple[str, str]],
+    extra_pieces: Sequence[pl.DataFrame] = (),
 ) -> pd.MultiIndex:
     """Derive a ``(process, commodity, node)`` MultiIndex from FlexData
     flow_* frames.
@@ -166,7 +242,9 @@ def _process_commodity_node_from_flex(
     Each entry of ``attrs`` is a ``(field_name, node_column)`` tuple.  The
     union of ``(p, c, node_column)`` rows across all listed frames is
     returned as a deterministic, deduplicated ``pd.MultiIndex`` with
-    names ``("process", "commodity", "node")``.
+    names ``("process", "commodity", "node")``.  ``extra_pieces`` are
+    already-projected frames (columns ``process``, ``commodity``,
+    ``node``) folded into the same union.
     """
     pieces: list[pl.DataFrame] = []
     for field_name, node_col in attrs:
@@ -184,6 +262,9 @@ def _process_commodity_node_from_flex(
                 pl.col(node_col).cast(pl.Utf8).alias("node"),
             )
         )
+    for fr in extra_pieces:
+        if fr is not None and fr.height > 0:
+            pieces.append(fr.select("process", "commodity", "node"))
     if not pieces:
         return empty_multi_index(["process", "commodity", "node"])
     df = (
@@ -903,6 +984,14 @@ def read_sets(
     s.commodity_with_ladder = _index_or_empty(
         getattr(flex_data, "commodity_with_ladder", None), dim="c", name="commodity",
     )
+    # ``_physical_co2_emission_pieces`` recovers (process, commodity, node)
+    # rows for every co2_content commodity consumed, even when no group
+    # prices or caps it — ``_CO2_EMISSION_FLOW_ATTRS`` alone is empty in
+    # that case and under-reports emissions as 0 (#see read_sets diagnosis).
+    _co2_phys_pc_n = _physical_co2_emission_pieces(flex_data)
+    _co2_phys_c_n = [
+        fr.select("commodity", "node") for fr in _co2_phys_pc_n
+    ]
     s.commodity_node_co2 = _commodity_node_from_flex(
         flex_data,
         attrs=(
@@ -911,6 +1000,7 @@ def read_sets(
             ("flow_from_co2_capped", "source"),
             ("flow_from_co2_capped_noEff", "source"),
         ),
+        extra_pieces=_co2_phys_c_n,
     )
     s.process__commodity__node = _process_commodity_node_from_flex(
         flex_data,
@@ -921,7 +1011,7 @@ def read_sets(
         ),
     )
     s.process__commodity__node_co2 = _process_commodity_node_from_flex(
-        flex_data, attrs=_CO2_EMISSION_FLOW_ATTRS,
+        flex_data, attrs=_CO2_EMISSION_FLOW_ATTRS, extra_pieces=_co2_phys_pc_n,
     )
     s.group_co2_price = pd.Index([], name="group", dtype="object")
     s.group_co2_limit = pd.Index([], name="group", dtype="object")

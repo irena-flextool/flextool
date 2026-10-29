@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **CO2 emission outputs now report physical emissions even when no group prices or caps CO2.**
+  The model-wide and per-unit/connection CO2 outputs used to come from the same flow set the LP
+  builds for a priced or capped CO2 group — so a commodity with a `co2_content` row, but no group
+  with an active `co2_price` or `co2_max_period`/`co2_max_total` on its node, reported zero
+  emissions even while units were burning that fuel. Emission totals are now derived from the
+  commodity's own flows whenever it has a nonzero `co2_content`, independent of whether a group
+  happens to price or cap it; the per-group breakdown is unchanged and still requires a group that
+  actually tracks CO2.
+
 - **A commodity price ladder in a rolling solve no longer crashes the solve, and its annual tier
   quantity is now scaled to how much of the year the solve actually covers.** The annual tier
   quantity is a per-year amount, but a short or rolling solve used to compare it against the

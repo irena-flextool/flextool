@@ -351,6 +351,23 @@ def _read_slack_capacity_margin_d(csv_dir: Path) -> pd.DataFrame:
     return pd.read_csv(csv_dir / "slack__capacity_margin__d.csv", index_col=[0, 1])
 
 
+def _read_co2_model_total(csv_dir: Path) -> float:
+    """Read the ``model`` entity ``CO2`` total [Mt] from ``co2.csv``."""
+    with open(csv_dir / "co2.csv") as f:
+        reader = csv.reader(f)
+        next(reader)  # header: param_CO2,model_wide
+        row = next(reader)
+    return float(row[1])
+
+
+def _read_unit_input_node_dt(csv_dir: Path, *, unit: str) -> pd.Series:
+    """Read ``unit__inputNode__dt.csv`` flow (MW, negative = into the unit)
+    for a single ``unit`` column. Index: (solve, period, time)."""
+    df = pd.read_csv(csv_dir / "unit__inputNode__dt.csv", header=[0, 1], index_col=[0, 1, 2])
+    col = [c for c in df.columns if c[0] == unit][0]
+    return df[col].astype(float)
+
+
 # ---------------------------------------------------------------------------
 # Known inputs (copied from tests/test_vq_penalties.py — same fixture)
 # ---------------------------------------------------------------------------
@@ -563,6 +580,42 @@ class TestCoalWindInertiaControl:
         s = _read_summary_solve(csv_dir)
         assert s["objective"] == pytest.approx(s["total_calc"], rel=1e-4), (
             f"Objective {s['objective']} != Python total {s['total_calc']}"
+        )
+
+    def test_physical_co2_reported_without_priced_or_capped_group(
+        self, csv_dir: Path,
+    ) -> None:
+        """``coal`` has a ``co2_content`` row (0.34 t/MWh), but
+        ``coal_wind_inertia``'s alternative chain
+        (init < west < coal < wind < inertia) never pulls in the
+        ``co2_price`` / ``co2_limit`` alternatives that hold
+        ``group.co2_price`` / ``group.co2_max_period`` — so no group
+        prices or caps CO2 in this scenario.  Physical CO2 is still being
+        emitted (``coal_plant`` is dispatched, drawing fuel from
+        ``coal_market``), and the ``model`` ``CO2`` total must report it;
+        it is not conditioned on a priced/capped group existing.
+
+        Regression for ``read_sets._CO2_EMISSION_FLOW_ATTRS`` being the
+        only source of ``process__commodity__node_co2`` — those frames
+        are empty whenever no group prices/caps CO2, which silently
+        zeroed the model-wide and per-process CO2 outputs even though
+        the commodity's ``co2_content`` was set and fuel was consumed.
+        """
+        # Positive control: coal_plant must actually draw coal fuel,
+        # otherwise a 0 CO2 total would be correct and the assertion below
+        # would be vacuous.
+        coal_flow = _read_unit_input_node_dt(csv_dir, unit="coal_plant")
+        assert (coal_flow != 0).any(), (
+            "coal_plant has zero coal_market flow in every timestep — "
+            "fixture no longer exercises coal dispatch, test is vacuous"
+        )
+
+        total_co2 = _read_co2_model_total(csv_dir)
+        assert total_co2 > 0, (
+            f"model CO2 total = {total_co2} Mt, expected > 0: coal has "
+            "co2_content and coal_plant is dispatched, so physical "
+            "emissions exist even though no group prices or caps CO2 "
+            "in this scenario"
         )
 
 
