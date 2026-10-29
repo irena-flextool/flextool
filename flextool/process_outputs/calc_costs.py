@@ -148,9 +148,23 @@ def compute_costs(par, s, v, r) -> None:
     flow_outof_cols = s.process__commodity__node_co2.join(flow_outof_cols)
     flow_outof_cols = flow_outof_cols[~flow_outof_cols.get_level_values('sink').isna()]
 
+    # Removal credit (#19, Q14; c18a gap): join against the DEDICATED
+    # removal set (keyed by the CREDITING process's own sink arc), not
+    # ``process__commodity__node_co2`` (the emission-side set, keyed by the
+    # EMITTING process's source arc).  The old code joined into-flows
+    # against the emission set, which only matched a flow back into the
+    # SAME process's SAME node -- a same-process round trip -- and missed
+    # the LP's actual removal credit (``flow_to_co2_*``), which any OTHER
+    # process can earn by delivering into the group's node (e.g. DAC/BECCS
+    # distinct from whatever emits in the group).  Net result below still
+    # subtracts by (process, node, commodity): a different crediting
+    # process produces its OWN (negative) column instead of cancelling the
+    # emitting process's column -- correct, since results.md's per-process
+    # CO2 cost attributes a removal flow's credit to the process that
+    # delivers it, not to whichever process happens to emit at that node.
     flow_into_cols = r.flow_dt.columns.copy()
     flow_into_cols.names = ['process', 'source', 'node']
-    flow_into_cols = s.process__commodity__node_co2.join(flow_into_cols)
+    flow_into_cols = s.process__commodity__node_co2_removal.join(flow_into_cols)
     flow_into_cols = flow_into_cols[~flow_into_cols.get_level_values('source').isna()]
     flow_into_cols = flow_into_cols.reorder_levels(order=['process', 'commodity', 'source', 'node'])
 

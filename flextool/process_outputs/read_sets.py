@@ -161,6 +161,22 @@ _CO2_EMISSION_FLOW_ATTRS: tuple[tuple[str, str], ...] = (
     ("flow_from_co2_capped_total_noEff", "source"),
 )
 
+# Sink-side removal-credit frames (#19, Q14; c18a): a flow INTO a priced/
+# capped group's node (e.g. DAC/BECCS) credited against that group's price
+# term / cap, unsplit (no slope, no eff/noEff split -- the delivered flow
+# is the removed quantity, not a fuel input, mirroring ``flow_to_commodity``).
+# No noEff sibling exists for these.  Built into their OWN
+# (process, commodity, node) set -- keyed by the CREDITING process, not the
+# emitting one -- so ``calc_costs.py`` can net emissions against removal at
+# the GROUP level the way the LP does, instead of requiring the same
+# process to both emit and remove at the same node (see the c18a "Untested"
+# gap note).
+_CO2_REMOVAL_FLOW_ATTRS: tuple[tuple[str, str], ...] = (
+    ("flow_to_co2_priced", "sink"),
+    ("flow_to_co2_capped", "sink"),
+    ("flow_to_co2_capped_total", "sink"),
+)
+
 # Flow frames that carry EVERY commodity-consuming arc (built once per
 # process-topology load, unconditionally — unlike ``_CO2_EMISSION_FLOW_ATTRS``
 # above, which is only populated when a ``group`` prices or caps CO2).  Used
@@ -1013,6 +1029,11 @@ def read_sets(
     s.process__commodity__node_co2 = _process_commodity_node_from_flex(
         flex_data, attrs=_CO2_EMISSION_FLOW_ATTRS, extra_pieces=_co2_phys_pc_n,
     )
+    # (#19, Q14; c18a) Removal-credit set, sibling of the emission-side set
+    # above but keyed by the crediting process and its SINK node.
+    s.process__commodity__node_co2_removal = _process_commodity_node_from_flex(
+        flex_data, attrs=_CO2_REMOVAL_FLOW_ATTRS,
+    )
     s.group_co2_price = pd.Index([], name="group", dtype="object")
     s.group_co2_limit = pd.Index([], name="group", dtype="object")
     if (flex_data.p_co2_price is not None
@@ -1035,6 +1056,17 @@ def read_sets(
     if _limit_groups:
         s.group_co2_limit = pd.Index(
             list(dict.fromkeys(_limit_groups)), name="group")
+
+    # d_leaf — (period, leaf) scenario-tree membership (Q16, #52/#58): a
+    # pre-reveal trunk period belongs to every leaf that shares it; a
+    # post-reveal period belongs to exactly one.  Empty / single-leaf
+    # outside a genuinely multi-leaf stochastic solve.  Used by the CO2
+    # outputs to report per scenario path instead of pooling every leaf's
+    # periods into one number (the output-side analogue of c18c's
+    # ``co2_max_total_path`` cap fix).
+    s.d_leaf = _multi_index_or_empty(
+        flex_data.d_leaf, dims=("d", "leaf"), names=("period", "leaf"),
+    )
 
     # ─── Group-related sets ───────────────────────────────────────────────
     s.groupInertia = _index_or_empty(flex_data.groupInertia, dim="g", name="group")
