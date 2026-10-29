@@ -146,6 +146,29 @@ def binding_q(flat):
     return 0.5 * float(branch_mwh.max())
 
 
+@pytest.fixture(scope="module")
+def period_share(flat) -> float:
+    """``p_period_share[d]`` of this fixture — the same for every period (trunk and every forecast
+    branch cover the same 2-day calendar window): 2/365 = 0.0054794520...
+
+    ``_eq_tier_cap_annual`` treats the authored ladder quantity as a per-calendar-YEAR amount and
+    scales it down to this period's own share of the year (#89) — so a quantity authored directly as
+    ``binding_q`` no longer makes the tier's *realized* MWh cap equal ``binding_q``; it makes the
+    *per-year* allowance equal ``binding_q``, and the period only gets ``binding_q · period_share`` of
+    it.  ``binding_q / period_share`` is the per-year quantity that gets this fixture's 2-day period
+    exactly ``binding_q`` MWh of headroom — see ``_tier_quantity`` below.
+    """
+    fd = _last(flat["uniform"]).flex_data
+    values = utf8(fd.p_period_share.frame)["value"].unique().to_list()
+    assert len(values) == 1, f"expected one p_period_share value for this fixture, got {values}"
+    return float(values[0])
+
+
+def _tier_quantity(binding_q: float, period_share: float) -> float:
+    """The per-year tier-1 quantity to author so the period's realized cap equals ``binding_q`` MWh."""
+    return binding_q / period_share
+
+
 # ---------------------------------------------------------------------------
 # #32 (+ #41 for the 2d form): a ladder at the flat price costs the flat price
 
@@ -192,18 +215,25 @@ def test_branch_periods_inherit_annual_ladder_price(tmp_path_factory, flat) -> N
 
 
 @pytest.fixture(scope="module")
-def cap_reference(tmp_path_factory, binding_q):
-    """The binding-cap ladder keyed by every period name (the authored-everywhere reference)."""
-    return {name: _steps(tmp_path_factory, f"c5_cap_all_{name}", _annual("3d_all", _tiers(10.0, binding_q)),
+def cap_reference(tmp_path_factory, binding_q, period_share):
+    """The binding-cap ladder keyed by every period name (the authored-everywhere reference).
+
+    The authored quantity is ``_tier_quantity(binding_q, period_share)`` (the per-year amount whose
+    period_share-scaled realization is exactly ``binding_q`` — see the ``period_share`` fixture), so the
+    branch that actually needs tier 1 binds there.
+    """
+    quantity = _tier_quantity(binding_q, period_share)
+    return {name: _steps(tmp_path_factory, f"c5_cap_all_{name}", _annual("3d_all", _tiers(10.0, quantity)),
                          weights=w)
             for name, w in WEIGHTS.items()}
 
 
 @pytest.mark.parametrize("weights", list(WEIGHTS))
 @pytest.mark.parametrize("form", ["3d_trunk", "2d"])
-def test_branch_periods_inherit_annual_tier_cap(tmp_path_factory, binding_q, cap_reference, form,
-                                                weights) -> None:
-    steps = _steps(tmp_path_factory, f"c5_cap_{form}_{weights}", _annual(form, _tiers(10.0, binding_q)),
+def test_branch_periods_inherit_annual_tier_cap(tmp_path_factory, binding_q, period_share, cap_reference,
+                                                form, weights) -> None:
+    quantity = _tier_quantity(binding_q, period_share)
+    steps = _steps(tmp_path_factory, f"c5_cap_{form}_{weights}", _annual(form, _tiers(10.0, quantity)),
                    weights=WEIGHTS[weights])
     ref = cap_reference[weights]
     assert _obj(steps) == pytest.approx(_obj(ref), rel=1e-9)

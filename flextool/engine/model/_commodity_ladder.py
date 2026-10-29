@@ -360,6 +360,22 @@ def _eq_ladder_balance(b: _Build) -> None:
     )
 
 
+def _period_branch_pairs(d) -> "pl.DataFrame | None":
+    """(anchor, br) pairs of every stochastic forecast branch and its anchor period; None when there are none.
+
+    Built from ``period_branch_full`` (the full unfiltered ``period__branch.csv`` map, already on
+    ``flex_data`` by model-build time — the same source ``_non_anticipativity._forecast_star`` reads for
+    the forecast ties) rather than ``branch_anchor_pairs``, which needs a ``provider`` the model build
+    does not have.  Self rows (``d == b``, trunks / deterministic periods) are dropped.
+    """
+    pbf = getattr(d, "period_branch_full", None)
+    if not _has_rows(pbf):
+        return None
+    pairs = (pbf.select(pl.col("d").cast(pl.Utf8).alias("anchor"), pl.col("b").cast(pl.Utf8).alias("br"))
+             .filter(pl.col("anchor") != pl.col("br")))
+    return pairs if pairs.height > 0 else None
+
+
 def _eq_tier_cap_annual(b: _Build) -> None:
     """ladder_tier_cap_annual_roll: purchase per tier and period up to the tier's annual quantity."""
     d = b.d
@@ -387,12 +403,23 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     # only part of that (#143's fix applies here too — no clamp needed, the row is feasible by
     # construction instead of approximately-compliant). Unlimited tiers (quantity ≥ 1e29) get no row.
     # Branch periods of a stochastic solve use their anchor period's quantity (and price) unless they
-    # have their own (inherit_branch_periods).
+    # have their own (inherit_branch_periods).  period_share and f_d_k are plain engine params, keyed by
+    # period and never authored for the per-solve-minted branch names, so they need the same anchor
+    # fallback here (_period_branch_pairs + inherit_anchor_period) — without it the join below leaves a
+    # null share/fdk for every branch row, the null propagates into cap, and the branch's tier-1 budget
+    # silently clamps to 0 instead of its anchor's share.
+    pairs = _period_branch_pairs(d)
+    share_frame = d.p_period_share.frame
+    fdk_frame = d.p_f_d_k.frame if d.p_f_d_k is not None else None
+    if pairs is not None:
+        share_frame = inherit_anchor_period(share_frame, pairs, group_keys=())
+        if fdk_frame is not None:
+            fdk_frame = inherit_anchor_period(fdk_frame, pairs, group_keys=())
     keys = cndi_ann_finite.select("c", "i", "d").unique()
     cap_df = (keys.join(d.p_ladder_ann_quantity.frame.rename({"value": "quantity"}), on=["c", "i", "d"], how="left")
-              .join(d.p_period_share.frame.rename({"value": "share"}), on="d", how="left"))
-    if d.p_f_d_k is not None:
-        cap_df = (cap_df.join(d.p_f_d_k.frame.rename({"value": "fdk"}), on="d", how="left")
+              .join(share_frame.rename({"value": "share"}), on="d", how="left"))
+    if fdk_frame is not None:
+        cap_df = (cap_df.join(fdk_frame.rename({"value": "fdk"}), on="d", how="left")
                   .with_columns(pl.col("fdk").fill_null(1.0)))
     else:
         cap_df = cap_df.with_columns(fdk=pl.lit(1.0))
