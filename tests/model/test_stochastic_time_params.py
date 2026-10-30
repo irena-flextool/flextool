@@ -411,9 +411,10 @@ def _const(tmp_path_factory, scenario: str, rank3: bool) -> dict:
 
 def test_rank3_constant_equals_scalar_single_branch_periods(tmp_path_factory) -> None:
     """Single stochastic solve: the branch periods carry the scalar's cells and the objective is the scalar's.
-    The anchor period ``period1`` gets the class default from the emit's fold (availability 1.0, no cost) — the
-    anchor-period behaviour logged as its own item (stochastics re-grounding); this assertion fails when it is
-    fixed, so the test is updated with it."""
+    The anchor period ``period1`` takes the realized branch's value from the emit's fold (#82) — no branch is
+    flagged ``realized: yes`` here, so it takes the documented reference-forecast fallback (the lexically
+    smallest active branch token); since every branch in this fixture carries the SAME value, the anchor's
+    cells equal the scalar run's anchor cells for both fields."""
     r3, sc = _first(_const(tmp_path_factory, SINGLE, True)), _first(_const(tmp_path_factory, SINGLE, False))
     for field, keys, ent in (("p_process_availability", ["p"], ("coal_plant",)),
                              ("p_pdt_varCost_source", ["p", "source"], tuple(COAL_IN))):
@@ -421,10 +422,8 @@ def test_rank3_constant_equals_scalar_single_branch_periods(tmp_path_factory) ->
         branch = {k: v for k, v in a.items() if k[:len(keys)] == ent and k[-2] in BRANCH_PERIODS}
         assert branch == {k: v for k, v in b.items() if k[:len(keys)] == ent and k[-2] in BRANCH_PERIODS}, field
         anchor = {k: v for k, v in a.items() if k[:len(keys)] == ent and k[-2] == ANCHOR}
-        if field == "p_process_availability":
-            assert set(anchor.values()) == {1.0}
-        else:
-            assert anchor == {}
+        want_anchor = {k: v for k, v in b.items() if k[:len(keys)] == ent and k[-2] == ANCHOR}
+        assert anchor == want_anchor, field
     assert _rel(float(r3.solution.obj), float(sc.solution.obj)) < 1e-9
 
 
@@ -447,11 +446,13 @@ def test_rank3_constant_equals_scalar_rolling(tmp_path_factory) -> None:
 @pytest.mark.parametrize("scenario", [SINGLE, ROLLING])
 def test_rank3_outside_stochastic_group(tmp_path_factory, scenario: str) -> None:
     """``gas_plant`` (in no ``include_stochastics`` group) authors a rank-3 availability.  The emit's fold, which
-    the readers take as is: the class default 1.0 on every cell of the single solve, the realized branch (0.9) on
-    every cell of the rolls.  The docs promise the stochastic series only for entities in such a group."""
+    the readers take as is, applies regardless of group membership (the parent-period fold is unconditional):
+    the rolls' cohort flags ``realized: yes`` on branch ``realized`` (0.9); the single solve's cohort is
+    forecasts-only, so its anchor takes the documented reference-forecast fallback -- the lexically smallest
+    active branch token, ``lower`` (0.7).  The docs' "only inside such a group" wording is corrected with #82."""
     at = AT_SINGLE if scenario == SINGLE else AT_ROLL
     steps = _run(tmp_path_factory, scenario, [["unit", "gas_plant", "availability", _r3(1.0, at, True)]], [])
-    want = 1.0 if scenario == SINGLE else BR["realized"]
+    want = BR["lower"] if scenario == SINGLE else BR["realized"]
     for step in list(steps.values())[:3]:
         cells = {k: v for k, v in _cells(step, "p_process_availability", ["p"]).items() if k[0] == "gas_plant"}
         assert len(cells) == len(_dt(step))

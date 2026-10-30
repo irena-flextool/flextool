@@ -648,6 +648,33 @@ def _patch_stoch_na_reserve(data: dict) -> dict:
                     + ents, values=vals)
 
 
+def _stoch_rank3(values: dict) -> dict:
+    """3-level ``branch -> analysis_time -> time`` map, constant per branch over the fixture's
+    48 hourly timesteps (``t0001``..``t0048``), analysis time ``t0001`` -- the stochastic-time
+    (rank-3) shape ``docs/how_to.md`` "Single solve stochastics" describes.  Every nested level
+    needs its own explicit ``"type": "map"`` (unlike :func:`_pmap`'s single, unnested level)."""
+    def level(name: str, data: list) -> dict:
+        return {"type": "map", "index_type": "str", "index_name": name, "data": data}
+    return level("branch", [
+        [b, level("analysis_time", [
+            ["t0001", level("time", [[f"t{i:04d}", v] for i in range(1, 49)])]])]
+        for b, v in values.items()])
+
+
+def _patch_stoch_rank3_anchor(data: dict) -> dict:
+    """Stochastic-time availability on the stochastic 2-day dispatch -- #82 per-path proof: no branch
+    of this cohort is flagged ``realized: yes`` (forecasts only), so BEFORE the fix the anchor period
+    ``period1`` fell back to the unit ``param_def1`` default (availability 1.0, independent of every
+    branch's own value); AFTER the fix it takes the documented reference-forecast fallback -- the
+    lexically smallest active branch token's value (``lower``, 0.7 here).  The branch periods
+    (``period1_{realized,upper,lower,mid}``) are unaffected (unchanged before/after)."""
+    return _overlay(
+        data, name="stoch_rank3_anchor", base="2_day_stochastic_dispatch",
+        entities=[["group__unit", ["add_stochastics", "coal_plant"]]],
+        values=[["unit", "coal_plant", "availability",
+                 _stoch_rank3({"realized": 0.9, "upper": 0.8, "lower": 0.7, "mid": 0.6})]])
+
+
 def _patch_chp_misc(data: dict) -> dict:
     """greater_than user constraint, balance_within_period node and ramp
     limits on both the input and the output side of a unit."""
@@ -1725,6 +1752,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "reserve_input_side": _patch_reserve_input_side,
     "reserve_dynamic_demand": _patch_reserve_dynamic_demand,
     "stoch_na_reserve": _patch_stoch_na_reserve,
+    "stoch_rank3_anchor": _patch_stoch_rank3_anchor,
     "chp_misc": _patch_chp_misc,
     "profiles": _patch_profiles,
     "co2_period_total": _patch_co2_period_total,
@@ -2016,6 +2044,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("ladder_cum_silent", _T),
     ("co2_stoch_total", _F + "stochastics.json"),
     ("ladder_stoch_cumulative", _F + "stochastics.json"),
+    ("stoch_rank3_anchor", _F + "stochastics.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

@@ -297,6 +297,58 @@ def _read_singles(path: Path,
 
 
 # ---------------------------------------------------------------------------
+# #82 -- the anchor (reveal / continuation self-row) takes the realized
+# branch's pbt value, or the documented reference-forecast fallback, in the
+# 7/9-branch cascade.  See docs/how_to.md "Stochastics over multiple
+# periods" and the owner decision in specs/owner_decisions.md.
+# ---------------------------------------------------------------------------
+
+def _anchor_fan_members(period_branch_csv: Path,
+                         *, provider: "object | None" = None) -> dict[str, list[str]]:
+    """Anchor period -> its fan members (``period__branch`` rows, self row excluded).
+
+    An anchor that branched (at the reveal or at a later continuation period) owns one row per
+    fan member -- realized and zero-weight branches included, per ``_stochastic.py``'s main walk.
+    A period that never branches (deterministic, or strictly pre-reveal) is absent.
+    """
+    out: dict[str, list[str]] = {}
+    for anchor, members in _read_pairs_to_dict(period_branch_csv, key_col=0, provider=provider).items():
+        kept = [m for m in members if m != anchor]
+        if kept:
+            out[anchor] = kept
+    return out
+
+
+def _apply_reference_forecast_fallback(
+    tb_for_d: dict[str, list[str]],
+    anchor_members: dict[str, list[str]],
+) -> None:
+    """Patch *tb_for_d* IN PLACE: an anchor with fan members but no time-branch entry of its own
+    binds to the lexically-smallest member token -- the documented "reference forecast"
+    (docs/how_to.md "Stochastics over multiple periods"), the same definition ``_stochastic.py``'s
+    own ``d_ref_tok`` already uses to own the real period names of strictly pre-reveal periods when
+    no branch is flagged ``realized: yes``.
+
+    ``_stochastic.py`` deliberately leaves the REVEAL and CONTINUATION periods' own self-row unowned
+    in ``solve_branch__time_branch`` (binding them there would make a weight-0 anchor join a
+    branch's scenario-lineage weight-constancy chain in ``_branch.py``).  This patches the lookup's
+    OWN in-memory ``tb_for_d`` instead -- never written back to ``solve_branch__time_branch.csv`` /
+    the Provider -- so the pbt-fold cascade resolves the anchor's value without perturbing anything
+    the lineage code reads.
+
+    A no-op when the anchor already owns an entry (a ``realized: yes`` row for this cohort, or the
+    pre-reveal fallback ``_stochastic.py`` already wrote to the CSV): the realized branch's
+    designation always wins over the reference-forecast fallback.
+    """
+    for anchor, members in anchor_members.items():
+        if tb_for_d.get(anchor):
+            continue
+        tokens = sorted({tb_for_d[m][0] for m in members if tb_for_d.get(m)})
+        if tokens:
+            tb_for_d[anchor] = [tokens[0]]
+
+
+# ---------------------------------------------------------------------------
 # Branch periods inherit the anchor period's ``pd`` rows.
 # ---------------------------------------------------------------------------
 
@@ -476,6 +528,8 @@ class PdtLookup:
         self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
+        anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
+        _apply_reference_forecast_fallback(self._tb_for_d, anchor_members)
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d, key_cols=["e", "param", "d"],
                                              period_pos=2, periods=list(self._ts_for_d))
         self._pdt = inherit_pd_branch_periods(self._pdt, self._pe_for_d, key_cols=["e", "param", "d", "t"],
@@ -590,6 +644,8 @@ class PdtLookupPerSide:
         self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
+        anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
+        _apply_reference_forecast_fallback(self._tb_for_d, anchor_members)
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d,
                                              key_cols=["p", "side", "param", "d"], period_pos=3,
                                              periods=list(self._ts_for_d))
