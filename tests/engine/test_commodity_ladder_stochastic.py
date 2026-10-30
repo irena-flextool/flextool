@@ -8,6 +8,15 @@ Before the fix every branch counted in full.
 ladder row can be authored for them.  They use the annual ladder of their anchor period (price and tier
 quantity together); before the fix purchases in the branches had no price and no tier limit.
 
+#59: a rolling chain's carried realized MWh per tier (``p_ladder_cum_realized_mwh``, populated from the
+solve handoff by ``_extract_cumulative_commodity``) is only ever keyed under the REAL period name — the
+realized branch keeps the real name, so ``v_trade`` there already is its purchase, but a forecast branch
+period of the SAME year has no row of its own there either.  ``_eq_tier_cap_annual`` must give it the
+anchor's carried value, the same way it already does for ``p_period_share`` / ``p_f_d_k`` (#89); a
+dispatch-parent solve that has an auto-spawned realized-dispatch sibling (OC1 separate_dispatch) must
+add none of its own degenerate contribution either — the sibling re-solves the same hours for real and
+carries that forward instead.
+
 Vehicle: ``2_day_stochastic_dispatch`` of ``tests/fixtures/stochastics.json`` (one real period
 ``period1`` = the weight-0 phantom trunk, four forecast branch periods), coal moved to a ladder.  A
 ladder whose cheap tier is the flat price (16) and unlimited must cost exactly what the flat price
@@ -257,6 +266,134 @@ def test_rolling_ladder_at_flat_price_equals_flat_price_cost(tmp_path_factory) -
     assert len(ladder) == len(flat_roll) > 1
     assert sum(s.solution.obj for s in ladder.values()) == pytest.approx(
         sum(s.solution.obj for s in flat_roll.values()), rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# #59: a branch period inherits the anchor's carried realized MWh in the next roll
+
+
+def test_branch_periods_inherit_realized_mwh_carry(tmp_path_factory, binding_q, period_share) -> None:
+    """``_eq_tier_cap_annual`` must give a branch period the anchor's carried ``p_ladder_cum_realized_mwh``
+    (the running cross-roll "already bought" total), the same way it already gives it the anchor's
+    ``p_period_share`` / ``p_f_d_k`` (#89) -- #59.
+
+    The carrier is a solve-handoff carrier, not a DB-authored one, so a "next roll" is simulated by
+    authoring it directly on an already-solved single solve's FlexData: ``build()`` builds the LP
+    straight from the FlexData it is given, with no re-derivation (the same technique
+    ``test_ladder_objective_coefficient_carries_branch_weight`` uses to inspect objective coefficients).
+
+    TEST authors the carry at the anchor (``period1``) only -- the shape
+    ``_extract_cumulative_commodity`` actually produces, since the realized branch keeps the real
+    period name (#59).  REF authors the SAME carry directly at every period, branches included -- the
+    shape a branch would need to see its remaining budget reduced the same way the anchor's is.  Before
+    the fix, a branch's carry falls through to 0 (full, un-reduced cap) in TEST while REF's branch has
+    its own authored (reduced) cap, so the two solves differ for the branch whose natural demand exceeds
+    both cap levels (the max-demand branch the ``binding_q`` fixture is built around); after the fix
+    they match.
+    """
+    from polar_high import Param
+
+    quantity = _tier_quantity(binding_q, period_share)
+    steps = _steps(tmp_path_factory, "c59_rlz_carry", _annual("3d_trunk", _tiers(10.0, quantity)))
+    fd = _last(steps).flex_data
+    realized = 0.3 * binding_q  # leaves 0.7 * binding_q of headroom -- still less than the max branch's
+                                # natural (uncapped) demand, so the cap keeps binding.
+
+    def _tier1_with_carry(carried_periods: tuple[str, ...]) -> dict[str, float]:
+        frame = pl.DataFrame({
+            "c": ["coal"] * len(carried_periods), "i": ["1"] * len(carried_periods),
+            "d": list(carried_periods), "value": [realized] * len(carried_periods),
+        })
+        fd.p_ladder_cum_realized_mwh = Param(("c", "i", "d"), frame)
+        sol = build(fd).solve()
+        tier1 = utf8(sol.value("v_trade")).filter(
+            (pl.col("i") == "1") & pl.col("d").is_in(list(BRANCH_PERIODS)))
+        return dict(zip(tier1["d"].to_list(), tier1["value"].to_list()))
+
+    test_mwh = _tier1_with_carry(("period1",))
+    ref_mwh = _tier1_with_carry(ALL_PERIODS)
+
+    assert set(test_mwh) == set(ref_mwh) == set(BRANCH_PERIODS)
+    for b in BRANCH_PERIODS:
+        assert test_mwh[b] == pytest.approx(ref_mwh[b], rel=1e-7), (
+            f"{b}: anchor-only carry gave {test_mwh[b]} MWh, expected the anchor's carry inherited "
+            f"(= {ref_mwh[b]} MWh, authored directly on every period)")
+    # At least one branch (the fixture's max-demand branch) is actually capped by the carry-adjusted
+    # budget -- otherwise the comparison above would hold trivially (both uncapped) regardless of the fix.
+    assert max(test_mwh.values()) == pytest.approx(binding_q - realized, rel=1e-7)
+
+
+def test_dispatch_sibling_parent_carries_no_realized_mwh_of_its_own() -> None:
+    """``_extract_cumulative_commodity`` / ``_extract_cum_sim_hours`` must contribute nothing of their
+    own when THIS solve is the parent of an auto-spawned realized-dispatch sibling (#59 fix 3): the
+    sibling re-solves the same realized hours for real right after it and carries that forward instead
+    (``_run_model``'s ``ROLL_FORWARD_FIELDS`` routes the sibling's prior from its own previous sibling
+    roll, never from this parent) -- adding this parent's own (degenerate, weight-0) contribution on top
+    would count those hours twice.
+
+    Hand-computed oracle (not copied from the function under test): with step_duration 10h at each of
+    two steps and only the first realized, ``this_roll = v * unitsize * (realized_hours / horizon_hours)
+    = 5.0 * 1.0 * (10 / 20) = 2.5``; combined with a prior carry of 7.0 that is ``7.0 + 2.5 = 9.5``.
+    """
+    from flextool.engine.preprocess.flex_data import (
+        _extract_cum_sim_hours,
+        _extract_cumulative_commodity,
+    )
+
+    class _NoProvider:
+        def has(self, name: str) -> bool:
+            return False
+
+        def get(self, name: str):  # pragma: no cover - never called, has() is always False
+            raise AssertionError(f"unexpected provider.get({name!r})")
+
+    class _FakeSol:
+        def __init__(self, v_trade: pl.DataFrame) -> None:
+            self._vars = {"v_trade": True}
+            self._v_trade = v_trade
+
+        def value(self, name: str):
+            return self._v_trade if name == "v_trade" else None
+
+    from types import SimpleNamespace
+
+    from polar_high import Param
+
+    v_trade = pl.DataFrame({"c": ["coal"], "i": [1], "d": ["period1"], "value": [5.0]})
+    flex_data = SimpleNamespace(
+        ci_ladder_cumulative=pl.DataFrame({"c": ["coal"], "i": [1]}),
+        commodity__tier_ann=pl.DataFrame(schema={"c": pl.Utf8, "i": pl.Int64}),
+        p_step_duration=Param(("d", "t"), pl.DataFrame(
+            {"d": ["period1", "period1"], "t": ["t1", "t2"], "value": [10.0, 10.0]})),
+        realized_dispatch=pl.DataFrame({"period": ["period1"], "step": ["t1"]}),
+    )
+    prior_handoff = SimpleNamespace(
+        cumulative_commodity=pl.DataFrame(
+            {"commodity": ["coal"], "tier": [1], "period": ["period1"], "p_ladder_cum_realized_mwh": [7.0]}),
+        cum_sim_hours=pl.DataFrame({"period": ["period1"], "p_ladder_cum_sim_hours": [3.0]}),
+    )
+    sol = _FakeSol(v_trade)
+    sd = Path("/nonexistent")
+
+    def _carried_mwh(is_dispatch_sibling_parent: bool) -> float:
+        df = _extract_cumulative_commodity(
+            sol, sd, prior_handoff=prior_handoff, flex_data=flex_data, provider=_NoProvider(),
+            is_dispatch_sibling_parent=is_dispatch_sibling_parent)
+        row = df.filter((pl.col("commodity") == "coal") & (pl.col("period") == "period1"))
+        return float(row["p_ladder_cum_realized_mwh"][0])
+
+    def _carried_hrs(is_dispatch_sibling_parent: bool) -> float:
+        df = _extract_cum_sim_hours(
+            sd, prior_handoff=prior_handoff, flex_data=flex_data, provider=_NoProvider(),
+            is_dispatch_sibling_parent=is_dispatch_sibling_parent)
+        row = df.filter(pl.col("period") == "period1")
+        return float(row["p_ladder_cum_sim_hours"][0])
+
+    assert _carried_mwh(False) == pytest.approx(9.5, abs=0.0)
+    assert _carried_hrs(False) == pytest.approx(13.0, abs=0.0)
+    # The dispatch-sibling parent adds nothing of its own: the carry stays exactly the prior's.
+    assert _carried_mwh(True) == pytest.approx(7.0, abs=0.0)
+    assert _carried_hrs(True) == pytest.approx(3.0, abs=0.0)
 
 
 # ---------------------------------------------------------------------------

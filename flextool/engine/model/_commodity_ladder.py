@@ -408,13 +408,22 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     # fallback here (_period_branch_pairs + inherit_anchor_period) — without it the join below leaves a
     # null share/fdk for every branch row, the null propagates into cap, and the branch's tier-1 budget
     # silently clamps to 0 instead of its anchor's share.
+    # realized_ann (the carried cross-roll purchase) is keyed (c, i, d) and, like share/fdk, is only ever
+    # populated for the ANCHOR's own name (handoff/cumulative_commodity carries the realized branch's
+    # history under the real period name — see _extract_cumulative_commodity, #59): a branch period has no
+    # row of its own there either, so without the same anchor fallback it joined to null -> 0 "already
+    # bought", letting a branch re-open the anchor's already-spent budget in full instead of inheriting
+    # what every future of that year has, in truth, already spent (#59).
     pairs = _period_branch_pairs(d)
     share_frame = d.p_period_share.frame
     fdk_frame = d.p_f_d_k.frame if d.p_f_d_k is not None else None
+    realized_frame = d.p_ladder_cum_realized_mwh.frame if d.p_ladder_cum_realized_mwh is not None else None
     if pairs is not None:
         share_frame = inherit_anchor_period(share_frame, pairs, group_keys=())
         if fdk_frame is not None:
             fdk_frame = inherit_anchor_period(fdk_frame, pairs, group_keys=())
+        if realized_frame is not None:
+            realized_frame = inherit_anchor_period(realized_frame, pairs, group_keys=("c", "i"))
     keys = cndi_ann_finite.select("c", "i", "d").unique()
     cap_df = (keys.join(d.p_ladder_ann_quantity.frame.rename({"value": "quantity"}), on=["c", "i", "d"], how="left")
               .join(share_frame.rename({"value": "share"}), on="d", how="left"))
@@ -424,8 +433,8 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     else:
         cap_df = cap_df.with_columns(fdk=pl.lit(1.0))
     cap_df = cap_df.with_columns(cap=pl.col("quantity") * pl.col("share") * pl.col("fdk"))
-    if d.p_ladder_cum_realized_mwh is not None:
-        cap_df = (cap_df.join(d.p_ladder_cum_realized_mwh.frame.rename({"value": "realized"}),
+    if realized_frame is not None:
+        cap_df = (cap_df.join(realized_frame.rename({"value": "realized"}),
                               on=["c", "i", "d"], how="left")
                   .with_columns(pl.col("realized").fill_null(0.0)))
     else:

@@ -1,5 +1,26 @@
 ## Unreleased
 
+- **A rolling stochastic solve's commodity price-ladder tier cap now gives a forecast branch period
+  the same already-bought carry-over as its anchor, instead of re-opening the tier's budget in
+  full for every branch.** The running "already bought this tier" total carried from roll to roll
+  is only ever recorded under the anchor's real period name; a branch period of the same calendar
+  year had no row of its own there, so its remaining budget silently fell back to the un-reduced
+  full-tier amount — too loose — while the anchor's own row correctly subtracted what earlier
+  rolls had bought. Branch periods now read their anchor's carried-over amount the same way they
+  already read its tier price and quantity. A deterministic solve, a single (non-rolling)
+  stochastic solve, or a rolling solve without a price ladder is unaffected.
+
+- **A rolling solve that auto-spawns a separate realized-dispatch solve now carries the commodity
+  price-ladder's rolling "already bought" total forward from that dispatch solve alone, instead of
+  also adding the same hours' purchases from the solve that spawned it.** The spawning solve's own
+  dispatch for those hours is a placeholder with no weight in its objective (the dispatch solve
+  re-solves the same hours for real right afterwards), so its own purchase split across tiers was
+  arbitrary; folding it into the running total on top of the dispatch solve's own, correct
+  contribution double-counted those hours and could leave an arbitrary residual in the carried
+  total besides. The spawning solve now carries the running total forward unchanged, leaving the
+  addition to the dispatch solve that actually realizes the hours. A rolling solve that does not
+  auto-spawn a separate dispatch solve, or that has no price ladder, is unaffected.
+
 - **A stochastic branch period now inherits its anchor's existing capacity and fixed cost, instead
   of only the anchor seeing them.** A period map keyed by the anchor period (e.g. `existing` or
   `fixed_cost` set for just that one period, the normal way to author a value that applies to the

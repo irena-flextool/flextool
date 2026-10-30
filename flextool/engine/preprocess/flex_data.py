@@ -5467,7 +5467,7 @@ def _realized_dispatch_frame(
 
 def _extract_cum_sim_hours(
     sd: Path, *, prior_handoff=None, flex_data: "FlexData | None" = None,
-    provider: "object | None" = None,
+    provider: "object | None" = None, is_dispatch_sibling_parent: bool = False,
 ) -> "pl.DataFrame | None":
     """Δ.11 — derive ``cum_sim_hours[period]`` from
     ``flex_data.p_step_duration`` (in-memory, when supplied) + the
@@ -5483,15 +5483,29 @@ def _extract_cum_sim_hours(
     (the cascade always supplies it).  Test fixtures that call this
     helper directly without ``flex_data`` retain the disk fallback.
 
-    Returns the wide ``[period, value]`` carrier frame, or ``None`` when
-    neither prior nor the workdir's realized set contributes any rows.
+    ``realized_dispatch`` marks (period, step) under the REAL period name
+    regardless of how the period branched (#59): with a stochastic fan it is
+    the anchor/trunk — the realized branch keeps the real name, so this is
+    already "the realized branch's own hours" when one is designated, and
+    the only available periods when none is (a forecasts-only fan with no
+    ``realized: yes`` row) — that no-designation case is left as-is here,
+    unchanged from before this fix.  ``is_dispatch_sibling_parent`` (#59
+    fix 3) is True when THIS solve is the parent of an auto-spawned
+    realized-dispatch sibling (``state.solve.realized_dispatch_parent``):
+    the sibling re-solves the SAME realized window with its own real
+    (non-zero-weight) objective right after this solve and will add its own
+    ``this_roll_hrs`` for those same hours (``_run_model``'s
+    ``ROLL_FORWARD_FIELDS`` routes the sibling's prior from its OWN previous
+    sibling roll, not from this parent) — so this parent must contribute
+    nothing of its own here, or the hours would be counted twice.
     """
-    rd_df = _realized_dispatch_frame(sd, flex_data, provider=provider)
-    realized: set[tuple[str, str]] = set()
-    if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
-        for r in rd_df.iter_rows(named=True):
-            realized.add((str(r["period"]), str(r["step"])))
     this_roll_hrs: dict[str, float] = {}
+    realized: set[tuple[str, str]] = set()
+    if not is_dispatch_sibling_parent:
+        rd_df = _realized_dispatch_frame(sd, flex_data, provider=provider)
+        if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
+            for r in rd_df.iter_rows(named=True):
+                realized.add((str(r["period"]), str(r["step"])))
     if realized:
         sd_df = _step_duration_frame(sd, flex_data, provider=provider)
         if sd_df is not None and sd_df.height > 0:
@@ -5527,7 +5541,7 @@ def _extract_cum_sim_hours(
 
 def _extract_cumulative_commodity(
     sol, sd: Path, *, prior_handoff=None, flex_data: "FlexData | None" = None,
-    provider: "object | None" = None,
+    provider: "object | None" = None, is_dispatch_sibling_parent: bool = False,
 ) -> "pl.DataFrame | None":
     """Δ.11 — derive ``cumulative_commodity[c, i, d]`` from ``v_trade``
     on the LP solution + workdir-side accumulator metadata.
@@ -5544,6 +5558,18 @@ def _extract_cumulative_commodity(
     ``[commodity, tier, period, mwh]`` carrier frame, or ``None`` when
     no v_trade variable exists on the solution AND no prior accumulator
     is supplied (caller falls back to the workdir CSV).
+
+    ``realized_hours[d]`` (below) comes from ``realized_dispatch``, which
+    marks (period, step) under the REAL period name — with a stochastic
+    fan that is the anchor/trunk, and the realized branch (``realized:
+    yes`` in ``stochastic_branches``) keeps the real name (#59), so
+    ``v_trade`` there already IS the realized branch's purchase when one
+    is designated.  A forecasts-only fan with no realized designation has
+    no better row to read; that case is unchanged by this fix.
+    ``is_dispatch_sibling_parent`` (#59 fix 3) — see
+    :func:`_extract_cum_sim_hours`'s docstring for why this solve must
+    contribute nothing of its own when a realized-dispatch sibling will
+    re-solve (and carry forward) the same hours right after it.
     """
     if sol is None or "v_trade" not in getattr(sol, "_vars", {}):
         # Without v_trade we can only propagate prior — same shape the
@@ -5672,10 +5698,11 @@ def _extract_cumulative_commodity(
             "p_step_duration" if "p_step_duration" in sd_df.columns else None
         )
         realized_set: set[tuple[str, str]] = set()
-        rd_df = _realized_dispatch_frame(sd, flex_data, provider=provider)
-        if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
-            for r in rd_df.iter_rows(named=True):
-                realized_set.add((str(r["period"]), str(r["step"])))
+        if not is_dispatch_sibling_parent:
+            rd_df = _realized_dispatch_frame(sd, flex_data, provider=provider)
+            if rd_df is not None and rd_df.height > 0 and {"period", "step"}.issubset(rd_df.columns):
+                for r in rd_df.iter_rows(named=True):
+                    realized_set.add((str(r["period"]), str(r["step"])))
         if d_col is not None and t_col is not None and v_col is not None:
             for r in sd_df.iter_rows(named=True):
                 d_v = str(r[d_col])
@@ -6222,6 +6249,18 @@ def build_handoff_from_solution(
         roll_end_step_df = pl.DataFrame({"period": [last_step[0]], "step": [last_step[1]],
                                          "duration": [_step_duration_at(flex_data, last_step)]})
 
+    # Is THIS solve the parent of an auto-spawned realized-dispatch sibling
+    # (OC1 separate_dispatch)?  Shared by fix_online below and by the ladder /
+    # CO2 rolling-accumulator extraction further down (#59 fix 3): a
+    # separate_dispatch parent's own dispatch is a degenerate, weight-0
+    # placeholder (the sibling re-solves the same window for real right
+    # after it), so neither extraction may add this solve's own realized
+    # contribution — the sibling's own extraction call does that instead.
+    _is_dispatch_sibling_parent = (
+        realized_dispatch_parents is not None
+        and solve_name in realized_dispatch_parents
+    )
+
     # ---- fix_online: committed v_online over the JUMP for the sibling ----
     # OC1 #1 sub-slice (b).  For a separate_dispatch PARENT (its name is a
     # registered realized-dispatch parent) carry the committed ``v_online``
@@ -6561,7 +6600,7 @@ def build_handoff_from_solution(
     # the legacy propagation path.
     cumulative_commodity_df = _extract_cumulative_commodity(
         sol, sd, prior_handoff=prior_handoff, flex_data=flex_data,
-        provider=provider)
+        provider=provider, is_dispatch_sibling_parent=_is_dispatch_sibling_parent)
     if cumulative_commodity_df is None:
         # Phase 4 (Gap F) — disk fallback retired.  When
         # ``_extract_cumulative_commodity`` returns None this solve had no
@@ -6588,7 +6627,7 @@ def build_handoff_from_solution(
     # itself is inactive (CO2-cap normalisation also consumes it).
     cum_sim_hours_df = _extract_cum_sim_hours(
         sd, prior_handoff=prior_handoff, flex_data=flex_data,
-        provider=provider)
+        provider=provider, is_dispatch_sibling_parent=_is_dispatch_sibling_parent)
     if cum_sim_hours_df is None:
         # Disk fallback retired.  ``_extract_cum_sim_hours`` returns
         # None only when this solve has zero realized timesteps AND
