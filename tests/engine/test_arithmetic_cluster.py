@@ -502,7 +502,11 @@ def test_p_penalty_up_stochastic_time_merges_fold():
     pdt_node = pl.DataFrame([("n_a", "penalty_up", d, t, repr(v)) for (d, t), v in folded.items()],
                             schema=["node", "param", "period", "time", "value"], orient="row")
     nb = pl.DataFrame({"n": ["n_a", "n_b", "n_c"]})
-    token = activate_stochastic_time_source(_Provider({"solve_data/pdtNode": pdt_node}))
+    # A non-empty solve_branch__time_branch stands in for a `realized: yes` designation (#82): without
+    # one, stochastic_time_values refuses to fold a rank-3 value with no realized branch to take it from.
+    realized_branch = pl.DataFrame({"period": ["d1"], "branch": ["realized"]})
+    token = activate_stochastic_time_source(
+        _Provider({"solve_data/pdtNode": pdt_node, "solve_data/solve_branch__time_branch": realized_branch}))
     try:
         p = ar.p_penalty_up_from_source(_stochastic_penalty_source(), nb, _penalty_dt())
     finally:
