@@ -753,6 +753,16 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     # needs a row there exactly as the entity cap already does — otherwise only the entity's
     # own (looser) cap applies in the branches.  Flag-off, or no branches, is a no-op
     # (byte-parity); ``gd_invest.csv`` / ``gd_divest.csv`` above are untouched.
+    #
+    # This stage has no per-entity, per-branch-period eligibility data of its own (``eea`` /
+    # ``ed_invest_set`` above are anchor-only: the annuity pass that builds them never visits a
+    # branch period, so a membership test against them here would always be false and silently
+    # drop every branch row again). Listing every branch here and no more is deliberate: whether
+    # a given member actually has the variable at a given branch period is decided downstream,
+    # where the real (branch-aware, zero-respecting) variable domain is known --
+    # ``_eq_group_entity_period`` scopes its constraint rows to that, not to this listing alone
+    # (#82-adjacent fix: a branch-native 0 beating the anchor's value must not leave a vacuous
+    # 0 ≥ positive-floor row here).
     gd_invest_pairs_period = list(gd_invest_pairs)
     seen_period_pairs = set(gd_invest_pairs_period)
     for g in group_invest:

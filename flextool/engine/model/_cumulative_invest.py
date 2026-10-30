@@ -415,12 +415,15 @@ def _eq_group_entity_period(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{p : (g,p) ∈ group_entity} v_invest_p[p,d] · unitsize[p]  ≤ group_invest_max_period[g,d]   (max…_p)
     #                                                             ≥ group_invest_min_period[g,d]   (min…_p)
-    #   ∀ (g,d) ∈ gd_invest_period
-    #   Divest: v_divest_p with group_retire_{max,min}_period over gd_divest_period
+    #   ∀ (g,d) ∈ gd_invest_period, restricted to the (g,d) some member actually has the variable for
+    #   Divest: v_divest_p with group_retire_{max,min}_period over gd_divest_period (same restriction)
     #   _n: the node analogues with v_invest_n / v_divest_n and state_unitsize[n]
     # Bounds the capacity a group of entities builds or retires in one period, MW (MWh for storage
     # nodes); processes and storage nodes of a group get separate rows.  Group retire_{max,min}_period is
-    # not a schema parameter, so the divest rows are reachable only with off-schema data.
+    # not a schema parameter, so the divest rows are reachable only with off-schema data.  Under recourse
+    # ``gd_invest_period`` / ``gd_divest_period`` list a group's own invest/divest period's branch periods
+    # too (#67); a branch period with no member actually invest/divest-eligible there (e.g. a branch's own
+    # 0 beating the anchor's cost, #82) gets no row, not a vacuous 0 ≥ a positive floor.
     for kind, sense, gd_idx, cap, sides, param_name in (
         ("invest", "<=", d.gd_invest_period, d.p_group_invest_max_period,
          (("maxInvestGroup_entity_period_p", b.v_invest_p, "p"),
@@ -444,6 +447,12 @@ def _eq_group_entity_period(b: _Build) -> None:
             members = group_entity.rename({"e": axis}).filter(pl.col(axis).is_in(var.frame[axis].unique()))
             if members.height == 0:
                 continue
+            # #82-adjacent: row domain is TERMS' (g, d), not the full gd_idx -- gd_idx may list a
+            # branch period of a group's invest period (#67) that no member actually has the
+            # variable for (e.g. a branch-native 0 beating the anchor's invest_cost, #82). A row
+            # there would be vacuous on the LHS (empty sum) while the RHS min/max still carries
+            # the branch's (inherited-or-own) cap, turning an unconstrained branch into an
+            # infeasible one for the ">=" (min) sense.
             terms = (members.join(var.frame.select(axis, "d"), on=axis, how="inner")
                      .join(gd_idx, on=["g", "d"], how="inner"))
             if terms.height == 0:
@@ -454,7 +463,7 @@ def _eq_group_entity_period(b: _Build) -> None:
                               param_name=param_name)
             b.m.add_cstr(
                 name,
-                over      = gd_idx,
+                over      = terms.select("g", "d").unique(),
                 sense     = sense,
                 lhs_terms = {kind:  Sum(Where(var * unitsize, terms.select("g", axis, "d")), over=(axis,))},
                 rhs_terms = {"cap": cap},

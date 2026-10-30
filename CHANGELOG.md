@@ -63,6 +63,15 @@
   past the group's limit in every branch, constrained only by its own (looser) individual cap. A
   deterministic solve, or a solve without the recourse feature, is unaffected.
 
+- **Fixed a follow-on bug from the group per-period cap fix above: a branch period where no group
+  member actually invests or divests (for example because its own authored value of zero wins
+  over the anchor's) no longer makes the solve infeasible.** The cap's row now only applies where a
+  group member actually has the investment or divestment there; previously the row still carried
+  the group's minimum-per-period floor at a branch with nothing to satisfy it, forcing an
+  infeasible zero-against-floor comparison instead of leaving the branch unconstrained. A
+  deterministic solve, a solve without the recourse feature, or a group cap without a minimum is
+  unaffected.
+
 - **A non-recourse stochastic solve's operating costs now get the same `years_represented` weight
   as the investment side, instead of being weighted one year regardless of how many years the
   period represents.** Every forecast branch period (the ones carrying the solve's probability
