@@ -53,6 +53,10 @@ COAL_OUT = ["coal_plant", "demand_node"]
 GAS_IN = ["gas_plant", "gas_market"]
 STOCH_UNIT = [["group__unit", ["add_stochastics", "coal_plant"], None]]
 STOCH_NODE = [["group__node", ["add_stochastics", "demand_node"], None]]
+ROLLING_SEPARATE_DISPATCH_JSON = STOCHASTICS_JSON.parent / "rolling_separate_dispatch.json"
+# The SINGLE scenario's realized branch (``_single_realized_override``) carries its data on the real
+# "period1" name, not a synthetic branch-period copy -- these are its remaining FORECAST branch periods.
+SINGLE_FORECAST_BRANCH_PERIODS = tuple(p for p in (f"{ANCHOR}_{b}" for b in BRANCHES) if not p.endswith("_realized"))
 
 
 @pytest.fixture(autouse=True)
@@ -105,12 +109,35 @@ def _reserve_values(r1, r2) -> list:
     return vals
 
 
+def _single_realized_override() -> list:
+    """Flag the ``SINGLE`` scenario's ``realized`` branch ``realized: yes``.
+
+    The shared fixture leaves every one of ``2day_dispatch``'s branches ``realized: no`` -- a
+    legitimate, separately-tested forecasts-only configuration many unrelated tests build on --
+    but a stochastic-time (rank-3) value authored on this module's SINGLE-scenario runs needs a
+    committed branch to resolve the anchor's own value from (owner decision #82: no
+    reference-forecast fallback).  A per-test override alternative (``make_db``'s ``values``);
+    the shared ``stochastics.json`` file, and every other test that reads it, is untouched.
+    """
+    branch_map = {
+        "type": "map", "index_type": "str",
+        "data": [[b, {"type": "map", "index_type": "str",
+                      "data": [["t0001", {"type": "map", "index_type": "str",
+                                          "data": [["yes" if b == "realized" else "no", 1.0]]}]]}]
+                 for b in BRANCHES],
+    }
+    value = {"index_type": "str", "data": [[ANCHOR, branch_map]]}
+    return [["solve", "2day_dispatch", "stochastic_branches", b64(value, "map")]]
+
+
 _RUNS: dict = {}
 
 
 def _run(tmp_path_factory, scenario: str, values: list, entities: list, *, warm: bool = True) -> dict:
     from flextool.engine import run_chain_from_db
 
+    if scenario == SINGLE:
+        values = _single_realized_override() + list(values)
     key = json.dumps([scenario, values, entities, warm])
     if key not in _RUNS:
         alt = f"c10b_{len(_RUNS)}"
@@ -210,7 +237,7 @@ def test_stochastic_time_single_solve(tmp_path_factory, labelled: bool) -> None:
     for field, (keys, ent, other, mult, base, emit_key, emit_cols, param, costlike) in SINGLE_FIELDS.items():
         cells = _cells(step, field, keys)
         mine = {k: v for k, v in cells.items() if k[:len(keys)] == ent}
-        assert {k[-2] for k in mine} >= set(BRANCH_PERIODS), (field, sorted({k[-2] for k in mine}))
+        assert {k[-2] for k in mine} >= set(SINGLE_FORECAST_BRANCH_PERIODS), (field, sorted({k[-2] for k in mine}))
         _assert_branch_values(cells, ent, mult)
         emit = utf8(provider.get(emit_key))
         emit = emit.filter(pl.col("param") == param)
@@ -284,7 +311,7 @@ def test_stochastic_efficiency_and_min_load(tmp_path_factory, labelled: bool) ->
         for u in ("coal_plant", "gas_plant"):
             assert all((u, d, t) in cells for d, t in _dt(step)), (field, u)
     slope = _cells(step, "p_slope", ["p"])
-    for d in BRANCH_PERIODS:
+    for d in SINGLE_FORECAST_BRANCH_PERIODS:
         eta, m = BR[d.removeprefix("period1_")], BR[d.removeprefix("period1_")] * 0.5
         want = (1 / eta - m / 0.6) / (1 - m)
         assert slope[("coal_plant", d, "t0001")] == pytest.approx(want, rel=1e-9), d
@@ -412,10 +439,10 @@ def _const(tmp_path_factory, scenario: str, rank3: bool) -> dict:
 
 def test_rank3_constant_equals_scalar_single_branch_periods(tmp_path_factory) -> None:
     """Single stochastic solve: the branch periods carry the scalar's cells and the objective is the scalar's.
-    The anchor period ``period1`` takes the realized branch's value from the emit's fold (#82) — no branch is
-    flagged ``realized: yes`` here, so it takes the documented reference-forecast fallback (the lexically
-    smallest active branch token); since every branch in this fixture carries the SAME value, the anchor's
-    cells equal the scalar run's anchor cells for both fields."""
+    The anchor period ``period1`` takes the realized branch's value from the emit's fold (#82) — this module's
+    ``_single_realized_override`` flags branch ``realized`` ``realized: yes`` for the SINGLE scenario; since
+    every branch in this fixture carries the SAME value, the anchor's cells equal the scalar run's anchor
+    cells for both fields regardless of which branch is realized."""
     r3, sc = _first(_const(tmp_path_factory, SINGLE, True)), _first(_const(tmp_path_factory, SINGLE, False))
     for field, keys, ent in (("p_process_availability", ["p"], ("coal_plant",)),
                              ("p_pdt_varCost_source", ["p", "source"], tuple(COAL_IN))):
@@ -448,12 +475,13 @@ def test_rank3_constant_equals_scalar_rolling(tmp_path_factory) -> None:
 def test_rank3_outside_stochastic_group(tmp_path_factory, scenario: str) -> None:
     """``gas_plant`` (in no ``include_stochastics`` group) authors a rank-3 availability.  The emit's fold, which
     the readers take as is, applies regardless of group membership (the parent-period fold is unconditional):
-    the rolls' cohort flags ``realized: yes`` on branch ``realized`` (0.9); the single solve's cohort is
-    forecasts-only, so its anchor takes the documented reference-forecast fallback -- the lexically smallest
-    active branch token, ``lower`` (0.7).  The docs' "only inside such a group" wording is corrected with #82."""
+    both cohorts flag ``realized: yes`` on branch ``realized`` (0.9) -- the rolls' fixture already does, and
+    this module's ``_single_realized_override`` does the same for the SINGLE scenario (owner decision #82:
+    no reference-forecast fallback) -- so both anchors take the realized branch's value.  The docs' "only
+    inside such a group" wording is corrected with #82."""
     at = AT_SINGLE if scenario == SINGLE else AT_ROLL
     steps = _run(tmp_path_factory, scenario, [["unit", "gas_plant", "availability", _r3(1.0, at, True)]], [])
-    want = BR["lower"] if scenario == SINGLE else BR["realized"]
+    want = BR["realized"]
     for step in list(steps.values())[:3]:
         cells = {k: v for k, v in _cells(step, "p_process_availability", ["p"]).items() if k[0] == "gas_plant"}
         assert len(cells) == len(_dt(step))
@@ -475,15 +503,16 @@ def test_rank3_partial_branch_coverage_raises(tmp_path_factory) -> None:
 
 
 # ---------------------------------------------------------------------------
-# A solve without stochastic branches
+# A solve without its own stochastic branches
 
 
 @pytest.mark.parametrize("single", [True, False], ids=["single", "rolls"])
 def test_rank3_in_deterministic_solve_raises_no_realized_branch(tmp_path_factory, single: bool) -> None:
-    """``1_week_rolling_wind`` without its stochastic data: no branch periods, so there is no realized-branch
-    designation anywhere for ``coal_plant``'s rank-3 availability to take its value from.  Owner decision #82(4)
-    raises a :class:`FlexToolConfigError` naming the entity and parameter instead of silently falling back to
-    the class default (as a pre-fix run used to, with a WARNING)."""
+    """``1_week_rolling_wind`` without its stochastic data at all: no branch periods and no
+    ``stochastic_branches`` row anywhere, so there is no realized-branch designation for
+    ``coal_plant``'s rank-3 availability to take its value from.  Owner decision #82(4) raises a
+    :class:`FlexToolConfigError` naming the entity and parameter instead of silently falling back
+    to the class default (as a pre-fix run used to, with a WARNING)."""
     from flextool.engine import run_chain_from_db
     from flextool.engine.input._solve_state import FlexToolConfigError
     from tests.model.test_rolling_period_maps import ROLL_CHAIN, _deterministic_rolling_json
@@ -494,5 +523,32 @@ def test_rank3_in_deterministic_solve_raises_no_realized_branch(tmp_path_factory
     alt = f"det_r3_{single}"
     url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=ROLL_CHAIN,
                         fixture_json=_deterministic_rolling_json(tmp_path_factory, alt))
-    with pytest.raises(FlexToolConfigError, match="no stochastic branches at all"):
+    with pytest.raises(FlexToolConfigError, match="no realized branch"):
         run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"), keep_solutions=True)
+
+
+def test_rank3_dispatch_sibling_uses_realized_branch(tmp_path_factory) -> None:
+    """A rolling + ``separate_dispatch`` solve's auto-spawned realized-dispatch sibling has no
+    ``stochastic_branches`` / branch-anchor pairs of its own (it is deterministic -- ``v_online`` is pinned
+    from its UC parent), but its parent's realized branch is projected onto it
+    (``_run_model.project_realized_branch_time_branch_rows``).  A rank-3 availability authored on
+    ``coal_plant`` must resolve to the REALIZED branch's own value on the sibling (owner decision #82(4):
+    a realized branch projected from elsewhere still counts; only the TRUE no-realized-branch-anywhere case
+    (above) raises), not the class default (1.0) and not a raise."""
+    from flextool.engine import run_chain_from_db
+
+    at = {f"t{s:04d}": [f"t{i:04d}" for i in range(s, 73)] for s in (1, 25, 49)}
+    avail = stoch_map({"realized": 0.73, "upper": 0.81, "lower": 0.62, "mid": 0.95}, at, labelled=True)
+    alt = "disp_sibling_r3"
+    url, scen = make_db(tmp_path_factory, alt=alt, values=[["unit", "coal_plant", "availability", avail]],
+                        base_chain=_chain(ROLLING_SEPARATE_DISPATCH_JSON, "rolling_separate_dispatch"),
+                        entities=[["group__unit", ["add_stochastics", "coal_plant"], None]],
+                        fixture_json=ROLLING_SEPARATE_DISPATCH_JSON)
+    steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"),
+                              keep_solutions=True, warm=False)
+    dispatch = [s for name, s in steps.items() if "realized_dispatch" in name]
+    assert dispatch, list(steps)
+    for step in dispatch:
+        coal = {k: v for k, v in _cells(step, "p_process_availability", ["p"]).items() if k[0] == "coal_plant"}
+        assert coal, "coal_plant missing from the dispatch sibling's availability"
+        assert set(coal.values()) == {0.73}, coal

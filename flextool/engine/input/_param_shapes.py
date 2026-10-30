@@ -1147,6 +1147,22 @@ class _StochasticTimeSource:
         self._folds: dict[tuple[str, str], pl.DataFrame] = {}
         self.warned: set = warned if warned is not None else set()
 
+    def has_realized_branch_rows(self) -> bool:
+        """Whether ``solve_data/solve_branch__time_branch`` carries any row for the active solve.
+
+        A realized (or forecast) branch assignment can exist even when this solve has no
+        branch-anchor pairs of its own: an auto-spawned realized-dispatch sibling
+        (``dispatch_realization_method=separate_dispatch``) leaves its own ``period__branch``
+        empty, but ``_run_model.project_realized_branch_time_branch_rows`` projects its parent's
+        already-realized ``solve_branch__time_branch`` rows onto it, so the fold below reads the
+        realized branch's own value instead of silently falling through to the class default.
+        """
+        provider = self._provider
+        if provider is None or not provider.has("solve_data/solve_branch__time_branch"):
+            return False
+        df = provider.get("solve_data/solve_branch__time_branch")
+        return df is not None and df.height > 0
+
     def fold(self, key: "tuple[str, str]") -> pl.DataFrame:
         """``[<emit entity columns>, d, t, value]`` of parameter ``key[1]`` in its emit frame (Utf8 keys,
         Float64 values), memoised for the load."""
@@ -1216,17 +1232,22 @@ def stochastic_time_values(
 
         value[e, d, t] = the branch series of e for the solve's analysis time    d a branch period of e's
                                                                                  include_stochastics group
-                       = the realized branch's series                           otherwise, this solve
-                                                                                 declares no stochastic
-                                                                                 branches at all
+                       = the realized branch's series                           otherwise (including a
+                                                                                 solve without its own
+                                                                                 stochastic branches, e.g. an
+                                                                                 auto-spawned realized-dispatch
+                                                                                 sibling)
         ∀ (d, t) of the solve's emit (steps_in_use)
 
     This is what the per-solve emit computes from ``pbt_*`` (and what the CSV seeds carry when the labels are
-    silent).  A solve without stochastic branch periods (no active branch-anchor pairs) has no realized-branch
-    designation anywhere to resolve a rank-3 value from -- owner decision #82(4) raises instead of silently
-    falling back to the class default.  Raises :class:`FlexToolConfigError` outside ``load_flextool`` (no
-    active emit), when the emit frame is missing, and in that no-branches case.  Rows sorted by the keys;
-    Utf8 keys, Float64 values.
+    silent).  A solve without its own stochastic branch periods (no active branch-anchor pairs) still takes
+    the realized branch's value when one is designated for it -- a realized-dispatch sibling has no
+    ``period__branch`` of its own, but its parent's realized ``solve_branch__time_branch`` rows are projected
+    onto it (:meth:`_StochasticTimeSource.has_realized_branch_rows`), so the fold below still resolves the
+    realized branch rather than the class default.  Only when NO realized branch is designated anywhere for
+    this solve does owner decision #82(4) raise instead of silently falling back to the class default.
+    Raises :class:`FlexToolConfigError` outside ``load_flextool`` (no active emit), when the emit frame is
+    missing, and in that no-realized-branch case.  Rows sorted by the keys; Utf8 keys, Float64 values.
     """
     scope = _STOCHASTIC_TIME_SOURCE.get()
     if scope is None:
@@ -1237,13 +1258,13 @@ def stochastic_time_values(
     # Function-local import: input -> preprocess, kept out of the module import order.
     from flextool.engine.preprocess.params._branch import active_branch_anchor_pairs
 
-    if active_branch_anchor_pairs() is None:
+    if active_branch_anchor_pairs() is None and not scope.has_realized_branch_rows():
         names = ", ".join("/".join(e) for e in sorted(entities))
         raise FlexToolConfigError(
-            f"{key[0]}.{key[1]}: {names} authors a stochastic-time (rank-3) value, but this solve declares "
-            "no stochastic branches at all, so there is no realized branch to take the value from (#82). "
-            "Either add a stochastic_branches row with a realized: yes designation, or give the parameter a "
-            "non-stochastic value.")
+            f"{key[0]}.{key[1]}: {names} authors a stochastic-time (rank-3) value, but this solve has no "
+            "realized branch to take the value from: no stochastic_branches row anywhere designates one "
+            "realized: yes, and no sibling solve projected one onto it (#82). Either add a realized: yes "
+            "row to this solve's stochastic_branches, or give the parameter a non-stochastic value.")
     emit_cols = list(STOCHASTIC_TIME_PARAMS[key][1])
     dim_cols = list(entity_dim_columns)
     ents = pl.DataFrame([list(e) for e in sorted(entities)], schema={c: pl.Utf8 for c in emit_cols},

@@ -341,7 +341,7 @@ def test_no_active_branch_pairs_raises(tmp_path_factory) -> None:
     src = _reader(_rank3("u2_dedupe"))
     token = activate_stochastic_time_source(_Provider({"solve_data/pdtProcess": FOLD}))
     try:
-        with pytest.raises(FlexToolConfigError, match="no stochastic branches at all"):
+        with pytest.raises(FlexToolConfigError, match="no realized branch"):
             broadcast_to_period_time(resolve_param_shape(src, "unit", "availability", period_filter=DT), "p", DT)
     finally:
         deactivate_stochastic_time_source(token)
