@@ -38,6 +38,7 @@ from tests.model.test_balance_penalty_shapes import (
     T48,
     T168,
     _chain,
+    realized_branch_override,
     scalar,
     stoch_map,
 )
@@ -110,24 +111,12 @@ def _reserve_values(r1, r2) -> list:
 
 
 def _single_realized_override() -> list:
-    """Flag the ``SINGLE`` scenario's ``realized`` branch ``realized: yes``.
-
-    The shared fixture leaves every one of ``2day_dispatch``'s branches ``realized: no`` -- a
-    legitimate, separately-tested forecasts-only configuration many unrelated tests build on --
-    but a stochastic-time (rank-3) value authored on this module's SINGLE-scenario runs needs a
-    committed branch to resolve the anchor's own value from (owner decision #82: no
-    reference-forecast fallback).  A per-test override alternative (``make_db``'s ``values``);
-    the shared ``stochastics.json`` file, and every other test that reads it, is untouched.
+    """Flag the ``SINGLE`` scenario's ``realized`` branch ``realized: yes`` (owner decision #82: no
+    reference-forecast fallback for a forecasts-only fan that authors a rank-3 value).  Delegates to
+    ``test_balance_penalty_shapes.realized_branch_override``, which the other module's own rank-3 tests
+    share; the shared ``stochastics.json`` file, and every other test that reads it, is untouched.
     """
-    branch_map = {
-        "type": "map", "index_type": "str",
-        "data": [[b, {"type": "map", "index_type": "str",
-                      "data": [["t0001", {"type": "map", "index_type": "str",
-                                          "data": [["yes" if b == "realized" else "no", 1.0]]}]]}]
-                 for b in BRANCHES],
-    }
-    value = {"index_type": "str", "data": [[ANCHOR, branch_map]]}
-    return [["solve", "2day_dispatch", "stochastic_branches", b64(value, "map")]]
+    return realized_branch_override()
 
 
 _RUNS: dict = {}
