@@ -77,6 +77,7 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
+from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
 from flextool.engine.preprocess.params._walks import period_walk_iterator, WindowMethod
 
 
@@ -226,6 +227,12 @@ def _per_entity_param_lf(source: "InputSource",
     period dim — checking only ``"period" in cols`` mis-classifies
     user-renamed indices as scalars, which then explode through
     :func:`_resolve_per_period_lf`'s ``scalar.join(on="e")``.
+
+    A stochastic branch period inherits its anchor's explicit row here
+    (unconditionally, not only under recourse — #63): a branch period is
+    never itself authored, so without this every per-period ``existing``
+    / ``lifetime`` / ``virtual_unitsize`` row is invisible in every
+    branch and falls back to ``fill=0.0`` in :func:`_resolve_per_period_lf`.
     """
     parts: list[pl.LazyFrame] = []
     for ec in ("unit", "node", "connection"):
@@ -244,6 +251,12 @@ def _per_entity_param_lf(source: "InputSource",
         extra = [c for c in cols if c not in ("name", "value")]
         period_col = "period" if "period" in extra else (extra[0] if extra else None)
         if period_col is not None:
+            # Branch periods never carry their own row; inherit the
+            # anchor's (no-op outside a stochastic load, and a no-op on
+            # the null-index / scalar rows — ``inherit_anchor_period``
+            # never joins a null period).
+            df = inherit_active_branch_periods(
+                df, group_keys=("name",), period_col=period_col)
             # Per-ROW scalar detection — see the matching helper in
             # ``_npv._per_entity_param_lf`` for the full rationale.
             # A constant ``existing`` (etc.) stored in an entity class

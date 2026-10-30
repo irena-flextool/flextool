@@ -57,6 +57,10 @@ from flextool.engine.input._axis_enums import (
 )
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _provider_key
+from flextool.engine.preprocess.params._branch import (
+    active_branch_anchor_pairs,
+    inherit_active_branch_periods,
+)
 from flextool.engine.preprocess.params._direct import _e_period_param_union
 from flextool.engine.preprocess.params._per_solve_sets import (
     timeset_duration_lf,
@@ -3532,16 +3536,17 @@ def _ed_period_param_lf(source: "InputSource",
     ``resolve_param_shape`` → ``broadcast_to_period``): a constant is broadcast over the
     periods, a period map keeps its own per-period values (also when authored with the
     silent ``x`` index, and also next to a constant on another entity of the same class),
-    and map keys outside ``periods`` are dropped.  Under recourse each anchor period's
-    explicit value is inherited by its branch periods (:func:`_anchor_expand_explicit`)
-    before the final restriction to ``periods``.
+    and map keys outside ``periods`` are dropped.  Every anchor period's explicit value is
+    inherited by its stochastic branch periods (:func:`._branch.inherit_active_branch_periods`
+    — unconditionally, not only under recourse, #63) before the final restriction to
+    ``periods``.
 
     Zero values are kept (``filter_zero=False``) so that a branch-native explicit 0 wins over
     its anchor's non-zero value in the expansion.  Anchor periods are added to the period
     filter so that their explicit rows survive the resolver's inner join until the expansion
     has used them.  ``None`` when no entity authors the parameter.
     """
-    pairs = _RECOURSE_ANCHOR_PAIRS
+    pairs = active_branch_anchor_pairs()
     anchors = ([] if pairs is None
                else [a for a in pairs["anchor"].unique(maintain_order=True).to_list()
                      if a not in periods])
@@ -3551,7 +3556,7 @@ def _ed_period_param_lf(source: "InputSource",
         return None
     frame = param.frame if isinstance(param.frame, pl.LazyFrame) else param.frame.lazy()
     lf = frame.select("e", "d", pl.col("value").cast(pl.Float64))
-    lf = _anchor_expand_explicit(lf)
+    lf = inherit_active_branch_periods(lf.collect(), group_keys=("e",), period_col="d").lazy()
     # Restrict to ``periods``: semi-join in the frame's own d dtype.
     periods_d = axis_lazyframe({"d": list(periods)})
     d_dtype = lf.collect_schema().get("d")
@@ -9243,7 +9248,11 @@ def _per_entity_period_value(source: "InputSource",
     ``(entity, period) → value`` dict.  Scalar shapes broadcast to all
     periods downstream; this helper itself only emits explicit rows.
 
-    A separate ``_get_value(e, d)`` helper layers the broadcast.
+    A separate ``_get_value(e, d)`` helper layers the broadcast.  A
+    stochastic branch period inherits its anchor's explicit row here
+    (unconditionally, not only under recourse — #63); without it
+    ``_lifetime_gate_sums`` sees a ``lifetime`` of 0 (not the anchor's)
+    in every branch period.
     """
     out: dict[tuple[str, str], float] = {}
     for ec in ("unit", "node", "connection"):
@@ -9252,6 +9261,8 @@ def _per_entity_period_value(source: "InputSource",
             continue
         cols = df.columns
         if "period" in cols:
+            df = inherit_active_branch_periods(
+                df, group_keys=("name",), period_col="period")
             for r in df.iter_rows(named=True):
                 try:
                     out[(str(r["name"]), str(r["period"]))] = \

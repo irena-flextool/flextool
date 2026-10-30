@@ -282,6 +282,63 @@ def test_profile_1d_period_map_reaches_branches(profile_1d_2day) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Invest-side per-period readers inherit branch values unconditionally (#63): a period map on
+# ``existing`` / ``fixed_cost`` keyed by the anchor must give the same ``p_entity_all_existing``
+# in every branch period, and the same existing-fixed-cost objective constant, as the equivalent
+# scalar.  Before the fix, only ``period1`` (the weight-0 phantom trunk) saw the map's value: every
+# branch fell back to 0 (``p_entity_all_existing``) and the objective constant was lost entirely
+# (the only ``p_ed_fixed_cost`` row left was the one with ``pd_branch_weight`` 0).
+
+
+def _values_existing_fixed_cost(as_map: bool) -> list:
+    def v(x):
+        return pmap({ANCHOR: x}) if as_map else scalar(x)
+
+    return [
+        ["unit", "coal_plant", "existing", v(1500.0)],
+        ["unit", "coal_plant", "fixed_cost", v(3.0)],
+    ]
+
+
+@pytest.fixture(scope="module")
+def existing_fc_maps(tmp_path_factory):
+    return _steps(tmp_path_factory, "c63_existing_maps", _values_existing_fixed_cost(as_map=True))
+
+
+@pytest.fixture(scope="module")
+def existing_fc_scalars(tmp_path_factory):
+    return _steps(tmp_path_factory, "c63_existing_scalars", _values_existing_fixed_cost(as_map=False))
+
+
+def test_existing_fixed_cost_period_map_equals_scalar(existing_fc_maps, existing_fc_scalars) -> None:
+    from polar_high import Problem
+
+    from flextool.engine import build_flextool
+
+    d_map = _last(existing_fc_maps).flex_data
+    d_scalar = _last(existing_fc_scalars).flex_data
+
+    # p_entity_all_existing: the map must reach every branch period, exactly like the scalar.
+    _assert_every_period(d_map.p_entity_all_existing, 1500.0, e="coal_plant")
+    assert _by_period(d_map.p_entity_all_existing, e="coal_plant") == \
+        _by_period(d_scalar.p_entity_all_existing, e="coal_plant")
+
+    # The existing-fixed-cost objective constant (opt-in; off by default in the chain run) must
+    # also match the scalar-authored run — it sums exist[e,d] * fixed_cost[e,d] * inflation[d] *
+    # branch_weight[d] over every (e, d), so a branch missing its fixed_cost row changes it.
+    def _obj_with_existing_fixed_cost(fd) -> float:
+        pb = Problem()
+        build_flextool(pb, fd, include_existing_fixed_cost=True)
+        sol = pb.solve()
+        assert sol.optimal
+        return sol.obj
+
+    obj_map = _obj_with_existing_fixed_cost(d_map)
+    obj_scalar = _obj_with_existing_fixed_cost(d_scalar)
+    assert obj_map == pytest.approx(obj_scalar, rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
 # Two anchors (stoch_two_period): each branch period takes its own anchor's value
 
 

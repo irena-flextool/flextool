@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **A stochastic branch period now inherits its anchor's existing capacity and fixed cost, instead
+  of only the anchor seeing them.** A period map keyed by the anchor period (e.g. `existing` or
+  `fixed_cost` set for just that one period, the normal way to author a value that applies to the
+  whole forecast fan) used to reach only the anchor: every branch period fell back to zero existing
+  capacity, and the fixed cost of existing capacity — when that optional objective term is turned
+  on — silently dropped out of the objective because the only period left to weight was the
+  anchor's own zero-probability placeholder. Branch periods now read their anchor's value the same
+  way every other period-keyed input already does. A deterministic solve, or a value authored as a
+  plain constant, is unaffected.
+
 - **A non-recourse stochastic solve's operating costs now get the same `years_represented` weight
   as the investment side, instead of being weighted one year regardless of how many years the
   period represents.** Every forecast branch period (the ones carrying the solve's probability

@@ -90,6 +90,7 @@ from flextool.engine.input._axis_enums import (
     alias_to_axis,
     schema_dtype,
 )
+from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
 
 # Substrate handle for the cascade-wide axis enum vocabulary.
 # Bare ``None`` here; ``cast_dim`` / ``schema_dtype`` in
@@ -182,6 +183,10 @@ def _per_entity_param_lf(source: "InputSource",
 
     Returns columns ``[e, d, value, is_scalar]`` — ``is_scalar`` flags
     rows that need broadcasting.  ``d`` is null on scalar rows.
+
+    A stochastic branch period inherits its anchor's explicit row here
+    (unconditionally, not only under recourse — #63): see the matching
+    comment in :func:`._existing._per_entity_param_lf`.
     """
     parts: list[pl.LazyFrame] = []
     for ec in ("unit", "node", "connection"):
@@ -201,6 +206,8 @@ def _per_entity_param_lf(source: "InputSource",
         extra = [c for c in cols if c not in ("name", "value")]
         period_col = "period" if "period" in extra else (extra[0] if extra else None)
         if period_col is not None:
+            df = inherit_active_branch_periods(
+                df, group_keys=("name",), period_col=period_col)
             # Per-ROW scalar detection.  A scalar value stored alongside
             # Map values in the same entity class surfaces with a NULL
             # index ((e.g. ``x = null``) — Spine emits one ``x`` column
@@ -248,10 +255,12 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
 
     Returns ``ed_lf`` with an extra ``value`` column (Float64).
     ``ed_lf`` must carry columns ``[e, d, ...]``.
+
+    ``per_param`` already carries its stochastic-branch rows (#63 —
+    :func:`_per_entity_param_lf` inherits them unconditionally), so no
+    further branch expansion happens here.
     """
-    from flextool.engine.preprocess.params._derived import _anchor_expand_explicit
-    explicit = _anchor_expand_explicit(
-        per_param
+    explicit = (per_param
           .filter(~pl.col("is_scalar"))
           .select("e", "d", pl.col("value").alias("v_explicit")))
     scalar = (per_param
