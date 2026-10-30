@@ -10,6 +10,13 @@
   way every other period-keyed input already does. A deterministic solve, or a value authored as a
   plain constant, is unaffected.
 
+- **A group's per-period investment or divestment cap now applies to a stochastic branch period
+  the same way the entity's own cap already did.** Under the recourse investment feature, a branch
+  period is itself an investment period, and the entity-level cap already applied there — but the
+  group-level cap's row was missing for branch periods, so a group member could invest or divest
+  past the group's limit in every branch, constrained only by its own (looser) individual cap. A
+  deterministic solve, or a solve without the recourse feature, is unaffected.
+
 - **A non-recourse stochastic solve's operating costs now get the same `years_represented` weight
   as the investment side, instead of being weighted one year regardless of how many years the
   period represents.** Every forecast branch period (the ones carrying the solve's probability

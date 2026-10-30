@@ -500,6 +500,30 @@ def test_recourse_invest_period_caps_reach_branches(tmp_path_factory) -> None:
 
 
 # ---------------------------------------------------------------------------
+# #67 — ``gd_invest_period`` (the row domain of ``maxInvestGroup_entity_period_p``) lacked
+# branch-period rows under recourse, so the group's own per-period invest cap (15, tighter than
+# the entity's own cap of 20) never bound there: peaker invested up to its entity cap (20) in
+# every branch period instead of the group's 15.  Demand is large enough, and ``invest_cost``
+# cheap enough, that peaker wants to invest at its cap in every invest period.
+
+
+def test_recourse_group_invest_period_cap_binds_in_branches(tmp_path_factory) -> None:
+    from tests.engine._unit_db import unitsize
+
+    step = _last(_recourse_steps(tmp_path_factory, "c67_group_cap", False))
+    us = unitsize(step, "peaker")
+    rows = utf8(step.solution.value("v_invest_p")).filter(pl.col("p") == "peaker")
+    assert rows.height > 0, "no v_invest_p rows for peaker"
+    invested = {r["d"]: r["value"] * us for r in rows.iter_rows(named=True)}
+    for anchor, branches in TWO_P_BRANCHES.items():
+        for period in (anchor,) + branches:
+            assert period in invested, f"no v_invest_p row for {period}"
+            assert invested[period] <= GROUP_CAP + 1e-6, (
+                f"{period}: peaker invested {invested[period]}, exceeding the group's "
+                f"per-period cap of {GROUP_CAP} (entity cap alone is {PEAKER_CAP})")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 
 

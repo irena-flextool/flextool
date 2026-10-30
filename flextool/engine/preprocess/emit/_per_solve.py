@@ -27,6 +27,7 @@ import polars as pl
 
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
+from flextool.engine.preprocess.params._derived import _expand_invest_branch_periods
 
 
 # ---------------------------------------------------------------------------
@@ -745,14 +746,39 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     _emit_tuples(provider, "solve_data/gd_divest.csv",
                  ("group", "period"), gd_invest_pairs[:])
 
+    # #67 — a group's per-period invest/divest cap must reach the branch periods of its own
+    # invest periods too: under recourse a branch period is itself an invest period
+    # (``ed_invest_period_set`` already carries it, via ``ed_invest_set_from_source``'s
+    # ``_expand_invest_branch_periods``), so ``maxInvestGroup_entity_period_p``'s row domain
+    # needs a row there exactly as the entity cap already does — otherwise only the entity's
+    # own (looser) cap applies in the branches.  Flag-off, or no branches, is a no-op
+    # (byte-parity); ``gd_invest.csv`` / ``gd_divest.csv`` above are untouched.
+    gd_invest_pairs_period = list(gd_invest_pairs)
+    seen_period_pairs = set(gd_invest_pairs_period)
+    for g in group_invest:
+        anchors_for_g: list[str] = []
+        seen_anchor: set[str] = set()
+        for gg, d in gd_invest_pairs:
+            if gg == g and d not in seen_anchor:
+                anchors_for_g.append(d)
+                seen_anchor.add(d)
+        if not anchors_for_g:
+            continue
+        expanded = _expand_invest_branch_periods(
+            anchors_for_g, solve_data_dir.parent, provider=provider) or []
+        for d in expanded:
+            if (g, d) not in seen_period_pairs:
+                gd_invest_pairs_period.append((g, d))
+                seen_period_pairs.add((g, d))
+
     rows = [
-        (g, d) for g, d in gd_invest_pairs
+        (g, d) for g, d in gd_invest_pairs_period
         if methods_for_g.get(g, set()) & _INVEST_PERIOD_METHODS
     ]
     _emit_tuples(provider, "solve_data/gd_invest_period.csv",
                  ("group", "period"), rows)
     rows = [
-        (g, d) for g, d in gd_invest_pairs
+        (g, d) for g, d in gd_invest_pairs_period
         if methods_for_g.get(g, set()) & _DIVEST_PERIOD_METHODS
     ]
     _emit_tuples(provider, "solve_data/gd_divest_period.csv",
