@@ -1,5 +1,22 @@
 ## Unreleased
 
+- **A stochastic solve's anchor period now takes the committed branch's value for a stochastic-time
+  parameter (availability, efficiency, min_load, operational cost, reservation, penalty), instead
+  of the unit or node class's hard-coded default.** The anchor keeps the real period name next to
+  its forecast-branch copies and carries no weight in the objective, but it still has its own rows
+  in the constraints, so a wrong value there could still misbind them. When no branch is explicitly
+  marked as the one supplying the committed data, the anchor now reads the documented
+  reference-forecast's value instead of silently defaulting (e.g. availability 1.0 regardless of
+  what every forecast branch actually says). A rolling solve already resolved this correctly when a
+  branch was marked that way; this also fixes a single (non-rolling) stochastic solve, and an
+  entity outside every `include_stochastics` group.
+- **A stochastic-time value that gives only some of its forecast branches a number, leaving others
+  out, is now a configuration error naming the entity, the parameter and the missing branches**,
+  instead of silently treating the branches left out as the class default. **A deterministic solve
+  (no stochastic branches at all) that still authors a stochastic-time value now raises a
+  configuration error explaining that there is no committed branch to take the value from**,
+  instead of silently using the class default with only a warning.
+
 - **A rolling stochastic solve's commodity price-ladder tier cap now gives a forecast branch period
   the same already-bought carry-over as its anchor, instead of re-opening the tier's budget in
   full for every branch.** The running "already bought this tier" total carried from roll to roll

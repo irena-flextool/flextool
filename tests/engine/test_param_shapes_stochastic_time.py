@@ -33,9 +33,18 @@ from flextool.engine.input._param_shapes import (
     stochastic_time_entities,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.preprocess.params._branch import (
+    activate_branch_anchor_pairs,
+    deactivate_branch_anchor_pairs,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 DT = pl.DataFrame({"d": ["p1", "p1", "p1_hi", "p1_hi"], "t": ["t1", "t2", "t1", "t2"]})
+
+# A solve genuinely has stochastic branches in this module's tests only when a test cares about the
+# "no active branch-anchor pairs" path (#82 decision 4 -- that path now raises); every other test
+# activates this dummy pair so :func:`stochastic_time_values` reaches the behaviour it actually tests.
+_DUMMY_BRANCH_PAIRS = pl.DataFrame({"anchor": ["p1"], "br": ["p1_hi"]})
 
 
 class _Provider:
@@ -67,7 +76,9 @@ FOLD = _pdt_process([("u1", "availability", d, t, v) for (d, t), v in
 @pytest.fixture
 def emit_scope():
     token = activate_stochastic_time_source(_Provider({"solve_data/pdtProcess": FOLD}))
+    branch_token = activate_branch_anchor_pairs(_DUMMY_BRANCH_PAIRS)
     yield
+    deactivate_branch_anchor_pairs(branch_token)
     deactivate_stochastic_time_source(token)
 
 
@@ -178,12 +189,14 @@ def test_broadcast_merges_fold_and_direct(emit_scope) -> None:
 def test_broadcast_filter_zero_applies_to_both_parts() -> None:
     fold = _pdt_process([("u1", "availability", d, t, 0.0 if t == "t1" else 0.9) for d, t in DT.iter_rows()])
     token = activate_stochastic_time_source(_Provider({"solve_data/pdtProcess": fold}))
+    branch_token = activate_branch_anchor_pairs(_DUMMY_BRANCH_PAIRS)
     try:
         frame = pl.concat([_rank3(), pl.DataFrame({"name": ["u3", "u3"], "t": ["t1", "t2"],
                                                      "value": [0.0, 0.6]})], how="diagonal_relaxed")
         resolved = resolve_param_shape(_reader(frame), "unit", "availability", period_filter=DT)
         out = broadcast_to_period_time(resolved, "p", DT, filter_zero=True)
     finally:
+        deactivate_branch_anchor_pairs(branch_token)
         deactivate_stochastic_time_source(token)
     assert all(v != 0.0 for v in _cells(out).values())
     assert {k[2] for k in _cells(out)} == {"t2"}
@@ -207,23 +220,27 @@ def test_without_scope_raises() -> None:
 
 def test_missing_emit_frame_raises() -> None:
     token = activate_stochastic_time_source(_Provider({}))
+    branch_token = activate_branch_anchor_pairs(_DUMMY_BRANCH_PAIRS)
     try:
         resolved = resolve_param_shape(_reader(_rank3()), "unit", "availability", period_filter=DT)
         with pytest.raises(FlexToolConfigError, match="solve_data/pdtProcess"):
             broadcast_to_period_time(resolved, "p", DT)
     finally:
+        deactivate_branch_anchor_pairs(branch_token)
         deactivate_stochastic_time_source(token)
 
 
 def test_entity_without_fold_rows_warns(caplog) -> None:
     """A stochastic entity outside the emit's domain gets no value, with a warning that names it."""
     token = activate_stochastic_time_source(_Provider({"solve_data/pdtProcess": FOLD}))
+    branch_token = activate_branch_anchor_pairs(_DUMMY_BRANCH_PAIRS)
     try:
         resolved = resolve_param_shape(_reader(_with_time_map(_rank3("u2_absent"))), "unit", "availability",
                                        period_filter=DT)
         with caplog.at_level(logging.WARNING):
             out = broadcast_to_period_time(resolved, "p", DT)
     finally:
+        deactivate_branch_anchor_pairs(branch_token)
         deactivate_stochastic_time_source(token)
     assert {k[0] for k in _cells(out)} == {"u3"}
     assert any("u2_absent" in r.getMessage() and "no folded value" in r.getMessage() for r in caplog.records)
@@ -283,11 +300,13 @@ def test_spinedb_default_does_not_reach_stochastic_entity(tmp_path_factory) -> N
     dt = pl.DataFrame({"d": ["p2020"] * 2, "t": TIMESTEPS[:2]})
     fold = _pdt_process([("coal_plant", "availability", "p2020", t, 0.8) for t in TIMESTEPS[:2]])
     token = activate_stochastic_time_source(_Provider({"solve_data/pdtProcess": fold}))
+    branch_token = activate_branch_anchor_pairs(_DUMMY_BRANCH_PAIRS)
     try:
         resolved = resolve_param_shape(src, "unit", "availability", period_filter=dt)
         out = _cells(broadcast_to_period_time(resolved, "p", dt))
         vals = parameter_entity_values(src, "unit", "availability")
     finally:
+        deactivate_branch_anchor_pairs(branch_token)
         deactivate_stochastic_time_source(token)
     want = {(u, "p2020", t): (0.8 if u == "coal_plant" else 1.0) for u in units for t in TIMESTEPS[:2]}
     assert out == want
@@ -316,21 +335,36 @@ def test_registry_keys_have_a_pbt_spec() -> None:
     assert not missing, missing
 
 
+def test_no_active_branch_pairs_raises(tmp_path_factory) -> None:
+    """Owner decision #82(4): without active branch-anchor pairs there is no realized branch anywhere to take
+    a rank-3 value from, so the engine raises (it no longer warns and falls back to the class default)."""
+    src = _reader(_rank3("u2_dedupe"))
+    token = activate_stochastic_time_source(_Provider({"solve_data/pdtProcess": FOLD}))
+    try:
+        with pytest.raises(FlexToolConfigError, match="no stochastic branches at all"):
+            broadcast_to_period_time(resolve_param_shape(src, "unit", "availability", period_filter=DT), "p", DT)
+    finally:
+        deactivate_stochastic_time_source(token)
+
+
 def test_warnings_dedupe_per_run(caplog) -> None:
-    """The warnings are deduplicated with the run's set passed to the scope: a second run (a fresh set) warns
-    again, a second load of the same run (the same set) does not."""
+    """With active branch-anchor pairs (so #82's "no branches" raise does not apply here), the remaining
+    "no folded value" warning is deduplicated with the run's set passed to the scope: a second run (a fresh
+    set) warns again, a second load of the same run (the same set) does not."""
     src = _reader(_rank3("u2_dedupe"))
     run_set: set = set()
     counts = []
     for warned in (run_set, run_set, set()):
         token = activate_stochastic_time_source(_Provider({"solve_data/pdtProcess": FOLD}), warned)
+        branch_token = activate_branch_anchor_pairs(_DUMMY_BRANCH_PAIRS)
         try:
             caplog.clear()
             with caplog.at_level(logging.WARNING):
                 broadcast_to_period_time(resolve_param_shape(src, "unit", "availability", period_filter=DT), "p",
                                          DT)
         finally:
+            deactivate_branch_anchor_pairs(branch_token)
             deactivate_stochastic_time_source(token)
         counts.append(sum("u2_dedupe" in r.getMessage() for r in caplog.records))
-    # each fresh set: the "no stochastic branches" and the "no folded value" warning (2); the same run again: 0
-    assert counts == [2, 0, 2], counts
+    # each fresh set: the "no folded value" warning (1); the same run again: 0
+    assert counts == [1, 0, 1], counts

@@ -29,6 +29,7 @@ import json
 import polars as pl
 import pytest
 
+from flextool.engine.input._solve_state import FlexToolConfigError
 from tests.engine._unit_db import b64, make_db, utf8
 from tests.model.test_balance_penalty_shapes import (
     BRANCH_PERIODS,
@@ -460,17 +461,31 @@ def test_rank3_outside_stochastic_group(tmp_path_factory, scenario: str) -> None
 
 
 # ---------------------------------------------------------------------------
+# A stochastic-time value authoring only SOME of a cohort's active branches
+
+
+def test_rank3_partial_branch_coverage_raises(tmp_path_factory) -> None:
+    """A stochastic-time value that authors SOME of a reveal cohort's active branches but not ALL of them is
+    an input error (owner decision #82, point 2) -- never a silent fallback to the class default for the
+    branches left out.  ``2_day_stochastic_dispatch``'s ``period1`` cohort has 4 active branches (``realized``,
+    ``upper``, ``lower``, ``mid``; none flagged ``realized: yes``); authoring only 2 of them must raise."""
+    partial = stoch_map({"upper": 0.9, "lower": 0.7}, AT_SINGLE, labelled=True)
+    with pytest.raises(FlexToolConfigError, match="missing"):
+        _run(tmp_path_factory, SINGLE, [["unit", "coal_plant", "availability", partial]], STOCH_UNIT)
+
+
+# ---------------------------------------------------------------------------
 # A solve without stochastic branches
 
 
 @pytest.mark.parametrize("single", [True, False], ids=["single", "rolls"])
-def test_rank3_in_deterministic_solve_warns_once(tmp_path_factory, caplog, single: bool) -> None:
-    """``1_week_rolling_wind`` without its stochastic data: no branch periods, so the emit's fold gives the class
-    default (availability 1.0) on every cell of every solve.  The run says so with one WARNING naming the entity
-    (once per run, not per roll); which value a deterministic solve should take is logged with #82."""
-    import logging
-
+def test_rank3_in_deterministic_solve_raises_no_realized_branch(tmp_path_factory, single: bool) -> None:
+    """``1_week_rolling_wind`` without its stochastic data: no branch periods, so there is no realized-branch
+    designation anywhere for ``coal_plant``'s rank-3 availability to take its value from.  Owner decision #82(4)
+    raises a :class:`FlexToolConfigError` naming the entity and parameter instead of silently falling back to
+    the class default (as a pre-fix run used to, with a WARNING)."""
     from flextool.engine import run_chain_from_db
+    from flextool.engine.input._solve_state import FlexToolConfigError
     from tests.model.test_rolling_period_maps import ROLL_CHAIN, _deterministic_rolling_json
 
     values = [["unit", "coal_plant", "availability", _r3(1.0, AT_ROLL, True)]]
@@ -479,12 +494,5 @@ def test_rank3_in_deterministic_solve_warns_once(tmp_path_factory, caplog, singl
     alt = f"det_r3_{single}"
     url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=ROLL_CHAIN,
                         fixture_json=_deterministic_rolling_json(tmp_path_factory, alt))
-    with caplog.at_level(logging.WARNING):
-        steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"), keep_solutions=True)
-    assert len(steps) == (1 if single else 7), list(steps)
-    for step in steps.values():
-        assert {d for d, _t in _dt(step)} == {ANCHOR}
-        cells = {k: v for k, v in _cells(step, "p_process_availability", ["p"]).items() if k[0] == "coal_plant"}
-        assert len(cells) == len(_dt(step)) and set(cells.values()) == {1.0}
-    msgs = [r.getMessage() for r in caplog.records if "only in solves with stochastic branches" in r.getMessage()]
-    assert len(msgs) == 1 and "unit.availability" in msgs[0] and "coal_plant" in msgs[0], msgs
+    with pytest.raises(FlexToolConfigError, match="no stochastic branches at all"):
+        run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"), keep_solutions=True)

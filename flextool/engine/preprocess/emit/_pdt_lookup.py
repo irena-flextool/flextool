@@ -34,6 +34,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._provider_io import _provider_key
 
 
@@ -299,8 +300,9 @@ def _read_singles(path: Path,
 # ---------------------------------------------------------------------------
 # #82 -- the anchor (reveal / continuation self-row) takes the realized
 # branch's pbt value, or the documented reference-forecast fallback, in the
-# 7/9-branch cascade.  See docs/how_to.md "Stochastics over multiple
-# periods" and the owner decision in specs/owner_decisions.md.
+# 7/9-branch cascade; a partial-coverage stochastic-time value is an input
+# error.  See docs/how_to.md "Stochastics over multiple periods" and the
+# owner decision in specs/owner_decisions.md.
 # ---------------------------------------------------------------------------
 
 def _anchor_fan_members(period_branch_csv: Path,
@@ -346,6 +348,50 @@ def _apply_reference_forecast_fallback(
         tokens = sorted({tb_for_d[m][0] for m in members if tb_for_d.get(m)})
         if tokens:
             tb_for_d[anchor] = [tokens[0]]
+
+
+def _check_pbt_branch_coverage(
+    pbt: dict[tuple, float],
+    n_ent: int,
+    anchor_members: dict[str, list[str]],
+    tb_for_d: dict[str, list[str]],
+    ts_for_d: dict[str, list[str]],
+) -> None:
+    """Raise when a pbt entity/param authors SOME of a reveal cohort's active branches but not ALL
+    of them -- the engine must never silently fall back to the class default for a branch an entity
+    left out (owner decision #82, point 2).
+
+    *pbt* keys are ``(*entity, param, branch, ts, time)`` (``n_ent`` entity-key columns).  A cohort's
+    active-branch roster is the fan members' own tokens (*anchor_members* / *tb_for_d* -- the same
+    roster :func:`_apply_reference_forecast_fallback` reads); a roster of 0 or 1 members can never be
+    "partial", so those cohorts are skipped.
+    """
+    roster_by_ts: dict[str, frozenset[str]] = {}
+    for anchor, members in anchor_members.items():
+        tokens = frozenset(tb_for_d[m][0] for m in members if tb_for_d.get(m))
+        if len(tokens) <= 1:
+            continue
+        for ts in ts_for_d.get(anchor, ()):
+            roster_by_ts[ts] = tokens
+    if not roster_by_ts:
+        return
+    authored: dict[tuple, set[str]] = {}
+    for key in pbt:
+        ts = key[n_ent + 2]
+        if ts not in roster_by_ts:
+            continue
+        branch = key[n_ent + 1]
+        authored.setdefault((key[:n_ent], key[n_ent], ts), set()).add(branch)
+    for (ent, param, ts), branches in authored.items():
+        tokens = roster_by_ts[ts]
+        if branches & tokens and branches < tokens:
+            missing = sorted(tokens - branches)
+            raise FlexToolConfigError(
+                f"{'/'.join(ent)}.{param}: a stochastic-time value authors branch(es) "
+                f"{sorted(branches & tokens)} of this reveal but is missing {missing} -- give every "
+                "active forecast branch a value, or none; the engine never silently substitutes the "
+                "class default for a branch left out."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -529,6 +575,7 @@ class PdtLookup:
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
         anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
+        _check_pbt_branch_coverage(self._pbt, 1, anchor_members, self._tb_for_d, self._ts_for_d)
         _apply_reference_forecast_fallback(self._tb_for_d, anchor_members)
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d, key_cols=["e", "param", "d"],
                                              period_pos=2, periods=list(self._ts_for_d))
@@ -645,6 +692,7 @@ class PdtLookupPerSide:
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
         anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
+        _check_pbt_branch_coverage(self._pbt, 2, anchor_members, self._tb_for_d, self._ts_for_d)
         _apply_reference_forecast_fallback(self._tb_for_d, anchor_members)
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d,
                                              key_cols=["p", "side", "param", "d"], period_pos=3,

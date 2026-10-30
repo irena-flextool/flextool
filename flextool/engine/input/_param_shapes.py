@@ -1216,13 +1216,17 @@ def stochastic_time_values(
 
         value[e, d, t] = the branch series of e for the solve's analysis time    d a branch period of e's
                                                                                  include_stochastics group
-                       = the emit's fallback (class default)                     otherwise
+                       = the realized branch's series                           otherwise, this solve
+                                                                                 declares no stochastic
+                                                                                 branches at all
         ∀ (d, t) of the solve's emit (steps_in_use)
 
     This is what the per-solve emit computes from ``pbt_*`` (and what the CSV seeds carry when the labels are
-    silent).  A solve without stochastic branch periods (no active branch-anchor pairs) gets the fallback on
-    every cell; that is warned once per run and entity.  Raises :class:`FlexToolConfigError` outside ``load_flextool`` (no active emit) and when the emit
-    frame is missing.  Rows sorted by the keys; Utf8 keys, Float64 values.
+    silent).  A solve without stochastic branch periods (no active branch-anchor pairs) has no realized-branch
+    designation anywhere to resolve a rank-3 value from -- owner decision #82(4) raises instead of silently
+    falling back to the class default.  Raises :class:`FlexToolConfigError` outside ``load_flextool`` (no
+    active emit), when the emit frame is missing, and in that no-branches case.  Rows sorted by the keys;
+    Utf8 keys, Float64 values.
     """
     scope = _STOCHASTIC_TIME_SOURCE.get()
     if scope is None:
@@ -1234,8 +1238,12 @@ def stochastic_time_values(
     from flextool.engine.preprocess.params._branch import active_branch_anchor_pairs
 
     if active_branch_anchor_pairs() is None:
-        _warn_once("no_branches", key, entities,
-                   "is used only in solves with stochastic branches; this solve uses the class default.")
+        names = ", ".join("/".join(e) for e in sorted(entities))
+        raise FlexToolConfigError(
+            f"{key[0]}.{key[1]}: {names} authors a stochastic-time (rank-3) value, but this solve declares "
+            "no stochastic branches at all, so there is no realized branch to take the value from (#82). "
+            "Either add a stochastic_branches row with a realized: yes designation, or give the parameter a "
+            "non-stochastic value.")
     emit_cols = list(STOCHASTIC_TIME_PARAMS[key][1])
     dim_cols = list(entity_dim_columns)
     ents = pl.DataFrame([list(e) for e in sorted(entities)], schema={c: pl.Utf8 for c in emit_cols},
