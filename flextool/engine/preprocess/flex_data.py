@@ -6575,6 +6575,7 @@ def build_handoff_from_solution(
             flex_data, sol, work_folder=work_folder,
             prior_cumulative_co2=prior_df,
             provider=provider,
+            is_dispatch_sibling_parent=_is_dispatch_sibling_parent,
         )
         if native_co2.height > 0:
             cumulative_co2_df = (native_co2

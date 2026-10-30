@@ -21,6 +21,12 @@
   addition to the dispatch solve that actually realizes the hours. A rolling solve that does not
   auto-spawn a separate dispatch solve, or that has no price ladder, is unaffected.
 
+- **The same auto-spawned realized-dispatch solve fix applies to the rolling CO2 cap's "already
+  emitted" total**, for the same reason: the spawning solve's own emissions for the hours its
+  dispatch solve re-solves were a placeholder, and adding them to the running total on top of the
+  dispatch solve's own, correct contribution double-counted those hours. A rolling solve that does
+  not auto-spawn a separate dispatch solve, or that has no CO2 cap, is unaffected.
+
 - **A stochastic branch period now inherits its anchor's existing capacity and fixed cost, instead
   of only the anchor seeing them.** A period map keyed by the anchor period (e.g. `existing` or
   `fixed_cost` set for just that one period, the normal way to author a value that applies to the

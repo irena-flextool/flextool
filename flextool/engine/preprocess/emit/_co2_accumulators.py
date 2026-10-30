@@ -135,15 +135,36 @@ def compute_co2_rolling_accumulator(
     work_folder: Path,
     prior_cumulative_co2: "pl.DataFrame | None" = None,
     provider: "object | None" = None,
+    is_dispatch_sibling_parent: bool = False,
 ) -> pl.DataFrame:
     """Native compute of ``co2_cum_realized_tonnes`` for the current solve.
 
     Returns ``[group, period, p_co2_cum_realized_tonnes]``.  Empty frame
     when no CO2-cap group is active.
+
+    ``realized_dispatch`` (below) marks (period, step) under the REAL
+    period name regardless of how the period branched: with a stochastic
+    fan that is the anchor/trunk, and the realized branch (``realized:
+    yes``) keeps the real name, so ``v_flow`` there already is the
+    realized branch's flow when one is designated — and the only
+    available rows when none is (unchanged by this fix either way, #59).
+
+    ``is_dispatch_sibling_parent`` (#59 fix 3, applied the same way as the
+    commodity-ladder carry): True when THIS solve is the parent of an
+    auto-spawned realized-dispatch sibling (OC1 separate_dispatch).  The
+    sibling re-solves the SAME realized window with its own real
+    objective right after this solve and carries ITS OWN prior roll
+    forward for ``cumulative_co2`` (``_run_model``'s ``ROLL_FORWARD_FIELDS``
+    routes it from the sibling's own previous roll, not from this
+    parent's handoff) — so this parent must add nothing of its own here,
+    or the realized tonnes of those hours would be counted twice.
     """
     co2_groups = _read_co2_capped_groups(work_folder, provider=provider)
     if not co2_groups:
         return pl.DataFrame(schema=_SCHEMA_OUT)
+
+    if is_dispatch_sibling_parent:
+        return _passthrough_prior(prior_cumulative_co2, co2_groups)
 
     cn_co2 = _read_commodity_node_co2(work_folder, provider=provider)
     if cn_co2.height == 0:
