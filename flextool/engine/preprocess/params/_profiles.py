@@ -73,10 +73,16 @@ from polar_high import Param
 
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
+from flextool.engine.preprocess.emit._pdt_lookup import (
+    _anchor_fan_members,
+    _check_anchor_has_realized_branch,
+    _check_pbt_branch_coverage,
+)
 from flextool.engine.input._axis_enums import (
     alias_to_axis,
     schema_dtype,
 )
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 
 # Substrate handle for the cascade-wide axis enum vocabulary.
@@ -542,6 +548,34 @@ def _profile_stochastic_lf(workdir: Path | None,
     # Stochastic UNION gate per profile.
     stoch_set = _read_stoch_profiles(inp, provider=provider)
     stoch_active = [p for p in stoch_profiles if p in stoch_set]
+
+    # #82 (extended to profiles) -- a reveal/continuation cohort that carries a
+    # stochastic-time ``profile.profile`` value on its branches needs a
+    # ``realized: yes`` designation to own the anchor's / continuation periods'
+    # own row (no reference-forecast fallback), and an entity must author every
+    # active branch of a cohort or none of them.  Reuse the same helpers the
+    # non-profile pbt_* params use (one definition of "realized branch"),
+    # scoped to the profiles that actually enter Branch 1's stochastic fold.
+    if stoch_active and not tb_for_d:
+        # This solve has no branch assignment of its own and none projected onto it
+        # from a parent (``_StochasticTimeSource.has_realized_branch_rows`` -- same
+        # csv, same rule): a solve without stochastic branches still needs a
+        # realized branch to take a rank-3 profile value from (owner decision #82).
+        raise FlexToolConfigError(
+            f"profile.profile: {', '.join(stoch_active)} authors a stochastic-time (rank-3) value, "
+            "but this solve has no realized branch to take the value from: no stochastic_branches "
+            "row anywhere designates one realized: yes, and no sibling solve projected one onto it "
+            "(#82). Either add a realized: yes row to this solve's stochastic_branches, or give the "
+            "profile a non-stochastic value."
+        )
+    if stoch_active:
+        anchor_members = _anchor_fan_members(sd / "period__branch.csv", provider=provider)
+        pbt_dict = {
+            (row["profile"], "profile", row["branch"], row["time_start"], row["time"]): row["value"]
+            for row in pbt.filter(pl.col("profile").is_in(stoch_active)).iter_rows(named=True)
+        }
+        _check_pbt_branch_coverage(pbt_dict, 1, anchor_members, tb_for_d, ts_for_d)
+        _check_anchor_has_realized_branch(pbt_dict, 1, anchor_members, tb_for_d, ts_for_d)
 
     # Branch 1: stochastic UNION fold.
     # For each (p, d, t): sum pbt[p, tb, ts, t] over (tb, ts) ∈

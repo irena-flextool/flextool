@@ -693,6 +693,23 @@ def _patch_stoch_rank3_anchor(data: dict) -> dict:
                 ["solve", "2day_dispatch", "stochastic_branches", _realized_branch_override()]])
 
 
+def _patch_stoch_rank3_profile_anchor(data: dict) -> dict:
+    """Stochastic-time ``profile.profile`` on the stochastic 2-day dispatch -- #82 extended to
+    profiles: branch ``realized`` of this cohort is flagged ``realized: yes``
+    (:func:`_realized_branch_override`), so the anchor period ``period1`` takes ITS ``wind`` profile
+    value (0.9) wherever the profile cascade resolves it, not the scalar / time-series fallback and
+    not any other branch's value.  Without a realized designation this raises (``profile.profile``
+    goes through its own cascade, ``flextool/engine/preprocess/params/_profiles.py``, not the generic
+    ``pbt_*`` path :func:`_patch_stoch_rank3_anchor` proves -- same rule, reusing the same
+    ``_pdt_lookup.py`` helpers).  ``wind_plant`` / ``demand_node`` / ``wind`` and its
+    ``add_stochastics`` group membership are already wired in the base fixture."""
+    return _overlay(
+        data, name="stoch_rank3_profile_anchor", base="2_day_stochastic_dispatch",
+        values=[["profile", "wind", "profile",
+                 _stoch_rank3({"realized": 0.9, "upper": 0.8, "lower": 0.7, "mid": 0.6})],
+                ["solve", "2day_dispatch", "stochastic_branches", _realized_branch_override()]])
+
+
 def _patch_chp_misc(data: dict) -> dict:
     """greater_than user constraint, balance_within_period node and ramp
     limits on both the input and the output side of a unit."""
@@ -1771,6 +1788,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "reserve_dynamic_demand": _patch_reserve_dynamic_demand,
     "stoch_na_reserve": _patch_stoch_na_reserve,
     "stoch_rank3_anchor": _patch_stoch_rank3_anchor,
+    "stoch_rank3_profile_anchor": _patch_stoch_rank3_profile_anchor,
     "chp_misc": _patch_chp_misc,
     "profiles": _patch_profiles,
     "co2_period_total": _patch_co2_period_total,
@@ -2063,6 +2081,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("co2_stoch_total", _F + "stochastics.json"),
     ("ladder_stoch_cumulative", _F + "stochastics.json"),
     ("stoch_rank3_anchor", _F + "stochastics.json"),
+    ("stoch_rank3_profile_anchor", _F + "stochastics.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

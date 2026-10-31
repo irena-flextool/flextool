@@ -18,6 +18,12 @@
   explaining that a realized branch must be designated**, instead of silently using the class
   default (or, for a solve without its own branches, a realized branch projected from elsewhere —
   e.g. a rolling solve's auto-spawned realized-dispatch sibling — is still used, not an error).
+- **The same realized-branch rule above now also applies to a `profile` entity's stochastic-time
+  `profile` value** (profiles resolve through their own cascade, separate from the parameters
+  above): the anchor period takes the designated realized branch's profile, and a forecasts-only
+  cohort or a solve with no realized branch anywhere that authors a stochastic-time profile is a
+  configuration error instead of silently falling back to the profile's scalar or time-series
+  value.
 
 - **A rolling stochastic solve's commodity price-ladder tier cap now gives a forecast branch period
   the same already-bought carry-over as its anchor, instead of re-opening the tier's budget in
