@@ -106,7 +106,7 @@ def test_midhorizon_fan_period_branch_and_active_time() -> None:
         ("p2040", "p2040_rlz"),
         ("p2040", "p2040_low"),
     ]
-    # Active-time keys: p2035 trunk and the p2040_low branch copy; the period
+    # Active-time keys: the pre-reveal period p2035 and the p2040_low branch copy; the period
     # label p2040 has no dispatch.
     assert list(atl["s"].keys()) == ["p2035", "p2040_low"]
     assert atl["s"]["p2035"] == P1                # trunk unchanged
@@ -227,9 +227,9 @@ def test_step_jump_midhorizon_links_branch_to_shared_trunk() -> None:
     assert rows[("p2040", "t0004")][_PREV_PERIOD] == "p2035"
 
 
-def test_step_jump_midhorizon_branches_link_to_trunk_without_the_period_label() -> None:
+def test_step_jump_midhorizon_branches_link_to_pre_reveal_period_without_the_period_label() -> None:
     """T-S with the period label left out of the active time (it has no dispatch): EVERY mid-horizon branch
-    copy's first step links to the shared pre-reveal trunk p2035's last step, also the copy whose time-branch
+    copy's first step links to the shared pre-reveal period p2035's last step, also the copy whose time-branch
     owns no pre-reveal period (forecasts-only: p2035 is bound to the reference forecast ``high`` only)."""
     atl = {"p2035": P1, "p2040_high": P2, "p2040_low": P2}
     pb = [("p2035", "p2035"), ("p2040", "p2040"),

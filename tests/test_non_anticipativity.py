@@ -159,7 +159,7 @@ def test_storage_state_equal_across_branches(
     # Forecast periods = the branch (b) side of the off-diagonal
     # period__branch pairs; the anchor (d) side is the period label, which has
     # no dispatch.
-    trunks = {d for (d, b) in pb if d != b}
+    labels = {d for (d, b) in pb if d != b}
     forecast_periods = sorted(
         {b for (d, b) in pb if d != b and b in periods_with_rows}
     )
@@ -191,7 +191,7 @@ def test_storage_state_equal_across_branches(
     )
     # The anchor is a period label: it has no dispatch, so no v_state rows (the
     # ties are forecast-to-forecast, never to the label).
-    assert trunks and not (trunks & periods_with_rows), trunks
+    assert labels and not (labels & periods_with_rows), labels
 
 
 # ---------------------------------------------------------------------------

@@ -483,7 +483,7 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
     period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
                                    provider=provider)
 
-    # Forecasts-only cohort rule (R2/W7, unconditional) — a period label is a
+    # Forecasts-only cohort rule (unconditional) — a period label is a
     # self-row ``(d, d) ∈ pb`` that ALSO fans out to a forecast member;
     # it carries no probability mass → weight 0, excluded from every forecast
     # denominator, and has no steps (so it is tested before the first-step
@@ -491,8 +491,8 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
     # keeps 1.0.  Kept in lock-step with
     # ``_branch.pdt_branch_weight_lf`` (the authoritative LP weight) via
     # the shared :func:`_branch.fan_period_labels` helper, so this emitted
-    # CSV stays byte-parity with the LP Param.  Now applied to the pd (invest)
-    # loop too (= W7), not just pdt.
+    # CSV stays byte-parity with the LP Param.  Applied to the pd (invest)
+    # loop as well as pdt.
     from flextool.engine.preprocess.params._branch import fan_period_labels
     phantom = fan_period_labels(pb_set)
 
@@ -523,7 +523,7 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
     pdt_rows: list[tuple[str, str, float]] = []
     for d, t in dt_pairs:
         if d in phantom:
-            # Phantom trunk operational weight → 0 (forecasts carry the mass).
+            # Period-label operational weight → 0 (forecasts carry the mass).
             pdt_rows.append((d, t, 0.0))
             continue
         branches_with_t = branches_for_t.get(t, set())
@@ -534,7 +534,7 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
             if (d2, d) not in pb_set:
                 continue
             if b in phantom:
-                # Exclude the phantom trunk from the forecast denominator.
+                # Exclude the period label from the forecast denominator.
                 continue
             denom += w(b)
         if denom == 0.0:

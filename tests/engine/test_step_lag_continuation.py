@@ -279,9 +279,9 @@ def test_dtttdt_multi_period_stochastic_continuation() -> None:
     ]
 
 
-def test_dtttdt_midhorizon_branches_link_to_trunk_without_the_period_label() -> None:
+def test_dtttdt_midhorizon_branches_link_to_pre_reveal_period_without_the_period_label() -> None:
     """A mid-horizon fan whose period label p2040 has no steps: every branch copy's first step continues from
-    the pre-reveal trunk p2035's last step (the mirror of make_step_jump), also the copy whose time-branch owns
+    the pre-reveal period p2035's last step (the mirror of make_step_jump), also the copy whose time-branch owns
     no pre-reveal period."""
     atl = {"p2035": P1, "p2040_high": P2[0:], "p2040_low": P2[0:]}
     pb = [("p2035", "p2035"), ("p2040", "p2040"), ("p2040", "p2040_high"), ("p2040", "p2040_low")]

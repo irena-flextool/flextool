@@ -480,7 +480,7 @@ def _rolling_hedge(data: dict) -> None:
 @pytest.mark.solver
 def test_rolling_fan_in_the_look_ahead_carries_the_committed_state(tmp_path_factory) -> None:
     """A rolling fan only in the look-ahead needs no designation: roll 1 starts from roll 0's committed end state,
-    v_state of the trunk p2035 at t0003 (its last committed step) × the state unitsize, and every forecast of
+    v_state of the pre-reveal period p2035 at t0003 (its last committed step) × the state unitsize, and every forecast of
     roll 1's fan (opened at its first step) starts from that carry."""
     tmp = tmp_path_factory.mktemp("label_rolling_lookahead")
     steps, _ = _run(_variant(HEDGE, tmp, "rolling_hedge", _rolling_hedge), tmp, scenario="hedge_storage")

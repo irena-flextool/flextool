@@ -1901,7 +1901,7 @@ def _spawn_realized_dispatch_siblings(
     from flextool.engine.solve import _realization
 
     # Spawn list: every separate_dispatch solve (authored), then every
-    # designated solve without a configured realization solve (OD5).  Each
+    # designated solve (a ``realized: yes`` branch) without a configured realization solve.  Each
     # entry carries the reason the error messages below name.
     eligible: list[tuple[str, str]] = []
     for p in sorted(top_level):

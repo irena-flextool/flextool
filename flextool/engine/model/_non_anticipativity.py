@@ -23,7 +23,7 @@ _LOG = logging.getLogger(__name__)
 
 
 def reference_forecasts(d) -> "list[tuple[str, list[str]]]":
-    """``[(anchor, forecasts)]``: per anchor (trunk) period, its sorted forecast branch periods.
+    """``[(anchor, forecasts)]``: per anchor period (the period label that opens a fan), its sorted forecast branch periods.
 
     period_branch_full pairs every anchor period ``d`` with the branch periods ``b`` of its fan; the self-pair
     ``b == d`` and branches not in period_in_use (metadata-only rows such as a realized marker) are dropped.
@@ -38,8 +38,8 @@ def reference_forecasts(d) -> "list[tuple[str, list[str]]]":
     if d.period_in_use_set is not None:
         piu = d.period_in_use_set.rename({"d": "b"}).with_columns(pl.col("b").cast(pl.Utf8))
         db_pairs = db_pairs.join(piu, on="b", how="inner")
-    return [(d_trunk, sorted(db_pairs.filter(pl.col("d") == d_trunk).select("b").unique().to_series().to_list()))
-            for d_trunk in sorted(db_pairs.select("d").unique().to_series().to_list())]
+    return [(d_anchor, sorted(db_pairs.filter(pl.col("d") == d_anchor).select("b").unique().to_series().to_list()))
+            for d_anchor in sorted(db_pairs.select("d").unique().to_series().to_list())]
 
 
 def online_tie_cells(d) -> "pl.DataFrame | None":
@@ -91,7 +91,7 @@ def _forecast_star(d) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
 
     Per anchor period (:func:`reference_forecasts`) the first forecast is the reference forecast ``d_ref``; the
     star is {(d_ref, b) : b another forecast of that anchor}.  An anchor with fewer than two forecasts has nothing
-    to tie.  The tie is between forecasts only, never to the trunk, so it holds with no realized branch at all.
+    to tie.  The tie is between forecasts only, never to the period label, so it holds with no realized branch at all.
     A single global ``d_ref`` would be wrong: it would couple different anchor periods at mismatched steps.
     dt_non_anticipativity is re-keyed the same way (anchor ``d`` → that anchor's ``d_ref``, same ``t``),
     because every family joins the star and the tied steps on ``d``.  ``tie_dt`` is None when
@@ -108,9 +108,9 @@ def _forecast_star(d) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
         return None, None
     ties: list[pl.DataFrame] = []
     if tie_u is not None:
-        for d_trunk, forecasts in anchors:
+        for d_anchor, forecasts in anchors:
             if len(forecasts) >= 2:
-                ties.append(tie_u.filter(pl.col("d") == d_trunk).with_columns(pl.lit(forecasts[0]).alias("d")))
+                ties.append(tie_u.filter(pl.col("d") == d_anchor).with_columns(pl.lit(forecasts[0]).alias("d")))
     star = (pl.DataFrame({"d": [a for a, _ in pairs], "b": [b for _, b in pairs]}, schema={"d": pl.Utf8, "b": pl.Utf8})
             .with_columns(cast_dim(pl.col("d"), None, "d"), cast_dim(pl.col("b"), None, "b")))
     tie_dt = pl.concat(ties).with_columns(cast_dim(pl.col("d"), None, "d")) if ties else None

@@ -73,7 +73,7 @@ EXPECTED_PERIOD_BRANCH = [
     ("p2040", "p2040_low"),
 ]
 
-# Forecasts-only per-cohort weights (R2): period label → 0 (its row is
+# Forecasts-only per-cohort weights: period label → 0 (its row is
 # kept for the period-level bookkeeping), forecasts renormalised
 # {high:0.25, low:0.75}.
 EXPECTED_PD_BRANCH_WEIGHT = {

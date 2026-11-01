@@ -45,7 +45,7 @@ EXPECTED_ANNU = {
     "p2035_high": 2100.0, "p2040_high": 1050.0,
     "p2035_low": 2100.0, "p2040_low": 1050.0,
 }
-# Forecasts-only weights (R2): period label → 0, forecasts renormalised
+# Forecasts-only weights: period label → 0, forecasts renormalised
 # {high:0.25, low:0.75}.
 EXPECTED_WEIGHT = {
     "p2035": 0.0, "p2040": 0.0,

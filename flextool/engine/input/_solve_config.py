@@ -360,11 +360,11 @@ class SolveConfig:
         # (an author-declared deterministic solve right after its parent, see
         # ``solve._realization.configured_realization_solve``).  Consumers:
         # roll interleaving, the PIN translation, the CarryRouter siblings and
-        # the W4c projection in ``_run_model``, the fix_online / fix_reserve
+        # the realized-branch projection in ``_run_model``, the fix_online / fix_reserve
         # producers and the silent last-wins pair.  The realization solve is
         # deterministic (no ``stochastic_branches``), so
         # ``create_stochastic_periods`` leaves its
-        # ``solve_branch__time_branch`` scaffolding empty; the W4c post-pass
+        # ``solve_branch__time_branch`` scaffolding empty; the projection post-pass
         # reuses THIS explicit map (never name-parsing the suffix) to
         # re-populate it from the parent's realized-branch rows.  Empty when
         # no stochastic solve has a realization solve (the consumers then
