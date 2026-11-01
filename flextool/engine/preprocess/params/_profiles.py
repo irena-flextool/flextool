@@ -76,6 +76,7 @@ from flextool.engine.preprocess.params._branch import inherit_active_branch_peri
 from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
     _check_pbt_branch_coverage,
+    _check_ungrouped_reads_have_realized_branch,
 )
 from flextool.engine.input._axis_enums import (
     alias_to_axis,
@@ -548,13 +549,12 @@ def _profile_stochastic_lf(workdir: Path | None,
     stoch_set = _read_stoch_profiles(inp, provider=provider)
     stoch_active = [p for p in stoch_profiles if p in stoch_set]
 
-    # #82 (extended to profiles) -- a reveal/continuation cohort that carries a
-    # stochastic-time ``profile.profile`` value on its branches needs a
-    # ``realized: yes`` designation to own the anchor's / continuation periods'
-    # own row (no reference-forecast fallback), and an entity must author every
-    # active branch of a cohort or none of them.  Reuse the same helpers the
-    # non-profile pbt_* params use (one definition of "realized branch"),
-    # scoped to the profiles that actually enter Branch 1's stochastic fold.
+    # The same input checks as the non-profile pbt_* params (one definition of
+    # "realized branch"): a solve without stochastic branches needs a realized
+    # branch for a rank-3 profile; a profile outside every include_stochastics
+    # group reads the realized branch on a fan's branch periods, so a
+    # forecasts-only fan cannot serve it; and a profile must author every active
+    # branch of a fan or none of them.
     if stoch_active and not tb_for_d:
         # This solve has no branch assignment of its own and none projected onto it
         # from a parent (``_StochasticTimeSource.has_realized_branch_rows`` -- same
@@ -567,13 +567,16 @@ def _profile_stochastic_lf(workdir: Path | None,
             "(#82). Either add a realized: yes row to this solve's stochastic_branches, or give the "
             "profile a non-stochastic value."
         )
+    anchor_members = _anchor_fan_members(sd / "period__branch.csv", provider=provider)
+    pbt_dict = {
+        (row["profile"], "profile", row["branch"], row["time_start"], row["time"]): row["value"]
+        for row in pbt.iter_rows(named=True)
+    }
+    _check_ungrouped_reads_have_realized_branch(pbt_dict, 1, frozenset(stoch_set), anchor_members, tb_for_d,
+                                                ts_for_d)
     if stoch_active:
-        anchor_members = _anchor_fan_members(sd / "period__branch.csv", provider=provider)
-        pbt_dict = {
-            (row["profile"], "profile", row["branch"], row["time_start"], row["time"]): row["value"]
-            for row in pbt.filter(pl.col("profile").is_in(stoch_active)).iter_rows(named=True)
-        }
-        _check_pbt_branch_coverage(pbt_dict, 1, anchor_members, tb_for_d, ts_for_d)
+        _check_pbt_branch_coverage({k: v for k, v in pbt_dict.items() if k[0] in stoch_active}, 1, anchor_members,
+                                   tb_for_d, ts_for_d)
 
     # Branch 1: stochastic UNION fold.
     # For each (p, d, t): sum pbt[p, tb, ts, t] over (tb, ts) ∈

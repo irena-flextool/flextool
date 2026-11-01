@@ -367,6 +367,46 @@ def _check_pbt_branch_coverage(
             )
 
 
+def _check_ungrouped_reads_have_realized_branch(
+    pbt: dict[tuple, float],
+    n_ent: int,
+    stochastic_entities: "set[str] | frozenset[str]",
+    anchor_members: dict[str, list[str]],
+    tb_for_d: dict[str, list[str]],
+    ts_for_d: dict[str, list[str]],
+) -> None:
+    """Raise when an entity outside every ``include_stochastics`` group authors a stochastic-time value
+    that a forecasts-only fan of this solve would read.
+
+    Such an entity reads, on every branch period, the single value of the fan's realized branch (the
+    parent-period fold over the period label's ``solve_branch__time_branch`` rows).  A forecasts-only fan
+    (no ``realized: yes`` designation) has no such row, so the value would silently become the class
+    default; the engine never substitutes the class default for an authored value.
+
+    *pbt* keys are ``(*entity, param, branch, ts, time)`` (``n_ent`` entity-key columns); group membership
+    is tested on ``key[0]`` (the process for the per-side tables).  The fan's analysis times are its
+    members' first steps (the period label has no steps of its own).
+    """
+    for anchor, members in anchor_members.items():
+        if tb_for_d.get(anchor):
+            continue  # a ``realized: yes`` row (or one projected from a parent) supplies the value.
+        starts = frozenset(ts for m in members for ts in ts_for_d.get(m, ()))
+        if not starts:
+            continue
+        ungrouped = sorted({(key[:n_ent], key[n_ent]) for key in pbt
+                            if key[0] not in stochastic_entities and key[n_ent + 2] in starts})
+        if ungrouped:
+            ent, param = ungrouped[0]
+            raise FlexToolConfigError(
+                f"{'/'.join(ent)}.{param}: a stochastic-time (rank-3) value of an entity in no "
+                f"include_stochastics group, read in the forecasts-only fan of period {anchor!r}.  Outside "
+                "such a group the value of the realized branch is read on every branch period, and no branch "
+                "of this fan is designated realized: yes.  Add the entity to an include_stochastics group (each "
+                "forecast then reads its own branch), designate a realized: yes branch, or give the parameter a "
+                "non-stochastic value."
+            )
+
+
 # ---------------------------------------------------------------------------
 # Branch periods inherit the anchor period's ``pd`` rows.
 # ---------------------------------------------------------------------------
@@ -563,6 +603,8 @@ class PdtLookup:
                 c0, c1 = _cell_str(row[0]), _cell_str(row[1])
                 if c0 in groups_stoch and c1:
                     self._stoch_entity.add(c1)
+        _check_ungrouped_reads_have_realized_branch(self._pbt, 1, self._stoch_entity, anchor_members,
+                                                    self._tb_for_d, self._ts_for_d)
         self._param_def1 = param_def1
         self._time_first = time_first_priority
         self._class_defaults = class_default_values or {}
@@ -678,6 +720,8 @@ class PdtLookupPerSide:
                 c0, c1 = _cell_str(row[0]), _cell_str(row[1])
                 if c0 in groups_stoch and c1:
                     self._stoch_process.add(c1)
+        _check_ungrouped_reads_have_realized_branch(self._pbt, 2, self._stoch_process, anchor_members,
+                                                    self._tb_for_d, self._ts_for_d)
 
     def get(self, p: str, side: str, param: str, d: str, t: str) -> float:
         if p in self._stoch_process:
