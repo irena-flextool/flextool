@@ -27,7 +27,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from tests.engine._unit_db import b64, make_db, run, utf8
+from tests.engine._unit_db import b64, last_stochastic, make_db, run, utf8
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
@@ -103,7 +103,8 @@ def _steps_with_entities(tmp_path_factory, alt: str, values: list, entities: lis
 
 
 def _last(steps: dict):
-    return list(steps.values())[-1]
+    """The stochastic solve: the branch periods live there, not in the realization solve after it."""
+    return last_stochastic(steps)
 
 
 def _frame(x) -> pl.DataFrame:

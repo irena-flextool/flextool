@@ -32,7 +32,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from tests.engine._unit_db import b64, build, make_db, utf8
+from tests.engine._unit_db import b64, build, last_stochastic, make_db, utf8
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = REPO / "tests" / "fixtures"
@@ -290,8 +290,10 @@ def test_min_load_efficiency_without_efficiency_at_min_load_is_flat(tmp_path_fac
         # The floor binds here (on single and roll a linear online variable without start costs can follow the
         # flow, so the floor rows hold without changing the optimum): without it the model differs.
         no_floor = _run(tmp_path_factory, veh, _online(veh) + _mle(u))
-        assert float(list(steps.values())[-1].solution.obj) != pytest.approx(
-            float(list(no_floor.values())[-1].solution.obj), rel=1e-6)
+        # The stochastic solve's objective: the realization solve after it pins units online to the stochastic
+        # solve's commitment, so its objective does not see the floor directly.
+        assert float(last_stochastic(steps).solution.obj) != pytest.approx(
+            float(last_stochastic(no_floor).solution.obj), rel=1e-6)
     assert (f"Unit '{u}' uses min_load_efficiency with min_load > 0 but has no efficiency_at_min_load"
             in caplog.text)
 

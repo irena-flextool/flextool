@@ -26,7 +26,7 @@ import polars as pl
 import pytest
 
 from tests.engine._lp_rows import coef, row_bounds, row_terms, step_of
-from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, make_db, run, utf8
+from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, last_stochastic, make_db, run, utf8
 
 pytestmark = pytest.mark.solver
 
@@ -373,7 +373,7 @@ def stoch(tmp_path_factory):
     vals += _startup("dn_north", "linear") + _startup("dn_north2", "binary", 5.0)
     url, scen = make_db(tmp_path_factory, alt="oc_stoch", values=vals, base_chain=["base", "init", "system", "2day"],
                         entities=ents, fixture_json=STOCH_JSON)
-    return list(run(tmp_path_factory, url, scen).values())[-1]
+    return last_stochastic(run(tmp_path_factory, url, scen))
 
 
 def test_online_connection_stochastic(stoch) -> None:

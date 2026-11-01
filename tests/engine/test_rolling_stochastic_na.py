@@ -131,7 +131,8 @@ def _steps(rolling_result):
     """
     if rolling_result["error"] is not None:
         raise rolling_result["error"]
-    return rolling_result["steps"]
+    # The stochastic rolls; the fixture's realized: yes designation interleaves a realization roll after each.
+    return {k: s for k, s in rolling_result["steps"].items() if "__realized_dispatch" not in k}
 
 
 def _pick(cols, *candidates):
@@ -403,6 +404,13 @@ _STORAGE_NODE = "hydro_reservoir"
 def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result):
     """PRODUCER-LEVEL guard for the H1 rolling-storage handoff fix.
 
+    With the fixture's realized: yes designation each stochastic roll hands
+    its committed jump to the realization roll interleaved after it, so the
+    carry is produced by that realization roll (its state at the committed
+    jump-end) and consumed by the next stochastic roll; the stochastic roll
+    carries nothing.  The wrong-step / wrong-branch guards below still read
+    the stochastic roll's own window.
+
     The roll-to-roll storage carry (``SolveHandoff.roll_end_state``, consumed
     next roll as ``p_roll_continue_state``) must carry the realized TRUNK's
     ``v_state`` at the COMMITTED JUMP-END, NOT the discarded look-ahead
@@ -447,14 +455,21 @@ def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result
     names = list(steps)
     assert len(names) == EXPECTED_ROLLS, (
         f"expected {EXPECTED_ROLLS} rolls, got {len(names)}")
+    everything = rolling_result["steps"]
 
     for i, name in enumerate(names):
         s = steps[name]
-        res = s.handoff.roll_end_state
-        assert res is not None, f"roll {name!r}: roll_end_state unexpectedly None"
+        # The fixture's realized: yes designation hands each stochastic roll's
+        # committed jump to its realization roll, which therefore produces the
+        # carry: the stochastic roll carries nothing itself.
+        assert s.handoff.roll_end_state is None, f"roll {name!r} carries its own storage"
+        rname = name.replace("1week_rolling_roll_", "1week_rolling__realized_dispatch_roll_")
+        assert rname in everything, f"no realization roll {rname!r}"
+        res = everything[rname].handoff.roll_end_state
+        assert res is not None, f"roll {rname!r}: roll_end_state unexpectedly None"
         carried = {r["node"]: r["value"] for r in res.iter_rows(named=True)}
         assert _STORAGE_NODE in carried, (
-            f"roll {name!r}: {_STORAGE_NODE} absent from roll_end_state "
+            f"roll {rname!r}: {_STORAGE_NODE} absent from roll_end_state "
             f"(got {sorted(carried)})")
         carried_v = carried[_STORAGE_NODE]
 
@@ -495,13 +510,21 @@ def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result
             # (1) VALUE — the carry equals the realized TRUNK's committed
             #     jump-end v_state (0.0 here).  FAILS ON HEAD, which carries the
             #     forecast horizon-end (0.5 × unitsize = 2500).
-            assert carried_v == pytest.approx(0.0, abs=1e-9), (
-                f"roll {name!r}: carried storage {carried_v} is not the trunk "
-                f"committed jump-end (expected 0.0); HEAD's bug carries the "
-                f"forecast horizon-end (2500)")
-            assert trunk_jump == pytest.approx(0.0, abs=1e-9), (
-                f"roll {name!r}: trunk jump-end v_state {trunk_jump} unexpected "
-                f"(fixture precondition: emptied reservoir at the jump-end)")
+            # The carry is the realization roll's own state at the committed
+            # jump-end (its window is the jump) × the state unitsize, and the
+            # next stochastic roll starts from it.
+            rstep = everything[rname]
+            rv = rstep.solution.value("v_state")
+            rsub = rv.filter((pl.col(_pick(rv.columns, "n", "node")).cast(pl.Utf8) == _STORAGE_NODE)
+                             & (pl.col(_pick(rv.columns, "t", "time")).cast(pl.Utf8) == jump_end_t))
+            assert rsub.height == 1, f"{rname!r}: no {_STORAGE_NODE} v_state at {jump_end_t}"
+            su = (rstep.flex_data.p_state_unitsize.frame
+                  .filter(pl.col("n").cast(pl.Utf8) == _STORAGE_NODE)["value"][0])
+            assert carried_v == pytest.approx(float(rsub["value"][0]) * su, abs=1e-6), (rname, carried_v)
+            nxt = steps[names[i + 1]].flex_data.p_roll_continue_state
+            assert nxt is not None, f"roll {names[i + 1]!r}: no p_roll_continue_state"
+            nxt_v = (nxt.frame.filter(pl.col("n").cast(pl.Utf8) == _STORAGE_NODE)["value"].to_list())
+            assert nxt_v == [pytest.approx(carried_v, abs=1e-9)], (names[i + 1], nxt_v, carried_v)
 
             # (2) STEP identity — the trunk WINDOW-HORIZON value is non-zero and
             #     differs from the jump-end, so carrying the jump-end (0.0)

@@ -345,12 +345,17 @@ def test_nested_sub_solves_fraction(tmp_path_factory, monkeypatch) -> None:
 
 def test_stochastic_rolls_fraction(tmp_path_factory, monkeypatch) -> None:
     """Stochastic rolling (``1_week_rolling_wind``): every roll's fraction is its window hours over the
-    complete 168 h, the same for the anchor period and each forecast branch period."""
-    seen = _record_builds(monkeypatch, 6)
+    complete 168 h, the same for the anchor period and each forecast branch period.  The fixture's realized: yes
+    designation adds a realization roll after each stochastic roll (only the anchor period, its jump window):
+    its fraction follows the same rule."""
+    seen = _record_builds(monkeypatch, 12)
     _run_until_stop(tmp_path_factory, "co2roll_stoch_roll", [], _stoch_chain(), FIX / "stochastics.json")
-    assert len(seen) == 6
-    for name, hours, share, frac in seen:
+    assert len(seen) == 12
+    stochastic = [s for s in seen if "__realized_dispatch" not in s[0]]
+    assert len(stochastic) == 6, [s[0] for s in seen]
+    for name, _hours, _share, frac in stochastic:
         assert len(frac) > 1, (name, frac)  # anchor + branch periods
+    for name, hours, share, frac in seen:
         assert all(share[d] == pytest.approx(168.0, rel=1e-12) for d in share), (name, share)
         for d in frac:
             assert frac[d] == pytest.approx(hours[d] / 168.0, rel=1e-12), (name, d)

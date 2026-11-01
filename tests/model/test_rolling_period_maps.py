@@ -35,7 +35,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from tests.engine._unit_db import b64, make_db, run, utf8
+from tests.engine._unit_db import b64, is_realization, make_db, run, utf8
 
 REPO = Path(__file__).resolve().parents[2]
 STOCHASTICS_JSON = REPO / "tests" / "fixtures" / "stochastics.json"
@@ -387,7 +387,8 @@ def test_period_time_2d_maps_equal_time_maps_in_stochastic_rolling(tmp_path_fact
     as_2d = _run(tmp_path_factory, ROLLING, values(True), entities)
     as_1d = _run(tmp_path_factory, ROLLING, values(False), entities)
     assert list(as_2d) == list(as_1d)
-    rolls = [k for k in as_2d if "_roll_" in k]
+    # The stochastic rolls (the realization rolls the designation interleaves have no branch periods).
+    rolls = [k for k in as_2d if "_roll_" in k and not is_realization(k)]
     assert len(rolls) == 7, list(as_2d)
     for name in rolls:
         d2, d1 = as_2d[name].flex_data, as_1d[name].flex_data

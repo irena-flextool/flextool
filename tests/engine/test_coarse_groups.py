@@ -25,7 +25,7 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.model import _self_discharge
 from flextool.engine.model._pdt_join import compute_nodeState_dt
 from tests.engine._lp_rows import coef, row_bounds, row_terms
-from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, make_db, run, utf8
+from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, last_stochastic, make_db, run, utf8
 
 pytestmark = pytest.mark.solver
 
@@ -67,7 +67,8 @@ def _run_wf(tmp_path_factory, alt, values, chain, entities=None, fixture_json=No
 
 
 def _last(steps: dict):
-    return list(steps.values())[-1]
+    """The last solve, not an engine-added realization solve after a stochastic one."""
+    return last_stochastic(steps)
 
 
 def _f(x) -> list:

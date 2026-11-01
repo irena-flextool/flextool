@@ -1125,6 +1125,9 @@ def test_stochastic_branch_weight(
     # objectives.
     objectives = _solve_objectives(csv_dir)
     assert set(objectives) == {"2day_dispatch", "2day_dispatch__realized_dispatch"}, objectives
+    # The stochastic solve's objective is the value grounded before the realization solve existed (its LP is
+    # byte-identical; tests/scenarios.yaml history): the forecast expectation.
+    assert objectives["2day_dispatch"] == pytest.approx(66.9291187913, rel=1e-6)
     lp_total = sum(objectives.values())
     rel_err = abs(summary["total_calc"] - lp_total) / max(abs(lp_total), 1e-9)
     assert rel_err <= 1e-4, (

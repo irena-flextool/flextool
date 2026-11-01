@@ -16,7 +16,7 @@ import polars as pl
 import pytest
 
 from tests.engine._lp_rows import coef, row_bounds, row_terms, step_of
-from tests.engine._unit_db import PLANT, b64, build, flow, make_db, run, utf8
+from tests.engine._unit_db import PLANT, b64, build, flow, make_db, run, utf8, without_realization
 
 pytestmark = pytest.mark.solver
 
@@ -697,7 +697,8 @@ def test_stochastic_roll_branches_take_the_carry(tmp_path_factory) -> None:
                                   ["unit__node__profile", [PLANT, "demand_node", "coal_floor"], None]],
                         base_chain=["init", "base", "system", "1week_rolling"],
                         fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json")
-    steps = list(run(tmp_path_factory, url, scen).values())
+    # The stochastic rolls (the fixture's realization rolls interleave with them and realize the anchor only).
+    steps = list(without_realization(run(tmp_path_factory, url, scen)).values())
     assert len(steps) > 2
     assert steps[0].flex_data.dt_ramp_carry is None
     arc = f"{PLANT},coal_market,demand_node,"

@@ -737,7 +737,7 @@ def test_fix_end_stochastic(tmp_path_factory):
     steps = list(run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("sse_end_stoch_w"),
                                    keep_solutions=True).values())
     assert all(s.solution.optimal for s in steps)
-    step = steps[-1]
+    step = next(s for s in steps if s.solve_name == "2day_dispatch")   # the branch periods' solve
     fd = step.flex_data
     node = "hydro_reservoir"
     ends = _last_steps(fd, node)

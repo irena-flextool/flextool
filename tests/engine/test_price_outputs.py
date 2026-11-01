@@ -259,7 +259,7 @@ def test_stochastic_branch_price_not_probability_weighted(tmp_path_factory) -> N
     bw = utf8(fd.pdt_branch_weight.frame)
     zero_d = set(bw.filter(pl.col("value") == 0.0)["d"].to_list())
     assert "period1" in zero_d
-    prices = _node_prices(wf)
+    prices = _node_prices(wf, "2day_dispatch")
     periods = {d for (_s, d, _t) in prices}
     assert "period1" in periods and len(periods - {"period1"}) >= 4, periods
     zero = {(d, t) for d, t in bw.filter(pl.col("value") == 0.0).select("d", "t").iter_rows()}
@@ -274,6 +274,12 @@ def test_stochastic_branch_price_not_probability_weighted(tmp_path_factory) -> N
         hit |= _approx_set([v], {16.0 / 0.9, 6.0 / 0.9, 0.0}) if v != 0.0 else {0.0}
     assert {16.0 / 0.9, 6.0 / 0.9} <= hit
     assert n_null > 0
+    # The fan's realized: yes designation adds the realization solve, which dispatches the realized data of the
+    # trunk period: its prices are realized ones, set at the margin by the same merit order (coal, gas, spill).
+    realized = _node_prices(wf, "2day_dispatch__realized_dispatch")
+    assert {d for (_s, d, _t) in realized} == {"period1"}
+    for key, row in realized.items():
+        assert _approx_set([row["demand_node"]], {16.0 / 0.9, 6.0 / 0.9, 0.0}), (key, row["demand_node"])
 
 
 def test_rolling_price_per_roll(tmp_path_factory) -> None:

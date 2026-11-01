@@ -43,6 +43,8 @@ JSON-backed SpineDB fixtures.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import polars as pl
 import pytest
 
@@ -66,6 +68,13 @@ _DB_FIXTURE_BY_SCENARIO: dict[str, str] = {
 def _db_fixture_for(scenario: str) -> str:
     return _DB_FIXTURE_BY_SCENARIO.get(scenario, "main")
 
+
+
+def _load_solve_of(run, parquet: Path):
+    """The FlexData of the solve whose objective ``parquet`` (``v_obj__<solve>.parquet``) holds: the last step
+    unless the run has a step of that name (a stochastic solve followed by its realization solve)."""
+    name = parquet.stem.removeprefix("v_obj__")
+    return load_scenario(run, step=name) if name in {s.solve_name for s in run.steps} else load_scenario(run)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -457,7 +466,7 @@ def test_db_direct_solve_parity_with_derived_a(work, sqlite, scenario, parquet,
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    data = load_scenario(run)
+    data = _load_solve_of(run, parquets[0])
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -541,7 +550,7 @@ def test_db_direct_solve_parity_with_derived_b(work, sqlite, scenario, parquet,
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    data = load_scenario(run)
+    data = _load_solve_of(run, parquets[0])
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -593,7 +602,7 @@ def test_db_direct_solve_parity_with_derived_c(work, sqlite, scenario,
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    data = load_scenario(run)
+    data = _load_solve_of(run, parquets[0])
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -645,7 +654,7 @@ def test_db_direct_solve_parity_with_derived_d(work, sqlite, scenario,
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    data = load_scenario(run)
+    data = _load_solve_of(run, parquets[0])
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -700,7 +709,7 @@ def test_db_direct_solve_parity_with_derived_e(work, sqlite, scenario,
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    data = load_scenario(run)
+    data = _load_solve_of(run, parquets[0])
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -750,7 +759,7 @@ def test_db_direct_solve_parity_with_derived_f(work, sqlite, scenario,
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    data = load_scenario(run)
+    data = _load_solve_of(run, parquets[0])
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -801,7 +810,7 @@ def test_db_direct_solve_parity_with_derived_g(work, sqlite, scenario,
         parquets = sorted((fixture / "output_raw").glob("v_obj__*.parquet"))
     if not parquets:
         pytest.skip(f"{work} has no v_obj parquet")
-    data = load_scenario(run)
+    data = _load_solve_of(run, parquets[0])
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()

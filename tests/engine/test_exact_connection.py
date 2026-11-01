@@ -15,7 +15,7 @@ import polars as pl
 import pytest
 
 from tests.engine._lp_rows import coef, row_bounds, row_terms, step_of
-from tests.engine._unit_db import b64, build, make_db, run, utf8
+from tests.engine._unit_db import b64, build, last_stochastic, make_db, run, utf8
 
 pytestmark = pytest.mark.solver
 
@@ -194,7 +194,7 @@ def test_exact_stochastic(tmp_path_factory) -> None:
             ["connection", "dn_x", "efficiency", b64(0.9, "float")]]
     url, scen = make_db(tmp_path_factory, alt="ex_stoch", values=vals, base_chain=["base", "init", "system", "2day"],
                         entities=ents, fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json")
-    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    step = last_stochastic(run(tmp_path_factory, url, scen))
     pb = build(step.flex_data)
     fwd = row_terms(pb, "maxFlow_exact_forward", "dn_x,demand_node,north,")
     assert len(fwd) == step.flex_data.dt.height

@@ -89,6 +89,26 @@ def run(tmp_path_factory, url: str, scenario: str) -> dict:
     return steps
 
 
+#: Name suffix of the realization solve the engine adds after a stochastic solve with a ``realized: yes``
+#: designation (``solve._orchestration._spawn_realized_dispatch_siblings``); its rolls are ``<name>_roll_<k>``.
+REALIZATION_SUFFIX = "__realized_dispatch"
+
+
+def is_realization(name: str) -> bool:
+    """True for a step of an engine-added realization solve (or one of its rolls)."""
+    return REALIZATION_SUFFIX in name
+
+
+def without_realization(steps: dict) -> dict:
+    """*steps* without the engine-added realization solves: the stochastic (or deterministic) solves only."""
+    return {k: s for k, s in steps.items() if not is_realization(k)}
+
+
+def last_stochastic(steps: dict):
+    """The last step that is not an engine-added realization solve (the stochastic solve of a single run)."""
+    return list(without_realization(steps).values())[-1]
+
+
 def solve(tmp_path_factory, *, alt: str, values: list, base_chain: list[str],
           entities: list | None = None):
     url, scen = make_db(tmp_path_factory, alt=alt, values=values,

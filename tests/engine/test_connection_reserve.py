@@ -15,7 +15,7 @@ import polars as pl
 import pytest
 
 from tests.engine._lp_rows import coef, row_terms
-from tests.engine._unit_db import b64, build, make_db, run, utf8
+from tests.engine._unit_db import b64, build, last_stochastic, make_db, run, utf8
 
 pytestmark = pytest.mark.solver
 
@@ -317,7 +317,7 @@ def test_connection_reserve_rolling_and_stochastic(tmp_path_factory) -> None:
                                                                                           "2day"],
                         entities=ents + _group("gdn", "demand_node") + er,
                         fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json")
-    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    step = last_stochastic(run(tmp_path_factory, url, scen))
     rows = row_terms(build(step.flex_data), "connection_reserve_up", "dn_north,demand_node,")
     periods = {r.split(",")[-2] for r in rows}
     assert len(rows) == step.flex_data.dt.height and len(periods) > 1

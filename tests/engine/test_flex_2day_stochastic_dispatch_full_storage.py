@@ -43,7 +43,8 @@ SCENARIO = "2_day_stochastic_dispatch"
 def test_2day_stochastic_dispatch_full_storage_parity(scenario_run):
     run = scenario_run(SCENARIO, db_fixture="stochastic")
     work = run.work_folder
-    data = load_scenario(run)
+    # The stochastic solve (the realization solve the fan's designation adds runs after it).
+    data = load_scenario(run, step="2day_dispatch")
 
     # Fixture sanity — stochastic data + storage data populated.
     assert data.pdt_branch_weight is not None

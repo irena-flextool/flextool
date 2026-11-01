@@ -149,7 +149,7 @@ def run_scenario(
 
     Runs ``run_chain_from_db(csv_dump=False, keep_solutions=True)`` (``keep_solutions`` keeps every
     step's provider), copies the DB to ``work_folder/tests.sqlite``, snapshots the last step's provider
-    to CSVs under ``work_folder`` and creates the empty sibling ``load_<scenario>`` folder.  A step
+    (the last that is not an engine-added realization solve) to CSVs under ``work_folder`` and creates the empty sibling ``load_<scenario>`` folder.  A step
     without a provider is kept with ``provider=None``; loading it raises (see :func:`load_scenario`).
     """
     work_folder = Path(work_folder)
@@ -174,8 +174,12 @@ def run_scenario(
             prior_handoff=ordered[i - 1][1].handoff if i > 0 else None,
             obj=step.obj,
         ))
-    if step_inputs and step_inputs[-1].provider is not None:
-        step_inputs[-1].provider.snapshot_processed_inputs(work_folder)
+    # The snapshot is of the last solve that is not an engine-added realization solve: after a stochastic solve
+    # with a realized: yes designation the run ends with ``<solve>__realized_dispatch``, a deterministic dispatch
+    # without the fan; the files tests read (branch sets, folds) are the stochastic solve's.
+    snap = [s for s in step_inputs if "__realized_dispatch" not in s.solve_name] or step_inputs
+    if snap and snap[-1].provider is not None:
+        snap[-1].provider.snapshot_processed_inputs(work_folder)
     last_step = ordered[-1][1] if ordered else None
     return ScenarioRun(
         scenario=scenario,
