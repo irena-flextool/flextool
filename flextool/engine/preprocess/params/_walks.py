@@ -56,8 +56,9 @@ Slice A ``dd_same_scenario`` contract
 ``d ∈ period_in_use`` AND ``d_all ∈ period_in_use`` AND
 ``(d, d_all) ∉ lineage``; any row with either end outside
 ``period_in_use`` (history-anchored rows) passes unconditionally.
-Every production caller passes ``lineage=None`` (no filtering) until
-the Slice C/D recourse activation lands.
+The NPV window walks pass the annuity lineage in a stochastic fan (each
+calendar period once along a lineage); the capacity walks pass the
+scenario lineage under recourse.  ``None`` elsewhere (no filtering).
 """
 from __future__ import annotations
 

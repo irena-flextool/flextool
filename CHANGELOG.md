@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Under `stochastic_invest_method = none`, investment cost in a stochastic fan is no longer counted
+  several times.** The investment annuity, the salvage value of retirements and the lifetime fixed cost
+  of capacity built before or at the reveal were summed over the period's original name and again over
+  each forecast branch copy of the same calendar years, so with two forecasts the fan periods were
+  charged three times. Each calendar period the capacity serves is now counted once, as under
+  `recourse`. Objectives and reported investment costs of such solves are lower; the chosen
+  investment can change (it was biased low).
+
 - **A `realized: yes` branch in a stochastic solve's `stochastic_branches` now makes FlexTool run a
   realization dispatch right after the stochastic solve, without setting
   `dispatch_realization_method = separate_dispatch`.** It applies when the designated branch opens a

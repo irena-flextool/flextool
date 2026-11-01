@@ -28,10 +28,11 @@ Hand-verified reference numbers (deterministic LP; see the builder):
 * ``pinned_ops`` (unset): storage NA fires, the set CSV holds the whole
   6-step horizon, and ``v_state[resv]`` is IDENTICAL across the two
   forecast copies up / low — the branches cannot follow their opposite
-  surplus/deficit timing.  Objective 2_037_600.
+  surplus/deficit timing.  Objective 1_029_600 (hand derivation at
+  ``PINNED_OBJ``).
 * ``free_ops`` (``[]``): zero NA rows, header-only set CSV, and
   ``v_state[resv]`` DIVERGES (up rises above 0.5, low falls below).
-  Shared v_invest 2 and objective 428_076 < pinned (hand derivation at
+  Shared v_invest 2 and objective 260_076 < pinned (hand derivation at
   ``FREE_INVEST``).
 
 R3 forecasts-only note: the fixture declares a realized designation
@@ -54,17 +55,30 @@ from tests.engine._unit_db import is_realization
 
 SOLVE = "stoch_2p_free"
 
-# Deterministic LP reference objectives (see the fixture builder).
-PINNED_OBJ = 2_037_600.0
+# Investment cost coefficient of ``base`` built in p2035, CUR/MW (ed_entity_annual_discounted).
+# Annuity = invest_cost · 1000 · r / (1 − (1 + r)^−life) = 20 · 1000 · 0.05 / (1 − 1.05^−1) = 21 000.
+# lifetime_method reinvest_automatic: the capacity serves every later calendar period of the horizon, p2035 and
+# p2040 (1 year each, every investment inflation factor 1.0), so the sum is 2 × 21 000 = 42 000.  Each calendar
+# period counts once: the period labels p2035 / p2040 and their forecast copies p20xx_up / p20xx_low are the
+# same calendar years, not four more years of service.
+INVEST_COEFF = 2 * 21_000.0
+# Operating cost scale: 3-h periods of 1 year each -> 8760 / 3 per CUR of per-step cost; forecasts 0.5 / 0.5.
+OPS_SCALE = 8760.0 / 3.0
+# pinned_ops hand derivation.  Storage net output s_t is tied across the forecasts and nets to 0 over the 6 steps
+# (start 0.5 = reference end).  ``up`` late (wind 0) needs base + s_t = 12 and ``low`` early (wind 0) the same, so
+# s_t >= 12 − C at every step; Σ s_t = 0 then forces C >= 12 (the 10 000 CUR/MWh penalty is far dearer).  With
+# C = 12 and s = 0, base supplies 12 − wind: 36 MWh per forecast at 5 CUR -> 180 · OPS_SCALE = 525 600.
+#   12 MW × 42 000 + 525 600 = 1 029 600.
+PINNED_OBJ = 12.0 * INVEST_COEFF + 180.0 * OPS_SCALE
 # free_ops hand derivation.  Per forecast the wind gives 60 MWh against 72 MWh demand, so ``base`` must
 # supply 12 MWh over the 6 steps; the storage ends where it starts (reference 0.5) and is not limiting
 # (100 MW, 1000 MWh), so ``base`` runs flat at 12 / 6 = 2 MW and the shared capacity is 2 MW:
 #   up : steps 1-3 wind 20 + base 2 - demand 12 = charge 10; steps 4-6 wind 0 + base 2 -> discharge 10.
 #   low: the mirror (discharge 10 early, charge 10 late).  Each forecast discharges 30 MWh.
 # Operating cost per forecast = (5 · 12 + 0.01 · 30) CUR × 8760 / 3 (3 h periods, 1 year each) = 60.3 · 2920,
-# weighted 0.5 + 0.5 -> 176 076.  Investment: 2 MW × the LP's invest coefficient (read from FlexData).
+# weighted 0.5 + 0.5 -> 176 076.  Investment: 2 MW × INVEST_COEFF = 84 000.  Objective 260 076.
 FREE_INVEST = 2.0
-FREE_OPS_COST = 60.3 * 8760.0 / 3.0
+FREE_OPS_COST = 60.3 * OPS_SCALE
 
 
 # ---------------------------------------------------------------------------
@@ -213,19 +227,27 @@ def test_free_ops_v_state_diverges_across_branches(free_ops_resolved) -> None:
 
 
 @pytest.mark.solver
-def test_free_ops_objective(free_ops_wf, free_ops_resolved) -> None:
+def test_free_ops_objective(free_ops_wf) -> None:
     """§7: the free-ops objective is the deterministic LP optimum
     (per-branch dispatch under the shared capacity, hand derivation at
-    ``FREE_INVEST``)."""
-    data, _sol, _pb = free_ops_resolved
-    annual = data.ed_entity_annual_discounted.frame
-    inv_cost = float(annual.filter((pl.col("e").cast(pl.Utf8) == "base")
-                                   & (pl.col("d").cast(pl.Utf8) == "p2035"))["value"].item())
+    ``FREE_INVEST``): 2 × 42 000 + 176 076 = 260 076."""
     obj = float(
         pl.read_parquet(free_ops_wf / "output_raw" / f"v_obj__{SOLVE}.parquet")
         ["objective"][0]
     )
-    assert obj == pytest.approx(FREE_INVEST * inv_cost + FREE_OPS_COST, rel=1e-6)
+    assert obj == pytest.approx(FREE_INVEST * INVEST_COEFF + FREE_OPS_COST, rel=1e-6)
+
+
+@pytest.mark.solver
+def test_here_and_now_invest_annuity_counts_each_calendar_period_once(free_ops_resolved) -> None:
+    """Under ``stochastic_invest_method = none`` the one here-and-now ``v_invest`` (on the period label p2035)
+    pays its annuity once per calendar period it serves (p2035, p2040), not once per period label and forecast
+    copy in ``period_in_use``: the coefficient is 42 000 (hand derivation at ``INVEST_COEFF``), not 6 × 21 000."""
+    data, _sol, _pb = free_ops_resolved
+    annual = data.ed_entity_annual_discounted.frame
+    coeff = {str(r["d"]): float(r["value"])
+             for r in annual.filter(pl.col("e").cast(pl.Utf8) == "base").iter_rows(named=True)}
+    assert coeff == pytest.approx({"p2035": INVEST_COEFF}, rel=1e-12)
 
 
 # ---------------------------------------------------------------------------

@@ -729,8 +729,8 @@ def npv_invest_discounted_lf(
     multiple methods; each contributes a separate sum.  See
     ``entity_annual_calc_params.py:222-251``.
 
-    ``lineage`` — see :func:`._walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` — see :func:`._walks.period_walk_iterator`; the
+    :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
 
     Returns lazy ``[e, d, value]``.
     """
@@ -832,8 +832,8 @@ def npv_divest_discounted_lf(
     and the gate is restricted to e ∈ node ∪ process (mirrors
     L266-285 — no fallback for unclassified entities).
 
-    ``lineage`` — see :func:`._walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` — see :func:`._walks.period_walk_iterator`; the
+    :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
 
     Returns lazy ``[e, d, value]``.
     """
@@ -929,8 +929,8 @@ def lifetime_fixed_cost_invest_lf(
     ops_factor (not inv_factor) and edEntity_lifetime as the bound.
     See L292-321.
 
-    ``lineage`` — see :func:`._walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` — see :func:`._walks.period_walk_iterator`; the
+    :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
     """
     if not period_with_history:
         return pl.LazyFrame(schema={
@@ -1019,8 +1019,8 @@ def lifetime_fixed_cost_divest_lf(
     where ``life`` is raw lifetime and ``inv_factor`` (NOT ops_factor)
     is used — mod L1651 asymmetry.  See L325-348.
 
-    ``lineage`` — see :func:`._walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` — see :func:`._walks.period_walk_iterator`; the
+    :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
     """
     if not period_invest:
         return pl.LazyFrame(schema={
@@ -1171,8 +1171,8 @@ def ed_entity_annual_discounted_from_source(
     for the lazy result to match the seed on fixtures where every
     (e, d) value is zero (e.g. ``work_wind_battery_invest``).
 
-    ``lineage`` — see :func:`._walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` — see :func:`._walks.period_walk_iterator`; the
+    :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
     """
     if not period_invest:
         return None
@@ -1202,8 +1202,8 @@ def ed_entity_annual_divest_discounted_from_source(
     Unfiltered ``entityDivest × period_invest`` — see the rationale on
     :func:`ed_entity_annual_discounted_from_source`.
 
-    ``lineage`` — see :func:`._walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` — see :func:`._walks.period_walk_iterator`; the
+    :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
     """
     if not period_invest:
         return None
@@ -1233,8 +1233,8 @@ def ed_lifetime_fixed_cost_from_source(
     Unfiltered ``entity × period_with_history`` — see the rationale on
     :func:`ed_entity_annual_discounted_from_source`.
 
-    ``lineage`` — see :func:`._walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` — see :func:`._walks.period_walk_iterator`; the
+    :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
     """
     if not period_with_history:
         return None
@@ -1264,8 +1264,8 @@ def ed_lifetime_fixed_cost_divest_from_source(
     Unfiltered ``entityDivest × period_invest`` — see the rationale on
     :func:`ed_entity_annual_discounted_from_source`.
 
-    ``lineage`` — see :func:`._walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
+    ``lineage`` — see :func:`._walks.period_walk_iterator`; the
+    :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
     """
     if not period_invest:
         return None
@@ -1319,29 +1319,20 @@ def apply_npv(flex_data: object,
     # the annuity / lifetime / fixed-cost resolution below (no-op flag-off).
     _enter_recourse_anchor_scope(workdir, provider=provider)
     active_solve = _read_active_solve(workdir, provider=provider)
-    # Slice D §8 (E) — scenario-lineage frame for the four NPV walks, gated
-    # on the anchor-pairs conjunct just armed (recourse-active AND branch
-    # axis).  Built ON-DEMAND from the provider: ``flex_data.dd_same_scenario``
-    # is not populated until ``apply_branch_cluster`` (derived_g), which runs
-    # AFTER apply_npv.  Precondition check hoisted above the NPV builder
-    # calls (§6).  ``None`` flag-off → walks unfiltered → byte-parity.
+    # Lineage of the four NPV window walks: each calendar period counted once along a lineage, under every
+    # invest method (recourse: the branch's own path; none: the period label's bookkeeping path, not every
+    # forecast copy of the same calendar years).  Built on demand from the provider:
+    # ``flex_data.dd_same_scenario`` is populated only by ``apply_branch_cluster`` (derived_g), after
+    # apply_npv.  None without a fan (deterministic / rolling) -> walks unfiltered.
+    from flextool.engine.preprocess.params._branch import (
+        annuity_window_lineage_df,
+        assert_recourse_npv_preconditions,
+    )
     if _recourse_branch_axis_present():
-        from flextool.engine.preprocess.params._branch import (
-            assert_recourse_npv_preconditions,
-            dd_same_scenario_annuity_df,
-        )
-        # Slice E (§4.1 vs §8.1): the NPV annuity / fixed-cost window
-        # walks use the CALENDAR-anchor-deduplicated lineage so a shared
-        # pre-reveal trunk's window counts each future calendar period
-        # once (not once per branch) — the capacity edd walks keep the
-        # full ``dd_same_scenario``.  Byte-parity for every non-shared-
-        # trunk solve (the dedup is a no-op there).
-        _npv_lineage = dd_same_scenario_annuity_df(
-            workdir, source, active_solve, provider=provider)
         assert_recourse_npv_preconditions(
             workdir, source, active_solve, provider=provider)
-    else:
-        _npv_lineage = None
+    _npv_lineage = annuity_window_lineage_df(
+        workdir, source, active_solve, provider=provider)
     period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
     period_universe = _periodAll_from_source(source, active_solve, workdir=workdir, provider=provider)
     period_invest = _expand_invest_branch_periods(

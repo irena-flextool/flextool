@@ -27,6 +27,7 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine.preprocess.emit._pdt_lookup import PdLookup
+from flextool.engine.preprocess.params._branch import annuity_window_pairs
 from flextool.engine.preprocess._provider_io import _emit
 
 
@@ -174,6 +175,19 @@ def _inflation_window_sum(
     return s
 
 
+def _window_periods(inp: dict, d: str) -> list[str]:
+    """The ``period_in_use`` members the window sum of capacity built in ``d`` may count.
+
+    In a stochastic fan each calendar period is counted once along a lineage
+    (:func:`~flextool.engine.preprocess.params._branch.annuity_window_pairs`); a period outside
+    ``period_in_use`` (history) and every period of a solve without a fan walk all of ``period_in_use``.
+    """
+    reach = inp["window_reach"]
+    if reach is None or d not in reach:
+        return inp["period_in_use"]
+    return [x for x in inp["period_in_use"] if x in reach[d]]
+
+
 # ---------------------------------------------------------------------------
 # Top-level writer.
 # ---------------------------------------------------------------------------
@@ -213,7 +227,14 @@ def _entity_annual_inputs(input_dir: Path, solve_data_dir: Path,
     for e, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv",
                              provider=provider):
         lifetime_methods_for_entity.setdefault(e, []).append(m)
+    pairs = annuity_window_pairs(solve_data_dir.parent, provider=provider)
+    window_reach: dict[str, set[str]] | None = None
+    if pairs:
+        window_reach = {}
+        for x, y in pairs:
+            window_reach.setdefault(x, set()).add(y)
     return {
+        "window_reach": window_reach,
         "pp": pp,
         "pn": pn,
         "process_set": frozenset(_read_singles(input_dir / "process.csv", provider=provider)),
@@ -303,13 +324,13 @@ def _ann_pair(inp: dict) -> tuple[
             life = inp["edEntity_lifetime"].get((e, d), 0.0)
             if is_choice_or_no_invest:
                 disc += ann * _inflation_window_sum(
-                    pdy_d, life, inp["period_in_use"],
+                    pdy_d, life, _window_periods(inp, d),
                     inp["p_discount_years"], inp["p_inflation_invest"],
                     open_window=False,
                 )
             if is_automatic:
                 disc += ann * _inflation_window_sum(
-                    pdy_d, life, inp["period_in_use"],
+                    pdy_d, life, _window_periods(inp, d),
                     inp["p_discount_years"], inp["p_inflation_invest"],
                     open_window=True,
                 )
@@ -333,14 +354,14 @@ def _div_pair(inp: dict) -> tuple[
             if e in inp["node_set"]:
                 life = inp["pn"].get(e, "lifetime", d)
                 disc = ann * _inflation_window_sum(
-                    pdy_d, life, inp["period_in_use"],
+                    pdy_d, life, _window_periods(inp, d),
                     inp["p_discount_years"], inp["p_inflation_invest"],
                     open_window=False,
                 )
             elif e in inp["process_set"]:
                 life = inp["pp"].get(e, "lifetime", d)
                 disc = ann * _inflation_window_sum(
-                    pdy_d, life, inp["period_in_use"],
+                    pdy_d, life, _window_periods(inp, d),
                     inp["p_discount_years"], inp["p_inflation_invest"],
                     open_window=False,
                 )
@@ -363,13 +384,13 @@ def _rows_lifetime_fixed_cost(inp: dict) -> list[tuple[str, str, float]]:
             life = inp["edEntity_lifetime"].get((e, d), 0.0)
             if is_choice_or_no_invest:
                 v += fc * _inflation_window_sum(
-                    pdy_d, life, inp["period_in_use"],
+                    pdy_d, life, _window_periods(inp, d),
                     inp["p_discount_years"], inp["p_inflation_ops"],
                     open_window=False,
                 )
             if is_automatic:
                 v += fc * _inflation_window_sum(
-                    pdy_d, life, inp["period_in_use"],
+                    pdy_d, life, _window_periods(inp, d),
                     inp["p_discount_years"], inp["p_inflation_ops"],
                     open_window=True,
                 )
@@ -392,7 +413,7 @@ def _rows_lifetime_fixed_cost_divest(inp: dict) -> list[tuple[str, str, float]]:
             else:
                 life = 0.0
             v = fc * _inflation_window_sum(
-                pdy_d, life, inp["period_in_use"],
+                pdy_d, life, _window_periods(inp, d),
                 inp["p_discount_years"], inp["p_inflation_invest"],
                 open_window=False,
             )

@@ -1286,8 +1286,23 @@ def dd_same_scenario_annuity_lf(
         workdir, source, active_solve, ctx=ctx, provider=provider)
     if not piu:
         return _empty_lf(schema)
-    anchors, pos, synthetic, anchor_of = _classify_lineage(
-        pb_rows, piu, tb_of)
+    seen = _annuity_lineage_pairs(*_classify_lineage(pb_rows, piu, tb_of), tb_of)
+    if not seen:
+        return _empty_lf(schema)
+    return _finalize_lineage_frame(seen, "d", "d", "d_other",
+                                   "d_other", "dd_same_scenario_annuity")
+
+
+def _annuity_lineage_pairs(
+    anchors: list[str],
+    pos: dict[str, int],
+    synthetic: list[str],
+    anchor_of: dict[str, str],
+    tb_of: dict[str, str],
+) -> list[tuple[str, str]]:
+    """The ``(d, d_other)`` pairs of :func:`dd_same_scenario_annuity_lf`, from a :func:`_classify_lineage`
+    result: every ``d_other`` on a lineage leaf through ``d``, one member per calendar anchor (the real-named
+    anchor when it is reachable, otherwise the first-seen copy)."""
     leaves = _lineage_leaves(anchors, pos, synthetic, anchor_of, tb_of)
     # Calendar anchor of every in-use period (anchors map to themselves).
     calendar_anchor = {a: a for a in anchors}
@@ -1313,10 +1328,53 @@ def dd_same_scenario_annuity_lf(
                 best[a] = y
         for y in best.values():
             seen[(x, y)] = None
-    if not seen:
-        return _empty_lf(schema)
-    return _finalize_lineage_frame(list(seen), "d", "d", "d_other",
-                                   "d_other", "dd_same_scenario_annuity")
+    return list(seen)
+
+
+def annuity_window_pairs(
+    workdir: Path | None,
+    source: "InputSource | None" = None,
+    active_solve: str | None = None,
+    *,
+    provider: "object | None" = None,
+) -> list[tuple[str, str]] | None:
+    """The ``(d, d_other)`` lineage of the investment-annuity, salvage and fixed-cost window sums, or None
+    when the solve has no stochastic fan.
+
+    Every one of those sums adds a per-period factor (inflation × the period's years) over the periods the
+    capacity built in ``d`` serves.  In a fan, ``period_in_use`` holds each calendar period several times:
+    the period label and one copy per forecast.  The sum must count each calendar period once along a
+    lineage, whatever the invest method: under recourse the branch's own path; under ``none`` the period
+    label's path, which is the bookkeeping walk over the calendar periods (the label stands for its
+    forecasts, and every forecast copy shares the label's years).  These are exactly the pairs of
+    :func:`dd_same_scenario_annuity_lf`.
+
+    None (no filtering) when no ``period_in_use`` member is a forecast copy: deterministic and rolling
+    solves, where every pair is on the one path and the filter would be a no-op.
+    """
+    pb_rows, piu, tb_of = _lineage_inputs(
+        workdir, source, active_solve, provider=provider)
+    if not piu:
+        return None
+    classified = _classify_lineage(pb_rows, piu, tb_of)
+    if not classified[2]:
+        return None
+    return _annuity_lineage_pairs(*classified, tb_of)
+
+
+def annuity_window_lineage_df(
+    workdir: Path | None,
+    source: "InputSource | None" = None,
+    active_solve: str | None = None,
+    *,
+    provider: "object | None" = None,
+) -> pl.DataFrame | None:
+    """:func:`annuity_window_pairs` as a typed ``(d, d_other)`` frame for the NPV walks; None without a fan."""
+    pairs = annuity_window_pairs(workdir, source, active_solve, provider=provider)
+    if not pairs:
+        return None
+    return _finalize_lineage_frame(pairs, "d", "d", "d_other", "d_other",
+                                   "annuity_window_lineage").collect()
 
 
 def dd_same_scenario_annuity_df(
@@ -2010,6 +2068,8 @@ __all__ = [
     "dd_same_scenario_df",
     "dd_same_scenario_annuity_lf",
     "dd_same_scenario_annuity_df",
+    "annuity_window_pairs",
+    "annuity_window_lineage_df",
     "d_leaf_lf",
     "d_leaf_df",
     "pd_non_anticipativity_lf",
