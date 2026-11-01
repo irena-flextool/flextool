@@ -55,6 +55,9 @@
   realized branch's value on every branch period, so in a forecasts-only fan such a value is a
   configuration error naming the entity and the parameter (it would otherwise silently become the class
   default); add the entity to the group, designate a realized branch, or give a non-stochastic value.
+  The same holds for the `reservation` of a reserve group without `include_stochastics` (before, it
+  silently became 0). A stochastic-time profile is read per profile: when any of its users is in an
+  `include_stochastics` group, all its users read the forecast branches' own series.
   The how-to stochastics example `2_day_stochastic_dispatch` is a forecasts-only fan of four forecasts
   again, so it reports no realized dispatch (the forecast branches are visible through
   `model.output_horizon`); `1_week_rolling_wind` keeps its realized branch.

@@ -92,8 +92,8 @@ def _reserve_entities(second: bool) -> list:
     return ents
 
 
-def _reserve_values(r1, r2) -> list:
-    vals = [["group", "res_g", "include_stochastics", b64("yes", "str")]]
+def _reserve_values(r1, r2, *, grouped: bool = True) -> list:
+    vals = [["group", "res_g", "include_stochastics", b64("yes", "str")]] if grouped else []
     for r, units in (("r1", ("coal_plant", "gas_plant")), ("r2", ("gas_plant",))):
         if r == "r2" and r2 is None:
             continue
@@ -464,6 +464,24 @@ def test_rank3_outside_stochastic_group_forecasts_only_raises(tmp_path_factory) 
     default (1.0) on every branch period."""
     with pytest.raises(FlexToolConfigError, match="gas_plant.availability.*include_stochastics"):
         _run(tmp_path_factory, SINGLE, [["unit", "gas_plant", "availability", _r3(1.0, AT_SINGLE, True)]], [])
+
+
+@pytest.mark.parametrize("grouped", [True, False], ids=["grouped", "ungrouped"])
+def test_rank3_reservation_forecasts_only_fan(tmp_path_factory, grouped: bool) -> None:
+    """A rank-3 ``reservation`` of ``res_g`` in ``2_day_stochastic_dispatch``, a forecasts-only fan.  With
+    ``include_stochastics`` on ``res_g`` each forecast reads its own branch (100 x the branch value).  Without
+    it the group would read the realized branch, which this fan does not have, so the solve raises naming the
+    reserve instead of silently taking the reservation default 0 on every branch period."""
+    values = _reserve_values(_r3(100.0, AT_SINGLE, True), None, grouped=grouped)
+    entities = _reserve_entities(second=False)
+    if not grouped:
+        with pytest.raises(FlexToolConfigError, match="r1/up/res_g.reservation.*include_stochastics"):
+            _run(tmp_path_factory, SINGLE, values, entities)
+        return
+    cells = _cells(_first(_run(tmp_path_factory, SINGLE, values, entities)),
+                   "pdtReserve_upDown_group_reservation", ["r", "ud", "g"])
+    assert {k[-2] for k in cells} == set(BRANCH_PERIODS)
+    _assert_branch_values(cells, ("r1", "up", "res_g"), 100.0)
 
 
 # ---------------------------------------------------------------------------

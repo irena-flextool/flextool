@@ -54,6 +54,10 @@ from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
 from flextool.engine.preprocess._reserve_methods import demanded_reserves
+from flextool.engine.preprocess.emit._pdt_lookup import (
+    _anchor_fan_members,
+    _check_ungrouped_reads_have_realized_branch,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +371,16 @@ def derive_pdtReserve_upDown_group(
         solve_data_dir / "reserve__upDown__group.csv", 3, provider=provider,
     )
     dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+
+    # A reserve group outside every include_stochastics group reads the realized branch's value
+    # (branch 2 below); a forecasts-only fan has none, so its stochastic-time reservation is an
+    # input error rather than a silent fall-through to the default 0.
+    rug_set = set(rug)
+    _check_ungrouped_reads_have_realized_branch(
+        {k: v for k, v in pbt.items() if k[:3] in rug_set}, 3, groups_stoch,
+        _anchor_fan_members(solve_data_dir / "period__branch.csv", provider=provider),
+        tb_for_d, ts_for_d, member_pos=2,
+    )
 
     rows: list[tuple] = []
     for (r, ud, g) in rug:

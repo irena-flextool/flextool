@@ -374,6 +374,8 @@ def _check_ungrouped_reads_have_realized_branch(
     anchor_members: dict[str, list[str]],
     tb_for_d: dict[str, list[str]],
     ts_for_d: dict[str, list[str]],
+    *,
+    member_pos: int = 0,
 ) -> None:
     """Raise when an entity outside every ``include_stochastics`` group authors a stochastic-time value
     that a forecasts-only fan of this solve would read.
@@ -384,7 +386,8 @@ def _check_ungrouped_reads_have_realized_branch(
     default; the engine never substitutes the class default for an authored value.
 
     *pbt* keys are ``(*entity, param, branch, ts, time)`` (``n_ent`` entity-key columns); group membership
-    is tested on ``key[0]`` (the process for the per-side tables).  The fan's analysis times are its
+    is tested on ``key[member_pos]``: the process (``0``) for the per-side tables, the group (``2``) for the
+    ``(reserve, upDown, group)`` reservation table.  The fan's analysis times are its
     members' first steps (the period label has no steps of its own).
     """
     for anchor, members in anchor_members.items():
@@ -394,16 +397,16 @@ def _check_ungrouped_reads_have_realized_branch(
         if not starts:
             continue
         ungrouped = sorted({(key[:n_ent], key[n_ent]) for key in pbt
-                            if key[0] not in stochastic_entities and key[n_ent + 2] in starts})
+                            if key[member_pos] not in stochastic_entities and key[n_ent + 2] in starts})
         if ungrouped:
             ent, param = ungrouped[0]
             raise FlexToolConfigError(
                 f"{'/'.join(ent)}.{param}: a stochastic-time (rank-3) value of an entity in no "
                 f"include_stochastics group, read in the forecasts-only fan of period {anchor!r}.  Outside "
                 "such a group the value of the realized branch is read on every branch period, and no branch "
-                "of this fan is designated realized: yes.  Add the entity to an include_stochastics group (each "
-                "forecast then reads its own branch), designate a realized: yes branch, or give the parameter a "
-                "non-stochastic value."
+                "of this fan is designated realized: yes.  Add the entity to an include_stochastics group (for a "
+                "reservation, set include_stochastics on its reserve group; each forecast then reads its own "
+                "branch), designate a realized: yes branch, or give the parameter a non-stochastic value."
             )
 
 
