@@ -192,7 +192,8 @@ def _assert_dense(step, field: str, nodes, expected) -> None:
 
 
 def _last(steps: dict):
-    return list(steps.values())[-1]
+    """The last stochastic or deterministic step, not an engine-added realization solve after it."""
+    return [s for k, s in steps.items() if "__realized_dispatch" not in k][-1]
 
 
 def _obj(steps: dict) -> float:
@@ -343,8 +344,9 @@ def test_stochastic_time_penalty(tmp_path_factory, labelled: bool) -> None:
 
 
 def _rolls(steps: dict) -> list:
-    """The roll steps; their solve names carry ``_roll_`` (the synthetic early return was taken)."""
-    rolls = [s for k, s in steps.items() if "_roll_" in k]
+    """The roll steps; their solve names carry ``_roll_`` (the synthetic early return was taken).  The rolls of an
+    engine-added realization solve are left out."""
+    rolls = [s for k, s in steps.items() if "_roll_" in k and "__realized_dispatch" not in k]
     assert len(rolls) >= 3, f"expected roll sub-solves, got {list(steps)}"
     return rolls
 

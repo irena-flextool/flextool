@@ -244,6 +244,10 @@ def compute_level_key(
        rolling-window triple ``[jump, horizon, duration]``, coerced to
        a tuple.  ``None`` when not rolling.
     4. ``solve_config.solve_modes.get(complete_solve_name)``.
+    5. Whether ``complete_solve_name`` is a realization solve
+       (``solve_config.realized_dispatch_parent``): it copies its stochastic
+       parent's timesets, step and rolls but has no branch structure, so the
+       two never share LP matrix shape nor a Provider.
 
     Returns a hashable tuple.  Same key on consecutive iterations
     means "same level — reuse Provider"; different key means "level
@@ -258,7 +262,8 @@ def compute_level_key(
     if rolling is not None:
         rolling = tuple(rolling)
     mode = solve_config.solve_modes.get(complete_solve_name)
-    return (timesets, step_dur, rolling, mode)
+    realization = complete_solve_name in (getattr(solve_config, "realized_dispatch_parent", None) or {})
+    return (timesets, step_dur, rolling, mode, realization)
 
 
 __all__ = [

@@ -164,6 +164,11 @@ def _first(steps: dict):
     return next(iter(steps.values()))
 
 
+def _stochastic_steps(steps: dict) -> list:
+    """The steps of the stochastic solve, without the engine-added realization solve that follows it."""
+    return [s for k, s in steps.items() if "__realized_dispatch" not in k]
+
+
 def _rel(a: float, b: float) -> float:
     return abs(a - b) / max(1.0, abs(b))
 
@@ -344,7 +349,7 @@ def test_stochastic_min_load_online_constant_efficiency(tmp_path_factory, scenar
     """coal is online with a constant efficiency: its stochastic min_load reaches the minFlow_minload floor (every
     cell carries the fold, branch periods their branch value) and ``process_minload`` contains it."""
     steps = _ml_online(tmp_path_factory, scenario, labelled)
-    for step in list(steps.values())[:3]:
+    for step in _stochastic_steps(steps)[:3]:
         cells = _cells(step, "p_min_load", ["p"])
         assert all(("coal_plant", d, t) in cells for d, t in _dt(step))
         periods = {d for d, _t in _dt(step)} - {ANCHOR}
@@ -378,7 +383,7 @@ def _rolling(tmp_path_factory, labelled: bool, *, warm: bool = True) -> dict:
 
 
 def _rolls(steps: dict) -> list:
-    rolls = [s for k, s in steps.items() if "_roll_" in k]
+    rolls = [s for k, s in steps.items() if "_roll_" in k and "__realized_dispatch" not in k]
     assert len(rolls) == 7, list(steps)
     return rolls
 
@@ -471,7 +476,7 @@ def test_rank3_outside_stochastic_group(tmp_path_factory, scenario: str) -> None
     at = AT_SINGLE if scenario == SINGLE else AT_ROLL
     steps = _run(tmp_path_factory, scenario, [["unit", "gas_plant", "availability", _r3(1.0, at, True)]], [])
     want = BR["realized"]
-    for step in list(steps.values())[:3]:
+    for step in _stochastic_steps(steps)[:3]:
         cells = {k: v for k, v in _cells(step, "p_process_availability", ["p"]).items() if k[0] == "gas_plant"}
         assert len(cells) == len(_dt(step))
         assert set(cells.values()) == {want}

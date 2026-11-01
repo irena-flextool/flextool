@@ -147,8 +147,9 @@ def emit_per_solve_sets(
     the ``dt_non_anticipativity_set.csv`` content — the single source of
     truth read back by ``_branch.dt_non_anticipativity_lf``:
 
-    * ``None`` (unset)      -> legacy ``realized_dispatch u fix_storage``
-      union, byte-identical to prior behaviour;
+    * ``None`` (unset)      -> ``committed_dispatch u fix_storage`` union
+      (``committed_dispatch`` = ``realized_dispatch`` unless a realization
+      solve took over the solve's realized window);
     * ``[]`` (empty)        -> header-only (empty) set -> operations free
       from t0 (all four non_anticipativity_* families off);
     * ``[(p, p), ...]``     -> those periods' timesteps, intersected with
@@ -368,8 +369,14 @@ def emit_per_solve_sets(
     if na_window is None:
         # Unset -> legacy realized_dispatch u fix_storage union
         # (byte-identical to prior behaviour for every existing fixture).
-        a_df = _read_csv(solve_data_dir / "realized_dispatch.csv",
+        # The committed window (``committed_dispatch``) equals the realized
+        # one except for a solve whose realized window a realization solve
+        # takes over: its ties still hold over the committed window.
+        a_df = _read_csv(solve_data_dir / "committed_dispatch.csv",
                          ["period", "time"], provider=provider)
+        if a_df.height == 0:
+            a_df = _read_csv(solve_data_dir / "realized_dispatch.csv",
+                             ["period", "time"], provider=provider)
         b_df = _read_csv(solve_data_dir / "fix_storage_timesteps.csv",
                          ["period", "time"], provider=provider)
         for src in (a_df, b_df):

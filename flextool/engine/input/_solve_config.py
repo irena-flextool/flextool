@@ -353,18 +353,22 @@ class SolveConfig:
         # byte-parity-safe (both empty-ish states resolve to no ties).
         self.non_anticipativity_invest_periods: defaultdict = defaultdict(list)
 
-        # W4c — maps an auto-spawned realized-dispatch sibling name to its
-        # parent solve name.  Populated by
-        # :meth:`spawn_realized_dispatch_sibling`; consumed by the W4c
-        # post-pass in ``_run_model`` to project each stochastic
-        # parameter onto the parent's REALIZED branch.  The sibling is
-        # deterministic (``stochastic_branches`` dropped), so
+        # Realization registry: maps a realization solve to the stochastic
+        # solve whose committed window it realizes.  Populated by
+        # :meth:`spawn_realized_dispatch_sibling` (engine-spawned
+        # ``<solve>__realized_dispatch``) and :meth:`register_realization_solve`
+        # (an author-declared deterministic solve right after its parent, see
+        # ``solve._realization.configured_realization_solve``).  Consumers:
+        # roll interleaving, the PIN translation, the CarryRouter siblings and
+        # the W4c projection in ``_run_model``, the fix_online / fix_reserve
+        # producers and the silent last-wins pair.  The realization solve is
+        # deterministic (no ``stochastic_branches``), so
         # ``create_stochastic_periods`` leaves its
-        # ``solve_branch__time_branch`` scaffolding empty; the post-pass
+        # ``solve_branch__time_branch`` scaffolding empty; the W4c post-pass
         # reuses THIS explicit map (never name-parsing the suffix) to
-        # re-populate it from the parent's realized-branch rows.  Empty
-        # when no sibling is spawned (the post-pass then no-ops, preserving
-        # byte-parity on deterministic 2d-profile fixtures).
+        # re-populate it from the parent's realized-branch rows.  Empty when
+        # no stochastic solve has a realization solve (the consumers then
+        # no-op, preserving byte-parity on deterministic fixtures).
         self.realized_dispatch_parent: dict[str, str] = {}
 
         # Mutable tracking — populated during the recursive solve loop.
@@ -1036,6 +1040,16 @@ class SolveConfig:
         # Using this map (not a ``__realized_dispatch`` name-parse) keeps
         # the sibling identification robust.
         self.realized_dispatch_parent[sibling] = parent
+
+    def register_realization_solve(self, realization_solve: str, parent: str) -> None:
+        """Register the author-declared *realization_solve* as the realization solve of *parent*.
+
+        The solve keeps its authored configuration; registering it gives it the same treatment as an
+        engine-spawned sibling: it takes its parent's pins (investment, NA-tied online and reserve), the
+        stochastic parameters projected onto the parent's realized branch, and the parent's realized
+        window through a silent last-wins.
+        """
+        self.realized_dispatch_parent[realization_solve] = parent
 
     # ------------------------------------------------------------------
     # v60/v62 per-solve decomposition accessors

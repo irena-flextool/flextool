@@ -576,6 +576,24 @@ def emit_realized_dispatch(
     )
 
 
+def emit_committed_dispatch(
+    committed_time_list: dict[str, list[tuple[str, ...]]],
+    solve: str,
+    realized_periods: list[tuple[str, str]],
+    *, provider,
+) -> None:
+    """Emit ``committed_dispatch`` (period, step) to the Provider: the window the solve commits.
+
+    Equal to ``realized_dispatch`` except for a solve that has a realization solve: that solve hands its
+    realized window to the realization solve (last-wins) but still commits it in its own LP, so its
+    non-anticipativity ties hold over it.  Same frame builder as :func:`derive_realized_dispatch`.
+    """
+    _emit(
+        provider, "solve_data/committed_dispatch.csv",
+        derive_realized_dispatch(committed_time_list, solve, realized_periods),
+    )
+
+
 def derive_fix_storage_timesteps(
     active_time_list: dict[str, list[tuple[str, ...]]],
     solve: str,

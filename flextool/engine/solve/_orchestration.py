@@ -1785,9 +1785,20 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
 def _spawn_realized_dispatch_siblings(
     solve_cfg, cascade_db_reader, logger, timeline_cfg=None,
 ) -> None:
-    """W4b — register an engine-automatic deterministic realized-dispatch
-    sibling for every eligible top-level solve that authors
-    ``dispatch_realization_method = separate_dispatch``.
+    """Register the realization solve of every stochastic top-level solve
+    that needs one (``solve._realization``).
+
+    * a solve authoring ``dispatch_realization_method = separate_dispatch``
+      gets an engine-automatic deterministic realized-dispatch sibling;
+    * otherwise a solve followed in ``model.solves`` by an author-declared
+      realization solve (``configured_realization_solve``) has that solve
+      registered (``SolveConfig.register_realization_solve``);
+    * otherwise a single_solve / rolling_window solve with
+      ``stochastic_invest_method = none`` whose ``realized: yes``
+      designation reaches its committed window
+      (``designation_reaches_committed_window``) gets the sibling too.  A
+      designated recourse solve gets a warning and no sibling; a designated
+      solve that contains solves, or is nested in another solve, raises.
 
     ════════════════════════════════════════════════════════════════════
     REALIZED-DISPATCH FEATURE MAP (the single anchor for all touch-points)
@@ -1851,7 +1862,7 @@ def _spawn_realized_dispatch_siblings(
     injected, so it correctly no-ops for the sibling, which authors no
     ``dispatch_realization_method`` — no infinite re-spawn.)
 
-    Eligibility was already validated by
+    ``separate_dispatch`` eligibility was already validated by
     :func:`_dispatch_realization_raw_guard` at both wired sites; this
     re-selects the same eligible parents from the driving config so the
     two stay in lockstep.
@@ -1887,19 +1898,63 @@ def _spawn_realized_dispatch_siblings(
         except Exception:  # noqa: BLE001
             reader_solves = set()
 
-    eligible = [
-        p for p in sorted(top_level)
-        if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch"
-    ]
+    from flextool.engine.solve import _realization
+
+    # Spawn list: every separate_dispatch solve (authored), then every
+    # designated solve without a configured realization solve (OD5).  Each
+    # entry carries the reason the error messages below name.
+    eligible: list[tuple[str, str]] = []
+    for p in sorted(top_level):
+        if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch":
+            eligible.append((p, "dispatch_realization_method='separate_dispatch'"))
+            continue
+        configured = _realization.configured_realization_solve(solve_cfg, p)
+        if configured is not None:
+            solve_cfg.register_realization_solve(configured, p)
+            if logger is not None:
+                logger.info(
+                    "registered author-declared realization solve '%s' for "
+                    "stochastic solve '%s'", configured, p,
+                )
+            continue
+        if not _realization.designation_reaches_committed_window(solve_cfg, p):
+            continue
+        if solve_cfg.stochastic_invest_method_for(p) == "recourse":
+            _realization.warn_recourse_designation(p)
+            continue
+        if contains_solves.get(p):
+            raise FlexToolConfigError(
+                f"Solve '{p}' has a realized: yes designation in "
+                f"stochastic_branches whose fan reaches its committed window, "
+                f"but it contains other solves (contains_solves), so the "
+                f"engine cannot add a realization solve for it.  Configure a "
+                f"realization solve right after it in model.solves (a "
+                f"deterministic solve with the same solve_mode and roll "
+                f"structure realizing the same periods), or remove the "
+                f"designation."
+            )
+        eligible.append((p, "a realized: yes designation in stochastic_branches"))
+    for c in sorted(contained):
+        if (_realization.designation_reaches_committed_window(solve_cfg, c)
+                and solve_cfg.stochastic_invest_method_for(c) != "recourse"):
+            raise FlexToolConfigError(
+                f"Solve '{c}' has a realized: yes designation in "
+                f"stochastic_branches whose fan reaches its committed window, "
+                f"but it is nested inside another solve's contains_solves, so "
+                f"no realization solve can run right after it.  Make it a "
+                f"top-level solve followed by a realization solve, or remove "
+                f"the designation."
+            )
     if eligible and cascade_db_reader is None:
         raise FlexToolConfigError(
-            "dispatch_realization_method='separate_dispatch' requires the "
-            "DB-backed cascade reader (run via run_chain_from_db with "
-            "db_url + scenario_name); none is available, so the realized-"
-            f"dispatch sibling for {eligible!r} cannot be registered."
+            "A realization solve for "
+            + ", ".join(f"'{p}' ({why})" for p, why in eligible)
+            + " requires the DB-backed cascade reader (run via "
+            "run_chain_from_db with db_url + scenario_name); none is "
+            "available, so the realized-dispatch sibling cannot be registered."
         )
 
-    for parent in eligible:
+    for parent, why in eligible:
         # Positive storage-pinning guard (investigation outcome).
         # The sibling DROPS ``fix_storage_periods`` — the ONLY solve-level
         # storage mechanism it sheds (the node-level
@@ -1912,21 +1967,17 @@ def _spawn_realized_dispatch_siblings(
         # ``fix_storage_periods`` (independent of realized-period count):
         # even a single pinned boundary is dropped, and gating on period
         # count would UNDER-fire (a single realized period with a 2-period
-        # fix_storage authored still drops the pin).  The combo is
-        # brand-new; storage pinning in the realized-dispatch solve is a
-        # later slice.  No ``fix_storage_periods`` → fine: the monolithic
-        # solve links storage via its own balance constraints exactly as
-        # the parent would.
+        # fix_storage authored still drops the pin).  No
+        # ``fix_storage_periods`` → fine: the monolithic solve links storage
+        # via its own balance constraints exactly as the parent would.
         _fix_storage = getattr(solve_cfg, "fix_storage_periods", {}) or {}
         if _fix_storage.get(parent):
             raise FlexToolConfigError(
-                f"Solve '{parent}' sets "
-                f"dispatch_realization_method='separate_dispatch' but also "
-                f"authors fix_storage_periods: separate_dispatch is not yet "
-                f"supported for a solve that authors fix_storage_periods "
-                f"(storage pinning in the realized-dispatch solve is a later "
-                f"slice; the auto realized-dispatch sibling would re-float "
-                f"the pinned storage boundaries).  Clear fix_storage_periods."
+                f"Solve '{parent}' needs an engine-added realization solve "
+                f"({why}) but also authors fix_storage_periods: the "
+                f"realization solve would re-float the pinned storage "
+                f"boundaries.  Clear fix_storage_periods, or configure a "
+                f"realization solve right after it in model.solves."
             )
         sibling = f"{parent}__realized_dispatch"
         if sibling in top_level or sibling in contained:
@@ -1957,8 +2008,8 @@ def _spawn_realized_dispatch_siblings(
         top_level.add(sibling)
         if logger is not None:
             logger.info(
-                "W4b: registered engine-automatic realized-dispatch sibling "
-                "'%s' for separate_dispatch solve '%s'", sibling, parent,
+                "registered engine-automatic realization solve '%s' for "
+                "solve '%s' (%s)", sibling, parent, why,
             )
 
 

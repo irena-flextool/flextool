@@ -993,3 +993,22 @@ the value itself is unaffected, only the row count and label). No other row or f
 byte-identical content, confirmed by `git diff --stat` showing zero changes to that file.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate 2_day_stochastic_dispatch`.
+
+## 2026-11-01 — `2_day_stochastic_dispatch/{costs__dt,summary_solve}.csv`
+
+**Context.** A `realized: yes` designation whose fan reaches the solve's committed window now makes the engine add a
+deterministic realization solve right after the stochastic solve (owner decision "Stochastic realization model
+(2026-11-01)" point 5).  This fixture's `2day_dispatch` carries such a designation (branch `committed`, weight 0, in
+`tests/fixtures/stochastics.json`), so the run now has a second solve `2day_dispatch__realized_dispatch`.  It realizes
+`period1` with the stochastic solve's investments fixed and takes the stochastic solve's realized window through the
+silent last-wins: the `costs__dt.csv` rows of `period1` move from `2day_dispatch` (the weight-0 period-label shadow
+dispatch) to `2day_dispatch__realized_dispatch` and now hold the realized dispatch's own costs; the forecast-branch rows
+(`period1_lower/mid/realized/upper`) of `2day_dispatch` are unchanged.  `summary_solve.csv` gains the second solve's
+objective (307.573 M CUR); the calculated totals add it to the stochastic solve's forecast-branch costs, as the totals
+already summed every reported row; the slack rows of `period1` are the realization solve's; the CO2 rows collapse to
+one model-wide row because the output's scenario-path set (`d_leaf`) is read from the last solve of the run, now the
+deterministic realization solve (one path) — all CO2 values stay 0.  The stochastic
+solve's own LP is byte-identical (lp_snapshot).  This designation is a stand-in that the redesign removes later
+together with the label's dispatch; this golden is regenerated again then.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate 2_day_stochastic_dispatch`.

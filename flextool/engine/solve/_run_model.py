@@ -76,6 +76,7 @@ from flextool.engine.solve._recursive_solve import (
 )
 from flextool.engine.solve._stochastic import StochasticSolver
 from flextool.engine.solve import _carry_routing
+from flextool.engine.solve import _realization
 from flextool.engine.input._timeline import (
     get_active_time,
     make_step_jump,
@@ -617,6 +618,26 @@ def native_run_model(state, solver) -> int:
         fix_storage_time_lists,
         realized_time_lists,
     )
+
+    # ------------------------------------------------------------------
+    # 3.1 Realization plan per sub-solve.  A sub-solve with a realization
+    # solve (``realized_dispatch_parent``) hands its realized window to that
+    # solve through the last-wins below, but the window stays committed in
+    # its own LP: the non-anticipativity ties hold over it.  Keep the
+    # pre-last-wins window of those sub-solves as their committed window
+    # (``solve_data/committed_dispatch``, read by the NA-set emitter); every
+    # other sub-solve commits exactly what it realizes.
+    # ------------------------------------------------------------------
+    _rdp_registry = getattr(state.solve, "realized_dispatch_parent", {}) or {}
+    realization_plans = {
+        _s: _realization.build_realization_plan(_s, period__branch_lists.get(_s, []), _rdp_registry)
+        for _s in all_solves
+    }
+    committed_time_lists = {
+        _s: copy.deepcopy(realized_time_lists[_s])
+        for _s, _plan in realization_plans.items()
+        if _plan.realization_solve is not None and _s in realized_time_lists
+    }
 
     # ------------------------------------------------------------------
     # 3.5 Resolve realized-dispatch overlap across solves (LAST-WINS).
@@ -1165,6 +1186,12 @@ def native_run_model(state, solver) -> int:
         state.logger.debug("Create realized timeline")
         solve_writers.emit_realized_dispatch(
             realized_time_lists[solve],
+            complete_solve[solve],
+            state.solve.realized_periods.get(complete_solve[solve], []),
+            provider=sub_solve_provider,
+        )
+        solve_writers.emit_committed_dispatch(
+            committed_time_lists.get(solve, realized_time_lists[solve]),
             complete_solve[solve],
             state.solve.realized_periods.get(complete_solve[solve], []),
             provider=sub_solve_provider,
