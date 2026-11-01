@@ -1,5 +1,22 @@
 ## Unreleased
 
+- **A `realized: yes` branch in a stochastic solve's `stochastic_branches` now makes FlexTool run a
+  realization dispatch right after the stochastic solve, without setting
+  `dispatch_realization_method = separate_dispatch`.** It applies when the designated branch opens a
+  fan that reaches the periods the solve realizes (a single or rolling solve with
+  `stochastic_invest_method = none`). The realization dispatch is deterministic, fixes the stochastic
+  solve's investments, reads the designated branch's data, and inherits the units online and the
+  reserves the stochastic solve committed before the forecast is known (the value of the first
+  forecast branch in sorted order over the tied steps; reserves were not inherited before). The
+  stochastic solve keeps those ties over the window it hands to the realization dispatch. A deterministic
+  solve placed right after the stochastic solve in `model.solves`, with the same solve mode and
+  rolling settings and realizing the same fan periods, is used as the realization dispatch instead.
+  A designated solve that contains other solves or is nested in another solve is a configuration
+  error; under `stochastic_invest_method = recourse` a warning says that no realization dispatch is
+  added. When the inherited units online cannot cover the realized net load of a node with
+  `penalty_method = off`, the run stops before that solve with an error naming the node and the time
+  step.
+
 - **A stochastic solve's anchor period now takes the designated REALIZED branch's value for a
   stochastic-time parameter (availability, efficiency, min_load, operational cost, reservation,
   penalty), instead of the unit or node class's hard-coded default.** The anchor keeps the real
