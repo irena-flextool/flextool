@@ -40,11 +40,19 @@
   ladder, the CO2 total cap, recourse investment, or units online / reserves outside the tied steps)
   and suggests designating a `realized: yes` branch, configuring a realization solve, or ending the
   committed window before the reveal. Units online and reserves on the tied steps are the same in
-  every forecast and need no realization.
+  every forecast and need no realization: the next solve (e.g. the next roll) continues the units
+  online, and the start-up / shut-down history of minimum up and down times, from them (before, it
+  continued from nothing at all, as if no unit had been online).
 - **A forecasts-only fan (no `realized: yes` branch) that authors a stochastic-time value
   (availability, efficiency, min_load, operational cost, reservation, penalty, profile) is valid
   again:** every forecast branch period takes its own branch's value. A designated `realized: yes`
-  branch's value feeds the realization dispatch.
+  branch's value feeds the realization dispatch. An entity in no `include_stochastics` group reads the
+  realized branch's value on every branch period, so in a forecasts-only fan such a value is a
+  configuration error naming the entity and the parameter (it would otherwise silently become the class
+  default); add the entity to the group, designate a realized branch, or give a non-stochastic value.
+  The how-to stochastics example `2_day_stochastic_dispatch` is a forecasts-only fan of four forecasts
+  again, so it reports no realized dispatch (the forecast branches are visible through
+  `model.output_horizon`); `1_week_rolling_wind` keeps its realized branch.
 - **A stochastic-time value that gives only some of its forecast branches a number, leaving others
   out, is now a configuration error naming the entity, the parameter and the missing branches**,
   instead of silently treating the branches left out as the class default. **A deterministic solve
@@ -360,7 +368,7 @@
 - **Online units continue across consecutive periods of one timeline and across rolling windows from the
   right step.** A unit with online variables used to be charged a spurious startup where a period's first
   step continued the previous period on the same timeline (two periods on consecutive parts of one
-  timeline, or a forecast branch continuing from its trunk step), and a continuation roll's carried
+  timeline, or a forecast branch continuing from the step before its fan), and a continuation roll's carried
   commitment used to land on the timeline's alphabetically first period instead of the roll's real first
   step. Both are fixed; a unit that stays committed across either boundary is no longer re-charged a
   startup there.
@@ -736,8 +744,8 @@
   Reserve prices (`reserve_price_t`) were a million times too small and are
   now per MW of reserve held for one hour, also with the step length and
   weights removed. In a stochastic solve each forecast branch now reports
-  its own price, and a step the objective does not weigh (the trunk period
-  at the branch steps) has no price. The nested `fix_price` storage handoff
+  its own price, and a step the objective does not weigh (e.g. a step that
+  `timeset_weights` leaves out) has no price. The nested `fix_price` storage handoff
   passed the dispatch solve a price a million times too small (and weighted);
   it now passes the storage solve's `price_t` to the dispatch solve, also to
   the rolls of a rolling dispatch solve (before, a rolling dispatch solve
@@ -802,8 +810,8 @@
   step looked like its own block, so storage could not shift energy), ramp
   limits and rolling windows no longer link steps across a gap, and
   representative blocks keep their order. When several timesets of the solve
-  share a timeline (one per period, or a stochastic trunk period before the
-  branches), every period keeps its time steps; before, only the last
+  share a timeline (one per period, or a period before a stochastic fan and
+  the fan's branches), every period keeps its time steps; before, only the last
   timeset's period survived. `scale_in_proportion` inflow scaling now also
   works with `new_stepduration` and scales as the unaggregated solve does. A
   timeset shared by a solve with `new_stepduration` and a solve without it is
