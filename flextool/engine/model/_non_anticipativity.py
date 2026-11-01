@@ -21,20 +21,15 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 
-def _forecast_star(d) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
-    """``(star, tie_dt)``: the forecast pairs ``(d, b)`` to tie and the tied steps ``(d, t)``.
+def reference_forecasts(d) -> "list[tuple[str, list[str]]]":
+    """``[(anchor, forecasts)]``: per anchor (trunk) period, its sorted forecast branch periods.
 
-    period_branch_full pairs every anchor (trunk) period ``d`` with the branch periods ``b`` of its fan;
-    the self-pair ``b == d`` and branches not in period_in_use (metadata-only rows such as a realized
-    marker) are dropped.  Per anchor period the forecasts are sorted and the first is the reference
-    forecast ``d_ref``; the star is {(d_ref, b) : b another forecast of that anchor}.  An anchor with
-    fewer than two forecasts has nothing to tie.  The tie is between forecasts only, never to the trunk,
-    so it holds with no realized branch at all.  A single global ``d_ref`` would be wrong: it would couple
-    different anchor periods at mismatched steps.
-    dt_non_anticipativity is re-keyed the same way (anchor ``d`` → that anchor's ``d_ref``, same ``t``),
-    because every family joins the star and the tied steps on ``d``.  ``tie_dt`` is None when
-    dt_non_anticipativity has no rows.  ``star`` is None when there is nothing to tie.
+    period_branch_full pairs every anchor period ``d`` with the branch periods ``b`` of its fan; the self-pair
+    ``b == d`` and branches not in period_in_use (metadata-only rows such as a realized marker) are dropped.
+    Anchors are listed in sorted order; the first forecast of an anchor is its reference forecast ``d_ref``.
     """
+    if not _has_rows(d.period_branch_full):
+        return []
     # d (period axis) and b (branch axis) are different Enum vocabularies: compare and join them as Utf8.
     db_pairs = (d.period_branch_full
                 .with_columns(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8))
@@ -42,15 +37,58 @@ def _forecast_star(d) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
     if d.period_in_use_set is not None:
         piu = d.period_in_use_set.rename({"d": "b"}).with_columns(pl.col("b").cast(pl.Utf8))
         db_pairs = db_pairs.join(piu, on="b", how="inner")
-    if db_pairs.height == 0:
+    return [(d_trunk, sorted(db_pairs.filter(pl.col("d") == d_trunk).select("b").unique().to_series().to_list()))
+            for d_trunk in sorted(db_pairs.select("d").unique().to_series().to_list())]
+
+
+def online_tie_cells(d) -> "pl.DataFrame | None":
+    """``(anchor, d_ref, t)`` Utf8: the steps over which units online are tied, at each anchor's reference forecast.
+
+    The steps are those of non_anticipativity_online: the tied steps dt_non_anticipativity of the anchors, or,
+    when no anchor has a tied step, every online step (p_online_dt) of the reference forecast.  An anchor
+    with a single forecast has no tie rows but the same committed steps (its one forecast is the tied value).
+    None when there is no anchor or no step.
+    """
+    refs = [(a, f[0]) for a, f in reference_forecasts(d) if f]
+    if not refs:
+        return None
+    ref = pl.DataFrame({"anchor": [a for a, _ in refs], "d_ref": [r for _, r in refs]})
+    cells = None
+    if _has_rows(d.dt_non_anticipativity):
+        tie = (d.dt_non_anticipativity
+               .select(pl.col("d").cast(pl.Utf8).alias("anchor"), pl.col("t").cast(pl.Utf8))
+               .unique())
+        cells = ref.join(tie, on="anchor", how="inner")
+    if (cells is None or cells.height == 0) and _has_rows(d.p_online_dt):
+        steps = (d.p_online_dt
+                 .select(pl.col("d").cast(pl.Utf8).alias("d_ref"), pl.col("t").cast(pl.Utf8))
+                 .unique())
+        cells = ref.join(steps, on="d_ref", how="inner")
+    if cells is None or cells.height == 0:
+        return None
+    return cells.select("anchor", "d_ref", "t").sort("anchor", "t")
+
+
+def _forecast_star(d) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
+    """``(star, tie_dt)``: the forecast pairs ``(d, b)`` to tie and the tied steps ``(d, t)``.
+
+    Per anchor period (:func:`reference_forecasts`) the first forecast is the reference forecast ``d_ref``; the
+    star is {(d_ref, b) : b another forecast of that anchor}.  An anchor with fewer than two forecasts has nothing
+    to tie.  The tie is between forecasts only, never to the trunk, so it holds with no realized branch at all.
+    A single global ``d_ref`` would be wrong: it would couple different anchor periods at mismatched steps.
+    dt_non_anticipativity is re-keyed the same way (anchor ``d`` → that anchor's ``d_ref``, same ``t``),
+    because every family joins the star and the tied steps on ``d``.  ``tie_dt`` is None when
+    dt_non_anticipativity has no rows.  ``star`` is None when there is nothing to tie.
+    """
+    anchors = reference_forecasts(d)
+    if not anchors:
         return None, None
 
     tie_raw = d.dt_non_anticipativity
     tie_u = tie_raw.with_columns(pl.col("d").cast(pl.Utf8)) if _has_rows(tie_raw) else None
     stars: list[pl.DataFrame] = []
     ties: list[pl.DataFrame] = []
-    for d_trunk in sorted(db_pairs.select("d").unique().to_series().to_list()):
-        forecasts = sorted(db_pairs.filter(pl.col("d") == d_trunk).select("b").unique().to_series().to_list())
+    for d_trunk, forecasts in anchors:
         if len(forecasts) < 2:
             continue
         d_ref = forecasts[0]
@@ -98,9 +136,8 @@ def add_dispatch_constraints(b: "_Build") -> None:
     has_tie_dt = _has_rows(tie_dt)
 
     # Steps of the online ties: the tied steps, or, when there are none, every online step of the anchor
-    # periods.  Unit commitment over the committed section is decided before the forecast is known.  A
-    # separate_dispatch parent hands its committed window to the dispatch sibling and has no tied steps;
-    # its whole horizon is the committed section.
+    # periods.  Unit commitment over the committed section is decided before the forecast is known.  A solve
+    # with a realization solve keeps its committed window as its tied steps (solve_data/committed_dispatch).
     online_dt = tie_dt
     if not has_tie_dt and (v_online_integer is not None or v_online_linear is not None) \
             and _has_rows(d.p_online_dt):

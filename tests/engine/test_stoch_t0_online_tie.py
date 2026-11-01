@@ -7,23 +7,16 @@ across the forecast branches over the whole jump.  The dispatch sibling then
 FIXES that committed ``v_online`` over the jump while flows realize.
 
 Mechanism (``_non_anticipativity.add_dispatch_constraints``): the online non-
-anticipativity families join ``dtna_online`` = ``dt_non_anticipativity`` when
-``has_dtna``, ELSE (a ``separate_dispatch`` PARENT hands its realized window
-to the sibling, so its ``dt_non_anticipativity`` is empty) the FULL set of
-online ``(d, t)`` steps for the anchor forecast periods — the whole horizon =
-the jump.  So:
+anticipativity families join the tied steps ``dt_non_anticipativity``, ELSE
+the FULL set of online ``(d, t)`` steps for the anchor forecast periods.  A
+solve with a realization solve keeps its committed window as its tied steps
+(``solve_data/committed_dispatch``), although the realization solve takes over
+its realized window, so here the tie holds over the whole jump.
 
-  * plain single-shot stochastic — ``dtna`` = its whole realized window →
-    online already tied over that window (UNCHANGED, existing behaviour);
-  * ``separate_dispatch`` parent — ``dtna`` empty → the ``jump_steps`` branch
-    ties online over the whole horizon (the fix; was tying NOTHING);
-  * rolling / mid-horizon / deterministic — ``dtna_online`` == ``dtna``
-    (byte-parity).
-
-Sibling pin (sub-slice b): a new ``fix_online`` SolveHandoff carrier ferries
-the parent's committed ``v_online`` over the jump (read from a FORECAST branch
-via the tie — the well-defined value, NOT the degenerate weight-0 realized
-branch — re-keyed to the realized trunk period) into the sibling, where
+Sibling pin (sub-slice b): a ``fix_online`` SolveHandoff carrier ferries
+the parent's committed ``v_online`` on the tied steps (read from the first
+sorted FORECAST branch — the NA-tied value, NOT the degenerate weight-0
+realized branch — re-keyed to the anchor period) into the sibling, where
 ``online_fix_eq`` pins the sibling's ``v_online`` to it.
 
 Fixture (``stoch_t0_commit.json``, built from JSON per CLAUDE.md invariant 3):
@@ -126,9 +119,9 @@ def _write_variant(tmp_path: Path, name: str, mutate) -> Path:
 
 
 def _drop_separate_dispatch(d: dict) -> None:
-    """Plain stochastic: remove the separate_dispatch designation (its
-    ``dt_non_anticipativity`` is then the whole realized window — the
-    existing whole-window tie path)."""
+    """Remove separate_dispatch: the ``realized: yes`` designation of ``rlz``
+    still adds the same realization solve, and the tie holds over the whole
+    realized window."""
     d["parameter_values"] = [
         r for r in d["parameter_values"]
         if r[2] != "dispatch_realization_method"

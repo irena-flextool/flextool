@@ -6261,19 +6261,18 @@ def build_handoff_from_solution(
         and solve_name in realized_dispatch_parents
     )
 
-    # ---- fix_online: committed v_online over the JUMP for the sibling ----
-    # OC1 #1 sub-slice (b).  For a separate_dispatch PARENT (its name is a
-    # registered realized-dispatch parent) carry the committed ``v_online``
-    # over the whole jump so the realized-dispatch SIBLING PINS it instead of
-    # re-deciding commitment.  The online NA tie makes ``v_online`` EQUAL
-    # across the forecast branches over the jump (``dtna_online``), so the
-    # value is read from the FORECAST branches and re-keyed from each forecast
-    # branch ``b`` to its REALIZED trunk period ``d`` (``period__branch``) —
-    # the period name the sibling dispatches.  The degenerate weight-0
-    # realized self-row (``b == d``) is excluded, so the carried value is the
-    # well-defined committed schedule, NOT the degenerate realized branch.
-    # Unit-count space (NOT ×unitsize).  ``None`` on every other solve →
-    # byte-identical baseline.
+    # ---- fix_online: NA-tied v_online for the realization solve ----
+    # For the parent of a realization solve (its name is a registered
+    # realization parent) carry the committed ``v_online`` so the
+    # realization solve PINS it instead of re-deciding commitment (owner
+    # decision: the realization solve inherits the NA-tied values).  The
+    # value is the reference forecast's (the first sorted forecast branch of
+    # each anchor, the ``d_ref`` of non_anticipativity_online), on the
+    # online tie cells only (``online_tie_cells``: the tied steps, or every
+    # online step when nothing is tied), re-keyed from the forecast branch
+    # to its anchor period, the period name the realization solve
+    # dispatches.  Unit-count space (NOT ×unitsize).  ``None`` on every
+    # other solve → byte-identical baseline.
     fix_online_df = None
     if (realized_dispatch_parents is not None
             and solve_name in realized_dispatch_parents
@@ -6282,14 +6281,10 @@ def build_handoff_from_solution(
             and flex_data.period_branch_full.height > 0
             and (("v_online_linear" in sol._vars)
                  or ("v_online_integer" in sol._vars))):
-        # forecast-branch → realized-trunk map (drop the realized self-row).
-        _fcast = (flex_data.period_branch_full.select("d", "b")
-                  .with_columns(pl.col("d").cast(pl.Utf8),
-                                pl.col("b").cast(pl.Utf8))
-                  .filter(pl.col("d") != pl.col("b"))
-                  .rename({"d": "trunk", "b": "fb"}))
+        from flextool.engine.model._non_anticipativity import online_tie_cells
+        _cells = online_tie_cells(flex_data)
         _parts: list[pl.DataFrame] = []
-        if _fcast.height > 0:
+        if _cells is not None:
             for _vn in ("v_online_linear", "v_online_integer"):
                 if _vn not in sol._vars:
                     continue
@@ -6299,20 +6294,16 @@ def build_handoff_from_solution(
                        .with_columns(value=pl.Series(sol.col_value[_ids]))
                        .with_columns(pl.col("d").cast(pl.Utf8),
                                      pl.col("t").cast(pl.Utf8)))
-                _re = (_fr.join(_fcast, left_on="d", right_on="fb",
-                                how="inner")
+                _re = (_fr.join(_cells, left_on=["d", "t"],
+                                right_on=["d_ref", "t"], how="inner")
                        .select(pl.col("p").cast(pl.Utf8).alias("process"),
-                               pl.col("trunk").alias("period"),
+                               pl.col("anchor").alias("period"),
                                pl.col("t").alias("step"),
                                "value"))
                 if _re.height > 0:
                     _parts.append(_re)
         if _parts:
-            # All forecast branches tie to the same committed value over the
-            # jump; group to one row per (process, period, step).
             fix_online_df = (pl.concat(_parts)
-                             .group_by(["process", "period", "step"])
-                             .agg(pl.col("value").max())
                              .sort(["process", "period", "step"]))
 
     # ---- online_history: trailing realized committed v_startup/v_shutdown ----
