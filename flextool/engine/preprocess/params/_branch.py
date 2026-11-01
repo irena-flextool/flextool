@@ -1340,12 +1340,13 @@ def d_leaf_lf(
     ctx: "object | None" = None,
     provider: "object | None" = None,
 ) -> pl.LazyFrame:
-    """``d_leaf`` — (d, leaf) scenario-leaf PARTITION of ``period_in_use``.
+    """``d_leaf`` — (d, leaf) scenario-path RELATION over ``period_in_use``.
 
-    Each in-use period maps to exactly ONE scenario leaf (design §7.2):
-    real-named anchors → the ``"__anchor"`` leaf (the real-named
-    calendar-anchor chain, not a "realized" scenario); synthetic fan
-    members → their time-branch id (``tb_of[m]``).  Because the
+    Without a fan every in-use period is on the one ``"__anchor"`` leaf.
+    With a fan there is one leaf per forecast time-branch: its own branch
+    periods, the shared pre-reveal periods and the period labels of its fan
+    periods (period-level ancestors: no dispatch, a here-and-now investment
+    under ``stochastic_invest_method = none``); no ``"__anchor"`` leaf.  Because the
     continuation fan starts at the solve's first step (§K), leaves
     PARTITION the invest axis — no period is on two leaves — so the map
     is well-defined and the per-leaf invest sums are disjoint.
@@ -1380,6 +1381,21 @@ def d_leaf_lf(
     # pre-reveal anchors, so each branch leaf gains nothing and the map is
     # identical to the legacy partition.
     labeled = _lineage_leaves(anchors, pos, synthetic, anchor_of, tb_of)
+    if synthetic:
+        # A fan's period labels have no dispatch, so the ``__anchor`` chain (pre-reveal periods + labels) is not
+        # an operational path.  Each branch leaf holds the labels of its own fan periods as their period-level
+        # ancestors instead: a here-and-now investment at a label (stochastic_invest_method = none) counts on
+        # every branch path; under recourse the label has no investment column, so nothing is double counted.
+        labels = fan_period_labels(set(pb_rows))
+        joined: list[tuple[str, list[str]]] = []
+        for label, members in labeled:
+            if label == "__anchor":
+                continue
+            ancestors = [anchor_of[m] for m in members if m in anchor_of and anchor_of[m] in labels]
+            joined.append((label, list(dict.fromkeys(
+                sorted(members + [a for a in ancestors if a not in members],
+                       key=lambda x: pos[x] if x in pos else pos[anchor_of[x]])))))
+        labeled = joined
     rows: list[tuple[str, str]] = []
     for label, members in labeled:
         rows += [(d, label) for d in members]

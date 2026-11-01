@@ -298,13 +298,12 @@ def _read_singles(path: Path,
 
 
 # ---------------------------------------------------------------------------
-# #82 -- the anchor (reveal / continuation self-row) takes the realized
-# branch's pbt value in the 7/9-branch cascade; there is no reference-forecast
-# fallback (owner decision c20 / #82): a forecasts-only cohort that authors a
-# stochastic-time value with no realized: yes designation is an input error,
-# as is a partial-coverage stochastic-time value.  See docs/how_to.md
-# "Stochastics over multiple periods" and the owner decision in
-# specs/owner_decisions.md.
+# A stochastic-time value of a fan: the forecast branch periods take their own
+# branch's value; the period label (the reveal / continuation self-row) has no
+# dispatch, so it needs no value of its own and a forecasts-only fan is valid.
+# A stochastic-time value that authors only part of a fan's forecasts is an
+# input error (never a silent class default).  See docs/how_to.md
+# "Stochastics over multiple periods".
 # ---------------------------------------------------------------------------
 
 def _anchor_fan_members(period_branch_csv: Path,
@@ -323,49 +322,6 @@ def _anchor_fan_members(period_branch_csv: Path,
     return out
 
 
-def _check_anchor_has_realized_branch(
-    pbt: dict[tuple, float],
-    n_ent: int,
-    anchor_members: dict[str, list[str]],
-    tb_for_d: dict[str, list[str]],
-    ts_for_d: dict[str, list[str]],
-) -> None:
-    """Raise when a reveal/continuation cohort carries a stochastic-time (rank-3) value on its
-    branches but has no ``realized: yes`` designation to own the anchor's / later continuation
-    periods' own row (owner decision c20 / #82: no reference-forecast fallback -- a realized
-    branch must be designated).
-
-    ``_stochastic.py`` deliberately leaves the REVEAL and CONTINUATION periods' own self-row
-    unowned in ``solve_branch__time_branch`` when the cohort is forecasts-only (binding it to any
-    one forecast would make a weight-0 phantom join that branch's scenario-lineage
-    weight-constancy chain in ``_branch.py``), so there is no value for the anchor / continuation
-    periods to take unless one branch is designated ``realized: yes``.  A cohort whose branches
-    carry no rank-3 data needs no realized branch (nothing for the anchor row to resolve), so only
-    a cohort with actually authored data trips this.
-
-    *pbt* keys are ``(*entity, param, branch, ts, time)`` (``n_ent`` entity-key columns), matching
-    :func:`_check_pbt_branch_coverage`'s indexing.
-    """
-    for anchor, members in anchor_members.items():
-        if tb_for_d.get(anchor):
-            continue  # a `realized: yes` row (or an upstream projection) already owns this anchor.
-        ts_list = ts_for_d.get(anchor, ())
-        if not ts_list:
-            continue
-        ts_set = frozenset(ts_list)
-        if not any(key[n_ent + 2] in ts_set for key in pbt):
-            continue
-        tokens = sorted({tb_for_d[m][0] for m in members if tb_for_d.get(m)})
-        raise FlexToolConfigError(
-            f"Period {anchor!r} branches into a forecasts-only fan {tokens} that authors a "
-            "stochastic-time (rank-3) value, but no branch in this solve is designated "
-            "realized: yes.  The anchor (trunk) period and any later continuation periods need a "
-            "committed branch to take their own value from -- there is no reference-forecast "
-            "fallback (#82).  Add a realized: yes row to this solve's stochastic_branches for one "
-            "of these branches."
-        )
-
-
 def _check_pbt_branch_coverage(
     pbt: dict[tuple, float],
     n_ent: int,
@@ -378,16 +334,17 @@ def _check_pbt_branch_coverage(
     left out (owner decision #82, point 2).
 
     *pbt* keys are ``(*entity, param, branch, ts, time)`` (``n_ent`` entity-key columns).  A cohort's
-    active-branch roster is the fan members' own tokens (*anchor_members* / *tb_for_d* -- the same
-    roster :func:`_check_anchor_has_realized_branch` reads); a roster of 0 or 1 members can never be
-    "partial", so those cohorts are skipped.
+    active-branch roster is the fan members' own tokens (*anchor_members* / *tb_for_d*); a roster of 0 or
+    1 members can never be "partial", so those cohorts are skipped.  The cohort's time starts are its
+    members' first steps (the period label has no steps of its own).
     """
     roster_by_ts: dict[str, frozenset[str]] = {}
     for anchor, members in anchor_members.items():
         tokens = frozenset(tb_for_d[m][0] for m in members if tb_for_d.get(m))
         if len(tokens) <= 1:
             continue
-        for ts in ts_for_d.get(anchor, ()):
+        starts = dict.fromkeys([*ts_for_d.get(anchor, ()), *(ts for m in members for ts in ts_for_d.get(m, ()))])
+        for ts in starts:
             roster_by_ts[ts] = tokens
     if not roster_by_ts:
         return
@@ -592,7 +549,6 @@ class PdtLookup:
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
         anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
         _check_pbt_branch_coverage(self._pbt, 1, anchor_members, self._tb_for_d, self._ts_for_d)
-        _check_anchor_has_realized_branch(self._pbt, 1, anchor_members, self._tb_for_d, self._ts_for_d)
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d, key_cols=["e", "param", "d"],
                                              period_pos=2, periods=list(self._ts_for_d))
         self._pdt = inherit_pd_branch_periods(self._pdt, self._pe_for_d, key_cols=["e", "param", "d", "t"],
@@ -709,7 +665,6 @@ class PdtLookupPerSide:
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
         anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
         _check_pbt_branch_coverage(self._pbt, 2, anchor_members, self._tb_for_d, self._ts_for_d)
-        _check_anchor_has_realized_branch(self._pbt, 2, anchor_members, self._tb_for_d, self._ts_for_d)
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d,
                                              key_cols=["p", "side", "param", "d"], period_pos=3,
                                              periods=list(self._ts_for_d))

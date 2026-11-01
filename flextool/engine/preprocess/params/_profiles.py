@@ -75,7 +75,6 @@ from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
 from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
-    _check_anchor_has_realized_branch,
     _check_pbt_branch_coverage,
 )
 from flextool.engine.input._axis_enums import (
@@ -575,7 +574,6 @@ def _profile_stochastic_lf(workdir: Path | None,
             for row in pbt.filter(pl.col("profile").is_in(stoch_active)).iter_rows(named=True)
         }
         _check_pbt_branch_coverage(pbt_dict, 1, anchor_members, tb_for_d, ts_for_d)
-        _check_anchor_has_realized_branch(pbt_dict, 1, anchor_members, tb_for_d, ts_for_d)
 
     # Branch 1: stochastic UNION fold.
     # For each (p, d, t): sum pbt[p, tb, ts, t] over (tb, ts) ∈

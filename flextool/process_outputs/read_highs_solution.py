@@ -649,6 +649,15 @@ def _load_canonical_dt_order(
     return None
 
 
+def _fan_labels(flex_data) -> set[str]:
+    """The period labels of the solve's stochastic fans (``fan_period_labels`` of ``period_branch_full``)."""
+    pbf = getattr(flex_data, "period_branch_full", None) if flex_data is not None else None
+    if pbf is None or pbf.height == 0:
+        return set()
+    from flextool.engine.preprocess.params._branch import fan_period_labels
+    return fan_period_labels({(str(a), str(b)) for a, b in zip(pbf["d"].to_list(), pbf["b"].to_list())})
+
+
 def _load_canonical_d_order(
     solve_name: str,
     *,
@@ -873,9 +882,18 @@ def extract_variable(
             realized_invest = _load_realized_invest_periods_list(
                 realized_periods_csv, provider=provider,
             )
-            if realized_invest is not None and not realized_invest:
+            no_invest = realized_invest is not None and not realized_invest
+            labels = _fan_labels(flex_data) if realized_invest else set()
+            if no_invest:
                 canonical_d = []
-            elif (getattr(flex_data, "recourse_invest", False)
+            elif labels:
+                # A period label of a stochastic fan has no dispatch, so it is not on the dispatch axis, but it
+                # is where the solve realizes its here-and-now investment (stochastic_invest_method = none; no
+                # column under recourse, so a 0 row): add the realized-invest labels.
+                base = list(canonical_d or [])
+                canonical_d = base + [p for p in realized_invest if p in labels and p not in base]
+            if (not no_invest
+                  and getattr(flex_data, "recourse_invest", False)
                   and _output_horizon_enabled(work_folder, provider=provider)):
                 # Slice D §11.2: surface the non-realized branch invest
                 # rows under ``output_horizon``.  The in-memory

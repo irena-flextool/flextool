@@ -146,7 +146,10 @@ def leaf_rows(terms: pl.DataFrame, key: str, var: Var, d_leaf: "pl.DataFrame | N
     the scenario tree's ``(d, leaf)`` pairs (``d_leaf``), and ``rows = mask.select(key,
     "leaf").unique()``.  A ``(key, leaf)`` combination with no ``d`` (that key has no
     variable/member in that leaf) therefore gets no row at all, instead of a constants-only row
-    that would be infeasible for a ``>=`` family and a no-op for ``<=``.
+    that would be infeasible for a ``>=`` family and a no-op for ``<=``.  Leaves of one key with
+    the same ``d`` support (the period labels' here-and-now investment is on every branch path)
+    collapse to the first sorted leaf; when every key then has one row, the legacy shape is
+    returned.
     """
     if d_leaf is None or getattr(d_leaf, "height", 0) == 0:
         return False, terms.select(key).unique(), terms
@@ -157,6 +160,14 @@ def leaf_rows(terms: pl.DataFrame, key: str, var: Var, d_leaf: "pl.DataFrame | N
     if leaves.height == 0 or leaves["leaf"].n_unique() <= 1:
         return False, terms.select(key).unique(), terms
     mask = terms.join(leaves_all, on="d", how="inner")
+    # Leaves of one key with the SAME d-support give the same row (e.g. a here-and-now investment at a period
+    # label, on every branch path): keep the first sorted leaf.  When that leaves one row per key, the rows are the
+    # legacy single-path shape (each key's row sums its whole support).
+    support = (mask.group_by(key, "leaf").agg(pl.col("d").cast(pl.Utf8).sort().alias("__support"))
+               .sort(key, "leaf").unique(subset=[key, "__support"], keep="first", maintain_order=True))
+    mask = mask.join(support.select(key, "leaf"), on=[key, "leaf"], how="semi")
+    if support.group_by(key).len()["len"].max() <= 1:
+        return False, terms.select(key).unique(), terms
     rows = mask.select(key, "leaf").unique()
     return True, rows, mask
 
