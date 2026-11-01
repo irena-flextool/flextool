@@ -17,6 +17,11 @@
   `penalty_method = off`, the run stops before that solve with an error naming the node and the time
   step.
 
+- **Under `stochastic_invest_method = recourse`, `cumulative_max_capacity` / `cumulative_min_capacity` now
+  apply to every forecast branch.** The cumulative-capacity limit of a `cumulative_limits` entity sat on the
+  period's original name, which has no investment under recourse: a `cumulative_min_capacity` made the solve
+  infeasible, and neither limit constrained the forecast branches' investment.
+
 - **A stochastic fan now has no dispatch of its own under the period's original name.** The period that
   opens a fan (and every later period of it) keeps its name only for period-level bookkeeping: its
   investment (under `stochastic_invest_method = none`, seen by every forecast), years and discounting.

@@ -717,8 +717,19 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
             if methods_for_e.get(e, set()) & _DIVEST_PERIOD_METHODS]
     _emit_tuples(provider, "solve_data/ed_divest_period.csv",
                  ("entity", "period"), rows)
-    rows = [(e, d) for e, d in ed_invest_pairs
-            if "cumulative_limits" in methods_for_e.get(e, set())]
+    # Under recourse the cumulative-capacity rows sit on the invest axis ``v_invest`` has: each
+    # anchor period's branch periods, never the period label (no column there, so a label row
+    # would read ``0 ≥ cumulative_min_capacity``).  Flag-off the expansion returns the period
+    # itself (byte-parity).
+    invest_axis_of: dict[str, list[str]] = {}
+    rows = []
+    for e, d in ed_invest_pairs:
+        if "cumulative_limits" not in methods_for_e.get(e, set()):
+            continue
+        if d not in invest_axis_of:
+            invest_axis_of[d] = _expand_invest_branch_periods(
+                [d], solve_data_dir.parent, provider=provider) or []
+        rows.extend((e, d_axis) for d_axis in invest_axis_of[d])
     _emit_tuples(provider, "solve_data/ed_invest_cumulative.csv",
                  ("entity", "period"), rows)
 

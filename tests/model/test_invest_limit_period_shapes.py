@@ -38,7 +38,10 @@ TESTS_JSON = REPO / "tests" / "fixtures" / "tests.json"
 DET = ["init", "base"]
 REC = ["init", "base", "stoch", "recourse"]
 DET_PERIODS = ["p2035", "p2040"]
-REC_PERIODS = DET_PERIODS + [f"{a}_{b}" for a in DET_PERIODS for b in ("high", "low")]
+# Recourse periods: the period labels p2035 / p2040 (bookkeeping: parameters may carry them) and the forecast
+# branches.  The invest axis is the branches only: a label has no invest column under recourse.
+REC_INVEST_PERIODS = [f"{a}_{b}" for a in DET_PERIODS for b in ("high", "low")]
+REC_PERIODS = DET_PERIODS + REC_INVEST_PERIODS
 GROUP_ENTS = [["group", "ginv", None], ["group__unit", ["ginv", "peaker"], None]]
 
 
@@ -132,11 +135,12 @@ def _last(steps: dict):
                                               ("cumulative_max_capacity", "cumulative_limits")])
 @pytest.mark.parametrize("chain", ["det", "rec"])
 def test_constant_cap_reaches_p_entity_max_units(tmp_path_factory, param, inv_method, chain):
-    base_chain, periods = (DET, DET_PERIODS) if chain == "det" else (REC, REC_PERIODS)
+    base_chain, periods = (DET, DET_PERIODS) if chain == "det" else (REC, REC_INVEST_PERIODS)
     const = _solve(tmp_path_factory, [method("peaker", inv_method), ["unit", "peaker", param, S(20)]], base_chain)
     ref = _solve(tmp_path_factory, [method("peaker", inv_method), ["unit", "peaker", param, M(20)]], base_chain)
     _assert_same(const, ref)
-    # peaker: existing 0, unitsize 1 -> max units = the cap, in every period (branch periods included).
+    # peaker: existing 0, unitsize 1 -> max units = the cap, in every invest period (the branch periods
+    # under recourse).
     assert _rows(_last(const).flex_data, "p_entity_max_units", "e", "peaker") == {d: 20.0 for d in periods}
 
 
@@ -208,6 +212,28 @@ def test_family_constant_equals_map(tmp_path_factory, case, chain):
     _assert_same(const, ref)
     rows = _rows(_last(const).flex_data, field, col, fent)
     assert rows and set(rows) <= set(periods) and all(x == float(v) for x in rows.values()), rows
+
+
+def test_recourse_cumulative_rows_on_the_invest_axis(tmp_path_factory):
+    """Under recourse the cumulative-capacity rows sit on the forecast branch periods (the invest axis), never
+    on a period label: the label has no invest column, so a label row read ``0 >= cumulative_min_capacity``
+    and made the solve infeasible.  The floor binds on every branch path:
+
+        v_invest[p2035_b] >= 30                        (cumulative capacity in p2035_b)
+        v_invest[p2035_b] + v_invest[p2040_b] >= 30    (in p2040_b, the p2035_b investment still alive)
+    """
+    steps = _solve(tmp_path_factory, [method("peaker", "cumulative_limits"),
+                                      ["unit", "peaker", "cumulative_max_capacity", M(50)],
+                                      ["unit", "peaker", "cumulative_min_capacity", M(30)]], REC)
+    step = _last(steps)
+    rows = utf8(step.flex_data.ed_invest_cumulative).filter(pl.col("e") == "peaker")
+    assert set(rows["d"].to_list()) == set(REC_INVEST_PERIODS)
+    inv = {str(d): v for d, v in utf8(step.solution.value("v_invest_p")).filter(pl.col("p") == "peaker")
+           .select("d", "value").iter_rows()}
+    assert set(inv) == set(REC_INVEST_PERIODS)
+    for b in ("high", "low"):
+        assert inv[f"p2035_{b}"] >= 30.0 - 1e-6, inv
+        assert inv[f"p2035_{b}"] + inv[f"p2040_{b}"] >= 30.0 - 1e-6, inv
 
 
 # ---------------------------------------------------------------------------
