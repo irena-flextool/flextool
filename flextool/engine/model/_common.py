@@ -18,6 +18,15 @@ def _has_rows(frame) -> bool:
     return frame is not None and frame.height > 0
 
 
+def dispatch_periods(d) -> pl.DataFrame:
+    """``(d,)``: the periods that have dispatch, i.e. the periods of ``dt``.
+
+    ``period_in_use_set`` also holds the period labels of a stochastic fan (bookkeeping only: investment, years,
+    lineage), which have no (d, t) rows; rows over operational sums take their periods from here.
+    """
+    return d.dt.select("d").unique(maintain_order=True)
+
+
 def _var_view(v: Var, suffix: str, rename: dict, *, to_axis: bool = False) -> Var:
     """``v`` with renamed dims and the same columns.
 

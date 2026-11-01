@@ -91,6 +91,7 @@ from flextool.engine.model._common import (
     _entity_rows,
     _has_rows,
     _indirect_sum_arcs,
+    dispatch_periods,
     _utf8_keys,
     _var_view,
     chain_prior,
@@ -963,7 +964,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
     # ─── EQ. ─── rp_inter_period_balance ─────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_state_inter[n,d,b] − v_state_inter[n,d′,b′] = drift[n,d,b]
-    #   drift[n,d,b] = Σ_{(d,b,r) ∈ rp_base__rep, (d,r) ∈ rp_block_first, d ∈ period_in_use}
+    #   drift[n,d,b] = Σ_{(d,b,r) ∈ rp_base__rep, (d,r) ∈ rp_block_first, d ∈ periods of dt}
     #                    rp_weight[d,b,r] · (v_state[n,d,last_step[d,r]] − v_state_rp_start[n,d,r])
     #   ∀ n ∈ nodeState_rp, (d,b,b′) ∈ rp_base_chain, d′ = d                         (within a period)
     #   ∀ n ∈ bind_within_solve_blended_weights ∪ bind_forward_only_blended_weights,
@@ -1040,7 +1041,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state_inter[n,d,b] + Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
     #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]  ≤  state_upper[n,d]
-    #   ∀ n ∈ nodeState_rp, (d,b) ∈ rp_base_period, d ∈ period_in_use
+    #   ∀ n ∈ nodeState_rp, (d,b) ∈ rp_base_period, d ∈ periods of dt
     # v_state_rp_start[n,d,t] + (same invest/divest terms)  ≤  state_upper[n,d]
     #   ∀ (n,d,t) ∈ nodeState_rp × rp_block_first
     # Capacity bounds of the boundary and block-start states, as maxState
@@ -1050,7 +1051,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
         base_periods = typed(d.rp_base_period_set)
         if _has_rows(d.period_in_use_set):
             base_periods = base_periods.join(
-                d.period_in_use_set.select(pl.col("d").cast(pl.Utf8).cast(d_dtype, strict=False)).unique(),
+                dispatch_periods(d).select(pl.col("d").cast(pl.Utf8).cast(d_dtype, strict=False)).unique(),
                 on="d", how="inner")
         over = nodes.join(base_periods.select("d", "b"), how="cross").select("n", "d", "b")
         if over.height > 0:
@@ -1099,7 +1100,8 @@ def _rp_weighted_drift(b: _Build, nodes: pl.DataFrame):
     cohort = (rep.join(block_first, on=["d", "r"], how="inner")
               .join(last_step, on=["d", "r"], how="inner"))
     if d.period_in_use_set is not None:
-        cohort = cohort.join(d.period_in_use_set, on="d", how="inner")
+        cohort = cohort.join(dispatch_periods(d).with_columns(pl.col("d").cast(pl.Utf8).cast(d_dtype, strict=False)),
+                             on="d", how="inner")
     if cohort.height == 0:
         return None
     keys = ("d", "b", "r", "last_step")
@@ -1492,7 +1494,7 @@ def _eq_node_balance_period(b: _Build) -> None:
     # ─── EQ. ─── nodeBalancePeriod_eq ────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_t w[d,t] · (flow and slack terms of nodeBalance_eq)[n,d,t]  =  −Σ_t w[d,t] · inflow[n,d,t]
-    #   ∀ n ∈ nodeBalancePeriod, n ∉ nodeState, d ∈ period_in_use;   w = timestep_weight
+    #   ∀ n ∈ nodeBalancePeriod, n ∉ nodeState, d ∈ periods of dt;   w = timestep_weight
     # Energy balance over a whole period instead of every step, in MWh.  The
     # terms are b.node_balance_flow_terms (Δt already applied); period nodes
     # are never storage, so there are no state terms.
@@ -1502,7 +1504,7 @@ def _eq_node_balance_period(b: _Build) -> None:
     # parts (inflation_op, period_share) are per period and cancel in a row.
     # Inflow is energy per step (no Δt), as in nodeBalance_eq.
     over = (d.nodeBalancePeriod.select("n").lazy()
-            .join(d.period_in_use_set.select("d").lazy(), how="cross"))
+            .join(dispatch_periods(d).lazy(), how="cross"))
     if _has_rows(d.nodeState):
         over = over.join(d.nodeState.select("n").lazy(), on="n", how="anti")
     over = over.select("n", "d").collect()

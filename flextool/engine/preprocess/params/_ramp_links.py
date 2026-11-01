@@ -40,6 +40,23 @@ def ramp_link_from_jump(steps: "pl.DataFrame | None",
     return out.collect()
 
 
+def _with_fan_members(hit: pl.DataFrame, anchors: pl.DataFrame, firsts: pl.DataFrame,
+                      period_branch: "pl.DataFrame | None") -> pl.DataFrame:
+    """*hit* (the first steps of this roll's periods that take a carry) plus the forecast branch periods of the
+    carried *anchors* that start at the same step.  An anchor may be a period label, which has no steps of its
+    own (it is not in *firsts*): its branches continue from the carried step all the same."""
+    if period_branch is None or period_branch.height == 0 or anchors.height == 0:
+        return hit
+    pb = (period_branch.select(pl.col("period").cast(pl.Utf8).alias("d"),
+                               pl.col("branch").cast(pl.Utf8).alias("b"))
+          .filter(pl.col("d") != pl.col("b")))
+    branches = (anchors.join(pb, on="d", how="inner")
+                .join(firsts.select("d", "t").rename({"d": "b", "t": "t_b"}), on="b", how="inner")
+                .filter(pl.col("t_b") == pl.col("t"))
+                .select(pl.col("b").alias("d"), "t"))
+    return pl.concat([hit, branches]).unique(maintain_order=True)
+
+
 def ramp_roll_carry(dt: "pl.DataFrame | None",
                     carried_step: "pl.DataFrame | None",
                     first_step_link: "pl.DataFrame | None",
@@ -83,18 +100,10 @@ def ramp_roll_carry(dt: "pl.DataFrame | None",
         pl.col("previous_period").cast(pl.Utf8).alias("d_previous"),
         pl.col("previous_within_solve").cast(pl.Utf8).alias("t_previous"),
         pl.col("jump").cast(pl.Utf8).cast(pl.Float64, strict=False).alias("jump"))
-    hit = (firsts.join(link, on=["d", "t"], how="inner")
-           .filter((pl.col("jump") == 1.0) & (pl.col("d_previous") == c_d) & (pl.col("t_previous") == c_t))
-           .select("d", "t"))
-    if period_branch is not None and period_branch.height > 0 and hit.height > 0:
-        pb = (period_branch.select(pl.col("period").cast(pl.Utf8).alias("d"),
-                                   pl.col("branch").cast(pl.Utf8).alias("b"))
-              .filter(pl.col("d") != pl.col("b")))
-        branches = (hit.join(pb, on="d", how="inner")
-                    .join(firsts.rename({"d": "b", "t": "t_b"}), on="b", how="inner")
-                    .filter(pl.col("t_b") == pl.col("t"))
-                    .select(pl.col("b").alias("d"), "t"))
-        hit = pl.concat([hit, branches]).unique(maintain_order=True)
+    anchors = (link.filter((pl.col("jump") == 1.0) & (pl.col("d_previous") == c_d) & (pl.col("t_previous") == c_t))
+               .select("d", "t"))
+    hit = _with_fan_members(firsts.join(anchors, on=["d", "t"], how="inner").select("d", "t"),
+                            anchors, firsts, period_branch)
     if rp_block_first is not None and rp_block_first.height > 0:
         hit = hit.join(rp_block_first.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique(),
                        on=["d", "t"], how="anti")
@@ -157,18 +166,10 @@ def online_roll_carry_steps(dt: "pl.DataFrame | None",
             pl.col("period").cast(pl.Utf8).alias("d"), pl.col("time").cast(pl.Utf8).alias("t"),
             pl.col("previous_period").cast(pl.Utf8).alias("d_previous"),
             pl.col("previous_within_solve").cast(pl.Utf8).alias("t_previous"))
-        hit = (firsts.join(link, on=["d", "t"], how="inner")
-               .filter((pl.col("d_previous") == c_d) & (pl.col("t_previous") == c_t))
-               .select("d", "t"))
-        if period_branch is not None and period_branch.height > 0 and hit.height > 0:
-            pb = (period_branch.select(pl.col("period").cast(pl.Utf8).alias("d"),
-                                       pl.col("branch").cast(pl.Utf8).alias("b"))
-                  .filter(pl.col("d") != pl.col("b")))
-            branches = (hit.join(pb, on="d", how="inner")
-                        .join(firsts.select("d", "t").rename({"d": "b", "t": "t_b"}), on="b", how="inner")
-                        .filter(pl.col("t_b") == pl.col("t"))
-                        .select(pl.col("b").alias("d"), "t"))
-            hit = pl.concat([hit, branches]).unique(maintain_order=True)
+        anchors = (link.filter((pl.col("d_previous") == c_d) & (pl.col("t_previous") == c_t))
+                   .select("d", "t"))
+        hit = _with_fan_members(firsts.join(anchors, on=["d", "t"], how="inner").select("d", "t"),
+                                anchors, firsts.select("d", "t"), period_branch)
     if hit.height == 0:
         # Fallback: the roll's own first step in timeline order (dt's row order), not a (d, t) name sort.
         hit = firsts.sort("__i").head(1).select("d", "t")

@@ -59,7 +59,10 @@ from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.preprocess.params._branch import (
     active_branch_anchor_pairs,
+    fan_period_labels,
     inherit_active_branch_periods,
+    period_branch_pairs_lf,
+    period_in_use_set_lf,
 )
 from flextool.engine.preprocess.params._direct import _e_period_param_union
 from flextool.engine.preprocess.params._per_solve_sets import (
@@ -642,6 +645,11 @@ def dt_and_step_duration_from_source(
             pt_e = cast_frame_axes(pt_e, _live)
             at_e = cast_frame_axes(at_e, _live)
         pt = pl.concat([pt_e, at_e]).unique().lazy()
+        # A period label (the original name of a period that opens a fan) is in period_in_use_set for the
+        # period-level bookkeeping but has no dispatch: it gets no (d, t) rows.
+        labels = _labels_of_pairs(pb_raw["period"].to_list(), pb_raw["branch"].to_list())
+        if labels:
+            realized_p = realized_p.filter(~pl.col("d").cast(pl.Utf8).is_in(sorted(labels)))
 
     tl_dur = _try_param(source, "timeline", "timestep_duration")
     if tl_dur is None:
@@ -807,6 +815,27 @@ def periods_of_dt(dt: "pl.DataFrame | None") -> list[str]:
     if dt is None or dt.height == 0:
         return []
     return [str(x) for x in dt["d"].unique(maintain_order=True).to_list()]
+
+
+def _labels_of_pairs(periods: list, branches: list) -> set[str]:
+    """The period labels (:func:`._branch.fan_period_labels`) of ``period__branch`` given as two columns."""
+    return fan_period_labels({(str(a), str(b)) for a, b in zip(periods, branches)})
+
+
+def bookkeeping_periods(dt: "pl.DataFrame | None", workdir, *, ctx=None,
+                        provider: "object | None" = None) -> list[str]:
+    """The periods of ``dt`` (in dt order) followed by the solve's period labels (sorted).
+
+    A period label (the original name of a period that opens a stochastic fan) has no (d, t) rows but is a period
+    of the solve for period-level bookkeeping (years, investment costs).
+    """
+    dt_periods = periods_of_dt(dt)
+    pb = period_branch_pairs_lf(workdir, ctx=ctx, provider=provider).collect()
+    labels = _labels_of_pairs(pb["d"].to_list(), pb["b"].to_list())
+    if not labels:
+        return dt_periods
+    piu = {str(d) for d in period_in_use_set_lf(workdir, ctx=ctx, provider=provider).collect()["d"].to_list()}
+    return dt_periods + sorted(d for d in labels if d in piu and d not in dt_periods)
 
 
 def p_years_represented_d_from_source(
@@ -1676,13 +1705,15 @@ def apply_derived_a(
                 ("d",), flex_data.p_period_share.frame.with_columns(value=pl.lit(1.0, dtype=pl.Float64)))
 
     # 2b. p_years_represented_d — per-period R width sum (e.g. 5.0 for a
-    # 5-year invest period) over the periods of the solve's dt; consumed
-    # by ``process_outputs.read_parameters`` to scale annualised
-    # per-period costs / CO2 to absolute totals.  The provider arm reads
-    # the canonical CSV, which carries the anchor's years on every
-    # stochastic branch period.
+    # 5-year invest period) over the periods of the solve's dt and its
+    # period labels (a label has no dt rows but keeps its years for the
+    # period-level costs); consumed by ``process_outputs.read_parameters``
+    # to scale annualised per-period costs / CO2 to absolute totals.  The
+    # provider arm reads the canonical CSV, which carries the anchor's
+    # years on every stochastic branch period.
     flex_data.p_years_represented_d = p_years_represented_d_from_source(
-        source, active_solve, periods_of_dt(usable_dt), provider=provider)
+        source, active_solve, bookkeeping_periods(usable_dt, workdir, ctx=ctx, provider=provider),
+        provider=provider)
 
     # 3. p_inflation_op — Δ.12b: unconditional.  None == no inflation
     #    declared; the multi-year cascade in apply_derived_c overlays
@@ -4097,8 +4128,16 @@ def edd_divest_active_from_source(source: "InputSource",
                                       entity_col: str = "p",
                                       provider: "object | None" = None,
                                       lineage: pl.DataFrame | None = None,
+                                      workdir: Path | None = None,
+                                      ctx: "SolveContext | None" = None,
                                       ) -> pl.DataFrame | None:
     """Build the active-divest (entity_col, d_divest, d) tuples — see audit §3.7.3.
+
+    With *workdir* (or *ctx*) the period domain is the solve's ``period_in_use_set``, which also holds the
+    forecast branch periods of a stochastic fan; a branch period has the years of its anchor period.  A divest
+    at a period then reduces the capacity of the branch periods it reaches (a here-and-now divest every branch,
+    a recourse branch divest its own branch through the lineage filter) — the branch periods have the dispatch,
+    the period label of a fan has none.
 
     pd_divest ⊆ ed_divest with ``entity_col ∈ {process, node}``; the active
     set further filters d_divest ≤ d using year ordering. ``entity_col``
@@ -4131,7 +4170,21 @@ def edd_divest_active_from_source(source: "InputSource",
     pyd_lf = _p_years_d_lf(source, active_solve, provider=provider)
     if pyd_lf is None:
         return None
-    periods = _period_in_use_set(source, active_solve, provider=provider)
+    periods = _period_in_use_set(source, active_solve, workdir, provider=provider, ctx=ctx)
+    if workdir is not None or ctx is not None:
+        pb = period_branch_pairs_lf(workdir, ctx=ctx, provider=provider).collect()
+        pairs = [(str(a), str(b)) for a, b in zip(pb["d"].to_list(), pb["b"].to_list()) if str(a) != str(b)]
+        if pairs:
+            pyd = pyd_lf.collect()
+            yr_of = {str(dd): y for dd, y in zip(pyd["d"].to_list(), pyd["yr"].to_list())}
+            extra = [(b, yr_of[a]) for a, b in pairs if a in yr_of and b not in yr_of]
+            if extra:
+                branch_yr = pl.DataFrame({"d": [b for b, _ in extra], "yr": [y for _, y in extra]},
+                                         schema={"d": pl.Utf8, "yr": pyd.schema["yr"]})
+                merged = pl.concat([pyd.with_columns(pl.col("d").cast(pl.Utf8)), branch_yr])
+                if _live is not None:
+                    merged = cast_frame_axes(merged, _live)
+                pyd_lf = merged.lazy()
     if not periods:
         return pl.DataFrame(schema={
             entity_col: schema_dtype(_enums, entity_col),
@@ -6351,7 +6404,7 @@ def apply_derived_c(
     try:
         edda_db = edd_divest_active_from_source(
             source, active_solve, pd_div_used,
-            provider=provider, lineage=_c_lineage)
+            provider=provider, lineage=_c_lineage, workdir=workdir, ctx=ctx)
     except LineageFilterError:
         raise
     except Exception:
@@ -6363,7 +6416,7 @@ def apply_derived_c(
     try:
         ndda_db = edd_divest_active_from_source(
             source, active_solve, nd_div_used,
-            entity_col="n", provider=provider, lineage=_c_lineage)
+            entity_col="n", provider=provider, lineage=_c_lineage, workdir=workdir, ctx=ctx)
     except LineageFilterError:
         raise
     except Exception:
@@ -6994,13 +7047,21 @@ def _expand_invest_branch_periods(period_invest: "list[str] | None",
     columns.  Flag-off (or empty axis) → returns ``period_invest``
     unchanged (byte-parity).  Reuses — does not fork — the dispatch-side
     helper so invest and dispatch axes stay consistent.
+
+    Under recourse a period label (the original name of a period that
+    opens a fan, :func:`._branch.fan_period_labels`) has no investment
+    column: every forecast branch invests on its own after the reveal,
+    so nothing is invested here-and-now at the label.
     """
     if not period_invest:
         return period_invest
     if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
         return period_invest
-    return _expand_branch_periods(list(period_invest), workdir,
-                                     ctx=ctx, provider=provider)
+    expanded = _expand_branch_periods(list(period_invest), workdir,
+                                      ctx=ctx, provider=provider)
+    pb = period_branch_pairs_lf(workdir, ctx=ctx, provider=provider).collect()
+    labels = _labels_of_pairs(pb["d"].to_list(), pb["b"].to_list())
+    return [d for d in expanded if str(d) not in labels]
 
 
 def _dt_period_active_steps_from_workdir(
@@ -7087,6 +7148,10 @@ def _dt_period_active_steps_from_workdir(
         if d and d not in seen:
             period_order.append(d)
             seen.add(d)
+    # A period label is in period_in_use_set for the period-level bookkeeping but has no active steps.
+    pb_wd = period_branch_pairs_lf(workdir, ctx=ctx, provider=provider).collect()
+    labels = _labels_of_pairs(pb_wd["d"].to_list(), pb_wd["b"].to_list())
+    period_order = [d for d in period_order if str(d) not in labels]
     if not period_order:
         return None
     # Timeline lookup: per period, the timeline is whichever timeline
@@ -7340,6 +7405,9 @@ def _dt_period_active_steps(source: "InputSource",
             if (anchor in anchor_to_ts
                     and branch not in anchor_to_ts):
                 anchor_to_ts[branch] = anchor_to_ts[anchor]
+        # A period label has no dispatch: it has no active steps.
+        for label in _labels_of_pairs(pbf["period"].to_list(), pbf["branch"].to_list()):
+            anchor_to_ts.pop(label, None)
     if not anchor_to_ts:
         return None
     # Use axis_lazyframe so ``d`` carries the global Enum vocabulary
@@ -7619,6 +7687,7 @@ def dtttdt_with_jump_from_source(source: "InputSource",
     # branches off a non-self anchor.
     branch_anchor: dict[str, str] = {}
     anchors_with_self: set[str] = set()
+    anchor_order: list[str] = []
     pbf: pl.DataFrame | None = None
     period_col, branch_col = "period", "branch"
     # Path B Cat B: prefer ctx.period_branch (schema [d_anchor, b]).
@@ -7650,6 +7719,7 @@ def dtttdt_with_jump_from_source(source: "InputSource",
         for a, b in pb_rows:
             if a == b:
                 anchors_with_self.add(a)
+                anchor_order.append(a)
         for a, b in pb_rows:
             if b != a and a in anchors_with_self:
                 branch_anchor[b] = a
@@ -7741,6 +7811,13 @@ def dtttdt_with_jump_from_source(source: "InputSource",
                     for qi in range(pos_anchor - 1, -1, -1):
                         if period_order[qi] in anchors_with_self:
                             wrap_period = period_order[qi]
+                            break
+                elif p_anchor is not None and p_anchor in anchor_order:
+                    # The anchor is a period label (no steps, not in period_order): walk the anchors in
+                    # period__branch order back from it to the nearest one with steps.
+                    for a in reversed(anchor_order[:anchor_order.index(p_anchor)]):
+                        if a in period_order:
+                            wrap_period = a
                             break
         else:
             if pi == 0:
@@ -8400,16 +8477,37 @@ def period_branch_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
-def dtttdt_forward_only_from_dtttdt(dtttdt: pl.DataFrame | None
-                                          ) -> pl.DataFrame | None:
+def dtttdt_forward_only_from_dtttdt(dtttdt: pl.DataFrame | None,
+                                    first_periods: "list[str] | None" = None,
+                                    ) -> pl.DataFrame | None:
     """``dtttdt`` sorted by (d, t), .slice(1) — drops the first wrap row
     so bind_forward_only nodes don't carry a state-change term across
     the very first step of the first period (mod:2188).
+
+    *first_periods* are the periods of ``period_first_of_solve``.  When a
+    stochastic fan opens in the solve's first period there are several
+    (its forecast branch periods; the period label has no steps): every
+    one of them starts the solve, so the first step of each is dropped.
     """
     if dtttdt is None or dtttdt.height == 0:
         return None
     out = dtttdt.sort("d", "t").slice(1)
+    if first_periods is not None and len(first_periods) > 1:
+        firsts = (dtttdt.filter(pl.col("d").cast(pl.Utf8).is_in([str(p) for p in first_periods]))
+                  .group_by("d").agg(pl.col("t").min()))
+        out = out.join(firsts, on=["d", "t"], how="anti")
     return out if out.height > 0 else None
+
+
+def read_period_first_of_solve(sd: Path, *, provider: "object | None" = None) -> "list[str] | None":
+    """The periods of ``solve_data/period_first_of_solve.csv``; None when absent."""
+    p = Path(sd) / "period_first_of_solve.csv"
+    if not _provider_has_key(provider, p):
+        return None
+    df = _provider_read(provider, p)
+    if df.height == 0 or "period" not in df.columns:
+        return None
+    return [str(x) for x in df["period"].to_list()]
 
 
 def dtttdt_block_interior_from_dtttdt(dtttdt: pl.DataFrame | None,
@@ -8610,7 +8708,9 @@ def apply_derived_e(
 
     # 1b. dtttdt-derived lag frames (storage-only). ------------------
     if has_state:
-        fwd = dtttdt_forward_only_from_dtttdt(dtttdt_db)
+        fwd = dtttdt_forward_only_from_dtttdt(
+            dtttdt_db, read_period_first_of_solve(Path(workdir) / "solve_data", provider=provider)
+            if workdir is not None else None)
         if fwd is not None:
             # The per-solve forward-only set counts too: it holds the fix_start_end nodes whose cyclic method the
             # solve ignores (_run_model._fix_start_end_chains_forward), which the DB does not call forward-only.

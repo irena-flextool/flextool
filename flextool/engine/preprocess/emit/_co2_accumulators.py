@@ -142,12 +142,10 @@ def compute_co2_rolling_accumulator(
     Returns ``[group, period, p_co2_cum_realized_tonnes]``.  Empty frame
     when no CO2-cap group is active.
 
-    ``realized_dispatch`` (below) marks (period, step) under the REAL
-    period name regardless of how the period branched: with a stochastic
-    fan that is the anchor/trunk, and the realized branch (``realized:
-    yes``) keeps the real name, so ``v_flow`` there already is the
-    realized branch's flow when one is designated — and the only
-    available rows when none is (unchanged by this fix either way, #59).
+    ``realized_dispatch`` (below) holds no cell of a stochastic fan: the
+    period label (the original period name) has no dispatch and the
+    forecast branches are never realized, so a fan's tonnes come only from
+    the realization solve's own extraction (#59).
 
     ``is_dispatch_sibling_parent`` (#59 fix 3, applied the same way as the
     commodity-ladder carry): True when THIS solve is the parent of an

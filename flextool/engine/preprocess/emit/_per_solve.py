@@ -27,6 +27,7 @@ import polars as pl
 
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
+from flextool.engine.preprocess.params._branch import fan_period_labels
 from flextool.engine.preprocess.params._derived import _expand_invest_branch_periods
 
 
@@ -123,6 +124,36 @@ def _project_column(df: pl.DataFrame, col_idx: int) -> list[str]:
     return [v for v in s.unique(maintain_order=True).to_list() if v]
 
 
+def _project_values(df: pl.DataFrame, col_idx: int) -> list[str]:
+    """The *col_idx* column as strings (blanks as ``""``), row order kept."""
+    if col_idx >= len(df.columns):
+        return []
+    return df[df.columns[col_idx]].cast(pl.Utf8).fill_null("").to_list()
+
+
+def _periods_with_labels(periods: list[str], pb_pairs: list[tuple[str, str]]) -> list[str]:
+    """*periods* (the periods with steps) with each period label inserted right before its first fan member.
+
+    A period label (:func:`~flextool.engine.preprocess.params._branch.fan_period_labels`) has no steps, but it is
+    a period of the solve for the period-level bookkeeping (investment, years, NPV, lineage), so the period set
+    keeps it at the position it had while it still had steps: just before the first of its ``period__branch``
+    members that has steps (appended at the end when none has).
+    """
+    labels = fan_period_labels(set(pb_pairs))
+    if not labels:
+        return periods
+    out = list(periods)
+    for label in [d for d, b in pb_pairs if d == b and d in labels]:
+        if label in out:
+            continue
+        members = [b for d, b in pb_pairs if d == label and b != label and b in out]
+        if members:
+            out.insert(min(out.index(m) for m in members), label)
+        else:
+            out.append(label)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Family A — per_solve_sets.write_per_solve_sets
 # ---------------------------------------------------------------------------
@@ -147,14 +178,16 @@ def emit_per_solve_sets(
     the ``dt_non_anticipativity_set.csv`` content — the single source of
     truth read back by ``_branch.dt_non_anticipativity_lf``:
 
-    * ``None`` (unset)      -> ``committed_dispatch u fix_storage`` union
-      (``committed_dispatch`` = ``realized_dispatch`` unless a realization
-      solve took over the solve's realized window);
+    * ``None`` (unset)      -> ``realized_dispatch u committed_in_fan u
+      fix_storage`` union (``committed_in_fan`` = the cells the solve
+      commits inside its fan, keyed on the period label, which has no
+      dispatch of its own);
     * ``[]`` (empty)        -> header-only (empty) set -> operations free
       from t0 (all four non_anticipativity_* families off);
     * ``[(p, p), ...]``     -> those periods' timesteps, intersected with
-      ``steps_in_use`` (the ONLY domain guard for the storage family,
-      which joins the (d,t) set on ``d`` alone — F7).
+      ``steps_in_use`` u ``label_steps`` (a period label keeps the steps
+      it had before the stochastic expansion; the ONLY domain guard for
+      the storage family, which joins the (d,t) set on ``d`` alone — F7).
 
     *na_invest_window* is the resolved v72 invest-NA window
     (``SolveConfig.non_anticipativity_invest_periods``, plain
@@ -170,6 +203,7 @@ def emit_per_solve_sets(
     input_dir = solve_data_dir.parent / "input"
 
     df = _read_csv(solve_data_dir / "period__branch.csv", ["period", "branch"], provider=provider)
+    branch_pairs = [(d, b) for d, b in zip(_project_values(df, 0), _project_values(df, 1)) if d and b]
     _emit_singles(provider, "solve_data/branch_set.csv", "branch",
                   _project_column(df, 1))
 
@@ -186,7 +220,7 @@ def emit_per_solve_sets(
     df = _read_csv(solve_data_dir / "steps_in_use.csv",
                    ["period", "time"], provider=provider)
     _emit_singles(provider, "solve_data/period_in_use_set.csv", "period",
-                  _project_column(df, 0))
+                  _periods_with_labels(_project_column(df, 0), branch_pairs))
     _emit_singles(provider, "solve_data/time_in_use_set.csv", "time",
                   _project_column(df, 1))
 
@@ -367,19 +401,18 @@ def emit_per_solve_sets(
     # emit_per_solve_sets docstring.
     dtna_seen: dict[tuple[str, str], None] = {}
     if na_window is None:
-        # Unset -> legacy realized_dispatch u fix_storage union
-        # (byte-identical to prior behaviour for every existing fixture).
-        # The committed window (``committed_dispatch``) equals the realized
-        # one except for a solve whose realized window a realization solve
-        # takes over: its ties still hold over the committed window.
-        a_df = _read_csv(solve_data_dir / "committed_dispatch.csv",
+        # Unset -> the committed window: realized_dispatch u fix_storage
+        # plus the cells committed inside the fan (``committed_in_fan``,
+        # keyed on the period label as the forecast star expects).  The
+        # fan cells are independent of whether a realization solve later
+        # takes over the realized window: the ties hold in this LP.
+        a_df = _read_csv(solve_data_dir / "realized_dispatch.csv",
                          ["period", "time"], provider=provider)
-        if a_df.height == 0:
-            a_df = _read_csv(solve_data_dir / "realized_dispatch.csv",
-                             ["period", "time"], provider=provider)
+        c_df = _read_csv(solve_data_dir / "committed_in_fan.csv",
+                         ["period", "time"], provider=provider)
         b_df = _read_csv(solve_data_dir / "fix_storage_timesteps.csv",
                          ["period", "time"], provider=provider)
-        for src in (a_df, b_df):
+        for src in (a_df, c_df, b_df):
             for d, t in zip(src["period"].to_list(), src["time"].to_list()):
                 if d and t and (d, t) not in dtna_seen:
                     dtna_seen[(d, t)] = None
@@ -392,8 +425,9 @@ def emit_per_solve_sets(
         # with steps_in_use (the emit-time domain guard the storage NA
         # family relies on — it joins the set on ``d`` only, F7).
         na_periods = {p for (p, _p_in) in na_window}
-        su_df = _read_csv(solve_data_dir / "steps_in_use.csv",
-                          ["period", "time"], provider=provider)
+        su_df = pl.concat([
+            _read_csv(solve_data_dir / name, ["period", "time"], provider=provider).select(pl.all().cast(pl.Utf8))
+            for name in ("steps_in_use.csv", "label_steps.csv")])
         for d, t in zip(su_df["period"].to_list(), su_df["time"].to_list()):
             if d and t and d in na_periods and (d, t) not in dtna_seen:
                 dtna_seen[(d, t)] = None
@@ -420,7 +454,9 @@ def emit_per_solve_sets(
     ]
     pin_use_df = _read_csv(solve_data_dir / "period_in_use_set.csv",
                            ["period"], provider=provider)
-    pin_use = [v for v in pin_use_df["period"].to_list() if v]
+    # Ladder purchases are operational: a period label (no dispatch) has none.
+    fan_labels = fan_period_labels(set(branch_pairs))
+    pin_use = [v for v in pin_use_df["period"].to_list() if v and v not in fan_labels]
     with_ladder = frozenset(
         v for v in _read_csv(solve_data_dir / "commodity_with_ladder.csv",
                              ["commodity"], provider=provider)["commodity"].to_list() if v

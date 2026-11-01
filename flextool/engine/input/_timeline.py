@@ -1517,6 +1517,17 @@ def make_step_jump(
                                 ) in period__branch:
                                     prev_anchor = period_names[kk]
                                     break
+                        elif p_anchor is not None:
+                            # The anchor is a period label (no steps, not
+                            # a key): walk the anchors in period__branch
+                            # order back from it to the nearest one with
+                            # steps.
+                            pb_anchors = [a for a, b in period__branch if a == b]
+                            if p_anchor in pb_anchors:
+                                for a in reversed(pb_anchors[:pb_anchors.index(p_anchor)]):
+                                    if a in period_names:
+                                        prev_anchor = a
+                                        break
                         if prev_anchor is not None:
                             jump = (
                                 active_time[j].index

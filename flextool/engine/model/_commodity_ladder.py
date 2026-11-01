@@ -198,6 +198,9 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *, provider=None) -> dict
     # untouched period, so including the whole years_represented domain (even periods not yet reached)
     # is harmless. None when the inputs are absent (e.g. a synthetic fixture that skips the derived-param
     # pass) -- the cap row then falls back to the plain Sigma f_d_k of the pre-fix formula.
+    # A period label of a stochastic fan has no dispatch (hours_in_period 0): its weight is the realized hours
+    # of earlier solves only, and every branch path (d_leaf) holds the label with its own branch periods, so a
+    # path counts the realized history once and this solve's hours once.
     p_cum_weight = None
     pyr_raw = _provider_get(provider, "solve_data/p_years_represented.csv")
     if pyr_raw is not None and {"period", "p_years_represented"}.issubset(pyr_raw.columns):

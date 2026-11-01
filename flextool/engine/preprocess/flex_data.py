@@ -52,6 +52,8 @@ from flextool.engine.preprocess.params._block_layout import BlockLayout
 from flextool.engine.preprocess.params._branch import (
     activate_branch_anchor_pairs,
     deactivate_branch_anchor_pairs,
+    fan_period_labels,
+    period_branch_pairs_lf,
     solve_branch_anchor_pairs,
 )
 from flextool.engine.preprocess._provider_io import _provider_key
@@ -1088,6 +1090,10 @@ class FlexData:
     dt_non_anticipativity: pl.DataFrame | None = None  # (d, t) — realised dispatch + fix-storage timesteps
     groupStochastic: pl.DataFrame | None = None   # (g,) — groups enabling storage non-anticipativity
     period_in_use_set: pl.DataFrame | None = None  # (d,) — periods active this solve (filters branches)
+    # (d, t) — the steps the period labels of a stochastic fan had before the expansion.  A label has no dispatch
+    # (no dt rows); this is only the period filter of period-level parameters (investment limits), so a label's
+    # period-level investment keeps its values.  None without a fan.
+    label_steps: pl.DataFrame | None = None
     # (d,) — investment periods of the active solve and their stochastic branch periods: the capacity-margin
     # domain.  Empty frame = the solve has no investment periods; None = not loaded.
     period_invest: pl.DataFrame | None = None
@@ -1762,6 +1768,26 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     return (g_max, flow_eff, flow_noEff, p_cap, flow_to_co2_capped_total)
 
 
+def _fan_members(workdir: Path, provider) -> "tuple[set[str], dict[str, str]]":
+    """``(members, first_member)`` of the solve's stochastic fans: every fan member period (a forecast branch
+    period, a zero-weight forecast, the realized designation) and, per period label, its first sorted member
+    with steps in ``steps_in_use``.  Both empty without a fan."""
+    from flextool.engine.preprocess.params._branch import steps_in_use_lf
+    pb = period_branch_pairs_lf(workdir, provider=provider).collect()
+    pairs = {(str(a), str(b)) for a, b in zip(pb["d"].to_list(), pb["b"].to_list())}
+    labels = fan_period_labels(pairs)
+    if not labels:
+        return set(), {}
+    with_steps = {str(x) for x in steps_in_use_lf(workdir, provider=provider).collect()["d"].to_list()}
+    members = {b for a, b in pairs if a != b and a in labels}
+    first: dict[str, str] = {}
+    for a in sorted(labels):
+        stepped = sorted(b for x, b in pairs if x == a and b != a and b in with_steps)
+        if stepped:
+            first[a] = stepped[0]
+    return members, first
+
+
 def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
     """``(p_co2_f_d_k, p_co2_cum_realized_tonnes, horizon_fraction_reached)`` for the CO2 cap
     rolling / chained carry (#38, Q22).
@@ -1778,7 +1804,8 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
     ``None`` on the first solve of a chain (no prior carrier); consumers then treat realized as 0.
 
     ``horizon_fraction_reached`` — ``Σ_d years_represented[d]·f_d_k[d] / Σ_d years_represented[d]``,
-    over every period of the whole chain (``solve_data/p_years_represented.csv``, the solve's static
+    over every period of the whole chain, each counted once: a stochastic fan's members are left out and its
+    period label stands for the period (its realized share plus this solve's share) (``solve_data/p_years_represented.csv``, the solve's static
     period→year map, not dt-pruned — the same un-pruned source the ladder's cumulative tier cap reads
     for its own carried weight, ``p_ladder_cum_weight``). The fraction of the chain's total represented
     years reached by the end of this roll — scales ``co2_max_total``'s fixed whole-horizon budget down
@@ -1814,12 +1841,26 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
     if _provider_has(provider, "solve_data/p_years_represented", sd / "p_years_represented.csv"):
         pyr = _provider_read(provider, "solve_data/p_years_represented", sd / "p_years_represented.csv")
         if pyr is not None and pyr.height > 0 and {"period", "p_years_represented"}.issubset(pyr.columns):
+            # Each calendar period counts once.  The members of a stochastic fan are alternatives of their
+            # period, not more calendar, so they are in neither sum; the period label (the original name of
+            # the period, no dispatch of its own) stands for the period: its share reached is its realized
+            # share from earlier solves (its f_d_k) plus this solve's share (the f_d_k of a member with steps;
+            # every forecast has the same steps).
+            members, first_member = _fan_members(sd.parent, provider)
             years = (pyr.pipe(rename_to_axis, {"period": "d"})
+                     .filter(~pl.col("d").cast(pl.Utf8).is_in(sorted(members)))
                      .with_columns(pl.col("p_years_represented").cast(pl.Float64, strict=False))
                      .group_by("d").agg(pl.col("p_years_represented").sum().alias("years")))
             total_years = float(years["years"].sum())
             if total_years > 0.0 and fdk_df is not None:
-                reached = (years.join(fdk_df.rename({"value": "fdk"}), on="d", how="left")
+                fdk_of = {str(a): float(v) for a, v in zip(fdk_df["d"].to_list(), fdk_df["value"].to_list())
+                          if v is not None}
+                eff = fdk_df.with_columns(pl.col("d").cast(pl.Utf8)).select("d", pl.col("value").alias("fdk"))
+                if first_member:
+                    eff = eff.with_columns(pl.col("fdk") + pl.col("d").replace_strict(
+                        {a: fdk_of.get(b, 0.0) for a, b in first_member.items()}, default=0.0,
+                        return_dtype=pl.Float64))
+                reached = (years.with_columns(pl.col("d").cast(pl.Utf8)).join(eff, on="d", how="left")
                            .with_columns(pl.col("fdk").fill_null(0.0)))
                 fraction_reached = min(
                     float((reached["years"] * reached["fdk"]).sum()) / total_years, 1.0)
@@ -3012,9 +3053,10 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # (the native engine is single-solve per build).
     dtttdt_forward_only_df = None
     if binding_forward_only is not None and dtttdt is not None and dtttdt.height > 0:
-        dtttdt_forward_only_df = dtttdt.sort("d", "t").slice(1)
-        if dtttdt_forward_only_df.height == 0:
-            dtttdt_forward_only_df = None
+        from flextool.engine.preprocess.params._derived import (
+            dtttdt_forward_only_from_dtttdt, read_period_first_of_solve)
+        dtttdt_forward_only_df = dtttdt_forward_only_from_dtttdt(
+            dtttdt, read_period_first_of_solve(sd, provider=provider))
 
     dtttdt_within_period_df = None
     if binding_within_period is not None and dtttdt is not None and dtttdt.height > 0:
@@ -3957,6 +3999,13 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
         if df.height > 0 and "period" in df.columns:
             period_in_use_set = df.pipe(rename_to_axis, {"period": "d"}).select("d").unique()
 
+    label_steps = None
+    ls_path = sd / "label_steps.csv"
+    if _provider_has(provider, "solve_data/label_steps", ls_path):
+        df = _provider_read(provider, "solve_data/label_steps", ls_path)
+        if df.height > 0 and {"period", "step"}.issubset(df.columns):
+            label_steps = df.pipe(rename_to_axis, {"period": "d", "step": "t"}).select("d", "t").unique()
+
     # groupIncludeStochastics: (g,)
     gis_path = inp / "groupIncludeStochastics.csv"
     groupStochastic = None
@@ -3974,6 +4023,7 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
         groupStochastic=groupStochastic,
         period_branch_full=period_branch_full,
         period_in_use_set=period_in_use_set,
+        label_steps=label_steps,
     )
 
 
@@ -4027,7 +4077,8 @@ def _assign_param_names(data: "FlexData") -> "FlexData":
 
 def _years_represented_boundary(dt: "pl.DataFrame | None", db_reader, provider,
                                 workdir: "Path | str | None") -> "Param | None":
-    """``p_years_represented_d`` over the periods of ``dt`` for a sub-solve that skipped ``apply_derived_a``.
+    """``p_years_represented_d`` over the periods of ``dt`` and the period labels for a sub-solve that skipped
+    ``apply_derived_a``.
 
     Built only from the provider's canonical ``solve_data/p_years_represented.csv`` (the parent solve's
     years, also for stochastic branch periods).  Without a provider or without that CSV the source arm
@@ -4043,7 +4094,7 @@ def _years_represented_boundary(dt: "pl.DataFrame | None", db_reader, provider,
     active = (_drv_yr._read_active_solve(Path(workdir), provider=provider)
               if workdir is not None else None)
     return _drv_yr.p_years_represented_d_from_source(
-        db_reader, active, _drv_yr.periods_of_dt(dt), provider=provider)
+        db_reader, active, _drv_yr.bookkeeping_periods(dt, workdir, provider=provider), provider=provider)
 
 
 def load_flextool(source: "Path | str | FlexInputSource",
@@ -5504,13 +5555,13 @@ def _extract_cum_sim_hours(
     (the cascade always supplies it).  Test fixtures that call this
     helper directly without ``flex_data`` retain the disk fallback.
 
-    ``realized_dispatch`` marks (period, step) under the REAL period name
-    regardless of how the period branched (#59): with a stochastic fan it is
-    the anchor/trunk — the realized branch keeps the real name, so this is
-    already "the realized branch's own hours" when one is designated, and
-    the only available periods when none is (a forecasts-only fan with no
-    ``realized: yes`` row) — that no-designation case is left as-is here,
-    unchanged from before this fix.  ``is_dispatch_sibling_parent`` (#59
+    ``realized_dispatch`` holds no cell of a stochastic fan: the period
+    label (the original period name) has no dispatch and the forecast
+    branches are never realized.  A fan's realized hours come only from
+    the realization solve's own extraction (its period has the real name);
+    a committed window in a forecasts-only fan that a later solve continues
+    from raises before the LP (``_realization.check_committed_window_realized``),
+    never a silent 0.  ``is_dispatch_sibling_parent`` (#59
     fix 3) is True when THIS solve is the parent of an auto-spawned
     realized-dispatch sibling (``state.solve.realized_dispatch_parent``):
     the sibling re-solves the SAME realized window with its own real
@@ -5581,12 +5632,9 @@ def _extract_cumulative_commodity(
     is supplied (caller falls back to the workdir CSV).
 
     ``realized_hours[d]`` (below) comes from ``realized_dispatch``, which
-    marks (period, step) under the REAL period name — with a stochastic
-    fan that is the anchor/trunk, and the realized branch (``realized:
-    yes`` in ``stochastic_branches``) keeps the real name (#59), so
-    ``v_trade`` there already IS the realized branch's purchase when one
-    is designated.  A forecasts-only fan with no realized designation has
-    no better row to read; that case is unchanged by this fix.
+    holds no cell of a stochastic fan (see :func:`_extract_cum_sim_hours`):
+    a fan's purchases are carried only by the realization solve's own
+    extraction.
     ``is_dispatch_sibling_parent`` (#59 fix 3) — see
     :func:`_extract_cum_sim_hours`'s docstring for why this solve must
     contribute nothing of its own when a realized-dispatch sibling will

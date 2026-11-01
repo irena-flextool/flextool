@@ -14,6 +14,7 @@ import polars as pl
 from flextool.engine.input._axis_enums import cast_dim
 from flextool.engine.model import _balance_terms
 from flextool.engine.model._common import _has_rows, _var_view
+from flextool.engine.preprocess.params._branch import forecast_star_pairs
 
 if TYPE_CHECKING:
     from flextool.engine.model.core import _Build
@@ -102,18 +103,16 @@ def _forecast_star(d) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
 
     tie_raw = d.dt_non_anticipativity
     tie_u = tie_raw.with_columns(pl.col("d").cast(pl.Utf8)) if _has_rows(tie_raw) else None
-    stars: list[pl.DataFrame] = []
-    ties: list[pl.DataFrame] = []
-    for d_trunk, forecasts in anchors:
-        if len(forecasts) < 2:
-            continue
-        d_ref = forecasts[0]
-        stars.append(pl.DataFrame({"d": [d_ref] * (len(forecasts) - 1), "b": forecasts[1:]}))
-        if tie_u is not None:
-            ties.append(tie_u.filter(pl.col("d") == d_trunk).with_columns(pl.lit(d_ref).alias("d")))
-    if not stars:
+    pairs = forecast_star_pairs(dict(anchors))
+    if not pairs:
         return None, None
-    star = pl.concat(stars).with_columns(cast_dim(pl.col("d"), None, "d"), cast_dim(pl.col("b"), None, "b"))
+    ties: list[pl.DataFrame] = []
+    if tie_u is not None:
+        for d_trunk, forecasts in anchors:
+            if len(forecasts) >= 2:
+                ties.append(tie_u.filter(pl.col("d") == d_trunk).with_columns(pl.lit(forecasts[0]).alias("d")))
+    star = (pl.DataFrame({"d": [a for a, _ in pairs], "b": [b for _, b in pairs]}, schema={"d": pl.Utf8, "b": pl.Utf8})
+            .with_columns(cast_dim(pl.col("d"), None, "d"), cast_dim(pl.col("b"), None, "b")))
     tie_dt = pl.concat(ties).with_columns(cast_dim(pl.col("d"), None, "d")) if ties else None
     return star, tie_dt
 
@@ -152,8 +151,8 @@ def add_dispatch_constraints(b: "_Build") -> None:
     has_tie_dt = _has_rows(tie_dt)
 
     # Steps of the online ties: the tied steps, or, when there are none, every online step of the anchor
-    # periods.  Unit commitment over the committed section is decided before the forecast is known.  A solve
-    # with a realization solve keeps its committed window as its tied steps (solve_data/committed_dispatch).
+    # periods.  Unit commitment over the committed section is decided before the forecast is known.  The tied
+    # steps inside a fan are the committed cells of its period label (solve_data/committed_in_fan).
     online_dt = tie_dt
     if not has_tie_dt and (v_online_integer is not None or v_online_linear is not None) \
             and _has_rows(d.p_online_dt):

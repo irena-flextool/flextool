@@ -2187,6 +2187,16 @@ def apply_direct_params_a(source: "InputSource",
     flex_data.p_commodity_unitsize = p_commodity_unitsize_from_source(source)
 
 
+def _with_label_steps(dt: "pl.DataFrame | None", label_steps: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """``dt`` plus the ``(d, t)`` rows of the period labels (cast to ``dt``'s dtypes); ``dt`` without labels."""
+    if dt is None or label_steps is None or label_steps.height == 0:
+        return dt
+    base = dt.select("d", "t")
+    extra = label_steps.select(pl.col("d").cast(pl.Utf8).cast(base.schema["d"], strict=False),
+                               pl.col("t").cast(pl.Utf8).cast(base.schema["t"], strict=False))
+    return pl.concat([base, extra]).unique(maintain_order=True)
+
+
 def apply_direct_params_b(source: "InputSource",
                             flex_data: object) -> None:
     """Pass 1b of Direct Params — the dt-dependent assignments.
@@ -2219,6 +2229,11 @@ def apply_direct_params_b(source: "InputSource",
     # active solve's periods via flextool's preprocessing.  We mirror by
     # restricting period-keyed Params to the active dt's periods.
     dt = getattr(flex_data, "dt", None)
+    # Period-level investment limits also hold at a period label (the original name of a period that opens a
+    # stochastic fan): it has no dispatch, so it is not in dt, but it carries the here-and-now investment.  Their
+    # period filter is dt plus the steps the labels had before the expansion (the same periods and steps as the
+    # forecast branches of the fan, so the period / timestep vocabulary of the shape resolver is unchanged).
+    dt_invest = _with_label_steps(dt, getattr(flex_data, "label_steps", None))
 
     # ─── Δ.4b — group 1d_map(period) (capacity_margin / inertia / nonSync) ─
     # Δ.12b: unconditional — _entity_period_scalar handles 1d_map(period)
@@ -2249,10 +2264,15 @@ def apply_direct_params_b(source: "InputSource",
         (p_group_invest_min_period_from_source, "p_group_invest_min_period"),
         (p_group_retire_max_period_from_source, "p_group_retire_max_period"),
         (p_group_retire_min_period_from_source, "p_group_retire_min_period"),
-        (pd_max_cumulative_flow_from_source, "pd_max_cumulative_flow"),
-        (pd_min_cumulative_flow_from_source, "pd_min_cumulative_flow"),
         (pd_group_cumulative_max_capacity_from_source, "pd_group_cumulative_max_capacity"),
         (pd_group_cumulative_min_capacity_from_source, "pd_group_cumulative_min_capacity"),
+    ):
+        setattr(flex_data, field,
+                _filter_param_by_periods(fn(source, period_filter=dt_invest), dt_invest))
+    # Cumulative flow limits are operational: dispatch periods only.
+    for fn, field in (
+        (pd_max_cumulative_flow_from_source, "pd_max_cumulative_flow"),
+        (pd_min_cumulative_flow_from_source, "pd_min_cumulative_flow"),
     ):
         setattr(flex_data, field,
                 _filter_param_by_periods(fn(source, period_filter=dt), dt))
@@ -2297,7 +2317,7 @@ def apply_direct_params_b(source: "InputSource",
         (ed_cumulative_min_capacity_from_source, "ed_cumulative_min_capacity"),
     ):
         setattr(flex_data, field,
-                _filter_param_by_periods(fn(source, period_filter=dt), dt))
+                _filter_param_by_periods(fn(source, period_filter=dt_invest), dt_invest))
 
     # ─── Δ.4b — relationship scalars (ramp + inertia, sink/source) ───────
     for fn, field in (
@@ -2408,12 +2428,14 @@ def apply_direct_params_b(source: "InputSource",
 
     # ─── Δ.4b — commodity ladder split (price / quantity) ────────────────
     # _ladder_split returns (price, quantity) — both can be None.
+    # The annual ladder is authored per period: a period label keeps its curve so that the forecast branch periods
+    # inherit it (_commodity_ladder.inherit_branch_periods); the label itself buys nothing (no dispatch).
     p_ann_price, p_ann_qty = _ladder_split(source, "price_ladder_annual",
-                                              period_filter=dt)
+                                              period_filter=dt_invest)
     if p_ann_price is not None:
-        flex_data.p_ladder_ann_price = _filter_param_by_periods(p_ann_price, dt)
+        flex_data.p_ladder_ann_price = _filter_param_by_periods(p_ann_price, dt_invest)
     if p_ann_qty is not None:
-        flex_data.p_ladder_ann_quantity = _filter_param_by_periods(p_ann_qty, dt)
+        flex_data.p_ladder_ann_quantity = _filter_param_by_periods(p_ann_qty, dt_invest)
     p_cum_price, p_cum_qty = _ladder_split(source, "price_ladder_cumulative",
                                               period_filter=None)
     if p_cum_price is not None:

@@ -610,6 +610,7 @@ def native_run_model(state, solver) -> int:
         fix_storage_time_lists,
         realized_time_lists,
         branch_start_time_lists,
+        fan_label_time_lists,
     ) = stochastic_solver.create_stochastic_periods(
         state.solve.stochastic_branches,
         all_solves,
@@ -620,23 +621,33 @@ def native_run_model(state, solver) -> int:
     )
 
     # ------------------------------------------------------------------
-    # 3.1 Realization plan per sub-solve.  A sub-solve with a realization
-    # solve (``realized_dispatch_parent``) hands its realized window to that
-    # solve through the last-wins below, but the window stays committed in
-    # its own LP: the non-anticipativity ties hold over it.  Keep the
-    # pre-last-wins window of those sub-solves as their committed window
-    # (``solve_data/committed_dispatch``, read by the NA-set emitter); every
-    # other sub-solve commits exactly what it realizes.
+    # 3.1 Realization plan per sub-solve.  A period label has no dispatch, so
+    # the cells a sub-solve commits inside its fan (its pre-stochastic
+    # realized and fix-storage cells of the labels) are kept as
+    # ``committed_in_fan``: the non-anticipativity window of an unset
+    # ``non_anticipativity_periods`` and the trigger of the committed-window
+    # check.  The labels' pre-stochastic steps are kept for a curated window.
     # ------------------------------------------------------------------
     _rdp_registry = getattr(state.solve, "realized_dispatch_parent", {}) or {}
+    committed_in_fan_frames: dict[str, pl.DataFrame] = {}
+    label_step_frames: dict[str, pl.DataFrame] = {}
+    for _s in all_solves:
+        _times = fan_label_time_lists.get(_s)
+        if _times is None:
+            continue
+        _cs = complete_solve[_s]
+        committed_in_fan_frames[_s] = pl.concat([
+            solve_writers.derive_realized_dispatch(
+                _times.realized, _cs, state.solve.realized_periods.get(_cs, [])),
+            solve_writers.derive_fix_storage_timesteps(
+                _times.fix_storage, _cs, state.solve.fix_storage_periods.get(_cs, [])),
+        ]).unique(maintain_order=True)
+        label_step_frames[_s] = solve_writers.derive_periods_steps(_times.active)
     realization_plans = {
-        _s: _realization.build_realization_plan(_s, period__branch_lists.get(_s, []), _rdp_registry)
+        _s: _realization.build_realization_plan(
+            _s, period__branch_lists.get(_s, []), _rdp_registry,
+            committed_in_fan=committed_in_fan_frames.get(_s))
         for _s in all_solves
-    }
-    committed_time_lists = {
-        _s: copy.deepcopy(realized_time_lists[_s])
-        for _s, _plan in realization_plans.items()
-        if _plan.realization_solve is not None and _s in realized_time_lists
     }
 
     # ------------------------------------------------------------------
@@ -1057,8 +1068,12 @@ def native_run_model(state, solver) -> int:
             jump_lists[solve],
             provider=sub_solve_provider,
         )
+        # A period label has no steps, but its first step is where a roll's fan continues from the previous
+        # roll: its forecast branch periods start there (the carry matches the label, then its branches).
+        _label_times = fan_label_time_lists.get(solve)
         solve_writers.emit_roll_first_step_link(
-            active_time_lists[solve],
+            {**_label_times.active, **active_time_lists[solve]} if _label_times is not None
+            else active_time_lists[solve],
             cached_complete_step_jumps[cs],
             provider=sub_solve_provider,
         )
@@ -1190,10 +1205,9 @@ def native_run_model(state, solver) -> int:
             state.solve.realized_periods.get(complete_solve[solve], []),
             provider=sub_solve_provider,
         )
-        solve_writers.emit_committed_dispatch(
-            committed_time_lists.get(solve, realized_time_lists[solve]),
-            complete_solve[solve],
-            state.solve.realized_periods.get(complete_solve[solve], []),
+        solve_writers.emit_fan_label_steps(
+            committed_in_fan_frames.get(solve),
+            label_step_frames.get(solve),
             provider=sub_solve_provider,
         )
         solve_writers.emit_fix_storage_timesteps(
@@ -1414,7 +1428,11 @@ def native_run_model(state, solver) -> int:
         _period_order = list(active_time_lists[solve])
         _timeset_of = {p: ts for p, ts in timesets_used}
         rp_periods = [p for p in _period_order if _timeset_of.get(p) in state.timeline.rp_weights]
-        if rp_periods:
+        # A fan's period labels (no steps, not in the period order) carry the timeset of their branch periods.
+        _labels_rp = sorted(p for p in getattr(fan_label_time_lists.get(solve), "labels", ())
+                            if _timeset_of.get(p) in state.timeline.rp_weights)
+        if rp_periods or _labels_rp:
+            rp_periods = rp_periods + _labels_rp
             _check_rp_solve(
                 complete_solve_name=complete_solve[solve],
                 rp_periods=rp_periods,
@@ -1645,7 +1663,11 @@ def native_run_model(state, solver) -> int:
         # after the per-iter writers run.
         state._current_iter_index = i
         state._current_level_key = _level_key
+        # A committed window reaching into a forecasts-only fan must be realized by some solve when a later solve
+        # continues from it (checked on the built FlexData, before the LP).
+        state.current_committed_window_check = (solve, realization_plans.get(solve), i < len(all_solves) - 1)
         exit_status = solver.run(complete_solve[solve])
+        state.current_committed_window_check = None
         state.emit_phase_checkpoints_this_iter = False
         state.current_parent_complete = None
         state.current_scale_solve_name = None

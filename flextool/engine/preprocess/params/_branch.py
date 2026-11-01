@@ -163,7 +163,7 @@ def period_branch_pairs_lf(
         # null-free — under enum activation the ctx frame's anchor column is
         # null-poisoned (the ``d_anchor`` axis vocabulary is empty by
         # contract), which would drop every trunk self-row ``(d, d)`` and
-        # silently defeat the forecasts-only ``phantom_periods`` detection
+        # silently defeat the forecasts-only ``fan_period_labels`` detection
         # (phantom weights collapse to a naive 1/Σw instead of 0).  This
         # mirrors the guard in :func:`_collect_lineage_inputs`; on a
         # null-poisoned ctx we fall through to the raw ``period__branch.csv``
@@ -371,20 +371,17 @@ def steps_in_use_lf(workdir: Path | None,
               .unique())
 
 
-def phantom_periods(pb_set: "set[tuple[str, str]]") -> set[str]:
-    """Phantom trunk periods under the forecasts-only cohort rule (R2/W7).
+def fan_period_labels(pb_set: "set[tuple[str, str]]") -> set[str]:
+    """The period labels of a solve: the only definition of a period label.
 
-    A *phantom* is a period ``d`` that is both a trunk self-row
-    (``(d, d) ∈ period__branch``) AND the parent of ≥1 forecast member
-    (``∃ b ≠ d : (d, b) ∈ period__branch``).  The stochastic fan is
-    forecasts-only (Σ = 1), so a phantom trunk carries no probability mass —
-    the branch-weight producers emit weight 0 for it and skip it from every
-    forecast denominator.
+    A *period label* is a period ``d`` that is both a self-row (``(d, d) ∈ period__branch``) AND the parent of ≥1
+    forecast member (``∃ b ≠ d : (d, b) ∈ period__branch``): the original name of a period that opens a stochastic
+    fan.  It is bookkeeping only — period-level investment, years / NPV rows, the lineage anchor — and never has
+    dispatch ((d, t) rows): the fan is forecasts-only (Σ = 1), so the label carries no probability mass and the
+    branch-weight producers emit weight 0 for it and skip it from every forecast denominator.
 
-    A trunk with NO fan member (``has_fan`` is false) is a genuine pre-reveal
-    cohort-of-one or a deterministic period and is NOT phantom, so it keeps its
-    full 1.0 weight.  Returns the empty set for a deterministic solve
-    (``pb_set`` empty) → the rule is a no-op (byte-parity with HEAD).
+    A self-row with NO fan member is a pre-reveal period (or a deterministic one) and is NOT a label, so it keeps
+    its full 1.0 weight.  Returns the empty set for a deterministic solve (``pb_set`` empty).
     """
     trunk = {d for d, b in pb_set if d == b}
     has_fan = {d for d, b in pb_set if b != d}
@@ -456,7 +453,7 @@ def pd_branch_weight_lf(
     # one (or a deterministic period) and is NOT phantom → it stays 1.0 (the
     # ``has_fan`` guard).  This is the W4d-A exclusion made unconditional (no
     # ``dispatch_realization_method`` marker) and extended to the invest weight.
-    phantom = phantom_periods(pb_set)
+    phantom = fan_period_labels(pb_set)
     # times_with_first[ts] = {b : (b, ts) ∈ first_ts}
     first_ts_map = {row["d"]: row["ts"] for row in ft.iter_rows(named=True)}
     times_with_first: dict[str, set[str]] = {}
@@ -469,11 +466,12 @@ def pd_branch_weight_lf(
     rows: list[tuple[str, float]] = []
     period_list = piu["d"].to_list()
     for d in period_list:
+        if d in phantom:
+            # A period label has no steps (no first timestep) but keeps its weight-0 row.
+            rows.append((d, 0.0))
+            continue
         ts = first_ts_map.get(d)
         if ts is None:
-            continue
-        if d in phantom:
-            rows.append((d, 0.0))
             continue
         branches_at_ts = times_with_first.get(ts, set())
         denom = 0.0
@@ -557,7 +555,7 @@ def pdt_branch_weight_lf(
     # skip it from every forecast denominator.  Applied unconditionally (no
     # ``dispatch_realization_method`` marker); a lone pre-reveal / deterministic
     # trunk has no fan member and is NOT phantom → stays 1.0.
-    phantom = phantom_periods(pb_set)
+    phantom = fan_period_labels(pb_set)
     # branches_for_t[t] = {b : (b, t) ∈ dt} — derived from the dt set.
     # Mirrors flextool's ``branches_for_t`` from steps_in_use rows.
     branches_for_t: dict[str, set[str]] = {}
@@ -1449,6 +1447,20 @@ def _read_invest_tie_periods(
     return frozenset(str(v) for v in df[col].to_list() if v is not None)
 
 
+def forecast_star_pairs(forecasts_by_anchor: "dict[str, list[str]]") -> "list[tuple[str, str]]":
+    """The forecast star of each anchor period: ``(d_ref, b)`` for every other forecast ``b`` of the anchor.
+
+    ``d_ref`` is the anchor's first sorted forecast (its reference forecast).  Ties join forecasts to each other,
+    never to the period label (which has no dispatch and, under recourse, no investment), so they hold without a
+    realized branch.  An anchor with fewer than two forecasts has nothing to tie.  Anchors in sorted order.
+    """
+    pairs: list[tuple[str, str]] = []
+    for anchor in sorted(forecasts_by_anchor):
+        forecasts = sorted(set(forecasts_by_anchor[anchor]))
+        pairs.extend((forecasts[0], b) for b in forecasts[1:])
+    return pairs
+
+
 def pd_non_anticipativity_lf(
     workdir: Path | None,
     source: "InputSource | None" = None,
@@ -1472,9 +1484,11 @@ def pd_non_anticipativity_lf(
 
     The v72 invest-NA window drives the emit by MEMBERSHIP: ``tie_periods``
     is the resolved window (a ``frozenset`` of anchor periods).  When
-    supplied, ``(anchor_of[m], m)`` is emitted for every synthetic member
-    ``m`` whose anchor lies in the window — the standard two-stage mode
-    (design §3.2).  When ``tie_periods`` is ``None`` it is auto-resolved
+    supplied, the synthetic members whose anchor lies in the window are
+    tied in the forecast star of that anchor (:func:`forecast_star_pairs`:
+    ``(d_ref, m)`` for every other member ``m``; members − 1 pairs) — the
+    standard two-stage mode.  The anchor itself is a period label with no
+    investment column under recourse, so nothing is tied to it.  When ``tie_periods`` is ``None`` it is auto-resolved
     from ctx / the per-solve CSV via :func:`_read_invest_tie_periods`;
     still ``None`` (unset) falls back to the legacy ``branch_start``
     reveal-boundary path below, which is provably EMPTY for every
@@ -1509,12 +1523,16 @@ def pd_non_anticipativity_lf(
     if not synthetic:
         return _empty_lf(schema)
     if tie_periods is not None:
-        # v72 window-membership emit (design §3.2): tie every synthetic
-        # member whose real-named anchor is in the window.  Supersedes the
+        # v72 window-membership emit (design §3.2): tie the synthetic
+        # members whose real-named anchor is in the window to each other,
+        # in the forecast star of that anchor.  Supersedes the
         # reveal-boundary gate below (which cannot express an at-branching-
         # period tie).  An empty window -> no rows -> empty frame.
-        rows = [(anchor_of[m], m) for m in synthetic
-                if anchor_of[m] in tie_periods]
+        by_anchor: dict[str, list[str]] = {}
+        for m in synthetic:
+            if anchor_of[m] in tie_periods:
+                by_anchor.setdefault(anchor_of[m], []).append(m)
+        rows = forecast_star_pairs(by_anchor)
         if not rows:
             return _empty_lf(schema)
         return _finalize_lineage_frame(rows, "d", "d", "b", "b",

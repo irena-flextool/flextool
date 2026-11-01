@@ -24,7 +24,7 @@ import polars as pl
 
 from flextool.engine.input._solve_state import FlexToolConfigError
 
-from flextool.engine.preprocess.params._branch import phantom_periods
+from flextool.engine.preprocess.params._branch import fan_period_labels
 
 _MODULE_LOGGER = logging.getLogger(__name__)
 
@@ -34,12 +34,15 @@ class RealizationPlan:
     """How the fan of one sub-solve is realized.
 
     ``labels`` are the period labels of the sub-solve: the original names of the periods that open a fan
-    (``period__branch`` self-row with at least one forecast member).  ``realization_solve`` is the sub-solve that
-    realizes this sub-solve's committed window (the key of ``realized_dispatch_parent`` whose value is this
-    sub-solve), or ``None`` when no realization solve exists.
+    (``period__branch`` self-row with at least one forecast member).  A label has no dispatch.
+    ``committed_in_fan`` are the ``(period, step)`` cells the sub-solve commits inside its fan (its realized and
+    fix-storage cells of the labels before the stochastic expansion), in list order.  ``realization_solve`` is the
+    sub-solve that realizes this sub-solve's committed window (the key of ``realized_dispatch_parent`` whose value
+    is this sub-solve), or ``None`` when no realization solve exists.
     """
 
     labels: frozenset[str]
+    committed_in_fan: tuple[tuple[str, str], ...]
     realization_solve: str | None
 
 
@@ -47,15 +50,20 @@ def build_realization_plan(
     solve: str,
     period__branch: Iterable[tuple[str, str]],
     realized_dispatch_parent: Mapping[str, str],
+    *,
+    committed_in_fan: "pl.DataFrame | None" = None,
 ) -> RealizationPlan:
-    """The :class:`RealizationPlan` of *solve* from its ``period__branch`` rows and the realization registry.
+    """The :class:`RealizationPlan` of *solve* from its ``period__branch`` rows, its committed cells inside the fan
+    (a ``(period, step)`` frame) and the realization registry.
 
     Per-roll registry entries (``<sibling>_roll_<k> -> <parent>_roll_<k>``) are matched like single-solve ones; when
     several entries name *solve* the first in registry order is taken (one realization solve per sub-solve).
     """
-    labels = frozenset(phantom_periods({(str(d), str(b)) for d, b in period__branch}))
+    labels = frozenset(fan_period_labels({(str(d), str(b)) for d, b in period__branch}))
     realization_solve = next((s for s, p in realized_dispatch_parent.items() if p == solve), None)
-    return RealizationPlan(labels=labels, realization_solve=realization_solve)
+    cells = tuple() if committed_in_fan is None else tuple(
+        (str(p), str(t)) for p, t in zip(committed_in_fan["period"].to_list(), committed_in_fan["step"].to_list()))
+    return RealizationPlan(labels=labels, committed_in_fan=cells, realization_solve=realization_solve)
 
 
 def _branch_rows(solve_cfg: Any, solve: str) -> list:
@@ -293,3 +301,68 @@ def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> N
         f"stochastic solve leave at most {sup:.6g} MWh of supply ({short.height} step(s) affected).  Give the node "
         "balance slack (penalty_method = regular), add forecasts that cover the realized conditions, or end the "
         "committed window before the reveal.")
+
+
+def _untied_families(d, committed: "list[tuple[str, str]]") -> list[str]:
+    """The families of *d* (a sub-solve's FlexData) whose decisions over the *committed* fan cells are not tied
+    across the forecasts, so that the committed window has no realized value for them."""
+    from flextool.engine.model._commodity_ladder import _INF_SENTINEL
+
+    families: list[str] = []
+    if _rows(d.nodeState):
+        families.append("storage state")
+    if any(_rows(getattr(d, f"process_source_sink_ramp_limit_{side}_{ud}", None))
+           for side in ("sink", "source") for ud in ("up", "down")):
+        families.append("ramp-limited flows")
+    tied = set()
+    if _rows(d.dt_non_anticipativity):
+        tied = {(str(p), str(t)) for p, t in d.dt_non_anticipativity.select("d", "t").iter_rows()}
+    untied_cells = [c for c in committed if c not in tied]
+    # Units online are tied over the tied steps, or over every online step when nothing is tied.
+    if tied and untied_cells and _rows(d.process_online):
+        families.append("units online")
+    if untied_cells and _rows(d.process_reserve_upDown_node_active):
+        families.append("reserves")
+    qty = d.p_ladder_cum_quantity
+    if _rows(d.ci_ladder_cumulative) and qty is not None and qty.frame.filter(
+            pl.col("value") < _INF_SENTINEL).height > 0:
+        families.append("cumulative commodity ladder")
+    if _rows(d.group_co2_max_total):
+        families.append("CO2 total cap")
+    if getattr(d, "recourse_invest", False):
+        committed_labels = {p for p, _t in committed}
+        members = set()
+        if _rows(d.period_branch_full):
+            members = {str(b) for a, b in d.period_branch_full.select("d", "b").iter_rows()
+                       if str(a) in committed_labels and str(a) != str(b)}
+        invest_d = set()
+        for frame in (d.pd_invest_set, d.nd_invest_set):
+            if _rows(frame):
+                invest_d |= {str(x) for x in frame["d"].to_list()}
+        if members & invest_d:
+            families.append("recourse investment")
+    return families
+
+
+def check_committed_window_realized(d, solve: str, plan: "RealizationPlan | None", has_later_solve: bool) -> None:
+    """Raise when *solve* commits cells inside a forecasts-only fan that no solve realizes.
+
+    A committed window that reaches into a fan is realized for the families tied across the forecasts (units
+    online and reserves on the tied steps); every other family the next solve continues from — storage state,
+    ramp-limited flows, the cumulative commodity ladder, the CO2 total cap, recourse investment, and units online
+    or reserves outside the tied steps — is decided per forecast there.  Without a realization solve (a
+    ``realized: yes`` designation or a configured one) nothing realizes it, so a later solve would continue from
+    an arbitrary forecast.  Called on the built FlexData before the LP.
+    """
+    if plan is None or not plan.committed_in_fan or plan.realization_solve is not None or not has_later_solve:
+        return
+    families = _untied_families(d, list(plan.committed_in_fan))
+    if not families:
+        return
+    periods = sorted({p for p, _t in plan.committed_in_fan})
+    raise FlexToolConfigError(
+        f"Solve '{solve}' commits {len(plan.committed_in_fan)} step(s) inside a forecasts-only stochastic fan "
+        f"(period(s) {', '.join(periods)}) and a later solve continues from them, but {', '.join(families)} "
+        "is decided per forecast there and no solve realizes it.  Designate a realized: yes branch in "
+        "stochastic_branches, configure a realization solve right after it, or end the committed window before "
+        "the reveal.")

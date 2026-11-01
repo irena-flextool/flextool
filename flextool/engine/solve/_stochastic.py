@@ -6,8 +6,8 @@ Architecture notes
 * :class:`StochasticSolver` adds branched versions of periods to the
   per-solve active-time lists when ``state.solve.stochastic_branches``
   declares branches for a solve.  Branches receive LP variables
-  (active time) but are NOT committed (``realized_time_lists`` /
-  ``fix_storage_time_lists`` are filtered to the realized branch only).
+  (active time) but are NOT committed; a fan period's original name (its
+  period label) has no active time at all.
 
 * :func:`write_timeline_matching_map` returns an in-memory dict
   instead of writing CSV; downstream consumers read the dict directly.
@@ -31,11 +31,11 @@ Behavioural quirks
   three-way condition.
 
 * **Continuation-after-branching**: every period after the branching
-  period continues the fan.  The realized branch keeps the REAL period
-  name (with its active / realized / fix-storage windows); each
-  non-realized nonzero-weight branch gets a synthetic
-  ``period + "_" + branch`` copy of the period's active time (LP
-  variables, never committed).  The naming is "sticky" across periods.
+  period continues the fan.  Each non-realized nonzero-weight branch gets
+  a synthetic ``period + "_" + branch`` copy of the period's active time
+  (LP variables, never committed).  The original period name is a period
+  label: no active time, no realized or fix-storage window (kept aside
+  for the bookkeeping emits).  The naming is "sticky" across periods.
   ``period__branch`` mirrors the branching period's metadata rows
   (``(period, period)`` self-row plus one row per fan member,
   realized and zero-weight included).
@@ -55,13 +55,32 @@ from __future__ import annotations
 import bisect
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.input._timeline import make_step_jump
+from flextool.engine.preprocess.params._branch import fan_period_labels
 
 if TYPE_CHECKING:
     from flextool.engine.input._solve_state import RunnerState
+
+
+@dataclass(frozen=True)
+class FanLabelTimes:
+    """The period labels of one sub-solve and their pre-stochastic time lists.
+
+    A period label is the original name of a period that opens a fan (see
+    :func:`~flextool.engine.preprocess.params._branch.fan_period_labels`).  It has no dispatch, so
+    :meth:`StochasticSolver.create_stochastic_periods` drops it from the active, realized and fix-storage lists; the
+    lists it had before are kept here: ``active`` for the label's steps, ``realized`` and ``fix_storage`` for the
+    cells the sub-solve commits inside the fan.
+    """
+
+    labels: frozenset
+    active: dict
+    realized: dict
+    fix_storage: dict
 
 
 # ---------------------------------------------------------------------------
@@ -426,37 +445,36 @@ class StochasticSolver:
         dict[str, dict],
         dict[str, dict],
         defaultdict[str, Any],
+        dict[str, "FanLabelTimes"],
     ]:
         """Apply stochastic branching to per-solve active-time lists.
 
-        Branches are added to ``active_time_lists`` for optimization
-        but NOT to ``realized_time_lists`` / ``fix_storage_time_lists``;
-        branches are future scenarios that aren't committed.
+        At the first reveal reachable in a solve's active time the solve
+        fans out: every nonzero-weight forecast branch ``b`` (``realized:
+        no``) gets one synthetic ``period + "_" + b`` period per period of
+        the fan (the reveal period and every later period of the solve),
+        carrying a full copy of that period's active time.  The original
+        name of each fan period is its *period label*
+        (:func:`~flextool.engine.preprocess.params._branch.fan_period_labels`):
+        it has no dispatch, so it is dropped from the active, realized and
+        fix-storage lists; its pre-stochastic lists are returned in
+        :class:`FanLabelTimes` (the committed cells inside the fan and the
+        label's steps, for the bookkeeping emits).  Forecast branches are
+        never realized or storage-fixed.  Periods before the reveal keep
+        their lists unchanged.
 
-        After the branching period, the fan extends through every
-        remaining period of the solve: the realized branch keeps the
-        REAL period names (and their realized / fix-storage windows),
-        while each non-realized nonzero-weight branch ``b`` gets one
-        synthetic ``period + "_" + b`` period per continuation period
-        carrying a full copy of that period's active time.
-        ``period__branch`` mirrors the branching period's metadata rows
-        (self-row plus one row per fan member including the realized
-        and zero-weight branches); ``solve_branch__time_branch`` gains
-        rows only for branches that received active time.
+        ``period__branch`` holds, per fan period, the label's self-row and
+        one row per fan member (zero-weight and ``realized: yes`` members
+        included, as metadata); ``solve_branch__time_branch`` gains a row
+        per forecast branch period, plus the designated realized branch's
+        row on each label when a ``realized: yes`` row exists (projected
+        onto a realization solve), and, in a forecasts-only fan, the
+        reference forecast (lexically smallest forecast token) on each
+        pre-reveal period so its branch-keyed data binds (R-NAME).
 
-        Real-name data ownership has a 0-or-1 realized designation: when
-        a period has a realized branch it owns the real names' data; when
-        the whole fan is forecasts-only (n_real=0) no realized branch
-        owns them, so a PRE-REVEAL real-named period (the shared trunk)
-        instead binds the REFERENCE forecast (the lexically-smallest
-        forecast raw token) so its branch-keyed data does not fall through
-        to the zero fallback.  Reveal / continuation periods carry their
-        data on the suffixed forecast copies; their real-named self-row is
-        a harmless weight-0 phantom left untouched (R-NAME).
-
-        IMPORTANT: branches do NOT enter ``invest_periods`` either.
-        Per ``audit/a6_b_dim_alternative.md`` (R-O6), ``v_invest`` is
-        realized-only — recourse investment is a future capability.
+        IMPORTANT: branches do NOT enter ``invest_periods``; the recourse
+        investment domain is resolved downstream (a period label has no
+        investment column under recourse).
 
         Args:
             stochastic_branches: ``{solve: [(period, branch, start_step,
@@ -470,7 +488,8 @@ class StochasticSolver:
         Returns:
             ``(period__branch_lists, solve_branch__time_branch_lists,
             active_time_lists, jump_lists, fix_storage_time_lists,
-            realized_time_lists, branch_start_time_lists)``.
+            realized_time_lists, branch_start_time_lists,
+            fan_label_time_lists)``.
 
         Raises:
             FlexToolConfigError: When the reveal that triggers a solve does
@@ -488,6 +507,7 @@ class StochasticSolver:
         solve_branch__time_branch_lists: defaultdict[str, list] = defaultdict(list)
         jump_lists: dict[str, Any] = dict()
         branch_start_time_lists: defaultdict[str, Any] = defaultdict()
+        fan_label_time_lists: dict[str, FanLabelTimes] = dict()
 
         for solve in solves:
             new_realized_time_list: dict = dict()
@@ -816,6 +836,21 @@ class StochasticSolver:
                             (period, d_ref_tok)
                         )
 
+            # A period label (the original name of a period that opens a fan) has no dispatch: drop it from
+            # the active, realized and fix-storage lists.  Its pre-stochastic steps and committed cells are kept
+            # aside for the bookkeeping emits (period set, non-anticipativity window).
+            labels = fan_period_labels(set(period__branch_lists[solve]))
+            fan_label_time_lists[solve] = FanLabelTimes(
+                labels=frozenset(labels),
+                active={p: v for p, v in new_active_time_list.items() if p in labels},
+                realized={p: v for p, v in new_realized_time_list.items() if p in labels},
+                fix_storage={p: v for p, v in new_fix_storage_time_list.items() if p in labels},
+            )
+            for label in labels:
+                new_active_time_list.pop(label, None)
+                new_realized_time_list.pop(label, None)
+                new_fix_storage_time_list.pop(label, None)
+
             # Update the time lists for this solve.
             realized_time_lists[solve] = new_realized_time_list
             fix_storage_time_lists[solve] = new_fix_storage_time_list
@@ -834,6 +869,7 @@ class StochasticSolver:
             fix_storage_time_lists,
             realized_time_lists,
             branch_start_time_lists,
+            fan_label_time_lists,
         )
 
 

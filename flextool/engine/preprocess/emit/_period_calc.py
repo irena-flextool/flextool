@@ -483,25 +483,26 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
     period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
                                    provider=provider)
 
-    # Forecasts-only cohort rule (R2/W7, unconditional) — a PHANTOM period is a
-    # trunk self-row ``(d, d) ∈ pb`` that ALSO fans out to a forecast member;
+    # Forecasts-only cohort rule (R2/W7, unconditional) — a period label is a
+    # self-row ``(d, d) ∈ pb`` that ALSO fans out to a forecast member;
     # it carries no probability mass → weight 0, excluded from every forecast
-    # denominator.  A lone pre-reveal / deterministic trunk is NOT phantom and
+    # denominator, and has no steps (so it is tested before the first-step
+    # lookup).  A pre-reveal / deterministic period is not a label and
     # keeps 1.0.  Kept in lock-step with
     # ``_branch.pdt_branch_weight_lf`` (the authoritative LP weight) via
-    # the shared :func:`_branch.phantom_periods` helper, so this emitted
+    # the shared :func:`_branch.fan_period_labels` helper, so this emitted
     # CSV stays byte-parity with the LP Param.  Now applied to the pd (invest)
     # loop too (= W7), not just pdt.
-    from flextool.engine.preprocess.params._branch import phantom_periods
-    phantom = phantom_periods(pb_set)
+    from flextool.engine.preprocess.params._branch import fan_period_labels
+    phantom = fan_period_labels(pb_set)
 
     pd_rows: list[tuple[str, float]] = []
     for d in period_in_use:
-        ts = first_time_for_d.get(d)
-        if ts is None:
-            continue
         if d in phantom:
             pd_rows.append((d, 0.0))
+            continue
+        ts = first_time_for_d.get(d)
+        if ts is None:
             continue
         branches_at_ts = times_with_first_set.get(ts, set())
         denom = 0.0

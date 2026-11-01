@@ -3094,6 +3094,10 @@ def _drive_cascade(
                     check_pinned_realization_feasible,
                 )
                 check_pinned_realization_feasible(data, complete_solve_name)
+            _window_check = getattr(self.state, "current_committed_window_check", None)
+            if _window_check is not None:
+                from flextool.engine.solve._realization import check_committed_window_realized
+                check_committed_window_realized(data, *_window_check)
 
             # --- LP scaling -------------------------------------------------
             # Phase 2b — the legacy ``scaling.analyze_solve`` /

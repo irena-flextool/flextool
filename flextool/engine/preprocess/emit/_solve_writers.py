@@ -394,8 +394,13 @@ def _compute_first_and_last_periods(
         and active_time_list[period][-1].timestep == time_step_last
     ]
 
+    # The first active key may be a forecast branch period (a fan opening in the solve's first period, whose
+    # period label has no steps): list the members of its anchor that have steps, as for period_last.
+    first_anchor = next((pb[0] for pb in period__branch_list if pb[1] == period_first_of_solve),
+                        period_first_of_solve)
     period_first_of_solve_list = [
-        pb[1] for pb in period__branch_list if pb[0] == period_first_of_solve
+        pb[1] for pb in period__branch_list
+        if pb[0] == first_anchor and pb[1] in active_time_list
     ]
     period_first = period__timesets_in_this_solve[0][0]
     period_first_list = [
@@ -576,22 +581,28 @@ def emit_realized_dispatch(
     )
 
 
-def emit_committed_dispatch(
-    committed_time_list: dict[str, list[tuple[str, ...]]],
-    solve: str,
-    realized_periods: list[tuple[str, str]],
+def derive_periods_steps(time_list: dict[str, list[tuple[str, ...]]]) -> pl.DataFrame:
+    """Build a (period, step) frame of every step of *time_list*, in list order."""
+    rows = [(period, i.timestep) for period, steps in time_list.items() for i in steps]
+    return _to_utf8_frame(("period", "step"), rows)
+
+
+def emit_fan_label_steps(
+    committed_in_fan: "pl.DataFrame | None",
+    label_steps: "pl.DataFrame | None",
     *, provider,
 ) -> None:
-    """Emit ``committed_dispatch`` (period, step) to the Provider: the window the solve commits.
+    """Emit ``committed_in_fan`` and ``label_steps`` (period, step) to the Provider.
 
-    Equal to ``realized_dispatch`` except for a solve that has a realization solve: that solve hands its
-    realized window to the realization solve (last-wins) but still commits it in its own LP, so its
-    non-anticipativity ties hold over it.  Same frame builder as :func:`derive_realized_dispatch`.
+    A period label has no dispatch, so it is in neither ``steps_in_use`` nor ``realized_dispatch``.
+    ``committed_in_fan`` holds the cells the solve commits inside its fan (the labels' realized and fix-storage
+    cells before the stochastic expansion); ``label_steps`` every step the labels had.  Both are header-only for a
+    solve without a fan.  The non-anticipativity window emitter reads them.
     """
-    _emit(
-        provider, "solve_data/committed_dispatch.csv",
-        derive_realized_dispatch(committed_time_list, solve, realized_periods),
-    )
+    empty = _to_utf8_frame(("period", "step"), [])
+    _emit(provider, "solve_data/committed_in_fan.csv",
+          committed_in_fan if committed_in_fan is not None else empty)
+    _emit(provider, "solve_data/label_steps.csv", label_steps if label_steps is not None else empty)
 
 
 def derive_fix_storage_timesteps(
