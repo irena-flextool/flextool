@@ -771,6 +771,17 @@
   # probability-weighted LP objective exactly (the phantom's free slack ×0 = 0;
   # the four forecasts ×0.25 sum to the expectation).  This value IS the LP
   # objective (summary_solve ``2day_dispatch`` row == this).
-  expected_objective: 66.9291187913
+  #
+  # Re-grounded 66.9291187913 → 374.502452125 (realization solve): the
+  # ``committed`` realized: yes designation now adds the deterministic
+  # realization solve ``2day_dispatch__realized_dispatch`` after the
+  # stochastic solve.  ``Total cost (calculated) full horizon`` sums every
+  # reported cost row, so it is the stochastic solve's forecast expectation
+  # (66.9291187913, its LP objective; its LP is byte-identical) plus the
+  # realization solve's LP objective (307.573333333, summary_solve
+  # ``2day_dispatch__realized_dispatch`` row): 66.9291187913 + 307.573333333.
+  # It drops to the realization solve's cost alone once a fan reports no
+  # forecast-branch rows as realized output.
+  expected_objective: 374.502452125
   expected_objective_tolerance: 1.0e-4
   time_budget_seconds: 30.0

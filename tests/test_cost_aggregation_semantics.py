@@ -120,6 +120,12 @@ def _run_scenario(
     provider = getattr(last_step, "flex_data_provider", None)
     if provider is not None:
         provider.snapshot_processed_inputs(workdir)
+    # A stochastic solve followed by its realization solve: the solve_data of
+    # the stochastic solve (its own Provider) under solve_data_<solve>/.
+    for step in steps.values():
+        if step is not last_step and step.flex_data_provider is not None \
+                and step.flex_data_provider is not provider:
+            step.flex_data_provider.snapshot_processed_inputs(workdir / f"provider_{step.solve_name}", stamp=False)
 
     write_outputs(
         scenario_name=scenario,
@@ -277,6 +283,22 @@ def _read_pdt_timestep_weight(
         ),
         name="timestep_weight",
     )
+
+
+def _solve_objectives(csv_dir: Path) -> dict[str, float]:
+    """``{solve: LP objective}`` from the ``Solve,Objective`` block of ``summary_solve.csv``."""
+    out: dict[str, float] = {}
+    in_block = False
+    with open(csv_dir / "summary_solve.csv") as f:
+        for row in csv.reader(f):
+            if row and row[0] == "Solve":
+                in_block = True
+                continue
+            if in_block:
+                if len(row) < 2 or row[0].startswith("Total cost"):
+                    break
+                out[row[0]] = float(row[1])
+    return out
 
 
 def _read_summary_solve(csv_dir: Path) -> dict:
@@ -1071,8 +1093,10 @@ def test_stochastic_branch_weight(
     # genuinely stochastic (a real multi-forecast fan with a weight-0
     # phantom), otherwise the identity below is vacuous (deterministic runs
     # weight by 1.0 and trivially reconcile).
+    # The stochastic solve's own weights (the realization solve after it is
+    # deterministic and holds the last solve_data/ dump).
     weights: dict[str, float] = {}
-    with open(workdir / "solve_data" / "pd_branch_weight.csv") as f:
+    with open(workdir / "provider_2day_dispatch" / "solve_data" / "pd_branch_weight.csv") as f:
         next(f)  # header
         for row in csv.reader(f):
             if len(row) >= 2 and row[0]:
@@ -1096,12 +1120,16 @@ def test_stochastic_branch_weight(
     # Core invariant: both sides apply pdt_branch_weight, so the Python
     # calculated total equals the LP objective (the phantom's free slack
     # × weight 0 = 0; the forecasts × their weights sum to the expectation).
-    rel_err = abs(summary["total_calc"] - summary["objective"]) / max(
-        abs(summary["objective"]), 1e-9
-    )
+    # The run also holds the deterministic realization solve of the fan: the
+    # calculated total covers both solves, so it equals the sum of their LP
+    # objectives.
+    objectives = _solve_objectives(csv_dir)
+    assert set(objectives) == {"2day_dispatch", "2day_dispatch__realized_dispatch"}, objectives
+    lp_total = sum(objectives.values())
+    rel_err = abs(summary["total_calc"] - lp_total) / max(abs(lp_total), 1e-9)
     assert rel_err <= 1e-4, (
         f"branch-weight reconciliation broken: "
-        f"LP_obj={summary['objective']:.6f}, "
+        f"LP_obj={lp_total:.6f}, "
         f"python_total_calc={summary['total_calc']:.6f}, "
         f"rel_err={rel_err:.3e}.  Either the LP stopped applying "
         f"pdt_branch_weight (LP_obj jumps up) or the post-process option-A "

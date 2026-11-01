@@ -68,7 +68,11 @@ def stochastic_run_workdir(
     assert last_step.solution is not None and last_step.solution.optimal, (
         "Stochastic dispatch model failed to solve"
     )
-    provider = getattr(last_step, "flex_data_provider", None)
+    # The checks read the STOCHASTIC solve's inputs; the deterministic
+    # realization solve that follows it (the fan has a realized: yes
+    # designation) has its own Provider and wrote the last solve_data/ dump.
+    stochastic_step = steps["2day_dispatch"]
+    provider = getattr(stochastic_step, "flex_data_provider", None)
     if provider is not None:
         provider.snapshot_processed_inputs(workdir)
     return workdir
@@ -129,8 +133,10 @@ def test_storage_state_equal_across_branches(
     pulled from the wrong CSV) would let the forecasts' storage states drift.
     """
     workdir = stochastic_run_workdir
+    # The stochastic solve's own v_state (the realization solve after it
+    # writes v_state__2day_dispatch__realized_dispatch).
     matches = list(
-        (workdir / "output_raw").glob("v_state__*.parquet")
+        (workdir / "output_raw").glob("v_state__2day_dispatch.parquet")
     )
     assert matches, "No v_state parquet emitted by stochastic run"
     df = read_lean_parquet(matches[0])
