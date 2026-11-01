@@ -1093,10 +1093,8 @@ def test_stochastic_branch_weight(
     # genuinely stochastic (a real multi-forecast fan with a weight-0
     # period label), otherwise the identity below is vacuous (deterministic runs
     # weight by 1.0 and trivially reconcile).
-    # The stochastic solve's own weights (the realization solve after it is
-    # deterministic and holds the last solve_data/ dump).
     weights: dict[str, float] = {}
-    with open(workdir / "provider_2day_dispatch" / "solve_data" / "pd_branch_weight.csv") as f:
+    with open(workdir / "solve_data" / "pd_branch_weight.csv") as f:
         next(f)  # header
         for row in csv.reader(f):
             if len(row) >= 2 and row[0]:
@@ -1120,15 +1118,15 @@ def test_stochastic_branch_weight(
     # Core invariant: both sides apply pdt_branch_weight, so the Python
     # calculated total equals the LP objective (the phantom's free slack
     # × weight 0 = 0; the forecasts × their weights sum to the expectation).
-    # The run also holds the deterministic realization solve of the fan: the
-    # calculated total covers both solves, so it equals the sum of their LP
-    # objectives.
+    # The fan is forecasts-only (no realized: yes branch), so the run is the
+    # stochastic solve alone.
     objectives = _solve_objectives(csv_dir)
-    assert set(objectives) == {"2day_dispatch", "2day_dispatch__realized_dispatch"}, objectives
+    assert set(objectives) == {"2day_dispatch"}, objectives
     # The stochastic solve's objective, the forecast expectation: the parent LP (before the period label lost its
     # dispatch, objective 66.9291187913) with the label's rows and columns removed and each forecast's first-step
     # storage balance in the label's solve-start form (a forecast of a fan in the solve's first period starts the
-    # solve), solved on its own from the edited MPS: 67.3517305373.
+    # solve), solved on its own from the edited MPS: 67.3517305373.  Dropping the fixture's former weight-0
+    # realized: yes branch leaves this LP byte-identical (lp_snapshot), so the value stands.
     assert objectives["2day_dispatch"] == pytest.approx(67.3517305373, rel=1e-6)
     lp_total = sum(objectives.values())
     rel_err = abs(summary["total_calc"] - lp_total) / max(abs(lp_total), 1e-9)

@@ -5976,7 +5976,7 @@
       "2day_dispatch",
       "stochastic_branches",
       [
-        "{\"index_type\": \"str\", \"data\": [[\"period1\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"realized\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"t0001\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"yes\", 1.0]]}]]}], [\"upper\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"t0001\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"no\", 1.0]]}]]}], [\"lower\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"t0001\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"no\", 1.0]]}]]}], [\"mid\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"t0001\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"no\", 1.0]]}]]}]]}]]}",
+        "{\"index_type\": \"str\", \"data\": [[\"period1\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"realized\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"t0001\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"no\", 1.0]]}]]}], [\"upper\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"t0001\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"no\", 1.0]]}]]}], [\"lower\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"t0001\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"no\", 1.0]]}]]}], [\"mid\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"t0001\", {\"type\": \"map\", \"index_type\": \"str\", \"data\": [[\"no\", 1.0]]}]]}]]}]]}",
         "map"
       ],
       "2day"

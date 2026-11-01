@@ -38,7 +38,6 @@ from tests.model.test_balance_penalty_shapes import (
     T48,
     T168,
     _chain,
-    realized_branch_override,
     scalar,
     stoch_map,
 )
@@ -55,9 +54,6 @@ GAS_IN = ["gas_plant", "gas_market"]
 STOCH_UNIT = [["group__unit", ["add_stochastics", "coal_plant"], None]]
 STOCH_NODE = [["group__node", ["add_stochastics", "demand_node"], None]]
 ROLLING_SEPARATE_DISPATCH_JSON = STOCHASTICS_JSON.parent / "rolling_separate_dispatch.json"
-# The SINGLE scenario's realized branch (``_single_realized_override``) carries its data on the real
-# "period1" name, not a synthetic branch-period copy -- these are its remaining FORECAST branch periods.
-SINGLE_FORECAST_BRANCH_PERIODS = tuple(p for p in (f"{ANCHOR}_{b}" for b in BRANCHES) if not p.endswith("_realized"))
 
 
 @pytest.fixture(autouse=True)
@@ -110,23 +106,12 @@ def _reserve_values(r1, r2) -> list:
     return vals
 
 
-def _single_realized_override() -> list:
-    """Flag the ``SINGLE`` scenario's ``realized`` branch ``realized: yes`` (owner decision #82: no
-    reference-forecast fallback for a forecasts-only fan that authors a rank-3 value).  Delegates to
-    ``test_balance_penalty_shapes.realized_branch_override``, which the other module's own rank-3 tests
-    share; the shared ``stochastics.json`` file, and every other test that reads it, is untouched.
-    """
-    return realized_branch_override()
-
-
 _RUNS: dict = {}
 
 
 def _run(tmp_path_factory, scenario: str, values: list, entities: list, *, warm: bool = True) -> dict:
     from flextool.engine import run_chain_from_db
 
-    if scenario == SINGLE:
-        values = _single_realized_override() + list(values)
     key = json.dumps([scenario, values, entities, warm])
     if key not in _RUNS:
         alt = f"c10b_{len(_RUNS)}"
@@ -231,7 +216,7 @@ def test_stochastic_time_single_solve(tmp_path_factory, labelled: bool) -> None:
     for field, (keys, ent, other, mult, base, emit_key, emit_cols, param, costlike) in SINGLE_FIELDS.items():
         cells = _cells(step, field, keys)
         mine = {k: v for k, v in cells.items() if k[:len(keys)] == ent}
-        assert {k[-2] for k in mine} >= set(SINGLE_FORECAST_BRANCH_PERIODS), (field, sorted({k[-2] for k in mine}))
+        assert {k[-2] for k in mine} >= set(BRANCH_PERIODS), (field, sorted({k[-2] for k in mine}))
         _assert_branch_values(cells, ent, mult)
         emit = utf8(provider.get(emit_key))
         emit = emit.filter(pl.col("param") == param)
@@ -305,7 +290,7 @@ def test_stochastic_efficiency_and_min_load(tmp_path_factory, labelled: bool) ->
         for u in ("coal_plant", "gas_plant"):
             assert all((u, d, t) in cells for d, t in _dt(step)), (field, u)
     slope = _cells(step, "p_slope", ["p"])
-    for d in SINGLE_FORECAST_BRANCH_PERIODS:
+    for d in BRANCH_PERIODS:
         eta, m = BR[d.removeprefix("period1_")], BR[d.removeprefix("period1_")] * 0.5
         want = (1 / eta - m / 0.6) / (1 - m)
         assert slope[("coal_plant", d, "t0001")] == pytest.approx(want, rel=1e-9), d
@@ -432,20 +417,16 @@ def _const(tmp_path_factory, scenario: str, rank3: bool) -> dict:
 
 
 def test_rank3_constant_equals_scalar_single_branch_periods(tmp_path_factory) -> None:
-    """Single stochastic solve: the branch periods carry the scalar's cells and the objective is the scalar's.
-    The anchor period ``period1`` takes the realized branch's value from the emit's fold (#82) — this module's
-    ``_single_realized_override`` flags branch ``realized`` ``realized: yes`` for the SINGLE scenario; since
-    every branch in this fixture carries the SAME value, the anchor's cells equal the scalar run's anchor
-    cells for both fields regardless of which branch is realized."""
+    """Single stochastic solve, a forecasts-only fan: every cell of the four forecast branch periods equals the
+    scalar run's and so does the objective.  The period label ``period1`` has no dispatch, so neither run has a
+    cell on it."""
     r3, sc = _first(_const(tmp_path_factory, SINGLE, True)), _first(_const(tmp_path_factory, SINGLE, False))
     for field, keys, ent in (("p_process_availability", ["p"], ("coal_plant",)),
                              ("p_pdt_varCost_source", ["p", "source"], tuple(COAL_IN))):
-        a, b = _cells(r3, field, keys), _cells(sc, field, keys)
-        branch = {k: v for k, v in a.items() if k[:len(keys)] == ent and k[-2] in BRANCH_PERIODS}
-        assert branch == {k: v for k, v in b.items() if k[:len(keys)] == ent and k[-2] in BRANCH_PERIODS}, field
-        anchor = {k: v for k, v in a.items() if k[:len(keys)] == ent and k[-2] == ANCHOR}
-        want_anchor = {k: v for k, v in b.items() if k[:len(keys)] == ent and k[-2] == ANCHOR}
-        assert anchor == want_anchor, field
+        a = {k: v for k, v in _cells(r3, field, keys).items() if k[:len(keys)] == ent}
+        b = {k: v for k, v in _cells(sc, field, keys).items() if k[:len(keys)] == ent}
+        assert {k[-2] for k in a} == set(BRANCH_PERIODS), field
+        assert a == b, field
     assert _rel(float(r3.solution.obj), float(sc.solution.obj)) < 1e-9
 
 
@@ -465,21 +446,24 @@ def test_rank3_constant_equals_scalar_rolling(tmp_path_factory) -> None:
 # An entity outside every include_stochastics group
 
 
-@pytest.mark.parametrize("scenario", [SINGLE, ROLLING])
-def test_rank3_outside_stochastic_group(tmp_path_factory, scenario: str) -> None:
-    """``gas_plant`` (in no ``include_stochastics`` group) authors a rank-3 availability.  The emit's fold, which
-    the readers take as is, applies regardless of group membership (the parent-period fold is unconditional):
-    both cohorts flag ``realized: yes`` on branch ``realized`` (0.9) -- the rolls' fixture already does, and
-    this module's ``_single_realized_override`` does the same for the SINGLE scenario (owner decision #82:
-    no reference-forecast fallback) -- so both anchors take the realized branch's value.  The docs' "only
-    inside such a group" wording is corrected with #82."""
-    at = AT_SINGLE if scenario == SINGLE else AT_ROLL
-    steps = _run(tmp_path_factory, scenario, [["unit", "gas_plant", "availability", _r3(1.0, at, True)]], [])
-    want = BR["realized"]
+def test_rank3_outside_stochastic_group_reads_realized_branch(tmp_path_factory) -> None:
+    """``gas_plant`` (in no ``include_stochastics`` group) authors a rank-3 availability.  Outside such a group
+    every branch period reads the single value of the realized branch (docs/how_to.md "Single solve
+    stochastics"): ``1_week_rolling_wind`` designates branch ``realized`` (0.9) ``realized: yes`` in every
+    roll, so every cell of every stochastic roll is 0.9."""
+    steps = _run(tmp_path_factory, ROLLING, [["unit", "gas_plant", "availability", _r3(1.0, AT_ROLL, True)]], [])
     for step in _stochastic_steps(steps)[:3]:
         cells = {k: v for k, v in _cells(step, "p_process_availability", ["p"]).items() if k[0] == "gas_plant"}
         assert len(cells) == len(_dt(step))
-        assert set(cells.values()) == {want}
+        assert set(cells.values()) == {BR["realized"]}
+
+
+def test_rank3_outside_stochastic_group_forecasts_only_raises(tmp_path_factory) -> None:
+    """The same value in ``2_day_stochastic_dispatch``, a forecasts-only fan: there is no realized branch for
+    the ungrouped entity to read, so the solve raises naming the entity instead of silently taking the class
+    default (1.0) on every branch period."""
+    with pytest.raises(FlexToolConfigError, match="gas_plant.availability.*include_stochastics"):
+        _run(tmp_path_factory, SINGLE, [["unit", "gas_plant", "availability", _r3(1.0, AT_SINGLE, True)]], [])
 
 
 # ---------------------------------------------------------------------------
@@ -553,21 +537,23 @@ def test_rank3_dispatch_sibling_uses_realized_branch(tmp_path_factory) -> None:
 # (flextool.engine.preprocess.params._profiles), not the pbt_* STOCHASTIC_TIME_PARAMS path above.
 
 
-def _wind_branch_series(fixture_json, branch: str) -> dict:
-    """Branch *branch*'s own authored ``t -> value`` series of the SINGLE scenario's ``wind`` profile
-    (``stochastics.json``, alternative ``2day``) -- the independent oracle of the profile tests below, read
-    straight from the fixture JSON, never from the engine's own resolved output."""
+def _wind_branch_series(fixture_json, alt: str, branch: str, analysis_time: str) -> dict:
+    """Branch *branch*'s own authored ``t -> value`` series at *analysis_time* of the ``wind`` profile in
+    alternative *alt* (``2day`` for the single solve, ``1week_rolling`` for the rolls) -- the independent oracle
+    of the profile tests below, read straight from the fixture JSON, never from the engine's own resolved
+    output."""
     import base64
 
-    for cls, ent, param, value, alt in json.loads(fixture_json.read_text())["parameter_values"]:
-        if (cls, ent, param, alt) != ("profile", "wind", "profile", "2day"):
+    for cls, ent, param, value, a in json.loads(fixture_json.read_text())["parameter_values"]:
+        if (cls, ent, param, a) != ("profile", "wind", "profile", alt):
             continue
         raw = json.loads(base64.b64decode(value[0]).decode())
         for b, branch_map in raw["data"]:
             if b == branch:
-                for _ts, ts_map in branch_map["data"]:
-                    return dict(ts_map["data"])
-    raise AssertionError(f"profile.wind (alternative 2day, branch {branch}) not found in stochastics.json")
+                for ts, ts_map in branch_map["data"]:
+                    if ts == analysis_time:
+                        return dict(ts_map["data"])
+    raise AssertionError(f"profile.wind (alternative {alt}, branch {branch}, {analysis_time}) not in the fixture")
 
 
 def _wind_cells(step) -> dict:
@@ -579,52 +565,35 @@ def _wind_cells(step) -> dict:
     return out
 
 
-def _wind_realized_series() -> dict:
-    return _wind_branch_series(STOCHASTICS_JSON, "realized")
-
-
 def test_rank3_profile_realization_solve_takes_realized_branch(tmp_path_factory) -> None:
-    """The ``wind`` profile is a rank-3 (stochastic-time) map in the SINGLE scenario's fixture data; this
-    module's ``_single_realized_override`` designates branch ``realized``.  The period label ``period1`` has no
-    dispatch in the stochastic solve (no profile rows); the realization solve that the designation adds
-    dispatches ``period1`` with the realized branch's own series."""
-    want = _wind_realized_series()
-    steps = _run(tmp_path_factory, SINGLE, [], [])
-    stochastic = _stochastic_steps(steps)[0]
-    assert ANCHOR not in _wind_cells(stochastic), "the period label has profile rows in the stochastic solve"
+    """``1_week_rolling_wind`` authors a rank-3 ``wind`` profile and designates branch ``realized`` in every
+    roll.  The period label ``period1`` has no dispatch in the stochastic rolls (no profile rows there); each
+    realization roll dispatches ``period1`` with the realized branch's own series for that roll's analysis time
+    (its first step), read straight from the fixture JSON."""
+    steps = _run(tmp_path_factory, ROLLING, [], [])
+    for step in _stochastic_steps(steps):
+        assert ANCHOR not in _wind_cells(step), "the period label has profile rows in a stochastic roll"
     realization = [s for k, s in steps.items() if is_realization(k)]
-    assert len(realization) == 1, list(steps)
-    anchor = _wind_cells(realization[0]).get(ANCHOR)
-    assert anchor, "wind profile missing on period1 in the realization solve"
-    assert anchor == {t: want[t] for t in anchor}, "realization solve's profile != the realized branch's series"
-
-
-def _all_forecasts_override() -> list:
-    """The SAME ``2day_dispatch`` cohort with every branch ``realized: no``: a genuinely forecasts-only fan of
-    the four forecasts ``realized`` / ``upper`` / ``lower`` / ``mid`` (``stochastics.json`` itself is untouched)."""
-    branches = ("realized", "upper", "lower", "mid")
-    value = {"index_type": "str", "data": [[ANCHOR, {"type": "map", "index_type": "str", "data": [
-        [b, {"type": "map", "index_type": "str",
-             "data": [["t0001", {"type": "map", "index_type": "str", "data": [["no", 1.0]]}]]}]
-        for b in branches]}]]}
-    return [["solve", "2day_dispatch", "stochastic_branches", b64(value, "map")]]
+    assert len(realization) == 7, list(steps)
+    for step in realization:
+        cells = _wind_cells(step)
+        assert set(cells) == {ANCHOR}, sorted(cells)
+        analysis_time = min(cells[ANCHOR])
+        want = _wind_branch_series(STOCHASTICS_JSON, "1week_rolling", "realized", analysis_time)
+        assert cells[ANCHOR] == {t: want[t] for t in cells[ANCHOR]}, analysis_time
 
 
 def test_rank3_profile_forecasts_only_fan_solves(tmp_path_factory) -> None:
-    """A genuinely forecasts-only ``2day_dispatch`` fan (:func:`_all_forecasts_override`) with a rank-3 ``wind``
-    profile solves: every forecast branch period takes its own branch's authored series, and the period label
-    ``period1`` has no profile rows (no dispatch, so it needs no value of its own)."""
-    from flextool.engine import run_chain_from_db
-
-    alt = "profile_forecasts_only"
-    url, scen = make_db(tmp_path_factory, alt=alt, values=_all_forecasts_override(),
-                        base_chain=_chain(STOCHASTICS_JSON, SINGLE), fixture_json=STOCHASTICS_JSON)
-    steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"), keep_solutions=True)
+    """``2_day_stochastic_dispatch``'s forecasts-only fan (the four forecasts ``realized`` / ``upper`` /
+    ``lower`` / ``mid``, none designated) with its rank-3 ``wind`` profile solves: every forecast branch period
+    takes its own branch's authored series, the period label ``period1`` has no profile rows (no dispatch, so it
+    needs no value of its own) and no realization solve is added."""
+    steps = _run(tmp_path_factory, SINGLE, [], [])
     assert not any(is_realization(k) for k in steps), "a forecasts-only fan got a realization solve"
     cells = _wind_cells(_first(steps))
     assert ANCHOR not in cells
-    for branch in ("realized", "upper", "lower", "mid"):
-        want = _wind_branch_series(STOCHASTICS_JSON, branch)
+    for branch in BRANCHES:
+        want = _wind_branch_series(STOCHASTICS_JSON, "2day", branch, "t0001")
         got = cells.get(f"{ANCHOR}_{branch}")
         assert got, f"wind profile missing on {ANCHOR}_{branch}"
         assert got == {t: want[t] for t in got}, f"{ANCHOR}_{branch}: profile != the branch's own series"

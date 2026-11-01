@@ -270,12 +270,8 @@ def test_stochastic_branch_price_not_probability_weighted(tmp_path_factory) -> N
             continue
         hit |= _approx_set([v], {16.0 / 0.9, 6.0 / 0.9, 0.0}) if v != 0.0 else {0.0}
     assert {16.0 / 0.9, 6.0 / 0.9} <= hit
-    # The fan's realized: yes designation adds the realization solve, which dispatches the realized data of the
-    # trunk period: its prices are realized ones, set at the margin by the same merit order (coal, gas, spill).
-    realized = _node_prices(wf, "2day_dispatch__realized_dispatch")
-    assert {d for (_s, d, _t) in realized} == {"period1"}
-    for key, row in realized.items():
-        assert _approx_set([row["demand_node"]], {16.0 / 0.9, 6.0 / 0.9, 0.0}), (key, row["demand_node"])
+    # A forecasts-only fan (no realized: yes branch) adds no realization solve.
+    assert list(steps) == ["2day_dispatch"]
 
 
 def test_rolling_price_per_roll(tmp_path_factory) -> None:
@@ -429,23 +425,33 @@ def test_fix_price_handoff_equals_parent_price(tmp_path_factory, monkeypatch, sc
 
 
 def test_null_prices_reach_output_writers(tmp_path_factory) -> None:
-    """The prices of a stochastic solve and of its realization solve pass through the output processing and the
-    parquet / csv / excel / SpineDB writers without error; every price reaches the SpineDB ``price_t`` unchanged
-    (16 / 0.9, 6 / 0.9 or 0).  The period label ``period1`` has no dispatch in the stochastic solve (no price
-    rows of its own); its prices are the realization solve's."""
+    """Empty price cells pass through the output processing and the parquet / csv / excel / SpineDB writers
+    without error and are never written as a number (before the c15c reader change they were filled with 0; the
+    SpineDB writer may leave them out).
+
+    Vehicle: the coal case (west: penalty_up 900; coal 20 CUR/MWh / efficiency 0.4 = 50) with ``timeset_weights``
+    on its timeset ``2day`` listing only t0001-t0024.  A step the map leaves out has weight 0
+    (``p_timestep_weight``: raw weight 0, the listed steps scaled by 48 / 24), so its price weight is 0 and its
+    price is empty (``_prices.to_price``); the other steps keep their merit price, 50 or 900 (the weight cancels
+    between the dual and the price weight)."""
     from spinedb_api import DatabaseMapping, from_database
 
     from flextool.process_outputs.write_outputs import write_outputs
 
-    steps, wf = _run(tmp_path_factory, "pr_sdb", _chain(STOCH, "2_day_stochastic_dispatch_no_storage"),
-                     fixture_json=STOCH)
+    weights = b64({"index_type": "str", "data": [[f"t{i:04d}", 1.0] for i in range(1, 25)]}, "map")
+    steps, wf = _run(tmp_path_factory, "pr_null", COAL, [["timeset", "2day", "timeset_weights", weights]])
     prices = _node_prices(wf)
-    assert not [k for k in prices if k[0] == "2day_dispatch" and k[1] == "period1"]
-    assert [k for k in prices if k[0] == "2day_dispatch__realized_dispatch" and k[1] == "period1"]
+    for (_s, _d, t), row in prices.items():
+        v = row["west"]
+        if int(t[1:]) > 24:
+            assert v is None or math.isnan(v), (t, v)
+        else:
+            _approx_set([v], {50.0, 900.0})
+    assert any(int(t[1:]) > 24 for (_s, _d, t) in prices)
     last = next(reversed(steps.values()))
     db_url = "sqlite:///" + str(wf / "results.sqlite")
     write_outputs(
-        scenario_name="pr_sdb_test", output_location=str(wf), subdir="pr_sdb_test",
+        scenario_name="pr_null_test", output_location=str(wf), subdir="pr_null_test",
         output_config_path=str(FLEXTOOL_ROOT / "templates" / "default_plots.yaml"),
         fallback_output_location=str(wf), raw_output_dir=str(wf / "output_raw"),
         write_methods=["parquet", "csv", "excel", "spinedb"], results_db_url=db_url,
@@ -465,9 +471,11 @@ def test_null_prices_reach_output_writers(tmp_path_factory) -> None:
 
     with DatabaseMapping(db_url) as db:
         for pv in db.get_parameter_value_items(entity_class_name="node"):
-            if pv["entity_byname"] == ("demand_node",) and pv["parameter_definition_name"] == "price_t":
+            if pv["entity_byname"] == ("west",) and pv["parameter_definition_name"] == "price_t":
                 walk(from_database(pv["value"], pv["type"]), ())
-    assert leaves, "price_t of demand_node not written"
+    assert leaves, "price_t of west not written"
     for path, v in leaves:
-        if v is not None and not (isinstance(v, float) and math.isnan(v)) and v != 0.0:
-            _approx_set([v], {16.0 / 0.9, 6.0 / 0.9})
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            continue
+        assert not any(p.startswith("t") and int(p[1:]) > 24 for p in path if p[1:].isdigit()), (path, v)
+        _approx_set([v], {50.0, 900.0})

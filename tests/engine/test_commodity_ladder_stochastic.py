@@ -18,7 +18,7 @@ add none of its own degenerate contribution either — the sibling re-solves the
 carries that forward instead.
 
 Vehicle: ``2_day_stochastic_dispatch`` of ``tests/fixtures/stochastics.json`` (one real period
-``period1`` = the weight-0 phantom trunk, four forecast branch periods), coal moved to a ladder.  A
+``period1`` = the period label, which has no dispatch, and four forecast branch periods; a forecasts-only fan), coal moved to a ladder.  A
 ladder whose cheap tier is the flat price (16) and unlimited must cost exactly what the flat price
 costs.  The rolling smoke test uses ``1_week_rolling_wind``.  Databases are built from the JSON
 fixture (never a checked-in ``.sqlite``); the stochastic branch weights are rewritten in the
@@ -44,10 +44,9 @@ BRANCHES = ("realized", "upper", "lower", "mid")
 BRANCH_PERIODS = tuple(f"period1_{b}" for b in BRANCHES)
 ALL_PERIODS = ("period1",) + BRANCH_PERIODS
 FLAT_PRICE = 16.0
-# Input weights 1/2/3/4: the four forecasts renormalise to 0.1/0.2/0.3/0.4; the trunk is a weight-0 phantom.
+# Input weights 1/2/3/4: the four forecasts renormalise to 0.1/0.2/0.3/0.4 (the period label has no dispatch).
 SKEWED = {"realized": 1.0, "upper": 2.0, "lower": 3.0, "mid": 4.0}
-SKEWED_BW = {"period1": 0.0, "period1_realized": 0.1, "period1_upper": 0.2,
-             "period1_lower": 0.3, "period1_mid": 0.4}
+SKEWED_BW = {"period1_realized": 0.1, "period1_upper": 0.2, "period1_lower": 0.3, "period1_mid": 0.4}
 WEIGHTS = {"uniform": None, "skewed": SKEWED}
 
 
@@ -91,12 +90,12 @@ def _tiers(price1: float, quantity1: float, price2: float = 30.0) -> dict:
 
 
 def _annual(form: str, tiers: dict) -> list:
-    """coal on the annual ladder: ``2d`` (no period index), ``3d_trunk`` (keyed by ``period1`` only) or
+    """coal on the annual ladder: ``2d`` (no period index), ``3d_label`` (keyed by ``period1`` only) or
     ``3d_all`` (keyed by ``period1`` and every branch period name)."""
     if form == "2d":
         value = {k: v for k, v in tiers.items() if k != "type"}
     else:
-        periods = ("period1",) if form == "3d_trunk" else ALL_PERIODS
+        periods = ("period1",) if form == "3d_label" else ALL_PERIODS
         value = {"index_type": "str", "rank": 3, "index_name": "period",
                  "data": [[p, tiers] for p in periods]}
     return [["commodity", "coal", "price_method", b64("price_ladder_annual", "str")],
@@ -157,7 +156,7 @@ def binding_q(flat):
 
 @pytest.fixture(scope="module")
 def period_share(flat) -> float:
-    """``p_period_share[d]`` of this fixture — the same for every period (trunk and every forecast
+    """``p_period_share[d]`` of this fixture — the same for every period (the period label and every forecast
     branch cover the same 2-day calendar window): 2/365 = 0.0054794520...
 
     ``_eq_tier_cap_annual`` treats the authored ladder quantity as a per-calendar-YEAR amount and
@@ -211,7 +210,7 @@ def test_ladder_objective_coefficient_carries_branch_weight(tmp_path_factory) ->
         _c, _n, d, i = nm[nm.index("[") + 1:-1].split(",")
         assert c == pytest.approx(prices[i] * factor[d] * SKEWED_BW[d], rel=1e-12, abs=0.0), nm
         seen.add(d)
-    assert seen == set(ALL_PERIODS)
+    assert seen == set(BRANCH_PERIODS)
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +218,7 @@ def test_ladder_objective_coefficient_carries_branch_weight(tmp_path_factory) ->
 
 
 def test_branch_periods_inherit_annual_ladder_price(tmp_path_factory, flat) -> None:
-    steps = _steps(tmp_path_factory, "c5_trunk_price", _annual("3d_trunk", _tiers(FLAT_PRICE, math.inf)))
+    steps = _steps(tmp_path_factory, "c5_label_price", _annual("3d_label", _tiers(FLAT_PRICE, math.inf)))
     assert _obj(steps) == pytest.approx(_obj(flat["uniform"]), rel=1e-9)
 
 
@@ -238,7 +237,7 @@ def cap_reference(tmp_path_factory, binding_q, period_share):
 
 
 @pytest.mark.parametrize("weights", list(WEIGHTS))
-@pytest.mark.parametrize("form", ["3d_trunk", "2d"])
+@pytest.mark.parametrize("form", ["3d_label", "2d"])
 def test_branch_periods_inherit_annual_tier_cap(tmp_path_factory, binding_q, period_share, cap_reference,
                                                 form, weights) -> None:
     quantity = _tier_quantity(binding_q, period_share)
@@ -250,7 +249,7 @@ def test_branch_periods_inherit_annual_tier_cap(tmp_path_factory, binding_q, per
         step = _last(s)
         rows = cstr_over(build(step.flex_data), "ladder_tier_cap_annual_roll")
         assert rows is not None
-        assert set(rows.filter(pl.col("i") == "1")["d"]) == set(ALL_PERIODS)
+        assert set(rows.filter(pl.col("i") == "1")["d"]) == set(BRANCH_PERIODS)
         tier1 = _v_trade(step).filter((pl.col("i") == "1") & pl.col("d").is_in(list(BRANCH_PERIODS)))
         assert (tier1["value"] - binding_q).abs().min() <= 1e-7 * binding_q, "the tier-1 cap does not bind"
 
@@ -294,7 +293,7 @@ def test_branch_periods_inherit_realized_mwh_carry(tmp_path_factory, binding_q, 
     from polar_high import Param
 
     quantity = _tier_quantity(binding_q, period_share)
-    steps = _steps(tmp_path_factory, "c59_rlz_carry", _annual("3d_trunk", _tiers(10.0, quantity)))
+    steps = _steps(tmp_path_factory, "c59_rlz_carry", _annual("3d_label", _tiers(10.0, quantity)))
     fd = _last(steps).flex_data
     realized = 0.3 * binding_q  # leaves 0.7 * binding_q of headroom -- still less than the max branch's
                                 # natural (uncapped) demand, so the cap keeps binding.

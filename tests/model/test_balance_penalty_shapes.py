@@ -107,27 +107,6 @@ def stoch_map(branch_values: dict, analysis_times: dict, *, labelled: bool) -> l
     return b64(top, "map")
 
 
-def realized_branch_override(solve: str = "2day_dispatch", analysis_time: str = "t0001") -> list:
-    """Flag ``solve``'s ``realized`` branch ``realized: yes`` on ``ANCHOR``.
-
-    The shared ``stochastics.json`` fixture leaves every one of ``2day_dispatch``'s branches
-    ``realized: no`` -- a legitimate, separately-tested forecasts-only configuration many
-    unrelated tests build on -- but a stochastic-time (rank-3) value authored in a test that uses
-    this solve needs a committed branch to resolve the anchor's own value from (owner decision
-    #82: no reference-forecast fallback).  Shared with ``tests/model/test_stochastic_time_params.py``,
-    whose rolling solve names its analysis time differently.
-    """
-    branch_map = {
-        "type": "map", "index_type": "str",
-        "data": [[b, {"type": "map", "index_type": "str",
-                      "data": [[analysis_time, {"type": "map", "index_type": "str",
-                                                "data": [["yes" if b == "realized" else "no", 1.0]]}]]}]
-                 for b in BRANCHES],
-    }
-    value = {"index_type": "str", "data": [[ANCHOR, branch_map]]}
-    return [["solve", solve, "stochastic_branches", b64(value, "map")]]
-
-
 def _chain(fixture_json: Path, scenario: str) -> list[str]:
     rows = [r for r in json.loads(fixture_json.read_text())["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
@@ -309,39 +288,28 @@ def test_map_next_to_penalty_method_off(tmp_path_factory) -> None:
 @pytest.mark.parametrize("labelled", [False, True], ids=["silent_labels", "branch_labels"])
 def test_stochastic_time_penalty(tmp_path_factory, labelled: bool) -> None:
     """Rank-3 ``penalty_up`` / ``penalty_down`` on ``demand_node`` (in the stochastic group): each branch period
-    carries its branch's value, the other nodes keep theirs (48 rows per (n, d), no duplicates); the period
-    label has no dispatch, and the realization solve the designation adds dispatches ``period1`` with the
-    realized branch's value.
+    carries its branch's value, the other nodes keep theirs (48 rows per (n, d), no duplicates).  The fan is
+    forecasts-only (no ``realized: yes`` branch): the four forecasts dispatch, the period label has no dispatch
+    and no realization solve is added.
 
     Before the fix the silent-label case crashed (``p_penalty_*`` None) and the labelled case got every branch
-    value on every cell (192 rows per (n, d)) with the other nodes' slack free.  The ``realized`` branch is
-    designated ``realized: yes``.
+    value on every cell (192 rows per (n, d)) with the other nodes' slack free.
     """
     ups = dict(zip(BRANCHES, (6000.0, 6100.0, 6200.0, 6300.0)))
     downs = dict(zip(BRANCHES, (4000.0, 4100.0, 4200.0, 4300.0)))
     at = {"t0001": T48}
     steps = _stoch(tmp_path_factory, stoch_map(ups, at, labelled=labelled), stoch_map(downs, at, labelled=labelled),
-                   extra=realized_branch_override(),
                    entities=[["group__node", ["add_stochastics", "demand_node"], None]])
+    assert not any("__realized_dispatch" in k for k in steps), list(steps)
     step = _last(steps)
-
-    # The designated realized branch is no forecast, and the period label has no dispatch.
-    assert {d for d, _t in _dt(step)} == set(BRANCH_PERIODS) - {"period1_realized"}
+    assert {d for d, _t in _dt(step)} == set(BRANCH_PERIODS)
 
     def want(table, other):
         def f(n, d, t):
-            if n != "demand_node":
-                return other[n]
-            return table[d.removeprefix("period1_")] if d in BRANCH_PERIODS else table["realized"]
+            return table[d.removeprefix("period1_")] if n == "demand_node" else other[n]
         return f
-    others_up = {"downriver": DEFAULT, "hydro_reservoir": DEFAULT}
-    others_down = {"downriver": 0.0, "hydro_reservoir": DEFAULT}
-    realization = [s for k, s in steps.items() if "__realized_dispatch" in k]
-    assert len(realization) == 1, list(steps)
-    assert {d for d, _t in _dt(realization[0])} == {ANCHOR}
-    for s in (step, realization[0]):
-        _assert_dense(s, "p_penalty_up", STOCH_NODES, want(ups, others_up))
-        _assert_dense(s, "p_penalty_down", STOCH_NODES, want(downs, others_down))
+    _assert_dense(step, "p_penalty_up", STOCH_NODES, want(ups, {"downriver": DEFAULT, "hydro_reservoir": DEFAULT}))
+    _assert_dense(step, "p_penalty_down", STOCH_NODES, want(downs, {"downriver": 0.0, "hydro_reservoir": DEFAULT}))
     for field in ("p_penalty_up", "p_penalty_down"):
         counts = _frame(getattr(step.flex_data, field)).group_by("n", "d").len()
         assert set(counts["len"]) == {48}, f"{field}: rows per (n, d) {sorted(set(counts['len']))}"

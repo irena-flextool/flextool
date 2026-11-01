@@ -232,12 +232,13 @@ def test_rolling_with_investment_builds_margin_in_every_roll(tmp_path_factory) -
 
 
 def test_recourse_keeps_branch_periods(tmp_path_factory) -> None:
-    """Recourse investment: the margin keeps its rows in the anchors and their branch periods (status quo,
-    pending the stochastics re-grounding): 18 rows, slacks on all six periods."""
+    """Recourse investment: the margin keeps its rows in the forecast branch periods; the period labels p2035 /
+    p2040 have no dispatch, so no margin row: 4 branch periods × 3 steps = 12 rows (18 when the labels had
+    rows), slacks on the four branch periods."""
     steps = _run(tmp_path_factory, "recourse", margin("cm_g"))
     st = list(steps.values())[-1]
-    assert _rows(st) == 18
-    assert sorted(_slack(st)) == ["p2035", "p2035_high", "p2035_low", "p2040", "p2040_high", "p2040_low"]
+    assert _rows(st) == 12
+    assert sorted(_slack(st)) == ["p2035_high", "p2035_low", "p2040_high", "p2040_low"]
 
 
 # ---------------------------------------------------------------------------
@@ -282,11 +283,13 @@ def test_outputs_look_ahead_period_without_margin(tmp_path_factory, monkeypatch)
 
 
 def test_outputs_recourse(tmp_path_factory, monkeypatch) -> None:
-    """Recourse with the margin: the outputs are written and report the anchors' slack."""
+    """Recourse with the margin: the outputs are written; the period labels p2035 / p2040 have no dispatch, so
+    their slack cells are empty, and every forecast branch period reports its own slack."""
     steps = _run(tmp_path_factory, "recourse", margin("cm_g"))
     out = _write_outputs(steps, "cm_recourse", monkeypatch)
     slack = {r["period"]: r["cm_g"] for r in _csv_rows(out / "slack__capacity_margin__d.csv")}
-    assert float(slack["p2035"]) > 0 and float(slack["p2040"]) > 0
+    assert slack["p2035"] == "" and slack["p2040"] == ""
+    assert all(float(slack[d]) > 0 for d in ("p2035_high", "p2035_low", "p2040_high", "p2040_low"))
 
 
 # ---------------------------------------------------------------------------

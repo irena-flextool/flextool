@@ -482,10 +482,15 @@ def test_p_penalty_up_stochastic_time_needs_solve_emit():
 
 def test_p_penalty_up_stochastic_time_merges_fold():
     """With the solve's emit active: the rank-3 node gets its folded values, the other nodes their own value or
-    the default (before the fix the seed was kept for every node, hiding ``n_b``'s map)."""
+    the default (before the fix the seed was kept for every node, hiding ``n_b``'s map).  The solve is a
+    forecasts-only fan: ``d1`` and ``d2`` are the branch periods of the period label ``p`` (no row of its own)."""
     from flextool.engine.input._param_shapes import (
         activate_stochastic_time_source,
         deactivate_stochastic_time_source,
+    )
+    from flextool.engine.preprocess.params._branch import (
+        activate_branch_anchor_pairs,
+        deactivate_branch_anchor_pairs,
     )
 
     class _Provider:
@@ -502,15 +507,13 @@ def test_p_penalty_up_stochastic_time_merges_fold():
     pdt_node = pl.DataFrame([("n_a", "penalty_up", d, t, repr(v)) for (d, t), v in folded.items()],
                             schema=["node", "param", "period", "time", "value"], orient="row")
     nb = pl.DataFrame({"n": ["n_a", "n_b", "n_c"]})
-    # A non-empty solve_branch__time_branch stands in for a `realized: yes` designation (#82): without
-    # one, stochastic_time_values refuses to fold a rank-3 value with no realized branch to take it from.
-    realized_branch = pl.DataFrame({"period": ["d1"], "branch": ["realized"]})
-    token = activate_stochastic_time_source(
-        _Provider({"solve_data/pdtNode": pdt_node, "solve_data/solve_branch__time_branch": realized_branch}))
+    pairs = activate_branch_anchor_pairs(pl.DataFrame({"anchor": ["p", "p"], "br": ["d1", "d2"]}))
+    token = activate_stochastic_time_source(_Provider({"solve_data/pdtNode": pdt_node}))
     try:
         p = ar.p_penalty_up_from_source(_stochastic_penalty_source(), nb, _penalty_dt())
     finally:
         deactivate_stochastic_time_source(token)
+        deactivate_branch_anchor_pairs(pairs)
     got = {(n, d, t): v for n, d, t, v in p.frame.select(
         [pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t")] + [pl.col("value")]).iter_rows()}
     want = {}

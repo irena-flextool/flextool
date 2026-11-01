@@ -70,14 +70,16 @@ if str(TESTS_DIR) not in sys.path:
 
 # Normalised branch weights expected once the cascade folds the injected
 # input weights ``realized=1 / upper=2 / lower=3 / mid=4`` under the
-# forecasts-only rule (R2).  ``fan_period_labels`` is purely STRUCTURAL: the
-# weight-0 phantom is the real-named TRUNK period (its ``(d,d)`` self-row
-# that also fans) — NOT the branch merely *named* ``realized``.  The 2day
-# fixture is a genuine 4-forecast fan (realized retagged to a forecast), so
-# all four named branches are forecast MEMBERS that renormalise among
-# themselves over sum 10 → 0.1 / 0.2 / 0.3 / 0.4; the CSV value set also
-# carries the phantom trunk 0.0 member.
+# forecasts-only rule.  ``fan_period_labels`` is purely STRUCTURAL: the
+# weight-0 member is the period label (the real period name, its ``(d,d)``
+# self-row that also fans) — NOT the branch merely *named* ``realized``.  The
+# 2day fixture is a genuine 4-forecast fan, so all four named branches are
+# forecast MEMBERS that renormalise among themselves over sum 10 →
+# 0.1 / 0.2 / 0.3 / 0.4.  The period-level ``pd_branch_weight`` also carries
+# the label's 0.0 (bookkeeping); the per-step ``pdt_branch_weight`` covers the
+# dispatch steps only, and the label has none.
 _BASE_NORMALISED_WEIGHTS = {0.0, 0.1, 0.2, 0.3, 0.4}
+_BASE_NORMALISED_STEP_WEIGHTS = {0.1, 0.2, 0.3, 0.4}
 
 # Two sum-preserving (sum == 10) input-weight distributions over the
 # four branches.  The redistribution keeps the denominator constant so
@@ -203,8 +205,8 @@ def swapped_run(tmp_path_factory, test_solver_config_dir):
 
 def test_branch_weights_normalised_in_csv_and_flexdata(base_run):
     """NORMALISATION: injected 1/2/3/4 input weights fold to the
-    forecasts-only sibling-normalised {0, 2⁄9, 3⁄9, 4⁄9} in both emitted
-    weight CSVs (realized pulled → phantom 0; forecasts renormalise) —
+    forecasts-only normalised {0.1, 0.2, 0.3, 0.4} in both emitted weight
+    CSVs (plus the period label's 0 in the period-level one) —
     NOT a dense 1.0 (which is what a non-stochastic / clobbered path
     would emit)."""
     workdir, _sol = base_run
@@ -216,9 +218,9 @@ def test_branch_weights_normalised_in_csv_and_flexdata(base_run):
         f"pd_branch_weight.csv weights {pd_w} != expected normalised "
         f"{_BASE_NORMALISED_WEIGHTS}"
     )
-    assert pdt_w == _BASE_NORMALISED_WEIGHTS, (
+    assert pdt_w == _BASE_NORMALISED_STEP_WEIGHTS, (
         f"pdt_branch_weight.csv weights {pdt_w} != expected normalised "
-        f"{_BASE_NORMALISED_WEIGHTS}"
+        f"{_BASE_NORMALISED_STEP_WEIGHTS}"
     )
     # Sanity: genuinely non-unit (the whole point — a dense-1.0 emit
     # would mean the branch weights never reached the cascade).
