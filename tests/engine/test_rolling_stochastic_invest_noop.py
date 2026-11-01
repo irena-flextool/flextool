@@ -54,6 +54,7 @@ from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic,
     synthetic_branch_tokens,
 )
+from tests.engine._unit_db import without_realization
 
 pytestmark = [pytest.mark.solver]
 
@@ -73,15 +74,19 @@ def _pack(value, value_type):
     ]
 
 
-def _build_invest_spec() -> dict:
+def _build_invest_spec(method: str = "none") -> dict:
     """Extend the rolling-stochastic fixture with investment intent.
 
     Mirrors the exploration setup: gas_plant becomes invest-eligible and the
-    ``1week_rolling`` solve authors ``stochastic_invest_method=recourse`` +
+    ``1week_rolling`` solve authors ``stochastic_invest_method=<method>`` +
     ``invest_periods`` + ``realized_invest_periods`` over ``period1``.  The
     invest params land on a NEW ``invest`` alternative wired into the end of
     the ``1_week_rolling_wind`` scenario chain, so the original fixture
-    alternatives are not mutated.
+    alternatives are not mutated.  The no-build does not depend on the
+    method; ``none`` keeps the fixture's ``realized: yes`` designation
+    realized by its realization solve (under ``recourse`` no realization
+    solve is added, so the committed window is unrealized — see
+    :func:`test_rolling_recourse_designation_without_realization_raises`).
     """
     src = json.loads((FIXTURES_DIR / "stochastics.json").read_text())
 
@@ -110,7 +115,7 @@ def _build_invest_spec() -> dict:
          "invest"],
         # Solve-level investment intent (recourse over the single period).
         ["solve", "1week_rolling", "stochastic_invest_method",
-         _pack("recourse", "str"), "invest"],
+         _pack(method, "str"), "invest"],
         ["solve", "1week_rolling", "invest_periods",
          _pack({"value_type": "str", "data": ["period1"]}, "array"),
          "invest"],
@@ -200,9 +205,30 @@ def rolling_invest_result(
 
 
 def _steps(result):
+    """The stochastic rolls (the realization rolls the designation adds are left out)."""
     if result["error"] is not None:
         raise result["error"]
-    return result["steps"]
+    return without_realization(result["steps"])
+
+
+def test_rolling_recourse_designation_without_realization_raises(tmp_path_factory, test_solver_config_dir):
+    """Under ``recourse`` a ``realized: yes`` designation adds no realization solve, so each roll's committed
+    window inside the forecasts-only fan is realized by no solve while the next roll continues from it: the run
+    stops before the first roll's LP, naming the storage state."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from db_utils import json_to_db
+    from flextool.update_flextool.db_migration import migrate_database
+
+    work = tmp_path_factory.mktemp("rolling_stoch_recourse")
+    jpath = work / "rolling_stoch_recourse.json"
+    jpath.write_text(json.dumps(_build_invest_spec("recourse")) + "\n")
+    url = json_to_db(jpath, work / "rolling_stoch_recourse.sqlite")
+    migrate_database(url)
+    with pytest.raises(FlexToolConfigError, match=r"1week_rolling_roll_0.*storage state"):
+        run_chain_from_db(input_db_url=url, scenario_name=SCENARIO, work_folder=work / "w",
+                          solver_config_dir=test_solver_config_dir, warm=False, keep_solutions=True)
 
 
 def test_rolling_invest_all_rolls_optimal(rolling_invest_result):

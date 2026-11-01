@@ -70,7 +70,7 @@ if str(TESTS_DIR) not in sys.path:
 
 # Normalised branch weights expected once the cascade folds the injected
 # input weights ``realized=1 / upper=2 / lower=3 / mid=4`` under the
-# forecasts-only rule (R2).  ``phantom_periods`` is purely STRUCTURAL: the
+# forecasts-only rule (R2).  ``fan_period_labels`` is purely STRUCTURAL: the
 # weight-0 phantom is the real-named TRUNK period (its ``(d,d)`` self-row
 # that also fans) — NOT the branch merely *named* ``realized``.  The 2day
 # fixture is a genuine 4-forecast fan (realized retagged to a forecast), so

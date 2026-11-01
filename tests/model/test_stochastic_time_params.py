@@ -30,7 +30,7 @@ import polars as pl
 import pytest
 
 from flextool.engine.input._solve_state import FlexToolConfigError
-from tests.engine._unit_db import b64, make_db, utf8
+from tests.engine._unit_db import b64, is_realization, make_db, utf8
 from tests.model.test_balance_penalty_shapes import (
     BRANCH_PERIODS,
     BRANCHES,
@@ -549,50 +549,59 @@ def test_rank3_dispatch_sibling_uses_realized_branch(tmp_path_factory) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Owner decision #82 extended to profiles: profile.profile resolves through its own cascade
-# (flextool.engine.preprocess.params._profiles), not the pbt_* STOCHASTIC_TIME_PARAMS path above --
-# same rule, reusing the same _pdt_lookup.py helpers.
+# Stochastic-time profiles: profile.profile resolves through its own cascade
+# (flextool.engine.preprocess.params._profiles), not the pbt_* STOCHASTIC_TIME_PARAMS path above.
 
 
-def _wind_realized_series(fixture_json) -> dict:
-    """The ``realized`` branch's own authored ``t -> value`` series of the SINGLE scenario's ``wind``
-    profile (``stochastics.json``, alternative ``2day``) -- the independent oracle for
-    :func:`test_rank3_profile_anchor_equals_realized_branch`, read straight from the fixture JSON,
-    never from the engine's own resolved output."""
+def _wind_branch_series(fixture_json, branch: str) -> dict:
+    """Branch *branch*'s own authored ``t -> value`` series of the SINGLE scenario's ``wind`` profile
+    (``stochastics.json``, alternative ``2day``) -- the independent oracle of the profile tests below, read
+    straight from the fixture JSON, never from the engine's own resolved output."""
     import base64
 
     for cls, ent, param, value, alt in json.loads(fixture_json.read_text())["parameter_values"]:
         if (cls, ent, param, alt) != ("profile", "wind", "profile", "2day"):
             continue
         raw = json.loads(base64.b64decode(value[0]).decode())
-        for branch, branch_map in raw["data"]:
-            if branch == "realized":
+        for b, branch_map in raw["data"]:
+            if b == branch:
                 for _ts, ts_map in branch_map["data"]:
                     return dict(ts_map["data"])
-    raise AssertionError("profile.wind (alternative 2day) not found in stochastics.json")
+    raise AssertionError(f"profile.wind (alternative 2day, branch {branch}) not found in stochastics.json")
 
 
-def test_rank3_profile_anchor_equals_realized_branch(tmp_path_factory) -> None:
-    """The ``wind`` profile is already a rank-3 (stochastic-time) map in the SINGLE scenario's fixture
-    data; this module's ``_single_realized_override`` designates branch ``realized``.  The anchor period
-    ``period1`` must take the realized branch's own series -- the profile cascade's Branch 1 (the
-    stochastic UNION fold) resolves the anchor exactly as the generic pbt_* params do, via the same
-    per-solve ``solve_branch__time_branch`` row (owner decision #82)."""
-    want = _wind_realized_series(STOCHASTICS_JSON)
-    step = _first(_run(tmp_path_factory, SINGLE, [], []))
-    cells = _cells(step, "p_profile_value", ["f"])
-    anchor = {k[2]: v for k, v in cells.items() if k[0] == "wind" and k[1] == ANCHOR}
-    assert anchor, "wind profile missing a value on the anchor period"
-    assert anchor == {t: want[t] for t in anchor}, "anchor profile != the realized branch's own series"
+def _wind_cells(step) -> dict:
+    """``d -> {t: value}`` of the ``wind`` profile of *step*."""
+    out: dict = {}
+    for (f, d, t), v in _cells(step, "p_profile_value", ["f"]).items():
+        if f == "wind":
+            out.setdefault(d, {})[t] = v
+    return out
+
+
+def _wind_realized_series() -> dict:
+    return _wind_branch_series(STOCHASTICS_JSON, "realized")
+
+
+def test_rank3_profile_realization_solve_takes_realized_branch(tmp_path_factory) -> None:
+    """The ``wind`` profile is a rank-3 (stochastic-time) map in the SINGLE scenario's fixture data; this
+    module's ``_single_realized_override`` designates branch ``realized``.  The period label ``period1`` has no
+    dispatch in the stochastic solve (no profile rows); the realization solve that the designation adds
+    dispatches ``period1`` with the realized branch's own series."""
+    want = _wind_realized_series()
+    steps = _run(tmp_path_factory, SINGLE, [], [])
+    stochastic = _stochastic_steps(steps)[0]
+    assert ANCHOR not in _wind_cells(stochastic), "the period label has profile rows in the stochastic solve"
+    realization = [s for k, s in steps.items() if is_realization(k)]
+    assert len(realization) == 1, list(steps)
+    anchor = _wind_cells(realization[0]).get(ANCHOR)
+    assert anchor, "wind profile missing on period1 in the realization solve"
+    assert anchor == {t: want[t] for t in anchor}, "realization solve's profile != the realized branch's series"
 
 
 def _all_forecasts_override() -> list:
-    """The SAME ``2day_dispatch`` cohort with every branch (including the shared fixture's own
-    zero-weight ``committed`` bookkeeping branch -- see ``tests/fixtures/build_stoch_two_period.py``'s
-    sibling comment) back to ``realized: no``: a genuinely forecasts-only fan, for
-    :func:`test_rank3_profile_raises_without_realized_designation` only.  ``stochastics.json`` itself
-    stays untouched; the many other tests that build on its forecasts-only ``realized``/``upper``/
-    ``lower``/``mid`` fan are unaffected by this one test's own override alternative."""
+    """The SAME ``2day_dispatch`` cohort with every branch ``realized: no``: a genuinely forecasts-only fan of
+    the four forecasts ``realized`` / ``upper`` / ``lower`` / ``mid`` (``stochastics.json`` itself is untouched)."""
     branches = ("realized", "upper", "lower", "mid")
     value = {"index_type": "str", "data": [[ANCHOR, {"type": "map", "index_type": "str", "data": [
         [b, {"type": "map", "index_type": "str",
@@ -601,15 +610,21 @@ def _all_forecasts_override() -> list:
     return [["solve", "2day_dispatch", "stochastic_branches", b64(value, "map")]]
 
 
-def test_rank3_profile_raises_without_realized_designation(tmp_path_factory) -> None:
-    """A genuinely forecasts-only ``2day_dispatch`` cohort (:func:`_all_forecasts_override`, every
-    branch ``realized: no``) that still authors a rank-3 ``wind`` profile: there is no committed
-    branch for the anchor period to take its value from, which is the input error owner decision #82
-    names for the generic pbt_* params, extended here to ``profile.profile``."""
+def test_rank3_profile_forecasts_only_fan_solves(tmp_path_factory) -> None:
+    """A genuinely forecasts-only ``2day_dispatch`` fan (:func:`_all_forecasts_override`) with a rank-3 ``wind``
+    profile solves: every forecast branch period takes its own branch's authored series, and the period label
+    ``period1`` has no profile rows (no dispatch, so it needs no value of its own)."""
     from flextool.engine import run_chain_from_db
 
-    alt = "profile_no_realized"
+    alt = "profile_forecasts_only"
     url, scen = make_db(tmp_path_factory, alt=alt, values=_all_forecasts_override(),
                         base_chain=_chain(STOCHASTICS_JSON, SINGLE), fixture_json=STOCHASTICS_JSON)
-    with pytest.raises(FlexToolConfigError, match="realized"):
-        run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"), keep_solutions=True)
+    steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"), keep_solutions=True)
+    assert not any(is_realization(k) for k in steps), "a forecasts-only fan got a realization solve"
+    cells = _wind_cells(_first(steps))
+    assert ANCHOR not in cells
+    for branch in ("realized", "upper", "lower", "mid"):
+        want = _wind_branch_series(STOCHASTICS_JSON, branch)
+        got = cells.get(f"{ANCHOR}_{branch}")
+        assert got, f"wind profile missing on {ANCHOR}_{branch}"
+        assert got == {t: want[t] for t in got}, f"{ANCHOR}_{branch}: profile != the branch's own series"

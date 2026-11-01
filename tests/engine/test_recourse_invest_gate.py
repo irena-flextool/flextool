@@ -40,12 +40,12 @@ SOLVE = "stoch_2p_inv"
 # per-period window property, identical on the phantom trunk and both
 # forecast copies (2100 at the branching period p2035, 1050 at the
 # continuation period p2040).
+# The period labels p2035 / p2040 have no investment under recourse (no column), so no annuity row.
 EXPECTED_ANNU = {
-    "p2035": 2100.0, "p2040": 1050.0,
     "p2035_high": 2100.0, "p2040_high": 1050.0,
     "p2035_low": 2100.0, "p2040_low": 1050.0,
 }
-# Forecasts-only weights (R2): phantom trunk → 0, forecasts renormalised
+# Forecasts-only weights (R2): period label → 0, forecasts renormalised
 # {high:0.25, low:0.75}.
 EXPECTED_WEIGHT = {
     "p2035": 0.0, "p2040": 0.0,
@@ -53,13 +53,12 @@ EXPECTED_WEIGHT = {
     "p2035_low": 0.75, "p2040_low": 0.75,
 }
 # Objective coefficient of v_invest[peaker, d] = unitsize·annu[d]·weight[d]
-# (§15.2 D4): phantom 0; high 525 / 262.5; low 1575 / 787.5.
+# (§15.2 D4): high 525 / 262.5; low 1575 / 787.5.
 EXPECTED_COEFF = {d: EXPECTED_ANNU[d] * EXPECTED_WEIGHT[d]
                   for d in EXPECTED_ANNU}
-# Per-leaf optimal invest (§15.1 step 3): the phantom trunk invests 0; each
-# forecast leaf invests its own capacity.
+# Per-leaf optimal invest (§15.1 step 3): each forecast leaf invests its own
+# capacity (the period labels have no investment column).
 EXPECTED_INVEST = {
-    "p2035": 0.0, "p2040": 0.0,
     "p2035_high": 60.0, "p2040_high": 30.0,
     "p2035_low": 80.0, "p2040_low": 40.0,
 }
@@ -123,11 +122,8 @@ def test_recourse_per_leaf_invest(_resolved):
     """§15.2 D2: v_invest carries a (peaker, d) column per period — each
     forecast leaf invests its own §15.1 quantities (high 60/30, low 80/40).
 
-    The real-named trunk periods p2035/p2040 are weight-0 PHANTOMS: their
-    invest objective coefficient AND demand penalty are both 0, so their
-    invest value is a genuine alternate-optimum (degenerate — the simplex
-    vertex varies with build context).  We pin the economically-determined
-    forecast leaves exactly and assert the phantoms are merely feasible."""
+    The period labels p2035/p2040 have no investment column under recourse
+    (before, a weight-0 copy whose value was a degenerate alternate optimum)."""
     _data, sol = _resolved
     vi = sol.value("v_invest_p")
     got = {r["d"]: float(r["value"]) for r in vi.iter_rows(named=True)}
@@ -135,10 +131,7 @@ def test_recourse_per_leaf_invest(_resolved):
     forecast_got = {k: got[k] for k in forecast_keys}
     assert forecast_got == pytest.approx(
         {k: EXPECTED_INVEST[k] for k in forecast_keys})
-    # Weight-0 phantom trunk periods are unpinned (degenerate) — only
-    # bounded-feasible (0 ≤ v ≤ invest_max_total 150).
-    assert 0.0 <= got["p2035"] <= 150.0
-    assert 0.0 <= got["p2040"] <= 150.0
+    assert set(got) == set(forecast_keys)
 
 
 @pytest.mark.solver
@@ -169,12 +162,11 @@ def test_recourse_edd_lineage_filtered(_resolved):
     data, _sol = _resolved
     rows = {(str(r["d_invest"]), str(r["d"]))
             for r in data.edd_invest_set.iter_rows(named=True)}
+    # No pair with a period label as the investment period: it has no investment under recourse.
     assert rows == {
-        ("p2035", "p2035"), ("p2035", "p2040"),
         ("p2035_high", "p2035_high"), ("p2035_high", "p2040_high"),
         ("p2035_low", "p2035_low"), ("p2035_low", "p2040_low"),
-        ("p2040", "p2040"), ("p2040_high", "p2040_high"),
-        ("p2040_low", "p2040_low"),
+        ("p2040_high", "p2040_high"), ("p2040_low", "p2040_low"),
     }
 
 
@@ -228,8 +220,9 @@ def test_recourse_output_horizon_branch_rows(horizon_wf):
 @pytest.mark.solver
 def test_recourse_per_path_cap_two_leaf_rows(_resolved):
     """§15.1 / §7.2 (D6), R3 re-grounded: under recourse the entity total
-    cap fans into ONE row per scenario leaf (peaker × {__anchor, high,
-    low} of the genuine {high, low} fan) under the ``…_path`` name — the
+    cap fans into ONE row per scenario path (peaker × {high, low} of the
+    genuine {high, low} fan; no ``__anchor`` path: the period labels have
+    no dispatch and no investment) under the ``…_path`` name — the
     legacy single-row ``maxInvest_entity_total`` (which summed all periods,
     210 > 150, and would spuriously bind) is gone.  Each leaf row sums only
     its own periods; the D2 per-leaf-invest test pins the forecast sums to
@@ -247,9 +240,9 @@ def test_recourse_per_path_cap_two_leaf_rows(_resolved):
     assert "maxInvest_entity_total" not in names  # legacy replaced
     recs = pb.cstrs_named("maxInvest_entity_total_path")
     over = recs[0].over
-    assert over.height == 3  # (peaker, {__anchor, high, low})
+    assert over.height == 2  # (peaker, {high, low})
     leaves = sorted(str(v) for v in over["leaf"].to_list())
-    assert leaves == ["__anchor", "high", "low"]
+    assert leaves == ["high", "low"]
     ents = {str(v) for v in over["p"].to_list()}
     assert ents == {"peaker"}
 

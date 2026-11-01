@@ -1091,7 +1091,7 @@ def test_stochastic_branch_weight(
     # Pull pd_branch_weight from solve_data — the writer's own output, so the
     # file is guaranteed to exist for any solve.  Assert the fixture is
     # genuinely stochastic (a real multi-forecast fan with a weight-0
-    # phantom), otherwise the identity below is vacuous (deterministic runs
+    # period label), otherwise the identity below is vacuous (deterministic runs
     # weight by 1.0 and trivially reconcile).
     # The stochastic solve's own weights (the realization solve after it is
     # deterministic and holds the last solve_data/ dump).
@@ -1125,9 +1125,11 @@ def test_stochastic_branch_weight(
     # objectives.
     objectives = _solve_objectives(csv_dir)
     assert set(objectives) == {"2day_dispatch", "2day_dispatch__realized_dispatch"}, objectives
-    # The stochastic solve's objective is the value grounded before the realization solve existed (its LP is
-    # byte-identical; tests/scenarios.yaml history): the forecast expectation.
-    assert objectives["2day_dispatch"] == pytest.approx(66.9291187913, rel=1e-6)
+    # The stochastic solve's objective, the forecast expectation: the parent LP (before the period label lost its
+    # dispatch, objective 66.9291187913) with the label's rows and columns removed and each forecast's first-step
+    # storage balance in the label's solve-start form (a forecast of a fan in the solve's first period starts the
+    # solve), solved on its own from the edited MPS: 67.3517305373.
+    assert objectives["2day_dispatch"] == pytest.approx(67.3517305373, rel=1e-6)
     lp_total = sum(objectives.values())
     rel_err = abs(summary["total_calc"] - lp_total) / max(abs(lp_total), 1e-9)
     assert rel_err <= 1e-4, (

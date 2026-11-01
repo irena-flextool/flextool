@@ -229,17 +229,15 @@ def test_dtttdt_deterministic_two_period_byte_parity() -> None:
 
 
 def test_dtttdt_single_period_stochastic_byte_parity() -> None:
-    """Captured from PRE-change HEAD — branch periods self-wrap, the
-    base period wraps to period_order[-1] (retained quirk).  Must stay
-    byte-identical.  (Frame is sorted d, t — Utf8 lexicographic.)"""
+    """Captured from PRE-change HEAD — branch periods self-wrap.  The
+    period label period1 is in period_in_use_set but has no steps (no
+    dispatch), so it has no rows.  (Frame is sorted d, t — Utf8
+    lexicographic.)"""
     piu = ["period1", "period1_upper", "period1_lower", "period1_mid"]
-    frames = _frames(_steps(SP_ATL), piu, SP_PB, SP_SBTB)
+    frames = _frames(_steps({k: v for k, v in SP_ATL.items() if k != "period1"}), piu, SP_PB, SP_SBTB)
     df = dtttdt_from_source(StubSource(TL), "sp", WD,
                             provider=StubProvider(frames))
     assert df.rows() == [
-        ("period1", "t0001", "t0003", "t0003", "period1_mid", "t0003"),
-        ("period1", "t0002", "t0001", "t0001", "period1", "t0001"),
-        ("period1", "t0003", "t0002", "t0002", "period1", "t0002"),
         ("period1_lower", "t0001", "t0003", "t0003",
          "period1_lower", "t0003"),
         ("period1_lower", "t0002", "t0001", "t0001",
@@ -266,23 +264,34 @@ def test_dtttdt_multi_period_stochastic_continuation() -> None:
     (``wrap_period = period``) and p2040 wrapped to the positional
     previous ``p2035_low`` (the last fan member of p2035)."""
     piu = ["p2035", "p2035_low", "p2040", "p2040_low"]
-    frames = _frames(_steps(MP_ATL), piu, MP_PB, MP_SBTB)
+    frames = _frames(_steps({k: v for k, v in MP_ATL.items() if k not in ("p2035", "p2040")}),
+                     piu, MP_PB, MP_SBTB)
     df = dtttdt_from_source(StubSource(TL), "mp", WD,
                             provider=StubProvider(frames))
+    # The period labels p2035 / p2040 have no steps, so no rows.
     assert df.rows() == [
-        ("p2035", "t0001", "t0006", "t0003", "p2040_low", "t0006"),
-        ("p2035", "t0002", "t0001", "t0001", "p2035", "t0001"),
-        ("p2035", "t0003", "t0002", "t0002", "p2035", "t0002"),
         ("p2035_low", "t0001", "t0003", "t0003", "p2035_low", "t0003"),
         ("p2035_low", "t0002", "t0001", "t0001", "p2035_low", "t0001"),
         ("p2035_low", "t0003", "t0002", "t0002", "p2035_low", "t0002"),
-        ("p2040", "t0004", "t0003", "t0006", "p2035", "t0003"),
-        ("p2040", "t0005", "t0004", "t0004", "p2040", "t0004"),
-        ("p2040", "t0006", "t0005", "t0005", "p2040", "t0005"),
         ("p2040_low", "t0004", "t0003", "t0006", "p2035_low", "t0003"),
         ("p2040_low", "t0005", "t0004", "t0004", "p2040_low", "t0004"),
         ("p2040_low", "t0006", "t0005", "t0005", "p2040_low", "t0005"),
     ]
+
+
+def test_dtttdt_midhorizon_branches_link_to_trunk_without_the_period_label() -> None:
+    """A mid-horizon fan whose period label p2040 has no steps: every branch copy's first step continues from
+    the pre-reveal trunk p2035's last step (the mirror of make_step_jump), also the copy whose time-branch owns
+    no pre-reveal period."""
+    atl = {"p2035": P1, "p2040_high": P2[0:], "p2040_low": P2[0:]}
+    pb = [("p2035", "p2035"), ("p2040", "p2040"), ("p2040", "p2040_high"), ("p2040", "p2040_low")]
+    sbtb = [("p2040_high", "high"), ("p2040_low", "low"), ("p2035", "high")]
+    frames = _frames(_steps(atl), ["p2035", "p2040", "p2040_high", "p2040_low"], pb, sbtb)
+    df = dtttdt_from_source(StubSource(TL), "mh", WD, provider=StubProvider(frames))
+    first = {(r[0], r[1]): r for r in df.rows() if r[1] == "t0004"}
+    for branch in ("p2040_high", "p2040_low"):
+        assert first[(branch, "t0004")][4:] == ("p2035", "t0003"), branch
+    assert ("p2040", "t0004") not in first
 
 
 def test_dtttdt_raises_when_time_branch_map_missing() -> None:

@@ -13,8 +13,8 @@ no variable cost, free slack, …).  The criterion here: a period map keyed by t
 parameters and objective as the same value given as a scalar (or keyed explicitly by every branch period).
 
 Vehicles (databases built from JSON, never a checked-in ``.sqlite``):
-- ``2_day_stochastic_dispatch`` (``tests/fixtures/stochastics.json``): ``period1`` (weight-0 trunk) and
-  four forecast branch periods.
+- ``2_day_stochastic_dispatch`` (``tests/fixtures/stochastics.json``): ``period1`` (the period label: no
+  dispatch, so no per-step parameter rows) and four forecast branch periods.
 - ``stoch`` (``stoch_two_period.json``): two anchors, ``p2035 → p2035_{high,low}``, ``p2040 → p2040_{…}``.
 - ``recourse`` (``stoch_two_period_invest.json``): recourse investment; branch periods are invest periods.
 - ``1_week_rolling_wind`` (``stochastics.json``): 7 stochastic rolls.
@@ -132,6 +132,15 @@ def _assert_every_period(x, value: float, periods=ALL_PERIODS, **keys) -> None:
         assert got.get(d) == {value}, f"{keys} period {d}: expected {{{value}}}, got {got.get(d)} (all: {got})"
 
 
+def _assert_dispatch_periods(x, value: float, periods=BRANCH_PERIODS, labels=(ANCHOR,), **keys) -> None:
+    """An operational (per-step) parameter: the value in every forecast branch period, no row at a period label
+    (the label has no dispatch)."""
+    _assert_every_period(x, value, periods=periods, **keys)
+    got = _by_period(x, **keys)
+    for label in labels:
+        assert label not in got, f"{keys}: period label {label} has rows {got[label]}"
+
+
 def _periods_of(frame, **keys) -> set[str]:
     f = _frame(frame)
     for col, val in keys.items():
@@ -182,55 +191,55 @@ def scalars_2day(tmp_path_factory):
 
 def test_efficiency_map_reaches_branches(maps_2day) -> None:
     d = _last(maps_2day).flex_data
-    _assert_every_period(d.p_slope, 4.0, p="coal_plant")
+    _assert_dispatch_periods(d.p_slope, 4.0, p="coal_plant")
 
 
 def test_startup_cost_map_reaches_branches_and_online_domain(maps_2day) -> None:
     d = _last(maps_2day).flex_data
-    _assert_every_period(d.p_startup_cost, 7000.0, p="coal_plant")
+    _assert_dispatch_periods(d.p_startup_cost, 7000.0, p="coal_plant")
     # The startup-cost objective term runs over pdt_online_linear, built in _load_online from the same
     # startup-cost read (before the DB-direct pass): every branch period must be in it.
-    assert _periods_of(d.pdt_online_linear, p="coal_plant") == set(ALL_PERIODS)
+    assert _periods_of(d.pdt_online_linear, p="coal_plant") == set(BRANCH_PERIODS)
 
 
 def test_commodity_price_map_reaches_branches(maps_2day) -> None:
     d = _last(maps_2day).flex_data
-    _assert_every_period(d.p_commodity_price, 17.0, c="coal")
+    _assert_dispatch_periods(d.p_commodity_price, 17.0, c="coal")
 
 
 def test_variable_cost_map_reaches_branches_and_lp_domain(maps_2day) -> None:
     d = _last(maps_2day).flex_data
-    _assert_every_period(d.p_pdt_varCost_sink, 3.0, p="coal_plant", sink="demand_node")
-    _assert_every_period(d.p_pdt_varCost_source, 2.0, p="gas_plant", source="gas_market")
-    _assert_every_period(d.p_pssdt_varCost, 3.0, p="coal_plant", sink="demand_node")
-    _assert_every_period(d.p_pssdt_varCost, 2.0, p="gas_plant", source="gas_market")
+    _assert_dispatch_periods(d.p_pdt_varCost_sink, 3.0, p="coal_plant", sink="demand_node")
+    _assert_dispatch_periods(d.p_pdt_varCost_source, 2.0, p="gas_plant", source="gas_market")
+    _assert_dispatch_periods(d.p_pssdt_varCost, 3.0, p="coal_plant", sink="demand_node")
+    _assert_dispatch_periods(d.p_pssdt_varCost, 2.0, p="gas_plant", source="gas_market")
     # The LP domain of the variable-cost terms comes from the emit layer (pdtProcess_source / _sink).
-    assert _periods_of(d.pssdt_varCost_eff_unit_sink, p="coal_plant") == set(ALL_PERIODS)
-    assert _periods_of(d.pssdt_varCost_eff_unit_source, p="gas_plant") == set(ALL_PERIODS)
+    assert _periods_of(d.pssdt_varCost_eff_unit_sink, p="coal_plant") == set(BRANCH_PERIODS)
+    assert _periods_of(d.pssdt_varCost_eff_unit_source, p="gas_plant") == set(BRANCH_PERIODS)
 
 
 def test_availability_maps_reach_branches(maps_2day) -> None:
     d = _last(maps_2day).flex_data
-    _assert_every_period(d.p_process_availability, 0.8, p="coal_plant")
-    _assert_every_period(d.p_process_availability, 0.7, p="gas_plant")  # 2-d period x time map
-    _assert_every_period(d.p_node_availability, 0.9, n="hydro_reservoir")
+    _assert_dispatch_periods(d.p_process_availability, 0.8, p="coal_plant")
+    _assert_dispatch_periods(d.p_process_availability, 0.7, p="gas_plant")  # 2-d period x time map
+    _assert_dispatch_periods(d.p_node_availability, 0.9, n="hydro_reservoir")
 
 
 def test_min_load_and_reference_value_maps_reach_branches(maps_2day) -> None:
     d = _last(maps_2day).flex_data
-    _assert_every_period(d.p_min_load, 0.3, p="coal_plant")  # consumed: coal_plant is an online unit
-    _assert_every_period(d.p_storage_state_reference_value, 0.4, n="hydro_reservoir")
+    _assert_dispatch_periods(d.p_min_load, 0.3, p="coal_plant")  # consumed: coal_plant is an online unit
+    _assert_dispatch_periods(d.p_storage_state_reference_value, 0.4, n="hydro_reservoir")
 
 
 def test_group_period_maps_reach_branches(maps_2day) -> None:
     d = _last(maps_2day).flex_data
     g = {"g": "add_stochastics"}
-    _assert_every_period(d.p_co2_price, 50.0, **g)
-    _assert_every_period(d.p_co2_max_period, 1e6, **g)
-    _assert_every_period(d.pdGroup_capacity_margin, 10.0, **g)
-    _assert_every_period(d.pdGroup_inertia_limit, 11.0, **g)
-    _assert_every_period(d.pdGroup_non_synchronous_limit, 0.9, **g)
-    _assert_every_period(d.pdGroup_penalty_non_synchronous, 77.0, **g)
+    _assert_dispatch_periods(d.p_co2_price, 50.0, **g)
+    _assert_dispatch_periods(d.p_co2_max_period, 1e6, **g)
+    _assert_dispatch_periods(d.pdGroup_capacity_margin, 10.0, **g)
+    _assert_dispatch_periods(d.pdGroup_inertia_limit, 11.0, **g)
+    _assert_dispatch_periods(d.pdGroup_non_synchronous_limit, 0.9, **g)
+    _assert_dispatch_periods(d.pdGroup_penalty_non_synchronous, 77.0, **g)
 
 
 def test_period_maps_equal_scalars_single_anchor(maps_2day, scalars_2day) -> None:
@@ -261,9 +270,10 @@ def curves_2day_ref(tmp_path_factory):
 
 def test_profile_period_map_reaches_branches(curves_2day) -> None:
     f = _frame(_last(curves_2day).flex_data.p_profile_value).filter(pl.col("f") == "wind")
-    for d in ALL_PERIODS:
+    for d in BRANCH_PERIODS:
         got = dict(f.filter(pl.col("d") == d).select("t", "value").iter_rows())
         assert got == pytest.approx(WIND_CURVE), f"wind profile in {d}"
+    assert f.filter(pl.col("d") == ANCHOR).height == 0, "the period label has no dispatch, so no profile rows"
 
 
 def test_period_curves_equal_time_curves(curves_2day, curves_2day_ref) -> None:
@@ -277,9 +287,10 @@ def profile_1d_2day(tmp_path_factory):
 
 def test_profile_1d_period_map_reaches_branches(profile_1d_2day) -> None:
     f = _frame(_last(profile_1d_2day).flex_data.p_profile_value).filter(pl.col("f") == "wind")
-    for d in ALL_PERIODS:
+    for d in BRANCH_PERIODS:
         vals = set(f.filter(pl.col("d") == d)["value"].to_list())
         assert vals == {0.35}, f"wind profile in {d}: {vals}"
+    assert f.filter(pl.col("d") == ANCHOR).height == 0, "the period label has no dispatch, so no profile rows"
 
 
 # ---------------------------------------------------------------------------
@@ -379,15 +390,15 @@ def two_p_full(tmp_path_factory):
 
 def test_penalty_map_reaches_branches(two_p_maps) -> None:
     d = _last(two_p_maps).flex_data
-    _assert_every_period(d.p_penalty_up, 8000.0, periods=("p2035",) + TWO_P_BRANCHES["p2035"], n="city")
-    _assert_every_period(d.p_penalty_up, 9000.0, periods=("p2040",) + TWO_P_BRANCHES["p2040"], n="city")
+    _assert_dispatch_periods(d.p_penalty_up, 8000.0, periods=TWO_P_BRANCHES["p2035"], labels=("p2035",), n="city")
+    _assert_dispatch_periods(d.p_penalty_up, 9000.0, periods=TWO_P_BRANCHES["p2040"], labels=("p2040",), n="city")
 
 
 def test_period_maps_two_anchors(two_p_maps, two_p_full) -> None:
     d = _last(two_p_maps).flex_data
-    _assert_every_period(d.p_slope, 2.0, periods=("p2035",) + TWO_P_BRANCHES["p2035"], p="thermal")
-    _assert_every_period(d.p_slope, 4.0, periods=("p2040",) + TWO_P_BRANCHES["p2040"], p="thermal")
-    _assert_every_period(d.p_startup_cost, 9.0, periods=("p2040",) + TWO_P_BRANCHES["p2040"], p="thermal")
+    _assert_dispatch_periods(d.p_slope, 2.0, periods=TWO_P_BRANCHES["p2035"], labels=("p2035",), p="thermal")
+    _assert_dispatch_periods(d.p_slope, 4.0, periods=TWO_P_BRANCHES["p2040"], labels=("p2040",), p="thermal")
+    _assert_dispatch_periods(d.p_startup_cost, 9.0, periods=TWO_P_BRANCHES["p2040"], labels=("p2040",), p="thermal")
     assert _last(two_p_maps).solution.obj == pytest.approx(_last(two_p_full).solution.obj, rel=1e-9)
 
 
@@ -406,7 +417,7 @@ def test_branch_native_value_wins(two_p_native) -> None:
     slope = _by_period(d.p_slope, p="thermal")
     assert slope["p2035_high"] == {1.25}
     assert slope["p2035_low"] == {2.0}
-    assert slope["p2035"] == {2.0}
+    assert "p2035" not in slope  # the period label has no dispatch
     # An authored 0 in a branch period is that period's value (then dropped by the zero filter of the
     # startup-cost reader); it is not replaced by the anchor's 7.
     startup = _by_period(d.p_startup_cost, p="thermal")
@@ -517,7 +528,9 @@ def test_recourse_group_invest_period_cap_binds_in_branches(tmp_path_factory) ->
     assert rows.height > 0, "no v_invest_p rows for peaker"
     invested = {r["d"]: r["value"] * us for r in rows.iter_rows(named=True)}
     for anchor, branches in TWO_P_BRANCHES.items():
-        for period in (anchor,) + branches:
+        # Under recourse a period label invests nothing here-and-now: no column, every branch invests itself.
+        assert anchor not in invested, f"recourse: period label {anchor} has a v_invest_p column"
+        for period in branches:
             assert period in invested, f"no v_invest_p row for {period}"
             assert invested[period] <= GROUP_CAP + 1e-6, (
                 f"{period}: peaker invested {invested[period]}, exceeding the group's "

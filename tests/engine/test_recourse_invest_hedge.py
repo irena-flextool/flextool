@@ -97,7 +97,7 @@ def test_midhorizon_fan_period_branch_and_active_time() -> None:
     """T-F (§3.2): a reveal declared at p2040 keeps p2035 a single
     real-named trunk period and fans ONLY p2040 — exactly Option B."""
     solver = _make_solver()
-    pb, sbtb, atl, _jumps, _fstl, _rtl, bstl = _run(solver, MIDHORIZON_INFO)
+    pb, sbtb, atl, _jumps, _fstl, _rtl, bstl, _labels = _run(solver, MIDHORIZON_INFO)
 
     # p2035 is a single trunk self-row (NOT fanned); p2040 fans.
     assert pb["s"] == [
@@ -106,8 +106,9 @@ def test_midhorizon_fan_period_branch_and_active_time() -> None:
         ("p2040", "p2040_rlz"),
         ("p2040", "p2040_low"),
     ]
-    # Active-time keys: p2035 trunk, p2040 realized, p2040_low branch copy.
-    assert list(atl["s"].keys()) == ["p2035", "p2040", "p2040_low"]
+    # Active-time keys: p2035 trunk and the p2040_low branch copy; the period
+    # label p2040 has no dispatch.
+    assert list(atl["s"].keys()) == ["p2035", "p2040_low"]
     assert atl["s"]["p2035"] == P1                # trunk unchanged
     assert atl["s"]["p2040_low"] == P2[0:]        # branch copy of p2040
     # Realized resolution: trunk p2035 -> rlz (via the after-branch path),
@@ -163,7 +164,7 @@ def test_validation_zero_realized_in_period_accepted() -> None:
         ("p2040", "rlz", "t0004", "no", "1"),
         ("p2040", "low", "t0004", "no", "3"),
     ]
-    pb, sbtb, atl, _jumps, _fstl, _rtl, bstl = _run(solver, good)
+    pb, sbtb, atl, _jumps, _fstl, _rtl, bstl, _labels = _run(solver, good)
 
     # p2035 trunk, p2040 trunk, then BOTH forecasts as fan branches.
     assert pb["s"] == [
@@ -173,9 +174,7 @@ def test_validation_zero_realized_in_period_accepted() -> None:
         ("p2040", "p2040_low"),
     ]
     # Both forecast branches carry active time (no realized member to drop).
-    assert list(atl["s"].keys()) == [
-        "p2035", "p2040", "p2040_rlz", "p2040_low",
-    ]
+    assert list(atl["s"].keys()) == ["p2035", "p2040_rlz", "p2040_low"]
     assert atl["s"]["p2040_rlz"] == P2[0:]
     assert atl["s"]["p2040_low"] == P2[0:]
     # Branch resolution: each forecast maps to its own branch; no realized
@@ -188,16 +187,15 @@ def test_validation_zero_realized_in_period_accepted() -> None:
 
 def test_validation_fan_at_first_still_passes() -> None:
     """T-V control: the fan-at-first-step shape (branch at the solve's
-    first step) still validates and fans byte-identically."""
+    first step) still validates and fans (the period labels have no
+    dispatch)."""
     solver = _make_solver()
     good = [
         ("p2035", "rlz", "t0001", "yes", "1"),
         ("p2035", "low", "t0001", "no", "3"),
     ]
     pb, _sbtb, atl, *_ = _run(solver, good)
-    assert list(atl["s"].keys()) == [
-        "p2035", "p2035_low", "p2040", "p2040_low",
-    ]
+    assert list(atl["s"].keys()) == ["p2035_low", "p2040_low"]
     assert ("p2035", "p2035_low") in pb["s"]
 
 
@@ -227,6 +225,20 @@ def test_step_jump_midhorizon_links_branch_to_shared_trunk() -> None:
     assert branch[_PREV_WITHIN_SOLVE] == "t0003"
     # The realized continuation anchor p2040 also links to the trunk.
     assert rows[("p2040", "t0004")][_PREV_PERIOD] == "p2035"
+
+
+def test_step_jump_midhorizon_branches_link_to_trunk_without_the_period_label() -> None:
+    """T-S with the period label left out of the active time (it has no dispatch): EVERY mid-horizon branch
+    copy's first step links to the shared pre-reveal trunk p2035's last step, also the copy whose time-branch
+    owns no pre-reveal period (forecasts-only: p2035 is bound to the reference forecast ``high`` only)."""
+    atl = {"p2035": P1, "p2040_high": P2, "p2040_low": P2}
+    pb = [("p2035", "p2035"), ("p2040", "p2040"),
+          ("p2040", "p2040_high"), ("p2040", "p2040_low")]
+    sbtb = [("p2040_high", "high"), ("p2040_low", "low"), ("p2035", "high")]
+    rows = _first_step_rows(make_step_jump(atl, pb, sbtb))
+    for branch in ("p2040_high", "p2040_low"):
+        assert rows[(branch, "t0004")][_PREV_PERIOD] == "p2035", branch
+        assert rows[(branch, "t0004")][_PREV_WITHIN_SOLVE] == "t0003", branch
 
 
 def test_step_jump_fan_at_first_self_cycles_control() -> None:
@@ -329,14 +341,9 @@ def test_rp_invest_is_a_genuine_hedge(hedge_resolved) -> None:
     recourse r_high = 60 at p2040_high and r_low = 0 at p2040_low.
 
     Under the forecasts-only model (genuine {high, low} fan, n_real = 0)
-    the reference forecast owns the real period names, so the recourse
-    period's real-named trunk p2040 is a weight-0 PHANTOM: its invest
-    objective coefficient AND its demand penalty are both 0, so its
-    invest value is a genuine alternate-optimum (degenerate — both 0 and
-    60 are cost-identical, and the simplex vertex picked varies with build
-    context).  We therefore pin only the economically-determined
-    variables (the costed forecasts + the pre-reveal shared stage) and
-    assert the phantom is merely feasible, not a specific value."""
+    the recourse period's original name p2040 is a period label: no
+    dispatch and, under recourse, no investment column (before, a weight-0
+    copy whose value was a degenerate alternate optimum)."""
     _data, sol, _pb = hedge_resolved
     vi = sol.value("v_invest_p")
     got = {r["d"]: round(float(r["value"]), 4)
@@ -345,9 +352,7 @@ def test_rp_invest_is_a_genuine_hedge(hedge_resolved) -> None:
     assert got["p2035"] == pytest.approx(60.0)       # shared first stage
     assert got["p2040_high"] == pytest.approx(60.0)   # recourse (high)
     assert got["p2040_low"] == pytest.approx(0.0)     # recourse (low)
-    # The weight-0 phantom recourse trunk is unpinned (degenerate) — only
-    # bounded-feasible (0 ≤ v ≤ invest_max_total 150).
-    assert 0.0 <= got["p2040"] <= 150.0
+    assert "p2040" not in got                         # the period label
 
 
 @pytest.mark.solver
@@ -401,17 +406,18 @@ def test_lineage_shared_trunk_on_every_leaf(hedge_resolved) -> None:
 @pytest.mark.solver
 def test_d_leaf_is_a_relation_not_a_partition(hedge_resolved) -> None:
     """T-C / T-L (§6.2): d_leaf is a RELATION — the shared pre-reveal
-    anchor p2035 is on EVERY leaf (__anchor, high, low) of the genuine
-    {high, low} fan, so each scenario path's total cap counts it.  A strict
+    anchor p2035 is on EVERY leaf (high, low) of the genuine {high, low}
+    fan, so each scenario path's total cap counts it, and so is the period
+    label p2040 (period-level ancestor of its branch periods).  A strict
     partition would put p2035 on one leaf only (under-counting the others).
+    There is no ``__anchor`` leaf: the labels have no dispatch.
     """
     data, _sol, _pb = hedge_resolved
     dl = {(str(r["d"]), str(r["leaf"]))
           for r in data.d_leaf.iter_rows(named=True)}
     assert dl == {
-        ("p2035", "__anchor"), ("p2040", "__anchor"),
-        ("p2035", "high"), ("p2040_high", "high"),
-        ("p2035", "low"), ("p2040_low", "low"),
+        ("p2035", "high"), ("p2040", "high"), ("p2040_high", "high"),
+        ("p2035", "low"), ("p2040", "low"), ("p2040_low", "low"),
     }
 
 
@@ -432,19 +438,19 @@ def test_pd_non_anticipativity_empty_no_invest_na(hedge_resolved) -> None:
 @pytest.mark.solver
 def test_per_path_cap_two_leaf_rows(hedge_resolved) -> None:
     """T-C (§6.2 / §8.3): the entity total cap fans into ONE row per
-    scenario leaf (base × {__anchor, high, low} of the genuine {high,
-    low} fan) under the ``…_path`` name; the legacy single-row
-    ``maxInvest_entity_total`` (which would sum all periods) is gone."""
+    scenario path (base × {high, low} of the genuine {high, low} fan) under
+    the ``…_path`` name; the legacy single-row ``maxInvest_entity_total``
+    (which would sum all periods) is gone.  There is no ``__anchor`` path:
+    the period label p2040 has no dispatch and, under recourse, no
+    investment."""
     _data, _sol, pb = hedge_resolved
     names = pb.cstr_names()
     assert "maxInvest_entity_total_path" in names
     assert "maxInvest_entity_total" not in names
     recs = pb.cstrs_named("maxInvest_entity_total_path")
     over = recs[0].over
-    assert over.height == 3
-    assert sorted(str(v) for v in over["leaf"].to_list()) == [
-        "__anchor", "high", "low",
-    ]
+    assert over.height == 2
+    assert sorted(str(v) for v in over["leaf"].to_list()) == ["high", "low"]
     assert {str(v) for v in over["p"].to_list()} == {"base"}
 
 
@@ -454,8 +460,8 @@ def test_committed_output_realized_only(hedge_wf) -> None:
     output carries only the real-named (trunk) periods — branch rows are
     dropped.  The committed INVESTMENT is the single here-and-now
     PRE-REVEAL decision: the shared first stage p2035 = 60.  The recourse
-    period p2040 is the weight-0 phantom trunk (pd_branch_weight = 0), so
-    it carries no committed investment (= 0) — the per-forecast recourse
+    period p2040 is a period label: no investment column under recourse,
+    so its committed investment row is 0 — the per-forecast recourse
     lives on the branch rows p2040_high / p2040_low, which the committed
     output does not surface."""
     inv = pl.read_parquet(

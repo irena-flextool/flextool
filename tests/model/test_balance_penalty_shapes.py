@@ -247,7 +247,8 @@ def test_stoch_map_default_for_nodes_without_value(tmp_path_factory) -> None:
     step = _last(steps)
     up = {"demand_node": 6000.0, "downriver": DEFAULT, "hydro_reservoir": DEFAULT}
     down = {"demand_node": 4000.0, "downriver": 0.0, "hydro_reservoir": DEFAULT}
-    assert {d for d, _t in _dt(step)} == set(ALL_PERIODS)
+    # The period label has no dispatch: dt holds the forecast branch periods only.
+    assert {d for d, _t in _dt(step)} == set(BRANCH_PERIODS)
     _assert_dense(step, "p_penalty_up", STOCH_NODES, lambda n, d, t: up[n])
     _assert_dense(step, "p_penalty_down", STOCH_NODES, lambda n, d, t: down[n])
     assert _cells(step, "p_penalty_up") == _cells(_last(ref), "p_penalty_up")
@@ -280,11 +281,12 @@ def test_silent_label_map(tmp_path_factory) -> None:
 
 
 def test_partial_period_map_gets_default(tmp_path_factory) -> None:
-    """``city.penalty_up = {p2035: 8000}``: p2035 and its branches 8000, p2040 and its branches the default."""
+    """``city.penalty_up = {p2035: 8000}``: the branches of p2035 8000, the branches of p2040 the default (the
+    period labels p2035 / p2040 have no dispatch)."""
     step = _last(_run(tmp_path_factory, TWO_PERIOD_JSON, "stoch",
                       [["node", "city", "penalty_up", pmap({"p2035": 8000.0})]]))
     periods = {d for d, _t in _dt(step)}
-    assert {"p2035", "p2035_high", "p2035_low", "p2040", "p2040_high", "p2040_low"} <= periods
+    assert periods == {"p2035_high", "p2035_low", "p2040_high", "p2040_low"}
     _assert_dense(step, "p_penalty_up", ("city",),
                   lambda n, d, t: 8000.0 if d.startswith("p2035") else DEFAULT)
 
@@ -307,14 +309,13 @@ def test_map_next_to_penalty_method_off(tmp_path_factory) -> None:
 @pytest.mark.parametrize("labelled", [False, True], ids=["silent_labels", "branch_labels"])
 def test_stochastic_time_penalty(tmp_path_factory, labelled: bool) -> None:
     """Rank-3 ``penalty_up`` / ``penalty_down`` on ``demand_node`` (in the stochastic group): each branch period
-    carries its branch's value, the anchor carries the realized branch's value, the other nodes keep theirs
-    (48 rows per (n, d), no duplicates).
+    carries its branch's value, the other nodes keep theirs (48 rows per (n, d), no duplicates); the period
+    label has no dispatch, and the realization solve the designation adds dispatches ``period1`` with the
+    realized branch's value.
 
     Before the fix the silent-label case crashed (``p_penalty_*`` None) and the labelled case got every branch
     value on every cell (192 rows per (n, d)) with the other nodes' slack free.  The ``realized`` branch is
-    designated ``realized: yes`` (owner decision #82: a forecasts-only fan authoring a rank-3 value with no
-    committed branch is a configuration error) -- the anchor then takes that branch's own value rather than
-    the schema default.
+    designated ``realized: yes``.
     """
     ups = dict(zip(BRANCHES, (6000.0, 6100.0, 6200.0, 6300.0)))
     downs = dict(zip(BRANCHES, (4000.0, 4100.0, 4200.0, 4300.0)))
@@ -324,16 +325,23 @@ def test_stochastic_time_penalty(tmp_path_factory, labelled: bool) -> None:
                    entities=[["group__node", ["add_stochastics", "demand_node"], None]])
     step = _last(steps)
 
+    # The designated realized branch is no forecast, and the period label has no dispatch.
+    assert {d for d, _t in _dt(step)} == set(BRANCH_PERIODS) - {"period1_realized"}
+
     def want(table, other):
         def f(n, d, t):
             if n != "demand_node":
                 return other[n]
-            if d in BRANCH_PERIODS:
-                return table[d.removeprefix("period1_")]
-            return table["realized"]
+            return table[d.removeprefix("period1_")] if d in BRANCH_PERIODS else table["realized"]
         return f
-    _assert_dense(step, "p_penalty_up", STOCH_NODES, want(ups, {"downriver": DEFAULT, "hydro_reservoir": DEFAULT}))
-    _assert_dense(step, "p_penalty_down", STOCH_NODES, want(downs, {"downriver": 0.0, "hydro_reservoir": DEFAULT}))
+    others_up = {"downriver": DEFAULT, "hydro_reservoir": DEFAULT}
+    others_down = {"downriver": 0.0, "hydro_reservoir": DEFAULT}
+    realization = [s for k, s in steps.items() if "__realized_dispatch" in k]
+    assert len(realization) == 1, list(steps)
+    assert {d for d, _t in _dt(realization[0])} == {ANCHOR}
+    for s in (step, realization[0]):
+        _assert_dense(s, "p_penalty_up", STOCH_NODES, want(ups, others_up))
+        _assert_dense(s, "p_penalty_down", STOCH_NODES, want(downs, others_down))
     for field in ("p_penalty_up", "p_penalty_down"):
         counts = _frame(getattr(step.flex_data, field)).group_by("n", "d").len()
         assert set(counts["len"]) == {48}, f"{field}: rows per (n, d) {sorted(set(counts['len']))}"

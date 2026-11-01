@@ -1012,3 +1012,20 @@ solve's own LP is byte-identical (lp_snapshot).  This designation is a stand-in 
 together with the label's dispatch; this golden is regenerated again then.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate 2_day_stochastic_dispatch`.
+
+## 2026-11-01 — `2_day_stochastic_dispatch/{costs__dt,summary_solve}.csv` (a period label has no dispatch)
+
+**Context.** The period that opens a stochastic fan (`period1` here) keeps its name only for period-level bookkeeping
+and has no dispatch any more (stochastic realization redesign, owner decision "Stochastic realization model
+(2026-11-01)" point 2).  Two effects on this fixture: (1) the stochastic solve `2day_dispatch` writes no `period1`
+rows (they were the weight-0 shadow dispatch; the `period1` rows come only from the realization solve, as before);
+(2) each forecast of this fan-in-the-first-period now starts the solve like the label did: its first-step storage
+balance takes the solve-start form instead of wrapping to the forecast's own last step.  The stochastic objective
+moves 66.9291187913 → 67.3517305373; independently, the parent LP (lp_snapshot of d9c2449d) with the label's rows and
+columns removed and the four first-step rows in the label's form solves to the same 67.3517305373 (HiGHS on the edited
+MPS).  The forecast-branch costs in `costs__dt.csv` change accordingly (first and later steps of each branch), and
+the branch `downriver` slack drops 14700 → 14400, equal to the realization solve's own 14400 (same start state).  The
+calculated totals follow (374.502452125 → 374.925063871 = 67.3517305373 + 307.573333333).  The realization solve's
+rows are unchanged; `period1` now comes last in the period header and slack list (the union order of the two solves).
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate 2_day_stochastic_dispatch`.

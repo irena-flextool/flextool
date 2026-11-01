@@ -251,29 +251,25 @@ def test_slack_step_price_equals_penalty(tmp_path_factory, case) -> None:
 def test_stochastic_branch_price_not_probability_weighted(tmp_path_factory) -> None:
     """2_day_stochastic_dispatch_no_storage: in each of the four branch periods (branch weight 0.25) demand_node
     is served at the margin by coal (16 CUR/MWh fuel / efficiency 0.9 = 17.78), gas (6 / 0.9 = 6.667) or free
-    (zero-cost) supply that is being spilled (0); the price is the branch's own price, not × 0.25.  The trunk
-    period ``period1`` has objective weight 0: its rows are written and empty.  Before: × 0.25 · period share."""
+    (zero-cost) supply that is being spilled (0); the price is the branch's own price, not × 0.25.  The period
+    label ``period1`` has no dispatch: no operational weight and no price rows.  Before: × 0.25 · period share."""
     steps, wf = _run(tmp_path_factory, "pr_stoch", _chain(STOCH, "2_day_stochastic_dispatch_no_storage"),
                      fixture_json=STOCH)
     fd = next(iter(steps.values())).flex_data
     bw = utf8(fd.pdt_branch_weight.frame)
-    zero_d = set(bw.filter(pl.col("value") == 0.0)["d"].to_list())
-    assert "period1" in zero_d
+    assert "period1" not in set(bw["d"].to_list())
     prices = _node_prices(wf, "2day_dispatch")
     periods = {d for (_s, d, _t) in prices}
-    assert "period1" in periods and len(periods - {"period1"}) >= 4, periods
+    assert "period1" not in periods and len(periods) >= 4, periods
     zero = {(d, t) for d, t in bw.filter(pl.col("value") == 0.0).select("d", "t").iter_rows()}
     hit: set[float] = set()
-    n_null = 0
     for (_s, d, t), row in prices.items():
         v = row["demand_node"]
         if (d, t) in zero:
             assert v is None or math.isnan(v), (d, t, v)
-            n_null += 1
             continue
         hit |= _approx_set([v], {16.0 / 0.9, 6.0 / 0.9, 0.0}) if v != 0.0 else {0.0}
     assert {16.0 / 0.9, 6.0 / 0.9} <= hit
-    assert n_null > 0
     # The fan's realized: yes designation adds the realization solve, which dispatches the realized data of the
     # trunk period: its prices are realized ones, set at the margin by the same merit order (coal, gas, spill).
     realized = _node_prices(wf, "2day_dispatch__realized_dispatch")
@@ -433,10 +429,10 @@ def test_fix_price_handoff_equals_parent_price(tmp_path_factory, monkeypatch, sc
 
 
 def test_null_prices_reach_output_writers(tmp_path_factory) -> None:
-    """The empty (zero-weight) trunk-period prices of a stochastic solve pass through the output processing and
-    the parquet / csv / excel / SpineDB writers without error; the branch prices reach the SpineDB ``price_t``
-    unchanged (16 / 0.9, 6 / 0.9 or 0) and no trunk-period price is written as a number (before the c15c reader
-    change the empty cells were filled with 0)."""
+    """The prices of a stochastic solve and of its realization solve pass through the output processing and the
+    parquet / csv / excel / SpineDB writers without error; every price reaches the SpineDB ``price_t`` unchanged
+    (16 / 0.9, 6 / 0.9 or 0).  The period label ``period1`` has no dispatch in the stochastic solve (no price
+    rows of its own); its prices are the realization solve's."""
     from spinedb_api import DatabaseMapping, from_database
 
     from flextool.process_outputs.write_outputs import write_outputs
@@ -444,7 +440,8 @@ def test_null_prices_reach_output_writers(tmp_path_factory) -> None:
     steps, wf = _run(tmp_path_factory, "pr_sdb", _chain(STOCH, "2_day_stochastic_dispatch_no_storage"),
                      fixture_json=STOCH)
     prices = _node_prices(wf)
-    assert any(v["demand_node"] is None for (_s, d, _t), v in prices.items() if d == "period1")
+    assert not [k for k in prices if k[0] == "2day_dispatch" and k[1] == "period1"]
+    assert [k for k in prices if k[0] == "2day_dispatch__realized_dispatch" and k[1] == "period1"]
     last = next(reversed(steps.values()))
     db_url = "sqlite:///" + str(wf / "results.sqlite")
     write_outputs(
@@ -472,7 +469,5 @@ def test_null_prices_reach_output_writers(tmp_path_factory) -> None:
                 walk(from_database(pv["value"], pv["type"]), ())
     assert leaves, "price_t of demand_node not written"
     for path, v in leaves:
-        if "period1" in path:
-            assert v is None or (isinstance(v, float) and math.isnan(v)), (path, v)
-        elif v != 0.0:
+        if v is not None and not (isinstance(v, float) and math.isnan(v)) and v != 0.0:
             _approx_set([v], {16.0 / 0.9, 6.0 / 0.9})

@@ -405,7 +405,8 @@ def _stoch_chain() -> list[str]:
 
 def test_period_time_cost_stochastic_branches(tmp_path_factory) -> None:
     """``2_day_stochastic_dispatch``, unit arcs: ``{period1: {t: v}}`` vs scalar.  The branch periods inherit the
-    anchor's cells (index rows on all 5 periods); same objective (before the fix 66 929 118.79 vs 83 412 804.49)."""
+    anchor's cells (index rows on the 4 forecast branch periods; the period label period1 has no dispatch); same
+    objective (before the fix the map lost the branch cells and the objectives differed)."""
     def values(shape):
         return [["unit__inputNode", ["coal_plant", "coal_market"], "other_operational_cost",
                  _shaped(COSTS["in"], shape, [PERIOD], T48)],
@@ -418,8 +419,8 @@ def test_period_time_cost_stochastic_branches(tmp_path_factory) -> None:
     _assert_same_cost_sets(pt.flex_data, sc.flex_data, "stoch")
     for field in ("pssdt_varCost_eff_unit_source", "pssdt_varCost_eff_unit_sink"):
         idx = _canon(getattr(pt.flex_data, field))
-        assert set(idx["d"].to_list()) == set(STOCH_PERIODS), field
-        assert idx.height == 240, field
+        assert set(idx["d"].to_list()) == set(STOCH_PERIODS) - {PERIOD}, field
+        assert idx.height == 4 * 48, field
     assert _rel(float(pt.solution.obj), float(sc.solution.obj)) < 1e-9
 
 

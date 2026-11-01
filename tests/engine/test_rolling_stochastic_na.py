@@ -409,7 +409,8 @@ def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result
     carry is produced by that realization roll (its state at the committed
     jump-end) and consumed by the next stochastic roll; the stochastic roll
     carries nothing.  The wrong-step / wrong-branch guards below still read
-    the stochastic roll's own window.
+    the stochastic roll's own window (its forecasts: the period label
+    ``period1`` has no dispatch of its own).
 
     The roll-to-roll storage carry (``SolveHandoff.roll_end_state``, consumed
     next roll as ``p_roll_continue_state``) must carry the realized TRUNK's
@@ -440,16 +441,12 @@ def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result
       discarded window-horizon step (HEAD picked the horizon).
 
     Discriminator on ``1_week_rolling_wind``: on continuation rolls 0-5 the
-    trunk committed jump-end ``v_state`` is ``0.0`` (an emptied reservoir),
-    while BOTH window-horizon candidates HEAD could pick — the trunk horizon
-    (``period1`` @ window end) and the forecast horizon (``period1_upper`` @
-    window end) — are a non-zero ``0.5`` end-reference pin (× unitsize = 2500).
-    So ``carried == 0.0`` FAILS on HEAD (which carries 2500) and PASSES with
-    the fix, and the non-zero horizon candidates prove the ``0.0`` is the
-    jump-end of the trunk, not either horizon value.  Roll 6 is the LAST roll:
-    its trunk realizes all the way to the window horizon (jump-end == horizon),
-    so the carry legitimately coincides with the horizon value and no next roll
-    consumes it — it is excluded from the strict ``0.0`` guard.
+    committed jump-end ``v_state`` (the realization roll's) differs from the
+    forecast window-horizon value (``period1_upper`` @ window end, a non-zero
+    end-reference pin), so a carry of the horizon value is caught.  Roll 6 is
+    the LAST roll: its jump reaches the window horizon (jump-end == horizon),
+    so the carry legitimately coincides with the horizon value and no next
+    roll consumes it — it is excluded from the strict guard.
     """
     steps = _steps(rolling_result)
     names = list(steps)
@@ -491,11 +488,9 @@ def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result
             r = _sub.filter((pl.col("__d") == d) & (pl.col("__t") == t))
             return r["value"][0] if r.height else None
 
-        trunk_jump = _vstate("period1", jump_end_t)
-        trunk_horizon = _vstate("period1", horizon_t)
+        # The period label period1 has no dispatch: no v_state rows of its own.
+        assert _vstate("period1", jump_end_t) is None, f"roll {name!r}: the period label has v_state"
         fcast_horizon = _vstate("period1_upper", horizon_t)
-        assert trunk_jump is not None, (
-            f"roll {name!r}: no trunk v_state at jump-end (period1, {jump_end_t})")
         assert fcast_horizon is not None, (
             f"roll {name!r}: no forecast v_state at horizon "
             f"(period1_upper, {horizon_t})")
@@ -526,27 +521,16 @@ def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result
             nxt_v = (nxt.frame.filter(pl.col("n").cast(pl.Utf8) == _STORAGE_NODE)["value"].to_list())
             assert nxt_v == [pytest.approx(carried_v, abs=1e-9)], (names[i + 1], nxt_v, carried_v)
 
-            # (2) STEP identity — the trunk WINDOW-HORIZON value is non-zero and
-            #     differs from the jump-end, so carrying the jump-end (0.0)
-            #     rather than the trunk horizon is a genuine distinction (guards
-            #     the wrong-STEP defect independently).
-            assert trunk_horizon is not None, (
-                f"roll {name!r}: no trunk v_state at horizon "
-                f"(period1, {horizon_t})")
-            assert abs(trunk_horizon - trunk_jump) > 1e-6, (
-                f"roll {name!r}: trunk horizon {trunk_horizon} must differ from "
-                f"the carried jump-end {trunk_jump} for the step guard to bite")
-
-            # (3) BRANCH identity — the FORECAST branch horizon value is
-            #     non-zero and differs from the carried jump-end, so the carry
+            # (2) BRANCH and STEP identity — the FORECAST branch horizon value
+            #     is non-zero and differs from the carried jump-end, so the carry
             #     is NOT a forecast-branch horizon value (guards the wrong-BRANCH
-            #     defect independently).  This is the exact (period1_upper,
+            #     and the wrong-STEP defects).  This is the exact (period1_upper,
             #     horizon) cell HEAD lexically selects.
             assert abs(fcast_horizon - carried_v) > 1e-6, (
                 f"roll {name!r}: carried {carried_v} coincides with the forecast "
                 f"horizon-end {fcast_horizon} — HEAD's wrong source")
         else:
-            # Last roll: trunk realizes to the window horizon (jump-end ==
+            # Last roll: its jump reaches the window horizon (jump-end ==
             # horizon), so the carry coincides with the horizon value and no
             # next roll consumes it.  Sanity only: geometry holds.
             assert jump_end_t == horizon_t, (

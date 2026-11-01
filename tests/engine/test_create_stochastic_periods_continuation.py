@@ -58,13 +58,13 @@ def _run(solver, info, active, realized, fix_storage):
 
 
 def test_two_period_fan_all_structures() -> None:
-    """§5.4 case 1 — the §4 shape, all seven returned/mutated
+    """§5.4 case 1 — the §4 shape, all eight returned/mutated
     structures verbatim, including ``new_active_time_list`` key order."""
     solver = _make_solver()
     active = {"p2035": P1, "p2040": P2}
     realized = {"p2035": P1[0:], "p2040": P2[0:]}
     fix_storage = {"p2040": P2[0:]}
-    (pb, sbtb, atl, jumps, fstl, rtl, bstl) = _run(
+    (pb, sbtb, atl, jumps, fstl, rtl, bstl, labels) = _run(
         solver, BRANCH_INFO, active, realized, fix_storage,
     )
 
@@ -85,32 +85,26 @@ def test_two_period_fan_all_structures() -> None:
         ("p2040", "rlz"),
     ]
     # Key ORDER is part of the contract (drives steps_in_use emission
-    # order and the step-jump walk).
-    assert list(atl["s"].keys()) == [
-        "p2035", "p2035_low", "p2040", "p2040_low",
-    ]
-    assert atl["s"]["p2035"] == P1
+    # order and the step-jump walk).  The period labels p2035 / p2040 have
+    # no dispatch: they are in none of the time lists.
+    assert list(atl["s"].keys()) == ["p2035_low", "p2040_low"]
     assert atl["s"]["p2035_low"] == P1
-    assert atl["s"]["p2040"] == P2
     assert atl["s"]["p2040_low"] == P2
-    # Realized branch keeps REAL period names with its windows.
-    assert list(rtl["s"].keys()) == ["p2035", "p2040"]
-    assert rtl["s"]["p2040"] == P2
-    # fix-storage window carried through the continuation period.
-    assert list(fstl["s"].keys()) == ["p2040"]
-    assert fstl["s"]["p2040"] == P2
+    # Nothing is realized or storage-fixed in the fan's own time lists ...
+    assert rtl["s"] == {}
+    assert fstl["s"] == {}
+    # ... the labels keep their pre-stochastic lists (the committed cells
+    # inside the fan and the labels' steps).
+    assert labels["s"].labels == frozenset({"p2035", "p2040"})
+    assert labels["s"].active == {"p2035": P1, "p2040": P2}
+    assert labels["s"].realized == {"p2035": P1, "p2040": P2}
+    assert labels["s"].fix_storage == {"p2040": P2}
     assert bstl["s"] == ("p2035", "t0001")
-    # Step-jump rows (design §4 step_previous shape).
+    # Step-jump rows (design §4 step_previous shape), forecast periods only.
     assert jumps["s"] == [
-        ("p2035", "t0001", "t0003", "t0003", "p2040_low", "t0006", -5),
-        ("p2035", "t0002", "t0001", "t0001", "p2035", "t0001", 1),
-        ("p2035", "t0003", "t0002", "t0002", "p2035", "t0002", 1),
         ("p2035_low", "t0001", "t0003", "t0003", "p2035_low", "t0003", -2),
         ("p2035_low", "t0002", "t0001", "t0001", "p2035_low", "t0001", 1),
         ("p2035_low", "t0003", "t0002", "t0002", "p2035_low", "t0002", 1),
-        ("p2040", "t0004", "t0006", "t0006", "p2035", "t0003", 1),
-        ("p2040", "t0005", "t0004", "t0004", "p2040", "t0004", 1),
-        ("p2040", "t0006", "t0005", "t0005", "p2040", "t0005", 1),
         ("p2040_low", "t0004", "t0006", "t0006", "p2035_low", "t0003", 1),
         ("p2040_low", "t0005", "t0004", "t0004", "p2040_low", "t0004", 1),
         ("p2040_low", "t0006", "t0005", "t0005", "p2040_low", "t0005", 1),
@@ -134,15 +128,14 @@ def test_rolling_window_partial_realized() -> None:
     active = {"p2035": P1, "p2040": P2}
     realized = {"p2035": P1[:1]}       # only the jump slice realized
     fix_storage: dict = {}
-    (pb, sbtb, atl, jumps, fstl, rtl, bstl) = _run(
+    (pb, sbtb, atl, jumps, fstl, rtl, bstl, labels) = _run(
         solver, BRANCH_INFO, active, realized, fix_storage,
     )
-    assert list(atl["s"].keys()) == [
-        "p2035", "p2035_low", "p2040", "p2040_low",
-    ]
-    # Realized: only the declared window; p2040 has none (post-jump).
-    assert list(rtl["s"].keys()) == ["p2035"]
-    assert rtl["s"]["p2035"] == P1[:1]
+    assert list(atl["s"].keys()) == ["p2035_low", "p2040_low"]
+    # Realized: only the declared window, kept on the period label; p2040 has
+    # none (post-jump).
+    assert rtl["s"] == {}
+    assert labels["s"].realized == {"p2035": P1[:1]}
     assert fstl["s"] == {}
     assert pb["s"] == [
         ("p2035", "p2035"),
@@ -163,7 +156,7 @@ def test_zero_weight_branch_metadata_only() -> None:
     info = BRANCH_INFO + [("p2035", "zero", "t0001", "no", "0")]
     active = {"p2035": P1, "p2040": P2}
     realized = {"p2035": P1[0:], "p2040": P2[0:]}
-    (pb, sbtb, atl, jumps, fstl, rtl, bstl) = _run(
+    (pb, sbtb, atl, jumps, fstl, rtl, bstl, labels) = _run(
         solver, info, active, realized, {},
     )
     assert pb["s"] == [
@@ -176,10 +169,9 @@ def test_zero_weight_branch_metadata_only() -> None:
         ("p2040", "p2040_low"),
         ("p2040", "p2040_zero"),
     ]
-    # No active time for the zero-weight branch in either period.
-    assert list(atl["s"].keys()) == [
-        "p2035", "p2035_low", "p2040", "p2040_low",
-    ]
+    # No active time for the zero-weight branch in either period (nor for
+    # the period labels).
+    assert list(atl["s"].keys()) == ["p2035_low", "p2040_low"]
     # No sbtb rows for the zero-weight branch.
     assert sbtb["s"] == [
         ("p2035_low", "low"),
@@ -244,7 +236,7 @@ def test_w1_rolling_pre_reveal_roll_does_not_raise() -> None:
         ("p1", "rlz", "t0010", "yes", "1"),
         ("p1", "low", "t0010", "no", "3"),
     ]
-    (pb, sbtb, atl, jumps, fstl, rtl, bstl) = _run_one(
+    (pb, sbtb, atl, jumps, fstl, rtl, bstl, labels) = _run_one(
         solver, info, {"p1": ROLL_WIN},
         solve="roll_c_roll_0", complete="roll_c",
     )
@@ -263,7 +255,7 @@ def test_w1_rolling_fan_at_first_passes() -> None:
         ("p1", "rlz", "t0001", "yes", "1"),
         ("p1", "low", "t0001", "no", "3"),
     ]
-    (pb, sbtb, atl, jumps, fstl, rtl, bstl) = _run_one(
+    (pb, sbtb, atl, jumps, fstl, rtl, bstl, labels) = _run_one(
         solver, info, {"p1": ROLL_WIN},
         solve="roll_c_roll_0", complete="roll_c",
     )
@@ -310,7 +302,7 @@ def test_w1_trigger_cohort_zero_realized_fans_out() -> None:
         ("p1", "low", "t0001", "no", "3"),
         ("p1", "high", "t0001", "no", "3"),
     ]
-    (pb, sbtb, atl, jumps, fstl, rtl, bstl) = _run_one(
+    (pb, sbtb, atl, jumps, fstl, rtl, bstl, labels) = _run_one(
         solver, info, {"p1": ROLL_WIN}
     )
     assert bstl["s"] == ("p1", "t0001")
@@ -321,7 +313,8 @@ def test_w1_trigger_cohort_zero_realized_fans_out() -> None:
     ]
     # Both forecasts receive active time; no realized self-row (n_real=0).
     assert sbtb["s"] == [("p1_low", "low"), ("p1_high", "high")]
-    assert list(atl["s"].keys()) == ["p1", "p1_low", "p1_high"]
+    assert list(atl["s"].keys()) == ["p1_low", "p1_high"]
+    assert labels["s"].labels == frozenset({"p1"})
 
 
 def test_w1_trigger_cohort_zero_forecast_raises() -> None:
@@ -356,7 +349,7 @@ def test_deterministic_solve_passthrough() -> None:
     active = {"p2035": P1, "p2040": P2}
     realized = {"p2035": P1[0:], "p2040": P2[0:]}
     fix_storage = {"p2035": P1[0:]}
-    (pb, sbtb, atl, jumps, fstl, rtl, bstl) = _run(
+    (pb, sbtb, atl, jumps, fstl, rtl, bstl, labels) = _run(
         solver, [], active, realized, fix_storage,
     )
     assert pb["s"] == [("p2035", "p2035"), ("p2040", "p2040")]
@@ -365,4 +358,5 @@ def test_deterministic_solve_passthrough() -> None:
     assert list(rtl["s"].keys()) == ["p2035", "p2040"]
     assert list(fstl["s"].keys()) == ["p2035"]
     assert bstl["s"] is None
+    assert labels["s"].labels == frozenset()
     assert solver.state.timeline.stochastic_timesteps["s"] == []

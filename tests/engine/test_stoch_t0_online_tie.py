@@ -8,10 +8,10 @@ FIXES that committed ``v_online`` over the jump while flows realize.
 
 Mechanism (``_non_anticipativity.add_dispatch_constraints``): the online non-
 anticipativity families join the tied steps ``dt_non_anticipativity``, ELSE
-the FULL set of online ``(d, t)`` steps for the anchor forecast periods.  A
-solve with a realization solve keeps its committed window as its tied steps
-(``solve_data/committed_dispatch``), although the realization solve takes over
-its realized window, so here the tie holds over the whole jump.
+the FULL set of online ``(d, t)`` steps for the anchor forecast periods.  The
+tied steps inside a fan are the committed cells of its period label
+(``solve_data/committed_in_fan``), whether or not a realization solve takes
+over the realized window, so here the tie holds over the whole jump.
 
 Sibling pin (sub-slice b): a ``fix_online`` SolveHandoff carrier ferries
 the parent's committed ``v_online`` on the tied steps (read from the first
@@ -31,8 +31,8 @@ Hand-calc (H = 8760/3 = 2920 h/step):
   * PARENT ``stoch_rd``: ``low`` has no wind -> peaker covers the full 100 MW
     -> v_online = 2.0 every step.  The jump tie forces ``high`` to the same
     2.0 (hedge); min_load floors high's output at 0.5*2.0*50 = 50 MW.  The
-    ``rlz`` branch carries weight 0 and is NOT tied (forecast-to-forecast) ->
-    v_online 0.  Objective = Σ_branch w * 10 * 2920 * Σ_t output
+    ``rlz`` branch is the realized designation, not a forecast: the period
+    label p2035 has no dispatch.  Objective = Σ_branch w * 10 * 2920 * Σ_t output
       = 0.5*10*2920*(50*3)  [high]  = 2 190 000
       + 0.5*10*2920*(100*3) [low]   = 4 380 000  ->  6 570 000.
     (Commitment constant over the horizon -> cyclic startup 0.)
@@ -59,7 +59,7 @@ FIXTURE = FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_t0_commit.json"
 SCENARIO = "stoch_t0_commit"
 PARENT = "stoch_rd"
 SIBLING = "stoch_rd__realized_dispatch"
-REALIZED = "p2035"          # the realized / trunk period (weight-0 branch)
+REALIZED = "p2035"          # the period label: no dispatch in the parent, the sibling's realized period
 HIGH = "p2035_high"
 LOW = "p2035_low"
 STEPS = ("t0001", "t0002", "t0003")
@@ -210,13 +210,13 @@ def test_parent_v_online_tied_over_jump(sep_chain):
 
 @pytest.mark.solver
 def test_parent_realized_branch_excluded(sep_chain):
-    """The weight-0 realized branch is NOT part of the forecast-to-forecast
-    tie — it is free and parks at 0 (this is why the carried commitment must
-    be read from a forecast branch, fixing the first prototype's VOLL blocker
-    where pinning the sibling to the degenerate realized 0 forced VOLL)."""
+    """The period label is NOT part of the forecast-to-forecast tie: it has no
+    dispatch, so no v_online at all in the parent (this is why the carried
+    commitment is read from a forecast branch, fixing the first prototype's
+    VOLL blocker where pinning the sibling to a degenerate weight-0 copy
+    forced VOLL)."""
     fr = _online(sep_chain, PARENT, "v_online_linear")
-    for t in STEPS:
-        assert _at(fr, REALIZED, t) == pytest.approx(0.0, abs=1e-9)
+    assert fr.filter(pl.col("d") == REALIZED).height == 0
 
 
 @pytest.mark.solver

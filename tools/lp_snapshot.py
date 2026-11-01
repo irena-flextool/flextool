@@ -664,10 +664,8 @@ def _stoch_rank3(values: dict) -> dict:
 def _realized_branch_override() -> dict:
     """``2day_dispatch``'s ``stochastic_branches`` with branch ``realized`` flagged ``realized: yes``.
 
-    The base fixture leaves every branch of this cohort ``realized: no`` (a legitimate,
-    separately-tested forecasts-only configuration); owner decision c20 / #82 requires a realized
-    designation for a forecasts-only cohort that also authors a stochastic-time value -- without
-    one, the anchor's own value is a configuration error (:func:`_patch_stoch_rank3_anchor`)."""
+    The designation feeds the realization solve the engine adds after the stochastic solve: it
+    dispatches ``period1`` with the realized branch's data (:func:`_patch_stoch_rank3_anchor`)."""
     branches = ("realized", "upper", "lower", "mid")
     return {"index_type": "str", "data": [
         ["period1", {"type": "map", "index_type": "str", "data": [
@@ -678,13 +676,12 @@ def _realized_branch_override() -> dict:
 
 
 def _patch_stoch_rank3_anchor(data: dict) -> dict:
-    """Stochastic-time availability on the stochastic 2-day dispatch -- #82 per-path proof: branch
-    ``realized`` of this cohort is flagged ``realized: yes`` (:func:`_realized_branch_override`), so
-    the anchor period ``period1`` takes ITS value (0.9) on every maxFlow RHS row, not the unit
-    ``param_def1`` default (availability 1.0) and not any other branch's value.  Without a realized
-    designation this would now raise (owner decision c20 / #82: no reference-forecast fallback).
-    The branch periods (``period1_{upper,lower,mid}``) are unaffected; ``period1_realized`` no
-    longer exists as a synthetic branch period (its data lives on the anchor's own real name)."""
+    """Stochastic-time availability on the stochastic 2-day dispatch: branch ``realized`` of this
+    cohort is flagged ``realized: yes`` (:func:`_realized_branch_override`), so the realization
+    solve dispatches ``period1`` with ITS value (0.9) on every maxFlow RHS row, not the unit
+    ``param_def1`` default (availability 1.0) and not any other branch's value.  The stochastic
+    solve's forecast branch periods (``period1_{upper,lower,mid}``) take their own values; the
+    period label ``period1`` has no dispatch there."""
     return _overlay(
         data, name="stoch_rank3_anchor", base="2_day_stochastic_dispatch",
         entities=[["group__unit", ["add_stochastics", "coal_plant"]]],
@@ -694,15 +691,14 @@ def _patch_stoch_rank3_anchor(data: dict) -> dict:
 
 
 def _patch_stoch_rank3_profile_anchor(data: dict) -> dict:
-    """Stochastic-time ``profile.profile`` on the stochastic 2-day dispatch -- #82 extended to
-    profiles: branch ``realized`` of this cohort is flagged ``realized: yes``
-    (:func:`_realized_branch_override`), so the anchor period ``period1`` takes ITS ``wind`` profile
-    value (0.9) wherever the profile cascade resolves it, not the scalar / time-series fallback and
-    not any other branch's value.  Without a realized designation this raises (``profile.profile``
-    goes through its own cascade, ``flextool/engine/preprocess/params/_profiles.py``, not the generic
-    ``pbt_*`` path :func:`_patch_stoch_rank3_anchor` proves -- same rule, reusing the same
-    ``_pdt_lookup.py`` helpers).  ``wind_plant`` / ``demand_node`` / ``wind`` and its
-    ``add_stochastics`` group membership are already wired in the base fixture."""
+    """Stochastic-time ``profile.profile`` on the stochastic 2-day dispatch: branch ``realized`` of
+    this cohort is flagged ``realized: yes`` (:func:`_realized_branch_override`), so the realization
+    solve dispatches ``period1`` with ITS ``wind`` profile value (0.9) wherever the profile cascade
+    resolves it, not the scalar / time-series fallback and not any other branch's value
+    (``profile.profile`` goes through its own cascade, ``flextool/engine/preprocess/params/_profiles.py``,
+    not the generic ``pbt_*`` path :func:`_patch_stoch_rank3_anchor` proves).  ``wind_plant`` /
+    ``demand_node`` / ``wind`` and its ``add_stochastics`` group membership are already wired in the
+    base fixture."""
     return _overlay(
         data, name="stoch_rank3_profile_anchor", base="2_day_stochastic_dispatch",
         values=[["profile", "wind", "profile",

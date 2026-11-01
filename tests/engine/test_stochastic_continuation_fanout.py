@@ -10,11 +10,11 @@ periods ``p2035`` (t0001-t0003) and ``p2040`` (t0004-t0006), demand
 50 EUR/MWh thermal backstop.  Forecast branches ``high`` (weight 1.0)
 and ``low`` (weight 3.0) are declared at ``p2035``/t0001, making
 ``p2040`` a CONTINUATION period.  Both branches are forecasts
-(``realized:no``); n_real = 0 — a genuine ``{high, low}`` fan.  Under the
-forecasts-only model the reference forecast owns the real period names,
-so the real-named trunk periods p2035/p2040 are weight-0 phantoms
-(pd_branch_weight = 0) and the dispatch fans onto p2035_high/p2040_high
-(0.25) and p2035_low/p2040_low (0.75).
+(``realized:no``); n_real = 0 — a genuine ``{high, low}`` fan.  The real
+period names p2035/p2040 are period labels: bookkeeping only
+(pd_branch_weight = 0, years, investment), no dispatch — no steps, no
+(d, t) rows — and the dispatch fans onto p2035_high/p2040_high (0.25) and
+p2035_low/p2040_low (0.75).
 
 Hand calculation (design §5.2, uniform annualization factor
 8760/3 = 2920, weights 0.25 / 0.75):
@@ -52,14 +52,12 @@ THERMAL_COL = "('thermal', 'thermal', 'city')"
 P1_STEPS = ["t0001", "t0002", "t0003"]
 P2_STEPS = ["t0004", "t0005", "t0006"]
 
-# The 18 (period, step) rows of the genuine {high, low} fan (§4, R3
-# re-grounded): the real-named trunk p2035/p2040 (phantom) plus both
-# forecast copies high/low, each over 3 steps.
+# The 12 (period, step) rows of the genuine {high, low} fan: both forecast
+# copies high/low, each over 3 steps.  The period labels p2035/p2040 have
+# no steps.
 EXPECTED_STEPS_IN_USE = (
-    [("p2035", t) for t in P1_STEPS]
-    + [("p2035_high", t) for t in P1_STEPS]
+    [("p2035_high", t) for t in P1_STEPS]
     + [("p2035_low", t) for t in P1_STEPS]
-    + [("p2040", t) for t in P2_STEPS]
     + [("p2040_high", t) for t in P2_STEPS]
     + [("p2040_low", t) for t in P2_STEPS]
 )
@@ -75,8 +73,9 @@ EXPECTED_PERIOD_BRANCH = [
     ("p2040", "p2040_low"),
 ]
 
-# Forecasts-only per-cohort weights (R2): phantom trunk → 0, forecasts
-# renormalised {high:0.25, low:0.75}.
+# Forecasts-only per-cohort weights (R2): period label → 0 (its row is
+# kept for the period-level bookkeeping), forecasts renormalised
+# {high:0.25, low:0.75}.
 EXPECTED_PD_BRANCH_WEIGHT = {
     "p2035": 0.0,
     "p2035_high": 0.25,
@@ -91,30 +90,22 @@ EXPECTED_PD_BRANCH_WEIGHT = {
 EXPECTED_STEP_PREVIOUS_FIRST_ROWS = {
     # (period, time) -> (previous, previous_within_timeset,
     #                    previous_period, previous_within_solve, jump)
-    ("p2035", "t0001"): ("t0003", "t0003", "p2040_low", "t0006", -5),
     ("p2035_high", "t0001"): ("t0003", "t0003", "p2035_high", "t0003", -2),
     ("p2035_low", "t0001"): ("t0003", "t0003", "p2035_low", "t0003", -2),
-    ("p2040", "t0004"): ("t0006", "t0006", "p2035", "t0003", 1),
     ("p2040_high", "t0004"): ("t0006", "t0006", "p2035_high", "t0003", 1),
     ("p2040_low", "t0004"): ("t0006", "t0006", "p2035_low", "t0003", 1),
 }
 
-# flex_data.dtttdt rows of design §4 (all 18; first-of-period rows
+# flex_data.dtttdt rows of design §4 (all 12; first-of-period rows
 # carry the cross-period t_previous, unlike the CSV's within-period
 # cyclic ``previous`` column — pre-existing divergence, design §3.3).
 EXPECTED_DTTTDT = [
-    ("p2035", "t0001", "t0006", "t0003", "p2040_low", "t0006"),
-    ("p2035", "t0002", "t0001", "t0001", "p2035", "t0001"),
-    ("p2035", "t0003", "t0002", "t0002", "p2035", "t0002"),
     ("p2035_high", "t0001", "t0003", "t0003", "p2035_high", "t0003"),
     ("p2035_high", "t0002", "t0001", "t0001", "p2035_high", "t0001"),
     ("p2035_high", "t0003", "t0002", "t0002", "p2035_high", "t0002"),
     ("p2035_low", "t0001", "t0003", "t0003", "p2035_low", "t0003"),
     ("p2035_low", "t0002", "t0001", "t0001", "p2035_low", "t0001"),
     ("p2035_low", "t0003", "t0002", "t0002", "p2035_low", "t0002"),
-    ("p2040", "t0004", "t0003", "t0006", "p2035", "t0003"),
-    ("p2040", "t0005", "t0004", "t0004", "p2040", "t0004"),
-    ("p2040", "t0006", "t0005", "t0005", "p2040", "t0005"),
     ("p2040_high", "t0004", "t0003", "t0006", "p2035_high", "t0003"),
     ("p2040_high", "t0005", "t0004", "t0004", "p2040_high", "t0004"),
     ("p2040_high", "t0006", "t0005", "t0005", "p2040_high", "t0005"),
@@ -186,17 +177,19 @@ def test_stoch_objective_hand_calc(stoch_wf) -> None:
 
 
 def test_stoch_steps_in_use_full_horizon(stoch_wf) -> None:
-    """§5.3-2 (DEFECT PIN): exactly the 12 (period, step) rows of §4 —
-    pre-fix the continuation periods produced ZERO rows here."""
+    """§5.3-2 (DEFECT PIN): exactly the 12 (period, step) rows of the two
+    forecasts — pre-fix the continuation periods produced ZERO rows here;
+    the period labels have no steps."""
     siu = pl.read_csv(stoch_wf / "solve_data" / "steps_in_use.csv")
     rows = [(r[0], r[1]) for r in siu.rows()]
     assert rows == EXPECTED_STEPS_IN_USE
 
 
 def test_stoch_period_bookkeeping_consistent(stoch_wf) -> None:
-    """§5.3-2: period_in_use_set == the four cohort members, each of
-    which appears in period_with_history (subset invariant), and the
-    continuation branch period has year rows."""
+    """§5.3-2: period_in_use_set == the period labels (kept for the
+    period-level bookkeeping, each just before its forecasts) and the four
+    forecast periods, each of which appears in period_with_history (subset
+    invariant), and the continuation branch period has year rows."""
     piu = pl.read_csv(stoch_wf / "solve_data" / "period_in_use_set.csv")
     assert piu["period"].to_list() == [
         "p2035", "p2035_high", "p2035_low",
@@ -216,15 +209,16 @@ def test_stoch_period_bookkeeping_consistent(stoch_wf) -> None:
 
 def test_stoch_branch_weights(stoch_wf) -> None:
     """§5.3-3, R3 re-grounded: forecasts-only per-cohort normalization —
-    phantom trunk → 0, forecasts {high:0.25, low:0.75}, constant along
-    each branch chain; pdt dense over the 18 (d, t) cells."""
+    period label → 0, forecasts {high:0.25, low:0.75}, constant along
+    each branch chain; pdt dense over the 12 (d, t) cells (the labels
+    have none)."""
     pdw = pl.read_csv(stoch_wf / "solve_data" / "pd_branch_weight.csv")
     got = {r[0]: float(r[1]) for r in pdw.rows()}
     assert set(got) == set(EXPECTED_PD_BRANCH_WEIGHT)
     for p, w in EXPECTED_PD_BRANCH_WEIGHT.items():
         assert got[p] == pytest.approx(w, abs=1e-12)
     pdtw = pl.read_csv(stoch_wf / "solve_data" / "pdt_branch_weight.csv")
-    assert pdtw.height == 18
+    assert pdtw.height == 12
     for r in pdtw.rows(named=True):
         assert float(r["value"]) == pytest.approx(
             EXPECTED_PD_BRANCH_WEIGHT[r["period"]], abs=1e-12
@@ -253,7 +247,7 @@ def test_stoch_step_previous_continuation_linkage(stoch_wf) -> None:
     """§5.3-5 / §4 (DEFECT PIN for the p2040 rows): step_previous.csv
     links each continuation period to its own branch chain."""
     sp = pl.read_csv(stoch_wf / "solve_data" / "step_previous.csv")
-    assert sp.height == 18
+    assert sp.height == 12
     first = {
         (r["period"], r["time"]): (
             r["previous"], r["previous_within_timeset"],
@@ -288,7 +282,7 @@ def test_stoch_csv_dtttdt_parity_guard(stoch_run, stoch_wf) -> None:
     ``d_previous`` / ``t_previous_within_solve`` equal
     step_previous.csv's ``previous_period`` / ``previous_within_solve``
     for ALL 12 rows, and full 6-column equality holds for the 8
-    interior rows.  (Full-frame equality is impossible: ``t_previous``
+    interior rows (the period labels have no rows).  (Full-frame equality is impossible: ``t_previous``
     vs ``previous`` legitimately differ on first-of-period rows.)"""
     data = load_scenario(stoch_run)
     dtttdt = {
@@ -296,9 +290,8 @@ def test_stoch_csv_dtttdt_parity_guard(stoch_run, stoch_wf) -> None:
         for r in data.dtttdt.rows(named=True)
     }
     sp = pl.read_csv(stoch_wf / "solve_data" / "step_previous.csv")
-    assert sp.height == len(dtttdt) == 18
-    first_steps = {("p2035", "t0001"), ("p2035_high", "t0001"),
-                   ("p2035_low", "t0001"), ("p2040", "t0004"),
+    assert sp.height == len(dtttdt) == 12
+    first_steps = {("p2035_high", "t0001"), ("p2035_low", "t0001"),
                    ("p2040_high", "t0004"), ("p2040_low", "t0004")}
     for r in sp.rows(named=True):
         key = (r["period"], r["time"])
@@ -315,7 +308,8 @@ def test_stoch_csv_dtttdt_parity_guard(stoch_run, stoch_wf) -> None:
 
 
 def test_stoch_na_domain_and_period_branch(stoch_wf) -> None:
-    """§5.3-6: dt_non_anticipativity == the 6 realized rows;
+    """§5.3-6: dt_non_anticipativity == the 6 committed cells, keyed on the
+    period labels (committed_in_fan; the labels have no dispatch);
     period__branch.csv == the 6 metadata rows of §4 (DEFECT PIN for
     the (p2040, p2040) self-row and the p2040 fan rows)."""
     dtna = _csv_rows(stoch_wf, "dt_non_anticipativity_set.csv")
@@ -342,18 +336,16 @@ def test_horizon_branch_dispatch_reached_lp(horizon_wf) -> None:
     """§5.3-8 (DEFECT PIN), R3 re-grounded: under the genuine {high, low}
     fan every forecast branch's profile data constrained the solver — the
     high fan (wind 60/50, thermal 40/60) and the low fan (wind 20/10,
-    thermal 80/100).  The weight-0 phantom trunk p2035/p2040 carries no
-    dispatch (wind 0, thermal 0)."""
+    thermal 80/100).  The period labels p2035/p2040 have no dispatch: no
+    flow rows."""
     flows = _v_flow(horizon_wf)
-    assert flows.height == 18
+    assert flows.height == 12
     periods = set(flows["period"].to_list())
     assert {"p2035_high", "p2040_high", "p2035_low", "p2040_low"} <= periods
     for r in flows.rows(named=True):
         wind_mw = r[WIND_COL] * WIND_EXISTING
         thermal_mw = r[THERMAL_COL] * THERMAL_EXISTING
         expected = {
-            "p2035": (0.0, 0.0),
-            "p2040": (0.0, 0.0),
             "p2035_high": (60.0, 40.0),
             "p2040_high": (50.0, 60.0),
             "p2035_low": (20.0, 80.0),

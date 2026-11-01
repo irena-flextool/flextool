@@ -43,13 +43,13 @@ def test_2day_stochastic_dispatch_no_storage_parity(scenario_run):
     assert data.dt_non_anticipativity is not None
     assert data.period_branch_full is not None
     # Genuine 4-forecast fan (realized retagged to a forecast) at weight
-    # 0.25 each; the real-named trunk period1 is a weight-0 phantom.
+    # 0.25 each; the period label period1 has no dispatch (no (d, t) weight
+    # row) and a weight-0 period-level row.
     weights = data.pdt_branch_weight.frame
-    # The trunk period1 row is present but weight 0 (phantom).
-    trunk = (weights
-        .filter((pl.col("d") == "period1") & (pl.col("t") == "t0001")))
-    assert trunk.height == 1
-    assert abs(float(trunk["value"].sum())) < 1e-12
+    assert weights.filter(pl.col("d") == "period1").height == 0
+    pd_label = data.pd_branch_weight.frame.filter(pl.col("d") == "period1")
+    assert pd_label.height == 1
+    assert abs(float(pd_label["value"].sum())) < 1e-12
     # The four FORECAST siblings sit on the suffixed periods and their
     # weights sum to 1.0 per time index.
     siblings_t1 = (weights

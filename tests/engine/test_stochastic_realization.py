@@ -24,6 +24,8 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
+from tests.engine._unit_db import is_realization, utf8
+
 FLEXTOOL_ROOT = Path(__file__).resolve().parents[2]
 T0_FIXTURE = FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_t0_commit.json"
 RESERVE_FIXTURE = FLEXTOOL_ROOT / "tests" / "fixtures" / "w4b_reserve_dispatch.json"
@@ -315,3 +317,236 @@ def test_designation_outside_the_committed_window_adds_nothing() -> None:
                   timesets_used_by_solves={"p": [("d1", "ts"), ("d2", "ts")]})
     _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
     assert cfg.realized_dispatch_parent == {}
+
+
+# ---------------------------------------------------------------------------
+# A period label has no dispatch
+# ---------------------------------------------------------------------------
+
+FIXTURES = FLEXTOOL_ROOT / "tests" / "fixtures"
+TWO_PERIOD = FIXTURES / "stoch_two_period.json"
+RECOURSE = FIXTURES / "stoch_two_period_invest.json"
+HEDGE = FIXTURES / "stoch_two_period_hedge.json"
+STOCHASTICS = FIXTURES / "stochastics.json"
+
+
+def _mps_rows(mps: bytes) -> set[str]:
+    """Row names of an MPS file (the ROWS section)."""
+    rows, section = set(), None
+    for line in mps.decode().splitlines():
+        if not line.startswith(" "):
+            section = line.split()[0] if line.split() else section
+            continue
+        if section == "ROWS":
+            rows.add(line.split()[1])
+    return rows
+
+
+def _mps_entries(mps: bytes) -> list[tuple[str, str]]:
+    """``(column, row)`` entries of the COLUMNS section of an MPS file."""
+    out, section = [], None
+    for line in mps.decode().splitlines():
+        if not line.startswith(" "):
+            section = line.split()[0] if line.split() else section
+            continue
+        f = line.split()
+        if section == "COLUMNS" and "MARKER" not in line:
+            out += [(f[0], f[i]) for i in range(1, len(f) - 1, 2)]
+    return out
+
+
+def _mps_columns(mps: bytes) -> set[str]:
+    return {c for c, _r in _mps_entries(mps)}
+
+
+def _with_label_dt(names, label: str) -> list[str]:
+    """Names indexed by the period *label* together with a time step (``[..,label,t0001..]``)."""
+    import re
+    pattern = re.compile(rf"[\[,]{re.escape(label)},t\d{{4}}[,\]]")
+    return sorted(n for n in names if pattern.search(n))
+
+
+def _branch_map_without(data: dict, solve: str, drop: str) -> None:
+    """Remove branch *drop* from *solve*'s ``stochastic_branches``."""
+    for r in data["parameter_values"]:
+        if r[0] == "solve" and r[1] == solve and r[2] == "stochastic_branches":
+            m = json.loads(base64.b64decode(r[3][0]).decode())
+            for _period, period_map in m["data"]:
+                period_map["data"] = [b for b in period_map["data"] if b[0] != drop]
+            r[3] = [base64.b64encode(json.dumps(m).encode()).decode(), r[3][1]]
+
+
+def _all_forecasts(data: dict, solve: str) -> None:
+    """Flag every branch of *solve*'s ``stochastic_branches`` ``realized: no`` (a forecasts-only fan)."""
+    for r in data["parameter_values"]:
+        if r[0] == "solve" and r[1] == solve and r[2] == "stochastic_branches":
+            m = json.loads(base64.b64decode(r[3][0]).decode())
+            for _period, period_map in m["data"]:
+                for _branch, branch_map in period_map["data"]:
+                    for _step, leaf in branch_map["data"]:
+                        leaf["data"] = [["no", leaf["data"][0][1]]]
+            r[3] = [base64.b64encode(json.dumps(m).encode()).decode(), r[3][1]]
+
+
+def _objective(steps, solve: str, tmp: Path) -> float:
+    return float(pl.read_parquet(tmp / "work" / "output_raw" / f"v_obj__{solve}.parquet")["objective"][0])
+
+
+@pytest.mark.solver
+def test_forecasts_only_fan_has_no_label_dispatch(tmp_path_factory) -> None:
+    """``stoch_two_period`` (forecasts-only {high, low} fan at p2035, continuing into p2040): the stochastic solve
+    solves; no row or column of the LP is indexed by a period label with a time step; the objective is the hand
+    calculation 2920 × 24 000 = 70 080 000 of ``test_stochastic_continuation_fanout`` (also the objective of the
+    parent before #82, 75f73acf^, when the fixture still solved)."""
+    tmp = tmp_path_factory.mktemp("label_two_period")
+    steps, mps = _run(TWO_PERIOD, tmp, scenario="stoch", capture_mps=True)
+    assert list(steps) == ["stoch_2p"]
+    names = _mps_rows(mps["stoch_2p"]) | _mps_columns(mps["stoch_2p"])
+    for label in ("p2035", "p2040"):
+        assert _with_label_dt(names, label) == [], label
+    assert _objective(steps, "stoch_2p", tmp) == pytest.approx(70_080_000.0, rel=1e-9)
+
+
+@pytest.mark.solver
+def test_designation_leaves_the_stochastic_lp_unchanged(tmp_path_factory, designated) -> None:
+    """``stoch_t0_commit`` as a forecasts-only {high, low} fan and with the extra ``rlz`` (realized: yes, weight 0)
+    designation: the stochastic solve's LP is byte-identical (the designation only feeds the realization solve)."""
+    tmp = tmp_path_factory.mktemp("label_forecasts_only")
+
+    def forecasts_only(data: dict) -> None:
+        _drop_separate_dispatch(data)
+        _branch_map_without(data, PARENT, "rlz")
+
+    steps, mps = _run(_variant(T0_FIXTURE, tmp, "forecasts_only", forecasts_only), tmp, capture_mps=True)
+    assert list(steps) == [PARENT]
+    _, mps_designated = designated
+    assert mps[PARENT] == mps_designated[PARENT]
+
+
+@pytest.mark.solver
+def test_recourse_label_has_no_investment(tmp_path_factory) -> None:
+    """Under recourse a period label invests nothing here-and-now: ``stoch_two_period_invest`` has no ``v_invest``
+    column at p2035 / p2040, only at the forecast branch periods, and the objective equals the parent before #82
+    (75f73acf^, lp_snapshot ``stoch_recourse``: 0.196875 in objective units, here unscaled 196 875)."""
+    tmp = tmp_path_factory.mktemp("label_recourse")
+    steps, mps = _run(RECOURSE, tmp, scenario="recourse", capture_mps=True)
+    cols = [c for c in _mps_columns(mps["stoch_2p_inv"]) if c.startswith("v_invest")]
+    assert cols
+    assert not [c for c in cols if ",p2035]" in c or ",p2040]" in c], sorted(cols)
+    assert _objective(steps, "stoch_2p_inv", tmp) == pytest.approx(196_875.0, rel=1e-9)
+
+
+@pytest.mark.solver
+def test_recourse_shared_investment_ties_forecasts_to_each_other(tmp_path_factory) -> None:
+    """``hedge_na_window`` (recourse, fan at p2035, shared_invest_periods p2035): the shared-investment window ties
+    the forecasts in the forecast star of each window period, members − 1 rows per entity and window period, never a
+    forecast to the period label (which has no investment column under recourse)."""
+    tmp = tmp_path_factory.mktemp("label_recourse_na")
+    steps, mps = _run(HEDGE, tmp, scenario="hedge_na_window", capture_mps=True)
+    (solve,) = [s for s in steps if not is_realization(s)]
+    rows = sorted(r for r in _mps_rows(mps[solve]) if r.startswith("non_anticipativity_invest"))
+    assert rows
+    fd = steps[solve].flex_data
+    pairs = utf8(fd.pd_non_anticipativity)
+    members = utf8(fd.period_branch_full).filter(pl.col("d") != pl.col("b"))
+    labels = set(members["d"].to_list())
+    assert not (set(pairs["d"].to_list()) | set(pairs["b"].to_list())) & labels
+    in_use = set(utf8(fd.period_in_use_set)["d"].to_list())
+    for d_ref, group in pairs.group_by("d"):
+        anchor = members.filter(pl.col("b") == d_ref[0])["d"][0]
+        forecasts = set(members.filter((pl.col("d") == anchor) & pl.col("b").is_in(list(in_use)))["b"].to_list())
+        assert group.height == len(forecasts) - 1, (anchor, group)
+
+
+def _rolling_hedge(data: dict) -> None:
+    """``hedge_storage`` (fan at p2040 = t0004, storage ``resv`` with fix_start) as a rolling solve, horizon 4 h,
+    jump 3 h: roll 0 (t0001-t0004) commits t0001-t0003 before the reveal, the fan only in its look-ahead; roll 1
+    (t0004-t0006) opens the fan at its first step."""
+    data["alternatives"].append(["roll", "rolling, fan in the look-ahead"])
+    for sa in data["scenario_alternatives"]:
+        if sa[0] == "hedge_storage" and sa[1] == "storage" and sa[2] is None:
+            sa[2] = "roll"
+    data["scenario_alternatives"].append(["hedge_storage", "roll", None])
+
+    def enc(value, kind):
+        return [base64.b64encode(json.dumps(value).encode()).decode(), kind]
+    data["parameter_values"] += [
+        ["solve", "stoch_2p_hedge", "solve_mode", enc("rolling_window", "str"), "roll"],
+        ["solve", "stoch_2p_hedge", "rolling_solve_horizon", enc(4.0, "float"), "roll"],
+        ["solve", "stoch_2p_hedge", "rolling_solve_jump", enc(3.0, "float"), "roll"],
+        ["solve", "stoch_2p_hedge", "stochastic_invest_method", enc("none", "str"), "roll"]]
+
+
+@pytest.mark.solver
+def test_rolling_fan_in_the_look_ahead_carries_the_committed_state(tmp_path_factory) -> None:
+    """A rolling fan only in the look-ahead needs no designation: roll 1 starts from roll 0's committed end state,
+    v_state of the trunk p2035 at t0003 (its last committed step) × the state unitsize, and every forecast of
+    roll 1's fan (opened at its first step) starts from that carry."""
+    tmp = tmp_path_factory.mktemp("label_rolling_lookahead")
+    steps, _ = _run(_variant(HEDGE, tmp, "rolling_hedge", _rolling_hedge), tmp, scenario="hedge_storage")
+    rolls = list(steps.values())
+    assert len(rolls) == 2 and not any(is_realization(k) for k in steps), list(steps)
+    first, second = rolls
+    v0 = utf8(first.solution.value("v_state")).filter(
+        (pl.col("n") == "resv") & (pl.col("d") == "p2035") & (pl.col("t") == "t0003"))
+    assert v0.height == 1
+    su = utf8(first.flex_data.p_state_unitsize.frame).filter(pl.col("n") == "resv")["value"][0]
+    carry = utf8(second.flex_data.p_roll_continue_state.frame).filter(pl.col("n") == "resv")["value"].to_list()
+    assert carry == [pytest.approx(float(v0["value"][0]) * su, abs=1e-6)]
+    starts = utf8(second.flex_data.nodeState_first_dt).filter(pl.col("n") == "resv")
+    assert set(starts["d"].to_list()) == {"p2040_high", "p2040_low"}
+
+
+def _stochastics_variant(tmp: Path, name: str, mutate) -> Path:
+    return _variant(STOCHASTICS, tmp, name, mutate)
+
+
+@pytest.mark.solver
+def test_committed_window_in_forecasts_only_fan_with_storage_raises(tmp_path_factory) -> None:
+    """``1_week_rolling_wind`` with every branch a forecast: each roll commits its jump inside the fan, the next
+    roll continues from it and the storage state is decided per forecast there, so the run stops before the first
+    roll's LP and names the storage state."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    tmp = tmp_path_factory.mktemp("label_committed_storage")
+    fixture = _stochastics_variant(tmp, "forecasts_only_rolling", lambda d: _all_forecasts(d, "1week_rolling"))
+    with pytest.raises(FlexToolConfigError, match=r"1week_rolling_roll_0.*storage state"):
+        _run(fixture, tmp, scenario="1_week_rolling_wind")
+
+
+def _flowgroup_path(invest_method: str):
+    import importlib.util
+    name = "_lp_snapshot_for_realization"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, FLEXTOOL_ROOT / "tools" / "lp_snapshot.py")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    lps = sys.modules[name]
+    base = ["init", "base", "stoch", "ws", "na_window", "divest"] + (
+        ["invest_none"] if invest_method == "none" else [])
+    data = lps._overlay(json.loads(HEDGE.read_text()), name="flowgroup_path", base=base,
+                        entities=[["flowGroup", "base_flow"],
+                                  ["flowGroup__unit__node", ["base_flow", "base", "elec"]]],
+                        values=[["flowGroup", "base_flow", "min_cumulative_flow", 1.0]])
+    return data
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("invest_method", ["recourse", "none"])
+def test_branch_paths_hold_the_period_label(tmp_path_factory, invest_method: str) -> None:
+    """A flowGroup minimum cumulative flow on the fan-at-p2035 hedge: the solve is feasible and no row is keyed by
+    an ``__anchor`` path (the period labels have no dispatch).  Under ``none`` the label p2035 carries the
+    here-and-now investment: every investment-total row holds that investment."""
+    tmp = tmp_path_factory.mktemp(f"label_paths_{invest_method}")
+    path = tmp / "flowgroup_path.json"
+    path.write_text(json.dumps(_flowgroup_path(invest_method)))
+    steps, mps = _run(path, tmp, scenario="flowgroup_path", capture_mps=True)
+    (solve,) = list(steps)
+    assert steps[solve].solution.optimal
+    rows = _mps_rows(mps[solve])
+    assert not [r for r in rows if "__anchor" in r]
+    assert [r for r in rows if r.startswith("minCumulative_flow")]
+    totals = [r for r in rows if r.startswith("maxInvest_entity_total")]
+    if invest_method == "none":
+        assert totals
+        holders = {r for c, r in _mps_entries(mps[solve]) if c == "v_invest_p[base,p2035]"}
+        assert set(totals) <= holders, (totals, holders)
