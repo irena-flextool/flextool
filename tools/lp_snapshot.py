@@ -706,6 +706,18 @@ def _patch_stoch_rank3_profile_anchor(data: dict) -> dict:
                 ["solve", "2day_dispatch", "stochastic_branches", _realized_branch_override()]])
 
 
+def _patch_stoch_na_reserve_designated(data: dict) -> dict:
+    """:func:`_patch_stoch_na_reserve` with branch ``realized`` flagged ``realized: yes``
+    (:func:`_realized_branch_override`) and ``coal_plant`` online (linear startups): the realization
+    solve the engine adds after the stochastic solve pins its reserves (``reserve_fix_eq``) and units
+    online (``online_fix_eq``) to the stochastic solve's reference forecast on the tied steps."""
+    data = _patch_stoch_na_reserve(data)
+    return _overlay(
+        data, name="stoch_na_reserve_designated", base="stoch_na_reserve",
+        values=[["unit", "coal_plant", "startup_method", "linear"],
+                ["solve", "2day_dispatch", "stochastic_branches", _realized_branch_override()]])
+
+
 def _patch_chp_misc(data: dict) -> dict:
     """greater_than user constraint, balance_within_period node and ramp
     limits on both the input and the output side of a unit."""
@@ -1783,6 +1795,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "reserve_input_side": _patch_reserve_input_side,
     "reserve_dynamic_demand": _patch_reserve_dynamic_demand,
     "stoch_na_reserve": _patch_stoch_na_reserve,
+    "stoch_na_reserve_designated": _patch_stoch_na_reserve_designated,
     "stoch_rank3_anchor": _patch_stoch_rank3_anchor,
     "stoch_rank3_profile_anchor": _patch_stoch_rank3_profile_anchor,
     "chp_misc": _patch_chp_misc,
@@ -1989,6 +2002,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("reserve_input_side", _T),
     ("reserve_dynamic_demand", _T),
     ("stoch_na_reserve", _F + "stochastics.json"),
+    ("stoch_na_reserve_designated", _F + "stochastics.json"),
     ("chp_misc", _T),
     ("profiles", _T),
     ("co2_period_total", _T),
