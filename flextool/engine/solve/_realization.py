@@ -20,6 +20,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
+import polars as pl
+
+from flextool.engine.input._solve_state import FlexToolConfigError
+
 from flextool.engine.preprocess.params._branch import phantom_periods
 
 _MODULE_LOGGER = logging.getLogger(__name__)
@@ -157,3 +161,135 @@ def warn_recourse_designation(solve: str) -> None:
         "stochastic_invest_method = recourse: no realization solve is added (there is no realized post-reveal "
         "investment to fix).  The designation only selects the branch deterministic solves read stochastic data "
         "from.", solve)
+
+
+def _utf8(frame):
+    return frame.with_columns(pl.col(c).cast(pl.Utf8) for c in frame.columns if c != "value")
+
+
+def _rows(frame) -> bool:
+    return frame is not None and frame.height > 0
+
+
+def _frame(param):
+    if param is None:
+        return None
+    frame = param.frame if hasattr(param, "frame") else param
+    return _utf8(frame) if frame.height > 0 else None
+
+
+def _join_value(base: pl.DataFrame, param, name: str, default: float) -> pl.DataFrame:
+    """*base* with column *name* = *param*'s value joined on the key columns both share (*default* where absent)."""
+    frame = _frame(param)
+    if frame is None:
+        return base.with_columns(pl.lit(default).alias(name))
+    keys = [c for c in frame.columns if c != "value" and c in base.columns]
+    if not keys:
+        return base.with_columns(pl.lit(default).alias(name))
+    vals = frame.select(*keys, pl.col("value").cast(pl.Float64).alias(name)).unique(subset=keys, keep="first")
+    return base.join(vals, on=keys, how="left").with_columns(pl.col(name).fill_null(default))
+
+
+def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> None:
+    """Raise when a pinned realization solve cannot balance a node without balance slack.
+
+    A realization solve pins units online (``p_fix_online``) and reserves (``p_fix_reserve``) to values the
+    stochastic solve chose for its forecasts; the realized data was not among them.  On a node with
+    ``penalty_method = off`` (no balance slack) the realized net load may then exceed what the supply into the node
+    can deliver, and the LP is infeasible.  This check finds that case before the solve and names the node and step.
+
+    Per hard-balance node and step: the realized need ``−inflow`` (MWh) is compared with an upper bound of the
+    supply into the node, Σ over the arcs into the node of ``unitsize · Δt · (cap · availability · profile −
+    reserve_up)``, where ``cap`` is the pinned online count × the sink's capacity_max_coeff for a pinned process and
+    the existing capacity (units of unitsize) × the arc's capacity factor otherwise, ``profile`` the realized upper
+    or fixed flow profile (1 without one) and ``reserve_up`` the pinned upward reserve the process holds at the node.
+    A node is not checked when the bound is not certain: it has a storage state, a block or coarse balance, a
+    connection, an arc without capacity (conversion_flow_coeff = 0) or an arc without an existing-capacity value.
+    """
+    off = _frame(getattr(d, "nodeBalance_penalty_off", None))
+    fix_online = _frame(getattr(d, "p_fix_online", None))
+    fix_reserve = _frame(getattr(d, "p_fix_reserve", None))
+    flow_to_n = _frame(getattr(d, "flow_to_n", None))
+    inflow = _frame(getattr(d, "p_inflow", None))
+    if off is None or (fix_online is None and fix_reserve is None) or flow_to_n is None or inflow is None:
+        return
+    nodes = set(off["n"].to_list())
+    for skip in ("nodeState", "nodeStateBlock", "nodeCoarse"):
+        frame = _frame(getattr(d, skip, None))
+        if frame is not None and "n" in frame.columns:
+            nodes -= set(frame["n"].to_list())
+    units = _frame(getattr(d, "process_unit", None))
+    unit_names = set(units["p"].to_list()) if units is not None else set()
+    arcs_all = pl.concat([f.select("p", "n") for f in (flow_to_n, _frame(getattr(d, "flow_from_n", None)))
+                          if f is not None])
+    nodes -= set(arcs_all.filter(~pl.col("p").is_in(list(unit_names)))["n"].to_list())
+    uncapped = _frame(getattr(d, "process_source_sink_uncapped", None))
+    arcs = flow_to_n.filter(pl.col("n").is_in(list(nodes))).select("p", "source", "sink", "n").unique()
+    if uncapped is not None:
+        nodes -= set(arcs.join(uncapped.select("p", "source", "sink"), on=["p", "source", "sink"],
+                               how="semi")["n"].to_list())
+    arcs = arcs.filter(pl.col("n").is_in(list(nodes)))
+    if arcs.height == 0:
+        return
+    dt = _utf8(d.dt.select("d", "t")).unique()
+    cells = arcs.join(dt, how="cross")
+    cells = _join_value(cells, d.p_unitsize, "unitsize", 1.0)
+    cells = _join_value(cells, getattr(d, "p_process_availability", None), "avail", 1.0)
+    cells = _join_value(cells, d.p_step_duration, "dur", 1.0)
+    cells = _join_value(cells, getattr(d, "p_process_sink_max_capacity_coef", None), "k_sink", 1.0)
+    cells = _join_value(cells, getattr(d, "p_arc_max_cap_coef", None), "k_arc", 1.0)
+    existing = _frame(getattr(d, "p_flow_upper_existing", None))
+    if existing is None:
+        return
+    cells = cells.join(existing.select("p", "source", "sink", "d", pl.col("value").alias("existing")),
+                       on=["p", "source", "sink", "d"], how="left")
+    if fix_online is not None:
+        cells = cells.join(fix_online.select("p", "d", "t", pl.col("value").alias("online")),
+                           on=["p", "d", "t"], how="left")
+    else:
+        cells = cells.with_columns(pl.lit(None, dtype=pl.Float64).alias("online"))
+    profile_value = _frame(getattr(d, "p_profile_value", None))
+    profiles = [f.select("p", "source", "sink", "f") for f in (_frame(getattr(d, "process_profile_upper", None)),
+                                                               _frame(getattr(d, "process_profile_fixed", None)))
+                if f is not None]
+    if profiles and profile_value is not None:
+        arc_f = pl.concat(profiles).unique()
+        pv_keys = [c for c in ("f", "d", "t") if c in profile_value.columns]
+        prof = (arcs.join(arc_f, on=["p", "source", "sink"], how="inner").join(dt, how="cross")
+                .join(profile_value.select(*pv_keys, pl.col("value").cast(pl.Float64).alias("profile")),
+                      on=pv_keys, how="inner")
+                .group_by("p", "source", "sink", "d", "t").agg(pl.col("profile").min()))
+        cells = cells.join(prof, on=["p", "source", "sink", "d", "t"], how="left")
+    else:
+        cells = cells.with_columns(pl.lit(None, dtype=pl.Float64).alias("profile"))
+    if fix_reserve is not None:
+        res_up = (fix_reserve.filter(pl.col("ud") == "up")
+                  .group_by("p", "n", "d", "t").agg(pl.col("value").sum().alias("reserve_up")))
+        cells = cells.join(res_up, on=["p", "n", "d", "t"], how="left")
+    else:
+        cells = cells.with_columns(pl.lit(None, dtype=pl.Float64).alias("reserve_up"))
+    unknown = cells.filter(pl.col("online").is_null() & pl.col("existing").is_null())
+    nodes_unknown = set(unknown["n"].to_list())
+    cells = cells.filter(~pl.col("n").is_in(list(nodes_unknown)))
+    if cells.height == 0:
+        return
+    cap = (pl.when(pl.col("online").is_not_null()).then(pl.col("online") * pl.col("k_sink"))
+           .otherwise(pl.col("existing") * pl.col("k_arc")))
+    supply = (cells
+              .with_columns(mwh=pl.col("unitsize") * pl.col("dur")
+                            * (cap * pl.col("avail") * pl.col("profile").fill_null(1.0)
+                               - pl.col("reserve_up").fill_null(0.0)))
+              .group_by("n", "d", "t").agg(pl.col("mwh").sum().alias("supply")))
+    need = inflow.select("n", "d", "t", (-pl.col("value").cast(pl.Float64)).alias("need"))
+    short = (supply.join(need, on=["n", "d", "t"], how="inner")
+             .filter(pl.col("need") > pl.col("supply") + rtol * pl.max_horizontal(pl.lit(1.0), pl.col("need").abs()))
+             .sort("n", "d", "t"))
+    if short.height == 0:
+        return
+    n, period, step, sup, req = short.row(0)
+    raise FlexToolConfigError(
+        f"Realization solve '{solve}' cannot balance node '{n}' (penalty_method = off) at period '{period}', step "
+        f"'{step}': the realized net load needs {req:.6g} MWh but the units online and the reserves pinned from the "
+        f"stochastic solve leave at most {sup:.6g} MWh of supply ({short.height} step(s) affected).  Give the node "
+        "balance slack (penalty_method = regular), add forecasts that cover the realized conditions, or end the "
+        "committed window before the reveal.")

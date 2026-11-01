@@ -3084,6 +3084,17 @@ def _drive_cascade(
                     user_label="FlexData built",
                 )
 
+            # A realization solve pins units online and reserves to the
+            # stochastic solve's NA-tied values: name the hard-balance node
+            # the realized data cannot balance before the LP is built.
+            if complete_solve_name in (
+                getattr(self.state.solve, "realized_dispatch_parent", {}) or {}
+            ):
+                from flextool.engine.solve._realization import (
+                    check_pinned_realization_feasible,
+                )
+                check_pinned_realization_feasible(data, complete_solve_name)
+
             # --- LP scaling -------------------------------------------------
             # Phase 2b — the legacy ``scaling.analyze_solve`` /
             # ``ScaleTable`` / ``resolve_effective_scaling`` pipeline has
