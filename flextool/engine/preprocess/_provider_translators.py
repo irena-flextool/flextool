@@ -44,6 +44,7 @@ _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
     K.HANDOFF_ONLINE_HISTORY:     ("process", "period", "step",
                                    "startup", "shutdown", "duration"),
     K.HANDOFF_FIX_ONLINE:         ("process", "period", "step", "value"),
+    K.HANDOFF_FIX_RESERVE:        ("process", "reserve", "upDown", "node", "period", "step", "value"),
     K.HANDOFF_CUMULATIVE_CO2:     ("group", "period", "value"),
     K.HANDOFF_CUMULATIVE_COMMODITY: ("commodity", "tier", "period",
                                       "p_ladder_cum_realized_mwh"),
@@ -75,7 +76,7 @@ ROLL_FORWARD_FIELDS: frozenset = frozenset((
 ))
 PIN_FIELDS: frozenset = frozenset((
     "realized_invest", "realized_existing", "divest_cumulative",
-    "fix_online", "fix_storage_quantity", "fix_storage_price",
+    "fix_online", "fix_reserve", "fix_storage_quantity", "fix_storage_price",
     "fix_storage_usage",
 ))
 
@@ -92,6 +93,7 @@ _FIELD_TO_KEY: tuple[tuple[str, str], ...] = (
     ("roll_end_step",       K.HANDOFF_ROLL_END_STEP),
     ("online_history",      K.HANDOFF_ONLINE_HISTORY),
     ("fix_online",          K.HANDOFF_FIX_ONLINE),
+    ("fix_reserve",         K.HANDOFF_FIX_RESERVE),
     ("cumulative_co2",      K.HANDOFF_CUMULATIVE_CO2),
     ("cumulative_commodity", K.HANDOFF_CUMULATIVE_COMMODITY),
     ("cum_sim_hours",       K.HANDOFF_CUM_SIM_HOURS),

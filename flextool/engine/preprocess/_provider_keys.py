@@ -165,6 +165,7 @@ HANDOFF_ONLINE_HISTORY = "handoff/online_history"
 # OC1 #1 sub-slice (b) — separate_dispatch parent's committed v_online over
 # the jump, pinned into the realized-dispatch sibling.
 HANDOFF_FIX_ONLINE = "handoff/fix_online"
+HANDOFF_FIX_RESERVE = "handoff/fix_reserve"
 HANDOFF_CUMULATIVE_CO2 = "handoff/cumulative_co2"
 HANDOFF_CUMULATIVE_COMMODITY = "handoff/cumulative_commodity"
 HANDOFF_CUM_SIM_HOURS = "handoff/cum_sim_hours"

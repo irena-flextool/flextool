@@ -69,6 +69,22 @@ def online_tie_cells(d) -> "pl.DataFrame | None":
     return cells.select("anchor", "d_ref", "t").sort("anchor", "t")
 
 
+def reserve_tie_cells(d) -> "pl.DataFrame | None":
+    """``(anchor, d_ref, t)`` Utf8: the tied steps dt_non_anticipativity of each anchor, at its reference forecast.
+
+    The steps of non_anticipativity_reserve (reserve is tied only over the tied steps).  None when nothing is tied.
+    """
+    refs = [(a, f[0]) for a, f in reference_forecasts(d) if f]
+    if not refs or not _has_rows(d.dt_non_anticipativity):
+        return None
+    ref = pl.DataFrame({"anchor": [a for a, _ in refs], "d_ref": [r for _, r in refs]})
+    tie = (d.dt_non_anticipativity
+           .select(pl.col("d").cast(pl.Utf8).alias("anchor"), pl.col("t").cast(pl.Utf8))
+           .unique())
+    cells = ref.join(tie, on="anchor", how="inner")
+    return cells.select("anchor", "d_ref", "t").sort("anchor", "t") if cells.height > 0 else None
+
+
 def _forecast_star(d) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
     """``(star, tie_dt)``: the forecast pairs ``(d, b)`` to tie and the tied steps ``(d, t)``.
 

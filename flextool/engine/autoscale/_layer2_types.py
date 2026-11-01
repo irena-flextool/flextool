@@ -455,6 +455,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # suffix to this base).  Pins the dimensionless unit-count v_online to
     # the parent's committed schedule.
     "online_fix_eq": CstrFamily(QuantityType.DIMENSIONLESS),
+    # flextool/engine/model/_reserve.py _add_reserve_fix — realization-solve
+    # v_reserve PIN (unit-count, like v_reserve).
+    "reserve_fix_eq": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/_online.py (maxFlow_online_<sfx>)
     "maxFlow_online": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/_online.py

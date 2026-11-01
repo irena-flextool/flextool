@@ -183,6 +183,14 @@ class SolveHandoff:
     # Schema: ``[process, period, step, value]``.  No file equivalent.
     fix_online: pl.DataFrame | None = None
 
+    # The reserve counterpart of ``fix_online``: the parent's v_reserve on
+    # its tied steps (reference forecast, re-keyed to the anchor period),
+    # pinned into the realization solve.  Unit-count space (NOT ×unitsize).
+    # Producer: parent's v_reserve.  Consumer: realization solve's
+    # ``p_fix_reserve`` (``reserve_fix_eq``).
+    # Schema: ``[process, reserve, upDown, node, period, step, value]``.
+    fix_reserve: pl.DataFrame | None = None
+
     # Storage quota imposed by parent solve on child solve — narrow
     # per-metric carriers in canonical column schema.  The trio is
     # independent (parent may set quantity-only, price-only, or any
@@ -211,7 +219,7 @@ class SolveHandoff:
     _FIELDS = (
         "realized_invest", "realized_existing", "divest_cumulative",
         "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
-        "roll_end_step", "online_history", "fix_online",
+        "roll_end_step", "online_history", "fix_online", "fix_reserve",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
     )

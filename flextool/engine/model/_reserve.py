@@ -6,7 +6,8 @@ requirement rows reserveBalance_timeseries_eq, reserveBalance_dynamic_eq and res
 the bound reserve_total_upper, the per-process limits
 reserve_process_{upward,downward}, the connection rows connection_reserve_{up,down}[_online_*|_exact] (a
 connection's reserve limited by its net position at the node), the storage energy rows reserve_storage_up_floor /
-reserve_storage_down_headroom, and the shortfall penalty in the objective.  The coupling of units' v_reserve to
+reserve_storage_down_headroom, the realization-solve pin reserve_fix_eq, and the shortfall penalty in the
+objective.  The coupling of units' v_reserve to
 process capacity (maxFlow, maxOutputSum, maxFlow_online, maxOutputSum_online, maxInputFlow_online, profile limits,
 unit floors) lives with those families.
 """
@@ -885,6 +886,37 @@ def add_constraints(b: "_Build") -> None:
 
     _add_connection_reserve_constraints(b)
     _add_storage_energy_constraints(b)
+    _add_reserve_fix(b)
+
+
+def _add_reserve_fix(b: "_Build") -> None:
+    """reserve_fix_eq: the reserve pin of a realization solve (see the EQ. header)."""
+    d = b.d
+    # ─── EQ. ─── reserve_fix_eq ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_reserve[p,r,ud,n,d,t] = p_fix_reserve[p,r,ud,n,d,t]   ∀ (p,r,ud,n,d,t) ∈ prundt with a p_fix_reserve value
+    # In a realization solve, pins the reserve each process holds to the non-anticipativity-tied reserve of the
+    # stochastic solve it realizes (that solve's reference forecast on its tied steps).  Only declared v_reserve
+    # cells are pinned.  p_fix_reserve is Utf8-keyed: it is joined to the native-typed index through Utf8 copies.
+    fix = getattr(d, "p_fix_reserve", None)
+    if fix is None or fix.frame.height == 0 or b.v_reserve is None or not _has_rows(d.prundt):
+        return
+    keys = ("p", "r", "ud", "n", "d", "t")
+    fix_u = fix.frame.select(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys), "value")
+    pin = (d.prundt.select(*keys).unique()
+           .with_columns(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys))
+           .join(fix_u, on=[f"_{k}" for k in keys], how="inner")
+           .select(*keys, "value"))
+    if pin.height == 0:
+        return
+    over = pin.select(*keys).unique()
+    b.m.add_cstr(
+        "reserve_fix_eq",
+        over=over,
+        sense="==",
+        lhs_terms={"reserve": Where(b.v_reserve, over)},
+        rhs_terms={"target": Param(keys, pin)},
+    )
 
 
 # ---------------------------------------------------------------------------
