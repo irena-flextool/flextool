@@ -1029,3 +1029,18 @@ calculated totals follow (374.502452125 → 374.925063871 = 67.3517305373 + 307.
 rows are unchanged; `period1` now comes last in the period header and slack list (the union order of the two solves).
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate 2_day_stochastic_dispatch`.
+
+## 2026-11-01 — `2_day_stochastic_dispatch/{costs__dt,summary_solve}.csv` (forecasts-only fixture again)
+
+**Context.** The weight-0 `committed` (`realized: yes`) branch that `tests/fixtures/stochastics.json` gave
+`2day_dispatch` as a #82 workaround is removed (owner decision "Stochastic realization model (2026-11-01)" point 8):
+the fan is again four forecasts (`realized`, `upper`, `lower`, `mid`, 0.25 each) with no designation, so no
+realization solve is added.  The stochastic solve's LP is byte-identical (lp_snapshot), so its objective stays the
+independently grounded 67.3517305373 and every `2day_dispatch` row of `costs__dt.csv` is unchanged; the 48
+`2day_dispatch__realized_dispatch,period1` rows are gone.  `summary_solve.csv`: the realization solve's objective
+(307.573333333) is gone and the calculated totals drop 374.925063871 → 67.3517305373 (= the stochastic LP objective);
+`period1` leaves the period header (no solve dispatches it); the realization solve's `downriver` slack row is gone; the
+CO2 rows split per scenario path again (the path set is read from the last solve, now the stochastic solve with its
+four paths; all 0).  `tests/scenarios.yaml` pins `expected_objective: 67.3517305373` again.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate 2_day_stochastic_dispatch`.
