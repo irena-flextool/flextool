@@ -513,6 +513,58 @@ def test_committed_window_in_forecasts_only_fan_with_storage_raises(tmp_path_fac
         _run(fixture, tmp, scenario="1_week_rolling_wind")
 
 
+def _rolling_online_only(data: dict) -> None:
+    """``stoch_t0_commit`` as a rolling solve over a forecasts-only fan with unit commitment only: no designation,
+    no ``separate_dispatch``, no investment; horizon 2 h, jump 1 h, so every roll commits its first step inside the
+    fan.  Each roll start t0001-t0003 has an analysis time: ``high`` (wind CF 0.8) and ``low`` (0.0), 0.5 each."""
+    drop = {"dispatch_realization_method", "invest_periods", "realized_invest_periods", "invest_method",
+            "invest_cost", "discount_rate", "lifetime", "invest_max_total"}
+    data["parameter_values"] = [r for r in data["parameter_values"] if r[2] not in drop]
+    steps = ("t0001", "t0002", "t0003")
+
+    def enc(value, kind):
+        return [base64.b64encode(json.dumps(value).encode()).decode(), kind]
+
+    def leaf(m):
+        return {"type": "map", "index_type": "str", "data": m}
+    cf = {"high": 0.8, "low": 0.0}
+    for r in data["parameter_values"]:
+        if r[2] == "solve_mode":
+            r[3] = enc("rolling_window", "str")
+        elif r[2] == "stochastic_branches":
+            r[3] = enc({"index_type": "str", "data": [["p2035", leaf(
+                [[b, leaf([[ts, leaf([["no", 0.5]])] for ts in steps])] for b in cf])]]}, "map")
+        elif r[1] == "wprof" and r[2] == "profile":
+            r[3] = enc({"index_type": "str", "data": [
+                [b, leaf([[ts, leaf([[t, v] for t in steps if t >= ts])] for ts in steps])] for b, v in cf.items()]},
+                "map")
+    data["parameter_values"] += [["solve", "stoch_rd", "rolling_solve_horizon", enc(2.0, "float"), "init"],
+                                 ["solve", "stoch_rd", "rolling_solve_jump", enc(1.0, "float"), "init"]]
+
+
+@pytest.mark.solver
+def test_committed_window_in_forecasts_only_fan_online_only_solves(tmp_path_factory) -> None:
+    """A committed window inside a forecasts-only fan with only non-anticipativity-tied families (online): the
+    run needs no realization solve, every roll solves, and the next roll's online carry is the first sorted
+    forecast's commitment at the committed step, applied to every forecast at the next roll's first step.  Hand value: demand 100 MW, wind 80 (high) or 0 (low) MW, the
+    peaker 2 × 50 MW with min_load 0.5; ``low`` needs both units, the tie gives ``high`` the same commitment, and
+    a slack costs 10 000 per MWh against the 10 per MWh peaker, so v_online = 2 at each roll's first step."""
+    tmp = tmp_path_factory.mktemp("label_committed_online")
+    steps, _ = _run(_variant(T0_FIXTURE, tmp, "rolling_online_only", _rolling_online_only), tmp)
+    rolls = list(steps.values())
+    assert len(rolls) == 3 and not any(is_realization(k) for k in steps), list(steps)
+    for prev, nxt in zip(rolls, rolls[1:]):
+        online = utf8(prev.solution.value("v_online_linear")).filter(pl.col("p") == "peaker")
+        first = online.filter(pl.col("d") == FIRST_FORECAST).sort("t")
+        assert float(first["value"][0]) == pytest.approx(2.0, abs=1e-6)
+        assert set(online.filter(pl.col("t") == first["t"][0])["value"].round(6).to_list()) == {2.0}
+        carry = utf8(nxt.flex_data.p_roll_continue_online.frame).filter(pl.col("p") == "peaker")
+        assert carry["value"].to_list() == [pytest.approx(float(first["value"][0]), abs=1e-6)]
+        # ... and it reaches every forecast of the next roll's fan at its first step.
+        takes = utf8(nxt.flex_data.dt_online_carry)
+        assert set(takes["d"].to_list()) == {"p2035_high", "p2035_low"} and takes["t"].n_unique() == 1, takes
+
+
 def _flowgroup_path(invest_method: str):
     import importlib.util
     name = "_lp_snapshot_for_realization"

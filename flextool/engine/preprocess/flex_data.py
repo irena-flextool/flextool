@@ -5879,6 +5879,36 @@ def _last_realized_step(sd: Path, flex_data: "FlexData | None", *,
     return pairs["d"][-1], pairs["t"][-1]
 
 
+def _committed_fan_online_cells(sd: Path, flex_data: "FlexData | None", *,
+                                provider: "object | None" = None) -> "pl.DataFrame | None":
+    """``(label, d_ref, t)`` Utf8, chronological: the cells a solve commits inside a forecasts-only fan on which
+    units online are tied, each at the forecast whose value the tie holds (the first sorted forecast ``d_ref``).
+
+    Inside a fan the solve realizes no dispatch (``realized_dispatch`` holds no fan cell), but the families tied
+    across its forecasts are de facto realized on the tied cells, so the next solve continues its unit
+    commitment from them (the committed-window check, ``solve._realization.check_committed_window_realized``,
+    stops a run whose untied families would need the same).  ``None`` when the solve commits no cell in a fan
+    or no online tie covers it."""
+    path = sd / "committed_in_fan.csv"
+    if flex_data is None or not _provider_has(provider, "solve_data/committed_in_fan", path):
+        return None
+    try:
+        committed = _provider_read(provider, "solve_data/committed_in_fan", path)
+    except pl.exceptions.NoDataError:
+        return None
+    if committed is None or committed.height == 0:
+        return None
+    from flextool.engine.model._non_anticipativity import online_tie_cells
+    ties = online_tie_cells(flex_data)
+    if ties is None:
+        return None
+    order = committed.select(pl.col("period").cast(pl.Utf8).alias("label"), pl.col("step").cast(pl.Utf8).alias("t"),
+                             pl.int_range(pl.len()).alias("__order"))
+    cells = (order.join(ties.rename({"anchor": "label"}), on=["label", "t"], how="inner")
+             .sort("__order").select("label", "d_ref", "t"))
+    return cells if cells.height > 0 else None
+
+
 def _step_duration_at(flex_data: "FlexData | None", step: "tuple[str, str]") -> float:
     """``p_step_duration`` of ``step`` ``(d, t)`` (1.0 when unknown)."""
     sd_param = getattr(flex_data, "p_step_duration", None) if flex_data is not None else None
@@ -6201,6 +6231,10 @@ def build_handoff_from_solution(
     # ``solve_data/realized_dispatch``, equivalent to ``_load_realized_period_time_last`` followed by
     # ``last_pairs[-1]`` in v3.32.0's ``write_p_roll_continue_state``), shared by the three roll carriers.
     last_step = _last_realized_step(sd, flex_data, provider=provider)
+    # The committed cells of a forecasts-only fan carry unit commitment to the next solve when no realization
+    # solve follows this one (a realization solve's own carries continue the run then).
+    fan_online = (None if realized_dispatch_parents is not None and solve_name in realized_dispatch_parents
+                  else _committed_fan_online_cells(sd, flex_data, provider=provider))
     if nodes_state and last_step is not None and "v_state" in sol._vars:
         last_d, last_t = last_step
         rcs_rows: list[tuple[str, float]] = []
@@ -6280,8 +6314,12 @@ def build_handoff_from_solution(
     roll_end_online_df = None
     _has_online_var = ("v_online_linear" in sol._vars
                        or "v_online_integer" in sol._vars)
-    if last_step is not None and _has_online_var:
-        last_d_on, last_t_on = last_step
+    online_step = last_step
+    if fan_online is not None:
+        # The last committed step lies in the fan (after every pre-reveal realized step): read the tied value.
+        online_step = (fan_online["d_ref"][-1], fan_online["t"][-1])
+    if online_step is not None and _has_online_var:
+        last_d_on, last_t_on = online_step
         rco_rows: list[tuple[str, float]] = []
         for _vname in ("v_online_linear", "v_online_integer"):
             if _vname not in sol._vars:
@@ -6314,7 +6352,11 @@ def build_handoff_from_solution(
     # The next roll links its first step to it (ramp rows with roll_end_flow, and the ramp output also in
     # models without ramp limits).
     roll_end_step_df = None
-    if last_step is not None:
+    if fan_online is not None:
+        # The committed step under its period label (the name the complete solve's timeline links to).
+        roll_end_step_df = pl.DataFrame({"period": [fan_online["label"][-1]], "step": [fan_online["t"][-1]],
+                                         "duration": [_step_duration_at(flex_data, online_step)]})
+    elif last_step is not None:
         roll_end_step_df = pl.DataFrame({"period": [last_step[0]], "step": [last_step[1]],
                                          "duration": [_step_duration_at(flex_data, last_step)]})
 
@@ -6441,16 +6483,23 @@ def build_handoff_from_solution(
     # Only produce the window for processes that author min-up/down
     # (``online_min_time`` non-empty); a solve with no min-up/down never
     # carries, so nothing is stored — byte-identical to the baseline.
-    if (last_pairs_on is not None and last_pairs_on.height > 0
-            and _has_su_sd
-            and online_min_time_df is not None
-            and online_min_time_df.height > 0):
+    # The committed cells of a forecasts-only fan join the realized ones: the tied forecast's value (``d_ref``)
+    # under the period label (``d_out``), the name the next solve's look-back walks.
+    _hist_cells = []
+    if last_pairs_on is not None and last_pairs_on.height > 0:
         _cols = last_pairs_on.columns
         _dc = "period" if "period" in _cols else "d"
         _tc = "step" if "step" in _cols else "t"
-        realized_dt = (last_pairs_on
-                       .select(alias_to_axis(_dc, "d"), alias_to_axis(_tc, "t"))
-                       .unique())
+        _hist_cells.append(last_pairs_on.select(pl.col(_dc).cast(pl.Utf8).alias("d"),
+                                                pl.col(_tc).cast(pl.Utf8).alias("t"),
+                                                pl.col(_dc).cast(pl.Utf8).alias("d_out")))
+    if fan_online is not None:
+        _hist_cells.append(fan_online.select(pl.col("d_ref").alias("d"), "t", pl.col("label").alias("d_out")))
+    if (_hist_cells
+            and _has_su_sd
+            and online_min_time_df is not None
+            and online_min_time_df.height > 0):
+        realized_dt = pl.concat(_hist_cells).unique()
 
         def _pull_online_metric(vnames):
             frames = []
@@ -6458,11 +6507,13 @@ def build_handoff_from_solution(
                 if vn not in sol._vars:
                     continue
                 _v = sol._vars[vn]
-                _fr = _v.frame.join(realized_dt, on=["d", "t"], how="inner")
+                _fr = (_v.frame.with_columns(pl.col("d").cast(pl.Utf8).alias("__d"),
+                                             pl.col("t").cast(pl.Utf8).alias("__t"))
+                       .join(realized_dt, left_on=["__d", "__t"], right_on=["d", "t"], how="inner"))
                 if _fr.height == 0:
                     continue
                 _ids = _fr["col_id"].to_numpy()
-                frames.append(_fr.select("p", "d", "t").with_columns(
+                frames.append(_fr.select("p", pl.col("d_out").alias("d"), pl.col("__t").alias("t")).with_columns(
                     value=pl.Series(sol.col_value[_ids])))
             if not frames:
                 return None
