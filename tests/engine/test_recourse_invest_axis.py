@@ -64,7 +64,9 @@ def test_expand_invest_axis_recourse(tmp_path):
     prov = _provider(tmp_path, flag="recourse", pb=PB, piu=PIU)
     out = _expand_invest_branch_periods(
         ["p2035", "p2040"], tmp_path, provider=prov)
-    assert out == ["p2035", "p2035_low", "p2040", "p2040_low"]
+    # p2035 / p2040 are period labels (self-row + fan members): no invest column under recourse.
+    # Each anchor's in-use forecast members take its place (p2035_rlz is not in use).
+    assert out == ["p2035_low", "p2040_low"]
 
 
 def test_expand_invest_axis_flag_off_noop(tmp_path):

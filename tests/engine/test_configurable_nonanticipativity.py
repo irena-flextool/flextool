@@ -31,14 +31,16 @@ Hand-verified reference numbers (deterministic LP; see the builder):
   surplus/deficit timing.  Objective 2_037_600.
 * ``free_ops`` (``[]``): zero NA rows, header-only set CSV, and
   ``v_state[resv]`` DIVERGES (up rises above 0.5, low falls below).
-  Objective 764_954.1 < pinned; shared v_invest 4.5.
+  Shared v_invest 2 and objective 428_076 < pinned (hand derivation at
+  ``FREE_INVEST``).
 
 R3 forecasts-only note: the fixture declares a realized designation
 ``mid`` (realized:yes) alongside the two forecasts ``up`` / ``low``.
 Under the corrected model ``mid`` is PULLED from the weighted fan and the
 two forecasts renormalise to {up:0.5, low:0.5}; the objectives above are
-the driven optima under that weighting (mid at weight 0 contributes only
-its real-named-trunk data, not probability mass).
+the driven optima under that weighting.  The period labels p2035 / p2040
+have no dispatch, and the designation adds a realization solve after the
+stochastic solve; the tests here read the stochastic solve.
 """
 from __future__ import annotations
 
@@ -48,12 +50,21 @@ import polars as pl
 import pytest
 
 from tests._support.load import load_scenario
+from tests.engine._unit_db import is_realization
 
 SOLVE = "stoch_2p_free"
 
 # Deterministic LP reference objectives (see the fixture builder).
 PINNED_OBJ = 2_037_600.0
-FREE_OBJ = 764_954.1
+# free_ops hand derivation.  Per forecast the wind gives 60 MWh against 72 MWh demand, so ``base`` must
+# supply 12 MWh over the 6 steps; the storage ends where it starts (reference 0.5) and is not limiting
+# (100 MW, 1000 MWh), so ``base`` runs flat at 12 / 6 = 2 MW and the shared capacity is 2 MW:
+#   up : steps 1-3 wind 20 + base 2 - demand 12 = charge 10; steps 4-6 wind 0 + base 2 -> discharge 10.
+#   low: the mirror (discharge 10 early, charge 10 late).  Each forecast discharges 30 MWh.
+# Operating cost per forecast = (5 · 12 + 0.01 · 30) CUR × 8760 / 3 (3 h periods, 1 year each) = 60.3 · 2920,
+# weighted 0.5 + 0.5 -> 176 076.  Investment: 2 MW × the LP's invest coefficient (read from FlexData).
+FREE_INVEST = 2.0
+FREE_OPS_COST = 60.3 * 8760.0 / 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -96,12 +107,14 @@ def pinned_ops_wf(pinned_ops_run):
 
 
 def _resolve(run):
-    """In-process build+solve of the run's last sub-solve, loaded through
-    the production provider path; returns ``(data, sol, pb)``."""
+    """In-process build+solve of the run's stochastic solve (the last
+    sub-solve before the realization solve the ``mid`` designation adds),
+    loaded through the production provider path; returns ``(data, sol, pb)``."""
     from polar_high import Problem
     from flextool.engine import build_flextool
 
-    data = load_scenario(run)
+    stochastic = [s.solve_name for s in run.steps if not is_realization(s.solve_name)]
+    data = load_scenario(run, step=stochastic[-1])
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -165,12 +178,13 @@ def test_free_ops_shared_single_v_invest(free_ops_resolved) -> None:
     _data, sol, _pb = free_ops_resolved
     vi = sol.value("v_invest_p")
     keys = {str(r["d"]) for r in vi.iter_rows(named=True)}
-    # Only the trunk invest period p2035 — never a branch copy
-    # (p2035_up / p2035_low), which would signal a fanned invest axis.
+    # Only the period label p2035 (under ``none`` it keeps the shared
+    # ``v_invest``) — never a branch copy (p2035_up / p2035_low), which
+    # would signal a fanned invest axis.
     assert keys == {"p2035"}
     val = {str(r["d"]): round(float(r["value"]), 3)
            for r in vi.iter_rows(named=True)}
-    assert val == pytest.approx({"p2035": 4.5})
+    assert val == pytest.approx({"p2035": FREE_INVEST})
 
 
 @pytest.mark.solver
@@ -184,10 +198,11 @@ def test_free_ops_v_state_diverges_across_branches(free_ops_resolved) -> None:
     real-named trunk carries no probability mass), so its storage
     trajectory is an uncosted free variable (driven to 0) and is NOT the
     idle-at-0.5 member it was when ``mid`` still carried fan weight; the
-    probability-relevant divergence is between the two forecasts."""
+    probability-relevant divergence is between the two forecasts.  The
+    period label p2035 has no dispatch, so no storage trajectory."""
     _data, sol, _pb = free_ops_resolved
     traj = _v_state_by_branch(sol, "p2035")
-    assert set(traj) == {"p2035", "p2035_up", "p2035_low"}
+    assert set(traj) == {"p2035_up", "p2035_low"}
     up = traj["p2035_up"]
     low = traj["p2035_low"]
     # up strictly above, low strictly below — at every step, and the two
@@ -198,14 +213,19 @@ def test_free_ops_v_state_diverges_across_branches(free_ops_resolved) -> None:
 
 
 @pytest.mark.solver
-def test_free_ops_objective(free_ops_wf) -> None:
+def test_free_ops_objective(free_ops_wf, free_ops_resolved) -> None:
     """§7: the free-ops objective is the deterministic LP optimum
-    (per-branch dispatch under the shared capacity)."""
+    (per-branch dispatch under the shared capacity, hand derivation at
+    ``FREE_INVEST``)."""
+    data, _sol, _pb = free_ops_resolved
+    annual = data.ed_entity_annual_discounted.frame
+    inv_cost = float(annual.filter((pl.col("e").cast(pl.Utf8) == "base")
+                                   & (pl.col("d").cast(pl.Utf8) == "p2035"))["value"].item())
     obj = float(
         pl.read_parquet(free_ops_wf / "output_raw" / f"v_obj__{SOLVE}.parquet")
         ["objective"][0]
     )
-    assert obj == pytest.approx(FREE_OBJ, rel=1e-6)
+    assert obj == pytest.approx(FREE_INVEST * inv_cost + FREE_OPS_COST, rel=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -262,18 +282,13 @@ def test_pinned_ops_v_state_equal_across_branches(pinned_ops_resolved) -> None:
     the FORECASTS' net-charge equal, so v_state[resv] is IDENTICAL across the
     forecast copies ``up`` / ``low`` on every constrained (d,t).
 
-    Forecast-to-forecast: the realized trunk ``mid`` (the bare-period key) is
-    NOT tied and is excluded; only the two forecast copies (the suffixed
-    keys) are asserted equal."""
+    Forecast-to-forecast: the period label (the bare-period key) has no
+    dispatch; only the two forecast copies carry a trajectory."""
     _data, sol, _pb = pinned_ops_resolved
     for prefix in ("p2035", "p2040"):
         traj = _v_state_by_branch(sol, prefix)
-        assert len(traj) == 3, traj
-        # Separate the untied trunk (bare prefix key) from the two tied
-        # forecast copies (suffixed keys).
-        forecast_vals = [v for d, v in traj.items() if d != prefix]
-        assert len(forecast_vals) == 2, traj
-        assert forecast_vals[0] == forecast_vals[1], (prefix, traj)
+        assert set(traj) == {f"{prefix}_up", f"{prefix}_low"}, traj
+        assert traj[f"{prefix}_up"] == traj[f"{prefix}_low"], (prefix, traj)
 
 
 @pytest.mark.solver

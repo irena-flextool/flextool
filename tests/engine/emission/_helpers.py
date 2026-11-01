@@ -22,8 +22,8 @@ from flextool.engine import build_flextool
 from tests._support.load import ScenarioRun, load_scenario
 
 
-def build(run: ScenarioRun):
-    """Rebuild the last sub-solve of a finished cascade run and build the LP — without solving.
+def build(run: ScenarioRun, step: str | None = None):
+    """Rebuild a sub-solve (default: the last) of a finished cascade run and build the LP — without solving.
 
     ``run`` comes from the ``scenario_run`` fixture (or
     :func:`tests._support.load.run_scenario`); the FlexData is the one
@@ -34,7 +34,7 @@ def build(run: ScenarioRun):
     via ``pb.cstr_names()`` / ``pb.cstrs_named()``) and at the input
     sets on ``FlexData`` for cross-checks.
     """
-    data = load_scenario(run)
+    data = load_scenario(run, step=step)
     pb = Problem()
     build_flextool(pb, data)
     return pb, data

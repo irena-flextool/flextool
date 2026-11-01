@@ -77,7 +77,7 @@ def test_rname_sbtb_binds_reference_forecast_prereveal() -> None:
     realized = {"p2035": P1[0:], "p2040": P2[0:]}
     fix_storage: dict = {}
 
-    (_pb, sbtb, _atl, _jumps, _fstl, _rtl, _bstl) = (
+    (_pb, sbtb, _atl, _jumps, _fstl, _rtl, _bstl, _fan_label_times) = (
         solver.create_stochastic_periods(
             {"s": BRANCH_INFO_NREAL0_MID},
             ["s"],

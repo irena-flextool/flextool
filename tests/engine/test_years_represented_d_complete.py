@@ -19,6 +19,8 @@ import polars as pl
 from tests.engine._unit_db import FLEXTOOL_ROOT, b64, make_db, run, utf8
 
 STOCH_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period.json"
+BRANCHES = ["p2035_high", "p2035_low", "p2040_high", "p2040_low"]
+LABELS = ["p2035", "p2040"]  # period labels: bookkeeping rows only, no dispatch
 
 
 def _years(periods: dict[str, float]) -> list:
@@ -45,7 +47,8 @@ def _inflation_op_by_period(fd) -> dict[str, float]:
 
 
 def test_branch_periods_get_anchor_years(tmp_path_factory) -> None:
-    """Two-period stochastic solve, 5 years per period: the anchors and every forecast branch get 5.0."""
+    """Two-period stochastic solve, 5 years per period: every forecast branch (the dt periods) and the period
+    labels (bookkeeping rows, no dispatch) get 5.0."""
     url, scen = make_db(tmp_path_factory, alt="yrd_stoch", base_chain=["init", "base", "stoch"],
                         fixture_json=STOCH_JSON,
                         values=[["solve", "stoch_2p", "years_represented", _years({"p2035": 5.0, "p2040": 5.0})]])
@@ -53,10 +56,11 @@ def test_branch_periods_get_anchor_years(tmp_path_factory) -> None:
     assert len(steps) == 1
     fd = steps[0].flex_data
     periods = _dt_periods(fd)
-    assert {"p2035", "p2035_high", "p2035_low", "p2040", "p2040_high", "p2040_low"} <= set(periods)
+    # The period labels p2035 / p2040 have no dispatch (not in dt); they keep their bookkeeping row.
+    assert set(periods) == set(BRANCHES)
     years = _years_by_period(fd)
-    assert years == {d: 5.0 for d in periods}
-    assert list(years) == periods
+    assert years == {d: 5.0 for d in BRANCHES + LABELS}
+    assert [d for d in years if d in periods] == periods
 
 
 def test_branch_periods_get_anchor_inflation_op(tmp_path_factory) -> None:
@@ -72,10 +76,10 @@ def test_branch_periods_get_anchor_inflation_op(tmp_path_factory) -> None:
     assert len(steps) == 1
     fd = steps[0].flex_data
     periods = _dt_periods(fd)
-    assert {"p2035", "p2035_high", "p2035_low", "p2040", "p2040_high", "p2040_low"} <= set(periods)
+    assert set(periods) == set(BRANCHES)
     infl = _inflation_op_by_period(fd)
     years = _years_by_period(fd)
-    assert infl == {d: 5.0 for d in periods}
+    assert infl == {d: 5.0 for d in BRANCHES + LABELS}
     # Relational: every branch's op-cost weight equals its anchor's.
     assert infl["p2035_high"] == infl["p2035_low"] == infl["p2035"]
     assert infl["p2040_high"] == infl["p2040_low"] == infl["p2040"]

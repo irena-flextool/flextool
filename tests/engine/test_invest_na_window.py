@@ -137,8 +137,8 @@ def test_main_invest_shared_first_stage(na_window_resolved) -> None:
     """T-Main (§9.2), R3 re-grounded: the first-stage p2035 v_invest is
     EQUAL across the two forecast branches (shared first stage = 60:
     p2035_high == p2035_low), while p2040 diverges (recourse: r_high = 60
-    at p2040_high, r_low = 0 at p2040_low).  The weight-0 phantom trunk
-    p2040 carries 0."""
+    at p2040_high, r_low = 0 at p2040_low).  Under recourse the period
+    labels p2035 / p2040 have no invest column at all."""
     _data, sol, _pb = na_window_resolved
     vi = sol.value("v_invest_p")
     got = {r["d"]: round(float(r["value"]), 4)
@@ -148,9 +148,7 @@ def test_main_invest_shared_first_stage(na_window_resolved) -> None:
     assert got["p2035_high"] == got["p2035_low"]
     assert got["p2040_high"] == pytest.approx(60.0)   # recourse (high)
     assert got["p2040_low"] == pytest.approx(0.0)     # recourse (low)
-    # The weight-0 phantom recourse trunk p2040 is NOT in the invest-NA
-    # window and is uncosted — degenerate, so only bounded-feasible.
-    assert 0.0 <= got["p2040"] <= 150.0
+    assert set(got) == {"p2035_high", "p2035_low", "p2040_high", "p2040_low"}
 
 
 @pytest.mark.solver
@@ -177,15 +175,16 @@ def test_ws_control_and_evpi_gap(na_ws_wf, na_window_wf) -> None:
 
 @pytest.mark.solver
 def test_frame_window_membership(na_window_resolved) -> None:
-    """T-Frame (§3.1), R3 re-grounded: pd_non_anticipativity =
-    {(p2035, p2035_high), (p2035, p2035_low)} — the window ties the p2035
-    anchor across BOTH forecast copies of the genuine {high, low} fan;
-    p2040 is NOT in the window so its branch pairs are absent."""
+    """T-Frame (§3.1): pd_non_anticipativity is the forecast star of the
+    p2035 fan — the first sorted forecast p2035_high is the reference and
+    every other forecast is tied to it: {(p2035_high, p2035_low)}, members
+    − 1 = 1 pair (the period label p2035 has no invest column under
+    recourse).  p2040 is NOT in the window so its forecasts are untied."""
     data, _sol, _pb = na_window_resolved
     pdna = data.pd_non_anticipativity
     pairs = {(str(r["d"]), str(r["b"]))
              for r in pdna.iter_rows(named=True)}
-    assert pairs == {("p2035", "p2035_high"), ("p2035", "p2035_low")}
+    assert pairs == {("p2035_high", "p2035_low")}
 
 
 def test_frame_empty_when_window_unset(na_ws_run) -> None:
@@ -216,17 +215,16 @@ def test_branch_weights_partition(na_window_resolved) -> None:
 
 @pytest.mark.solver
 def test_invest_constraint_rows(na_window_resolved) -> None:
-    """T-C (§9.4), R3 re-grounded: non_anticipativity_invest_p ties
-    (base, p2035, p2035_high) and (base, p2035, p2035_low) — both
-    forecasts of the genuine fan; NO row over p2040."""
+    """T-C (§9.4): non_anticipativity_invest_p ties the p2035 forecasts
+    across the fan — one row (base, p2035_high, p2035_low): the reference
+    forecast p2035_high to the other forecast; NO row over p2040."""
     _data, _sol, pb = na_window_resolved
     names = pb.cstr_names()
     assert "non_anticipativity_invest_p" in names
     over = pb.cstrs_named("non_anticipativity_invest_p")[0].over
     triples = {(str(r["p"]), str(r["d"]), str(r["b"]))
                for r in over.iter_rows(named=True)}
-    assert triples == {("base", "p2035", "p2035_high"),
-                       ("base", "p2035", "p2035_low")}
+    assert triples == {("base", "p2035_high", "p2035_low")}
 
 
 # --- T-Divest (solver, MANDATORY — F2) -------------------------------------
@@ -234,18 +232,16 @@ def test_invest_constraint_rows(na_window_resolved) -> None:
 
 @pytest.mark.solver
 def test_divest_family_ties_first_period(na_divest_resolved) -> None:
-    """T-Divest (§4.4, F2), R3 re-grounded: a divest-eligible base under
-    recourse+window → non_anticipativity_divest_p ties the first-period
-    divest over both forecasts (base, p2035, p2035_high) and
-    (base, p2035, p2035_low)."""
+    """T-Divest (§4.4, F2): a divest-eligible base under recourse+window →
+    non_anticipativity_divest_p ties the first-period divest across the
+    two forecasts — one row (base, p2035_high, p2035_low)."""
     _data, _sol, pb = na_divest_resolved
     names = pb.cstr_names()
     assert "non_anticipativity_divest_p" in names
     over = pb.cstrs_named("non_anticipativity_divest_p")[0].over
     triples = {(str(r["p"]), str(r["d"]), str(r["b"]))
                for r in over.iter_rows(named=True)}
-    assert triples == {("base", "p2035", "p2035_high"),
-                       ("base", "p2035", "p2035_low")}
+    assert triples == {("base", "p2035_high", "p2035_low")}
 
 
 @pytest.mark.solver

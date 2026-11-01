@@ -12,7 +12,8 @@ resolver (CLAUDE.md invariant #2):
 * map keys outside the solve's invest periods must not create invest variables (in a
   multi-solve model every solve got variables for every map period);
 * under recourse each anchor period's value is inherited by its branch periods, and a
-  branch's own explicit 0 wins over the anchor's value.
+  branch's own explicit 0 wins over the anchor's value (the period label itself has no
+  invest variable under recourse).
 
 Every DB is built from a JSON fixture plus an override alternative (never a checked-in
 ``.sqlite``).
@@ -208,7 +209,8 @@ def _stoch_store(cost_map: dict[str, float]):
     return patch
 
 
-STOCH_PERIODS = {"p2035", "p2035_high", "p2035_low", "p2040", "p2040_high", "p2040_low"}
+# Under recourse the period labels p2035 / p2040 have no LP column: only the forecast branches invest.
+STOCH_PERIODS = {"p2035_high", "p2035_low", "p2040_high", "p2040_low"}
 
 
 def test_recourse_period_map_reaches_branch_periods(tmp_path_factory):

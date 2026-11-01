@@ -58,6 +58,7 @@ from tests.engine.emission._helpers import (  # noqa: E402
     assert_cstr_row_count,
     build,
 )
+from tests.engine._unit_db import is_realization  # noqa: E402
 
 
 def _val(v: "str | float") -> list:
@@ -154,7 +155,10 @@ def storage_variant_run(tmp_path_factory, test_solver_config_dir):
 def test_na_storage_use_composes_with_continuation_cohorts(
     storage_variant_run,
 ) -> None:
-    pb, data = build(storage_variant_run)
+    # The ``rlz: yes`` designation adds a realization solve after the stochastic one; the NA rows
+    # live in the stochastic solve.
+    stochastic = [s.solve_name for s in storage_variant_run.steps if not is_realization(s.solve_name)]
+    pb, data = build(storage_variant_run, step=stochastic[-1])
 
     # Fixture invariants — the continuation structures are populated.
     assert data.dt_non_anticipativity is not None
