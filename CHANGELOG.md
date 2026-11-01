@@ -17,30 +17,41 @@
   `penalty_method = off`, the run stops before that solve with an error naming the node and the time
   step.
 
-- **A stochastic solve's anchor period now takes the designated REALIZED branch's value for a
-  stochastic-time parameter (availability, efficiency, min_load, operational cost, reservation,
-  penalty), instead of the unit or node class's hard-coded default.** The anchor keeps the real
-  period name next to its forecast-branch copies and carries no weight in the objective, but it
-  still has its own rows in the constraints, so a wrong value there could still misbind them. A
-  rolling solve already resolved this correctly when a branch was marked that way; this also fixes
-  a single (non-rolling) stochastic solve, and an entity outside every `include_stochastics`
-  group. **A forecasts-only cohort (no branch marked `realized: yes`) that authors a stochastic-time
-  value is now a configuration error** explaining that a realized branch must be designated,
-  instead of silently taking one forecast branch's value as an arbitrary stand-in.
+- **A stochastic fan now has no dispatch of its own under the period's original name.** The period that
+  opens a fan (and every later period of it) keeps its name only for period-level bookkeeping: its
+  investment (under `stochastic_invest_method = none`, seen by every forecast), years and discounting.
+  Its operational results (flows, storage, units online, reserves, prices, costs per time step) are
+  empty, not 0: those decisions exist only per forecast branch, and the realized operation comes from a
+  realization dispatch (see the `realized: yes` entry above). Before, the original period name carried a
+  weight-0 copy of the dispatch: an arbitrary feasible point that was reported, carried to the next roll
+  and, without a designated branch, filled with a guessed scenario. Forecast branches stay visible
+  through `model.output_horizon`. Under `stochastic_invest_method = recourse` the original period name
+  has no investment either: every forecast branch invests on its own, and the shared-investment ties
+  (`shared_invest_periods`) now join the forecasts to each other. A forecast branch's retirement now
+  reduces that branch's capacity (before, a branch retirement was paid but changed no capacity), and
+  every forecast of a fan in a solve's first period starts from the solve's start state (or the
+  previous roll's carry), not from its own last step. Per-path caps and outputs (investment and
+  cumulative-flow totals, `co2_max_total`, the cumulative price ladder) have no `__anchor` path any
+  more: each forecast path holds the shared periods before the reveal and the fan's here-and-now
+  investment.
+- **A committed window that reaches into a forecasts-only fan now stops the run before the LP when a
+  later solve continues from it and no solve realizes it**: the error names the solve and the
+  families decided per forecast there (storage state, ramp-limited flows, the cumulative commodity
+  ladder, the CO2 total cap, recourse investment, or units online / reserves outside the tied steps)
+  and suggests designating a `realized: yes` branch, configuring a realization solve, or ending the
+  committed window before the reveal. Units online and reserves on the tied steps are the same in
+  every forecast and need no realization.
+- **A forecasts-only fan (no `realized: yes` branch) that authors a stochastic-time value
+  (availability, efficiency, min_load, operational cost, reservation, penalty, profile) is valid
+  again:** every forecast branch period takes its own branch's value. A designated `realized: yes`
+  branch's value feeds the realization dispatch.
 - **A stochastic-time value that gives only some of its forecast branches a number, leaving others
   out, is now a configuration error naming the entity, the parameter and the missing branches**,
-  instead of silently treating the branches left out as the class default. **A solve with no
-  realized branch anywhere to take a stochastic-time value from — whether it declares no
-  stochastic branches at all, or its cohort is forecasts-only — now raises a configuration error
-  explaining that a realized branch must be designated**, instead of silently using the class
-  default (or, for a solve without its own branches, a realized branch projected from elsewhere —
-  e.g. a rolling solve's auto-spawned realized-dispatch sibling — is still used, not an error).
-- **The same realized-branch rule above now also applies to a `profile` entity's stochastic-time
-  `profile` value** (profiles resolve through their own cascade, separate from the parameters
-  above): the anchor period takes the designated realized branch's profile, and a forecasts-only
-  cohort or a solve with no realized branch anywhere that authors a stochastic-time profile is a
-  configuration error instead of silently falling back to the profile's scalar or time-series
-  value.
+  instead of silently treating the branches left out as the class default. **A deterministic solve
+  that authors a stochastic-time value takes the `realized: yes` branch's value and raises a
+  configuration error when no branch is designated**, instead of silently using the class default (a
+  realized branch projected from elsewhere — e.g. for a rolling solve's realization dispatch — is
+  used, not an error).
 
 - **A rolling stochastic solve's commodity price-ladder tier cap now gives a forecast branch period
   the same already-bought carry-over as its anchor, instead of re-opening the tier's budget in
