@@ -1042,6 +1042,19 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
         start = log_time("Wrote to parquet", start, timing_recorder)
 
+    # Raw horizon dump (``model.output_horizon``): stream the per-roll parts
+    # from ``output_raw/horizon/`` into ``<parquet_dir>/horizon/``.  An
+    # earlier run's ``horizon/`` is removed first whatever the flag (the
+    # top-level cleanup above removes files only), under the same
+    # single-result guard.  Not on the parquet-replay path (no raw parts).
+    if not read_parquet_dir:
+        try:
+            from flextool.engine.output._horizon_dump import assemble_horizon_dump
+            assemble_horizon_dump(raw_output_dir or 'output_raw', parquet_dir,
+                                  clear_stale=not single_result)
+        except Exception as exc:  # noqa: BLE001
+            logging.error("Raw horizon dump assembly failed: %s", exc)
+
     # Compute plot plans for the viewer (always, when parquets exist)
     if 'parquet' in write_methods or read_parquet_dir:
         try:

@@ -218,6 +218,7 @@ def write_outputs_for_solve(
     scale_the_objective: float | None = None,
     provider: "object | None" = None,
     csv_dump: bool = False,
+    horizon_cstr_keys: "list | None" = None,
 ) -> None:
     """Adapter — emit TIER A artefacts for one cascade sub-solve.
 
@@ -242,6 +243,11 @@ def write_outputs_for_solve(
     which always returns a Solution with a populated ``highs`` instance
     read back from the MPS — so the None branch is only hit by unit
     tests that synthesize Solutions by hand.
+
+    ``horizon_cstr_keys`` is the build-time constraint-key snapshot
+    (:func:`flextool.engine.output._horizon_dump.snapshot_cstr_keys`) the
+    raw horizon dump needs; the dump runs only under
+    ``model.output_horizon``.
     """
     h = getattr(sol, "highs", None)
     if h is None:
@@ -326,6 +332,31 @@ def write_outputs_for_solve(
         _logger.warning(
             "append_solve_order failed for solve '%s': %s", solve_name, exc,
         )
+
+    # Raw horizon dump (``model.output_horizon``, developer debug flag):
+    # every LP variable and constraint over all rows, as raw solver values,
+    # one part per family under ``output_raw/horizon/``.  After
+    # ``append_solve_order`` so the part's sequence number is this
+    # sub-solve's manifest position.  A failed dump is logged at ERROR and
+    # does not stop the normal outputs.
+    from flextool.engine.output._horizon_dump import (
+        output_horizon_enabled,
+        write_horizon_parts,
+    )
+    if output_horizon_enabled(work_folder, provider=provider):
+        try:
+            write_horizon_parts(
+                sol, horizon_cstr_keys,
+                work_folder=work_folder,
+                solve_name=solve_name,
+                roll_name=roll_name,
+                scale_the_objective=scale_the_objective,
+                provider=provider,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _logger.error(
+                "raw horizon dump failed for solve '%s': %s", solve_name, exc,
+            )
 
     sd = work_folder / "solve_data"
     realized_dispatch_csv = sd / "realized_dispatch.csv"

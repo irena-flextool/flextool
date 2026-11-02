@@ -2343,6 +2343,11 @@ def _drive_cascade(
         load_flextool,
     )
     from flextool.engine.model.core import build_flextool
+    from flextool.engine.output._horizon_dump import (
+        output_horizon_enabled,
+        snapshot_cstr_keys,
+        warn_benders_no_dump,
+    )
     from flextool.engine.output._writer import (
         OutputWriterState,
         write_outputs_for_solve,
@@ -3127,7 +3132,19 @@ def _drive_cascade(
             # When this solve resolves to decomposition=benders, run it
             # through the Benders region coordinator instead of building
             # and solving a monolithic LP.
+            # ``model.output_horizon`` (raw horizon dump): the constraint
+            # keys are snapshotted from the built LP before the solve
+            # releases them; ``None`` while the flag is off (zero cost).
+            _horizon_on = output_horizon_enabled(
+                self.state.paths.work_folder if self.state.paths is not None else None,
+                provider=_sub_solve_provider,
+            )
+            _horizon_keys = None
             if state.solve.decomposition_for(base_solve_name) == "benders":
+                # A Benders solve writes no outputs (it returns before
+                # ``write_outputs_for_solve``), so it has no raw dump either.
+                if _horizon_on:
+                    warn_benders_no_dump(state.logger, complete_solve_name)
                 # The Benders master / regions are their own WarmProblems:
                 # release the previous monolithic LP for the whole loop.
                 self._release_warm_problem()
@@ -3586,6 +3603,9 @@ def _drive_cascade(
                 )
                 _phase_prof("solve_start")
                 sol = self._warm_problem.solve()
+                if _horizon_on:
+                    # A WarmProblem keeps its constraint families alive.
+                    _horizon_keys = snapshot_cstr_keys(self._warm_problem.problem)
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
@@ -3936,6 +3956,9 @@ def _drive_cascade(
                 if _sa_line:
                     print(_sa_line, flush=True)
                 _phase_prof("solve_start")
+                if _horizon_on:
+                    # Before the solve: it releases ``pb._cstrs``.
+                    _horizon_keys = snapshot_cstr_keys(pb)
                 sol = run_one_solve(
                     pb, _active_solver_cfg, logger=state.logger,
                     save_memory=_save_memory,
@@ -4130,6 +4153,7 @@ def _drive_cascade(
                         self.state, "current_provider", None,
                     ),
                     csv_dump=getattr(self.state, "csv_dump", False),
+                    horizon_cstr_keys=_horizon_keys,
                 )
             except Exception as exc:  # noqa: BLE001
                 # item 163 §3.5 / owner Q3: ERROR, not WARNING — the runner
