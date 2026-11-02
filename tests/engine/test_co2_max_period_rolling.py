@@ -534,9 +534,15 @@ def test_stochastic_rolls_total_cap_per_forecast_path(stochastic_total_rolls) ->
     emissions into one row against one budget (about 3× too tight).
 
     Hand values: roll k's reached share is min(24k + 96, 168)/168 (one period, years_represented 1), and the
-    realized carry R_k is the tonnes the realization rolls 0..k−1 emitted (read from their solutions), subtracted as
-    tonnes (``_co2_total_cap_with_carry``): RHS = 1e7·min(24k + 96, 168)/168 − R_k, the same on every path.
-    Roll 0: 1e7·96/168."""
+    realized carry R_k is the tonnes the realization rolls 0..k−1 emitted (read from their solutions).  The row's
+    LHS weighs a tonne by years_represented / period_share = 1 / (168/8760) = 8760/168 (timeset_duration 168 h,
+    one-hour steps), so the carry is subtracted with that weight too:
+    RHS = 1e7·min(24k + 96, 168)/168 − R_k·8760/168, the same on every path.
+    Roll 0: 1e7·96/168 = 5 714 285.71.  Roll 1: realization roll 0 dispatches hours 1-24; its solution runs
+    gas_plant (unitsize 1000, efficiency 0.9) at 1000 MW in 19 h and 0, 160.6, 969.3, 748.7, 896.5 MW in the
+    other 5, 21 775.1 MWh out, so R_1 = 21 775.1 / 0.9 · 0.2 = 4 838.9 t (checked here through the input-side
+    fuel flow), and RHS = 1e7·120/168 − 4 838.9·8760/168 = 7 142 857.14 − 252 314.6 = 6 890 542.5.  The
+    pre-fix RHS subtracted raw tonnes: 7 138 018.2."""
     from tests.engine._lp_rows import row_bounds, row_terms
 
     realized = 0.0
@@ -546,7 +552,10 @@ def test_stochastic_rolls_total_cap_per_forecast_path(stochastic_total_rolls) ->
         assert row_bounds(pb, "co2_max_total", "") == {}, k
         rows = row_bounds(pb, "co2_max_total_path", "co2_limit,")
         assert set(rows) == {f"co2_max_total_path[co2_limit,{f.removeprefix('period1_')}]" for f in FORECASTS}, k
-        want = STOCH_TOTAL_CAP * min(24 * k + 96, 168) / 168 - realized
+        want = STOCH_TOTAL_CAP * min(24 * k + 96, 168) / 168 - realized * 8760 / 168
+        if k == 1:
+            assert realized == pytest.approx(4838.9, abs=0.05)
+            assert want == pytest.approx(6_890_542.5, abs=1.0)
         for nm, (_lb, ub) in rows.items():
             assert ub == pytest.approx(want, rel=1e-9), (k, nm)
         for nm, terms in row_terms(pb, "co2_max_total_path", "co2_limit,").items():
@@ -557,3 +566,117 @@ def test_stochastic_rolls_total_cap_per_forecast_path(stochastic_total_rolls) ->
         pb = build(stochastic_total_rolls[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"].flex_data)
         assert row_bounds(pb, "co2_max_total_path", "") == {}, k
         assert set(row_bounds(pb, "co2_max_total", "")) == {"co2_max_total[co2_limit]"}, k
+
+
+# ---------------------------------------------------------------------------
+# co2_max_total binding across rolls: the realized carry is weighted like the LHS
+
+YEARS_5 = [["solve", SOLVE, "years_represented", _pmap({"p2020": 5.0, "p2025": 5.0})]]
+BINDING_TOTAL_CAP = 2.0e7
+
+
+def _total_cap(cap: float) -> list:
+    return [["group", "co2_limit", "co2_method", b64("total", "str")],
+            ["group", "co2_limit", "co2_max_total", b64(cap, "float")]]
+
+
+def test_rolling_total_cap_binds_at_the_budget(tmp_path_factory) -> None:
+    """A binding ``co2_max_total`` lets a rolling solve emit the budget, not more.
+
+    p2020 + p2025, 2 days (48 one-hour steps) each, years_represented 5 each: co2_max_total's LHS weighs a tonne
+    of either period by years_represented / period_share = 5 / (48/8760) = 912.5.  Rolling 48 h / 48 h: roll 0 is
+    p2020, roll 1 is p2025, every hour is realized once.  Roll 0 reaches 5·1 / (5 + 5) = 0.5 of the represented
+    years, so it may emit 0.5·C represented tonnes; roll 1 reaches 1.0 and may emit C − E_0·912.5.  Unconstrained,
+    coal_plant emits about 2e4 t in 48 h (1.8e7 represented), so C = 2e7 binds in both rolls and the two rolls
+    together emit exactly C represented tonnes, as the single solve of both periods does.  Before, roll 1 got
+    C − E_0 (raw tonnes, about 1.1e4) and the week emitted about 2.8e7."""
+    values = _total_cap(BINDING_TOTAL_CAP) + TWO_PERIODS + YEARS_5
+    weight = 5 * 8760 / 48
+
+    single = list(_run(tmp_path_factory, "co2tot_single", values).values())
+    assert len(single) == 1
+    assert sum(_tonnes(single[0]).values()) * weight == pytest.approx(BINDING_TOTAL_CAP, rel=1e-6)
+    assert single[0].solution.constraint_dual("co2_max_total")["dual"].to_list()[0] != 0.0
+
+    rolls = list(_run(tmp_path_factory, "co2tot_roll48", values + _rolling(48.0, 48.0)).values())
+    assert [st.solve_name for st in rolls] == [_roll(0), _roll(1)]
+    represented = [sum(_tonnes(st).values()) * weight for st in rolls]
+    assert represented[0] == pytest.approx(0.5 * BINDING_TOTAL_CAP, rel=1e-6)
+    assert sum(represented) == pytest.approx(BINDING_TOTAL_CAP, rel=1e-6)
+    for st in rolls:
+        (dual,) = st.solution.constraint_dual("co2_max_total")["dual"].to_list()
+        assert dual != 0.0, st.solve_name
+
+
+def test_stochastic_rolling_week_total_cap_binds_at_the_budget(tmp_path_factory) -> None:
+    """The rolling stochastic week (7 stochastic rolls, each followed by a realization roll that realizes its 24 h)
+    with a binding ``co2_max_total`` = 1e6 t: the realized week emits exactly the budget.
+
+    One period of 168 h, years_represented 1: the LHS weighs a tonne by 1 / (168/8760) = 8760/168.  Realization
+    roll k reaches (24k + 24)/168 of the week, so it may emit C·(k + 1)/7 minus what rolls 0..k−1 realized (in
+    the same weight): the realized total through roll k never exceeds C·(k + 1)/7, and a day that needs less gas
+    (windier) leaves its allowance to the later days.  Gas burns about 4.8e3 t on the first day (2.5e5 weighted,
+    see the per-path test above), far over 1e6/7 = 1.4e5, so the last realization roll binds and the week's
+    realized emissions are C.  Before, the carry was subtracted as raw tonnes, so each realization roll got
+    about C·(k + 1)/7 again and the week emitted several times the budget."""
+    from flextool.engine import run_chain_from_db
+
+    cap = 1.0e6
+    values = [["commodity", "gas", "co2_content", b64(0.2, "float")],
+              ["group", "co2_limit", "co2_method", b64("total", "str")],
+              ["group", "co2_limit", "co2_max_total", b64(cap, "float")]]
+    url, scen = make_db(tmp_path_factory, alt="co2roll_stoch_total_binding", values=values,
+                        base_chain=_stoch_chain(), entities=STOCH_ENTITIES, fixture_json=FIX / "stochastics.json")
+    steps = run_chain_from_db(url, scen, keep_solutions=True,
+                              work_folder=tmp_path_factory.mktemp("co2tot_fan_binding_w"))
+    realization = [steps[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"] for k in range(7)]
+    weighted, duals = 0.0, []
+    for k, st in enumerate(realization):
+        weighted += _gas_tonnes(st) * 8760 / 168
+        assert weighted <= cap * (k + 1) / 7 * (1 + 1e-9), k
+        (dual,) = st.solution.constraint_dual("co2_max_total")["dual"].to_list()
+        duals.append(dual)
+    assert duals[-1] != 0.0
+    assert weighted == pytest.approx(cap, rel=1e-6)
+
+
+def test_chained_solves_total_cap_binds_at_the_budget(tmp_path_factory) -> None:
+    """Two chained solves (``y2020_2day_dispatch`` realizes p2020, a second single solve realizes p2025), both 2 days
+    of one-hour steps with years_represented 5: a tonne weighs 5 / (48/8760) = 912.5 in either solve's
+    ``co2_max_total`` row.  The first solve's periods are p2020 alone, so it reaches 1.0 of its represented years
+    and the cap C = 2e7 does not bind: coal_plant emits its unconstrained 19 924 t (1.818e7 weighted).  The second
+    solve may emit C − 19 924·912.5 = 1.8e6 weighted, so it binds and the chain emits exactly C.  Before, it got
+    C − 19 924 (raw tonnes) and emitted another 1.8e7."""
+    from flextool.engine import run_chain_from_db
+
+    second = "y2025_2day_dispatch"
+    cap = BINDING_TOTAL_CAP
+    values = _total_cap(cap) + [
+        ["model", "flexTool", "solves", b64({"value_type": "str", "data": [SOLVE, second]}, "array")],
+        ["solve", SOLVE, "years_represented", _pmap({"p2020": 5.0})],
+        ["solve", second, "solve_mode", b64("single_solve", "str")],
+        ["solve", second, "solver", b64("highs", "str")],
+        ["solve", second, "period_timeset", _pmap({"p2025": "2day"})],
+        ["solve", second, "realized_periods",
+         b64({"value_type": "str", "index_name": "period", "data": ["p2025"]}, "array")],
+        ["solve", second, "years_represented", _pmap({"p2025": 5.0})],
+    ]
+    url, scen = make_db(tmp_path_factory, alt="co2tot_chain", values=values, base_chain=CHAIN,
+                        entities=[["solve", second, None]])
+    steps = run_chain_from_db(url, scen, keep_solutions=True, work_folder=tmp_path_factory.mktemp("co2tot_chain_w"))
+    assert list(steps) == [SOLVE, second]
+    weight = 5 * 8760 / 48
+    first_t = _tonnes(steps[SOLVE])["p2020"]
+    assert first_t == pytest.approx(19924.0, rel=1e-6)
+    assert (first_t + _tonnes(steps[second])["p2025"]) * weight == pytest.approx(cap, rel=1e-6)
+    (dual,) = steps[second].solution.constraint_dual("co2_max_total")["dual"].to_list()
+    assert dual != 0.0
+    carry = utf8(steps[second].flex_data.p_co2_cum_realized_represented.frame)
+    assert carry.select("g", "d").rows() == [("co2_limit", "p2020")]
+    assert carry["value"][0] == pytest.approx(first_t * weight, rel=1e-12)
+    # a carried row without its weighted value cannot give a budget: refused, not counted as 0
+    fd = steps[second].flex_data
+    unknown = type(fd.p_co2_cum_realized_represented)(
+        ("g", "d"), fd.p_co2_cum_realized_represented.frame.with_columns(value=pl.lit(None, dtype=pl.Float64)))
+    with pytest.raises(ValueError, match=r"co2_max_total: the realized CO2 carry .*co2_limit,p2020"):
+        build(dataclasses.replace(fd, p_co2_cum_realized_represented=unknown))

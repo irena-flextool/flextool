@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Fix: `co2_max_total` in rolling solves and chains of solves no longer allows more than the limit.**
+  Each roll or solve subtracted the emissions earlier rolls and solves had already realized as plain
+  tonnes, while the limit counts emissions annualized and times `years_represented`. The history was
+  therefore under-counted by `years_represented` / period share (52 times for a one-week period that
+  represents a year), and a rolling or chained run could emit several times its limit. The realized
+  emissions are now counted the same way as in the limit, so the realized emissions of the whole run stay
+  within it. The per-forecast-path `co2_max_total` constraints of rolling stochastic solves (below) use the
+  same corrected budget.
+
 - **Fix: in a rolling stochastic solve each forecast keeps its own cumulative limits.** The rolls of a
   rolling solve were built without their scenario paths, so the CO2 total cap (`co2_max_total`), the
   cumulative commodity-ladder tier cap and the flow-group cumulative flow limits (`max_cumulative_flow` /

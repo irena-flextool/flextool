@@ -125,6 +125,7 @@ def _set_frame(df, *cols: str) -> pl.DataFrame:
 _SCHEMA_OUT = {
     "group": pl.Utf8, "period": pl.Utf8,
     "p_co2_cum_realized_tonnes": pl.Float64,
+    "p_co2_cum_realized_represented": pl.Float64,
 }
 
 
@@ -139,8 +140,17 @@ def compute_co2_rolling_accumulator(
 ) -> pl.DataFrame:
     """Native compute of ``co2_cum_realized_tonnes`` for the current solve.
 
-    Returns ``[group, period, p_co2_cum_realized_tonnes]``.  Empty frame
-    when no CO2-cap group is active.
+    Returns ``[group, period, p_co2_cum_realized_tonnes, p_co2_cum_realized_represented]``.  Empty
+    frame when no CO2-cap group is active.
+
+    ``p_co2_cum_realized_tonnes`` is the physical tonnes (co2_max_period's carry, divided by the period
+    share there).  ``p_co2_cum_realized_represented`` is the same tonnes in co2_max_total's units: each
+    realized step's tonnes × ``years_represented[d] / period_share[d]`` of THIS (realizing) solve, the
+    weight co2_max_total's LHS gives the step's emissions.  It is computed here because a period finished
+    by an earlier solve of a chain need not be in a later solve's ``p_period_share``, and a chained solve
+    can dispatch a period at a different share.  A realized period that THIS solve has no
+    ``p_period_share`` row for gets a null, which co2_max_total refuses (``_co2_total_cap_with_carry``).
+    ``p_years_represented_d`` absent means 1 year per period (its loader's default).
 
     ``realized_dispatch`` (below) holds no cell of a stochastic fan: the
     period label (the original period name) has no dispatch and the
@@ -394,7 +404,27 @@ def compute_co2_rolling_accumulator(
             how="vertical",
         ).select("group", "period", "value")
 
+    attributed = _with_represented(attributed, flex_data)
     return _combine_with_prior(attributed, prior_cumulative_co2)
+
+
+def _with_represented(attributed: pl.DataFrame, flex_data) -> pl.DataFrame:
+    """``attributed`` ``[group, period, value]`` plus ``represented`` = value · years_represented[d] /
+    period_share[d] of the extracting solve (null where the solve has no period_share row for d)."""
+    share = _param_frame(getattr(flex_data, "p_period_share", None), "d").select(
+        pl.col("d").cast(pl.Utf8).alias("_pk"), pl.col("value").cast(pl.Float64).alias("share"))
+    years_p = getattr(flex_data, "p_years_represented_d", None)
+    out = (attributed.with_columns(_pk=pl.col("period").cast(pl.Utf8))
+           .join(share.unique("_pk"), on="_pk", how="left"))
+    if years_p is None:
+        out = out.with_columns(years=pl.lit(1.0))
+    else:
+        years = years_p.frame.select(pl.col("d").cast(pl.Utf8).alias("_pk"),
+                                     pl.col("value").cast(pl.Float64).alias("years"))
+        out = out.join(years.unique("_pk"), on="_pk", how="left")
+    return out.with_columns(
+        represented=pl.col("value") * pl.col("years") / pl.col("share"),
+    ).select("group", "period", "value", "represented")
 
 
 def _combine_with_prior(
@@ -402,25 +432,40 @@ def _combine_with_prior(
     prior_cumulative_co2: "pl.DataFrame | None",
 ) -> pl.DataFrame:
     """Outer-join this-roll + prior, sum, return ``[group, period,
-    p_co2_cum_realized_tonnes]`` sorted."""
+    p_co2_cum_realized_tonnes, p_co2_cum_realized_represented]`` sorted.
+
+    A null ``represented`` on either side (a period the extracting solve had no period share for, or a
+    prior carrier without the column) stays null in the sum, so co2_max_total refuses it."""
     if prior_cumulative_co2 is None or prior_cumulative_co2.height == 0:
         prior = pl.DataFrame(schema={
             "group": schema_dtype(None, "group"),
             "period": schema_dtype(None, "period"),
-            "prior": pl.Float64})
+            "prior": pl.Float64, "prior_rep": pl.Float64})
     else:
-        prior = (prior_cumulative_co2
-            .with_columns(prior=pl.col("value").cast(pl.Float64))
-            .select("group", "period", "prior"))
+        prior = (_with_represented_column(prior_cumulative_co2)
+            .select("group", "period",
+                    prior=pl.col("value").cast(pl.Float64),
+                    prior_rep=pl.col("represented")))
     combined = (this_roll
         .join(prior, on=["group", "period"], how="full", coalesce=True)
         .with_columns(
             p_co2_cum_realized_tonnes=(
                 pl.col("value").fill_null(0.0)
-                + pl.col("prior").fill_null(0.0)))
-        .select("group", "period", "p_co2_cum_realized_tonnes")
+                + pl.col("prior").fill_null(0.0)),
+            # a side without rows contributes 0; a side WITH a row but no represented value stays null
+            p_co2_cum_realized_represented=(
+                pl.when(pl.col("value").is_null()).then(0.0).otherwise(pl.col("represented"))
+                + pl.when(pl.col("prior").is_null()).then(0.0).otherwise(pl.col("prior_rep"))))
+        .select("group", "period", "p_co2_cum_realized_tonnes", "p_co2_cum_realized_represented")
         .sort(["group", "period"]))
     return combined
+
+
+def _with_represented_column(prior_cumulative_co2: pl.DataFrame) -> pl.DataFrame:
+    """The handoff carrier with a Float64 ``represented`` column (null when the carrier has none)."""
+    if "represented" in prior_cumulative_co2.columns:
+        return prior_cumulative_co2.with_columns(pl.col("represented").cast(pl.Float64, strict=False))
+    return prior_cumulative_co2.with_columns(represented=pl.lit(None, dtype=pl.Float64))
 
 
 def _passthrough_prior(prior_cumulative_co2, co2_groups) -> pl.DataFrame:
@@ -428,11 +473,12 @@ def _passthrough_prior(prior_cumulative_co2, co2_groups) -> pl.DataFrame:
     roll contributes zero rows."""
     if prior_cumulative_co2 is None or prior_cumulative_co2.height == 0:
         return pl.DataFrame(schema=_SCHEMA_OUT)
-    return (prior_cumulative_co2
+    return (_with_represented_column(prior_cumulative_co2)
         .filter(pl.col("group").is_in(list(co2_groups)))
         .with_columns(value=pl.col("value").cast(pl.Float64))
         .select("group", "period",
-                pl.col("value").alias("p_co2_cum_realized_tonnes"))
+                pl.col("value").alias("p_co2_cum_realized_tonnes"),
+                pl.col("represented").alias("p_co2_cum_realized_represented"))
         .sort(["group", "period"]))
 
 

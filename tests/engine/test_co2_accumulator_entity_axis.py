@@ -89,6 +89,9 @@ def _flex_data(*, unitsize_axis: str) -> SimpleNamespace:
     fd.p_process_source_conversion_flow_coeff = None
     fd.p_process_sink_conversion_flow_coeff = None
     fd.group_node = pl.DataFrame({"g": ["cap_grp"], "n": ["coal_node"]})
+    # co2_max_total's weight of a realized tonne: years_represented / period_share = 5 / 0.25 = 20.
+    fd.p_period_share = Param(("d",), pl.DataFrame({"d": ["p1"], "value": [0.25]}))
+    fd.p_years_represented_d = Param(("d",), pl.DataFrame({"d": ["p1"], "value": [5.0]}))
 
     if unitsize_axis == "e":
         # The carrier that crashed: keyed on the entity-union axis ``e``.
@@ -133,6 +136,8 @@ def _v_flow() -> pl.DataFrame:
 # stray /1000 here used to undercount a thousandfold against what the LP's own co2_max_period /
 # co2_max_total / co2_price_eff rows count directly, #38.)
 _EXPECTED_TONNES = 10000.0
+# In co2_max_total's units: 10000 t · years_represented 5 / period_share 0.25.
+_EXPECTED_REPRESENTED = 200000.0
 
 
 @pytest.mark.parametrize("unitsize_axis", ["e", "p"])
@@ -147,7 +152,7 @@ def test_accumulator_reads_unitsize_off_either_axis(
         provider=_provider(),
     )
     assert out.columns == [
-        "group", "period", "p_co2_cum_realized_tonnes",
+        "group", "period", "p_co2_cum_realized_tonnes", "p_co2_cum_realized_represented",
     ]
     assert out.height == 1
     row = out.row(0, named=True)
@@ -156,12 +161,15 @@ def test_accumulator_reads_unitsize_off_either_axis(
     assert row["p_co2_cum_realized_tonnes"] == pytest.approx(
         _EXPECTED_TONNES, rel=1e-12
     )
+    assert row["p_co2_cum_realized_represented"] == pytest.approx(
+        _EXPECTED_REPRESENTED, rel=1e-12
+    )
 
 
 def test_accumulator_carries_prior_cumulative(tmp_path) -> None:
     """The ``e``-axis unitsize path also sums the prior-roll carrier."""
     prior = pl.DataFrame({
-        "group": ["cap_grp"], "period": ["p1"], "value": [3.5],
+        "group": ["cap_grp"], "period": ["p1"], "value": [3.5], "represented": [70.0],
     })
     out = compute_co2_rolling_accumulator(
         _flex_data(unitsize_axis="e"),
@@ -174,3 +182,19 @@ def test_accumulator_carries_prior_cumulative(tmp_path) -> None:
     assert row["p_co2_cum_realized_tonnes"] == pytest.approx(
         _EXPECTED_TONNES + 3.5, rel=1e-12
     )
+    assert row["p_co2_cum_realized_represented"] == pytest.approx(
+        _EXPECTED_REPRESENTED + 70.0, rel=1e-12
+    )
+
+
+def test_accumulator_prior_without_represented_stays_unknown(tmp_path) -> None:
+    """A prior carrier without the ``represented`` column (written outside the cascade) leaves the
+    co2_max_total-weighted sum unknown (null) instead of counting the prior as 0 or as raw tonnes."""
+    prior = pl.DataFrame({"group": ["cap_grp"], "period": ["p1"], "value": [3.5]})
+    out = compute_co2_rolling_accumulator(
+        _flex_data(unitsize_axis="e"), _Sol(_v_flow()), work_folder=tmp_path,
+        prior_cumulative_co2=prior, provider=_provider(),
+    )
+    row = out.row(0, named=True)
+    assert row["p_co2_cum_realized_tonnes"] == pytest.approx(_EXPECTED_TONNES + 3.5, rel=1e-12)
+    assert row["p_co2_cum_realized_represented"] is None

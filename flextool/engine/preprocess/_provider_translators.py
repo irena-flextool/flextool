@@ -45,7 +45,7 @@ _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
                                    "startup", "shutdown", "duration"),
     K.HANDOFF_FIX_ONLINE:         ("process", "period", "step", "value"),
     K.HANDOFF_FIX_RESERVE:        ("process", "reserve", "upDown", "node", "period", "step", "value"),
-    K.HANDOFF_CUMULATIVE_CO2:     ("group", "period", "value"),
+    K.HANDOFF_CUMULATIVE_CO2:     ("group", "period", "value", "represented"),
     K.HANDOFF_CUMULATIVE_COMMODITY: ("commodity", "tier", "period",
                                       "p_ladder_cum_realized_mwh"),
     K.HANDOFF_CUM_SIM_HOURS:      ("period", "p_ladder_cum_sim_hours"),

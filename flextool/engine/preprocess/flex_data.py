@@ -634,6 +634,9 @@ class FlexData:
     # co2_max_total EQ headers.
     p_co2_f_d_k: Param | None = None             # (d,)
     p_co2_cum_realized_tonnes: Param | None = None  # (g, d)
+    # The same realized tonnes in co2_max_total's units: × years_represented[d] / period_share[d] of the
+    # solve that realized them (the weight co2_max_total's LHS gives them); value null where unknown.
+    p_co2_cum_realized_represented: Param | None = None  # (g, d)
     co2_horizon_fraction_reached: float = 1.0
 
     # ─── Indirect-conversion (CHP) ────────────────────────────────────────
@@ -1792,8 +1795,8 @@ def _fan_members(workdir: Path, provider) -> "tuple[set[str], dict[str, str]]":
 
 
 def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
-    """``(p_co2_f_d_k, p_co2_cum_realized_tonnes, horizon_fraction_reached)`` for the CO2 cap
-    rolling / chained carry (#38, Q22).
+    """``(p_co2_f_d_k, p_co2_cum_realized_tonnes, p_co2_cum_realized_represented, horizon_fraction_reached)``
+    for the CO2 cap rolling / chained carry (#38, Q22).
 
     ``p_co2_f_d_k`` — the raw ``solve_data/f_d_k.csv`` Param ``(d,)``: the same per-period "share of
     d's hours reached by the end of this roll's horizon" the commodity ladder's annual tier cap uses
@@ -1806,6 +1809,10 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
     credits (#19): the ``cumulative_co2`` handoff carrier (``preprocess/emit/_co2_accumulators.py``).
     ``None`` on the first solve of a chain (no prior carrier); consumers then treat realized as 0.
 
+    ``p_co2_cum_realized_represented`` — the carrier's ``represented`` column: the same tonnes ×
+    years_represented[d] / period_share[d] of the solve that realized them (co2_max_total's LHS units);
+    null values where the carrier has none.  ``None`` exactly when ``p_co2_cum_realized_tonnes`` is.
+
     ``horizon_fraction_reached`` — ``Σ_d years_represented[d]·f_d_k[d] / Σ_d years_represented[d]``,
     over every period of the whole chain, each counted once: a stochastic fan's members are left out and its
     period label stands for the period (the f_d_k of its first member with steps: the realized share plus this
@@ -1816,7 +1823,7 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
     solves, or when either CSV is unavailable (a fixture that skips the derived-param pass).
     """
     if provider is None:
-        return None, None, 1.0
+        return None, None, None, 1.0
     from flextool.engine.preprocess import _provider_keys as K
     from flextool.engine.preprocess._provider_translators import read_handoff_frame
 
@@ -1833,12 +1840,16 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
 
     realized_raw = read_handoff_frame(provider, K.HANDOFF_CUMULATIVE_CO2)
     p_realized = None
+    p_realized_rep = None
     if realized_raw is not None and realized_raw.height > 0:
         realized_df = (realized_raw.pipe(rename_to_axis, {"group": "g", "period": "d"})
-                       .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                       .select("g", "d", "value"))
+                       .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
         if realized_df.height > 0:
-            p_realized = Param(("g", "d"), realized_df)
+            p_realized = Param(("g", "d"), realized_df.select("g", "d", "value"))
+            rep = (realized_df.with_columns(pl.col("represented").cast(pl.Float64, strict=False))
+                   if "represented" in realized_df.columns
+                   else realized_df.with_columns(represented=pl.lit(None, dtype=pl.Float64)))
+            p_realized_rep = Param(("g", "d"), rep.select("g", "d", value=pl.col("represented")))
 
     fraction_reached = 1.0
     if _provider_has(provider, "solve_data/p_years_represented", sd / "p_years_represented.csv"):
@@ -1868,7 +1879,7 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
                            .with_columns(pl.col("fdk").fill_null(0.0)))
                 fraction_reached = min(
                     float((reached["years"] * reached["fdk"]).sum()) / total_years, 1.0)
-    return p_fdk, p_realized, fraction_reached
+    return p_fdk, p_realized, p_realized_rep, fraction_reached
 
 
 def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
@@ -4351,7 +4362,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
          co2_max_total_p, flow_co2_cap_total_rem) = _load_co2_cap_total(
             inp, sd, proc["pss_eff"], pss_noEff=proc.get("pss_noEff"),
             pss=proc.get("pss"), provider=provider)
-        co2_f_d_k, co2_cum_realized, co2_horizon_fraction = _load_co2_rolling_carry(
+        co2_f_d_k, co2_cum_realized, co2_cum_realized_rep, co2_horizon_fraction = _load_co2_rolling_carry(
             sd, provider=provider)
 
         (indir_set, indir_in, indir_out, indir_dt,
@@ -4548,6 +4559,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             p_co2_max_total = co2_max_total_p,
             p_co2_f_d_k = co2_f_d_k,
             p_co2_cum_realized_tonnes = co2_cum_realized,
+            p_co2_cum_realized_represented = co2_cum_realized_rep,
             co2_horizon_fraction_reached = co2_horizon_fraction,
 
             process_indirect = indir_set,
@@ -6737,12 +6749,15 @@ def build_handoff_from_solution(
             is_dispatch_sibling_parent=_is_dispatch_sibling_parent,
         )
         if native_co2.height > 0:
+            # ``represented``: the tonnes in co2_max_total's units (× years_represented / period_share of
+            # the solve that realized them); null where that is unknown, which co2_max_total refuses.
             cumulative_co2_df = (native_co2
                 .with_columns(
                     value=pl.col("p_co2_cum_realized_tonnes")
                             .cast(pl.Float64, strict=False)
-                            .fill_null(0.0))
-                .select("group", "period", "value"))
+                            .fill_null(0.0),
+                    represented=pl.col("p_co2_cum_realized_represented").cast(pl.Float64, strict=False))
+                .select("group", "period", "value", "represented"))
 
     # ---- cumulative_commodity: per-(commodity, tier, period) running mwh ----
     # Δ.11 — derive from sol when v_trade is in the LP and prior_handoff

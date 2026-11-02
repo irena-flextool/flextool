@@ -2895,26 +2895,43 @@ def _eq_co2_max_period(b: _Build) -> None:
 def _co2_total_cap_with_carry(d) -> Param:
     """co2_max_total's remaining budget (#38): allocated up to the end of this roll's horizon minus
     what earlier rolls / chained solves already realized -- same carried-budget pattern as
-    :func:`_co2_period_cap_with_carry`.  Unlike the ladder's ``quantity_cum`` (a per-year rate that
-    needs replicating across the years elapsed so far), ``co2_max_total`` is already an absolute
-    tonnes-over-the-whole-horizon cap, so its allocated-so-far share needs only the horizon-fraction
-    scaling, no further annualisation.
+    :func:`_co2_period_cap_with_carry`.  ``co2_max_total`` is an absolute whole-horizon total in the
+    LHS's units (each step's tonnes × years_represented / period_share), so the allocated-so-far share
+    needs only the horizon-fraction scaling, and the realized carry must be in the same units.
 
-    cap[g] = co2_max_total[g] · horizon_fraction_reached  −  Σ_d co2_cum_realized_tonnes[g,d]
+    cap[g] = co2_max_total[g] · horizon_fraction_reached  −  Σ_d R_rep[g,d]
+    R_rep[g,d] = Σ_{realized steps of d} tonnes · years_represented[d] / period_share[d]   (of the realizing solve)
+
+    The constraint the chain enforces is one whole-horizon Σ_d E_d · y_d / s_d ≤ co2_max_total, so the
+    periods an earlier roll / solve realized enter with the weight THAT solve's LHS gave them.  R_rep is the
+    ``represented`` column of the realized carrier, built at extraction (``compute_co2_rolling_accumulator``):
+    a period finished earlier need not be in this solve's ``p_period_share``.  Subtracting physical tonnes
+    instead (the carry co2_max_period divides by its own share) under-counted the history by
+    years_represented / period_share (8760/168 for a week-long rolling period) and let a rolling or chained
+    solve emit several times the budget.
 
     horizon_fraction_reached (``flex_data.co2_horizon_fraction_reached``, 1.0 outside rolling / chained
     solves) is Σ_d years_represented[d]·f_d_k[d] / Σ_d years_represented[d] over every period of the
     whole chain (not just this roll's own dt) — the years_represented-weighted share of the chain's
     total represented years reached by the end of this roll.  Realized is summed over every period
     (unlike the per-period cap, this is a single whole-horizon budget) and is net of removal credits
-    (#19); 0 on the first solve of a chain.
+    (#19); 0 on the first solve of a chain.  A carried row without a represented value (a carrier from
+    outside the cascade without the column, or a period its realizing solve had no share for) raises.
     """
     cap = (d.group_co2_max_total.select("g").unique()
            .join(d.p_co2_max_total.frame.rename({"value": "cap"}), on="g", how="left")
            .with_columns(cap=pl.col("cap") * d.co2_horizon_fraction_reached))
-    realized = getattr(d, "p_co2_cum_realized_tonnes", None)
+    realized = getattr(d, "p_co2_cum_realized_represented", None)
     if realized is not None:
-        realized_g = realized.frame.group_by("g").agg(pl.col("value").sum().alias("realized"))
+        rows = realized.frame.join(cap.select("g"), on="g", how="semi")
+        missing = rows.filter(pl.col("value").is_null())
+        if missing.height:
+            raise ValueError(
+                "co2_max_total: the realized CO2 carry has no years_represented / period_share weighted value "
+                f"for {sorted(missing.select(pl.format('{},{}', 'g', 'd')).to_series().cast(pl.Utf8).to_list())}"
+                "; the carried budget cannot be computed.  The carrier comes from the realizing solve's "
+                "extraction (cumulative_co2 'represented' column).")
+        realized_g = rows.group_by("g").agg(pl.col("value").sum().alias("realized"))
         cap = cap.join(realized_g, on="g", how="left").with_columns(pl.col("realized").fill_null(0.0))
     else:
         cap = cap.with_columns(realized=pl.lit(0.0))
@@ -2958,8 +2975,10 @@ def _eq_co2_max_total(b: _Build) -> None:
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total_noEff, d∈D(leaf),t}
     #     v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
     #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped_total, d∈D(leaf),t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
-    #   ≤ co2_max_total[g] · horizon_fraction_reached  −  Σ_d co2_cum_realized_tonnes[g,d]
+    #   ≤ co2_max_total[g] · horizon_fraction_reached  −  Σ_d R_rep[g,d]
     #   ∀ g ∈ group_co2_max_total (, leaf);   w_y = step_duration · timestep_weight / period_share · years_represented[d]
+    #   R_rep[g,d] = realized tonnes of d from earlier rolls / solves · years_represented[d] / period_share[d],
+    #   with the share and years of the solve that realized them (the w_y its own row gave them)
     # Caps the CO2 emissions of a group over the horizon the solve represents (tonnes): each period's
     # annualised emissions (as in co2_max_period, section fuel included) times the years the period
     # represents, summed over the periods — the measure of the model CO2 output.  years_represented is not
@@ -2968,8 +2987,9 @@ def _eq_co2_max_total(b: _Build) -> None:
     # periods / window, over-allowing roughly by the number of rolls / chained solves (#38) — fixed the
     # same way the commodity ladder's cumulative tier cap was (#89/#143): horizon_fraction_reached scales
     # the fixed whole-horizon budget down to what's allocated so far, and the realized carrier (0 on the
-    # first solve of a chain) — net of removal credits (#19) — is subtracted; never negative by
-    # construction.  The removal term (#19, Q14) mirrors co2_max_period's: flows into the same group's
+    # first solve of a chain) — net of removal credits (#19), weighted like the LHS (R_rep, not physical
+    # tonnes: a realized step counts years_represented / period_share times its tonnes, as it did in the
+    # row of the solve that realized it) — is subtracted; never negative by construction.  The removal term (#19, Q14) mirrors co2_max_period's: flows into the same group's
     # node(s), unsplit, no slope; it only loosens the cap.
     # _path (Q16, #52): under recourse every forecast branch got its own copy of the whole-horizon
     # budget summed into ONE row, letting N branches spend N× the cap between them (the stochastic

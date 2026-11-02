@@ -33,7 +33,7 @@ carriers, named metric columns for multi-value):
     fix_storage_quantity   [node, period, step, p_fix_storage_quantity]
     fix_storage_price      [node, period, step, p_fix_storage_price]
     fix_storage_usage      [node, period, step, p_fix_storage_usage]
-    cumulative_co2         [group, period, value]
+    cumulative_co2         [group, period, value, represented]
     cumulative_commodity   [commodity, tier, period, p_ladder_cum_realized_mwh]
     cum_sim_hours          [period, p_ladder_cum_sim_hours]
 
@@ -204,7 +204,8 @@ class SolveHandoff:
     fix_storage_usage: pl.DataFrame | None = None
 
     # Running CO2 totals carried across rolls for cumulative-cap constraint.
-    # File equivalent: solve_data/co2_cum_realized_tonnes.csv.
+    # File equivalent: solve_data/co2_cum_realized_tonnes.csv.  ``value`` is physical tonnes;
+    # ``represented`` the same tonnes × years_represented / period_share of the realizing solve.
     cumulative_co2: pl.DataFrame | None = None
 
     # Running per-tier commodity consumption for cumulative ladder pricing.
