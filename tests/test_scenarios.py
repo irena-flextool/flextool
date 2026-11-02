@@ -50,6 +50,11 @@ def _load_scenarios() -> list:
     self-consistent CSVs that the golden-comparison would lock in) is
     caught here.
 
+    Optional ``expected_solver_objective`` pins the solver objective: the sum
+    of the per-solve ``<solve>,<Objective>`` rows of ``summary_solve.csv``
+    (same tolerance key).  It is the check for a run whose calculated total
+    is zero by construction (a forecasts-only fan realizes nothing).
+
     Optional ``time_budget_seconds`` field enables a per-scenario timing
     assertion: the test body (write_input → run_model → write_outputs)
     must finish within the given budget. Catches large performance
@@ -72,6 +77,7 @@ def _load_scenarios() -> list:
                 e["csvs"],
                 e.get("expected_objective"),
                 e.get("expected_objective_tolerance", 1e-3),
+                e.get("expected_solver_objective"),
                 e.get("time_budget_seconds"),
                 e.get("db_fixture", "main"),
                 marks=marks,
@@ -79,6 +85,29 @@ def _load_scenarios() -> list:
             )
         )
     return params
+
+
+def _parse_summary_solver_objective(summary_path: Path) -> float:
+    """Sum the per-solve solver objectives of ``summary_solve.csv``.
+
+    The rows between the ``"Solve","Objective",...`` header and the first
+    ``"Total cost (calculated)`` row are ``<solve>,<objective>``, one per
+    solve (and roll).
+    """
+    total, in_block, rows = 0.0, False, 0
+    for raw in summary_path.read_text().splitlines():
+        if raw.startswith('"Solve","Objective"'):
+            in_block = True
+            continue
+        if not in_block:
+            continue
+        if raw.startswith('"Total cost (calculated)') or not raw.strip():
+            break
+        total += float(raw.split(",")[1])
+        rows += 1
+    if rows == 0:
+        raise ValueError(f"No per-solve objective rows found in {summary_path}")
+    return total
 
 
 def _parse_summary_solve_objective(summary_path: Path) -> float:
@@ -195,7 +224,8 @@ SCENARIOS = _load_scenarios()
 
 
 @pytest.mark.parametrize(
-    "scenario,csvs,expected_objective,expected_objective_tolerance,time_budget_seconds,db_fixture",
+    "scenario,csvs,expected_objective,expected_objective_tolerance,expected_solver_objective,time_budget_seconds,"
+    "db_fixture",
     SCENARIOS,
 )
 def test_scenario(
@@ -203,6 +233,7 @@ def test_scenario(
     csvs: list[str],
     expected_objective: float | None,
     expected_objective_tolerance: float,
+    expected_solver_objective: float | None,
     time_budget_seconds: float | None,
     db_fixture: str,
     scenario_db_url: str,
@@ -348,6 +379,15 @@ def test_scenario(
             assert rel_err <= expected_objective_tolerance, (
                 f"objective drift: scenario={scenario} "
                 f"expected={expected_objective} got={actual_objective} "
+                f"rel_err={rel_err:.3e} tolerance={expected_objective_tolerance:.3e}"
+            )
+        if expected_solver_objective is not None:
+            summary_path = workdir / "output_csv" / scenario / "summary_solve.csv"
+            actual_solver = _parse_summary_solver_objective(summary_path)
+            rel_err = abs(actual_solver - expected_solver_objective) / max(abs(expected_solver_objective), 1e-9)
+            assert rel_err <= expected_objective_tolerance, (
+                f"solver objective drift: scenario={scenario} "
+                f"expected={expected_solver_objective} got={actual_solver} "
                 f"rel_err={rel_err:.3e} tolerance={expected_objective_tolerance:.3e}"
             )
 
