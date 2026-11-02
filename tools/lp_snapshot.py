@@ -796,6 +796,19 @@ def _patch_co2_stoch_total(data: dict) -> dict:
                 ["group", "co2_limit", "co2_max_total", 1.0e6]])
 
 
+def _patch_co2_period_stoch_rolling(data: dict) -> dict:
+    """co2_max_period (group__node = gas_market) on the rolling stochastic week (horizon 96 h, jump 24 h, a
+    fan in every roll plus the realization rolls): each forecast's cap counts its period's realized hours
+    (f_d_k) and continues from the realized emissions of the earlier realization rolls (#59)."""
+    return _overlay(
+        data, name="co2_period_stoch_rolling", base="1_week_rolling_wind",
+        entities=[["group", "co2_limit"],
+                  ["group__node", ["co2_limit", "gas_market"]]],
+        values=[["commodity", "gas", "co2_content", 0.2],
+                ["group", "co2_limit", "co2_method", "period"],
+                ["group", "co2_limit", "co2_max_period", _pmap({"period1": 2.0e6})]])
+
+
 def _patch_ladder_stoch_cumulative(data: dict) -> dict:
     """price_ladder_cumulative on the coal commodity of the stochastic 2-day dispatch -- Q16
     (#58) per-path proof: before the fix the tier's cumulative cap summed every forecast
@@ -1884,6 +1897,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "timeline_default": _patch_timeline_default,
     "ladder_cum_silent": _patch_ladder_cum_silent,
     "co2_stoch_total": _patch_co2_stoch_total,
+    "co2_period_stoch_rolling": _patch_co2_period_stoch_rolling,
     "ladder_stoch_cumulative": _patch_ladder_stoch_cumulative,
 }
 
@@ -2089,6 +2103,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("timeline_default", _T),
     ("ladder_cum_silent", _T),
     ("co2_stoch_total", _F + "stochastics.json"),
+    ("co2_period_stoch_rolling", _F + "stochastics.json"),
     ("ladder_stoch_cumulative", _F + "stochastics.json"),
     ("stoch_rank3_anchor", _F + "stochastics.json"),
     ("stoch_rank3_profile_anchor", _F + "stochastics.json"),

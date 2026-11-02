@@ -47,6 +47,7 @@ import polars as pl
 
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _emit
+from flextool.engine.preprocess.params._branch import branch_periods_inherit_carry
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +399,19 @@ def emit_period_calculated_params(
             except (ValueError, TypeError):
                 continue
     complete_share_lookup = dict(complete_share)
+    # A forecast branch period continues from its period's realized hours: the realization solve wrote
+    # them under the period label, so each forecast takes the label's carry (f_d_k[a_b] = (H[a] + W[a_b]) /
+    # T[a]); the label keeps H[a] / T[a].  The fold of finished periods below reads the raw carry keys.
+    cum_of = p_ladder_cum
+    if p_ladder_cum and pb_pairs_set:
+        carry = branch_periods_inherit_carry(
+            pl.DataFrame({"period": list(p_ladder_cum), "value": list(p_ladder_cum.values())},
+                         schema={"period": pl.Utf8, "value": pl.Float64}),
+            pb_pairs_set, period_col="period")
+        cum_of = dict(zip(carry["period"].to_list(), carry["value"].to_list()))
     f_d_k_rows: list[tuple[str, float]] = []
     for d in period_in_use:
-        num = p_ladder_cum.get(d, 0.0) + sum_step_dur_by_period.get(d, 0.0)
+        num = cum_of.get(d, 0.0) + sum_step_dur_by_period.get(d, 0.0)
         denom = complete_share_lookup.get(d, 0.0) * HOURS_PER_YEAR
         f_d_k_rows.append((d, num / denom))
     # A period only leaves `period_in_use` once the rolling chain has moved past it, which (periods

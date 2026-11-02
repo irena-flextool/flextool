@@ -15,6 +15,7 @@ Layer-2 trigger (warm ``p_inflow`` pushes ignore the Layer-2 row scale, #88).
 from __future__ import annotations
 
 import dataclasses
+import math
 import sys
 
 import polars as pl
@@ -396,3 +397,89 @@ def _stoch_chain() -> list[str]:
         chain.append(alt)
         alt = nxt.get(alt)
     return chain
+
+
+# ---------------------------------------------------------------------------
+# Rolling stochastic fan: every forecast continues from its period's realized history (#59)
+#
+# ``1_week_rolling_wind`` (stochastics.json): one period ``period1`` of 168 one-hour steps (timeset ``1week``,
+# timeset_duration 168), rolling horizon 96 h, jump 24 h -> 7 stochastic rolls k = 0..6 starting at hour 24k.
+# Every roll fans into the forecasts ``period1_lower`` / ``_mid`` / ``_upper`` at its first step; the
+# ``realized: yes`` branch makes the engine add a realization roll after each stochastic roll, which realizes
+# that roll's 24 h jump under the period label ``period1``.  So stochastic roll k starts with 24k realized
+# hours and its forecasts cover min(96, 168 - 24k) more:
+#     f_d_k[forecast] = (24k + min(96, 168 - 24k)) / 168 = min(24k + 96, 168) / 168   (roll 1: 120/168 = 0.714)
+#     f_d_k[period1]  = 24k / 168                                                    (no steps of its own)
+# The group ``co2_limit`` holds gas_market (gas co2_content 0.2, cap 2e6 t/a in period1): gas runs in every
+# realization roll, so the realized emissions grow roll by roll (coal does not run there).
+
+STOCH_ENTITIES = [["group", "co2_limit", None], ["group__node", ["co2_limit", "gas_market"], None]]
+STOCH_CAP = 2.0e6
+STOCH_VALUES = [["commodity", "gas", "co2_content", b64(0.2, "float")],
+                ["group", "co2_limit", "co2_method", b64("period", "str")],
+                ["group", "co2_limit", "co2_max_period", _pmap({"period1": STOCH_CAP})]]
+STOCH_SOLVE = "1week_rolling"
+FORECASTS = ("period1_lower", "period1_mid", "period1_upper")
+
+
+@pytest.fixture(scope="module")
+def stochastic_fan_rolls(tmp_path_factory) -> dict:
+    from flextool.engine import run_chain_from_db
+
+    url, scen = make_db(tmp_path_factory, alt="co2roll_stoch_fan", values=STOCH_VALUES, base_chain=_stoch_chain(),
+                        entities=STOCH_ENTITIES, fixture_json=FIX / "stochastics.json")
+    steps = run_chain_from_db(url, scen, keep_solutions=True, work_folder=tmp_path_factory.mktemp("co2roll_fan_w"))
+    assert steps and all(st.solution is not None for st in steps.values())
+    names = list(steps)
+    assert [n for n in names if "__realized_dispatch" not in n] == [f"{STOCH_SOLVE}_roll_{k}" for k in range(7)]
+    assert [n for n in names if "__realized_dispatch" in n] == [
+        f"{STOCH_SOLVE}__realized_dispatch_roll_{k}" for k in range(7)]
+    return steps
+
+
+def _period_values(p) -> dict[str, float]:
+    assert p is not None
+    return dict(utf8(p.frame).select("d", "value").iter_rows())
+
+
+def _forecast_rhs(fd) -> dict[str, float]:
+    from tests.engine._lp_rows import row_bounds
+
+    rows = row_bounds(build(fd), "co2_max_period", "co2_limit,")
+    return {nm[nm.index(",") + 1:-1]: ub for nm, (_lb, ub) in rows.items()}
+
+
+def test_stochastic_forecast_f_d_k_counts_realized_hours(stochastic_fan_rolls) -> None:
+    """Each forecast's ``f_d_k`` counts the realized hours of its period (the label's carry) plus its own window;
+    before, it counted the window alone (roll 1: 96/168 instead of 120/168), so a forecast's period cap allocated
+    nothing for the hours already realized."""
+    for k in range(7):
+        fd = stochastic_fan_rolls[f"{STOCH_SOLVE}_roll_{k}"].flex_data
+        fdk = _period_values(fd.p_co2_f_d_k)
+        assert set(fdk) == {"period1", *FORECASTS}, k
+        assert fdk["period1"] == pytest.approx(24 * k / 168, rel=1e-12, abs=1e-15), k
+        for b in FORECASTS:
+            assert fdk[b] == pytest.approx(min(24 * k + 96, 168) / 168, rel=1e-12), (k, b)
+        rhs = _forecast_rhs(fd)
+        assert set(rhs) == set(FORECASTS), k
+        assert all(math.isfinite(v) for v in rhs.values()), (k, rhs)
+
+
+def test_stochastic_total_cap_reached_share_counts_each_hour_once(tmp_path_factory) -> None:
+    """``co2_max_total``'s reached share counts the period once, through its label: the f_d_k of a forecast, which
+    holds the realized hours.  Stochastic roll k reaches min(24k + 96, 168) / 168 of the week, realization roll k
+    (24k + 24) / 168 (years_represented 1, one period); adding the label's own 24k / 168 on top of a forecast's
+    f_d_k would count the realized hours twice."""
+    from flextool.engine import run_chain_from_db
+
+    values = [["commodity", "gas", "co2_content", b64(0.2, "float")],
+              ["group", "co2_limit", "co2_method", b64("total", "str")],
+              ["group", "co2_limit", "co2_max_total", b64(1.0e7, "float")]]
+    url, scen = make_db(tmp_path_factory, alt="co2roll_stoch_total", values=values, base_chain=_stoch_chain(),
+                        entities=STOCH_ENTITIES, fixture_json=FIX / "stochastics.json")
+    steps = run_chain_from_db(url, scen, keep_solutions=True, work_folder=tmp_path_factory.mktemp("co2tot_fan_w"))
+    for k in range(7):
+        stochastic = steps[f"{STOCH_SOLVE}_roll_{k}"].flex_data
+        realization = steps[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"].flex_data
+        assert stochastic.co2_horizon_fraction_reached == pytest.approx(min(24 * k + 96, 168) / 168, rel=1e-12), k
+        assert realization.co2_horizon_fraction_reached == pytest.approx((24 * k + 24) / 168, rel=1e-12), k

@@ -59,6 +59,7 @@ from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.preprocess.params._branch import (
     active_branch_anchor_pairs,
+    branch_periods_inherit_carry,
     fan_period_labels,
     inherit_active_branch_periods,
     period_branch_pairs_lf,
@@ -9623,8 +9624,12 @@ def p_f_d_k_from_source(
     Algorithm — mirror of
     ``preprocessing/period_calculated_params.py:324-344``::
 
-        f_d_k[d] = (p_ladder_cum_sim_hours[d] + sum_t step_duration[d, t])
+        f_d_k[d] = (p_ladder_cum_sim_hours[α(d)] + sum_t step_duration[d, t])
                  / (complete_period_share_of_year[d] * 8760)
+
+    α(d) is the period label of a forecast branch period d (d itself otherwise, or when d has a
+    carry row of its own): the realization solve carries the realized hours under the label, and every
+    forecast continues from its period's realized history (``branch_periods_inherit_carry``).
 
     Domain: ``period_in_use``, plus one row per period that the chain has already finished and
     dropped from ``period_in_use`` (value 1.0 — a period only leaves ``period_in_use`` once it is
@@ -9721,8 +9726,14 @@ def p_f_d_k_from_source(
                             "p_ladder_cum_sim_hours": "cum"})
                    .with_columns(pl.col("cum")
                                    .cast(pl.Float64, strict=False)))
+        # A forecast branch period continues from its period's realized hours, written under the period
+        # label (emit_period_calculated_params, the emitted twin): the numerator joins the inherited
+        # carry; the fold of finished periods below keeps the raw keys.
+        cum_join_lf = branch_periods_inherit_carry(
+            cum_lf.collect(), _read_period_branch_pairs(workdir, provider=provider)).lazy()
     else:
         cum_lf = None
+        cum_join_lf = None
     # period_in_use as the output domain — Path B Cat B: prefer
     # SolveContext's typed accessor (already canonical ``[d]``).
     if ctx is not None and ctx.period_in_use.height > 0:
@@ -9746,11 +9757,12 @@ def p_f_d_k_from_source(
         csy = cast_frame_axes(csy, _enums)
         if cum_lf is not None:
             cum_lf = cast_frame_axes(cum_lf, _enums)
+            cum_join_lf = cast_frame_axes(cum_join_lf, _enums)
     out_lf = (piu_lf
                 .join(sum_step.select("d", "sum_step"), on="d", how="left")
                 .join(csy.select("d", "share"), on="d", how="left"))
     if cum_lf is not None:
-        out_lf = out_lf.join(cum_lf.select("d", "cum"), on="d", how="left")
+        out_lf = out_lf.join(cum_join_lf.select("d", "cum"), on="d", how="left")
         out_lf = out_lf.with_columns(pl.col("cum").fill_null(0.0))
     else:
         out_lf = out_lf.with_columns(cum=pl.lit(0.0))

@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Fix: in a rolling stochastic solve, a forecast's period budgets count the hours already realized.**
+  The annual commodity-ladder tiers and `co2_max_period` allot each roll the share of the period reached
+  by the end of its horizon. A forecast branch counted only its own window, not the hours the earlier
+  realization rolls had already realized, so its tier budget shrank as the week advanced. After the
+  realized purchases were subtracted it could turn negative and make the roll infeasible. Each forecast
+  now counts its period's realized hours plus its own window. The `co2_max_total` share of a fan
+  counts those hours once, and so does the fallback weight of the cumulative ladder.
+
 - **Normal outputs hold realized results only, with or without `output_horizon`.** `output_horizon = yes`
   no longer changes the parquet / CSV / plot / summary outputs: forecast-branch rows, rolling look-ahead
   rows and per-forecast (recourse) investment rows are gone from them, and the "realized periods" /

@@ -65,6 +65,7 @@ Workdir CSV reads (deferred to in-memory ``SolveContext`` per Δ.9+):
 from __future__ import annotations
 
 import contextvars
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -793,6 +794,30 @@ def inherit_anchor_period(frame: pl.DataFrame, pairs: pl.DataFrame | None, *,
                 "nulls (the token is missing from the period vocabulary).")
         out = casted
     return out
+
+
+def branch_periods_inherit_carry(frame: pl.DataFrame,
+                                 pairs: "pl.DataFrame | Iterable[tuple[str, str]] | None", *,
+                                 group_keys: "tuple[str, ...] | list[str]" = (),
+                                 period_col: str = "d") -> pl.DataFrame:
+    """A cross-solve carry ``frame`` (realized hours, purchases or emissions keyed by period) plus a copy of
+    each period label's rows for its forecast branch periods.
+
+    The realization solve writes every carry under the period label (the realized branch has the real
+    period name); a forecast branch period of the same period has no row of its own, yet every forecast
+    continues from its period's realized history (OD4).  ``pairs`` holds ``(anchor, br)`` either as a frame
+    or as tuples (``period__branch`` rows ``(period, branch)``); self rows are dropped.  The rule is
+    :func:`inherit_anchor_period`'s: a branch period that has a row of its own keeps it.
+
+    Apply it in each consumer that reads the carry per period, never once where the handoff is read:
+    several consumers sum a carry over the periods (the cumulative ladder's realized purchases, the
+    ``co2_max_total`` realized emissions, the fold of finished periods into ``f_d_k``), and a copy per
+    forecast would be counted again in every such sum.
+    """
+    if pairs is not None and not isinstance(pairs, pl.DataFrame):
+        rows = [(str(a), str(b)) for a, b in pairs]
+        pairs = pl.DataFrame(rows, schema={"anchor": pl.Utf8, "br": pl.Utf8}, orient="row")
+    return inherit_anchor_period(frame, pairs, group_keys=group_keys, period_col=period_col)
 
 
 # The branch-anchor pairs of the load being built.  ``load_flextool`` activates them (from its own

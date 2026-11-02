@@ -473,3 +473,114 @@ def test_branch_weight_per_period() -> None:
     with pytest.raises(ValueError, match=r"varies within period\(s\) \['p1_hi'\]"):
         _branch_weight(SimpleNamespace(cnd_ladder=cnd, pdt_branch_weight=pdt(
             [("p1", "t1", 0.0), ("p1_hi", "t1", 0.3), ("p1_hi", "t2", 0.4)])))
+
+
+# ---------------------------------------------------------------------------
+# #59: rolling stochastic fan — a forecast's tier allocation counts its period's realized hours
+#
+# ``1_week_rolling_wind``: period1 = 168 one-hour steps, rolling horizon 96 h / jump 24 h -> stochastic rolls
+# k = 0..6, each fanning into period1_lower / _mid / _upper, each followed by a realization roll that realizes
+# its 24 h jump under the label period1.  Stochastic roll k starts with 24k realized hours, so
+#     f_d_k[forecast] = (24k + min(96, 168 - 24k)) / 168 = min(24k + 96, 168) / 168
+# Gas runs in every realization roll, so the gas ladder carries realized purchases (coal does not run there).
+# With the forecast's window-only f_d_k = min(96, 168 - 24k) / 168 and a binding tier, the realized carry
+# reaches Q·share·24k/168, so the cap Q·share·(min(96, 168 - 24k) - 24k)/168 went negative from k = 4.
+
+ROLL_FORECASTS = ("period1_lower", "period1_mid", "period1_upper")
+ROLL_SOLVE = "1week_rolling"
+ROLL_SHARE = 168 / 8760
+
+
+def _gas_ladder(method: str, quantity1: float) -> list:
+    tiers = {k: v for k, v in _tiers(5.0, quantity1, 7.0).items() if k != "type"}
+    return [["commodity", "gas", "price_method", b64(method, "str")],
+            ["commodity", "gas", method, b64(tiers, "map")]]
+
+
+def _stochastic_rolls(steps: dict) -> list:
+    rolls = [steps[f"{ROLL_SOLVE}_roll_{k}"] for k in range(7)]
+    assert len([n for n in steps if "__realized_dispatch" in n]) == 7
+    return rolls
+
+
+def _forecast_f(k: int) -> float:
+    return min(24 * k + 96, 168) / 168
+
+
+def _bought(step, tier: str = "1") -> float:
+    """Tier MWh bought in a realization roll (commodity unitsize 1, the default): its whole horizon is realized."""
+    rows = _v_trade(step).filter((pl.col("c") == "gas") & (pl.col("i") == tier))
+    assert set(rows["d"]) == {"period1"}
+    return float(rows["value"].sum())
+
+
+def test_rolling_forecast_annual_cap_counts_realized_hours(tmp_path_factory) -> None:
+    """Each forecast's annual tier cap is Q·share·f_d_k − realized[period1], with f_d_k counting the realized
+    hours: the cap never goes negative, and the chain solves to the end of the week."""
+    from tests.engine._lp_rows import row_bounds
+
+    quantity = 1.0e6  # 2740 MWh per realized day, below the gas a realization roll burns: tier 1 binds
+    steps = _steps(tmp_path_factory, "c59_roll_ann_cap", _gas_ladder("price_ladder_annual", quantity),
+                   chain=CHAIN_ROLL)
+    realization = [steps[f"{ROLL_SOLVE}__realized_dispatch_roll_{k}"] for k in range(7)]
+    for k, step in enumerate(_stochastic_rolls(steps)):
+        fd = step.flex_data
+        fdk = dict(utf8(fd.p_f_d_k.frame).select("d", "value").iter_rows())
+        # the twin (flex_data.p_f_d_k) and the emitted f_d_k.csv (p_co2_f_d_k) agree
+        assert fdk == dict(utf8(fd.p_co2_f_d_k.frame).select("d", "value").iter_rows()), k
+        share = dict(utf8(fd.p_period_share.frame).select("d", "value").iter_rows())
+        realized = sum(_bought(s) for s in realization[:k])
+        if k > 0:
+            assert realized > 0.0, k
+        rows = row_bounds(build(fd), "ladder_tier_cap_annual_roll", "gas,1,")
+        assert {nm[nm.rindex(",") + 1:-1] for nm in rows} == set(ROLL_FORECASTS), k
+        for b in ROLL_FORECASTS:
+            assert fdk[b] == pytest.approx(_forecast_f(k), rel=1e-12), (k, b)
+            assert share[b] == pytest.approx(ROLL_SHARE, rel=1e-12), (k, b)
+            ub = rows[f"ladder_tier_cap_annual_roll[gas,1,{b}]"][1]
+            assert ub == pytest.approx(quantity * ROLL_SHARE * _forecast_f(k) - realized, rel=1e-9), (k, b)
+            assert ub >= 0.0, (k, b)
+
+
+def test_cumulative_ladder_fallback_counts_realized_hours_once(tmp_path_factory) -> None:
+    """Without ``p_ladder_cum_weight`` (the derived-param pass skipped) a scenario path's weight is Σ f_d_k over its
+    periods with the fan label left out: f_d_k[forecast] alone, which already holds the realized hours.  Adding the
+    label's f_d_k (24k/168) as well would count the realized hours twice.
+
+    A rolling roll is built without scenario paths (``d_leaf``), so the paths are attached here as a fan defines
+    them (``d_leaf_lf``): one leaf per forecast holding the forecast and its period label.
+
+    Hand values, roll k: with p_ladder_cum_weight (years_represented 1) a path weighs the label's realized hours
+    plus the forecast's own, (24k + min(96, 168 - 24k)) / 8760; the f_d_k fallback weighs the same hours over the
+    period's 168 h, min(24k + 96, 168) / 168 — i.e. 8760/168 times the first."""
+    import dataclasses
+
+    from tests.engine._lp_rows import row_bounds
+
+    quantity = 5.0e7
+    steps = _steps(tmp_path_factory, "c59_roll_cum_fallback", _gas_ladder("price_ladder_cumulative", quantity),
+                   chain=CHAIN_ROLL)
+    for k, step in list(enumerate(_stochastic_rolls(steps)))[1:]:
+        fd = step.flex_data
+        assert fd.p_ladder_cum_weight is not None
+        d_dtype = fd.p_f_d_k.frame.schema["d"]
+        leaves = pl.DataFrame({"d": [d for b in ROLL_FORECASTS for d in (b, "period1")],
+                               "leaf": [b for b in ROLL_FORECASTS for _ in range(2)]}).with_columns(
+            pl.col("d").cast(d_dtype))
+        fd = dataclasses.replace(fd, d_leaf=leaves)
+        realized = float(fd.p_ladder_cum_realized_mwh.frame.filter(
+            (pl.col("c").cast(pl.Utf8) == "gas") & (pl.col("i").cast(pl.Utf8) == "1"))["value"].sum())
+        assert realized > 0.0, k
+
+        def weights(flex_data) -> dict[str, float]:
+            rows = row_bounds(build(flex_data), "ladder_tier_cap_cumulative_roll_path", "gas,1,")
+            assert len(rows) == len(ROLL_FORECASTS), (k, rows)
+            return {nm[nm.rindex(",") + 1:-1]: (ub + realized) / quantity for nm, (_lb, ub) in rows.items()}
+
+        with_weight = weights(fd)
+        fallback = weights(dataclasses.replace(fd, p_ladder_cum_weight=None))
+        assert set(with_weight) == set(fallback) == set(ROLL_FORECASTS), k
+        for b in ROLL_FORECASTS:
+            assert with_weight[b] == pytest.approx((24 * k + min(96, 168 - 24 * k)) / 8760, rel=1e-12), (k, b)
+            assert fallback[b] == pytest.approx(_forecast_f(k), rel=1e-12), (k, b)
+            assert fallback[b] == pytest.approx(with_weight[b] * 8760 / 168, rel=1e-12), (k, b)

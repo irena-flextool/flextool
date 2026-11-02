@@ -394,6 +394,8 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     # Σ_n v_trade[c,n,d,i] · commodity_unitsize[c]
     #   ≤  quantity_ann[c,i,d] · period_share[d] · f_d_k[d] − realized_ann[c,i,d]
     #   ∀ (c,i,d) with (c,n,d,i) ∈ cndi_ladder_ann and quantity_ann[c,i,d] < 1e29
+    #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
+    #   α(d) = the period label of a forecast branch period d, d itself otherwise
     # quantity_ann is a per-YEAR amount (GMPL "per-year MWh"): period_share[d] scales it down to this
     # period's own share of the modelled year, matching the price term's inflation_op/period_share
     # annualisation (#89) — a 48h solve of a 48h period gets 48h/8760 of the annual tier, not the whole
@@ -482,10 +484,16 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
 
     # weight_frame: the per-d years-equivalent weight the legacy scalar summed whole (see the EQ.
     # header); None only in the degenerate fixture that skips the derived-param pass (flat 1.0 then).
+    # The f_d_k fallback leaves the fan labels out: a label has no v_trade, and each forecast's f_d_k
+    # already holds its period's realized hours, so a path counts them once.
     if d.p_ladder_cum_weight is not None and d.p_ladder_cum_weight.frame.height > 0:
         weight_frame = d.p_ladder_cum_weight.frame
     elif d.p_f_d_k is not None:
         weight_frame = d.p_f_d_k.frame
+        pairs = _period_branch_pairs(d)
+        if pairs is not None:
+            weight_frame = weight_frame.filter(
+                ~pl.col("d").cast(pl.Utf8).is_in(pairs["anchor"].unique().implode()))
     else:
         weight_frame = None
 
@@ -516,10 +524,11 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
         # row negative.  "quantity allocated up to the end of this roll's horizon" is monotone non-
         # decreasing across rolls — the same requirement #89's fix gives the annual cap — and realized (what
         # earlier rolls actually bought, always ≤ what their own, earlier horizon end allocated) can never
-        # exceed it, so the row is feasible by construction; no clamp.  p_ladder_cum_weight is a scalar sum
-        # (1 per period of Σ f_d_k, the pre-years_represented-fix formula, when load_data couldn't build the
-        # years_represented/realized_hours Param — e.g. a synthetic fixture that skips the derived-param
-        # pass); realized = tier MWh bought by earlier solves (0 when absent).  Unlimited tiers get no row.
+        # exceed it, so the row is feasible by construction; no clamp.  Without p_ladder_cum_weight (load_data
+        # couldn't build the years_represented/realized_hours Param — e.g. a synthetic fixture that skips the
+        # derived-param pass) the weight is Σ f_d_k over the path's periods, fan labels left out (a member's
+        # f_d_k holds its period's realized hours), the pre-years_represented-fix formula; realized = tier
+        # MWh bought by earlier solves (0 when absent).  Unlimited tiers get no row.
         sum_weight = float(weight_frame["value"].sum()) if weight_frame is not None else 1.0
         cap_df = (ci_cum_finite.join(d.p_ladder_cum_quantity.frame, on=["c", "i"], how="left")
                   .select("c", "i", cap=pl.col("value") * sum_weight))

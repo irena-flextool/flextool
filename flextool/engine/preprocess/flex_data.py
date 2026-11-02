@@ -1808,8 +1808,8 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
 
     ``horizon_fraction_reached`` — ``Σ_d years_represented[d]·f_d_k[d] / Σ_d years_represented[d]``,
     over every period of the whole chain, each counted once: a stochastic fan's members are left out and its
-    period label stands for the period (its realized share plus this solve's share) (``solve_data/p_years_represented.csv``, the solve's static
-    period→year map, not dt-pruned — the same un-pruned source the ladder's cumulative tier cap reads
+    period label stands for the period (the f_d_k of its first member with steps: the realized share plus this
+    solve's share) (``solve_data/p_years_represented.csv``, the solve's static period→year map, not dt-pruned — the same un-pruned source the ladder's cumulative tier cap reads
     for its own carried weight, ``p_ladder_cum_weight``). The fraction of the chain's total represented
     years reached by the end of this roll — scales ``co2_max_total``'s fixed whole-horizon budget down
     to "allocated so far". ``1.0`` (the old, full-cap-every-roll behaviour) outside rolling / chained
@@ -1846,9 +1846,10 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
         if pyr is not None and pyr.height > 0 and {"period", "p_years_represented"}.issubset(pyr.columns):
             # Each calendar period counts once.  The members of a stochastic fan are alternatives of their
             # period, not more calendar, so they are in neither sum; the period label (the original name of
-            # the period, no dispatch of its own) stands for the period: its share reached is its realized
-            # share from earlier solves (its f_d_k) plus this solve's share (the f_d_k of a member with steps;
-            # every forecast has the same steps).
+            # the period, no dispatch of its own) stands for the period: its share reached is the f_d_k of a
+            # member with steps, which holds the label's realized hours from earlier solves plus this
+            # solve's hours (every forecast has the same steps).  A label without such a member keeps its
+            # own f_d_k (its realized share).
             members, first_member = _fan_members(sd.parent, provider)
             years = (pyr.pipe(rename_to_axis, {"period": "d"})
                      .filter(~pl.col("d").cast(pl.Utf8).is_in(sorted(members)))
@@ -1860,9 +1861,9 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
                           if v is not None}
                 eff = fdk_df.with_columns(pl.col("d").cast(pl.Utf8)).select("d", pl.col("value").alias("fdk"))
                 if first_member:
-                    eff = eff.with_columns(pl.col("fdk") + pl.col("d").replace_strict(
-                        {a: fdk_of.get(b, 0.0) for a, b in first_member.items()}, default=0.0,
-                        return_dtype=pl.Float64))
+                    eff = eff.with_columns(pl.col("d").replace_strict(
+                        {a: fdk_of.get(b, 0.0) for a, b in first_member.items()}, default=pl.col("fdk"),
+                        return_dtype=pl.Float64).alias("fdk"))
                 reached = (years.with_columns(pl.col("d").cast(pl.Utf8)).join(eff, on="d", how="left")
                            .with_columns(pl.col("fdk").fill_null(0.0)))
                 fraction_reached = min(

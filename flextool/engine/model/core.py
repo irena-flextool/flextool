@@ -2835,6 +2835,8 @@ def _eq_co2_max_period(b: _Build) -> None:
     #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
     #   ≤ co2_max_period[g,d] · f_d_k[d]  −  co2_cum_realized_tonnes[g,d] / period_share[d]
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
+    #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
+    #   α(d) = the period label of a forecast branch period d, d itself otherwise
     # Caps the annualised CO2 emissions of a group in each period (tonnes per year): dividing by
     # period_share, the LHS is the emissions of the solve's own steps of d annualised over their hours.
     # The RHS (_co2_period_cap_with_carry) is this period's remaining budget as of this roll: f_d_k[d]
