@@ -805,8 +805,9 @@ def branch_periods_inherit_carry(frame: pl.DataFrame,
 
     The realization solve writes every carry under the period label (the realized branch has the real
     period name); a forecast branch period of the same period has no row of its own, yet every forecast
-    continues from its period's realized history (OD4).  ``pairs`` holds ``(anchor, br)`` either as a frame
-    or as tuples (``period__branch`` rows ``(period, branch)``); self rows are dropped.  The rule is
+    continues from its period's realized history (the realization solve's carry).  ``pairs`` holds
+    ``(anchor, br)`` either as a frame or as tuples (``period__branch`` rows ``(period, branch)``); self rows
+    are dropped.  The rule is
     :func:`inherit_anchor_period`'s: a branch period that has a row of its own keeps it.
 
     Apply it in each consumer that reads the carry per period, never once where the handoff is read:

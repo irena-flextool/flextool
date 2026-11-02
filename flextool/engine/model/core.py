@@ -2846,7 +2846,7 @@ def _eq_co2_max_period(b: _Build) -> None:
     #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
     #   α(d) = the period label of a forecast branch period d, d itself otherwise; period_share, f_d_k and the
     #   realized carry of a forecast come from α(d) unless it has its own row: every forecast continues from
-    #   its period's realized history (the realization solve's carry, OD4)
+    #   its period's realized history (the realization solve's carry)
     # Caps the annualised CO2 emissions of a group in each period (tonnes per year): dividing by
     # period_share, the LHS is the emissions of the solve's own steps of d annualised over their hours.
     # The RHS (_co2_period_cap_with_carry) is this period's remaining budget as of this roll: f_d_k[d]

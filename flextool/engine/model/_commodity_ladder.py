@@ -381,7 +381,7 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
     #   α(d) = the period label of a forecast branch period d, d itself otherwise; period_share, f_d_k and the
     #   realized carry of a forecast come from α(d) unless it has its own row: every forecast continues from
-    #   its period's realized history (the realization solve's carry, OD4)
+    #   its period's realized history (the realization solve's carry)
     # quantity_ann is a per-YEAR amount (GMPL "per-year MWh"): period_share[d] scales it down to this
     # period's own share of the modelled year, matching the price term's inflation_op/period_share
     # annualisation (#89) — a 48h solve of a 48h period gets 48h/8760 of the annual tier, not the whole
@@ -396,7 +396,7 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     # Branch periods of a stochastic solve use their anchor period's quantity (and price) unless they
     # have their own (inherit_branch_periods).  share, f_d_k and the realized carry of a forecast come from
     # α(d) unless it has its own row (branch_periods_inherit): every forecast continues from its period's
-    # realized history (the realization solve's carry, OD4); without it a null share/fdk would clamp the
+    # realized history (the realization solve's carry); without it a null share/fdk would clamp the
     # tier to 0, and a realized 0 would re-open the period's already-spent budget (#59).
     share_frame = branch_periods_inherit(d, d.p_period_share.frame, ())
     fdk_frame = branch_periods_inherit(d, d.p_f_d_k.frame, ()) if d.p_f_d_k is not None else None
@@ -531,7 +531,7 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
     # Σ_{n, d∈D(leaf)} v_trade[c,n,d,i] · commodity_unitsize[c]
     #   ≤ quantity_cum[c,i] · ( Σ_{d∈D(leaf)} w[d] + Σ_{d∉period_in_use} w[d] ) − Σ_d realized[c,i,d]
     #   ∀ (c,i) ∈ ci_ladder_cumulative with quantity_cum[c,i] < 1e29, leaf ∈ d_leaf, when v_trade spans >1 leaf
-    # One row per scenario path (Q16, #58): the pooled row's weight summed every forecast into one budget,
+    # One row per scenario path (#58): the pooled row's weight summed every forecast into one budget,
     # letting the forecasts buy N× the tier between them.  w[d] = years_represented[d]·realized_hours[d]/8760
     # (p_ladder_cum_weight; fallback f_d_k[d] with this solve's fan labels left out).  D(leaf) = the leaf's
     # branch periods, its fan labels and the shared pre-reveal periods (the (d, leaf) join of d_leaf, as in the
