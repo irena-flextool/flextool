@@ -9,6 +9,11 @@
   within it. The per-forecast-path `co2_max_total` constraints of rolling stochastic solves (below) use the
   same corrected budget.
 
+- **A recourse stochastic fan nested inside another solve now stops with an error.** A solve with
+  `stochastic_invest_method = recourse` that is nested (`contains_solves`) in a solve sharing exactly one of
+  its periods ran without the ties that keep its forecast investments non-anticipative. It now stops with a
+  configuration error naming the sub-solve; make it a top-level solve.
+
 - **Fix: in a rolling stochastic solve each forecast keeps its own cumulative limits.** The rolls of a
   rolling solve were built without their scenario paths, so the CO2 total cap (`co2_max_total`), the
   cumulative commodity-ladder tier cap and the flow-group cumulative flow limits (`max_cumulative_flow` /

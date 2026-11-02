@@ -193,3 +193,42 @@ def test_na_preconditions_clean(_built):
     data, _pb, sol = _built
     assert sol.optimal
     assert data.recourse_invest is True
+
+
+@pytest.mark.solver
+def test_nested_recourse_sub_solve_is_refused(tmp_path_factory):
+    """A recourse fan nested in another solve that shares exactly its one period runs as the sub-solve
+    ``2day_dispatch_period1``, which never gets the recourse wiring (no invest non-anticipativity ties),
+    so the run stops with a configuration error naming the sub-solve instead of solving it without them."""
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    from tests.engine._unit_db import FLEXTOOL_ROOT, b64, make_db
+
+    import json
+
+    fixture = FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_invest_na.json"
+    # the outer solve is deterministic, so wind keeps its plain time series (the system alternative's)
+    (plain_wind,) = [r[3] for r in json.loads(fixture.read_text())["parameter_values"]
+                     if r[:3] == ["profile", "wind", "profile"] and r[4] == "system"]
+    outer = "outer_invest"
+    one = {"value_type": "str", "index_name": "period", "data": ["period1"]}
+    values = [
+        ["profile", "wind", "profile", plain_wind],
+        ["model", "flextool", "solves", b64({"value_type": "str", "data": [outer]}, "array")],
+        ["solve", outer, "solve_mode", b64("single_solve", "str")],
+        ["solve", outer, "period_timeset",
+         b64({"index_type": "str", "index_name": "period", "data": [["period1", "2day"]]}, "map")],
+        ["solve", outer, "invest_periods", b64(one, "array")],
+        ["solve", outer, "realized_invest_periods", b64(one, "array")],
+        ["solve", outer, "years_represented",
+         b64({"index_type": "str", "index_name": "period", "data": [["period1", 1.0]]}, "map")],
+        ["solve", outer, "contains_solves", b64({"value_type": "str", "data": [SOLVE]}, "array")],
+    ]
+    url, scen = make_db(tmp_path_factory, alt="nested_recourse", values=values,
+                        base_chain=["base", "init", "system", "2day", "recourse_na"],
+                        entities=[["solve", outer, None]],
+                        fixture_json=fixture)
+    with pytest.raises(FlexToolConfigError, match=(
+            r"recourse in nested sub-solve '2day_dispatch_period1'.*nested solves cannot hold recourse "
+            r"investments")):
+        run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("nested_recourse_w"))

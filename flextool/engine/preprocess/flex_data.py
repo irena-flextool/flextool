@@ -4965,6 +4965,18 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                    _drv.apply_synthetic_invest_sets,
                    flex_data, db_reader, active_solve, synth, workdir_path,
                    provider=provider)
+        # A nested sub-solve (``<base>_<period>``) never gets the recourse wiring: ``recourse_invest`` and
+        # the recourse anchor scope are set only in ``apply_derived_c``, which this early return skips, so
+        # its forecast investments would lose their non-anticipativity ties without a word.  Refuse it while
+        # the sub-solve can invest.  The rolls of a rolling solve are synthetic too but make no investment
+        # (a rolling recourse solve is warned about and checked on its own), so they are not affected.
+        _pi = getattr(flex_data, "period_invest", None)
+        if (_pi is not None and _pi.height > 0 and not getattr(flex_data, "solve_is_rolling", False)
+                and _drv._recourse_invest_active(workdir_path, ctx=ctx, provider=provider)):
+            from flextool.engine.input._solve_state import FlexToolConfigError
+            raise FlexToolConfigError(
+                f"stochastic_invest_method = recourse in nested sub-solve '{active_solve}' is not "
+                f"supported: nested solves cannot hold recourse investments; make it a top-level solve.")
         # Δ.28 — synthetic solve: apply_derived_a is skipped, but in the
         # slow path ``flex_data.dt`` is already populated from CSV (see
         # ``_load_time``).  Run pass 1b so broadcast-needing Direct
