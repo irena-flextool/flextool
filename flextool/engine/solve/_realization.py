@@ -329,6 +329,15 @@ def _untied_families(d, committed: "list[tuple[str, str]]") -> list[str]:
         families.append("cumulative commodity ladder")
     if _rows(d.group_co2_max_total):
         families.append("CO2 total cap")
+    # The annual ladder tiers and the CO2 period caps continue from the period's realized purchases / emissions
+    # (the period label's carry), which a committed window inside the fan leaves per forecast.
+    ann_qty = d.p_ladder_ann_quantity
+    if _rows(d.cndi_ladder_ann) and ann_qty is not None and d.cndi_ladder_ann.join(
+            ann_qty.frame.filter(pl.col("value") < _INF_SENTINEL).select("c", "i", "d"),
+            on=["c", "i", "d"], how="inner").height > 0:
+        families.append("annual commodity ladder")
+    if _rows(d.group_d_co2_capped):
+        families.append("CO2 period cap")
     if getattr(d, "recourse_invest", False):
         committed_labels = {p for p, _t in committed}
         members = set()
@@ -349,8 +358,9 @@ def check_committed_window_realized(d, solve: str, plan: "RealizationPlan | None
 
     A committed window that reaches into a fan is realized for the families tied across the forecasts (units
     online and reserves on the tied steps); every other family the next solve continues from — storage state,
-    ramp-limited flows, the cumulative commodity ladder, the CO2 total cap, recourse investment, and units online
-    or reserves outside the tied steps — is decided per forecast there.  Without a realization solve (a
+    ramp-limited flows, the cumulative commodity ladder, the CO2 total cap, the finite annual commodity ladder
+    tiers, the CO2 period caps, recourse investment, and units online or reserves outside the tied steps — is
+    decided per forecast there.  Without a realization solve (a
     ``realized: yes`` designation or a configured one) nothing realizes it, so a later solve would continue from
     an arbitrary forecast.  Called on the built FlexData before the LP.
     """

@@ -102,7 +102,8 @@
 - **A committed window that reaches into a forecasts-only fan now stops the run before the LP when a
   later solve continues from it and no solve realizes it**: the error names the solve and the
   families decided per forecast there (storage state, ramp-limited flows, the cumulative commodity
-  ladder, the CO2 total cap, recourse investment, or units online / reserves outside the tied steps)
+  ladder, the CO2 total cap, finite annual commodity-ladder tiers, the CO2 period cap, recourse
+  investment, or units online / reserves outside the tied steps)
   and suggests designating a `realized: yes` branch, configuring a realization solve, or ending the
   committed window before the reveal. Units online and reserves on the tied steps are the same in
   every forecast and need no realization: the next solve (e.g. the next roll) continues the units

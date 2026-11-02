@@ -540,6 +540,119 @@ def test_committed_window_in_forecasts_only_fan_with_storage_raises(tmp_path_fac
         _run(fixture, tmp, scenario="1_week_rolling_wind")
 
 
+def _append_alternative(data: dict, scenario: str, alt: str, entities: list, values: list) -> None:
+    """Append alternative *alt* (with *entities* and *values* ``[cls, name, param, value]``) to the end of
+    *scenario*'s chain."""
+    data["alternatives"].append([alt, ""])
+    for sa in data["scenario_alternatives"]:
+        if sa[0] == scenario and sa[2] is None:
+            sa[2] = alt
+    data["scenario_alternatives"].append([scenario, alt, None])
+    for ent in entities:
+        data["entities"].append(ent)
+        if ent[0] in ("node", "unit", "connection"):
+            data["entity_alternatives"].append([ent[0], [ent[1]], alt, True])
+    data["parameter_values"] += [[*v, alt] for v in values]
+
+
+def _period_map(values: dict) -> list:
+    value = {"index_type": "str", "index_name": "period", "data": [[k, v] for k, v in values.items()]}
+    return [base64.b64encode(json.dumps(value).encode()).decode(), "map"]
+
+
+def _annual_tiers(quantity: float) -> list:
+    """``price_ladder_annual``: tier 1 at 5 up to *quantity* per year, tier 2 at 30 unlimited."""
+    def tier(price, q):
+        return {"type": "map", "index_type": "str", "rank": 1, "data": [["price", price], ["quantity", q]]}
+    return [base64.b64encode(json.dumps(
+        {"index_type": "str", "rank": 2, "index_name": "tier",
+         "data": [["1", tier(5.0, quantity)], ["2", tier(30.0, float("inf"))]]}).encode()).decode(), "map"]
+
+
+# ``1_week_rolling_wind`` (stochastics.json) with every branch a forecast and ``hydro_reservoir`` made a commodity
+# node (the ``no_storage_override`` alternative), so no storage state is carried; each roll commits its 24 h jump
+# inside the fan.
+_CO2_PERIOD_CAP = ([["group", "co2_limit", None], ["group__node", ["co2_limit", "gas_market"], None]],
+                   [["commodity", "gas", "co2_content", [base64.b64encode(b"0.2").decode(), "float"]],
+                    ["group", "co2_limit", "co2_method", _enc("period")],
+                    ["group", "co2_limit", "co2_max_period", _period_map({"period1": 2.0e6})]])
+_ANNUAL_LADDER = ([], [["commodity", "coal", "price_method", _enc("price_ladder_annual")],
+                       ["commodity", "coal", "price_ladder_annual", _annual_tiers(1.0e6)]])
+
+
+def _forecasts_only_without_storage(extra: tuple):
+    def mutate(data: dict) -> None:
+        _all_forecasts(data, "1week_rolling")
+        _append_alternative(data, "1_week_rolling_wind", "no_storage_override", [], [])
+        _append_alternative(data, "1_week_rolling_wind", "committed_carry", *extra)
+    return mutate
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize(("family", "extra"), [("CO2 period cap", _CO2_PERIOD_CAP),
+                                               ("annual commodity ladder", _ANNUAL_LADDER)])
+def test_committed_window_in_forecasts_only_fan_with_period_carry_raises(tmp_path_factory, family: str,
+                                                                         extra: tuple) -> None:
+    """A CO2 period cap and a finite annual ladder tier continue from the period's realized emissions /
+    purchases.  With every branch a forecast and no storage, each roll still commits its jump inside the fan and
+    the next roll continues from it, but those emissions / purchases are decided per forecast there and no solve
+    realizes them: the run stops before the first roll's LP and names the family."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    tmp = tmp_path_factory.mktemp("label_committed_period_carry")
+    fixture = _stochastics_variant(tmp, "forecasts_only_no_storage", _forecasts_only_without_storage(extra))
+    with pytest.raises(FlexToolConfigError, match=rf"1week_rolling_roll_0.*{family}") as raised:
+        _run(fixture, tmp, scenario="1_week_rolling_wind")
+    assert "storage state" not in str(raised.value)
+
+
+def _rolling_hedge_with_period_carry(data: dict) -> None:
+    """:func:`_rolling_hedge` with 100 MW of ``base`` existing (a rolling solve has no investment) fed from a
+    commodity node ``fuel`` (commodity ``fuel`` on a finite annual ladder, co2_content 0.5) inside a CO2
+    period-capped group ``co2g``."""
+    _rolling_hedge(data)
+    _append_alternative(
+        data, "hedge_storage", "period_carry",
+        [["node", "fuel", None], ["commodity", "fuel", None], ["commodity__node", ["fuel", "fuel"], None],
+         ["unit__inputNode", ["base", "fuel"], None], ["group", "co2g", None], ["group__node", ["co2g", "fuel"], None]],
+        [["unit", "base", "existing", [base64.b64encode(b"100.0").decode(), "float"]],
+         ["node", "fuel", "node_type", _enc("commodity")],
+         ["commodity", "fuel", "co2_content", [base64.b64encode(b"0.5").decode(), "float"]],
+         ["commodity", "fuel", "price_method", _enc("price_ladder_annual")],
+         ["commodity", "fuel", "price_ladder_annual", _annual_tiers(1.0e6)],
+         ["group", "co2g", "co2_method", _enc("period")],
+         ["group", "co2g", "co2_max_period", _period_map({"p2035": 1.0e6, "p2040": 1.0e6})]])
+
+
+@pytest.mark.solver
+def test_rolling_fan_in_the_look_ahead_with_period_carry_solves(tmp_path_factory) -> None:
+    """A fan only in the look-ahead commits nothing inside it: roll 0 commits t0001-t0003 of the pre-reveal
+    period p2035, so an annual ladder tier and a CO2 period cap need no realization solve.  The run solves, and
+    the carries roll 1 continues from (simulated hours, CO2 tonnes, ladder purchases) are keyed by the committed
+    period p2035 only, the simulated hours being its 3 committed one-hour steps."""
+    tmp = tmp_path_factory.mktemp("label_rolling_lookahead_period_carry")
+    steps, _ = _run(_variant(HEDGE, tmp, "rolling_hedge_period_carry", _rolling_hedge_with_period_carry), tmp,
+                    scenario="hedge_storage")
+    rolls = list(steps.values())
+    assert len(rolls) == 2 and not any(is_realization(k) for k in steps), list(steps)
+    first, second = rolls
+    assert second.flex_data.group_d_co2_capped is not None and second.flex_data.cndi_ladder_ann is not None
+    handoff = first.handoff
+    hours = handoff.cum_sim_hours
+    assert dict(zip(hours["period"].cast(pl.Utf8), hours["p_ladder_cum_sim_hours"])) == {
+        "p2035": pytest.approx(3.0)}
+    for name in ("cumulative_co2", "cumulative_commodity"):
+        carrier = getattr(handoff, name)
+        assert carrier is not None and carrier.height > 0, name
+        period_col = "period" if "period" in carrier.columns else "d"
+        assert set(utf8(carrier)[period_col].to_list()) == {"p2035"}, carrier
+    co2 = second.flex_data.p_co2_cum_realized_tonnes.frame
+    assert set(utf8(co2).select("g", "d").iter_rows()) == {("co2g", "p2035")}, co2
+    # the carried tonnes are the carried fuel purchases × co2_content 0.5, and both are non-zero
+    mwh = float(handoff.cumulative_commodity["p_ladder_cum_realized_mwh"].sum())
+    assert mwh > 0.0
+    assert float(co2["value"][0]) == pytest.approx(0.5 * mwh, rel=1e-9)
+
+
 def _rolling_online_only(data: dict) -> None:
     """``stoch_t0_commit`` as a rolling solve over a forecasts-only fan with unit commitment only: no designation,
     no ``separate_dispatch``, no investment; horizon 2 h, jump 1 h, so every roll commits its first step inside the
