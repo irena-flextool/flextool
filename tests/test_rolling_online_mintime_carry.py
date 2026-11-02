@@ -8,11 +8,11 @@ rebuilt into ``uptime_carry`` / ``downtime_carry`` at the continuation roll
 (``_derived.online_mintime_carry_from_source``) and injected on the
 ``minimum_uptime`` RHS / ``minimum_downtime`` LHS by ``_online.add_constraints``.
 
-The carry is PERIOD-AWARE: an obligation is carried ONLY within the same
-period, never across a period boundary.  FlexTool's online dynamics are
-period-cyclic (a period's first step wraps within that period, never to the
-prior period), so a min-up/down obligation must not propagate across the
-non-contiguous investment years — forcing one across is a unit-commitment
+The carry follows the timeline: it starts at the next roll's first steps that
+continue the previous roll's last realized step (``dt_ramp_carry``, ``jump ==
+1``) and counts each history step's ``hours_to_end``.  The fullYear periods
+p2020 → p2025 reuse one timeset, so p2025's first step does not continue p2020
+and takes no carry — forcing one across would be a unit-commitment
 infeasibility no node penalty slack can absorb (STEP-0 finding).
 
 All scenarios are built from JSON (CLAUDE.md invariant #3), never a

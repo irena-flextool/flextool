@@ -735,8 +735,10 @@ are routed by the same rule, taken whole from the latest entry with a
 realised step: the next dispatch roll continues the commitment, the
 ramp and the min up / down history from the dispatch realised last,
 also across a storage or investment solve in between.  The producer
-extends the min up / down window it was handed (the routed
-`handoff/online_history` its LP read).  A nested parent's handoff is
+extends the min up / down history it was handed (the routed
+`handoff/online_history` its LP read) when its realized chain reaches
+the step that continued from it (its `dt_ramp_carry`), adding that
+step's `hours_to_end`.  A nested parent's handoff is
 translated only for `PIN_FIELDS` (realised investment / existing /
 divest, fixed online, the nested storage fix).  The running totals
 (`cumulative_co2`, `cumulative_commodity`, `cum_sim_hours`) are not

@@ -29,7 +29,7 @@ carriers, named metric columns for multi-value):
     roll_end_online        [process, value]
     roll_end_flow          [process, source, sink, period, step, duration, value]
     roll_end_step          [period, step, duration]
-    online_history         [process, period, step, startup, shutdown, duration]
+    online_history         [process, period, step, startup, shutdown, duration, hours_to_end]
     fix_storage_quantity   [node, period, step, p_fix_storage_quantity]
     fix_storage_price      [node, period, step, p_fix_storage_price]
     fix_storage_usage      [node, period, step, p_fix_storage_usage]
@@ -148,24 +148,16 @@ class SolveHandoff:
     # Producer: ``flex_data._last_realized_step``.  In-memory only.
     roll_end_step: pl.DataFrame | None = None
 
-    # OC1 Carrier 2 — trailing realized committed-commitment window for
-    # cross-roll-boundary min_uptime / min_downtime continuity.  Unlike
-    # ``roll_end_online`` (a single jump-end ``v_online`` scalar per
-    # process), this carries a SLIDING WINDOW of the prior rolls' realized
-    # committed ``v_startup`` / ``v_shutdown`` per ``(process, period,
-    # step)``, long enough (trimmed to the authored max min-up/down
-    # duration per period) to cover the next roll's early-step lookback.
-    # The next roll rebuilds ``uptime_carry`` / ``downtime_carry`` from it
-    # (``_derived.online_mintime_carry_from_source``) and injects
-    # them on the ``minimum_uptime`` RHS / ``minimum_downtime`` LHS so an
-    # obligation opened in roll N constrains roll N+1's early steps.
-    # PERIOD-AWARE: carried only within the same period (period-cyclic
-    # online dynamics — non-contiguous investment years do not connect).
-    # Each step carries its own ``duration`` (the history steps are not in
-    # the next roll's ``dt``, so the lookback walk must be self-contained).
-    # Producer: this roll's realized v_startup/v_shutdown ∪ prior window.
-    # Consumer: next roll's ``uptime_carry`` / ``downtime_carry``.
-    # Schema: ``[process, period, step, startup, shutdown, duration]``.
+    # The realized ``v_startup`` / ``v_shutdown`` per ``(process, period, step)`` that a minimum up / down time
+    # still covers after this solve: the last realized step and its predecessors on the timeline (along
+    # ``dt_ramp_link``), each with ``hours_to_end`` = hours from the start of the step to the end of the last
+    # realized step, kept while ``hours_to_end <`` the process's authored max min-up/down time.  Inside a
+    # forecasts-only fan the steps are those of the tied forecast.  The history this solve started from is extended
+    # when the solve continued from it.  Consumer: the next solve's ``uptime_carry`` / ``downtime_carry``
+    # (``_derived.online_mintime_carry_from_source``) at the steps that follow its ``dt_ramp_carry`` (the first steps
+    # that continue from this solve's last realized step); ``period`` / ``step`` are for inspection only.  Routed
+    # together with ``roll_end_step`` (solve._carry_routing); the consumer raises when the history does not end at
+    # the carried step.  Schema: ``[process, period, step, startup, shutdown, duration, hours_to_end]``.
     # No file equivalent (in-memory only).
     online_history: pl.DataFrame | None = None
 

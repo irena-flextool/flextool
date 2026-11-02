@@ -5456,46 +5456,6 @@ def p_indirect_input_cap_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
-def _build_lookback_rows(processes_min: list[tuple[str, float]],
-                            ordered_steps: list[tuple[str, str, float]],
-                            ) -> list[tuple[str, str, str, str, str]]:
-    """Mirror flextool's ``_write_lookback_csv`` (minimum_time.py:122-169).
-
-    For each (process, min_time) and each (d, t):
-      * Always include the current step (d, t, d, t).
-      * Walk backwards through the ordered timeline accumulating
-        durations; include each predecessor while accumulated < min_time.
-
-    The simple linear timeline (single-period or sequential periods with
-    no gaps) suffices for our covered fixtures.  Gap detection (jump != 1)
-    is not modelled — fixtures that activate it gate-fail.
-    """
-    rows: list[tuple[str, str, str, str, str]] = []
-    n = len(ordered_steps)
-    if n == 0:
-        return rows
-    # Build index from (d, t) → position.
-    {
-        (d, t): i for i, (d, t, _) in enumerate(ordered_steps)
-    }
-    for proc, min_time in sorted(processes_min):
-        if min_time <= 0:
-            continue
-        for i, (d, t, _) in enumerate(ordered_steps):
-            rows.append((proc, d, t, d, t))
-            accumulated = 0.0
-            j = i - 1
-            while j >= 0:
-                d_prev, t_prev, dur_prev = ordered_steps[j]
-                accumulated += dur_prev
-                if accumulated < min_time:
-                    rows.append((proc, d, t, d_prev, t_prev))
-                    j -= 1
-                else:
-                    break
-    return rows
-
-
 def _process_min_time(source: "InputSource",
                         parameter_name: str) -> list[tuple[str, float]]:
     """Pull (entity, value) for ``unit.<parameter_name>`` (and connection
@@ -5541,7 +5501,8 @@ def downtime_lookback_from_source(source: "InputSource",
 def apply_mintime_lookbacks(flex_data: object, source: "InputSource",
                             first_step_link: pl.DataFrame | None, solve_name: str) -> None:
     """Set ``uptime_lookback`` / ``downtime_lookback`` and the projected ``pdt_*_set`` of ``flex_data`` from its
-    ``dt``, ``p_step_duration`` and ``dt_ramp_link``, and print a warning for each process whose look-back the
+    ``dt``, ``p_step_duration`` and ``dt_ramp_link``, the roll carries ``uptime_carry`` / ``downtime_carry``
+    (:func:`online_mintime_carry_from_source`), and print a warning for each process whose look-back the
     solve boundary cuts short (``params._mintime.cut_short_lookback_warnings``; ``first_step_link`` is the
     complete solve's ``step_previous`` of this solve's period first steps, ``None`` when not written)."""
     from flextool.engine.preprocess.params._mintime import report_cut_short_lookback
@@ -5558,42 +5519,14 @@ def apply_mintime_lookbacks(flex_data: object, source: "InputSource",
         flex_data.pdt_downtime_set = pdt_downtime_set_from_lookback(dlb)
     if ulb is None and dlb is None:
         return
+    flex_data.uptime_carry = (online_mintime_carry_from_source(source, flex_data, "min_uptime")
+                              if ulb is not None else None)
+    flex_data.downtime_carry = (online_mintime_carry_from_source(source, flex_data, "min_downtime")
+                                if dlb is not None else None)
     min_times = {"min_uptime": _process_min_time(source, "min_uptime"),
                  "min_downtime": _process_min_time(source, "min_downtime")}
-    report_cut_short_lookback(min_times, dt, first_step_link, getattr(flex_data, "online_startup_history", None),
+    report_cut_short_lookback(min_times, dt, first_step_link, getattr(flex_data, "dt_ramp_carry", None),
                               solve_name)
-
-
-def _step_order_with_duration(dt: pl.DataFrame,
-                                  p_step_duration: object | None
-                                  ) -> list[tuple[str, str, float]]:
-    """Return (d, t, duration) tuples in dt's natural order."""
-    if dt is None or dt.height == 0:
-        return []
-    if "step_duration" in dt.columns:
-        df = dt.sort("d", "t")
-        return [(d, t, float(s)) for d, t, s in zip(
-            df["d"].to_list(), df["t"].to_list(),
-            df["step_duration"].to_list())]
-    sd = (p_step_duration.frame
-            if p_step_duration is not None
-                and hasattr(p_step_duration, "frame")
-            else p_step_duration)
-    if sd is None:
-        df = dt.sort("d", "t")
-        return [(d, t, 1.0) for d, t in zip(
-            df["d"].to_list(), df["t"].to_list())]
-    # Defensive re-cast: align d/t to canonical Enum so the left-join
-    # against sd (alias_to_axis-cast d/t) composes cleanly.
-    df = (dt.lazy()
-            .with_columns(alias_to_axis(pl.col("d"), "d"),
-                          alias_to_axis(pl.col("t"), "t"))
-            .join(sd.lazy(), on=["d", "t"], how="left")
-            .with_columns(value=pl.col("value").fill_null(1.0))
-            .sort("d", "t")
-            .collect())
-    return [(d, t, float(v)) for d, t, v in zip(
-        df["d"].to_list(), df["t"].to_list(), df["value"].to_list())]
 
 
 def pdt_uptime_set_from_lookback(uptime_lookback: pl.DataFrame | None
@@ -5617,118 +5550,27 @@ def pdt_downtime_set_from_lookback(downtime_lookback: pl.DataFrame | None
               .collect())
 
 
-def online_mintime_carry_from_source(
-        source: "InputSource",
-        dt: pl.DataFrame | None,
-        p_step_duration: object | None,
-        history: pl.DataFrame | None,
-        parameter_name: str,
-        ) -> pl.DataFrame | None:
-    """OC1 Carrier 2 — build the cross-roll-boundary min_uptime /
-    min_downtime carry ``(p, d, t, value)`` for a rolling continuation roll.
+def online_mintime_carry_from_source(source: "InputSource", flex_data: object, parameter_name: str
+                                     ) -> pl.DataFrame | None:
+    """The roll carry of the minimum up / down time ``(p, d, t, value)`` (Utf8) of *flex_data*.
 
-    ``parameter_name`` is ``"min_uptime"`` (carries realized ``v_startup``,
-    injected on the ``minimum_uptime`` RHS) or ``"min_downtime"`` (carries
-    realized ``v_shutdown``, injected on the ``minimum_downtime`` LHS).
-
-    ``history`` is the prior rolls' realized committed-commitment window
-    handed off by :class:`SolveHandoff` (``online_history``) — one row per
-    ``(p, d, t)`` with ``startup`` / ``shutdown`` metric columns and a
-    ``duration`` column (carried so the lookback walk is self-contained;
-    the history steps are not in this roll's ``dt``).  ``None`` / empty on
-    the first roll / non-rolling / no-online solves → ``None`` here (the
-    model's online block then takes its byte-identical baseline path).
-
-    Construction (mirrors the within-roll lookback, extended into history):
-
-      * ``L`` is the AUTHORED ``min_uptime`` / ``min_downtime`` parameter
-        (hours), NOT a step count inferred from the per-roll lookback — a
-        short / last roll truncates that window and would silently
-        undercount the carry.
-      * Run :func:`_build_lookback_rows` with that authored ``L`` over the
-        combined, chronologically-ordered timeline ``history ++ roll-dt``
-        (each step with its own duration), then keep only rows whose
-        constrained step ``(d, t)`` is a ROLL step and whose predecessor
-        ``(d_back, t_back)`` is a HISTORY step, summing the carried metric.
-      * PERIOD-AWARE gate (``d == d_back``): a carried obligation is kept
-        ONLY within the same period.  FlexTool's online dynamics are
-        period-cyclic (the predecessor of a period's first step wraps
-        within that period, never to the prior period), so a min-up/down
-        obligation must NOT be carried across a period boundary — the
-        non-contiguous investment years (e.g. 2020 → 2025) do not connect,
-        and forcing one across would be a unit-commitment infeasibility no
-        node penalty slack can absorb.
-
-    Returns the ``(p, d, t, value)`` carry frame (Utf8 axes, caller casts
-    to the model Enum domain), or ``None`` when nothing is carried.
-    """
-    if dt is None or dt.height == 0 or history is None or history.height == 0:
+    ``parameter_name`` ``"min_uptime"`` carries the realized ``v_startup`` (``uptime_carry``, on the
+    ``minimum_uptime`` RHS), ``"min_downtime"`` the realized ``v_shutdown`` (``downtime_carry``, on the
+    ``minimum_downtime`` LHS).  The previous solve's realized on-line history (``online_startup_history``, each step
+    with its ``hours_to_end``) reaches the steps that follow the roots ``dt_ramp_carry`` along ``dt_ramp_link``
+    (``params._mintime.mintime_roll_carry``): the first steps that continue from the previous solve's last realized
+    step on the timeline — a period that continues the previous one and the forecast branches that start with such a
+    step included, a period that does not continue it (``jump != 1``) and a step after a gap excluded.  ``L`` is the
+    authored parameter.  ``None`` when nothing is carried."""
+    from flextool.engine.preprocess.params._mintime import mintime_roll_carry
+    history = getattr(flex_data, "online_startup_history", None)
+    if history is None or history.height == 0:
         return None
-    procs = _process_min_time(source, parameter_name)
-    if not procs:
-        return None
-    metric = "startup" if parameter_name == "min_uptime" else "shutdown"
-    if metric not in history.columns:
-        return None
-
-    roll_ord = _step_order_with_duration(dt, p_step_duration)
-    if not roll_ord:
-        return None
-    roll_set = {(d, t) for d, t, _ in roll_ord}
-
-    # history step durations + per-process metric values (Utf8 keys)
-    hist_dur: dict[tuple[str, str], float] = {}
-    hist_val: dict[tuple[str, str, str], float] = {}
-    for r in history.iter_rows(named=True):
-        d = str(r["d"])
-        t = str(r["t"])
-        try:
-            dur = float(r["duration"])
-        except (TypeError, ValueError):
-            dur = 1.0
-        hist_dur.setdefault((d, t), dur)
-        try:
-            val = float(r[metric])
-        except (TypeError, ValueError):
-            val = 0.0
-        hist_val[(str(r["p"]), d, t)] = val
-    hist_set = set(hist_dur)
-    if not hist_set:
-        return None
-
-    # combined chronologically-ordered timeline: history steps precede the
-    # roll steps (strictly earlier (d, t)); (d, t) string order is the
-    # canonical chronological order (p2020 < p2025, t0001 < t0002).
-    steps_dur: dict[tuple[str, str], float] = dict(hist_dur)
-    for d, t, dur in roll_ord:
-        steps_dur[(d, t)] = dur
-    ordered = sorted((d, t, dur) for (d, t), dur in steps_dur.items())
-
-    out_rows: list[tuple[str, str, str, float]] = []
-    for proc, min_time in procs:
-        if min_time <= 0:
-            continue
-        lb = _build_lookback_rows([(proc, float(min_time))], ordered)
-        for (pp, d, t, d_back, t_back) in lb:
-            if (d, t) not in roll_set:          # constrained step in the roll
-                continue
-            if (d_back, t_back) not in hist_set:  # predecessor in history
-                continue
-            if d != d_back:                     # PERIOD-AWARE: same period only
-                continue
-            v = hist_val.get((pp, d_back, t_back), 0.0)
-            if v != 0.0:
-                out_rows.append((pp, d, t, v))
-    if not out_rows:
-        return None
-    carry = (pl.DataFrame(out_rows, schema=["p", "d", "t", "value"],
-                          orient="row")
-             .group_by(["p", "d", "t"]).agg(pl.col("value").sum())
-             .filter(pl.col("value").abs() > 1e-12)
-             .sort("p", "d", "t"))
-    if carry.height == 0:
-        return None
-    return carry
+    return mintime_roll_carry(getattr(flex_data, "dt", None), getattr(flex_data, "p_step_duration", None),
+                              getattr(flex_data, "dt_ramp_link", None), getattr(flex_data, "dt_ramp_carry", None),
+                              history, _process_min_time(source, parameter_name),
+                              "startup" if parameter_name == "min_uptime" else "shutdown",
+                              getattr(flex_data, "period_branch_full", None))
 
 
 # ---------------------------------------------------------------------------

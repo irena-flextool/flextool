@@ -42,7 +42,7 @@ _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
     K.HANDOFF_ROLL_END_FLOW:      ("process", "source", "sink", "period", "step", "duration", "value"),
     K.HANDOFF_ROLL_END_STEP:      ("period", "step", "duration"),
     K.HANDOFF_ONLINE_HISTORY:     ("process", "period", "step",
-                                   "startup", "shutdown", "duration"),
+                                   "startup", "shutdown", "duration", "hours_to_end"),
     K.HANDOFF_FIX_ONLINE:         ("process", "period", "step", "value"),
     K.HANDOFF_FIX_RESERVE:        ("process", "reserve", "upDown", "node", "period", "step", "value"),
     K.HANDOFF_CUMULATIVE_CO2:     ("group", "period", "value", "represented"),

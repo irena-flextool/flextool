@@ -387,3 +387,78 @@ def test_mintime_lookback_of_each_forecast_equals_the_realized_dispatch_twin(cha
                 assert mine == twin, (
                     f"roll {k} {which} {forecast}: differs from the realized twin: "
                     f"extra {sorted(mine - twin)[:4]}, missing {sorted(twin - mine)[:4]}")
+
+
+# Min up/down times of the fixture (``unit.min_uptime`` / ``min_downtime``, hours; 1 h steps).
+MIN_TIME = {COAL: 4.0, GAS: 3.0}
+
+
+@pytest.fixture(scope="module")
+def peak_chain(tmp_path_factory):
+    """The fixture with a demand of 300 MW except 7000 MW in the first four hours of each later day
+    (t0024-t0027, t0048-t0051, t0072): each realized dispatch roll starts units at its last step, t0024 / t0048,
+    whose minimum up times reach into the next roll."""
+    from spinedb_api import DatabaseMapping, import_data
+    from spinedb_api.parameter_value import Map
+    from flextool.engine import run_chain_from_db
+
+    tmp = tmp_path_factory.mktemp("rolling_separate_dispatch_peak")
+    url = _build_db(tmp)
+    steps_t = [f"t{i:04d}" for i in range(1, 73)]
+    demand = [-7000.0 if i % 24 in (0, 1, 2, 3) and i > 3 else -300.0 for i in range(1, 73)]
+    with DatabaseMapping(url) as dm:
+        import_data(dm, parameter_values=[("node", "demand_node", "inflow",
+                                           Map(steps_t, demand, index_name="time"), "system")])
+        dm.commit_session("demand peak at the roll seams")
+    work = tmp / "work"
+    work.mkdir()
+    return run_chain_from_db(url, SCENARIO, work_folder=work, warm=False, keep_solutions=True)
+
+
+def _startups(step, p: str) -> dict[str, float]:
+    sol = step.solution
+    for vn in ("v_startup_integer", "v_startup_linear"):
+        if vn in sol._vars:
+            f = sol.value(vn).filter(pl.col("p").cast(pl.Utf8) == p)
+            if f.height:
+                return dict(zip(f["t"].cast(pl.Utf8).to_list(), f["value"].to_list()))
+    return {}
+
+
+@pytest.mark.solver
+def test_min_uptime_carry_reaches_every_forecast_of_the_next_roll(peak_chain):
+    """Each roll ≥ 1 of the UC fan continues the previous realized dispatch at its first step, so every forecast's
+    first steps carry the start-ups that realized dispatch made within the minimum up time: on 1 h steps,
+    carry[x] = Σ v_startup[h] over the realized steps h of the previous dispatch roll with idx(x) − idx(h) < L
+    (L = 4 h coal, 3 h gas) — the same as the realized dispatch twin of the roll.  The forecasts used to get no
+    carry (the history is under ``period1``, the forecasts' steps are not)."""
+    steps = peak_chain
+    assert all(s.optimal for s in steps.values())
+    carried = 0
+    for k in range(1, N_ROLLS):
+        prev_disp = steps[DISP.format(k=k - 1)]
+        for p, L in MIN_TIME.items():
+            su = _startups(prev_disp, p)
+            first = int(steps[DISP.format(k=k)].flex_data.dt["t"].cast(pl.Utf8).sort()[0][1:])
+            expect = {}
+            for x in range(first, first + int(L)):
+                v = sum(s for t, s in su.items() if x - int(t[1:]) < L)
+                if abs(v) > 1e-9:
+                    expect[f"t{x:04d}"] = v
+            assert expect, f"roll {k} {p}: the witness starts no unit within the minimum up time of the seam"
+            for name, owner in ((DISP.format(k=k), None), (UC.format(k=k), "forecasts")):
+                uc = steps[name].flex_data.uptime_carry
+                assert uc is not None, f"{name}: no uptime carry"
+                uc = uc.filter(pl.col("p") == p)
+                periods = sorted(uc["d"].unique().to_list())
+                if owner is None:
+                    assert periods == [REALIZED_PERIOD]
+                else:
+                    assert periods == sorted(steps[name].flex_data.dt["d"].cast(pl.Utf8).unique().to_list())
+                for d in periods:
+                    got = dict(uc.filter(pl.col("d") == d).select("t", "value").rows())
+                    assert got.keys() == expect.keys(), (name, p, d, got, expect)
+                    for t, v in expect.items():
+                        assert got[t] == pytest.approx(v, abs=1e-9), (name, p, d, t)
+                    carried += 1
+    assert carried > 0

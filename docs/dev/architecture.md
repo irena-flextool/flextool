@@ -868,21 +868,33 @@ names as before for debug inspection:
 | `divest_cumulative` | `p_entity_divested.csv` | Cumulative divest per entity carried forward. |
 | `roll_end_state` / `upward_roll_end_state` | `p_roll_continue_state.csv` | `v_state` at the end of the realized window; the start state of the sub-solves that continue from it, routed by `solve/_carry_routing.py` (the latest realised state at the sub-solve's nesting level or deeper; engine.md "Storage carry routing"). |
 | `roll_end_online` | *(in-memory only)* | Committed jump-end `v_online` per online process (OC1 Carrier 1); the next roll's `online_change` first step (`dt_online_carry`) sees the prior commitment instead of the within-roll cyclic wrap, so a unit that stays committed is not re-charged a startup across the boundary. |
-| `online_history` | *(in-memory only)* | Trailing realized committed `v_startup`/`v_shutdown` window (OC1 Carrier 2); rebuilt into `uptime_carry`/`downtime_carry` at the next roll and injected on the `minimum_uptime` RHS / `minimum_downtime` LHS so an obligation opened in roll N constrains roll N+1's early steps. |
+| `online_history` | *(in-memory only)* | The realized `v_startup`/`v_shutdown` that a minimum up / down time still covers after the solve: the last realized step and its predecessors along `dt_ramp_link`, each with `hours_to_end` (hours from its start to the end of the last realized step); inside a forecasts-only fan under the tied forecast's steps. Rebuilt into `uptime_carry`/`downtime_carry` at the next solve's steps that follow its `dt_ramp_carry` and injected on the `minimum_uptime` RHS / `minimum_downtime` LHS. |
 | `fix_storage_quantity / price / usage` | `fix_storage_*.csv` | Parent-imposed storage quota at the boundary (any subset of the three metrics — each carries its own `(node, period, step)` index, so a separate timesteps carrier is not needed). |
 | `cumulative_co2` | `co2_cum_realized_tonnes.csv` | Running CO2 totals across rolls. |
 | `cumulative_commodity` | `commodity_ladder_cumulative.csv` | Per-tier commodity consumption (ladder pricing). |
 | `cum_sim_hours` | `ladder_cum_sim_hours.csv` | Running simulated-hour total per period. |
 
 Cross-boundary unit-commitment continuity (OC1 Carriers 1 & 2) is
-**hard-enforced** and **period-aware**: a `min_uptime` / `min_downtime`
-obligation opened near a roll's jump-end carries into the next roll's early
-steps *only within the same period*. FlexTool's online dynamics are
-period-cyclic (a period's first step wraps within that period, never to the
-prior period), so a commitment obligation must not propagate across a period
-boundary — the non-contiguous investment years (e.g. 2020 → 2025) do not
-connect, and forcing one across would be a unit-commitment infeasibility no
-node penalty slack can absorb. A node with the default `penalty_method`
+**hard-enforced** and **timeline-aware**: a `min_uptime` / `min_downtime`
+obligation opened near a solve's last realized step carries exactly where
+`dt_ramp_carry` does — into the first steps of the next solve that continue
+that step on the timeline (`jump == 1`): the same period, a period that
+continues the previous one, and the forecast branches that start with such a
+step. It does not carry into a period that does not continue the previous one
+(investment years that reuse one timeset, e.g. 2020 → 2025), across a gap or
+into a representative-block start. The consumer counts elapsed time from the
+`dt_ramp_carry` roots along `dt_ramp_link` and adds each history step's
+`hours_to_end` (`params/_mintime.py`); it raises when the history does not end
+at the carried step (history and step handed over from different solves).
+Time-keyed carries (ramp, online, min up / down) reach forecast branches
+through the `dt_*_carry` roots (`_ramp_links._with_fan_members`); the
+period-keyed `branch_periods_inherit_carry` (`params/_branch.py`) is
+deliberately not applied to them — `hours_to_end` plus the roots is its
+timeline counterpart, and a copy per branch would count twice. A solve whose
+first step continues a step of another time resolution (a 6 h storage roll
+after an hourly dispatch) has no `dt_ramp_carry` there: it takes neither the
+ramp nor the min up / down carry, and the cut-short look-back warning names
+the step. A node with the default `penalty_method`
 (`regular`) absorbs any forced-on generation through its downward penalty
 (`vq_state_down`, a feasible spill); a hard-balance node (`penalty_method =
 off`) can instead become infeasible when a myopically-committed unit's

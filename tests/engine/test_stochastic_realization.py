@@ -734,6 +734,44 @@ def test_committed_window_in_forecasts_only_fan_online_only_solves(tmp_path_fact
         assert set(takes["d"].to_list()) == {"p2035_high", "p2035_low"} and takes["t"].n_unique() == 1, takes
 
 
+def _rolling_online_only_min_uptime(data: dict) -> None:
+    """:func:`_rolling_online_only` with the peaker's minimum up and down time 2 h (1 h steps)."""
+    _rolling_online_only(data)
+    for r in data["parameter_values"]:
+        if r[1] == "peaker" and r[2] in ("min_uptime", "min_downtime"):
+            r[3] = [base64.b64encode(json.dumps(2.0).encode()).decode(), "float"]
+
+
+@pytest.mark.solver
+def test_committed_window_in_forecasts_only_fan_carries_the_min_uptime(tmp_path_factory) -> None:
+    """The forecasts-only rolling fan with a 2 h minimum up time: each roll commits its first step inside the fan
+    (the tied forecast ``p2035_high`` holds its values), so the next roll's forecasts both start at the step after
+    it and owe the start-ups of that committed step — on 1 h steps the committed step is 1 h before the next roll's
+    first step (1 < 2), the step before it 2 h (not < 2).  So carry = v_startup of ``p2035_high`` at the committed
+    step, at the first step of every forecast of the next roll, nothing later.  The history used to be stored under
+    the period label, where no forecast's look-back reached it."""
+    tmp = tmp_path_factory.mktemp("label_committed_min_uptime")
+    steps, _ = _run(_variant(T0_FIXTURE, tmp, "rolling_online_only_min_uptime", _rolling_online_only_min_uptime),
+                    tmp)
+    rolls = list(steps.values())
+    assert len(rolls) == 3 and all(r.solution.optimal for r in rolls)
+    carried = 0
+    for prev, nxt in zip(rolls, rolls[1:]):
+        committed = prev.handoff.roll_end_step["step"][0]
+        su = utf8(prev.solution.value("v_startup_linear")).filter(
+            (pl.col("p") == "peaker") & (pl.col("d") == FIRST_FORECAST) & (pl.col("t") == committed))
+        expect = float(su["value"][0])
+        first = utf8(nxt.flex_data.dt)["t"].sort()[0]
+        uc = nxt.flex_data.uptime_carry
+        got = {} if uc is None else {(d, t): v for _p, d, t, v in utf8(uc).rows()}
+        want = {(d, first): expect for d in ("p2035_high", "p2035_low")} if abs(expect) > 1e-9 else {}
+        assert got.keys() == want.keys(), (got, want)
+        for key, v in want.items():
+            assert got[key] == pytest.approx(v, abs=1e-9)
+        carried += len(want)
+    assert carried > 0, "the witness starts no unit at a committed step"
+
+
 def _flowgroup_path(invest_method: str):
     import importlib.util
     name = "_lp_snapshot_for_realization"

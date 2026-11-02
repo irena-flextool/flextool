@@ -4,14 +4,17 @@
 ancestors along ``dt_ramp_link`` while the elapsed time (the summed durations of the chain from the ancestor up
 to, not including, the step) stays below the minimum time; it stops at a step without a link (solve start, a
 period that does not continue the previous one, a gap, a representative-block start, a forecast branch that starts
-the solve) and never wraps.  Every expected set below is derived by hand from that rule.
+the solve) and never wraps.  The roll carry (``history_hours_to_end`` / ``mintime_roll_carry``) extends the same
+chain across a roll seam: from the previous roll's last realized step backwards, and from the steps that continue
+it (``dt_ramp_carry``) forwards.  Every expected set below is derived by hand from that rule.
 """
 from __future__ import annotations
 
 import polars as pl
 import pytest
 
-from flextool.engine.preprocess.params._mintime import cut_short_lookback_warnings, mintime_lookback
+from flextool.engine.preprocess.params._mintime import (cut_short_lookback_warnings, history_hours_to_end,
+                                                        mintime_lookback, mintime_roll_carry)
 from flextool.engine.preprocess.params._ramp_links import ramp_link_from_jump
 
 
@@ -147,22 +150,80 @@ def _first_step_link(rows: list[tuple[str, str, str, str, int]]) -> pl.DataFrame
                          "jump": [str(r[4]) for r in rows]})
 
 
-def test_cut_short_warning_only_when_no_history_reaches_a_continuing_first_step():
-    """A roll p,t5..t6 whose first step continues p,t4 of the previous roll (jump 1, p,t4 not in this roll):
-    warned for a process without handed-over on-line history; silent for a process with history, when the first
-    step does not continue the timeline (jump ≠ 1), and when the predecessor is a step of this roll."""
+def test_cut_short_warning_only_where_no_roll_carry_starts():
+    """A roll p,t5..t6 whose first step continues p,t4 of the previous roll (jump 1, p,t4 not in this roll): warned
+    for every process with a minimum time when p,t5 is not a step the roll carry starts at (``dt_ramp_carry``: the
+    previous roll did not end at p,t4, e.g. it had steps of another length); silent when the carry starts there,
+    when the first step does not continue the timeline (jump ≠ 1), when the predecessor is a step of this roll and
+    for a first step that is not a step of this solve (a period label)."""
     dt = _dt([("p", "t5"), ("p", "t6")])
     fsl = _first_step_link([("p", "t5", "p", "t4", 1)])
     mt = {"min_uptime": [("u", 3.0), ("v", 4.0)], "min_downtime": [("u", 2.0), ("g", 0.0)]}
-    hist = pl.DataFrame({"p": ["v"], "d": ["p"], "t": ["t4"], "startup": [1.0], "shutdown": [0.0],
-                         "duration": [1.0]})
     msgs = cut_short_lookback_warnings(mt, dt, fsl, None, "roll_1")
     assert len(msgs) == 3
     assert "'u' has min_uptime=3" in msgs[0] and "(p, t5)" in msgs[0] and "'roll_1'" in msgs[0]
     assert "'v' has min_uptime=4" in msgs[1]
     assert "'u' has min_downtime=2" in msgs[2]
-    with_hist = cut_short_lookback_warnings(mt, dt, fsl, hist, "roll_1")
-    assert len(with_hist) == 2 and not any("'v'" in m for m in with_hist)
+    roots = pl.DataFrame({"d": ["p"], "t": ["t5"], "d_previous": ["p"], "t_previous": ["t4"]})
+    assert cut_short_lookback_warnings(mt, dt, fsl, roots, "roll_1") == []
     assert cut_short_lookback_warnings(mt, dt, _first_step_link([("p", "t5", "p", "t6", -1)]), None,
                                        "roll_0") == []
     assert cut_short_lookback_warnings(mt, _dt([("p", "t4"), ("p", "t5")]), fsl, None, "solve") == []
+    assert cut_short_lookback_warnings(mt, dt, _first_step_link([("label", "t5", "p", "t4", 1)]), None,
+                                       "roll_1") == []
+
+
+def _history(rows: list[tuple[str, str, str, float, float, float, float]]) -> pl.DataFrame:
+    return pl.DataFrame(rows, schema={"p": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "startup": pl.Float64,
+                                      "shutdown": pl.Float64, "duration": pl.Float64, "hours_to_end": pl.Float64},
+                        orient="row")
+
+
+def test_history_hours_to_end_walks_back_from_the_last_realized_step():
+    """Realized cells P,t1..t3 (1, 2, 1 h) linked in a chain, R,t1 not linked; last = P,t3, l_max = 4:
+    hours_to_end(t3) = its own 1 h, t2 = 2 + 1 = 3 h, t1 = 1 + 2 + 1 = 4 h (not < 4: dropped); R,t1 is not on
+    the chain.  A last step at least l_max long leaves nothing."""
+    cells = pl.DataFrame({"d": ["P", "P", "P", "R"], "t": ["t1", "t2", "t3", "t1"], "dur": [1.0, 2.0, 1.0, 1.0]})
+    link = _link(_chain("P", ["t1", "t2", "t3"]))
+    h2e = history_hours_to_end(cells, link, ("P", "t3"), 4.0)
+    assert sorted(h2e.rows()) == [("P", "t2", 3.0), ("P", "t3", 1.0)]
+    assert history_hours_to_end(cells, link, ("P", "t3"), 1.0) is None
+    assert history_hours_to_end(cells, link, ("X", "t3"), 4.0) is None
+
+
+def test_roll_carry_reaches_the_continuing_period_and_its_forecasts_only():
+    """History of the previous roll: Q,t1..t3 (1 h each, hours_to_end 3, 2, 1), start-ups 1, 0, 1, shut-downs
+    0, 1, 0; it ends at Q,t3.  This roll: Q,t4..t6 and the forecasts A, B (t4, t5) continue Q,t3 (roots Q,t4,
+    A,t4, B,t4); R,t1..t2 does not.  L = 3, carry[x] = Σ metric[h] over elapsed(root → x) + hours_to_end[h] < 3:
+    at a root (elapsed 0) t2 and t3 count (2, 1 < 3): start-ups 0 + 1 = 1, shut-downs 1 + 0 = 1; one step later
+    (elapsed 1) only t3 (1 + 1 < 3): start-ups 1, shut-downs 0; two steps later nothing (2 + 1 = 3).  R gets
+    nothing."""
+    dt = _dt([("Q", "t4"), ("Q", "t5"), ("Q", "t6"), ("A", "t4"), ("A", "t5"), ("B", "t4"), ("B", "t5"),
+              ("R", "t1"), ("R", "t2")])
+    link = _link(_chain("Q", ["t4", "t5", "t6"]) + _chain("A", ["t4", "t5"]) + _chain("B", ["t4", "t5"])
+                 + _chain("R", ["t1", "t2"]))
+    carry = pl.DataFrame({"d": ["Q", "A", "B"], "t": ["t4"] * 3, "d_previous": ["Q"] * 3, "t_previous": ["t3"] * 3})
+    hist = _history([("u", "Q", "t1", 1.0, 0.0, 1.0, 3.0), ("u", "Q", "t2", 0.0, 1.0, 1.0, 2.0),
+                     ("u", "Q", "t3", 1.0, 0.0, 1.0, 1.0)])
+    up = mintime_roll_carry(dt, None, link, carry, hist, [("u", 3.0)], "startup")
+    assert sorted(up.rows()) == sorted([("u", d, t, 1.0) for d in ("Q", "A", "B") for t in ("t4", "t5")])
+    dn = mintime_roll_carry(dt, None, link, carry, hist, [("u", 3.0)], "shutdown")
+    assert sorted(dn.rows()) == sorted([("u", d, "t4", 1.0) for d in ("Q", "A", "B")])
+    assert mintime_roll_carry(dt, None, link, None, hist, [("u", 3.0)], "startup") is None
+
+
+def test_roll_carry_raises_when_the_history_ends_at_another_step():
+    """The history ends at Q,t3 (the row whose hours_to_end is its own duration); a roll that continues Q,t2
+    raises.  A history under a forecast A of the carried period Q (period__branch Q → A) is accepted."""
+    dt = _dt([("Q", "t4")])
+    hist = _history([("u", "Q", "t3", 1.0, 0.0, 1.0, 1.0)])
+    carry = pl.DataFrame({"d": ["Q"], "t": ["t4"], "d_previous": ["Q"], "t_previous": ["t2"]})
+    with pytest.raises(ValueError, match="different solves"):
+        mintime_roll_carry(dt, None, None, carry, hist, [("u", 3.0)], "startup")
+    fan_hist = _history([("u", "A", "t3", 1.0, 0.0, 1.0, 1.0)])
+    carry3 = carry.with_columns(t_previous=pl.lit("t3"))
+    with pytest.raises(ValueError, match="different solves"):
+        mintime_roll_carry(dt, None, None, carry3, fan_hist, [("u", 3.0)], "startup")
+    pb = pl.DataFrame({"d": ["Q"], "b": ["A"]})
+    got = mintime_roll_carry(dt, None, None, carry3, fan_hist, [("u", 3.0)], "startup", pb)
+    assert got.rows() == [("u", "Q", "t4", 1.0)]

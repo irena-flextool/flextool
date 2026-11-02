@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **Fix: the minimum up / down time obligation carried into the next roll follows the timeline.** The start-ups
+  and shut-downs realized near the end of a roll were carried into the next roll only within a period of the same
+  name, matched by sorting step names. The forecast branches of a stochastic roll therefore never took the
+  obligation (the history had the period's name, not the branch's), and neither did a period that continues the
+  previous one on the same timeline. The carry now starts at the first steps that continue the previous roll's last
+  realized step on the timeline — the same steps from which ramp limits continue — and counts the hours from each
+  realized start-up or shut-down to them, so every forecast branch and a continuing period take it; a period that
+  does not continue the previous one, a step after a gap and a representative-period start still take none. A roll
+  whose first step continues a step of another time resolution (for example a 6-hour storage roll after an hourly
+  dispatch) takes no carry either, as for ramp limits; the warning about a cut-short look-back names it.
 - **Fix: minimum up and down times only look back along the timeline.** The look-back of `min_uptime` /
   `min_downtime` walked the time steps in the order of their names, so it reached from a forecast branch into
   the last hours of a sibling branch, from the first hours of an investment year into the end of an earlier
@@ -8,8 +18,8 @@
   steps continue the previous period's on the same timeline and into the steps of a forecast branch before the
   reveal, and stops at a gap, at the start of a representative period, at a period that does not continue the
   previous one and at the first step of a solve (no cyclic wrap). A rolling or nested solve whose first step
-  continues the timeline of an earlier solve, but receives no realized on-line history from it, now prints a
-  warning naming the process.
+  continues the timeline of an earlier solve, but not the last step realized before it (so no realized on-line
+  history reaches it), now prints a warning naming the process.
 
 - **Fix: `co2_max_total` in rolling solves and chains of solves no longer allows more than the limit.**
   Each roll or solve subtracted the emissions earlier rolls and solves had already realized as plain

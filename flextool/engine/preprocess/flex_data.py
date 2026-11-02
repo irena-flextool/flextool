@@ -783,18 +783,14 @@ class FlexData:
     # commitment.  ``None`` on every solve that is not a realized-dispatch
     # sibling with a carried pin (→ byte-identical baseline path).
     p_fix_online: Param | None = None                        # (p, d, t)
-    # OC1 Carrier 2 — cross-roll-boundary min_uptime / min_downtime carry.
-    # ``online_startup_history`` is the prior rolls' realized committed
-    # ``v_startup`` / ``v_shutdown`` window (read from the ``online_history``
-    # handoff); ``online_min_time`` is the authored max(min_uptime,
-    # min_downtime) per online process (hours) used only to trim that
-    # window in the next handoff.  ``uptime_carry`` / ``downtime_carry`` are
-    # the per-``(p, d, t)`` carried obligations built from the window at the
-    # continuation roll (period-aware) and injected on the ``minimum_uptime``
-    # RHS / ``minimum_downtime`` LHS by ``_online.add_constraints``.  All ``None``
-    # on the first roll / non-rolling / no-min-up-down solves (→ the online
-    # block takes its byte-identical baseline path).
-    online_startup_history: pl.DataFrame | None = None       # (p, d, t, startup, shutdown, duration)
+    # Roll carry of the minimum up / down time.  ``online_startup_history`` is the realized ``v_startup`` /
+    # ``v_shutdown`` of the solve this one continues from (the ``online_history`` handoff), each step with its
+    # ``hours_to_end``; ``online_min_time`` is the authored max(min_uptime, min_downtime) per online process
+    # (hours), used only to trim this solve's own history.  ``uptime_carry`` / ``downtime_carry`` are the carried
+    # obligations per ``(p, d, t)`` at the steps that follow ``dt_ramp_carry`` (``_derived.apply_mintime_lookbacks``),
+    # on the ``minimum_uptime`` RHS / ``minimum_downtime`` LHS.  All ``None`` on the first roll / non-rolling /
+    # no-min-up-down solves.
+    online_startup_history: pl.DataFrame | None = None       # (p, d, t, startup, shutdown, duration, hours_to_end)
     online_min_time: pl.DataFrame | None = None              # (p, value) — max authored min-up/down hours
     uptime_carry: pl.DataFrame | None = None                 # (p, d, t, value) — carried Σ v_startup
     downtime_carry: pl.DataFrame | None = None               # (p, d, t, value) — carried Σ v_shutdown
@@ -2704,16 +2700,20 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         if df_fxo.height > 0:
             p_fix_online = Param(("p", "d", "t"), df_fxo)
 
-    # OC1 Carrier 2 — read the prior rolls' realized committed-commitment
-    # window (``handoff/online_history``) and the authored min-up/down
-    # durations.  The window feeds ``uptime_carry`` / ``downtime_carry``
-    # (built later on the synthetic/derived path once ``dt`` + the
-    # lookback are in place); ``online_min_time`` is used only to trim the
-    # window when THIS roll's handoff is built.  Both empty (→ ``None``) on
-    # the first roll / non-rolling / no-min-up-down solves.
+    # The realized on-line history of the solve this one continues from (``handoff/online_history``, routed with
+    # the carried step by ``solve._carry_routing``): each step's start-ups / shut-downs with its ``hours_to_end``
+    # (hours from its start to the end of that solve's last realized step).  It feeds ``uptime_carry`` /
+    # ``downtime_carry`` (``_derived.apply_mintime_lookbacks``, once ``dt`` and the ramp links are in place) and is
+    # extended into this solve's own history in its handoff.  ``None`` on the first roll / non-rolling /
+    # no-min-up-down solves.
     online_startup_history = None
     df_hist = read_handoff_frame(provider, K.HANDOFF_ONLINE_HISTORY)
     if df_hist is not None and df_hist.height > 0:
+        if "hours_to_end" not in df_hist.columns:
+            raise ValueError(
+                "handoff/online_history: the realized on-line history needs an 'hours_to_end' column (hours from "
+                "the start of each step to the end of the last realized step); got columns "
+                f"{df_hist.columns}")
         df_hist = (df_hist
                    .pipe(rename_to_axis,
                          {"process": "p", "period": "d", "step": "t"})
@@ -2726,8 +2726,11 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
                        pl.col("shutdown").cast(pl.Float64, strict=False)
                                          .fill_null(0.0),
                        pl.col("duration").cast(pl.Float64, strict=False)
-                                         .fill_null(1.0))
-                   .select("p", "d", "t", "startup", "shutdown", "duration"))
+                                         .fill_null(1.0),
+                       pl.col("hours_to_end").cast(pl.Float64, strict=False))
+                   .select("p", "d", "t", "startup", "shutdown", "duration", "hours_to_end"))
+        if df_hist["hours_to_end"].null_count() > 0:
+            raise ValueError("handoff/online_history: 'hours_to_end' must be a number on every row")
         if df_hist.height > 0:
             online_startup_history = df_hist
 
@@ -5194,29 +5197,11 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # drop the constraints even within a roll.  ``apply_mintime_lookbacks`` reads only ``flex_data`` frames
         # populated before this return and does nothing when no process authors a minimum time.
         def _wire_mintime_for_synthetic_solve():
-            dt = getattr(flex_data, "dt", None)
-            sd = getattr(flex_data, "p_step_duration", None)
             # The look-back follows flex_data.dt_ramp_link (seeded from solve_data/step_previous before this
-            # early return): the same predecessor links the ramp rows of this roll use.
+            # early return): the same predecessor links the ramp rows of this roll use.  The roll carry
+            # (``uptime_carry`` / ``downtime_carry``) starts at the same roll's ``dt_ramp_carry`` steps.
             _drv.apply_mintime_lookbacks(flex_data, db_reader, _drv._roll_first_step_link(workdir_path, provider),
                                          active_solve)
-            # OC1 Carrier 2 — cross-roll-boundary min-up/down continuity.
-            # Build ``uptime_carry`` / ``downtime_carry`` from the prior
-            # rolls' realized committed-commitment window
-            # (``online_startup_history``, read from the handoff by
-            # ``_load_online``) using the AUTHORED min-up/down parameter as
-            # the window length and the PERIOD-AWARE gate (same-period
-            # carry only — period-cyclic online dynamics).  ``None`` on the
-            # first roll / non-rolling / no-min-up-down solves (empty
-            # history) → the online block takes its baseline path.
-            hist = getattr(flex_data, "online_startup_history", None)
-            if hist is not None and hist.height > 0:
-                flex_data.uptime_carry = (
-                    _drv.online_mintime_carry_from_source(
-                        db_reader, dt, sd, hist, "min_uptime"))
-                flex_data.downtime_carry = (
-                    _drv.online_mintime_carry_from_source(
-                        db_reader, dt, sd, hist, "min_downtime"))
         _loadflex_prof("apply_db_overrides:pass_synthetic_mintime")
         _timed("c.synth mintime", _wire_mintime_for_synthetic_solve)
 
@@ -6465,19 +6450,16 @@ def build_handoff_from_solution(
             if _re.height > 0:
                 fix_reserve_df = _re
 
-    # ---- online_history: trailing realized committed v_startup/v_shutdown ----
-    # OC1 Carrier 2 — the sliding-window producer (roll_end_online above
-    # carries only the single jump-end ``v_online``; this carries the
-    # trailing window of realized committed ``v_startup`` / ``v_shutdown``
-    # per (process, period, step) so the next roll can honour a min_uptime /
-    # min_downtime obligation opened near the prior roll's jump-end).
-    # Accumulates ``prior_handoff.online_history`` ∪ this roll's realized
-    # steps, trimmed per (process, period) to the authored max min-up/down
-    # duration (``flex_data.online_min_time``) so it stays bounded over a
-    # long run.  Each step carries its own ``duration`` (the next roll's
-    # ``dt`` does not contain these steps).  Restricted to processes that
-    # author min-up/down (inner-joined on ``online_min_time``) — a process
-    # with no obligation never carries, so it is never stored.
+    # ---- online_history: the realized start-ups / shut-downs a minimum up / down time still covers ----
+    # The next solve's first steps that continue from this solve's last realized step (its ``dt_ramp_carry``) owe
+    # the obligations opened here (``_derived.apply_mintime_lookbacks``).  Each step keeps its ``hours_to_end``:
+    # the hours from its start to the end of the last realized step (``online_step``: the committed end, inside a
+    # forecasts-only fan the tied forecast ``d_ref``), walked back along this solve's ``dt_ramp_link`` over its
+    # realized cells (``params._mintime.history_hours_to_end``), so it stops where the look-back stops (solve
+    # start, a period that does not continue the previous one, a gap, a representative-block start).  The history
+    # this solve started from is kept, its ``hours_to_end`` moved by the root's, when the walk reaches this solve's
+    # ``dt_ramp_carry`` (the first step that continued from it).  Trimmed per process to ``hours_to_end <`` the
+    # authored max min-up/down time (``flex_data.online_min_time``); a process without one is never stored.
     online_history_df = None
     last_pairs_on = None
     rd_path_on = sd / "realized_dispatch.csv"
@@ -6496,139 +6478,109 @@ def build_handoff_from_solution(
          "v_shutdown_linear", "v_shutdown_integer"))
     online_min_time_df = (getattr(flex_data, "online_min_time", None)
                           if flex_data is not None else None)
-    # Only produce the window for processes that author min-up/down
-    # (``online_min_time`` non-empty); a solve with no min-up/down never
-    # carries, so nothing is stored — byte-identical to the baseline.
-    # The committed cells of a forecasts-only fan join the realized ones: the tied forecast's value (``d_ref``)
-    # under the period label (``d_out``), the name the next solve's look-back walks.
+    # The realized cells under this solve's step names: the realized dispatch and the committed cells of a
+    # forecasts-only fan (the tied forecast ``d_ref``; the period label has no steps of its own).
     _hist_cells = []
     if last_pairs_on is not None and last_pairs_on.height > 0:
         _cols = last_pairs_on.columns
         _dc = "period" if "period" in _cols else "d"
         _tc = "step" if "step" in _cols else "t"
         _hist_cells.append(last_pairs_on.select(pl.col(_dc).cast(pl.Utf8).alias("d"),
-                                                pl.col(_tc).cast(pl.Utf8).alias("t"),
-                                                pl.col(_dc).cast(pl.Utf8).alias("d_out")))
+                                                pl.col(_tc).cast(pl.Utf8).alias("t")))
     if fan_online is not None:
-        _hist_cells.append(fan_online.select(pl.col("d_ref").alias("d"), "t", pl.col("label").alias("d_out")))
+        _hist_cells.append(fan_online.select(pl.col("d_ref").alias("d"), "t"))
     if (_hist_cells
+            and online_step is not None
             and _has_su_sd
             and online_min_time_df is not None
             and online_min_time_df.height > 0):
-        realized_dt = pl.concat(_hist_cells).unique()
+        from flextool.engine.preprocess.params._mintime import (
+            check_history_continues_carried_step, history_hours_to_end)
+        lmap = online_min_time_df.select(pl.col("p").cast(pl.Utf8), pl.col("value").cast(pl.Float64).alias("_L"))
+        cells = pl.concat(_hist_cells).unique(maintain_order=True)
+        _sdf = _step_duration_frame(sd, flex_data, provider=provider)
+        dur = None
+        if _sdf is not None and _sdf.height > 0:
+            _d2 = "period" if "period" in _sdf.columns else "d"
+            _t2 = "time" if "time" in _sdf.columns else ("step" if "step" in _sdf.columns else "t")
+            _v2 = "value" if "value" in _sdf.columns else "p_step_duration"
+            dur = (_sdf.select(pl.col(_d2).cast(pl.Utf8).alias("d"), pl.col(_t2).cast(pl.Utf8).alias("t"),
+                               pl.col(_v2).cast(pl.Float64).alias("dur"))
+                   .unique(subset=["d", "t"], keep="first"))
+        cells = (cells.join(dur, on=["d", "t"], how="left", maintain_order="left") if dur is not None
+                 else cells.with_columns(dur=pl.lit(None, dtype=pl.Float64)))
+        cells = cells.with_columns(pl.col("dur").fill_null(1.0))
+        h2e = history_hours_to_end(cells, getattr(flex_data, "dt_ramp_link", None), online_step,
+                                   float(lmap["_L"].max()))
+        hist_now = None
+        if h2e is not None:
+            def _pull_online_metric(vnames):
+                frames = []
+                for vn in vnames:
+                    if vn not in sol._vars:
+                        continue
+                    _v = sol._vars[vn]
+                    _fr = (_v.frame.with_columns(pl.col("d").cast(pl.Utf8).alias("__d"),
+                                                 pl.col("t").cast(pl.Utf8).alias("__t"))
+                           .join(h2e, left_on=["__d", "__t"], right_on=["d", "t"], how="inner"))
+                    if _fr.height == 0:
+                        continue
+                    _ids = _fr["col_id"].to_numpy()
+                    frames.append(_fr.select(pl.col("p").cast(pl.Utf8), pl.col("__d").alias("d"),
+                                             pl.col("__t").alias("t"))
+                                  .with_columns(value=pl.Series(sol.col_value[_ids])))
+                if not frames:
+                    return None
+                return pl.concat(frames).group_by(["p", "d", "t"]).agg(pl.col("value").sum())
 
-        def _pull_online_metric(vnames):
-            frames = []
-            for vn in vnames:
-                if vn not in sol._vars:
-                    continue
-                _v = sol._vars[vn]
-                _fr = (_v.frame.with_columns(pl.col("d").cast(pl.Utf8).alias("__d"),
-                                             pl.col("t").cast(pl.Utf8).alias("__t"))
-                       .join(realized_dt, left_on=["__d", "__t"], right_on=["d", "t"], how="inner"))
-                if _fr.height == 0:
-                    continue
-                _ids = _fr["col_id"].to_numpy()
-                frames.append(_fr.select("p", pl.col("d_out").alias("d"), pl.col("__t").alias("t")).with_columns(
-                    value=pl.Series(sol.col_value[_ids])))
-            if not frames:
-                return None
-            return (pl.concat(frames).group_by(["p", "d", "t"])
-                    .agg(pl.col("value").sum()))
-
-        su = _pull_online_metric(("v_startup_linear", "v_startup_integer"))
-        sh = _pull_online_metric(("v_shutdown_linear", "v_shutdown_integer"))
-        if su is not None or sh is not None:
-            keys = (pl.concat([f.select("p", "d", "t")
-                               for f in (su, sh) if f is not None])
-                    .unique())
-            hist_now = keys
-            if su is not None:
-                hist_now = hist_now.join(
-                    su.rename({"value": "startup"}), on=["p", "d", "t"],
-                    how="left")
-            else:
-                hist_now = hist_now.with_columns(startup=pl.lit(0.0))
-            if sh is not None:
-                hist_now = hist_now.join(
-                    sh.rename({"value": "shutdown"}), on=["p", "d", "t"],
-                    how="left")
-            else:
-                hist_now = hist_now.with_columns(shutdown=pl.lit(0.0))
-            hist_now = hist_now.with_columns(
-                pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
-                pl.col("t").cast(pl.Utf8),
-                pl.col("startup").cast(pl.Float64).fill_null(0.0),
-                pl.col("shutdown").cast(pl.Float64).fill_null(0.0))
-            # per-(d, t) durations
-            _sdf = _step_duration_frame(sd, flex_data, provider=provider)
-            if _sdf is not None and _sdf.height > 0:
-                _d2 = "period" if "period" in _sdf.columns else (
-                    "d" if "d" in _sdf.columns else None)
-                _t2 = "time" if "time" in _sdf.columns else (
-                    "step" if "step" in _sdf.columns else (
-                        "t" if "t" in _sdf.columns else None))
-                _v2 = "value" if "value" in _sdf.columns else (
-                    "p_step_duration" if "p_step_duration" in _sdf.columns
-                    else None)
-                if _d2 and _t2 and _v2:
-                    dur = (_sdf.select(
-                        pl.col(_d2).cast(pl.Utf8).alias("d"),
-                        pl.col(_t2).cast(pl.Utf8).alias("t"),
-                        pl.col(_v2).cast(pl.Float64).alias("duration"))
-                        .unique(subset=["d", "t"]))
-                    hist_now = hist_now.join(dur, on=["d", "t"], how="left")
-            if "duration" not in hist_now.columns:
-                hist_now = hist_now.with_columns(duration=pl.lit(1.0))
-            hist_now = hist_now.with_columns(
-                pl.col("duration").cast(pl.Float64).fill_null(1.0))
-
-            # accumulate prior window (rename carrier schema → p/d/t): the window this solve started from, i.e. the
-            # routed ``handoff/online_history`` its LP read (solve._carry_routing: the latest realised dispatch, which
-            # is not the sequential predecessor after a storage / investment solve or for a realised-dispatch
-            # sibling).
+            su = _pull_online_metric(("v_startup_linear", "v_startup_integer"))
+            sh = _pull_online_metric(("v_shutdown_linear", "v_shutdown_integer"))
+            if su is not None or sh is not None:
+                hist_now = pl.concat([f.select("p", "d", "t") for f in (su, sh) if f is not None]).unique()
+                for name, frame in (("startup", su), ("shutdown", sh)):
+                    hist_now = (hist_now.join(frame.rename({"value": name}), on=["p", "d", "t"], how="left")
+                                if frame is not None else hist_now.with_columns(pl.lit(0.0).alias(name)))
+                hist_now = (hist_now
+                            .join(cells.select("d", "t", pl.col("dur").alias("duration")), on=["d", "t"],
+                                  how="left")
+                            .join(h2e, on=["d", "t"], how="inner")
+                            .with_columns(pl.col("startup").cast(pl.Float64).fill_null(0.0),
+                                          pl.col("shutdown").cast(pl.Float64).fill_null(0.0),
+                                          pl.col("duration").cast(pl.Float64).fill_null(1.0),
+                                          pl.col("hours_to_end").cast(pl.Float64))
+                            .select("p", "d", "t", "startup", "shutdown", "duration", "hours_to_end"))
+        if hist_now is not None:
+            # The history this solve started from (the routed ``handoff/online_history`` its LP read,
+            # solve._carry_routing), continued through the first step of this solve that continued from it.
             from flextool.engine.preprocess import _provider_keys as _K
             from flextool.engine.preprocess._provider_translators import read_handoff_frame as _read_hf
+            parts = [hist_now]
             prior_hist = _read_hf(provider, _K.HANDOFF_ONLINE_HISTORY)
-            if prior_hist is not None and prior_hist.height > 0:
-                prior_renamed = prior_hist.rename(
-                    {"process": "p", "period": "d", "step": "t"}).with_columns(
-                    pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
-                    pl.col("t").cast(pl.Utf8),
-                    pl.col("startup").cast(pl.Float64),
-                    pl.col("shutdown").cast(pl.Float64),
-                    pl.col("duration").cast(pl.Float64))
-                combined = (pl.concat(
-                    [hist_now.select("p", "d", "t", "startup", "shutdown",
-                                     "duration"),
-                     prior_renamed.select("p", "d", "t", "startup", "shutdown",
-                                          "duration")])
-                    .unique(subset=["p", "d", "t"], keep="first"))
-            else:
-                combined = hist_now.select(
-                    "p", "d", "t", "startup", "shutdown", "duration")
-
-            # trim per (process, period) to the authored min-up/down window
-            if online_min_time_df is not None and online_min_time_df.height > 0:
-                lmap = online_min_time_df.select(
-                    pl.col("p").cast(pl.Utf8),
-                    pl.col("value").cast(pl.Float64).alias("_L"))
-                combined = combined.join(lmap, on="p", how="inner")
-                if combined.height > 0:
-                    combined = (combined.sort(["p", "d", "t"])
-                                .with_columns(
-                                    _rev=pl.col("duration").reverse()
-                                    .cum_sum().reverse().over(["p", "d"]))
-                                # keep steps whose durations strictly after
-                                # them sum to < L (covers the next roll's
-                                # first-step lookback window, plus one).
-                                .filter(pl.col("_rev") - pl.col("duration")
-                                        < pl.col("_L"))
-                                .drop(["_L", "_rev"]))
+            ramp_carry = getattr(flex_data, "dt_ramp_carry", None)
+            if (prior_hist is not None and prior_hist.height > 0
+                    and ramp_carry is not None and ramp_carry.height > 0):
+                root = h2e.join(ramp_carry.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique(),
+                                on=["d", "t"], how="semi")
+                if root.height > 1:
+                    raise ValueError(f"online_history: the realized chain reaches several carried steps "
+                                     f"{root.rows()}")
+                if root.height == 1:
+                    prior = prior_hist.rename({"process": "p", "period": "d", "step": "t"}).select(
+                        pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                        pl.col("startup").cast(pl.Float64), pl.col("shutdown").cast(pl.Float64),
+                        pl.col("duration").cast(pl.Float64), pl.col("hours_to_end").cast(pl.Float64))
+                    carried = ramp_carry.select(pl.col("d_previous").cast(pl.Utf8),
+                                                pl.col("t_previous").cast(pl.Utf8)).unique()
+                    check_history_continues_carried_step(prior, carried.row(0),
+                                                         getattr(flex_data, "period_branch_full", None))
+                    parts.append(prior.with_columns(pl.col("hours_to_end") + float(root["hours_to_end"][0])))
+            combined = (pl.concat(parts).unique(subset=["p", "d", "t"], keep="first", maintain_order=True)
+                        .join(lmap, on="p", how="inner")
+                        .filter(pl.col("hours_to_end") < pl.col("_L"))
+                        .drop("_L"))
             if combined.height > 0:
-                online_history_df = combined.rename(
-                    {"p": "process", "d": "period", "t": "step"}).sort(
-                    ["process", "period", "step"])
+                online_history_df = (combined.rename({"p": "process", "d": "period", "t": "step"})
+                                     .sort(["process", "hours_to_end"], descending=[False, True]))
 
     # ---- fix_storage_quantity: v_state at fix_quantity timesteps × unitsize ----
     # Mirrors flextool's ``write_fix_storage_quantity`` (handoff_writers.py

@@ -409,8 +409,9 @@ def add_constraints(b: "_Build") -> None:
         #   < min_uptime[p]} — the chain stops at a step without a ramp predecessor (solve start, a period that
         #   does not continue the previous one, a gap in the timeline, a representative-block start, a forecast
         #   branch that starts the solve); no cyclic wrap.
-        # carry_up is the sum of the previous roll's startups that fall in this roll's lookback window
-        # (d.uptime_carry, 0-filled; absent outside continuation rolls).
+        # carry_up[p,d,t] = Σ_{h ∈ online_history} startup[p,h] over the root r ∈ dt_ramp_carry that is (d,t) or an
+        #   ancestor of it along dt_ramp_link, with elapsed(r → d,t) + hours_to_end[h] < min_uptime[p]
+        #   (d.uptime_carry, 0-filled; absent where no step continues the previous solve's last realized step).
         if (d.pdt_uptime_set is not None and d.pdt_uptime_set.height > 0
                 and d.uptime_lookback is not None and d.uptime_lookback.height > 0):
             up_idx = d.pdt_uptime_set.join(online_set, on="p", how="inner")
@@ -441,7 +442,7 @@ def add_constraints(b: "_Build") -> None:
         # Σ v_shutdown, with the invest/divest terms of maxOnline (without them an invest-only
         # unit with existing = 0 could never be online).
         # downtime_lookback: as uptime_lookback with min_downtime[p].
-        # carry_dn is the previous roll's shutdowns in this roll's lookback window (d.downtime_carry, 0-filled).
+        # carry_dn: as carry_up with shutdown[p,h] and min_downtime[p] (d.downtime_carry, 0-filled).
         if (d.pdt_downtime_set is not None and d.pdt_downtime_set.height > 0
                 and d.downtime_lookback is not None and d.downtime_lookback.height > 0):
             dn_idx = d.pdt_downtime_set.join(online_set, on="p", how="inner")
@@ -857,7 +858,7 @@ def _reduction_terms(red: "pl.DataFrame", kappa: "pl.DataFrame", v_startup, v_sh
 def _online_mintime_carry_term(carry: "pl.DataFrame | None", idx: "pl.DataFrame") -> "Param | None":
     """The cross-roll minimum up/down-time carry as a ``Param((p, d, t))`` over ``idx``.
 
-    ``carry`` is ``(p, d, t, value)`` with Utf8 axes (``online_mintime_carry_from_source``); its
+    ``carry`` is ``(p, d, t, value)`` with Utf8 axes (``_derived.online_mintime_carry_from_source``); its
     axes are cast to ``idx``'s Enum dtypes before the join.  The result is DENSE over ``idx``
     (0-filled): a term on a restricted domain would misalign the ``(p, d)`` ``existing`` RHS of
     ``minimum_downtime`` and make rows infeasible.  The left join also restricts the carry to
