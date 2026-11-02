@@ -1455,6 +1455,7 @@ def native_run_model(state, solver) -> int:
             non_rp_time = {p: active_time_lists[solve][p] for p in _period_order if p not in rp_periods}
             extra_weight_rows, _ = solve_writers._compute_timeset_cost_weight_rows(
                 non_rp_time, timesets_used, state.timeline.timeset_weights,
+                period__branch_lists.get(solve, []),
             )
             solve_writers.emit_rp_data(
                 per_period_inputs,
@@ -1475,6 +1476,7 @@ def native_run_model(state, solver) -> int:
                 timesets_used_by_solve=timesets_used,
                 timeset_weights=state.timeline.timeset_weights,
                 provider=sub_solve_provider,
+                period__branch=period__branch_lists.get(solve, []),
             )
 
         state.logger.debug("Starting model creation")

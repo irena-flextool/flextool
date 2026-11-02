@@ -28,20 +28,24 @@ def test_derivation_rule_matches_registry():
     assert set(PERIOD_TIME_PARAMS) == expected
 
 
-def test_count_is_60_split_19_dual_41_period_only():
-    assert len(PERIOD_TIME_PARAMS) == 60
+def test_count_is_61_split_19_dual_1_time_only_41_period_only():
+    assert len(PERIOD_TIME_PARAMS) == 61
     # 19 dual-axis: 18 with the full 2-D shape + commodity.price (two 1-D).
     dual_2d = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                if Shape.MAP_PERIOD_TIME in v}
     assert len(dual_2d) == 18
     commodity_price = {k for k, v in PARAM_ALLOWED_SHAPES.items()
-                       if Shape.MAP_TIME in v and Shape.MAP_PERIOD_TIME not in v}
+                       if Shape.MAP_TIME in v and Shape.MAP_PERIOD_TIME not in v
+                       and Shape.MAP_PERIOD in v}
     assert commodity_price == {("commodity", "price")}
+    # 1 time-only: the per-timestep weight map of a timeset.
+    time_only = {k for k, v in PARAM_ALLOWED_SHAPES.items() if set(v) == {Shape.MAP_TIME}}
+    assert time_only == {("timeset", "timeset_weights")}
     # 41 period-only (incl. group cumulative_{max,min}_capacity): exactly {SCALAR, MAP_PERIOD}.
     period_only = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                    if set(v) == {Shape.SCALAR, Shape.MAP_PERIOD}}
     assert len(period_only) == 41
-    assert set(PERIOD_TIME_PARAMS) == dual_2d | commodity_price | period_only
+    assert set(PERIOD_TIME_PARAMS) == dual_2d | commodity_price | time_only | period_only
 
 
 def test_facet_and_scalar_str_shapes_excluded():

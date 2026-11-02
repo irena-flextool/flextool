@@ -1093,12 +1093,18 @@ def p_timestep_weight_from_source(
     if period_col is None:
         out = default_lf.collect()
         return Param(("d", "t"), out) if out.height > 0 else None
-    period_timeset_lf = (pt.lazy()
-                            .filter(pl.col("name") == active_solve)
-                            .select(alias_to_axis(period_col, "d"),
-                                    pl.col("value").alias("ts")))
+    # A stochastic branch period is a copy of its anchor period: it takes the anchor's timeset (and so
+    # its timeset_weights) through the active branch-anchor pairs, like every period-keyed input.
+    period_timeset = inherit_active_branch_periods(
+        pt.filter(pl.col("name") == active_solve)
+          .select(pl.col(period_col).cast(pl.Utf8).alias("d"), pl.col("value").alias("ts")),
+        group_keys=(), period_col="d")
+    period_timeset_lf = period_timeset.lazy().select(alias_to_axis("d", "d"), pl.col("ts"))
 
-    tw = _try_param_explicit(source, "timeset", "timeset_weights")
+    # ``timeset.timeset_weights``: a ``time`` Map (index_name ``time`` / ``t``, or the silent ``x``),
+    # resolved and validated by the shape registry; any other shape raises.
+    resolved_tw = resolve_param_shape(source, "timeset", "timeset_weights")
+    tw = resolved_tw.frame if resolved_tw is not None else None
     if tw is None or tw.height == 0:
         # No flat ``timeset_weights`` — but this may be an RP solve.
         # ``representative_period_weights`` are folded into
@@ -1125,15 +1131,10 @@ def p_timestep_weight_from_source(
                 return None
         out = default_lf.collect()
         return Param(("d", "t"), out) if out.height > 0 else None
-    # ``timeset_weights`` shape: name (timeset), x (timestep), value (weight).
-    tw_cols = tw.columns
-    step_col = next((c for c in ("x", "time", "step") if c in tw_cols), None)
-    if step_col is None:
-        out = default_lf.collect()
-        return Param(("d", "t"), out) if out.height > 0 else None
+    # Resolved ``timeset_weights`` frame: name (timeset), t (timestep), value (weight).
     weights_lf = (tw.lazy()
                     .select(pl.col("name").alias("ts"),
-                            alias_to_axis(step_col, "t"),
+                            alias_to_axis(resolved_tw.time_index_column, "t"),
                             pl.col("value").cast(pl.Float64).alias("w_raw")))
 
     # Per-(d, t) raw weight: lookup via period_timeset → timeset_weights.

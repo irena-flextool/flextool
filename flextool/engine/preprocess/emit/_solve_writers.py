@@ -1209,17 +1209,38 @@ def emit_rp_data(
         _emit(provider, _RP_BASENAME_TO_PROVIDER_KEY[basename], df)
 
 
+def _with_branch_period_timesets(
+    timesets_used_by_solve: list[tuple[str, str]],
+    period__branch: "list[tuple[str, str]] | None",
+) -> list[tuple[str, str]]:
+    """``(period, timeset)`` pairs plus, after each period, its stochastic branch periods with the
+    period's timeset (a branch period is a copy of its anchor period).  A branch period that has a
+    timeset of its own keeps it."""
+    own = {period for period, _ts in timesets_used_by_solve}
+    out: list[tuple[str, str]] = []
+    for period, timeset in timesets_used_by_solve:
+        out.append((period, timeset))
+        for pair in period__branch or ():
+            anchor, branch = pair[0], pair[1]
+            if anchor == period and branch != anchor and branch not in own:
+                out.append((branch, timeset))
+                own.add(branch)
+    return out
+
+
 def _compute_timeset_cost_weight_rows(
     active_time_list: dict[str, list],
     timesets_used_by_solve: list[tuple[str, str]],
     timeset_weights: dict[str, dict[str, float]],
+    period__branch: "list[tuple[str, str]] | None" = None,
 ) -> tuple[list[tuple[Any, ...]], bool]:
     """Shared compute for :func:`emit_timeset_cost_weight`.
-    Returns ``(rows, any_written)``.
+    Returns ``(rows, any_written)``.  The stochastic branch periods of ``period__branch``
+    (``(anchor, branch)`` rows) take their anchor period's timeset weights.
     """
     rows: list[tuple[Any, ...]] = []
     any_written = False
-    for period, timeset in timesets_used_by_solve:
+    for period, timeset in _with_branch_period_timesets(timesets_used_by_solve, period__branch):
         weights = timeset_weights.get(timeset)
         active_steps = active_time_list.get(period, [])
         if weights is None or not active_steps:
@@ -1241,10 +1262,11 @@ def emit_timeset_cost_weight(
     timesets_used_by_solve: list[tuple[str, str]],
     timeset_weights: dict[str, dict[str, float]],
     *, provider,
+    period__branch: "list[tuple[str, str]] | None" = None,
 ) -> bool:
     """Emit ``timeset_cost_weight`` to the Provider."""
     rows, any_written = _compute_timeset_cost_weight_rows(
-        active_time_list, timesets_used_by_solve, timeset_weights,
+        active_time_list, timesets_used_by_solve, timeset_weights, period__branch,
     )
     if not any_written:
         return False

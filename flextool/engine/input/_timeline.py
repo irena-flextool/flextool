@@ -7,9 +7,10 @@ Architecture notes
   orchestration loop) reads ``state.timeline.<dict>`` keys produced
   here.  Quirks:
 
-  - ``timeset_weights`` and ``representative_period_weights`` decoders
-    accept BOTH :class:`spinedb_api.Map` and ``list[tuple]`` shapes
-    (Spine API quirk; see ``audit/solve_orchestration_plan.md §3.2``).
+  - the ``representative_period_weights`` decoder accepts BOTH
+    :class:`spinedb_api.Map` and ``list[tuple]`` shapes (Spine API quirk;
+    see ``audit/solve_orchestration_plan.md §3.2``); ``timeset_weights``
+    is read from the raw Map and its index shape-checked.
   - ``new_step_durations`` is solve-scoped as of DB v50 (was
     timeset-scoped pre-v50; ``update_flextool/db_migration.py`` upgrades
     older DBs before this loader runs).
@@ -153,8 +154,8 @@ class TimelineConfig:
           (DB v50+; older DBs are upgraded by db_migration first).
         * ``timeset.representative_period_weights`` — nested Map decoder
           (handles BOTH ``api.Map`` and ``list[tuple]`` shapes).
-        * ``timeset.timeset_weights`` — flat Map decoder (same dual-
-          shape handling).
+        * ``timeset.timeset_weights`` — flat ``time`` Map, shape-checked
+          (:func:`_read_timeset_weights`).
         """
         timelines: defaultdict = params_to_dict(
             db=db,
@@ -193,17 +194,9 @@ class TimelineConfig:
         rp_weights: dict = _decode_rp_weights(rp_weights_raw)
 
         # Flat Map: ``timestep -> weight``.  Used for non-RP per-step
-        # cost/slack weighting.  Decodes BOTH ``api.Map`` and
-        # ``list[tuple]`` shapes (Spine API quirk).
-        timeset_weights_raw = params_to_dict(
-            db=db,
-            cl="timeset",
-            par="timeset_weights",
-            mode=DictMode.DICT,
-        )
-        timeset_weights: dict[str, dict[str, float]] = (
-            _decode_timeset_weights(timeset_weights_raw)
-        )
+        # cost/slack weighting.  Read from the raw values so the Map's
+        # ``index_name`` is validated (a period map or a scalar raises).
+        timeset_weights = _read_timeset_weights(db)
         return cls(
             timelines=timelines,
             timesets=timesets,
@@ -1186,29 +1179,43 @@ def _decode_rp_weights(rp_weights_raw: dict) -> dict:
     return rp_weights
 
 
-def _decode_timeset_weights(
-    timeset_weights_raw: dict,
-) -> dict[str, dict[str, float]]:
-    """Decode :attr:`TimelineConfig.timeset_weights`.
+def _read_timeset_weights(db: "DatabaseMapping") -> dict[str, dict[str, float]]:
+    """``{timeset: {timestep: weight}}`` of ``timeset.timeset_weights``.
 
-    Like :func:`_decode_rp_weights` but flat (one level of Map).
-    Handles both ``api.Map`` and ``list[tuple]`` shapes.
-
-    Mirrors lines 132-146 of the flextool source.
+    Each value must be a 1-D Map indexed by ``time`` (or Spine's silent
+    ``x``): the shape is checked against the parameter's allow-list by
+    :func:`flextool.engine.input._param_shapes.check_index_name_path`, the
+    same rule the DB-direct reader (``_derived.p_timestep_weight_from_source``)
+    applies, so a period map, a scalar or a deeper map raises
+    :class:`FlexToolConfigError` instead of being read as weights of no
+    timestep.
     """
+    from flextool.engine.input._param_shapes import check_index_name_path
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
     timeset_weights: dict[str, dict[str, float]] = {}
-    for timeset_name, flat_map in timeset_weights_raw.items():
-        if isinstance(flat_map, api.Map):
-            timeset_weights[timeset_name] = {
-                str(k): float(v)
-                for k, v in zip(flat_map.indexes, flat_map.values)
-            }
-        elif isinstance(flat_map, list):
-            timeset_weights[timeset_name] = {
-                str(entry[0]): float(entry[1])
-                for entry in flat_map
-                if len(entry) >= 2
-            }
+    for param in db.find_parameter_values(
+        entity_class_name="timeset", parameter_definition_name="timeset_weights"
+    ):
+        value = api.from_database(param["value"], param["type"])
+        if value is None:
+            continue
+        name = param["entity_name"]
+        if not isinstance(value, api.Map):
+            if isinstance(value, (float, int, str)):
+                check_index_name_path("timeset", "timeset_weights", name, [])
+            raise FlexToolConfigError(
+                f"Parameter ('timeset', 'timeset_weights') of {name!r} must be a map "
+                f"(timestep -> weight); got {type(value).__name__}.")
+        labels: list[str | None] = []
+        level: Any = value
+        while isinstance(level, api.Map):
+            labels.append(level.index_name)
+            level = level.values[0] if len(level.values) else None
+        check_index_name_path("timeset", "timeset_weights", name, labels)
+        timeset_weights[name] = {
+            str(k): float(v) for k, v in zip(value.indexes, value.values)
+        }
     return timeset_weights
 
 

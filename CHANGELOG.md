@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **`timeset_weights` now reach the forecast branches of a stochastic solve, and a map indexed by
+  `time` is no longer ignored.** The forecast branch copies of a period (single, recourse and rolling
+  stochastic solves) used weight 1 on every time step instead of the weights of their period's
+  timeset; they now take that timeset's weights, so the objective, the energy and cost outputs and the
+  prices weigh the branch steps like the deterministic period. A `timeset_weights` map whose
+  `index_name` is `time` (or `t`) was read as no weights at all in a single solve; it now gives the
+  same weights as a map without an index name. A `timeset_weights` value that is not a timestep map
+  (a scalar, or a map indexed by `period`) is now a configuration error instead of being ignored.
+  Objectives of affected solves change.
+
 - **Units online are no longer tied across the forecast branches when no step is committed.** With
   `shared_operation_periods = []`, or in a rolling solve whose fan lies only in the look-ahead, the
   units online were still held equal in every forecast over every time step of the fan, although the

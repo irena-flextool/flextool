@@ -468,6 +468,13 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("node",       "invest_method"): {Shape.SCALAR_STR},
     ("unit",       "invest_method"): {Shape.SCALAR_STR},
     ("connection", "invest_method"): {Shape.SCALAR_STR},
+    # ─── timeset: per-timestep weight map ────────────────────────────────
+    # ``timeset.timeset_weights`` — a 1-D Map timestep -> weight (schema: map rank 1).  The index is
+    # ``time`` (or ``t``), or Spine's silent ``x`` (unique at depth 1, so it resolves to ``time``); any
+    # other shape (scalar, a period map, deeper maps) is an authoring error.  Read by
+    # ``_derived.p_timestep_weight_from_source`` and validated for the writer by
+    # :func:`check_index_name_path` (``_timeline.TimelineConfig.load_from_db``).
+    ("timeset", "timeset_weights"): {Shape.MAP_TIME},
 }
 
 
@@ -820,6 +827,36 @@ def _shape_from_indices(index_names: "list[str | None]",
     raise _UnrecognisedIndex(
         f"depth {len(normalised)} (got {normalised})", depth=0,
     )
+
+
+def check_index_name_path(entity_class: str, parameter_name: str, entity_name: str,
+                          index_names: "list[str | None]") -> Shape:
+    """The :class:`Shape` of one value with raw per-level ``index_name`` labels ``index_names``
+    (``[]`` = scalar), validated against :data:`PARAM_ALLOWED_SHAPES`.
+
+    The same label rules as :func:`resolve_param_shape`: a silent label (``x`` / empty / None) takes
+    the allow-list's unique label at its depth.  For readers that see the raw Spine values without an
+    :class:`InputSource` (``_timeline.TimelineConfig``).  Raises :class:`FlexToolConfigError` when the
+    labels are not a valid axis, stay ambiguous, or give a shape outside the allow-list.
+    """
+    key = (entity_class, parameter_name)
+    allowed = PARAM_ALLOWED_SHAPES.get(key)
+    if allowed is None:
+        raise FlexToolConfigError(
+            f"check_index_name_path: parameter {key!r} is not in PARAM_ALLOWED_SHAPES.")
+    labels = _infer_silent_default_labels(list(index_names), allowed)
+    try:
+        shape = _shape_from_indices(labels)
+    except _UnrecognisedIndex as exc:
+        raise FlexToolConfigError(
+            f"Parameter ({entity_class!r}, {parameter_name!r}) of {entity_name!r} carries an unrecognised "
+            f"index_name {exc.label}.  Allowed shapes: {_allowed_shape_names(allowed)}.") from None
+    if shape is None or shape not in allowed:
+        observed = shape.value if shape is not None else f"index_names={list(index_names)}"
+        raise FlexToolConfigError(
+            f"Parameter ({entity_class!r}, {parameter_name!r}) of {entity_name!r} was authored as {observed} "
+            f"but allowed shapes are: {_allowed_shape_names(allowed)}.")
+    return shape
 
 
 class _UnrecognisedIndex(Exception):
