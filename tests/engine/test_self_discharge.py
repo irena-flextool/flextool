@@ -454,12 +454,31 @@ def _guard_links_match_lp(fd) -> int:
     return checked
 
 
+def _self_discharge_all_rows(step, out_dir: Path):
+    """``v_self_discharge`` of ``step`` written over every ``(d, t)`` of its ``v_state`` LP columns, and those
+    rows in LP order.  The 2-day fan is forecasts-only: it realizes no step, so its normal output has no rows; the
+    writer's handling of the forecast-branch rows is checked by giving it the whole LP row set as realized."""
+    import dataclasses
+
+    from flextool.lean_parquet import read_lean_parquet
+    from flextool.process_outputs.read_highs_solution import write_v_self_discharge
+
+    st = utf8(step.solution.value("v_state")).select(pl.col("d").alias("period"), pl.col("t").alias("step"))
+    st = st.unique(maintain_order=True)
+    fd = dataclasses.replace(step.flex_data, realized_dispatch=st)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = write_v_self_discharge(step.solution.highs, solve_name=step.solve_name, output_dir=out_dir,
+                                  flex_data=fd)
+    return read_lean_parquet(path), list(st.iter_rows())
+
+
 def test_output_stochastic(tmp_path_factory):
-    """Stochastic 2-day dispatch with a lossy hydro reservoir: v_self_discharge has exactly the row keys of the
-    v_state output (the realized and branch (d, t) the state output writes) and non-zero values; the model's
-    previous-state columns are the writer's links.  The reservoir is bind_forward_only + fix_start, whose branch
-    first-step rows take both a self-wrap and the start (item 137, pre-existing): no value check here, the values
-    are compared on sound rows in test_output_stochastic_values."""
+    """Stochastic 2-day dispatch with a lossy hydro reservoir: the forecasts-only fan realizes no step, so its
+    normal v_self_discharge output has no rows; written over every forecast-branch (d, t) of v_state it has
+    exactly those rows and non-zero values; the model's previous-state columns are the writer's links.  The
+    reservoir is bind_forward_only + fix_start, whose branch first-step rows take both a self-wrap and the start
+    (item 137, pre-existing): no value check here, the values are compared on sound rows in
+    test_output_stochastic_values."""
     from flextool.engine import run_chain_from_db
     from flextool.lean_parquet import read_lean_parquet
     from flextool.update_flextool.db_migration import migrate_database
@@ -473,14 +492,14 @@ def test_output_stochastic(tmp_path_factory):
     url = json_to_db(work / "f.json", work / "f.sqlite")
     migrate_database(url)
     steps = list(run_chain_from_db(url, "custom", work_folder=work / "w", keep_solutions=True).values())
-    for step in steps:
-        out = work / "w" / "output_raw"
-        sd = read_lean_parquet(out / f"v_self_discharge__{step.solve_name}.parquet")
-        st = read_lean_parquet(out / f"v_state__{step.solve_name}.parquet")
-        assert list(sd.index) == list(st.index)
-        assert "hydro_reservoir" in sd.columns and (sd["hydro_reservoir"].abs() > 0).any()
-        assert any("_" in str(d) for _s, d, _t in sd.index) or len(steps) > 1  # branch periods are written
-        assert _guard_links_match_lp(step.flex_data) > 0
+    (step,) = steps
+    out = work / "w" / "output_raw"
+    assert read_lean_parquet(out / f"v_self_discharge__{step.solve_name}.parquet").shape[0] == 0
+    sd, rows = _self_discharge_all_rows(step, work / "all_rows")
+    assert [(str(d), str(t)) for _s, d, t in sd.index] == rows
+    assert "hydro_reservoir" in sd.columns and (sd["hydro_reservoir"].abs() > 0).any()
+    assert all("_" in d for d, _t in rows)  # every dispatch period of the fan is a forecast branch
+    assert _guard_links_match_lp(step.flex_data) > 0
 
 
 @pytest.mark.parametrize("fixture", ["within_solve", "rp"])
@@ -681,9 +700,9 @@ def test_duplicate_loss_keys_raise():
 @pytest.mark.parametrize("method", ["bind_within_solve", "bind_within_period"])
 def test_output_stochastic_values(tmp_path_factory, method):
     """Stochastic 2-day dispatch, lossy hydro_reservoir with a sound previous state per row (bind_within_solve /
-    bind_within_period): every written loss equals the loss the LP row implies, read from the row's own state
-    coefficients and the solution: (Σ_{positive} S⁻ − S)·su − Σ coef·S."""
-    from flextool.lean_parquet import read_lean_parquet
+    bind_within_period): every loss written over the forecast-branch rows (``_self_discharge_all_rows``) equals
+    the loss the LP row implies, read from the row's own state coefficients and the solution:
+    (Σ_{positive} S⁻ − S)·su − Σ coef·S."""
 
     steps = _run_json(tmp_path_factory, STOCH_JSON, "2_day_stochastic_dispatch", [
         ["node", "hydro_reservoir", "storage_binding_method", method],
@@ -695,7 +714,7 @@ def test_output_stochastic_values(tmp_path_factory, method):
         sol = utf8(step.solution.value("v_state")).filter(pl.col("n") == "hydro_reservoir")
         S = {f"v_state[hydro_reservoir,{d},{t}]": v for d, t, v in sol.select("d", "t", "value").iter_rows()}
         su = float(utf8(fd.p_state_unitsize.frame).filter(pl.col("n") == "hydro_reservoir")["value"][0])
-        sd = read_lean_parquet(_WORK[id(steps[-1])] / "output_raw" / f"v_self_discharge__{step.solve_name}.parquet")
+        sd, _rows = _self_discharge_all_rows(step, _WORK[id(steps[-1])] / f"all_rows_{step.solve_name}")
         assert sd.index.is_unique
         rep = {(str(d), str(t)): float(v) for (_s, d, t), v in sd["hydro_reservoir"].items()}
         for name, cols in rows.items():

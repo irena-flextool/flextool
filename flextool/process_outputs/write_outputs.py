@@ -30,7 +30,7 @@ from flextool.process_outputs.out_ancillary import (
 )
 from flextool.process_outputs.out_capacity import unit_capacity, connection_capacity, node_capacity
 from flextool.process_outputs.out_costs import (
-    generic, cost_summaries, cost_breakdown_by_entity, CO2,
+    generic, cost_summaries, cost_breakdown_by_entity, CO2, realized_leaf_periods,
 )
 from flextool.process_outputs.out_flowgroup import flowGroup_indicators
 from flextool.process_outputs.out_flows import (
@@ -610,17 +610,12 @@ def write_summary_csv(par, s, v, r, csv_dir):
 
         # Emissions section
         f.write('Emissions\n')
-        # Q16 (#52/#58): report per scenario path in a genuinely multi-leaf
-        # stochastic solve instead of pooling every leaf into one number --
-        # see out_costs.CO2 for the full rationale.  Deterministic / single-
-        # leaf solves keep the legacy single "CO2 [Mt]" line, byte-identical.
-        leaves = (s.d_leaf.get_level_values('leaf').unique()
-                  if not s.d_leaf.empty else [])
-        if len(leaves) > 1:
-            for leaf in leaves:
-                leaf_periods = (s.d_leaf[s.d_leaf.get_level_values('leaf') == leaf]
-                                 .get_level_values('period').unique())
-                leaf_total = r.emissions_co2_d.reindex(leaf_periods).sum() / 1000000
+        # Per scenario path only when the realized periods differ between
+        # paths (out_costs.realized_leaf_periods); otherwise one line.
+        leaf_periods = realized_leaf_periods(s)
+        if len(leaf_periods) > 1:
+            for leaf, periods in leaf_periods.items():
+                leaf_total = r.emissions_co2_d.reindex(periods).sum() / 1000000
                 f.write(f'"CO2 [Mt] ({leaf})",{leaf_total:.6g},'
                         f'"System-wide annualized CO2 emissions for realized periods, scenario path {leaf}"\n')
         else:

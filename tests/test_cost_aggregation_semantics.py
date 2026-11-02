@@ -1047,38 +1047,22 @@ def test_stochastic_branch_weight(
     test_solver_config_dir: Path,
     workdir: Path,
 ) -> None:
-    """Both the LP objective AND the Python ``Total cost (calculated)``
-    apply ``pdt_branch_weight`` to every per-(d, t) operational + slack cost
-    term, so the two MUST agree.
-
-    The LP objective folds ``pdt_branch_weight[d, t]`` into ``op_factor`` /
-    ``startup_factor`` (``flextool/engine/model/core.py``).  Option (A)
-    makes the post-process do the same: ``calc_slacks`` / ``calc_costs``
-    weight each per-(d, t) cost term by ``pdt_branch_weight`` (via
-    ``flextool/process_outputs/_branch_weight.py``), so
-    ``Total cost (calculated) full horizon`` IS the probability-weighted
-    expectation == the LP objective.
+    """The LP objective applies ``pdt_branch_weight`` to every per-(d, t)
+    operational + slack cost term; the Python ``Total cost (calculated)``
+    adds up realized rows only.
 
     For ``2_day_stochastic_dispatch`` (a genuine 4-forecast fan at
     ``period1``, each forecast ``pd_branch_weight = 0.25``, plus the
-    weight-0 phantom self-row) the identity is exact:
+    weight-0 period label) the LP objective is the probability-weighted
+    expectation 67.3517305373 (grounded below).  The fan is forecasts-only
+    (no ``realized: yes`` branch, so no realization solve): it realizes no
+    step, so the calculated total is 0 — the forecast-branch costs are not
+    results (normal outputs hold realized rows only; with ``output_horizon``
+    they are in the raw dump).  Before, the forecast-branch rows were summed
+    with their weights and the total equalled the LP objective.
 
-        python_total_calc ≈ LP_obj
-
-    This is the re-grounding the previous ``× avg_weight = 4`` identity
-    anticipated in its own docstring ("someone fixes the calc_costs TODO
-    and multiplies cost terms by pdt_branch_weight: python_total_calc drops
-    to ≈ LP_obj, ratio falls to 1.0 … deserves an update of this test").
-
-    Still a genuine tripwire — it fails if EITHER side stops applying the
-    weight:
-
-    * LP-side regression (mod/model stops applying ``pdt_branch_weight``):
-      LP_obj jumps up (phantom slack re-enters the objective), diverging
-      from the weighted ``total_calc``.
-    * Python-side regression (option A reverts — the post-process stops
-      weighting): ``total_calc`` jumps up (phantom's free slack summed
-      unweighted ≈ 183 000 M), diverging from the weighted LP_obj.
+    Tripwire on the LP side: if the LP stops applying the weight, the
+    objective jumps up (the label's free slack re-enters it).
     """
     csv_dir = _run_scenario(
         "2_day_stochastic_dispatch",
@@ -1115,9 +1099,6 @@ def test_stochastic_branch_weight(
         f"{forecast_weights}"
     )
 
-    # Core invariant: both sides apply pdt_branch_weight, so the Python
-    # calculated total equals the LP objective (the phantom's free slack
-    # × weight 0 = 0; the forecasts × their weights sum to the expectation).
     # The fan is forecasts-only (no realized: yes branch), so the run is the
     # stochastic solve alone.
     objectives = _solve_objectives(csv_dir)
@@ -1128,14 +1109,4 @@ def test_stochastic_branch_weight(
     # solve), solved on its own from the edited MPS: 67.3517305373.  Dropping the fixture's former weight-0
     # realized: yes branch leaves this LP byte-identical (lp_snapshot), so the value stands.
     assert objectives["2day_dispatch"] == pytest.approx(67.3517305373, rel=1e-6)
-    lp_total = sum(objectives.values())
-    rel_err = abs(summary["total_calc"] - lp_total) / max(abs(lp_total), 1e-9)
-    assert rel_err <= 1e-4, (
-        f"branch-weight reconciliation broken: "
-        f"LP_obj={lp_total:.6f}, "
-        f"python_total_calc={summary['total_calc']:.6f}, "
-        f"rel_err={rel_err:.3e}.  Either the LP stopped applying "
-        f"pdt_branch_weight (LP_obj jumps up) or the post-process option-A "
-        f"weighting reverted (total_calc jumps up with unweighted phantom "
-        f"slack) — see the docstring above for which side moved."
-    )
+    assert summary["total_calc"] == 0.0, summary

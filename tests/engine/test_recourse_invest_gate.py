@@ -181,40 +181,14 @@ def test_recourse_committed_output_realized_only(recourse_wf):
     low).  The real-named trunk periods p2035/p2040 are weight-0 phantoms,
     so the committed (realized-only) investment is 0 on both: there is no
     non-anticipative here-and-now capacity to commit.  The actual
-    per-forecast investment (high 60/30, low 80/40) is surfaced only under
-    ``output_horizon`` (see test_recourse_output_horizon_branch_rows)."""
+    per-forecast investment (high 60/30, low 80/40) is in the raw horizon
+    dump of ``output_horizon`` only (tests/engine/test_output_horizon_dump.py::
+    test_recourse_branch_invest_in_dump)."""
     inv = pl.read_parquet(
         recourse_wf / "output_raw" / f"v_invest__{SOLVE}.parquet")
     got = {r["period"]: round(float(r["peaker"]), 6)
            for r in inv.iter_rows(named=True)}
     assert got == {"p2035": 0.0, "p2040": 0.0}
-
-
-@pytest.fixture(scope="module")
-def horizon_wf(scenario_workdir):
-    """Cascade run of the recourse fixture with ``model.output_horizon``
-    enabled — the non-realized branch invest rows must surface (§11.2)."""
-    return scenario_workdir("recourse_horizon",
-                            db_fixture="stoch_two_period_invest")
-
-
-@pytest.mark.solver
-def test_recourse_output_horizon_branch_rows(horizon_wf):
-    """§11.2 / §15.5 (D8), R3 re-grounded: under ``output_horizon`` the
-    invest-axis output surfaces every per-forecast branch row — the high
-    fan (60 at p2035_high, 30 at p2040_high) and the low fan (80 at
-    p2035_low, 40 at p2040_low).  The weight-0 phantom trunk p2035/p2040
-    carries 0 (no here-and-now investment under fan-at-first)."""
-    inv = pl.read_parquet(
-        horizon_wf / "output_raw" / f"v_invest__{SOLVE}.parquet")
-    got = {r["period"]: round(float(r["peaker"]), 6)
-           for r in inv.iter_rows(named=True)}
-    assert got.get("p2035") == 0.0
-    assert got.get("p2040") == 0.0
-    assert got.get("p2035_high") == 60.0
-    assert got.get("p2040_high") == 30.0
-    assert got.get("p2035_low") == 80.0
-    assert got.get("p2040_low") == 40.0
 
 
 @pytest.mark.solver

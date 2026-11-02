@@ -1168,7 +1168,7 @@ def test_rule_5_detector_flags_every_pattern(source: str, fname: str) -> None:
 
 @pytest.mark.parametrize("source,fname", [
     # a bare path-segment literal used ONLY as a provider-key selector (no disk read nearby) —
-    # exactly the real ``_output_horizon_enabled`` / ``_load_pre_existing`` shape.
+    # exactly the real ``output_horizon_enabled`` / ``_load_pre_existing`` shape.
     (
         "def f(wf, *, provider=None):\n"
         "    path = Path(wf) / 'solve_data' / 'enable_optional_outputs.csv'\n"

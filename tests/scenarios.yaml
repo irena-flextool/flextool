@@ -780,6 +780,13 @@
   # no realized: yes branch), so the run is this one stochastic solve and the
   # calculated total equals its LP objective
   # (tests/test_cost_aggregation_semantics.py::test_stochastic_branch_weight).
-  expected_objective: 67.3517305373
+  #
+  # Re-grounded 67.3517305373 → 0 when normal outputs became realized-only
+  # (output_horizon writes a separate raw dump, tests/expected/REGEN_LOG.md):
+  # a forecasts-only fan with no realization solve realizes no step, so the
+  # calculated full-horizon total has nothing to add up.  The LP objective
+  # 67.3517305373 stays pinned by the ``2day_dispatch`` Solve row of the
+  # summary_solve.csv golden.
+  expected_objective: 0.0
   expected_objective_tolerance: 1.0e-6
   time_budget_seconds: 30.0

@@ -324,31 +324,46 @@ def cost_breakdown_by_entity(par, s, v, r, debug):
     return results
 
 
+def realized_leaf_periods(s) -> dict[str, pd.Index]:
+    """``{leaf: realized periods on that scenario path}`` for the per-path CO2 reports.
+
+    ``s.d_leaf`` maps each period of a stochastic solve to the scenario
+    path(s) holding it (a pre-reveal trunk period is on every path).  Only
+    realized periods reach the outputs, so the map is cut to
+    ``s.d_realized_period`` first: forecast-branch periods never count.
+    Paths left with the same realized periods are one timeline and collapse
+    into one entry; the result has more than one entry only when realized
+    periods genuinely differ between paths.  Empty when there is no tree.
+    """
+    if s.d_leaf.empty:
+        return {}
+    realized = s.d_realized_period
+    if isinstance(realized, pd.MultiIndex):
+        realized = realized.get_level_values('period')
+    realized = set(realized)
+    d_leaf = s.d_leaf[s.d_leaf.get_level_values('period').isin(realized)]
+    out: dict[str, pd.Index] = {}
+    seen: set[tuple] = set()
+    for leaf in d_leaf.get_level_values('leaf').unique():
+        periods = d_leaf[d_leaf.get_level_values('leaf') == leaf].get_level_values('period').unique()
+        key = tuple(sorted(periods))
+        if key not in seen:
+            seen.add(key)
+            out[leaf] = periods
+    return out
+
+
 def CO2(par, s, v, r, debug):
     """Annualized CO2 Mt for groups by period"""
     results = []
 
-    # Calculate CO2 emissions in Mt.  Summing every period into ONE number
-    # pools the anchor's shared trunk together with every forecast branch's
-    # own periods -- in a genuinely multi-leaf stochastic solve that counts
-    # N parallel futures' emissions as if they were one timeline (Q16,
-    # #52/#58; the output-side analogue of the LP cap bug c18c fixed with
-    # per-path ``_path`` rows).  ``s.d_leaf`` maps every period to the
-    # leaf(ves) that reference it (a pre-reveal trunk period belongs to
-    # every leaf); gate on >1 distinct leaf so a deterministic / single-
-    # leaf solve keeps the legacy single "model_wide" column, byte-
-    # identical.
+    # Calculate CO2 emissions in Mt, reported per scenario path when the
+    # realized periods belong to more than one (see
+    # :func:`realized_leaf_periods`); otherwise one "model_wide" column.
     co2_mt = (r.emissions_co2_d * par.years_represented_d) / 1000000
-    leaves = (s.d_leaf.get_level_values('leaf').unique()
-              if not s.d_leaf.empty else [])
-    if len(leaves) > 1:
-        totals = {
-            leaf: co2_mt.reindex(
-                s.d_leaf[s.d_leaf.get_level_values('leaf') == leaf]
-                 .get_level_values('period').unique()
-            ).sum()
-            for leaf in leaves
-        }
+    leaf_periods = realized_leaf_periods(s)
+    if len(leaf_periods) > 1:
+        totals = {leaf: co2_mt.reindex(periods).sum() for leaf, periods in leaf_periods.items()}
         co2_summary = pd.DataFrame(totals, index=["CO2 [Mt]"])
         co2_summary.index.name = 'param_CO2'
         co2_summary.columns.name = 'path'

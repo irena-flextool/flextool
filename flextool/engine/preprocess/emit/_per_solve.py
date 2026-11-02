@@ -356,15 +356,10 @@ def emit_per_solve_sets(
     _emit_tuples(provider, "solve_data/period__timeline_set.csv",
                  ("period", "timeline"), list(pt_seen.keys()))
 
-    enable = _read_csv(solve_data_dir / "enable_optional_outputs.csv",
-                       ["flag"], provider=provider)
-    enable_set = frozenset(v for v in enable["flag"].to_list() if v)
-    if "output_horizon" in enable_set:
-        rows_df = _read_csv(solve_data_dir / "steps_in_use.csv",
-                            ["period", "time"], provider=provider)
-    else:
-        rows_df = _read_csv(solve_data_dir / "realized_dispatch.csv",
-                            ["period", "time"], provider=provider)
+    # Output rows are the realized steps only: ``model.output_horizon`` never widens them (its raw LP dump is
+    # written separately, ``flextool/engine/output/_horizon_dump.py``).
+    rows_df = _read_csv(solve_data_dir / "realized_dispatch.csv",
+                        ["period", "time"], provider=provider)
     drd_pairs_raw = list(zip(rows_df["period"].to_list(),
                              rows_df["time"].to_list()))
     seen_drd: dict[tuple[str, str], None] = {}
@@ -382,18 +377,6 @@ def emit_per_solve_sets(
             drp_seen[d] = None
     _emit_singles(provider, "solve_data/d_realized_period_set.csv", "period",
                   list(drp_seen.keys()))
-
-    drealize = _read_csv(
-        solve_data_dir / "realized_invest_periods_of_current_solve.csv",
-        ["period"], provider=provider
-    )
-    union_seen: dict[str, None] = dict(drp_seen)
-    for v in drealize["period"].to_list():
-        if v and v not in union_seen:
-            union_seen[v] = None
-    _emit_singles(provider,
-                  "solve_data/d_realize_dispatch_or_invest_set.csv", "period",
-                  list(union_seen.keys()))
 
     # Slice G — window-driven operational non-anticipativity set.  This
     # is the single source of truth: dt_non_anticipativity_lf reads it

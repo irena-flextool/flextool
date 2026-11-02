@@ -179,6 +179,26 @@ def test_cumulative_budget_caps_each_rolls_window(tmp_path_factory) -> None:
         assert lhs == pytest.approx(rhs, rel=1e-6), st.solve_name
 
 
+def test_output_horizon_leaves_the_realized_carrier_unchanged(tmp_path_factory) -> None:
+    """``model.output_horizon`` is an output-only debug flag: with rolling 24 h / 12 h (look-ahead 12 h) and the
+    binding cap above, every roll carries the same realized CO2 into the next roll and builds the same LP as
+    without the flag.  Before, the flag widened the realized row set to each roll's whole window, so the carried
+    total and the reached fraction ``f_d_k`` included the look-ahead hours (roll 1 carried roll 0's whole-window
+    8219.18 t at f_d_k 1.0 instead of the realized 3154.88 t at 0.75)."""
+    cap = 3.0e6
+    values = [_cap({"p2020": cap})] + _rolling(24.0, 12.0)
+    flag = [["model", "flexTool", "output_horizon", b64("yes", "str")]]
+    with_flag = list(_run(tmp_path_factory, "co2roll_oh_on", values + flag).values())
+    without = list(_run(tmp_path_factory, "co2roll_oh_off", values).values())
+    assert len(with_flag) == len(without) == 4
+    for a, b in zip(with_flag, without):
+        assert a.solve_name == b.solve_name
+        assert _carry(a.flex_data, "p2020") == _carry(b.flex_data, "p2020"), a.solve_name
+        ma, mb = build(a.flex_data).canonicalise(), build(b.flex_data).canonicalise()
+        assert list(ma.row_names) == list(mb.row_names) and list(ma.col_names) == list(mb.col_names)
+        assert list(ma.val) == list(mb.val), a.solve_name
+
+
 # ---------------------------------------------------------------------------
 # Two periods, rolls across the boundary
 

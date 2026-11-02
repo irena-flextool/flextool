@@ -160,7 +160,6 @@ _REQUIRED_SET_ATTRS: tuple[str, ...] = (
     "group_process",
     "group_process_node",
     "upDown",
-    "enable_optional_outputs",
     "node_dc_power_flow",
     "connection_dc_power_flow",
     "connection_susceptance",

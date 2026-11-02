@@ -238,10 +238,28 @@ def _unequal_branches() -> list:
     return [["solve", "2day_dispatch", "stochastic_branches", b64(sb, "map")]]
 
 
+def _over_all_lp_steps(step, out_dir: Path):
+    """``step`` with every ``(d, t)`` of its ``vq_reserve`` columns as the realized row set, and a folder holding
+    the reserve price parquet written over those rows."""
+    import dataclasses
+    from types import SimpleNamespace
+
+    from flextool.process_outputs.read_highs_solution import write_v_dual_reserve_balance
+
+    rows = (utf8(step.solution.value("vq_reserve")).select(pl.col("d").alias("period"), pl.col("t").alias("step"))
+            .unique(maintain_order=True))
+    fd = dataclasses.replace(step.flex_data, realized_dispatch=rows)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    write_v_dual_reserve_balance(step.solution.highs, solve_name=step.solve_name, output_dir=out_dir, flex_data=fd)
+    return SimpleNamespace(flex_data=fd, solution=step.solution, solve_name=step.solve_name), out_dir
+
+
 def test_reserve_price_stochastic(tmp_path_factory) -> None:
     """``2_day_stochastic_dispatch`` with a large_failure_only group on demand_node (coal fails; gas and coal
     provide) and unequal branch weights: the price at every (branch period, t) is Σ duals / s / (Δt · w) with
-    the branch weight in w."""
+    the branch weight in w.  The fan is forecasts-only, so it realizes no step and its normal reserve price
+    output has no rows; the writer is checked over the forecast-branch rows by giving it every LP step of the
+    group as realized."""
     grp = ["rq", "up", "dn"]
     ents = [["upDown", "up", None], ["group", "dn", None], ["group__node", ["dn", "demand_node"], None],
             ["reserve", "rq", None], ["reserve__upDown__group", grp, None]]
@@ -257,6 +275,8 @@ def test_reserve_price_stochastic(tmp_path_factory) -> None:
                         base_chain=["init", "system", "2day"], entities=ents, fixture_json=STOCH_JSON)
     steps, wf = _run(tmp_path_factory, url, scen)
     step = list(steps.values())[-1]
+    assert step.flex_data.realized_dispatch is None
+    step, wf = _over_all_lp_steps(step, Path(wf) / "all_lp_steps")
     assert step.flex_data.pdt_branch_weight is not None
     bw = {(d, t): v for d, t, v in utf8(step.flex_data.pdt_branch_weight.frame).select("d", "t", "value").iter_rows()}
     got = _assert_price_is_summed_duals(step, wf, "rq", "up", "dn")

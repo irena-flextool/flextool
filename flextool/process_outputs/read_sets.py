@@ -658,18 +658,27 @@ def read_sets(
     # ed_invest_set spans both, but only p2020 is a REALIZED invest
     # period).  Without this filter, ``unit_capacity__d`` emitted both
     # p2020 and p2025 rows instead of just p2020.
+    #
+    # A solve that realizes no dispatch (a forecasts-only stochastic fan
+    # with no realization solve) has no realized-dispatch periods to
+    # intersect with: its candidates are the forecast-branch copies, whose
+    # investment is never realized.  It is intersected with the solve's
+    # realized investment periods instead (the period labels of its fans).
+    # Without either source (FlexData built by hand) nothing is filtered.
     invest_periods_list: list = []
     seen: set = set()
-    realized_period_set: set = set(
-        s.d_realized_period.get_level_values("period").tolist()
-    ) if len(s.d_realized_period) > 0 else set()
+    realized_filter: "set | None" = None
+    if len(s.d_realized_period) > 0:
+        realized_filter = set(s.d_realized_period.get_level_values("period").tolist())
+    elif flex_data.realized_invest_periods is not None:
+        realized_filter = set(flex_data.realized_invest_periods)
     for src in (flex_data.ed_invest_set, flex_data.ed_divest_set):
         if (src is not None and src.height > 0
                 and "d" in src.columns):
             for d in src.select("d").unique().to_pandas()["d"].tolist():
                 if d in seen:
                     continue
-                if realized_period_set and d not in realized_period_set:
+                if realized_filter is not None and d not in realized_filter:
                     continue
                 seen.add(d)
                 invest_periods_list.append(d)
@@ -685,7 +694,12 @@ def read_sets(
     realized_periods: list = list(
         s.d_realized_period.get_level_values("period")
     ) if len(s.d_realized_period) > 0 else []
-    union_periods = list(dict.fromkeys(realized_periods + invest_periods))
+    # A solve that realizes no dispatch reports its realized investment
+    # periods (the period labels of a forecasts-only fan).
+    no_dispatch_invest: list = (
+        list(flex_data.realized_invest_periods)
+        if not realized_periods and flex_data.realized_invest_periods else [])
+    union_periods = list(dict.fromkeys(realized_periods + invest_periods + no_dispatch_invest))
     s.d_realize_dispatch_or_invest = pd.MultiIndex.from_arrays(
         [[solve_name] * len(union_periods), union_periods],
         names=["solve", "period"],
@@ -1068,6 +1082,20 @@ def read_sets(
         flex_data.d_leaf, dims=("d", "leaf"), names=("period", "leaf"),
     )
 
+    # forecast_period — the forecast-branch periods of the solve's
+    # stochastic fans (``b`` of every ``(d, b)`` row of ``period__branch``
+    # with ``b != d``).  ``drop_levels`` removes the unrealized ones from
+    # every output frame.  Solve-keyed, so a multi-solve run unions the
+    # forecast periods of every sub-solve (persisted unfiltered).  Empty for
+    # a deterministic solve.
+    pbf = flex_data.period_branch_full
+    forecast: list = []
+    if pbf is not None and pbf.height > 0:
+        forecast = list(dict.fromkeys(
+            str(b) for d, b in zip(pbf["d"].to_list(), pbf["b"].to_list()) if b != d))
+    s.forecast_period = pd.MultiIndex.from_arrays(
+        [[solve_name] * len(forecast), forecast], names=["solve", "period"])
+
     # ─── Group-related sets ───────────────────────────────────────────────
     s.groupInertia = _index_or_empty(flex_data.groupInertia, dim="g", name="group")
     s.groupNonSync = _index_or_empty(flex_data.groupNonSync, dim="g", name="group")
@@ -1136,9 +1164,6 @@ def read_sets(
 
     # upDown — flextool's known up/down set.
     s.upDown = pd.Index(["up", "down"], name="updown")
-
-    # enable_optional_outputs — read from FlexData if available.  Empty set OK.
-    s.enable_optional_outputs = set()
 
     # ─── DC power flow sets ───────────────────────────────────────────────
     s.node_dc_power_flow = _index_or_empty(

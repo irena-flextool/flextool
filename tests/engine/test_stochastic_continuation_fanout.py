@@ -240,7 +240,8 @@ def test_stoch_branch_weights(stoch_wf) -> None:
 # end-to-end by the Model 2 realized-dispatch tests (W8 / W4b / W4c +
 # test_realized_dispatch_coherence); the forecast-fan weighting and the
 # branch dispatch reaching the LP are covered by the sibling tests
-# test_stoch_branch_weights and test_horizon_branch_dispatch_reached_lp.
+# test_stoch_branch_weights and, in the raw horizon dump,
+# tests/engine/test_output_horizon_dump.py::test_fan_branch_dispatch_in_dump.
 
 
 def test_stoch_step_previous_continuation_linkage(stoch_wf) -> None:
@@ -321,38 +322,17 @@ def test_stoch_na_domain_and_period_branch(stoch_wf) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ``stoch_horizon`` scenario (output_horizon on — branch rows visible)
+# ``stoch_horizon`` scenario (output_horizon on — raw horizon dump only)
 # ---------------------------------------------------------------------------
 
 
 def test_horizon_objective_identical(horizon_wf) -> None:
-    """§5.3-7: output_horizon only widens the output gate, not the LP."""
+    """§5.3-7: output_horizon writes the raw horizon dump only; the LP (and so the objective) is the one
+    without the flag.  The branch dispatch values are pinned in the dump
+    (``tests/engine/test_output_horizon_dump.py``)."""
     assert _objective(horizon_wf) == pytest.approx(
         STOCH_OBJECTIVE, rel=1e-6
     )
-
-
-def test_horizon_branch_dispatch_reached_lp(horizon_wf) -> None:
-    """§5.3-8 (DEFECT PIN), R3 re-grounded: under the genuine {high, low}
-    fan every forecast branch's profile data constrained the solver — the
-    high fan (wind 60/50, thermal 40/60) and the low fan (wind 20/10,
-    thermal 80/100).  The period labels p2035/p2040 have no dispatch: no
-    flow rows."""
-    flows = _v_flow(horizon_wf)
-    assert flows.height == 12
-    periods = set(flows["period"].to_list())
-    assert {"p2035_high", "p2040_high", "p2035_low", "p2040_low"} <= periods
-    for r in flows.rows(named=True):
-        wind_mw = r[WIND_COL] * WIND_EXISTING
-        thermal_mw = r[THERMAL_COL] * THERMAL_EXISTING
-        expected = {
-            "p2035_high": (60.0, 40.0),
-            "p2040_high": (50.0, 60.0),
-            "p2035_low": (20.0, 80.0),
-            "p2040_low": (10.0, 100.0),
-        }[r["period"]]
-        assert wind_mw == pytest.approx(expected[0], abs=1e-6), r
-        assert thermal_mw == pytest.approx(expected[1], abs=1e-6), r
 
 
 # ---------------------------------------------------------------------------

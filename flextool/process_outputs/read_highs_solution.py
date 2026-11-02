@@ -560,60 +560,6 @@ def _load_realized_invest_periods_list(
     return list(seeded["period"].cast(str).to_list())
 
 
-def _output_horizon_enabled(
-    work_folder: "Path | str | None",
-    *,
-    provider: "object | None" = None,
-) -> bool:
-    """True when ``model.output_horizon`` is enabled for this solve.
-
-    The provider key is ``solve_data/enable_optional_outputs`` (the same
-    flag set ``_per_solve`` consults to source horizon vs realized rows).
-    Item 163: ``work_folder`` is a key-path selector only, no disk read; a
-    ``None`` provider or a missing key gives False.
-    """
-    if work_folder is None:
-        return False
-    path = Path(work_folder) / "solve_data" / "enable_optional_outputs.csv"
-    frame = _provider_lookup(provider, path)
-    if frame is None:
-        return False
-    try:
-        return "output_horizon" in {
-            str(v) for v in frame["flag"].to_list() if v is not None}
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _load_dispatch_or_invest_periods(
-    work_folder: "Path | str | None",
-    *,
-    provider: "object | None" = None,
-) -> list[str]:
-    """Return the horizon-expanded ``d_realize_dispatch_or_invest`` period
-    list (Slice D §11.2).
-
-    Under ``output_horizon`` this set (emitted by ``_per_solve``)
-    unions the branch (non-realized) dispatch periods with the realized
-    invest periods, so it carries the branch-suffixed period tokens the
-    in-memory ``realized_dispatch`` shortcut omits.  Item 163: key-path
-    selector only (``solve_data/d_realize_dispatch_or_invest_set``), no
-    disk fallback; empty list when unavailable.
-    """
-    if work_folder is None:
-        return []
-    path = (Path(work_folder) / "solve_data"
-            / "d_realize_dispatch_or_invest_set.csv")
-    frame = _provider_lookup(provider, path)
-    if frame is None:
-        return []
-    try:
-        return [str(v) for v in frame["period"].to_list()
-                if v is not None]
-    except Exception:  # noqa: BLE001
-        return []
-
-
 def _name_regex(var_name: str) -> re.Pattern[str]:
     """Return a compiled regex matching ``<var_name>[...]``."""
     return re.compile(rf"^{re.escape(var_name)}\[(.+)\]$")
@@ -836,15 +782,6 @@ def extract_variable(
     # post-hoc sort/reindex — both readers produce the exact same row
     # sequence because both ultimately come from the same phase-1
     # ``for {s, (d, t) in dt_realize_dispatch}`` iteration.
-    work_folder = (
-        Path(realized_dispatch_csv).parent.parent
-        if realized_dispatch_csv is not None
-        else (
-            Path(realized_periods_csv).parent.parent
-            if realized_periods_csv is not None
-            else None
-        )
-    )
     if has_period and has_time:
         canonical_rows: list[tuple[str, ...]] | None = (
             _load_canonical_dt_order(solve_name, flex_data=flex_data)
@@ -892,24 +829,6 @@ def extract_variable(
                 # column under recourse, so a 0 row): add the realized-invest labels.
                 base = list(canonical_d or [])
                 canonical_d = base + [p for p in realized_invest if p in labels and p not in base]
-            if (not no_invest
-                  and getattr(flex_data, "recourse_invest", False)
-                  and _output_horizon_enabled(work_folder, provider=provider)):
-                # Slice D §11.2: surface the non-realized branch invest
-                # rows under ``output_horizon``.  The in-memory
-                # ``realized_dispatch`` shortcut in
-                # ``_load_canonical_d_order`` is anchor-only (real names),
-                # so union the horizon-expanded invest set (branch periods
-                # included) into the canonical order.  Gated on recourse
-                # AND output_horizon — byte-parity for every other model
-                # (deterministic, or recourse without horizon output).
-                horizon_d = _load_dispatch_or_invest_periods(
-                    work_folder, provider=provider)
-                if horizon_d:
-                    base = list(canonical_d or [])
-                    seen = set(base)
-                    canonical_d = base + [
-                        p for p in horizon_d if p not in seen]
         canonical_rows = [(d,) for d in canonical_d] if canonical_d is not None else None
     else:
         canonical_rows = [()]  # one row: just (solve,)

@@ -147,6 +147,46 @@ def _reduce_share_per_period(csoy: pd.Series) -> pd.Series:
     return csoy.groupby(level=0, sort=False).max()
 
 
+def _period_level(idx: pd.Index) -> "pd.Index | None":
+    if isinstance(idx, pd.MultiIndex):
+        return idx.get_level_values('period') if 'period' in idx.names else None
+    return idx if idx.name == 'period' else None
+
+
+def _drop_unrealized_forecast_periods(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace) -> None:
+    """Remove the rows of unrealized forecast-branch periods from every output input.
+
+    A stochastic solve's forecast-branch periods (``s.forecast_period``) are never part of the
+    realized timeline unless the solve realizes them (``s.d_realize_dispatch_or_invest``), yet the
+    parameters, sets and dual variables of the solve carry rows for them.  Normal outputs hold realized
+    rows only, so those rows go here, before any calculation: every ``Series`` / ``DataFrame`` /
+    ``Index`` of ``par``, ``s`` and ``v`` with a ``period`` index level is cut with one ``isin``.
+    No-op for a solve without forecasts.
+    """
+    forecast = getattr(s, 'forecast_period', None)
+    if forecast is None or len(forecast) == 0:
+        return
+    realized = set(_period_level(s.d_realize_dispatch_or_invest)) | set(_period_level(s.d_realized_period))
+    drop = [p for p in dict.fromkeys(_period_level(forecast)) if p not in realized]
+    if not drop:
+        return
+    for ns in (par, s, v):
+        for attr, obj in list(vars(ns).items()):
+            if attr == 'forecast_period':
+                continue
+            if isinstance(obj, (pd.Series, pd.DataFrame)):
+                periods = _period_level(obj.index)
+            elif isinstance(obj, pd.Index):
+                periods = _period_level(obj)
+            else:
+                continue
+            if periods is None:
+                continue
+            mask = periods.isin(drop)
+            if mask.any():
+                setattr(ns, attr, obj[~mask])
+
+
 def _co2_period_price_weighted(
     v_dual: pd.DataFrame, step_duration: pd.Series, dt_realize_dispatch: pd.MultiIndex,
 ) -> pd.DataFrame:
@@ -196,6 +236,7 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     Must be called before any post-processing calculations.
     Returns (par, s, v) with the solve level removed in-place.
     """
+    _drop_unrealized_forecast_periods(par, s, v)
     for attr in _V_DROP:
         obj = getattr(v, attr)
         obj = obj.droplevel('solve')

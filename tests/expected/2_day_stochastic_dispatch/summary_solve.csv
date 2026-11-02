@@ -1,11 +1,11 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-11-01 21:10:47.629030+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-11-02 09:39:52.834493+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
 2day_dispatch,67.3517305373
-"Total cost (calculated) full horizon (M CUR)",67.3517305373,"Annualized operational, penalty and investment costs"
-"Total cost (calculated) realized periods (M CUR)",67.3517305373
-"Operational costs for realized periods (M CUR)",67.3517305373
+"Total cost (calculated) full horizon (M CUR)",0,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",0
+"Operational costs for realized periods (M CUR)",0
 "Investment costs for realized periods (M CUR)",0
 "Retirement costs / salvage revenue for realized periods (M CUR)",0
 "Fixed costs for pre-existing entities (M CUR)",0
@@ -13,19 +13,12 @@
 "Fixed cost removal due to divested entities (M CUR)",0
 "Penalty (slack) costs for realized periods (M CUR)",0
 
-Period,period1_lower,period1_mid,period1_realized,period1_upper
-"Time in use in years",0.00547945205479,0.00547945205479,0.00547945205479,0.00547945205479
-"Operational discount factor",1,1,1,1
-"Investment discount factor",1,1,1,1
+Period
+"Time in use in years"
+"Operational discount factor"
+"Investment discount factor"
 
 Emissions
-"CO2 [Mt] (lower)",0,"System-wide annualized CO2 emissions for realized periods, scenario path lower"
-"CO2 [Mt] (mid)",0,"System-wide annualized CO2 emissions for realized periods, scenario path mid"
-"CO2 [Mt] (realized)",0,"System-wide annualized CO2 emissions for realized periods, scenario path realized"
-"CO2 [Mt] (upper)",0,"System-wide annualized CO2 emissions for realized periods, scenario path upper"
+"CO2 [Mt]",0,"System-wide annualized CO2 emissions for realized periods"
 
 "Slack variables multiplied by timestep duration (creating or removing energy/matter, creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"
-Removed, downriver, period1_lower, 14400
-Removed, downriver, period1_mid, 14400
-Removed, downriver, period1_realized, 14400
-Removed, downriver, period1_upper, 14400

@@ -380,8 +380,8 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
 
 def _realized_steps(sd: Path, flex_data: "FlexData", *, provider: "object | None" = None) -> "pl.DataFrame | None":
     """``(d, t)`` the solve realizes: ``solve_data/realized_dispatch`` — the same source as
-    ``_last_realized_step`` (the roll carriers), never the output row set ``flex_data.realized_dispatch`` (which
-    ``model.output_horizon`` widens to the whole horizon).  Without that key (unit-test synthesis) the latter."""
+    ``_last_realized_step`` (the roll carriers).  Without that key (unit-test synthesis) the output row set
+    ``flex_data.realized_dispatch``, which holds the same de-duplicated realized steps."""
     frame = None
     rd_path = sd / "realized_dispatch.csv"
     if _provider_has(provider, "solve_data/realized_dispatch", rd_path):
@@ -1130,6 +1130,9 @@ class FlexData:
     # the handoff extractor (preserves test paths that construct FlexData by
     # hand).
     realized_dispatch: pl.DataFrame | None = None         # (period, step)
+    # The solve's realized investment periods (``solve_data/realized_invest_periods_of_current_solve``, in
+    # emitted order); ``None`` when the key is absent (FlexData built by hand), ``[]`` when it is empty.
+    realized_invest_periods: list[str] | None = None
     node__storage_nested_fix_method: pl.DataFrame | None = None  # (node, method)
 
     def dump_csvs(self,
@@ -4599,17 +4602,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # Each is lenient: file missing or empty → field stays ``None``
         # and the handoff extractor's disk fallback kicks in.
         #
-        # Stochastic / output_horizon: prefer ``dt_realize_dispatch_set.csv``
-        # when present.  That's the canonical "rows to emit" set built by
-        # ``_per_solve.write_period_set_csvs`` — it includes all
-        # forecast-branch (period, step) pairs for stochastic scenarios
-        # (where ``realized_dispatch.csv`` is anchor-only by design).  For
-        # non-stochastic / non-output_horizon solves it collapses to the
-        # same rows as ``realized_dispatch.csv`` (verified on fullYear_roll).
-        # Without this preference dispatch-time CSVs (costs__dt, node__dt,
-        # …) drop branch rows silently because the parquet extractor's
-        # canonical row order comes from this frame's downstream
-        # ``dt_realize_dispatch`` MultiIndex.
+        # The output row set: ``dt_realize_dispatch_set.csv`` (built by
+        # ``_per_solve.emit_per_solve_sets``) is the de-duplicated
+        # ``realized_dispatch`` — realized steps only, never forecast-branch
+        # or look-ahead steps (``model.output_horizon`` writes those to its
+        # separate raw dump).  Every dt-indexed output and the parquet
+        # extractor's canonical row order follow it.
         flex_data.realized_dispatch = _load_handoff_aux_pair(
             sd / "dt_realize_dispatch_set.csv", ("period", "time"),
             provider=provider)
@@ -4620,6 +4618,14 @@ def load_flextool(source: "Path | str | FlexInputSource",
             flex_data.realized_dispatch = _load_handoff_aux_pair(
                 sd / "realized_dispatch.csv", ("period", "step"),
                 provider=provider)
+        rip_path = sd / "realized_invest_periods_of_current_solve.csv"
+        if _provider_has(provider, "solve_data/realized_invest_periods_of_current_solve", rip_path):
+            try:
+                rip = _provider_read(provider, "solve_data/realized_invest_periods_of_current_solve", rip_path)
+                flex_data.realized_invest_periods = (
+                    [str(v) for v in rip["period"].to_list() if v is not None] if "period" in rip.columns else [])
+            except pl.exceptions.NoDataError:
+                flex_data.realized_invest_periods = []
         # ``node__storage_nested_fix_method`` lives in solve_data/ for
         # cascade solves; fall back to input/ if not yet copied.  Explicit
         # ``is None`` chain (DataFrame is non-truthy in polars).
@@ -6220,13 +6226,10 @@ def build_handoff_from_solution(
     # Carry the COMMITTED JUMP-END storage state of the realized TRUNK
     # (restores GMPL value parity).  Prefer the Provider anchor
     # ``solve_data/realized_dispatch`` (trunk-only, committed jump-end —
-    # emitted by ``emit_realized_dispatch`` before the handoff is built) over
-    # the in-memory ``flex_data.realized_dispatch``: the latter is loaded from
-    # the forecast-EXPANDED ``dt_realize_dispatch_set.csv`` (all branch periods
-    # × the full look-ahead window), so its lexically-last (d,t) is the
-    # discarded HORIZON-END of a FORECAST branch, not the committed trunk
-    # jump-end — see NOTE above.  Fall back to ``flex_data.realized_dispatch``
-    # only when the Provider key is absent (unit-test synthesis, no real solve).
+    # emitted by ``emit_realized_dispatch`` before the handoff is built), in
+    # its emitted order, over the in-memory ``flex_data.realized_dispatch``
+    # (the de-duplicated output row set).  Fall back to the latter only when
+    # the Provider key is absent (unit-test synthesis, no real solve).
     # The last realized step in time (``_last_realized_step``: the emitted order of
     # ``solve_data/realized_dispatch``, equivalent to ``_load_realized_period_time_last`` followed by
     # ``last_pairs[-1]`` in v3.32.0's ``write_p_roll_continue_state``), shared by the three roll carriers.

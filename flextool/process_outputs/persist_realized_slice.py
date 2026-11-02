@@ -487,6 +487,12 @@ def _apply_set_realized_filter(
     module-level note above).  The ``solve`` level is left intact —
     stage 3 drops it at union time, exactly as it does for params.
     """
+    # The solve's forecast-branch periods are the very rows ``drop_levels``
+    # removes from the outputs, so they are persisted whole (only by a solve
+    # that has forecasts: ``write_all_sets_realized_slice``).
+    if attr == "forecast_period":
+        return idx
+
     # (period, time)-keyed sets (incl. dtt / dtttdt) — filter on the
     # current (period, time); adjacency columns ride along verbatim.
     if _multiindex_has_level(idx, "time"):
@@ -556,6 +562,8 @@ def write_all_sets_realized_slice(
 
     written: list[Path] = []
     for attr, obj in vars(s).items():
+        if attr == "forecast_period" and len(obj) == 0:
+            continue
         if isinstance(obj, pd.MultiIndex):
             if not _multi_index_has_solve(obj):
                 # Invariant topology — taken once at union time (stage 3).

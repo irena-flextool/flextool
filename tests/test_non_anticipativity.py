@@ -29,7 +29,7 @@ import pandas as pd
 import pytest
 
 from flextool.engine import run_chain_from_db
-from flextool.lean_parquet import read_lean_parquet
+import polars as pl
 
 
 def _read_csv_pairs(path: Path) -> list[tuple[str, str]]:
@@ -133,17 +133,14 @@ def test_storage_state_equal_across_branches(
     pulled from the wrong CSV) would let the forecasts' storage states drift.
     """
     workdir = stochastic_run_workdir
-    # The stochastic solve's own v_state (the realization solve after it
-    # writes v_state__2day_dispatch__realized_dispatch).
-    matches = list(
-        (workdir / "output_raw").glob("v_state__2day_dispatch.parquet")
-    )
-    assert matches, "No v_state parquet emitted by stochastic run"
-    df = read_lean_parquet(matches[0])
-
-    # Rows: (solve, period, time).  Columns: (node,).
-    assert df.index.names == ["solve", "period", "time"], df.index.names
-    assert df.columns.names == ["node"], df.columns.names
+    # The forecasts' v_state is not realized, so it is not in the normal
+    # outputs; the fixture sets ``output_horizon``, whose raw dump holds every
+    # row of the solve (per unitsize, which leaves the equality unchanged).
+    parts = sorted((workdir / "output_raw" / "horizon" / "v_state").glob("*__2day_dispatch.parquet"))
+    assert parts, "No raw v_state dump written by the stochastic run"
+    raw = pl.read_parquet(parts[0])
+    df = (raw.select(pl.col("d").alias("period"), pl.col("t").alias("time"), pl.col("n").alias("node"), "value")
+          .to_pandas().pivot_table(index=["period", "time"], columns="node", values="value", aggfunc="first"))
 
     pb = _read_csv_pairs(workdir / "solve_data" / "period__branch.csv")
     dtna = _read_csv_pairs(
@@ -173,10 +170,9 @@ def test_storage_state_equal_across_branches(
             vals = []
             for f in forecast_periods:
                 try:
-                    row_f = df.xs((f, t), level=("period", "time"))
+                    vals.append(float(df.loc[(f, t), node]))
                 except KeyError:
                     continue
-                vals.append(float(row_f.iloc[0][node]))
             if len(vals) > 1:
                 assert max(vals) - min(vals) == pytest.approx(0.0, abs=1e-6), (
                     f"forecast-to-forecast non-anticipativity violated for "

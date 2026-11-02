@@ -1044,3 +1044,21 @@ CO2 rows split per scenario path again (the path set is read from the last solve
 four paths; all 0).  `tests/scenarios.yaml` pins `expected_objective: 67.3517305373` again.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate 2_day_stochastic_dispatch`.
+
+## 2026-11-02 — `2_day_stochastic_dispatch/{costs__dt,summary_solve}.csv` (normal outputs are realized-only)
+
+**Context.** `model.output_horizon` no longer widens the normal outputs (owner decision "output_horizon → separate
+raw parquet (2026-11-02)"): forecast-branch rows go only to the raw `horizon/` dump, flag or not.  This fixture is a
+forecasts-only fan (four forecasts `realized`, `upper`, `lower`, `mid` of 0.25 each, none designated `realized: yes`,
+so no realization solve) that sets `output_horizon = yes`; every dispatch step of the solve is on a forecast branch
+(`period1_<branch>`), and the period label `period1` has no dispatch, so the solve realizes no step.
+`costs__dt.csv`: the 192 forecast-branch rows (48 steps × 4 branches) are gone; the file is the header only.
+`summary_solve.csv`: the `2day_dispatch` Objective row stays 67.3517305373 — the LP is unchanged (lp_snapshot of
+this fixture byte-identical to the parent: the flag never reached the LP of a single solve, and a single solve has
+no carrier into a next solve); the calculated "full horizon" / "realized periods" / operational totals drop
+67.3517305373 → 0 (nothing realized to add up; they were the probability-weighted forecast costs); the four branch
+`Period` columns go (no realized period, so the period rows are empty); the four per-path CO2 lines become the one
+`"CO2 [Mt]",0` line (no realized period on any path); the four branch `downriver` slack rows go.
+`tests/scenarios.yaml` pins `expected_objective: 0.0` (it reads the calculated full-horizon total).
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate 2_day_stochastic_dispatch`.
