@@ -5,7 +5,7 @@ unrealized alike), as raw solver values: one parquet part per family per roll un
 ``<work>/output_raw/horizon/<lp_name>/<seq>__<roll>.parquet``.  :func:`assemble_horizon_dump` streams the parts of
 each family into ``<output_parquet>/<scenario>/horizon/<lp_name>.parquet`` once the run's outputs are written.
 
-Columns (one fixed schema per family; every part is cast to it):
+Columns (one fixed schema per family; every part is built with the same dtypes):
 
 * variables: ``<dims…>`` (Utf8, the LP dim names), ``solve``, ``roll``, ``realized`` (Boolean), ``value`` (primal,
   per unitsize as in the LP, Layer-2-unscaled) and ``reduced_cost`` (column dual × 1/scale_the_objective);
@@ -212,7 +212,7 @@ def write_horizon_parts(
         return written
     total = sum(1 if over is None else int(over.height) for _name, over in cstr_keys)
     n_rows = len(sol.row_dual) if sol.row_dual is not None else total
-    if total > n_rows:
+    if total != n_rows:
         raise ValueError(
             f"raw horizon dump for solve '{solve_name}': {total} snapshot constraint rows but the solution has "
             f"{n_rows} rows"
