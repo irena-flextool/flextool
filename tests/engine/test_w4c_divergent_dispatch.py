@@ -221,12 +221,16 @@ def test_parent_forecasts_genuinely_diverge(chain) -> None:
 #   high forecast: 20 MW * 8760 h * 10 CUR/MWh = 1 752 000
 #   low  forecast: 90 MW * 8760 h * 10 CUR/MWh = 7 884 000
 #   expectation  : 0.5 * 1 752 000 + 0.5 * 7 884 000 = 4 818 000
-#   + invest annuity                                 =   283 500
-#   = 5 101 500
-PARENT_FORECAST_ONLY_OBJECTIVE = 5_101_500.0
-# Negative control: the OLD value when the realized branch was kept in the
-# normalisation denominator (realized self-weight 1.0 in the cohort).
-PARENT_REALIZED_IN_DENOM_OBJECTIVE = 4_851_214.2857
+#   + invest annuity                                 =    94 500
+#   = 4 912 500
+# Invest annuity: peaker 1 CUR/kW, r 0.05, lifetime 1 -> 1000 · 0.05 / (1 − 1.05^−1) = 1050 CUR/MW per year;
+# 90 MW (the low forecast's peak) over the one calendar period p2035 (1 year) = 94 500.  The period label p2035
+# and its forecast copies p2035_high / p2035_low are the same calendar year, counted once.
+PARENT_FORECAST_ONLY_OBJECTIVE = 0.5 * 20 * 8760 * 10 + 0.5 * 90 * 8760 * 10 + 90 * 1050.0
+# Negative control: the value when the realized branch was kept in the
+# normalisation denominator (realized self-weight 1.0 in the cohort):
+# operational 4 567 714.2857 + the same 94 500 invest annuity.
+PARENT_REALIZED_IN_DENOM_OBJECTIVE = 4_567_714.2857 + 90 * 1050.0
 
 
 @pytest.mark.solver
@@ -236,9 +240,9 @@ def test_parent_objective_is_forecast_only_expectation(chain) -> None:
     (realized excluded from the denominator) and the realized branch's own
     operational weight → 0.  The parent objective is therefore the
     FORECAST-ONLY expectation (0.5/0.5 of the 20 MW / 90 MW forecasts =
-    4 818 000) plus the invest annuity (283 500) = 5 101 500.
+    4 818 000) plus the invest annuity (94 500) = 4 912 500.
 
-    Negative control: 4 851 214.2857 — the OLD objective with the realized
+    Negative control: 4 662 214.2857 — the objective with the realized
     branch kept in the normalisation denominator.  INVEST weight
     (``pd_branch_weight``) is UNTOUCHED, so the annuity term is unchanged."""
     steps, wf = chain
