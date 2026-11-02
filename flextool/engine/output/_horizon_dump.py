@@ -231,12 +231,17 @@ def write_horizon_parts(
     return written
 
 
-def warn_benders_no_dump(logger: logging.Logger, solve_name: str) -> None:
-    """The one warning a Benders solve gives under ``output_horizon`` (it writes no outputs at all)."""
-    logger.warning(
-        "output_horizon: raw horizon dump is not available for Benders solves; solve '%s' is not dumped",
-        solve_name,
-    )
+def warn_benders_no_dump(logger: logging.Logger, solve_name: str, *, console: bool = True) -> None:
+    """The warning a Benders solve gives under ``output_horizon`` (it writes no outputs at all).
+
+    Logged for every Benders solve; with ``console`` also printed (the runner's logger is pinned at ERROR,
+    so a solve-site warning would not reach the console otherwise) — the caller prints it once per run.
+    """
+    message = (f"output_horizon: raw horizon dump is not available for Benders solves; "
+               f"solve '{solve_name}' is not dumped")
+    logger.warning(message)
+    if console:
+        print(f"WARNING: {message}", flush=True)
 
 
 def assemble_horizon_dump(raw_output_dir: "Path | str", parquet_dir: "Path | str", *, clear_stale: bool) -> int:

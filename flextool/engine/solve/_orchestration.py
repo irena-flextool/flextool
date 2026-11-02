@@ -2512,6 +2512,9 @@ def _drive_cascade(
             # them before every LP that is not a reuse (fresh warm build,
             # cold / subprocess build, Benders solve).
             self._warm_problem: "WarmProblem | None" = None
+            # ``model.output_horizon`` with a Benders solve: the console
+            # notice that it is not dumped is printed once per run.
+            self._benders_dump_notice_printed = False
             self._prior_data = None
             self._prior_fp: "tuple | None" = None
             self._prior_solver_key: "tuple | None" = None
@@ -3144,7 +3147,9 @@ def _drive_cascade(
                 # A Benders solve writes no outputs (it returns before
                 # ``write_outputs_for_solve``), so it has no raw dump either.
                 if _horizon_on:
-                    warn_benders_no_dump(state.logger, complete_solve_name)
+                    warn_benders_no_dump(state.logger, complete_solve_name,
+                                         console=not self._benders_dump_notice_printed)
+                    self._benders_dump_notice_printed = True
                 # The Benders master / regions are their own WarmProblems:
                 # release the previous monolithic LP for the whole loop.
                 self._release_warm_problem()

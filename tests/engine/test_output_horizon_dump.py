@@ -241,9 +241,10 @@ def _lh2_chain() -> list[str]:
     return chain
 
 
-def test_benders_solve_warns_and_is_not_dumped(tmp_path_factory, caplog) -> None:
-    """D6: a Benders solve writes no outputs, so under the flag it gives one warning naming the solve and writes
-    no parts; the monolithic dispatch solve after it is dumped."""
+def test_benders_solve_warns_and_is_not_dumped(tmp_path_factory, caplog, capfd) -> None:
+    """D6: a Benders solve writes no outputs, so under the flag it gives one warning naming the solve (also
+    printed to the console once per run: the runner's logger is pinned at ERROR) and writes no parts; the
+    monolithic dispatch solve after it is dumped."""
     url, scen = make_db(tmp_path_factory, alt="hz_benders", values=[FLAG_ON], base_chain=_lh2_chain(),
                         fixture_json=LH2_FIXTURE_JSON)
     work = tmp_path_factory.mktemp("hz_benders_w") / "work"
@@ -255,6 +256,7 @@ def test_benders_solve_warns_and_is_not_dumped(tmp_path_factory, caplog) -> None
     assert others, list(steps)
     msgs = [r.getMessage() for r in caplog.records if "raw horizon dump is not available" in r.getMessage()]
     assert len(msgs) == len(benders) and all(any(b in m for m in msgs) for b in benders)
+    assert capfd.readouterr().out.count("raw horizon dump is not available for Benders solves") == 1
     parts = list((work / "output_raw" / "horizon").glob("*/*.parquet"))
     rolls = {p.stem.split("__", 1)[1] for p in parts}
     assert rolls == set(others)
