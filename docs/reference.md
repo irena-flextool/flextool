@@ -80,7 +80,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - Stochastic parameters:
 
     - *stochastic_branches*: 4D-map defining the solve's **forecast branches** — the probability-weighted possible futures. Index columns: *period*, *branch*, *analysis_time* (the branch's start timestep), *realized* (yes/no), and the value is the branch's **probability weight**. The weights are normalized to sum to one across the forecast branches at each start time. The *realized* flag is an **optional designation** (at most one branch per start time) marking which branch's data are treated as the actuals for the committed / realized-dispatch results; a realized-flagged branch is **not** a weighted member of the forecast fan. A period-indexed value (a map keyed by period, e.g. efficiency, startup cost, commodity price, availability, variable cost or a per-period limit) also applies to that period's forecast branches; a value authored for a branch period itself takes precedence. See 'How to use stochastics' for more information.
-    - *stochastic_invest_method*: `none` (default) or `recourse`. `none` makes a single shared here-and-now investment plan across all forecast branches (operations still fan per branch). `recourse` gives per-branch (wait-and-see) investment: each forecast branch invests on its own data at and after the branching period, with probability-weighted investment costs and per-branch investment limits, and reports EVPI/VSS-style stochastic value. Forecast-branch (unrealized) investments are output only under `model.output_horizon` (a debug flag). Incompatible with Benders decomposition. See 'How to use stochastics' for the interpretation caveats.
+    - *stochastic_invest_method*: `none` (default) or `recourse`. `none` makes a single shared here-and-now investment plan across all forecast branches (operations still fan per branch). `recourse` gives per-branch (wait-and-see) investment: each forecast branch invests on its own data at and after the branching period, with probability-weighted investment costs and per-branch investment limits, and reports EVPI/VSS-style stochastic value. Forecast-branch (unrealized) investments are not in the normal outputs, only in the raw dump of `model.output_horizon` (a debug flag). Incompatible with Benders decomposition. See 'How to use stochastics' for the interpretation caveats.
   
   - For commercial solvers:
 
@@ -513,9 +513,9 @@ Additionally a model level option to exclude all node, connection and unit level
 
 - model: `exclude_entity_outputs`: Default, no. Excludes results on node, unit and connection level, but preserves group level results
 
-A further option is to output everything from the model horizon. This changes the behaviour of a rolling model, since it would otherwise output only the realized part of the model horizon. This option will also output all variables from the stochastic branches when the model uses those. This option is useful for debugging and constructing stochastic/rolling model. Outputting the unrealized part of the model horizon will include unrealized costs in the cost calculations, so costs will be too high and this option should not be used for the final results.
+A further debug option writes everything the LP holds over the model horizon to a separate raw dump: the look-ahead of each roll after `rolling_solve_jump` and the forecast branches of stochastic solves. The normal outputs keep only the realized results, with or without it.
 
-- model: `output_horizon`: Default, no. Produces outputs for the model horizon after `rolling_solve_jump`.
+- model: `output_horizon`: Default, no. Writes one raw parquet per LP variable and constraint, with every row of every solve and a `realized` column, to `output_parquet/<scenario>/horizon/` (see [Results](results.md)). The normal outputs are unchanged.
 
 
 ## Reserves

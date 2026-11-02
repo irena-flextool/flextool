@@ -1,5 +1,19 @@
 ## Unreleased
 
+- **Normal outputs hold realized results only, with or without `output_horizon`.** `output_horizon = yes`
+  no longer changes the parquet / CSV / plot / summary outputs: forecast-branch rows, rolling look-ahead
+  rows and per-forecast (recourse) investment rows are gone from them, and the "realized periods" /
+  "full horizon" totals no longer include forecast-branch costs. Those rows are only in the raw dump
+  under `horizon/`. A stochastic fan with no realization solve (forecasts only) reports its investment
+  decisions only: without the option it also used to report the forecast branches' costs, prices and
+  capacities. CO2 in the summary is one total for the realized periods.
+
+- **Fix: `output_horizon = yes` no longer changes the next solve.** In a solve followed by another solve
+  (rolling, realization dispatch, multi-solve), the CO2 emitted in unrealized steps, and the unrealized
+  hours and commodity use, were carried into the next solve's CO2 limits (`co2_max_period`,
+  `co2_max_total`), cumulative-hour totals and commodity ladders. Only realized steps are carried now,
+  as without the option.
+
 - **New: raw LP dump with `output_horizon = yes`.** The debug option now also writes
   `output_parquet/<scenario>/horizon/`: one raw parquet per LP variable and constraint holding all rows
   of every solve (forecast branches and rolling look-ahead steps included), appended over the solves and
