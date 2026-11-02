@@ -14,6 +14,10 @@
   its periods ran without the ties that keep its forecast investments non-anticipative. It now stops with a
   configuration error naming the sub-solve; make it a top-level solve.
 
+- **A committed window in a forecasts-only fan no longer stops a run over a cap on another period.** The
+  check that stops a solve committing steps inside a fan nobody realizes named the annual commodity-ladder
+  tiers and `co2_max_period` caps of every period; it now only counts caps on the fan's own period.
+
 - **Fix: in a rolling stochastic solve each forecast keeps its own cumulative limits.** The rolls of a
   rolling solve were built without their scenario paths, so the CO2 total cap (`co2_max_total`), the
   cumulative commodity-ladder tier cap and the flow-group cumulative flow limits (`max_cumulative_flow` /

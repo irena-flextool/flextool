@@ -329,21 +329,24 @@ def _untied_families(d, committed: "list[tuple[str, str]]") -> list[str]:
         families.append("cumulative commodity ladder")
     if _rows(d.group_co2_max_total):
         families.append("CO2 total cap")
+    committed_labels = {str(p) for p, _t in committed}
+    members = set()
+    if _rows(d.period_branch_full):
+        members = {str(b) for a, b in d.period_branch_full.select("d", "b").iter_rows()
+                   if str(a) in committed_labels and str(a) != str(b)}
+    fan_periods = sorted(committed_labels | members)
     # The annual ladder tiers and the CO2 period caps continue from the period's realized purchases / emissions
-    # (the period label's carry), which a committed window inside the fan leaves per forecast.
+    # (the period label's carry), which a committed window inside the fan leaves per forecast.  Only a cap on the
+    # fan's own period (its label or a forecast of it) is affected; a cap on another period of the chain is not.
     ann_qty = d.p_ladder_ann_quantity
     if _rows(d.cndi_ladder_ann) and ann_qty is not None and d.cndi_ladder_ann.join(
             ann_qty.frame.filter(pl.col("value") < _INF_SENTINEL).select("c", "i", "d"),
-            on=["c", "i", "d"], how="inner").height > 0:
+            on=["c", "i", "d"], how="inner").filter(pl.col("d").cast(pl.Utf8).is_in(fan_periods)).height > 0:
         families.append("annual commodity ladder")
-    if _rows(d.group_d_co2_capped):
+    if _rows(d.group_d_co2_capped) and d.group_d_co2_capped.filter(
+            pl.col("d").cast(pl.Utf8).is_in(fan_periods)).height > 0:
         families.append("CO2 period cap")
     if getattr(d, "recourse_invest", False):
-        committed_labels = {p for p, _t in committed}
-        members = set()
-        if _rows(d.period_branch_full):
-            members = {str(b) for a, b in d.period_branch_full.select("d", "b").iter_rows()
-                       if str(a) in committed_labels and str(a) != str(b)}
         invest_d = set()
         for frame in (d.pd_invest_set, d.nd_invest_set):
             if _rows(frame):

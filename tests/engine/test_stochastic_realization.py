@@ -605,6 +605,35 @@ def test_committed_window_in_forecasts_only_fan_with_period_carry_raises(tmp_pat
     assert "storage state" not in str(raised.value)
 
 
+def _period_carry_flex_data(cap_period: str) -> SimpleNamespace:
+    """A FlexData stand-in with one fan (label ``p1``, forecasts ``p1_a`` / ``p1_b``), a finite annual ladder
+    tier and a CO2 period cap, both on *cap_period*; every other family absent."""
+    from polar_high import Param
+
+    return SimpleNamespace(
+        nodeState=None, dt_non_anticipativity=None, process_online=None, process_reserve_upDown_node_active=None,
+        ci_ladder_cumulative=None, p_ladder_cum_quantity=None, group_co2_max_total=None, recourse_invest=False,
+        period_branch_full=pl.DataFrame({"d": ["p1", "p1", "p2"], "b": ["p1_a", "p1_b", "p2"]}),
+        cndi_ladder_ann=pl.DataFrame({"c": ["coal"], "n": ["coal_node"], "d": [cap_period], "i": ["1"]}),
+        p_ladder_ann_quantity=Param(("c", "i", "d"), pl.DataFrame(
+            {"c": ["coal"], "i": ["1"], "d": [cap_period], "value": [1.0e6]})),
+        group_d_co2_capped=pl.DataFrame({"g": ["co2g"], "d": [cap_period]}))
+
+
+@pytest.mark.parametrize(("cap_period", "families"), [
+    ("p1", ["annual commodity ladder", "CO2 period cap"]),
+    ("p1_a", ["annual commodity ladder", "CO2 period cap"]),
+    ("p2", []),
+])
+def test_committed_window_period_carries_only_on_the_fan_period(cap_period: str, families: list) -> None:
+    """An annual ladder tier or a CO2 period cap continues from its own period's realized carry, so a committed
+    window inside the fan of p1 leaves it undecided only when the cap is on p1 (its label or a forecast of it); a
+    cap on another period p2 of the chain continues from a carry the window does not touch."""
+    from flextool.engine.solve._realization import _untied_families
+
+    assert _untied_families(_period_carry_flex_data(cap_period), [("p1", "t1")]) == families
+
+
 def _rolling_hedge_with_period_carry(data: dict) -> None:
     """:func:`_rolling_hedge` with 100 MW of ``base`` existing (a rolling solve has no investment) fed from a
     commodity node ``fuel`` (commodity ``fuel`` on a finite annual ladder, co2_content 0.5) inside a CO2
