@@ -457,16 +457,21 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
 
     # weight_frame: the per-d years-equivalent weight the legacy scalar summed whole (see the EQ.
     # header); None only in the degenerate fixture that skips the derived-param pass (flat 1.0 then).
-    # The f_d_k fallback leaves the fan labels out: a label has no v_trade, and each forecast's f_d_k
-    # already holds its period's realized hours, so a path counts them once.
+    # The f_d_k fallback leaves the fan labels of this solve out: a label has no v_trade, and each forecast's
+    # f_d_k already holds its period's realized hours, so a path counts them once.  A label outside this
+    # solve's period_in_use (a fan an earlier solve finished) keeps its f_d_k: it is realized history.
+    in_use = (d.period_in_use_set["d"].cast(pl.Utf8).unique()
+              if _has_rows(getattr(d, "period_in_use_set", None)) else None)
     if d.p_ladder_cum_weight is not None and d.p_ladder_cum_weight.frame.height > 0:
         weight_frame = d.p_ladder_cum_weight.frame
     elif d.p_f_d_k is not None:
         weight_frame = d.p_f_d_k.frame
         pairs = _period_branch_pairs(d)
         if pairs is not None:
-            weight_frame = weight_frame.filter(
-                ~pl.col("d").cast(pl.Utf8).is_in(pairs["anchor"].unique().implode()))
+            labels = pairs["anchor"].unique()
+            if in_use is not None:
+                labels = labels.filter(labels.is_in(in_use.implode()))
+            weight_frame = weight_frame.filter(~pl.col("d").cast(pl.Utf8).is_in(labels.implode()))
     else:
         weight_frame = None
 
@@ -521,21 +526,41 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
         )
         return
 
-    # _path (Q16, #58): one row per (c, i, leaf).  The LHS sums only the leaf's own periods (a
-    # shared pre-reveal trunk period belongs to every leaf, fanned in via the ``(d, leaf)`` join —
-    # same as the invest/divest _path families' leaf_rows pattern).  The RHS mirrors the legacy
-    # formula but weighs only the leaf's own periods: ``quantity_cum[c,i] · Σ_{d∈leaf} weight[d]``
-    # (recommended option (a) of #58) — a trunk period's weight is counted once per leaf (correct:
-    # each leaf's path genuinely includes that period's own dispatch), never pooled across leaves
-    # (the bug).  realized stays a single chain-wide carry per (c,i), shared across leaves (it is
-    # what one earlier, already-resolved past actually bought, independent of which future branch
-    # this solve now explores).
+    # ─── EQ. ─── ladder_tier_cap_cumulative_roll_path ─────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{n, d∈D(leaf)} v_trade[c,n,d,i] · commodity_unitsize[c]
+    #   ≤ quantity_cum[c,i] · ( Σ_{d∈D(leaf)} w[d] + Σ_{d∉period_in_use} w[d] ) − Σ_d realized[c,i,d]
+    #   ∀ (c,i) ∈ ci_ladder_cumulative with quantity_cum[c,i] < 1e29, leaf ∈ d_leaf, when v_trade spans >1 leaf
+    # One row per scenario path (Q16, #58): the pooled row's weight summed every forecast into one budget,
+    # letting the forecasts buy N× the tier between them.  w[d] = years_represented[d]·realized_hours[d]/8760
+    # (p_ladder_cum_weight; fallback f_d_k[d] with this solve's fan labels left out).  D(leaf) = the leaf's
+    # branch periods, its fan labels and the shared pre-reveal periods (the (d, leaf) join of d_leaf, as in the
+    # invest/divest _path families' leaf_rows); a shared period's weight counts once on each path.  The second
+    # sum is the periods earlier solves and rolls finished: one realized past shared by every path, matching
+    # realized, which is the chain-wide carry of what that past bought.  Every period of period_in_use with a
+    # weight lies on some leaf (raises otherwise), so the second sum holds only the finished history; it is added
+    # only when non-zero.  A chained earlier solve's period missing from this solve's p_years_represented.csv
+    # counts with years_represented 1 (as in the pooled row).  No branch weight on the row: constraints are per
+    # path, the branch weights belong to the objective.
     cndi_leaf = cndi_cum_finite.join(leaf_pairs, on="d", how="inner")
     leaves_list = leaf_pairs.select("leaf").unique()
     over = ci_cum_finite.join(leaves_list, how="cross")
     if weight_frame is not None:
         per_leaf_weight = (weight_frame.join(leaf_pairs, on="d", how="inner")
                            .group_by("leaf").agg(pl.col("value").sum().alias("weight")))
+        if in_use is not None:
+            weights_utf8 = weight_frame.select(pl.col("d").cast(pl.Utf8), pl.col("value").cast(pl.Float64))
+            on_leaf = d_leaf["d"].cast(pl.Utf8).unique()
+            off_path = (weights_utf8.filter(pl.col("d").is_in(in_use.implode())
+                                            & ~pl.col("d").is_in(on_leaf.implode())
+                                            & (pl.col("value") != 0.0))["d"].unique().sort().to_list())
+            if off_path:
+                raise ValueError(
+                    f"_commodity_ladder: period(s) {off_path} of period_in_use carry a cumulative ladder "
+                    "weight but lie on no scenario path (d_leaf); the lineage frames are incomplete.")
+            w_hist = float(weights_utf8.filter(~pl.col("d").is_in(in_use.implode()))["value"].sum())
+            if w_hist != 0.0:
+                per_leaf_weight = per_leaf_weight.with_columns(pl.col("weight") + w_hist)
     else:
         per_leaf_weight = leaves_list.with_columns(weight=pl.lit(1.0))
     cap_df = (ci_cum_finite.join(d.p_ladder_cum_quantity.frame, on=["c", "i"], how="left")

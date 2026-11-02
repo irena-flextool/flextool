@@ -584,3 +584,86 @@ def test_cumulative_ladder_fallback_counts_realized_hours_once(tmp_path_factory)
             assert with_weight[b] == pytest.approx((24 * k + min(96, 168 - 24 * k)) / 8760, rel=1e-12), (k, b)
             assert fallback[b] == pytest.approx(_forecast_f(k), rel=1e-12), (k, b)
             assert fallback[b] == pytest.approx(with_weight[b] * 8760 / 168, rel=1e-12), (k, b)
+
+
+# ---------------------------------------------------------------------------
+# A rolling fan over two periods: the second period's roll starts after the first period has finished.
+
+TWO_PERIOD_JSON = REPO_ROOT / "tests" / "fixtures" / "stoch_two_period.json"
+TWO_PERIOD_CHAIN = ["init", "base", "stoch"]
+TWO_PERIOD_FORECASTS = ("high", "low")
+FUEL_ENTITIES = [["commodity", "fuel", None], ["node", "fuel_node", None],
+                 ["commodity__node", ["fuel", "fuel_node"], None], ["unit__inputNode", ["thermal", "fuel_node"], None]]
+
+
+def _two_period_rolling_ladder(tmp_path_factory, alt: str, quantity: float) -> dict:
+    """``stoch_two_period.json`` as a rolling solve (horizon = jump = 3 h, one roll per period) with a forecast fan
+    revealed at the start of each period (realized designation + forecasts high/low), and the thermal unit burning
+    ``fuel`` bought on a cumulative ladder (tier 1 at 5 up to ``quantity``, tier 2 at 7 unlimited)."""
+    def at(step: str, realized: str, weight: float) -> dict:
+        return {"type": "map", "index_type": "str",
+                "data": [[step, {"type": "map", "index_type": "str", "data": [[realized, weight]]}]]}
+
+    branches = {"index_type": "str", "data": [
+        [period, {"type": "map", "index_type": "str", "data": [
+            ["realized", at(step, "yes", 1.0)], ["high", at(step, "no", 1.0)], ["low", at(step, "no", 3.0)]]}]
+        for period, step in (("p2035", "t0001"), ("p2040", "t0004"))]}
+    tiers = {k: v for k, v in _tiers(5.0, quantity, 7.0).items() if k != "type"}
+    values = [["solve", "stoch_2p", "solve_mode", b64("rolling_window", "str")],
+              ["solve", "stoch_2p", "rolling_solve_horizon", b64(3.0, "float")],
+              ["solve", "stoch_2p", "rolling_solve_jump", b64(3.0, "float")],
+              ["solve", "stoch_2p", "stochastic_branches", b64(branches, "map")],
+              ["node", "fuel_node", "node_type", b64("commodity", "str")],
+              ["commodity", "fuel", "price_method", b64("price_ladder_cumulative", "str")],
+              ["commodity", "fuel", "price_ladder_cumulative", b64(tiers, "map")]]
+    url, scen = make_db(tmp_path_factory, alt=alt, values=values, entities=FUEL_ENTITIES,
+                        base_chain=TWO_PERIOD_CHAIN, fixture_json=TWO_PERIOD_JSON)
+    return run(tmp_path_factory, url, scen)
+
+
+def _hand_d_leaf(flex_data, label: str) -> pl.DataFrame:
+    """The scenario paths of a fan at ``label``: one leaf per forecast holding the forecast and the label."""
+    d_dtype = flex_data.p_f_d_k.frame.schema["d"]
+    return pl.DataFrame({"d": [d for f in TWO_PERIOD_FORECASTS for d in (f"{label}_{f}", label)],
+                         "leaf": [f for f in TWO_PERIOD_FORECASTS for _ in range(2)]}).with_columns(
+        pl.col("d").cast(d_dtype))
+
+
+def test_rolling_path_tier_cap_counts_finished_periods(tmp_path_factory) -> None:
+    """A scenario path's cumulative tier cap counts the periods earlier rolls finished: one realized past, shared by
+    every path, the same past whose purchases ``realized`` subtracts.
+
+    Hand values (q = 1e5; every period is 3 one-hour steps; years_represented 1, the fixture sets none).  The thermal
+    unit burns at least 100 − 60 = 40 MW (demand 100, wind 100 MW × profile ≤ 0.6) for 3 h = 120 MWh of fuel per
+    period, above any tier-1 cap below, so tier 1 binds.  Realization roll 0 (p2035 realized) has the cap
+    q·3/8760 = 34.247 MWh and buys it all: R_0 = q·3/8760.  Roll 1 is the p2040 fan, with p2035 finished (outside its
+    period_in_use).  A path weighs the finished p2035 (3 realized hours: 3/8760), the label p2040 (no hours yet: 0)
+    and its forecast's own 3 hours (3/8760): RHS = q·6/8760 − R_0 = q·3/8760.  Without the history the RHS would be
+    q·3/8760 − R_0 = 0.  The f_d_k fallback weighs the same periods by the share of their hours realized:
+    f_d_k[p2035] = 3/3 = 1 and f_d_k[p2040_<f>] = 3/3 = 1, the label left out: RHS = q·2 − R_0."""
+    import dataclasses
+
+    from tests.engine._lp_rows import row_bounds
+
+    quantity = 1.0e5
+    steps = _two_period_rolling_ladder(tmp_path_factory, "ladder_two_period_roll", quantity)
+    bought0 = _v_trade(steps["stoch_2p__realized_dispatch_roll_0"]).filter(
+        (pl.col("c") == "fuel") & (pl.col("i") == "1"))
+    assert set(bought0["d"]) == {"p2035"}
+    r0 = float(bought0["value"].sum())
+    assert r0 == pytest.approx(quantity * 3 / 8760, rel=1e-9)
+
+    fd = steps["stoch_2p_roll_1"].flex_data
+    assert "p2035" not in set(utf8(fd.period_in_use_set)["d"])
+    fd = dataclasses.replace(fd, d_leaf=_hand_d_leaf(fd, "p2040"))
+
+    def rhs(flex_data) -> dict[str, float]:
+        rows = row_bounds(build(flex_data), "ladder_tier_cap_cumulative_roll_path", "fuel,1,")
+        return {nm[nm.rindex(",") + 1:-1]: ub for nm, (_lb, ub) in rows.items()}
+
+    with_weight = rhs(fd)
+    fallback = rhs(dataclasses.replace(fd, p_ladder_cum_weight=None))
+    assert set(with_weight) == set(fallback) == set(TWO_PERIOD_FORECASTS)
+    for f in TWO_PERIOD_FORECASTS:
+        assert with_weight[f] == pytest.approx(quantity * 6 / 8760 - r0, rel=1e-9), f
+        assert fallback[f] == pytest.approx(quantity * 2 - r0, rel=1e-9), f
