@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 
 from flextool.process_outputs._annualize import annualize_dt_to_d
-from flextool.process_outputs._branch_weight import weight_dt_by_branch
 
 
 def _agg_period_or_empty(df: pd.DataFrame, realized_periods, period_level: str = 'period') -> pd.DataFrame:
@@ -46,14 +45,9 @@ def compute_costs(par, s, v, r) -> None:
 
     # Per-step scaling factor: step_duration × timestep_weight.  Used by all
     # per-(d, t) cost terms below to match the objective in flextool.mod.
-    # Option (A): fold in pdt_branch_weight[d, t] so every operational cost
-    # term built from step_x_rp (commodity buy/sell, per-process commodity,
-    # other operational) carries the LP's per-(d, t) probability weight.
-    # step_x_rp feeds ONLY cost terms here (never a physical quantity), so
-    # folding the weight in is safe; deterministic runs weight by 1.0.
-    _pdt_bw = getattr(par, "pdt_branch_weight", None)
+    # The LP also weights these terms by pdt_branch_weight[d, t]; normal outputs hold realized rows only, and a
+    # realized (d, t) has branch weight 1, so no branch weight is applied here or below.
     step_x_rp = par.step_duration.mul(par.timestep_weight, axis=0)
-    step_x_rp = weight_dt_by_branch(step_x_rp, _pdt_bw)
 
     commodity_price = par.commodity_price[commodity_node.get_level_values('commodity').unique()]
     commodity_price.columns = commodity_price.columns.join(commodity_node)
@@ -94,24 +88,12 @@ def compute_costs(par, s, v, r) -> None:
         price = ann_price.fillna(cum_price)
         price.columns = mwh.columns
 
-        # Branch weight is per period (pd_branch_weight keeps its 'solve' level — drop_levels does not
-        # touch it, _weight_by_branch below mirrors this same lookup); default 1.0 outside stochastic solves.
-        bw_series = getattr(par, 'pd_branch_weight', None)
-        bw_map: dict[str, float] = {}
-        if bw_series is not None:
-            for idx, val in bw_series.items():
-                period = idx[-1] if isinstance(idx, tuple) else idx
-                bw_map[str(period)] = float(val)
-        bw = pd.Series(
-            [bw_map.get(str(p), 1.0) for p in mwh.index], index=mwh.index,
-        )
-        ladder_cost_d = mwh.mul(price).mul(bw, axis=0)
+        ladder_cost_d = mwh.mul(price)
         ladder_cost_d.columns = tiers
         ladder_cost_d = ladder_cost_d.T.groupby('commodity').sum().T
 
-        # Spread each period's ladder cost across its (d, t) rows proportionally to step_x_rp — the
-        # model requires a uniform branch weight within a ladder period, so this is a pure
-        # step_duration x timestep_weight share and reconciles to ladder_cost_d exactly on re-summing.
+        # Spread each period's ladder cost across its (d, t) rows proportionally to step_x_rp (a pure
+        # step_duration x timestep_weight share), which reconciles to ladder_cost_d exactly on re-summing.
         share = step_x_rp.div(step_x_rp.groupby(level='period').transform('sum'))
         ladder_cost_dt = ladder_cost_d.reindex(share.index.get_level_values('period'))
         ladder_cost_dt.index = share.index
@@ -234,11 +216,7 @@ def compute_costs(par, s, v, r) -> None:
     # aggregated from the rp-weighted cost_dt directly (instead of
     # multiplying the annualized physical emissions by price, which would
     # drop the per-step rp weighting).
-    # Option (A): weight the CO2 *cost* by pdt_branch_weight (the LP's CO2
-    # price term carries op_factor — model/core.py §4).  The physical CO2 tonnes
-    # (group_co2_d / process_emissions_co2_d above) stay UNWEIGHTED.
     r.group_cost_co2_dt = r.group_co2_dt.mul(par.group_co2_price).mul(par.timestep_weight, axis=0)
-    r.group_cost_co2_dt = weight_dt_by_branch(r.group_cost_co2_dt, _pdt_bw)
     r.group_cost_co2_d = r.group_cost_co2_dt.groupby('period').sum()
     r.cost_co2_dt = r.group_cost_co2_dt.sum(axis=1)
     r.cost_co2_d = r.group_cost_co2_d.sum(axis=1)
@@ -259,9 +237,6 @@ def compute_costs(par, s, v, r) -> None:
         .mul(par.timestep_weight, axis=0)
         .T.groupby('process').sum().T
     )
-    # Option (A): same per-(d, t) weight as the per-group CO2 cost above so
-    # the per-process CO2 cost reconciles to r.cost_co2_dt.
-    r.cost_process_co2_dt = weight_dt_by_branch(r.cost_process_co2_dt, _pdt_bw)
 
     # --- Operational costs ---
     # Mod objective (~line 2347-2376): flow × unitsize × varCost ×
@@ -300,10 +275,6 @@ def compute_costs(par, s, v, r) -> None:
         period_costs = par.process_startup_cost.loc[periods, valid_processes]
         period_costs.index = cost.index
         r.cost_startup_dt[valid_processes] = cost.mul(period_costs).mul(par.timestep_weight, axis=0)
-    # Option (A): weight the startup *cost* by pdt_branch_weight (the LP's
-    # startup_factor carries it — model/core.py §startup).  The physical start
-    # count (r.process_startup_dt above) stays UNWEIGHTED.
-    r.cost_startup_dt = weight_dt_by_branch(r.cost_startup_dt, _pdt_bw)
 
     # --- Investment costs ---
     r.cost_entity_invest_d = v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted)
@@ -320,35 +291,9 @@ def compute_costs(par, s, v, r) -> None:
     r.cost_entity_fixed_invested = (v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]))
     r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns]))
 
-    # --- Slice D (I-a, §11.3): probability-weight the invest/divest cost ---
-    # Under ``recourse`` the LP objective weights every invest/divest
-    # annuity + lifetime-fixed contribution by ``pd_branch_weight[period]``
-    # (§9.1).  The post-hoc recompute above uses the raw annuity, so the
-    # reported cost would over-state the realized invest by ``1/w_R``.
-    # Multiply each invest/divest cost row by its period's branch weight so
-    # the cost breakdown reconciles to the reported (expected) objective.
-    # Gated on the recourse flag — absent / off → factor 1.0 (byte-parity).
-    if getattr(par, "recourse_invest", False):
-        _wser = getattr(par, "pd_branch_weight", None)
-        _wmap: dict[str, float] = {}
-        if _wser is not None:
-            for _idx, _val in _wser.items():
-                _period = _idx[-1] if isinstance(_idx, tuple) else _idx
-                _wmap[str(_period)] = float(_val)
-
-        def _weight_by_branch(df):
-            if df is None or df.empty:
-                return df
-            _periods = df.index.get_level_values('period')
-            _factors = np.array([_wmap.get(str(_p), 1.0) for _p in _periods])
-            return df.mul(_factors, axis=0)
-
-        r.cost_entity_invest_d = _weight_by_branch(r.cost_entity_invest_d)
-        r.cost_entity_divest_d = _weight_by_branch(r.cost_entity_divest_d)
-        r.cost_entity_fixed_invested = _weight_by_branch(
-            r.cost_entity_fixed_invested)
-        r.cost_entity_fixed_divested = _weight_by_branch(
-            r.cost_entity_fixed_divested)
+    # Under ``recourse`` the LP weights the invest/divest annuity and lifetime-fixed terms by
+    # pd_branch_weight[period]; the realized investment periods of normal outputs have no forecast-branch
+    # investment (a recourse label period reports none), so no branch weight is applied.
 
     # --- Aggregate operational costs (depends on r.costPenalty_* from compute_slacks) ---
     r.costOper_dt = (r.cost_commodity_dt.sum(axis=1) -
