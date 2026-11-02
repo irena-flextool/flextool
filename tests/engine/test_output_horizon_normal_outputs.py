@@ -12,7 +12,8 @@ time)`` row of a per-roll ``output_raw`` file (of a final frame) is a step that 
 Cases (fixtures built from JSON): ``stoch_two_period`` ``stoch`` / ``stoch_horizon`` (forecasts-only fan, no
 realization solve), ``stoch_two_period_invest`` ``recourse`` / ``recourse_horizon`` (per-forecast investment) and
 ``stochastics`` ``1_week_rolling_wind`` (rolling, a forecast fan in each roll's look-ahead; the fixture enables the
-flag, the flag-off twin drops that value).
+flag, the flag-off twin drops that value).  ``tests.json`` ``multi_fullYear_battery_nested_24h_invest_one_solve``
+(nested invest → storage → rolling dispatch, horizon 36 h / jump 24 h): only the dispatch rolls realize steps.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ import polars as pl
 import pytest
 
 from tests.engine.test_output_horizon_dump import _run, _write_outputs
-from tests.engine._unit_db import FLEXTOOL_ROOT
+from tests.engine._unit_db import FLEXTOOL_ROOT, b64, make_db
 
 pytestmark = pytest.mark.solver
 
@@ -114,12 +115,7 @@ def test_no_unrealized_rows_in_normal_outputs(runs, case) -> None:
     windows = REALIZED[case]["windows"]
     unrealized = _unrealized_lp_periods(run["steps"], REALIZED[case]["periods"])
     assert unrealized, "the case has no unrealized LP period: it checks nothing"
-    # The per-solve dual files (``v_dual_*``) of a solve that realizes no step hold every step of it (the price
-    # source of handoffs such as a nested parent's ``fix_price``); their unrealized rows are cut from the final
-    # frames, checked below.
     for path in sorted((run["work"] / "output_raw").glob("*__*.parquet")):
-        if path.name.startswith("v_dual_"):
-            continue
         rolls = [name for name in run["steps"] if path.stem.endswith(f"__{name}")]
         assert rolls, path.name
         roll = max(rolls, key=len)
@@ -191,3 +187,56 @@ def test_normal_outputs_independent_of_flag(runs, off, on) -> None:
     assert sorted(fa) == sorted(fb)
     for rel in fa:
         assert _sorted(_normalised(fa[rel], a["scenario"])).equals(_sorted(_normalised(fb[rel], b["scenario"]))), rel
+
+
+def _scenario_chain(fixture: Path, scenario: str) -> list[str]:
+    """The alternatives of ``scenario`` in rank order."""
+    rows = [r for r in json.loads(fixture.read_text())["scenario_alternatives"] if r[0] == scenario]
+    nxt = {a: b for _, a, b in rows}
+    alt = next(a for a in nxt if a not in set(nxt.values()))
+    out = []
+    while alt is not None:
+        out.append(alt)
+        alt = nxt.get(alt)
+    return out
+
+
+# Hand-derived from tests.json: of the nested chain invest_24h ⊃ storage_fullYear_6h ⊃ dispatch_fullYear_roll only
+# dispatch_fullYear_roll has ``realized_periods``; invest_24h has ``realized_invest_periods`` only and
+# storage_fullYear_6h neither, so these two parents realize no dispatch step.
+NESTED_NO_STEP_SOLVES = {"invest_24h", "storage_fullYear_6h"}
+
+
+@pytest.fixture(scope="module")
+def nested_run(tmp_path_factory) -> dict:
+    values = [["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", b64(36.0, "float")],
+              ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", b64(24.0, "float")],
+              ["node", "battery", "storage_nested_fix_method", b64("fix_quantity", "str")]]
+    chain = _scenario_chain(FIXTURES / "tests.json", "multi_fullYear_battery_nested_24h_invest_one_solve")
+    url, scenario = make_db(tmp_path_factory, alt="hz_nested", values=values, base_chain=chain)
+    return _case(url, scenario, tmp_path_factory, "no_nested")
+
+
+def test_nested_parents_without_realized_steps_report_no_steps(nested_run) -> None:
+    """A nested parent that realizes no dispatch step (the invest and storage solves) has no ``(period, time)`` row
+    in any per-roll ``output_raw`` file, prices included, and no final frame row is tagged with it.  Before, its
+    node and reserve price files held every step of its LP, which then reached ``node_prices_dt_e``."""
+    run = nested_run
+    assert NESTED_NO_STEP_SOLVES <= set(run["steps"]), sorted(run["steps"])
+    checked = 0
+    for path in sorted((run["work"] / "output_raw").glob("*__*.parquet")):
+        solve = next((s for s in NESTED_NO_STEP_SOLVES if path.stem.endswith(f"__{s}")), None)
+        if solve is None:
+            continue
+        df = pl.read_parquet(path)
+        if {"period", "time"} <= set(df.columns):
+            assert df.height == 0, (path.name, df.height)
+            checked += 1
+    assert checked > 0
+    priced = 0
+    for name, df in _final_frames(run["pq"]).items():
+        if "solve" in df.columns and df.height:
+            hit = set(df["solve"].cast(str).unique()) & NESTED_NO_STEP_SOLVES
+            assert not hit, (name, sorted(hit))
+            priced += name.startswith("node_prices")
+    assert priced > 0, "no node price frame with a solve column: the check checks nothing"

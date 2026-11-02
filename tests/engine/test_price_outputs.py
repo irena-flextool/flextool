@@ -80,6 +80,24 @@ def _node_prices(wf: Path, solve: str | None = None) -> dict[tuple[str, str, str
     return out
 
 
+def _node_prices_over_all_lp_steps(step, wf: Path) -> dict[tuple[str, str, str], dict[str, float | None]]:
+    """:func:`_node_prices` of ``step`` written over every ``(d, t)`` of its LP (``v_flow`` columns) as the
+    realized rows, with the run's scale_the_objective: a solve that realizes no step (a nested parent, a
+    forecasts-only fan) has no rows in its normal price output."""
+    import dataclasses
+
+    from flextool.process_outputs.read_highs_solution import write_v_dual_node_balance
+
+    rows = (utf8(step.solution.value("v_flow")).select(pl.col("d").alias("period"), pl.col("t").alias("step"))
+            .unique(maintain_order=True))
+    fd = dataclasses.replace(step.flex_data, realized_dispatch=rows)
+    scale = float(pl.read_csv(Path(wf) / "solve_data" / "scale_the_objective.csv")["value"][0])
+    out_dir = Path(wf) / "all_lp_steps"
+    write_v_dual_node_balance(step.solution.highs, solve_name=step.solve_name, output_dir=out_dir / "output_raw",
+                              flex_data=fd, scale_the_objective=scale)
+    return _node_prices(out_dir, step.solve_name)
+
+
 def _reserve_prices(wf: Path) -> dict[tuple[str, str, str], dict[tuple[str, ...], float]]:
     from flextool.lean_parquet import read_lean_parquet
 
@@ -233,7 +251,9 @@ def test_slack_step_price_equals_penalty(tmp_path_factory, case) -> None:
         # demand_node slack at 10 CUR/MWh: cheaper than coal (17.78), dearer than gas (6.67).
         steps, wf = _run(tmp_path_factory, "pr_sl_st", _chain(STOCH, "2_day_stochastic_dispatch"),
                          [["node", "demand_node", "penalty_up", b64(10.0, "float")]], fixture_json=STOCH)
-    prices = _node_prices(wf)
+    # The forecasts-only fan realizes no step: its prices are checked over every step of its LP.
+    prices = (_node_prices_over_all_lp_steps(steps["2day_dispatch"], wf) if case == "stochastic"
+              else _node_prices(wf))
     checked = 0
     for solve, n, d, t, pen in _slack_cells(steps):
         row = prices.get((solve, d, t))
@@ -252,13 +272,16 @@ def test_stochastic_branch_price_not_probability_weighted(tmp_path_factory) -> N
     """2_day_stochastic_dispatch_no_storage: in each of the four branch periods (branch weight 0.25) demand_node
     is served at the margin by coal (16 CUR/MWh fuel / efficiency 0.9 = 17.78), gas (6 / 0.9 = 6.667) or free
     (zero-cost) supply that is being spilled (0); the price is the branch's own price, not × 0.25.  The period
-    label ``period1`` has no dispatch: no operational weight and no price rows.  Before: × 0.25 · period share."""
+    label ``period1`` has no dispatch: no operational weight and no price rows.  The fan realizes no step, so its
+    normal price output has no rows and the price is checked over every step of its LP.  Before: × 0.25 · period
+    share."""
     steps, wf = _run(tmp_path_factory, "pr_stoch", _chain(STOCH, "2_day_stochastic_dispatch_no_storage"),
                      fixture_json=STOCH)
     fd = next(iter(steps.values())).flex_data
     bw = utf8(fd.pdt_branch_weight.frame)
     assert "period1" not in set(bw["d"].to_list())
-    prices = _node_prices(wf, "2day_dispatch")
+    assert pl.read_parquet(Path(wf) / "output_raw" / "v_dual_node_balance__2day_dispatch.parquet").height == 0
+    prices = _node_prices_over_all_lp_steps(steps["2day_dispatch"], wf)
     periods = {d for (_s, d, _t) in prices}
     assert "period1" not in periods and len(periods) >= 4, periods
     zero = {(d, t) for d, t in bw.filter(pl.col("value") == 0.0).select("d", "t").iter_rows()}
@@ -390,8 +413,8 @@ def test_price_independent_of_lp_scaling(tmp_path_factory, monkeypatch) -> None:
 @pytest.mark.parametrize("scale", [None, 1.0])
 def test_fix_price_handoff_equals_parent_price(tmp_path_factory, monkeypatch, scale) -> None:
     """Nested invest → storage (6 h) → rolling dispatch (36 h / 24 h) with battery fix_price: the storage solve
-    hands, at each fix step, exactly its own written battery price_t (rel 1e-9), at the default
-    scale_the_objective and at 1.  At p2020/t0067 the battery discharges at the margin, so its price is the west
+    hands, at each fix step, exactly its own battery price_t (rel 1e-9; the price writer over every step of the
+    storage LP, as the storage solve realizes no step), at the default scale_the_objective and at 1.  At p2020/t0067 the battery discharges at the margin, so its price is the west
     price × the inverter efficiency 0.95 (one MWh from the battery delivers 0.95 MWh to west; 47.5 = 0.95 × 50 in
     this run, but the west level rests on the nested invest result and is not pinned here).  Before: s × the
     price (4.75e-5) at the default scale, ÷ nothing else."""
@@ -407,7 +430,7 @@ def test_fix_price_handoff_equals_parent_price(tmp_path_factory, monkeypatch, sc
           .with_columns(pl.col(c).cast(pl.Utf8) for c in ("node", "period", "step"))
           .filter(pl.col("node") == "battery"))
     assert fp.height > 0
-    prices = _node_prices(wf, "storage_fullYear_6h")
+    prices = _node_prices_over_all_lp_steps(parent, wf)
     checked = 0
     for _n, d, t, v in fp.select("node", "period", "step", "p_fix_storage_price").iter_rows():
         assert v == pytest.approx(prices[("storage_fullYear_6h", d, t)]["battery"], rel=1e-9), (d, t)

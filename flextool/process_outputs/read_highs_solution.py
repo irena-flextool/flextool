@@ -1408,6 +1408,7 @@ def write_v_dual_node_balance(
     realized_dispatch_csv: Path | str | None = None,
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
+    provider: "object | None" = None,
 ) -> Path:
     """Write ``v_dual_node_balance__{solve}.parquet`` (``price_t``).
 
@@ -1434,7 +1435,7 @@ def write_v_dual_node_balance(
     output_dir.mkdir(parents=True, exist_ok=True)
     inv_scale = _resolve_inv_scale_the_objective(scale_the_objective=scale_the_objective)
     kw = dict(solve_name=solve_name, has_time=True, source="row_dual", value_scale=1.0,
-              realized_dispatch_csv=realized_dispatch_csv, flex_data=flex_data)
+              realized_dispatch_csv=realized_dispatch_csv, flex_data=flex_data, provider=provider)
 
     # Raw duals of the per-step rows: (solve, period, time) × node, in the canonical realized row order.
     df = extract_variable(h, "nodeBalance_eq", ("node",), **kw)
@@ -1590,6 +1591,7 @@ def write_v_dual_reserve_balance(
     realized_dispatch_csv: Path | str | None = None,
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
+    provider: "object | None" = None,
 ) -> Path:
     """Write ``v_dual_reserve__upDown__group__period__t__{solve}.parquet`` (``reserve_price_t``).
 
@@ -1629,6 +1631,7 @@ def write_v_dual_reserve_balance(
             solve_name=solve_name, has_time=True, source="row_dual",
             realized_dispatch_csv=realized_dispatch_csv,
             flex_data=flex_data,
+            provider=provider,
         )
         if df is None:
             df = part      # the timeseries frame, also the shape of an empty output
@@ -1781,6 +1784,7 @@ def write_all_variables(
             realized_dispatch_csv=realized_dispatch_csv,
             flex_data=flex_data,
             scale_the_objective=scale_the_objective,
+            provider=provider,
         )),
         ("v_self_discharge", lambda: write_v_self_discharge(
             h, solve_name=solve_name, output_dir=output_dir,
@@ -1796,6 +1800,7 @@ def write_all_variables(
             realized_dispatch_csv=realized_dispatch_csv,
             flex_data=flex_data,
             scale_the_objective=scale_the_objective,
+            provider=provider,
         )),
         # ``entity_all_capacity`` moved to ``handoff_writers.py`` — it's
         # conceptually a solve-to-solve handoff (accumulates across

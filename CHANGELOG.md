@@ -8,6 +8,12 @@
   decisions only: without the option it also used to report the forecast branches' costs, prices and
   capacities. CO2 in the summary is one total for the realized periods.
 
+- **Fix: node and reserve prices of a solve that realizes no time step are no longer reported.** In a
+  nested run, the investment and storage solves above the dispatch solve (and a forecasts-only stochastic
+  fan) realize no dispatch step, yet their node prices reached `node_prices_dt_e` next to the dispatch
+  prices, and the per-step price plots could show the parent's price for a step. Prices now come only
+  from the solves that realize the step.
+
 - **Fix: `output_horizon = yes` no longer changes the next solve.** In a solve followed by another solve
   (rolling, realization dispatch, multi-solve), the CO2 emitted in unrealized steps, and the unrealized
   hours and commodity use, were carried into the next solve's CO2 limits (`co2_max_period`,
