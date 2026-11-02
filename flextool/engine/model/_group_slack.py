@@ -170,6 +170,19 @@ def _capacity_margin_periods(d) -> pl.DataFrame | None:
     return out if out.height > 0 else None
 
 
+def _capacity_margin_branch_weight(d) -> Param | None:
+    """``(d,)`` branch weight of the capacity-margin periods; None when the solve has no ``pd_branch_weight``.
+
+    Left join onto the capacity-margin domain: a period without a weight row has weight 1."""
+    periods = _capacity_margin_periods(d)
+    pd_bw = getattr(d, "pd_branch_weight", None)
+    if periods is None or pd_bw is None:
+        return None
+    left, right = align_join_dtypes(periods, pd_bw.frame.select("d", "value"), ("d",))
+    frame = left.join(right, on="d", how="left").with_columns(pl.col("value").fill_null(1.0))
+    return Param(("d",), frame)
+
+
 def has_capacity_margin(d) -> bool:
     """True when some group has capacity_margin_method = manual, the group scaling is populated and the solve has
     an investment period in dt.
@@ -211,8 +224,8 @@ def add_variables(b: _Build) -> None:
     # ─── VAR. ─── vq_capacity_margin ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # vq_capacity_margin[g,d] ≥ 0   ∀ g ∈ groupCapacityMargin, d ∈ D_inv
-    #   D_inv = period_invest ∩ periods of dt: the solve's investment periods and the branch periods of those
-    #   anchors (branch periods kept as before, pending the stochastics re-grounding)
+    #   D_inv = period_invest ∩ periods of dt: the solve's investment periods and, in a stochastic fan, the
+    #   forecast branch periods of those anchors (a period label has no dt); one slack per forecast
     # Capacity margin shortfall of group g in period d, as a fraction of
     # group_capacity_for_scaling: MW = vq_capacity_margin · group_capacity_for_scaling[g,d].
     if b.has_capacity_margin:
@@ -305,9 +318,9 @@ def _eq_capacity_margin(b: _Build) -> None:
     #     − Σ_{cap(g)} existing_count[p,d] · unitsize[p] · icap[g,d]
     #   ∀ g ∈ groupCapacityMargin, (d,t) ∈ dt : d ∈ D_inv
     #   groupCapacityMargin = groups with capacity_margin_method = manual;  capacity_margin[g,d] = 0 where not authored
-    #   D_inv = period_invest ∩ periods of dt (investment periods of the solve and the branch periods of those
-    #   anchors, the latter kept pending the stochastics re-grounding); a solve without investment periods has
-    #   no capacity margin
+    #   D_inv = period_invest ∩ periods of dt (investment periods of the solve; a period label has no dt, so a
+    #   fan contributes its forecast branch periods, one row per forecast); a solve without investment periods
+    #   has no capacity margin
     #   N(g) = nodes of g without a storage state;  icap = inv_group_cap = 1 / group_capacity_for_scaling
     #   prof(g) = unit arcs into N(g) with an upper_limit or fixed profile f;  cap(g) = the other unit arcs into N(g)
     #   use_*(g) = unit arcs out of N(g);  Σ_{d′} over edd_invest_set / edd_divest_active
@@ -627,13 +640,16 @@ def objective_terms(b: _Build) -> Expr | None:
     # + Σ_{(g,d,t)} vq_inertia[g,d,t] · inertia_limit[g,d] · penalty_inertia[g,d] · w_op[d,t]
     # + Σ_{(g,d,t)} vq_non_synchronous[g,d,t] · gcs[g,d] · penalty_non_synchronous[g,d] · w_op[d,t]
     # + Σ_{g ∈ groupCapacityMargin, d ∈ D_inv} vq_capacity_margin[g,d] · gcs[g,d] · penalty_capacity_margin[g,d]
-    #                                                                     · inflation_op[d] · 1000
+    #                                                         · inflation_op[d] · bw[d] · 1000
     #   gcs = group_capacity_for_scaling;  w_op = b.op_factor
+    #   bw = pd_branch_weight[d], 1 where it has no row (deterministic and pre-reveal periods)
     # Each slack is scaled back to physical units (MWs, MW) and priced per hour
     # of operation.  The capacity margin is a planning quantity: it is priced
-    # once per period, without step weights or branch weights, and its penalty
-    # is authored in CUR/kW (× 1000 to CUR/MW).  The output layer
-    # (calc_slacks) reports the same costs.
+    # once per period, weighted by pd_branch_weight, without step weights, and
+    # its penalty is authored in CUR/kW (× 1000 to CUR/MW).  In a stochastic
+    # fan each forecast branch period keeps its own slack and pays it with its
+    # probability.  The output layer (calc_slacks) reports the same costs for
+    # the realized periods (weight 1).
     pieces: list[Expr] = []
     if (b.vq_inertia is not None and d.pdGroup_inertia_limit is not None
             and d.pdGroup_penalty_inertia is not None):
@@ -644,8 +660,12 @@ def objective_terms(b: _Build) -> Expr | None:
                           * d.pdGroup_penalty_non_synchronous * b.op_factor))
     if (b.vq_capacity_margin is not None and d.p_group_capacity_for_scaling is not None
             and d.pdGroup_penalty_capacity_margin is not None and d.p_inflation_op is not None):
-        pieces.append(Sum(b.vq_capacity_margin * d.p_group_capacity_for_scaling
-                          * d.pdGroup_penalty_capacity_margin * d.p_inflation_op * 1000.0))
+        cm_cost = (b.vq_capacity_margin * d.p_group_capacity_for_scaling
+                   * d.pdGroup_penalty_capacity_margin * d.p_inflation_op * 1000.0)
+        cm_bw = _capacity_margin_branch_weight(d)
+        if cm_bw is not None:
+            cm_cost = cm_cost * cm_bw
+        pieces.append(Sum(cm_cost))
     if not pieces:
         return None
     total = pieces[0]

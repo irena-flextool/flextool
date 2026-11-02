@@ -6,8 +6,8 @@
 
 ``reference.md`` and the schema say the capacity margin is "used only by the investment mode", and GMPL built it
 for ``d ∈ period_invest`` only.  Before the fix it was built in every period of every solve: dispatch solves,
-rolling rolls, stochastic dispatch and look-ahead periods paid the margin penalty.  Branch periods of investment
-anchors keep their rows as before (pending the stochastics re-grounding).
+rolling rolls, stochastic dispatch and look-ahead periods paid the margin penalty.  A period label has no dt,
+so a stochastic fan contributes its forecast branch periods, one row per forecast.
 
 Every case uses a manual margin of 100 000 MW (far above any capacity), so a built row always has a slack.
 Databases are built from JSON (never a checked-in ``.sqlite``).

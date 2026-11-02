@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **Fix: in a stochastic fan the capacity-margin penalty is weighted by the forecast's probability.**
+  Each forecast branch period of an investment period keeps its own capacity-margin shortfall, but its
+  penalty was counted in full, so a fan of forecasts paid the shortfall as many times as it had branches
+  regardless of their weights. Each forecast's penalty is now multiplied by its branch weight, as the
+  operational costs already were. Deterministic solves are unchanged.
+
 - **Fix: in a rolling stochastic solve, a forecast's period budgets count the hours already realized.**
   The annual commodity-ladder tiers and `co2_max_period` allot each roll the share of the period reached
   by the end of its horizon. A forecast branch counted only its own window, not the hours the earlier

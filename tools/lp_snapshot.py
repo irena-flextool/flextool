@@ -809,6 +809,19 @@ def _patch_co2_period_stoch_rolling(data: dict) -> dict:
                 ["group", "co2_limit", "co2_max_period", _pmap({"period1": 2.0e6})]])
 
 
+def _patch_capacity_margin_stoch(data: dict) -> dict:
+    """Manual capacity margin (group cm_g = elec, margin 1e5 MW, penalty 1) on the recourse-invest fan (branch
+    weights high 1 : low 3): each forecast branch period keeps its own slack, priced with its branch weight
+    (#83)."""
+    return _overlay(
+        data, name="capacity_margin_stoch", base="recourse",
+        entities=[["group", "cm_g"],
+                  ["group__node", ["cm_g", "elec"]]],
+        values=[["group", "cm_g", "capacity_margin", 1.0e5],
+                ["group", "cm_g", "capacity_margin_method", "manual"],
+                ["group", "cm_g", "penalty_capacity_margin", 1.0]])
+
+
 def _patch_ladder_stoch_cumulative(data: dict) -> dict:
     """price_ladder_cumulative on the coal commodity of the stochastic 2-day dispatch -- Q16
     (#58) per-path proof: before the fix the tier's cumulative cap summed every forecast
@@ -1899,6 +1912,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "co2_stoch_total": _patch_co2_stoch_total,
     "co2_period_stoch_rolling": _patch_co2_period_stoch_rolling,
     "ladder_stoch_cumulative": _patch_ladder_stoch_cumulative,
+    "capacity_margin_stoch": _patch_capacity_margin_stoch,
 }
 
 
@@ -2105,6 +2119,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("co2_stoch_total", _F + "stochastics.json"),
     ("co2_period_stoch_rolling", _F + "stochastics.json"),
     ("ladder_stoch_cumulative", _F + "stochastics.json"),
+    ("capacity_margin_stoch", _F + "stoch_two_period_invest.json"),
     ("stoch_rank3_anchor", _F + "stochastics.json"),
     ("stoch_rank3_profile_anchor", _F + "stochastics.json"),
 )
