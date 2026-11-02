@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **Fix: minimum up and down times only look back along the timeline.** The look-back of `min_uptime` /
+  `min_downtime` walked the time steps in the order of their names, so it reached from a forecast branch into
+  the last hours of a sibling branch, from the first hours of an investment year into the end of an earlier
+  year that reuses the same timeset, and across gaps in the timeline and the starts of representative
+  periods. It now follows the same adjacent-time links as ramp limits: it continues into a period whose time
+  steps continue the previous period's on the same timeline and into the steps of a forecast branch before the
+  reveal, and stops at a gap, at the start of a representative period, at a period that does not continue the
+  previous one and at the first step of a solve (no cyclic wrap). A rolling or nested solve whose first step
+  continues the timeline of an earlier solve, but receives no realized on-line history from it, now prints a
+  warning naming the process.
+
 - **Fix: `co2_max_total` in rolling solves and chains of solves no longer allows more than the limit.**
   Each roll or solve subtracted the emissions earlier rolls and solves had already realized as plain
   tonnes, while the limit counts emissions annualized and times `years_represented`. The history was

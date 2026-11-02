@@ -14,7 +14,7 @@ free to collapse below its own recent startup obligation inside a roll.
 
 The fix wires ``uptime_lookback_from_source`` /
 ``downtime_lookback_from_source`` (+ the ``pdt_*_set`` projections) into the
-synthetic early-return, exactly mirroring ``apply_derived_c`` §3.8.  Both
+synthetic early-return, as ``apply_derived_e`` builds them on a full solve.  Both
 helpers return ``None`` when no process authors min-up/down, so the wire is a
 no-op (byte-identical) on every rolling fixture without min-up/down.
 

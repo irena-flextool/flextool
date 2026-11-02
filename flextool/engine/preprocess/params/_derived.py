@@ -5456,21 +5456,6 @@ def p_indirect_input_cap_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
-def _ordered_steps_from_dt(dt: pl.DataFrame) -> list[tuple[str, str, float]]:
-    """Return [(d, t, step_duration)] in a stable (d, t) order.  Step
-    duration defaults to 1.0 when not present (caller may supply
-    ``p_step_duration`` separately).
-    """
-    if dt is None:
-        return []
-    df = dt.sort("d", "t")
-    if "step_duration" in df.columns:
-        return [(d, t, float(s)) for d, t, s in zip(
-            df["d"].to_list(), df["t"].to_list(),
-            df["step_duration"].to_list())]
-    return [(d, t, 1.0) for d, t in zip(df["d"].to_list(), df["t"].to_list())]
-
-
 def _build_lookback_rows(processes_min: list[tuple[str, float]],
                             ordered_steps: list[tuple[str, str, float]],
                             ) -> list[tuple[str, str, str, str, str]]:
@@ -5535,46 +5520,48 @@ def _process_min_time(source: "InputSource",
 def uptime_lookback_from_source(source: "InputSource",
                                     dt: pl.DataFrame | None,
                                     p_step_duration: object | None = None,
+                                    link: pl.DataFrame | None = None,
                                     ) -> pl.DataFrame | None:
-    """Build the ``uptime_lookback`` set ``(p, d, t, d_back, t_back)``.
-
-    Algorithm: ``minimum_time.py:_write_lookback_csv:122-169``.
-    """
-    if dt is None or dt.height == 0:
-        return None
-    procs = _process_min_time(source, "min_uptime")
-    if not procs:
-        return None
-    ordered = _step_order_with_duration(dt, p_step_duration)
-    if not ordered:
-        return None
-    rows = _build_lookback_rows(procs, ordered)
-    if not rows:
-        return None
-    return pl.DataFrame(rows, schema=["p", "d", "t", "d_back", "t_back"],
-                          orient="row").sort("p", "d", "t",
-                                                "d_back", "t_back")
+    """Build the ``uptime_lookback`` set ``(p, d, t, d_back, t_back)``: each step and its ancestors along the
+    ramp predecessor links *link* (``dt_ramp_link``) within ``min_uptime`` (``params._mintime.mintime_lookback``)."""
+    from flextool.engine.preprocess.params._mintime import mintime_lookback
+    return mintime_lookback(dt, p_step_duration, link, _process_min_time(source, "min_uptime"))
 
 
 def downtime_lookback_from_source(source: "InputSource",
                                        dt: pl.DataFrame | None,
                                        p_step_duration: object | None = None,
+                                       link: pl.DataFrame | None = None,
                                        ) -> pl.DataFrame | None:
-    """Build the ``downtime_lookback`` set."""
-    if dt is None or dt.height == 0:
-        return None
-    procs = _process_min_time(source, "min_downtime")
-    if not procs:
-        return None
-    ordered = _step_order_with_duration(dt, p_step_duration)
-    if not ordered:
-        return None
-    rows = _build_lookback_rows(procs, ordered)
-    if not rows:
-        return None
-    return pl.DataFrame(rows, schema=["p", "d", "t", "d_back", "t_back"],
-                          orient="row").sort("p", "d", "t",
-                                                "d_back", "t_back")
+    """Build the ``downtime_lookback`` set (as :func:`uptime_lookback_from_source`, with ``min_downtime``)."""
+    from flextool.engine.preprocess.params._mintime import mintime_lookback
+    return mintime_lookback(dt, p_step_duration, link, _process_min_time(source, "min_downtime"))
+
+
+def apply_mintime_lookbacks(flex_data: object, source: "InputSource",
+                            first_step_link: pl.DataFrame | None, solve_name: str) -> None:
+    """Set ``uptime_lookback`` / ``downtime_lookback`` and the projected ``pdt_*_set`` of ``flex_data`` from its
+    ``dt``, ``p_step_duration`` and ``dt_ramp_link``, and print a warning for each process whose look-back the
+    solve boundary cuts short (``params._mintime.cut_short_lookback_warnings``; ``first_step_link`` is the
+    complete solve's ``step_previous`` of this solve's period first steps, ``None`` when not written)."""
+    from flextool.engine.preprocess.params._mintime import report_cut_short_lookback
+    dt = getattr(flex_data, "dt", None)
+    sd = getattr(flex_data, "p_step_duration", None)
+    link = getattr(flex_data, "dt_ramp_link", None)
+    ulb = uptime_lookback_from_source(source, dt, sd, link)
+    if ulb is not None and ulb.height > 0:
+        flex_data.uptime_lookback = ulb
+        flex_data.pdt_uptime_set = pdt_uptime_set_from_lookback(ulb)
+    dlb = downtime_lookback_from_source(source, dt, sd, link)
+    if dlb is not None and dlb.height > 0:
+        flex_data.downtime_lookback = dlb
+        flex_data.pdt_downtime_set = pdt_downtime_set_from_lookback(dlb)
+    if ulb is None and dlb is None:
+        return
+    min_times = {"min_uptime": _process_min_time(source, "min_uptime"),
+                 "min_downtime": _process_min_time(source, "min_downtime")}
+    report_cut_short_lookback(min_times, dt, first_step_link, getattr(flex_data, "online_startup_history", None),
+                              solve_name)
 
 
 def _step_order_with_duration(dt: pl.DataFrame,
@@ -6232,16 +6219,8 @@ def apply_derived_c(
     if dt_csv is not None and classified is not None and classified.height > 0:
         flex_data.p_section = p_section_from_source(source, dt_csv, classified)
 
-    # uptime / downtime lookbacks + projected pdt_*_set.
-    ulb_db = uptime_lookback_from_source(source, dt_csv, sd_csv)
-    if ulb_db is not None and ulb_db.height > 0:
-        flex_data.uptime_lookback = ulb_db
-        flex_data.pdt_uptime_set = pdt_uptime_set_from_lookback(ulb_db)
-
-    dlb_db = downtime_lookback_from_source(source, dt_csv, sd_csv)
-    if dlb_db is not None and dlb_db.height > 0:
-        flex_data.downtime_lookback = dlb_db
-        flex_data.pdt_downtime_set = pdt_downtime_set_from_lookback(dlb_db)
+    # The uptime / downtime look-backs follow the ramp predecessor links, which apply_derived_e builds from the
+    # source timeline; they are set there.
 
     # ─── §3.7 invest / divest ─────────────────────────────────────────
     # Δ.12b — set frames (None or non-empty); keep height>0 as a
@@ -7580,6 +7559,17 @@ def _dt_period_active_steps(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
+def _roll_first_step_link(workdir: "Path | None", provider: "object | None") -> "pl.DataFrame | None":
+    """``solve_data/roll_first_step_link`` (the complete solve's ``step_previous`` of each period's first step);
+    ``None`` when absent."""
+    if workdir is None:
+        return None
+    path = Path(workdir) / "solve_data" / "roll_first_step_link.csv"
+    if not _provider_has_key(provider, path):
+        return None
+    return _provider_read(provider, path)
+
+
 def _rp_block_first_utf8(workdir: "Path | None", provider: "object | None") -> "pl.DataFrame | None":
     """``solve_data/rp_block_first`` as Utf8 ``(d, t)``; ``None`` when absent or empty."""
     if workdir is None:
@@ -8694,6 +8684,9 @@ def apply_derived_e(
         from flextool.engine.preprocess.params._ramp_links import ramp_link_from_jump
         flex_data.dt_ramp_link = ramp_link_from_jump(
             dtttdt_jump, _rp_block_first_utf8(workdir, provider))
+    # Minimum up/down-time look-backs along the final ramp predecessor links (the seed links when the source
+    # timeline walk gives none).
+    apply_mintime_lookbacks(flex_data, source, _roll_first_step_link(workdir, provider), active_solve)
 
     # 2. period_block family (storage-only). --------------------------
     pb_family = None

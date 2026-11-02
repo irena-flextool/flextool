@@ -403,9 +403,14 @@ def add_constraints(b: "_Build") -> None:
         # ─────────────────────────────────────────────────────────────────────
         # v_online[p,d,t]  ≥  Σ_{(p,d′,t′,d,t) ∈ uptime_lookback} v_startup[p,d′,t′] + carry_up[p,d,t]
         #   ∀ (p,d,t) ∈ pdt_uptime_set ∩ this class
-        # A unit started within the minimum uptime stays online.  carry_up is the sum of the
-        # previous roll's startups that fall in this roll's lookback window (d.uptime_carry,
-        # 0-filled; absent outside continuation rolls).
+        # A unit started within the minimum uptime stays online.
+        # uptime_lookback = {(p,d′,t′,d,t) : (d′,t′) = (d,t), or (d′,t′) an ancestor of (d,t) along dt_ramp_link
+        #   with elapsed(d′,t′ → d,t) = Σ step_duration over the chain from (d′,t′) up to, not including, (d,t)
+        #   < min_uptime[p]} — the chain stops at a step without a ramp predecessor (solve start, a period that
+        #   does not continue the previous one, a gap in the timeline, a representative-block start, a forecast
+        #   branch that starts the solve); no cyclic wrap.
+        # carry_up is the sum of the previous roll's startups that fall in this roll's lookback window
+        # (d.uptime_carry, 0-filled; absent outside continuation rolls).
         if (d.pdt_uptime_set is not None and d.pdt_uptime_set.height > 0
                 and d.uptime_lookback is not None and d.uptime_lookback.height > 0):
             up_idx = d.pdt_uptime_set.join(online_set, on="p", how="inner")
@@ -434,8 +439,9 @@ def add_constraints(b: "_Build") -> None:
         #   ∀ (p,d,t) ∈ pdt_downtime_set ∩ this class
         # A unit shut down within the minimum downtime stays offline: existing − v_online ≥
         # Σ v_shutdown, with the invest/divest terms of maxOnline (without them an invest-only
-        # unit with existing = 0 could never be online).  carry_dn is the previous roll's
-        # shutdowns in this roll's lookback window (d.downtime_carry, 0-filled).
+        # unit with existing = 0 could never be online).
+        # downtime_lookback: as uptime_lookback with min_downtime[p].
+        # carry_dn is the previous roll's shutdowns in this roll's lookback window (d.downtime_carry, 0-filled).
         if (d.pdt_downtime_set is not None and d.pdt_downtime_set.height > 0
                 and d.downtime_lookback is not None and d.downtime_lookback.height > 0):
             dn_idx = d.pdt_downtime_set.join(online_set, on="p", how="inner")

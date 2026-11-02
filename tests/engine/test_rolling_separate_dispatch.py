@@ -325,3 +325,65 @@ def test_dispatch_per_solve_objectives(chain):
         assert got == pytest.approx(expected, rel=1e-6), (
             f"{name}: objective {got} != {expected}"
         )
+
+
+def _ancestor_closure(link: pl.DataFrame) -> set[tuple[str, str, str, str]]:
+    """``(d, t, d′, t′)`` with ``(d′, t′)`` the step itself or an ancestor of ``(d, t)`` along *link*."""
+    prev = {(d, t): (dp, tp) for d, t, dp, tp in
+            link.select(*(pl.col(c).cast(pl.Utf8) for c in ("d", "t", "d_previous", "t_previous"))).rows()}
+    out = set()
+    for start in list(prev) + [v for v in prev.values()]:
+        cur = start
+        seen = set()
+        while cur is not None and cur not in seen:
+            seen.add(cur)
+            out.add((*start, *cur))
+            cur = prev.get(cur)
+    return out
+
+
+def test_mintime_lookback_never_reaches_a_sibling_forecast(chain):
+    """In every UC roll (a fan of forecasts that starts at the roll's first step), each min up/down look-back row
+    pairs a step with itself or with an ancestor along the ramp predecessor links — never with a step of a
+    sibling forecast — and the first step of each forecast looks back at nothing but itself.  The look-back used
+    to walk the name-sorted step list, from ``period1_mid,t0001`` into the last steps of ``period1_lower``."""
+    steps, _ = chain
+    for k in range(N_ROLLS):
+        fd = steps[UC.format(k=k)].flex_data
+        closure = _ancestor_closure(fd.dt_ramp_link)
+        dt = fd.dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+        firsts = set(dt.group_by("d", maintain_order=True).agg(pl.col("t").first()).rows())
+        assert len(firsts) == 3, f"roll {k}: expected three forecasts, got {firsts}"
+        for which in ("uptime_lookback", "downtime_lookback"):
+            lb = getattr(fd, which)
+            assert lb is not None and lb.height > 0, f"roll {k}: {which} not built"
+            rows = set(lb.select(*(pl.col(c).cast(pl.Utf8) for c in ("d", "t", "d_back", "t_back"))).rows())
+            outside = {r for r in rows if r[:2] != r[2:] and r not in closure}
+            assert not outside, f"roll {k} {which}: rows outside the predecessor chain: {sorted(outside)[:6]}"
+            for d, t in firsts:
+                backs = {r[2:] for r in rows if r[:2] == (d, t)}
+                assert backs == {(d, t)}, f"roll {k} {which}: first step ({d}, {t}) looks back at {backs}"
+
+
+def test_mintime_lookback_of_each_forecast_equals_the_realized_dispatch_twin(chain):
+    """Relational: over the realized jump, each forecast of a UC roll and the roll's deterministic realized-
+    dispatch sibling cover the same steps of the same timeline, both starting at the roll's first step.  Their
+    min up/down look-back rows are therefore the same once the forecast's period name is mapped to the realized
+    period's."""
+    steps, _ = chain
+    cols = ("p", "d", "t", "d_back", "t_back")
+    for k in range(N_ROLLS):
+        disp_fd = steps[DISP.format(k=k)].flex_data
+        uc_fd = steps[UC.format(k=k)].flex_data
+        disp_t = set(disp_fd.dt["t"].cast(pl.Utf8).to_list())
+        for which in ("uptime_lookback", "downtime_lookback"):
+            twin = set(getattr(disp_fd, which).select(*(pl.col(c).cast(pl.Utf8) for c in cols)).rows())
+            assert twin, f"roll {k}: {which} of the realized dispatch is empty"
+            assert {r[1] for r in twin} == {REALIZED_PERIOD}
+            uc = getattr(uc_fd, which).select(*(pl.col(c).cast(pl.Utf8) for c in cols))
+            for forecast in uc["d"].unique().sort().to_list():
+                mine = {(p, REALIZED_PERIOD, t, REALIZED_PERIOD if db == forecast else db, tb)
+                        for p, d, t, db, tb in uc.filter(pl.col("d") == forecast).rows() if t in disp_t}
+                assert mine == twin, (
+                    f"roll {k} {which} {forecast}: differs from the realized twin: "
+                    f"extra {sorted(mine - twin)[:4]}, missing {sorted(twin - mine)[:4]}")

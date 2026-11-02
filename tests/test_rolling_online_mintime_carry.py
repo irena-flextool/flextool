@@ -234,6 +234,29 @@ def test_period_aware_within_period_carries_across_does_not(cross_period_run):
         "Carrier 2")
 
 
+def test_lookback_stops_at_a_period_that_reuses_the_timeset(cross_period_run):
+    """In the roll whose window holds the end of p2020 and the start of p2025 (the two years reuse one timeset,
+    so p2025's first step does not continue p2020), the ramp predecessor links have no p2025 → p2020 row, and the
+    min_uptime look-back has no row whose step and look-back step are in different periods.  The look-back used
+    to walk the name-sorted step list from p2025's first steps back into the last steps of p2020."""
+    straddling = 0
+    for name, step in cross_period_run["steps"].items():
+        fd = step.flex_data
+        if fd.dt["d"].cast(pl.Utf8).n_unique() < 2:
+            continue
+        straddling += 1
+        link = fd.dt_ramp_link
+        assert link is not None
+        assert link.filter(pl.col("d") != pl.col("d_previous")).height == 0, (
+            f"{name}: precondition — the periods are linked on the timeline: "
+            f"{link.filter(pl.col('d') != pl.col('d_previous')).rows()}")
+        lb = fd.uptime_lookback
+        assert lb is not None and lb.height > 0
+        cross = lb.filter(pl.col("d").cast(pl.Utf8) != pl.col("d_back").cast(pl.Utf8))
+        assert cross.height == 0, f"{name}: look-back crosses the period boundary: {cross.rows()[:5]}"
+    assert straddling > 0, "no roll straddles the p2020 → p2025 boundary — the witness does not exercise it"
+
+
 # ─────────────────── dedicated min_downtime witness ─────────────────────
 @pytest.fixture(scope="module")
 def downtime_run(tmp_path_factory):
