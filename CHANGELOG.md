@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **Units online are no longer tied across the forecast branches when no step is committed.** With
+  `shared_operation_periods = []`, or in a rolling solve whose fan lies only in the look-ahead, the
+  units online were still held equal in every forecast over every time step of the fan, although the
+  other operations were free. They are now tied only over the committed (tied) steps, like storage use
+  and reserves, so each forecast can commit units on its own there. Objectives of such solves can be lower.
+
 - **Under `stochastic_invest_method = none`, investment cost in a stochastic fan is no longer counted
   several times.** The investment annuity, the salvage value of retirements and the lifetime fixed cost
   of capacity built before or at the reveal were summed over the period's original name and again over

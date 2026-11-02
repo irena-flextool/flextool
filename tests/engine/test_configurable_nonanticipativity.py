@@ -342,3 +342,38 @@ def test_free_ops_objective_le_pinned(free_ops_wf, pinned_ops_wf) -> None:
     )
     assert free <= pinned
     assert free < pinned  # the fixture provably forces strict improvement
+
+
+# ---------------------------------------------------------------------------
+# Units online are tied only where committed
+# ---------------------------------------------------------------------------
+
+
+def _online_tie_rows(tmp_path_factory, alt: str, base_chain: list[str]) -> int:
+    """Rows of non_anticipativity_online_linear in the stochastic solve of the fixture with ``base`` given unit
+    commitment (startup_method linear, min_load 0.3) in alternative ``alt`` on top of ``base_chain``."""
+    from pathlib import Path
+
+    from tests.engine._unit_db import build, cstr_over, last_stochastic, make_db, run, uc
+
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "stoch_two_period_free_ops.json"
+    url, scenario = make_db(tmp_path_factory, alt=alt, values=uc("base", 0.3),
+                            base_chain=base_chain, fixture_json=fixture)
+    step = last_stochastic(run(tmp_path_factory, url, scenario))
+    over = cstr_over(build(step.flex_data), "non_anticipativity_online_linear")
+    return 0 if over is None else over.height
+
+
+@pytest.mark.solver
+def test_free_ops_leaves_units_online_untied(tmp_path_factory) -> None:
+    """``shared_operation_periods = []`` frees operations from the first timestep, units online included: with
+    nothing tied there is no non_anticipativity_online row, however many online steps the forecasts have."""
+    assert _online_tie_rows(tmp_path_factory, "online_free", ["init", "base", "stoch", "freeops"]) == 0
+
+
+@pytest.mark.solver
+def test_pinned_ops_ties_units_online_over_the_committed_steps(tmp_path_factory) -> None:
+    """The twin of the free case with the window unset: the committed steps are the whole horizon (3 steps in each
+    of the anchors p2035 / p2040), each anchor ties its reference forecast ``low`` to the one other forecast ``up``,
+    and ``base`` is the one online unit: 1 unit × 2 anchors × 3 steps × 1 forecast pair = 6 rows."""
+    assert _online_tie_rows(tmp_path_factory, "online_pinned", ["init", "base", "stoch"]) == 6

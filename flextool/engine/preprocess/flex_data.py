@@ -6379,8 +6379,8 @@ def build_handoff_from_solution(
     # decision: the realization solve inherits the NA-tied values).  The
     # value is the reference forecast's (the first sorted forecast branch of
     # each anchor, the ``d_ref`` of non_anticipativity_online), on the
-    # online tie cells only (``online_tie_cells``: the tied steps, or every
-    # online step when nothing is tied), re-keyed from the forecast branch
+    # online tie cells only (``online_tie_cells``: the tied steps; nothing
+    # when nothing is tied), re-keyed from the forecast branch
     # to its anchor period, the period name the realization solve
     # dispatches.  Unit-count space (NOT ×unitsize).  ``None`` on every
     # other solve → byte-identical baseline.

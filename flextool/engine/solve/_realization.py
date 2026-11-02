@@ -318,8 +318,8 @@ def _untied_families(d, committed: "list[tuple[str, str]]") -> list[str]:
     if _rows(d.dt_non_anticipativity):
         tied = {(str(p), str(t)) for p, t in d.dt_non_anticipativity.select("d", "t").iter_rows()}
     untied_cells = [c for c in committed if c not in tied]
-    # Units online are tied over the tied steps, or over every online step when nothing is tied.
-    if tied and untied_cells and _rows(d.process_online):
+    # Units online, like reserves, are tied only over the tied steps.
+    if untied_cells and _rows(d.process_online):
         families.append("units online")
     if untied_cells and _rows(d.process_reserve_upDown_node_active):
         families.append("reserves")

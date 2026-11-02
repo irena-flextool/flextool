@@ -497,6 +497,33 @@ def test_rolling_fan_in_the_look_ahead_carries_the_committed_state(tmp_path_fact
     assert set(starts["d"].to_list()) == {"p2040_high", "p2040_low"}
 
 
+def _rolling_hedge_online(data: dict) -> None:
+    """:func:`_rolling_hedge` with unit commitment on ``base`` (startup_method linear, min_load 0.3)."""
+    _rolling_hedge(data)
+    data["parameter_values"] += [["unit", "base", "startup_method", _enc("linear"), "roll"],
+                                 ["unit", "base", "min_load", [base64.b64encode(b"0.3").decode(), "float"], "roll"]]
+
+
+@pytest.mark.solver
+def test_rolling_fan_in_the_look_ahead_leaves_units_online_untied(tmp_path_factory) -> None:
+    """Units online are tied only where committed.  Roll 0 commits t0001-t0003 of the pre-reveal period p2035 and
+    has the fan (p2040 = t0004) only in its look-ahead: no step of the fan is committed, so its forecasts commit
+    units freely there (no non_anticipativity_online row).  Roll 1 commits t0004-t0006 inside the fan: units online
+    are tied on those 3 steps, reference forecast ``p2040_high`` to the one other forecast ``p2040_low``, for the
+    one online unit ``base``: 3 rows."""
+    from tests.engine._unit_db import build, cstr_over
+    tmp = tmp_path_factory.mktemp("label_rolling_lookahead_online")
+    steps, _ = _run(_variant(HEDGE, tmp, "rolling_hedge_online", _rolling_hedge_online), tmp,
+                    scenario="hedge_storage")
+    rolls = list(steps.values())
+    assert len(rolls) == 2 and not any(is_realization(k) for k in steps), list(steps)
+    first, second = (cstr_over(build(r.flex_data), "non_anticipativity_online_linear") for r in rolls)
+    assert first is None
+    assert second is not None
+    assert sorted(second.select("p", "d", "b", "t").iter_rows()) == [
+        ("base", "p2040_high", "p2040_low", t) for t in ("t0004", "t0005", "t0006")]
+
+
 def _stochastics_variant(tmp: Path, name: str, mutate) -> Path:
     return _variant(STOCHASTICS, tmp, name, mutate)
 
@@ -580,6 +607,26 @@ def _flowgroup_path(invest_method: str):
                                   ["flowGroup__unit__node", ["base_flow", "base", "elec"]]],
                         values=[["flowGroup", "base_flow", "min_cumulative_flow", 1.0]])
     return data
+
+
+
+def _rolling_online_only_free(data: dict) -> None:
+    """:func:`_rolling_online_only` with ``shared_operation_periods = []``: nothing is tied, units online included."""
+    _rolling_online_only(data)
+    data["parameter_values"].append(["solve", "stoch_rd", "shared_operation_periods",
+                                     [base64.b64encode(json.dumps({"value_type": "str", "data": []}).encode()).decode(),
+                                      "array"], "init"])
+
+
+@pytest.mark.solver
+def test_committed_window_in_forecasts_only_fan_with_untied_online_raises(tmp_path_factory) -> None:
+    """The twin of the online-only case with ``shared_operation_periods = []``: units online are no longer tied on
+    the committed step, so they are decided per forecast there, no solve realizes them and the next roll would
+    continue from them: the run stops before the first roll's LP and names the units online."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    tmp = tmp_path_factory.mktemp("label_committed_online_free")
+    with pytest.raises(FlexToolConfigError, match=r"stoch_rd_roll_0.*units online"):
+        _run(_variant(T0_FIXTURE, tmp, "rolling_online_only_free", _rolling_online_only_free), tmp)
 
 
 @pytest.mark.solver

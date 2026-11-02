@@ -45,29 +45,22 @@ def reference_forecasts(d) -> "list[tuple[str, list[str]]]":
 def online_tie_cells(d) -> "pl.DataFrame | None":
     """``(anchor, d_ref, t)`` Utf8: the steps over which units online are tied, at each anchor's reference forecast.
 
-    The steps are those of non_anticipativity_online: the tied steps dt_non_anticipativity of the anchors, or,
-    when no anchor has a tied step, every online step (p_online_dt) of the reference forecast.  An anchor
-    with a single forecast has no tie rows but the same committed steps (its one forecast is the tied value).
-    None when there is no anchor or no step.
+    The steps are those of non_anticipativity_online: the tied steps dt_non_anticipativity of the anchors.  Units
+    online are tied only where committed: with no tied step they are free in every forecast.  An anchor with a
+    single forecast has no tie rows but the same committed steps (its one forecast is the tied value).  None when
+    there is no anchor or no tied step.
     """
     refs = [(a, f[0]) for a, f in reference_forecasts(d) if f]
     if not refs:
         return None
     ref = pl.DataFrame({"anchor": [a for a, _ in refs], "d_ref": [r for _, r in refs]})
-    cells = None
-    if _has_rows(d.dt_non_anticipativity):
-        tie = (d.dt_non_anticipativity
-               .select(pl.col("d").cast(pl.Utf8).alias("anchor"), pl.col("t").cast(pl.Utf8))
-               .unique())
-        cells = ref.join(tie, on="anchor", how="inner")
-    if (cells is None or cells.height == 0) and _has_rows(d.p_online_dt):
-        steps = (d.p_online_dt
-                 .select(pl.col("d").cast(pl.Utf8).alias("d_ref"), pl.col("t").cast(pl.Utf8))
-                 .unique())
-        cells = ref.join(steps, on="d_ref", how="inner")
-    if cells is None or cells.height == 0:
+    if not _has_rows(d.dt_non_anticipativity):
         return None
-    return cells.select("anchor", "d_ref", "t").sort("anchor", "t")
+    tie = (d.dt_non_anticipativity
+           .select(pl.col("d").cast(pl.Utf8).alias("anchor"), pl.col("t").cast(pl.Utf8))
+           .unique())
+    cells = ref.join(tie, on="anchor", how="inner")
+    return cells.select("anchor", "d_ref", "t").sort("anchor", "t") if cells.height > 0 else None
 
 
 def reserve_tie_cells(d) -> "pl.DataFrame | None":
@@ -138,29 +131,15 @@ def _balance_nodes(d, nodes: "pl.DataFrame | None") -> "pl.DataFrame | None":
 def add_dispatch_constraints(b: "_Build") -> None:
     """Tie storage use, units online and reserves across the forecast branches of each anchor period."""
     d = b.d
-    if not _has_rows(d.period_branch_full) or not (
-            _has_rows(d.dt_non_anticipativity) or b.has_online_lin or b.has_online_int):
+    if not _has_rows(d.period_branch_full) or not _has_rows(d.dt_non_anticipativity):
         return
     star, tie_dt = _forecast_star(d)
-    if star is None:
+    if star is None or not _has_rows(tie_dt):
         return
     m = b.m
     v_state = b.v_state
     v_online_integer, v_online_linear = b.v_online_integer, b.v_online_linear
     v_reserve = b.v_reserve
-    has_tie_dt = _has_rows(tie_dt)
-
-    # Steps of the online ties: the tied steps, or, when there are none, every online step of the anchor
-    # periods.  Unit commitment over the committed section is decided before the forecast is known.  The tied
-    # steps inside a fan are the committed cells of its period label (solve_data/committed_in_fan).
-    online_dt = tie_dt
-    if not has_tie_dt and (v_online_integer is not None or v_online_linear is not None) \
-            and _has_rows(d.p_online_dt):
-        jump_steps = d.p_online_dt.select("d", "t").unique().join(star.select("d").unique(), on="d", how="inner")
-        if jump_steps.height > 0:
-            online_dt = jump_steps
-    if not has_tie_dt and not _has_rows(online_dt):
-        return
     stoch_nodes = _stochastic_nodes(d)
 
     # ─── EQ. ─── non_anticipativity_storage_use ──────────────────────────────
@@ -180,7 +159,7 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # section input counts because efficiency and min_load may differ between forecasts.  A node of the group
     # without an energy balance (e.g. a commodity node) has no balance flow terms to tie.
     tie_nodes = _balance_nodes(d, stoch_nodes)
-    if has_tie_dt and b.v_flow is not None and tie_nodes is not None and d.p_unitsize is not None \
+    if b.v_flow is not None and tie_nodes is not None and d.p_unitsize is not None \
             and d.p_step_duration is not None:
         flow_d = _balance_terms.balance_flow_terms(b, nodes=tie_nodes)
         flow_b = _balance_terms.balance_flow_terms(b, at_branch=True, nodes=tie_nodes)
@@ -214,7 +193,7 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # drift stays feasible where balance slack or forecast-specific inflow
     # absorbs it.  v_online and v_reserve need no analogue: their ties pin
     # the variable itself at every tied step.
-    if has_tie_dt and v_state is not None and stoch_nodes is not None:
+    if v_state is not None and stoch_nodes is not None:
         vstate_dt = v_state.frame.select("n", "d", "t").unique()
         tied_steps = tie_dt.select("d", "t").unique()
         first_per_d = tied_steps.group_by("d").agg(pl.col("t").min().alias("t"))
@@ -253,16 +232,18 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # ─── EQ. ─── non_anticipativity_online_{integer,linear} ──────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_online[p,d,t] − v_online[p,b,t] = 0
-    #   ∀ p ∈ process_online_{integer,linear}, (d,b) ∈ forecast star, (d,t) ∈ online tie steps,
+    #   ∀ p ∈ process_online_{integer,linear}, (d,b) ∈ forecast star, (d,t) ∈ tied steps,
     #     (p,d,t) and (p,b,t) ∈ p_online_dt
-    # Units online are the same in every forecast over the committed section.
+    # Units online are the same in every forecast over the tied steps, the committed section decided before the
+    # forecast is known (inside a fan: the committed cells of its period label, solve_data/committed_in_fan).
+    # With no tied step (shared_operation_periods = [], or a rolling fan only in the look-ahead) they are free.
     for kind, v_online, online_set in (("integer", v_online_integer, d.process_online_integer),
                                        ("linear", v_online_linear, d.process_online_linear)):
         if v_online is None or not _has_rows(online_set):
             continue
         over = (online_set
                 .join(star, how="cross")
-                .join(online_dt, on="d", how="inner")
+                .join(tie_dt, on="d", how="inner")
                 .select("p", "d", "b", "t").unique())
         if d.p_online_dt is not None:
             pdt = d.p_online_dt.select("p", "d", "t").unique()
@@ -285,7 +266,7 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # v_reserve[p,r,ud,n,d,t] − v_reserve[p,r,ud,n,b,t] = 0
     #   ∀ (p,r,ud,n) ∈ process_reserve_upDown_node_active, (d,b) ∈ forecast star, (d,t) ∈ tied steps
     # Reserve offered is the same in every forecast over the tied steps.
-    if has_tie_dt and v_reserve is not None and _has_rows(d.process_reserve_upDown_node_active) \
+    if v_reserve is not None and _has_rows(d.process_reserve_upDown_node_active) \
             and _has_rows(d.reserve_upDown_group):
         over = (d.process_reserve_upDown_node_active
                 .join(star, how="cross")
