@@ -226,7 +226,7 @@ def test_stochastic_solve_with_rp_timeset_raises(tmp_path_factory):
         return L._overlay(data, name="custom", base="2_day_stochastic_dispatch", values=[
             ["timeset", "2day", "timeset_duration", L._pmap({"t0001": 24.0}, "time")],
             ["timeset", "2day", "representative_period_weights", rpw]])
-    with pytest.raises(FlexToolConfigError, match="not available in stochastic solves"):
+    with pytest.raises(FlexToolConfigError, match="does not support this combination"):
         _run(tmp_path_factory, patch, STOCH_JSON)
 
 

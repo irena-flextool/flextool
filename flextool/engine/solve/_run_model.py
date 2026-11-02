@@ -181,11 +181,11 @@ def _check_rp_solve(*, complete_solve_name: str, rp_periods: list[str], period_o
     branches = sorted({str(b) for a, b in period_branch if a != b and b in period_order})
     if branches:
         raise FlexToolConfigError(
-            f"Solve '{complete_solve_name}' uses representative periods (representative_period_weights on the "
-            f"timeset of {', '.join(rp_periods)}) and has stochastic branch periods ({', '.join(branches)}). "
-            "Representative periods are not available in stochastic solves: the branch periods would get no "
-            "representative-period weights or base-period chain. Use a timeset without "
-            "representative_period_weights for this solve.")
+            f"Solve '{complete_solve_name}' combines representative periods (representative_period_weights on "
+            f"the timeset of {', '.join(rp_periods)}) with stochastic branches ({', '.join(branches)}). "
+            "FlexTool does not support this combination: there is no realistic use for representative periods "
+            "in a stochastic solve, so it has not been built. Use a timeset without "
+            "representative_period_weights for this solve, or remove its stochastic branches.")
     blended = _blended_nodes(provider)
     if blended and rolling:
         raise FlexToolConfigError(
