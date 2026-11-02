@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **New: raw LP dump with `output_horizon = yes`.** The debug option now also writes
+  `output_parquet/<scenario>/horizon/`: one raw parquet per LP variable and constraint holding all rows
+  of every solve (forecast branches and rolling look-ahead steps included), appended over the solves and
+  rolls, with `solve`, `roll` and `realized` columns, raw primal values, reduced costs and duals. Not
+  available for solves decomposed with Benders.
+
 - **`timeset_weights` now reach the forecast branches of a stochastic solve, and a map indexed by
   `time` is no longer ignored.** The forecast branch copies of a period (single, recourse and rolling
   stochastic solves) used weight 1 on every time step instead of the weights of their period's
