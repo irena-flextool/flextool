@@ -547,9 +547,6 @@ def test_cumulative_ladder_fallback_counts_realized_hours_once(tmp_path_factory)
     periods with the fan label left out: f_d_k[forecast] alone, which already holds the realized hours.  Adding the
     label's f_d_k (24k/168) as well would count the realized hours twice.
 
-    A rolling roll is built without scenario paths (``d_leaf``), so the paths are attached here as a fan defines
-    them (``d_leaf_lf``): one leaf per forecast holding the forecast and its period label.
-
     Hand values, roll k: with p_ladder_cum_weight (years_represented 1) a path weighs the label's realized hours
     plus the forecast's own, (24k + min(96, 168 - 24k)) / 8760; the f_d_k fallback weighs the same hours over the
     period's 168 h, min(24k + 96, 168) / 168 — i.e. 8760/168 times the first."""
@@ -563,11 +560,6 @@ def test_cumulative_ladder_fallback_counts_realized_hours_once(tmp_path_factory)
     for k, step in list(enumerate(_stochastic_rolls(steps)))[1:]:
         fd = step.flex_data
         assert fd.p_ladder_cum_weight is not None
-        d_dtype = fd.p_f_d_k.frame.schema["d"]
-        leaves = pl.DataFrame({"d": [d for b in ROLL_FORECASTS for d in (b, "period1")],
-                               "leaf": [b for b in ROLL_FORECASTS for _ in range(2)]}).with_columns(
-            pl.col("d").cast(d_dtype))
-        fd = dataclasses.replace(fd, d_leaf=leaves)
         realized = float(fd.p_ladder_cum_realized_mwh.frame.filter(
             (pl.col("c").cast(pl.Utf8) == "gas") & (pl.col("i").cast(pl.Utf8) == "1"))["value"].sum())
         assert realized > 0.0, k
@@ -579,8 +571,8 @@ def test_cumulative_ladder_fallback_counts_realized_hours_once(tmp_path_factory)
 
         with_weight = weights(fd)
         fallback = weights(dataclasses.replace(fd, p_ladder_cum_weight=None))
-        assert set(with_weight) == set(fallback) == set(ROLL_FORECASTS), k
-        for b in ROLL_FORECASTS:
+        assert set(with_weight) == set(fallback) == {b.removeprefix("period1_") for b in ROLL_FORECASTS}, k
+        for b in (f.removeprefix("period1_") for f in ROLL_FORECASTS):
             assert with_weight[b] == pytest.approx((24 * k + min(96, 168 - 24 * k)) / 8760, rel=1e-12), (k, b)
             assert fallback[b] == pytest.approx(_forecast_f(k), rel=1e-12), (k, b)
             assert fallback[b] == pytest.approx(with_weight[b] * 8760 / 168, rel=1e-12), (k, b)
@@ -622,7 +614,8 @@ def _two_period_rolling_ladder(tmp_path_factory, alt: str, quantity: float) -> d
 
 
 def _hand_d_leaf(flex_data, label: str) -> pl.DataFrame:
-    """The scenario paths of a fan at ``label``: one leaf per forecast holding the forecast and the label."""
+    """The scenario paths of a fan at ``label``, as a fan defines them: one leaf per forecast holding the forecast
+    and the label."""
     d_dtype = flex_data.p_f_d_k.frame.schema["d"]
     return pl.DataFrame({"d": [d for f in TWO_PERIOD_FORECASTS for d in (f"{label}_{f}", label)],
                          "leaf": [f for f in TWO_PERIOD_FORECASTS for _ in range(2)]}).with_columns(
@@ -655,7 +648,7 @@ def test_rolling_path_tier_cap_counts_finished_periods(tmp_path_factory) -> None
 
     fd = steps["stoch_2p_roll_1"].flex_data
     assert "p2035" not in set(utf8(fd.period_in_use_set)["d"])
-    fd = dataclasses.replace(fd, d_leaf=_hand_d_leaf(fd, "p2040"))
+    assert set(utf8(fd.d_leaf).iter_rows()) == set(utf8(_hand_d_leaf(fd, "p2040")).iter_rows())
 
     def rhs(flex_data) -> dict[str, float]:
         rows = row_bounds(build(flex_data), "ladder_tier_cap_cumulative_roll_path", "fuel,1,")
@@ -667,3 +660,94 @@ def test_rolling_path_tier_cap_counts_finished_periods(tmp_path_factory) -> None
     for f in TWO_PERIOD_FORECASTS:
         assert with_weight[f] == pytest.approx(quantity * 6 / 8760 - r0, rel=1e-9), f
         assert fallback[f] == pytest.approx(quantity * 2 - r0, rel=1e-9), f
+
+
+# ---------------------------------------------------------------------------
+# The rolls of a rolling fan carry their scenario paths (``d_leaf``)
+
+
+def test_rolling_fan_cumulative_tier_cap_per_forecast_path(tmp_path_factory) -> None:
+    """Every stochastic roll of the rolling week keeps one cumulative tier cap per forecast path; before, a roll had
+    no scenario paths and pooled the three forecasts into one row whose budget summed all their hours.
+
+    Hand values (q = 1e6, years_represented 1): stochastic roll k starts after 24k realized hours (the realization
+    rolls 0..k−1, each realizing its 24 h jump under ``period1``) and its forecasts cover min(96, 168 − 24k) more, so
+    each path's RHS is q·(24k + min(96, 168 − 24k))/8760 − R_k, R_k = the tier-1 MWh the realization rolls 0..k−1
+    bought (read from their solutions).  Roll 0: q·96/8760 = 10 958.904 MWh.  A realization roll buys more gas than its
+    q·24/8760 = 2 739.726 MWh day cap, and a forecast more than its window's, so the rows bind."""
+    from tests.engine._lp_rows import row_bounds, row_terms
+
+    quantity = 1.0e6
+    steps = _steps(tmp_path_factory, "ladder_roll_cum_paths", _gas_ladder("price_ladder_cumulative", quantity),
+                   chain=CHAIN_ROLL)
+    realization = [steps[f"{ROLL_SOLVE}__realized_dispatch_roll_{k}"] for k in range(7)]
+    family = "ladder_tier_cap_cumulative_roll"
+    bought = 0.0
+    binding = 0
+    for k, step in enumerate(_stochastic_rolls(steps)):
+        pb = build(step.flex_data)
+        assert row_bounds(pb, family, "") == {}, k
+        rows = row_bounds(pb, f"{family}_path", "gas,1,")
+        assert set(rows) == {f"{family}_path[gas,1,{f.removeprefix('period1_')}]" for f in ROLL_FORECASTS}, k
+        want = quantity * (24 * k + min(96, 168 - 24 * k)) / 8760 - bought
+        for nm, (_lb, ub) in rows.items():
+            assert ub == pytest.approx(want, rel=1e-9), (k, nm)
+        for nm, terms in row_terms(pb, f"{family}_path", "gas,1,").items():
+            periods = {col.split(",")[2] for col in terms if col.startswith("v_trade[")}
+            assert periods == {f"period1_{nm[nm.rindex(',') + 1:-1]}"}, (k, nm, periods)
+        duals = step.solution.constraint_dual(f"{family}_path")["dual"].to_list()
+        binding += sum(1 for v in duals if v != 0.0)
+        bought += _bought(realization[k])
+    assert binding > 0
+    for k, step in enumerate(realization):
+        pb = build(step.flex_data)
+        assert row_bounds(pb, f"{family}_path", "") == {}, k
+        assert set(row_bounds(pb, family, "")) == {f"{family}[gas,1]"}, k
+
+
+def _single_reveal_branches() -> list:
+    """The ``1week_rolling`` fan revealed once, at t0001: realized designation + forecasts upper/lower/mid."""
+    def at(realized: str) -> dict:
+        return {"type": "map", "index_type": "str",
+                "data": [["t0001", {"type": "map", "index_type": "str", "data": [[realized, 1.0]]}]]}
+
+    branches = {"index_type": "str", "data": [["period1", {"type": "map", "index_type": "str", "data": [
+        ["realized", at("yes")], ["upper", at("no")], ["lower", at("no")], ["mid", at("no")]]}]]}
+    return ["solve", ROLL_SOLVE, "stochastic_branches", b64(branches, "map")]
+
+
+def test_one_roll_fan_equals_single_solve_fan(tmp_path_factory) -> None:
+    """A rolling solve of one roll (horizon = jump = 168 h) is the single solve of the same week: the same scenario
+    paths, and the same per-path cumulative tier cap and CO2 total cap rows."""
+    from tests.engine._lp_rows import row_bounds
+    from tests.engine._unit_db import last_stochastic, without_realization
+
+    entities = [["group", "co2_limit", None], ["group__node", ["co2_limit", "gas_market"], None]]
+    values = (_gas_ladder("price_ladder_cumulative", 1.0e6) + [_single_reveal_branches()]
+              + [["commodity", "gas", "co2_content", b64(0.2, "float")],
+                 ["group", "co2_limit", "co2_method", b64("total", "str")],
+                 ["group", "co2_limit", "co2_max_total", b64(1.0e7, "float")]])
+    one_roll = [["solve", ROLL_SOLVE, "rolling_solve_horizon", b64(168.0, "float")],
+                ["solve", ROLL_SOLVE, "rolling_solve_jump", b64(168.0, "float")]]
+    single = [["solve", ROLL_SOLVE, "solve_mode", b64("single_solve", "str")]]
+    fds, names = {}, {}
+    for alt, extra in (("fan_one_roll", one_roll), ("fan_single", single)):
+        url, scen = make_db(tmp_path_factory, alt=alt, values=values + extra, entities=entities,
+                            base_chain=CHAIN_ROLL, fixture_json=STOCHASTICS_JSON)
+        steps = run(tmp_path_factory, url, scen)
+        names[alt] = list(without_realization(steps))
+        fds[alt] = last_stochastic(steps).flex_data
+    assert names == {"fan_one_roll": [f"{ROLL_SOLVE}_roll_0"], "fan_single": [ROLL_SOLVE]}
+
+    def leaves(fd) -> set:
+        return set(utf8(fd.d_leaf).iter_rows())
+
+    assert leaves(fds["fan_one_roll"]) == leaves(fds["fan_single"])
+    assert {leaf for _d, leaf in leaves(fds["fan_single"])} == {"lower", "mid", "upper"}
+    pbs = {alt: build(fd) for alt, fd in fds.items()}
+    for family in ("ladder_tier_cap_cumulative_roll_path", "co2_max_total_path"):
+        rows = {alt: row_bounds(pb, family, "") for alt, pb in pbs.items()}
+        assert len(rows["fan_single"]) == 3, family
+        assert set(rows["fan_one_roll"]) == set(rows["fan_single"]), family
+        for nm, (_lb, ub) in rows["fan_single"].items():
+            assert rows["fan_one_roll"][nm][1] == pytest.approx(ub, rel=1e-12), (family, nm)

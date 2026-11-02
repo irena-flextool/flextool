@@ -809,6 +809,43 @@ def _patch_co2_period_stoch_rolling(data: dict) -> dict:
                 ["group", "co2_limit", "co2_max_period", _pmap({"period1": 2.0e6})]])
 
 
+def _patch_ladder_cum_stoch_rolling(data: dict) -> dict:
+    """price_ladder_cumulative on gas (tier 1 at 5 up to 5e7 per year, tier 2 at 7 unlimited) on the rolling
+    stochastic week: each stochastic roll keeps one cumulative tier cap per forecast path, RHS
+    q·(24k + min(96, 168 - 24k))/8760 minus the realized purchases (#58)."""
+    ladder = {"index_type": "str", "rank": 2, "index_name": "tier",
+              "data": [["1", {"type": "map", "index_type": "str", "rank": 1,
+                               "data": [["price", 5.0], ["quantity", 5.0e7]]}],
+                       ["2", {"type": "map", "index_type": "str", "rank": 1,
+                              "data": [["price", 7.0], ["quantity", float("inf")]]}]]}
+    return _overlay(
+        data, name="ladder_cum_stoch_rolling", base="1_week_rolling_wind",
+        values=[["commodity", "gas", "price_method", "price_ladder_cumulative"],
+                ["commodity", "gas", "price_ladder_cumulative", ladder]])
+
+
+def _patch_co2_total_stoch_rolling(data: dict) -> dict:
+    """co2_max_total (group__node = gas_market, 1e7 t) on the rolling stochastic week: each stochastic roll keeps
+    one row per forecast path, every path with the whole remaining budget (#52)."""
+    return _overlay(
+        data, name="co2_total_stoch_rolling", base="1_week_rolling_wind",
+        entities=[["group", "co2_limit"],
+                  ["group__node", ["co2_limit", "gas_market"]]],
+        values=[["commodity", "gas", "co2_content", 0.2],
+                ["group", "co2_limit", "co2_method", "total"],
+                ["group", "co2_limit", "co2_max_total", 1.0e7]])
+
+
+def _patch_flowgroup_cum_stoch_rolling(data: dict) -> dict:
+    """flowGroup max_cumulative_flow on gas_plant's fuel arc on the rolling stochastic week: each stochastic roll
+    keeps one maxCumulative_flow_solve row per forecast path."""
+    return _overlay(
+        data, name="flowgroup_cum_stoch_rolling", base="1_week_rolling_wind",
+        entities=[["flowGroup", "gas_fuel"],
+                  ["flowGroup__unit__node", ["gas_fuel", "gas_plant", "gas_market"]]],
+        values=[["flowGroup", "gas_fuel", "max_cumulative_flow", 1.0e6]])
+
+
 def _patch_capacity_margin_stoch(data: dict) -> dict:
     """Manual capacity margin (group cm_g = elec, margin 1e5 MW, penalty 1) on the recourse-invest fan (branch
     weights high 1 : low 3): each forecast branch period keeps its own slack, priced with its branch weight
@@ -1913,6 +1950,9 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "co2_period_stoch_rolling": _patch_co2_period_stoch_rolling,
     "ladder_stoch_cumulative": _patch_ladder_stoch_cumulative,
     "capacity_margin_stoch": _patch_capacity_margin_stoch,
+    "ladder_cum_stoch_rolling": _patch_ladder_cum_stoch_rolling,
+    "co2_total_stoch_rolling": _patch_co2_total_stoch_rolling,
+    "flowgroup_cum_stoch_rolling": _patch_flowgroup_cum_stoch_rolling,
 }
 
 
@@ -2120,6 +2160,9 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("co2_period_stoch_rolling", _F + "stochastics.json"),
     ("ladder_stoch_cumulative", _F + "stochastics.json"),
     ("capacity_margin_stoch", _F + "stoch_two_period_invest.json"),
+    ("ladder_cum_stoch_rolling", _F + "stochastics.json"),
+    ("co2_total_stoch_rolling", _F + "stochastics.json"),
+    ("flowgroup_cum_stoch_rolling", _F + "stochastics.json"),
     ("stoch_rank3_anchor", _F + "stochastics.json"),
     ("stoch_rank3_profile_anchor", _F + "stochastics.json"),
 )

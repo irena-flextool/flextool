@@ -4931,7 +4931,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # solve-agnostic and remain authoritative, and the solve-agnostic
     # producers re-wired below (RESERVE-1, SECTION-1, MINLOAD-1, PROFILE-1 —
     # profiles are read DB-direct —, PENALTY-1, DELAY-1, CAPCOEF-1, INFLOW-1,
-    # NA-1, MINTIME-1) replace their CSV seeds.
+    # NA-1 with the scenario-lineage frames, MINTIME-1) replace their CSV seeds.
     #
     # Δ.19 — for the synthetic ``<base>_<anchor>`` shape we additionally
     # produce the 8 invest-set frames from ``<base>``'s Spine entries
@@ -5114,7 +5114,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
 
         # NA-1: the synthetic-solve early-return skips passes 3-10, so
         # ``apply_derived_g``'s ``apply_branch_cluster`` — the sole producer of
-        # ``period_branch_full`` / ``dt_non_anticipativity`` — never runs on a
+        # ``period_branch_full`` / ``dt_non_anticipativity`` and of the
+        # scenario-lineage frames (``dd_same_scenario``,
+        # ``pd_non_anticipativity``, ``d_leaf``) — never runs on a
         # rolling sub-solve (each ``<base>_rolling_roll_N`` names a solve absent
         # from Spine).  Without this wire both frames keep their None seeds
         # (above), the non-anticipativity gate never fires, and stochastic
@@ -5129,12 +5131,20 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # non-stochastic synthetic solves: no d≠b fan rows → ``db_pairs`` empty
         # → the gate's d≠b guard skips the constraint.
         #
+        # The lineage frames come from the same ``apply_lineage_frames`` call
+        # single solves make (it does not touch ``period_in_use_set``): without
+        # ``d_leaf`` the per-path families (cumulative ladder tier cap,
+        # co2_max_total, cumulative flow limits, invest totals) pooled every
+        # forecast of a roll into one row.  A roll without a fan gets a single
+        # ``__anchor`` leaf, so its rows stay the legacy ones.
+        #
         # ``period_branch_full`` also feeds ``synthetic_branch_tokens`` (invest
         # handoff guards) and ``is_genuinely_stochastic`` (benders); on a
         # rolling-stochastic solve WITH investment or benders those now
         # activate (parity with the single-solve path), not yet fixture-covered.
         def _wire_non_anticipativity_for_synthetic_solve():
             from flextool.engine.preprocess.params._branch import (
+                apply_lineage_frames,
                 dt_non_anticipativity_df,
                 period_branch_full_df,
             )
@@ -5147,6 +5157,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
             if _new_dtn is not None or getattr(
                     flex_data, "dt_non_anticipativity", None) is None:
                 flex_data.dt_non_anticipativity = _new_dtn
+            apply_lineage_frames(flex_data, workdir_path, db_reader,
+                                 active_solve, ctx=ctx, provider=provider)
         _loadflex_prof(
             "apply_db_overrides:pass_synthetic_non_anticipativity")
         _timed("c.synth non_anticipativity",

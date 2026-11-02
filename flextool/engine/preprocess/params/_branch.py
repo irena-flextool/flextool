@@ -1969,6 +1969,38 @@ def assert_recourse_npv_preconditions(
 # ---------------------------------------------------------------------------
 
 
+def apply_lineage_frames(
+    flex_data: object,
+    workdir: Path,
+    source: "InputSource | None",
+    active_solve: str | None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> None:
+    """Assign the scenario-lineage frames ``dd_same_scenario``,
+    ``pd_non_anticipativity`` and ``d_leaf`` to ``flex_data``.
+
+    Shared by single solves (:func:`apply_branch_cluster`) and by the
+    synthetic sub-solves (rolls, ``<base>_<anchor>`` sub-solves) that skip
+    the per-solve override passes, so every solve of a fan carries its
+    scenario paths.  The builders read only ``ctx`` and the solve's own
+    workdir CSVs (``period__branch``, ``period_in_use_set``,
+    ``solve_branch__time_branch``), so they are solve-agnostic.
+    Unconditional assignment: the fields have no CSV seed to preserve
+    (the builders always return a typed frame, never None); a solve
+    without a fan gets degenerate content (``d_leaf`` = one ``__anchor``
+    leaf, so the per-path families keep their legacy rows).
+    """
+    flex_data.dd_same_scenario = dd_same_scenario_df(
+        workdir, source, active_solve, ctx=ctx, provider=provider)
+    flex_data.pd_non_anticipativity = pd_non_anticipativity_df(
+        workdir, source, active_solve, ctx=ctx, provider=provider)
+    # The (d, leaf) partition that keeps the total caps per scenario path.
+    flex_data.d_leaf = d_leaf_df(
+        workdir, source, active_solve, ctx=ctx, provider=provider)
+
+
 def apply_branch_cluster(
     flex_data: object,
     source: "InputSource",
@@ -1984,10 +2016,8 @@ def apply_branch_cluster(
       1. ``period_branch_full`` (no dependencies; trivial CSV unroll).
       2. ``period_in_use_set`` (depends on workdir or source).
       3. ``dt_non_anticipativity`` (depends on realized + fix-storage CSVs).
-      2b. ``dd_same_scenario`` / ``pd_non_anticipativity`` — Slice A
-         scenario-lineage frames (always-on; degenerate all-pairs /
-         empty content for deterministic solves; consumed by nothing
-         until Slice B/E).
+      2b. ``dd_same_scenario`` / ``pd_non_anticipativity`` / ``d_leaf`` —
+         the scenario-lineage frames (:func:`apply_lineage_frames`).
       4. ``pd_branch_weight`` (depends on period_branch_full + first_ts +
          period_in_use_set + branch weights).
       5. ``pdt_branch_weight`` (depends on dt + period_branch_full +
@@ -2024,20 +2054,9 @@ def apply_branch_cluster(
     if _new_dtn is not None or getattr(flex_data, "dt_non_anticipativity", None) is None:
         flex_data.dt_non_anticipativity = _new_dtn
 
-    # 2b. Scenario-lineage frames (Slice A — recourse plan §6b).
-    #     Always-on; degenerate all-pairs content for deterministic
-    #     solves; consumed by nothing until Slice B/E.  Unconditional
-    #     assignment — these fields have no CSV seed to preserve
-    #     (builders always return a typed frame, never None).
-    flex_data.dd_same_scenario = dd_same_scenario_df(
-        workdir, source, active_solve, ctx=ctx, provider=provider)
-    flex_data.pd_non_anticipativity = pd_non_anticipativity_df(
-        workdir, source, active_solve, ctx=ctx, provider=provider)
-    # Slice D per-path total caps (design §7.2): the (d, leaf) partition
-    # that keeps entity/group total caps per-scenario-path.  Single
-    # "__anchor" leaf for deterministic solves (byte-parity).
-    flex_data.d_leaf = d_leaf_df(
-        workdir, source, active_solve, ctx=ctx, provider=provider)
+    # 2b. Scenario-lineage frames.
+    apply_lineage_frames(flex_data, workdir, source, active_solve,
+                         ctx=ctx, provider=provider)
 
     # 3-4. Branch-weight Params (lazy ports of the previous eager
     # helpers in ``_derived.py``).

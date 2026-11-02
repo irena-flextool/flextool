@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **Fix: in a rolling stochastic solve each forecast keeps its own cumulative limits.** The rolls of a
+  rolling solve were built without their scenario paths, so the CO2 total cap (`co2_max_total`), the
+  cumulative commodity-ladder tier cap and the flow-group cumulative flow limits (`max_cumulative_flow` /
+  `min_cumulative_flow`) pooled all forecasts of a roll into one constraint: the forecasts shared one
+  budget (the ladder tier allowed the forecasts' hours added together, the CO2 cap counted every
+  forecast's emissions against one budget). Each forecast now gets its own constraint, as in a single
+  stochastic solve. The cumulative tier cap of a scenario path also counts the periods that earlier solves
+  or rolls already finished, so a fan in a later period no longer gets a too-tight (or negative) budget.
+  Deterministic rolls and realization rolls are unchanged.
+
 - **Fix: in a stochastic fan the capacity-margin penalty is weighted by the forecast's probability.**
   Each forecast branch period of an investment period keeps its own capacity-margin shortfall, but its
   penalty was counted in full, so a fan of forecasts paid the shortfall as many times as it had branches

@@ -465,19 +465,30 @@ def test_stochastic_forecast_f_d_k_counts_realized_hours(stochastic_fan_rolls) -
         assert all(math.isfinite(v) for v in rhs.values()), (k, rhs)
 
 
-def test_stochastic_total_cap_reached_share_counts_each_hour_once(tmp_path_factory) -> None:
-    """``co2_max_total``'s reached share counts the period once, through its label: the f_d_k of a forecast, which
-    holds the realized hours.  Stochastic roll k reaches min(24k + 96, 168) / 168 of the week, realization roll k
-    (24k + 24) / 168 (years_represented 1, one period); adding the label's own 24k / 168 on top of a forecast's
-    f_d_k would count the realized hours twice."""
+STOCH_TOTAL_CAP = 1.0e7
+
+
+@pytest.fixture(scope="module")
+def stochastic_total_rolls(tmp_path_factory) -> dict:
+    """The rolling week with ``co2_max_total`` = 1e7 t on gas_market (co2_method total)."""
     from flextool.engine import run_chain_from_db
 
     values = [["commodity", "gas", "co2_content", b64(0.2, "float")],
               ["group", "co2_limit", "co2_method", b64("total", "str")],
-              ["group", "co2_limit", "co2_max_total", b64(1.0e7, "float")]]
+              ["group", "co2_limit", "co2_max_total", b64(STOCH_TOTAL_CAP, "float")]]
     url, scen = make_db(tmp_path_factory, alt="co2roll_stoch_total", values=values, base_chain=_stoch_chain(),
                         entities=STOCH_ENTITIES, fixture_json=FIX / "stochastics.json")
     steps = run_chain_from_db(url, scen, keep_solutions=True, work_folder=tmp_path_factory.mktemp("co2tot_fan_w"))
+    assert steps and all(st.solution is not None for st in steps.values())
+    return steps
+
+
+def test_stochastic_total_cap_reached_share_counts_each_hour_once(stochastic_total_rolls) -> None:
+    """``co2_max_total``'s reached share counts the period once, through its label: the f_d_k of a forecast, which
+    holds the realized hours.  Stochastic roll k reaches min(24k + 96, 168) / 168 of the week, realization roll k
+    (24k + 24) / 168 (years_represented 1, one period); adding the label's own 24k / 168 on top of a forecast's
+    f_d_k would count the realized hours twice."""
+    steps = stochastic_total_rolls
     for k in range(7):
         stochastic = steps[f"{STOCH_SOLVE}_roll_{k}"].flex_data
         realization = steps[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"].flex_data
@@ -515,3 +526,34 @@ def test_stochastic_forecast_period_cap_carries_realized_history(stochastic_fan_
             assert rhs[b] == pytest.approx(want, rel=1e-9), (k, b)
             assert rhs[b] >= 0.0, (k, b)
         realized += _gas_tonnes(stochastic_fan_rolls[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"])
+
+
+def test_stochastic_rolls_total_cap_per_forecast_path(stochastic_total_rolls) -> None:
+    """Every stochastic roll keeps one ``co2_max_total`` row per forecast path, each with the whole remaining budget
+    and only its own forecast's emissions; before, a roll had no scenario paths and summed the three forecasts'
+    emissions into one row against one budget (about 3× too tight).
+
+    Hand values: roll k's reached share is min(24k + 96, 168)/168 (one period, years_represented 1), and the
+    realized carry R_k is the tonnes the realization rolls 0..k−1 emitted (read from their solutions), subtracted as
+    tonnes (``_co2_total_cap_with_carry``): RHS = 1e7·min(24k + 96, 168)/168 − R_k, the same on every path.
+    Roll 0: 1e7·96/168."""
+    from tests.engine._lp_rows import row_bounds, row_terms
+
+    realized = 0.0
+    for k in range(7):
+        fd = stochastic_total_rolls[f"{STOCH_SOLVE}_roll_{k}"].flex_data
+        pb = build(fd)
+        assert row_bounds(pb, "co2_max_total", "") == {}, k
+        rows = row_bounds(pb, "co2_max_total_path", "co2_limit,")
+        assert set(rows) == {f"co2_max_total_path[co2_limit,{f.removeprefix('period1_')}]" for f in FORECASTS}, k
+        want = STOCH_TOTAL_CAP * min(24 * k + 96, 168) / 168 - realized
+        for nm, (_lb, ub) in rows.items():
+            assert ub == pytest.approx(want, rel=1e-9), (k, nm)
+        for nm, terms in row_terms(pb, "co2_max_total_path", "co2_limit,").items():
+            periods = {col.rsplit(",", 2)[-2] for col in terms if col.startswith("v_flow[")}
+            assert periods == {f"period1_{nm[nm.rindex(',') + 1:-1]}"}, (k, nm, periods)
+        realized += _gas_tonnes(stochastic_total_rolls[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"])
+    for k in range(7):
+        pb = build(stochastic_total_rolls[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"].flex_data)
+        assert row_bounds(pb, "co2_max_total_path", "") == {}, k
+        assert set(row_bounds(pb, "co2_max_total", "")) == {"co2_max_total[co2_limit]"}, k

@@ -16,9 +16,12 @@ row that lets one branch's surplus flow cover another branch's deficit.
 Fixtures: ``tests.json`` + the ``weighted_2day`` timestep-weight override, a ``flowGroup`` over
 ``coal_plant``'s fuel arc from ``coal_market`` (tests 1/2, built from JSON);
 ``stoch_two_period_hedge.json``'s fan-at-p2035 recourse topology (``base``/``stoch``/``ws``/
-``na_window``/``divest``) + a ``flowGroup`` over ``base``'s output arc (test 3).
+``na_window``/``divest``) + a ``flowGroup`` over ``base``'s output arc (test 3); ``stochastics.json``'s rolling
+stochastic week + a ``flowGroup`` over ``gas_plant``'s fuel arc (test 4).
 """
 from __future__ import annotations
+
+import math
 
 import polars as pl
 import pytest
@@ -154,3 +157,37 @@ def test_cumulative_flow_solve_gets_one_row_per_scenario_path(tmp_path_factory) 
         assert periods, name
         leaves = {leaf_of[p] for p in periods}
         assert len(leaves) == 1, (name, leaves)
+
+
+def test_rolling_fan_cumulative_flow_solve_per_forecast_path(tmp_path_factory) -> None:
+    """Every stochastic roll of the rolling week (``stochastics.json`` ``1_week_rolling_wind``: one period of 168
+    one-hour steps, horizon 96 h, jump 24 h, forecasts lower/mid/upper) keeps one ``maxCumulative_flow_solve`` row
+    per forecast path, holding only that forecast's flows; before, a roll had no scenario paths and pooled the
+    forecasts into one row, so one forecast's surplus covered another's deficit.
+
+    Hand values: the limit is an average power times the weighted hours of the path (timestep_weight 1, one period
+    so r = 1): stochastic roll k's forecast covers min(96, 168 − 24k) h, RHS = 1e6·min(96, 168 − 24k); a
+    realization roll keeps the legacy row over its 24 h jump, RHS = 1e6·24."""
+    fixture = FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json"
+    entities = [["flowGroup", "gas_fuel", None],
+                ["flowGroup__unit__node", ["gas_fuel", "gas_plant", "gas_market"], None]]
+    values = [["flowGroup", "gas_fuel", "max_cumulative_flow", b64(1.0e6, "float")]]
+    url, scen = make_db(tmp_path_factory, alt="flowgrp_roll_paths", base_chain=["init", "base", "system",
+                                                                                "1week_rolling"],
+                        entities=entities, values=values, fixture_json=fixture)
+    steps = run(tmp_path_factory, url, scen)
+    forecasts = ("lower", "mid", "upper")
+    for k in range(7):
+        pb = build(steps[f"1week_rolling_roll_{k}"].flex_data)
+        assert row_bounds(pb, "maxCumulative_flow_solve", "") == {}, k
+        rows = row_bounds(pb, "maxCumulative_flow_solve_path", "gas_fuel,")
+        assert set(rows) == {f"maxCumulative_flow_solve_path[gas_fuel,{f}]" for f in forecasts}, k
+        for nm, (_lb, ub) in rows.items():
+            assert ub == pytest.approx(1.0e6 * min(96, 168 - 24 * k), rel=1e-12), (k, nm)
+        for nm, terms in row_terms(pb, "maxCumulative_flow_solve_path", "gas_fuel,").items():
+            periods = {col.rsplit(",", 2)[-2] for col in terms if col.startswith("v_flow[")}
+            assert periods == {f"period1_{nm[nm.rindex(',') + 1:-1]}"}, (k, nm, periods)
+        realization = build(steps[f"1week_rolling__realized_dispatch_roll_{k}"].flex_data)
+        assert row_bounds(realization, "maxCumulative_flow_solve_path", "") == {}, k
+        legacy = row_bounds(realization, "maxCumulative_flow_solve", "gas_fuel")
+        assert legacy == {"maxCumulative_flow_solve[gas_fuel]": (-math.inf, pytest.approx(1.0e6 * 24, rel=1e-12))}, k
