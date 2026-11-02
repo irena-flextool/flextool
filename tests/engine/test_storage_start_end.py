@@ -1275,3 +1275,172 @@ def test_rebuild_from_the_post_solve_provider_is_the_solved_lp(tmp_path_factory,
         assert got == _as_carry(want), folder
     produced = utf8(provider.get(K.produced_handoff_key(K.HANDOFF_ROLL_END_STATE))).filter(pl.col("node") == "battery")
     assert float(produced["value"][0]) == pytest.approx(own_end, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# A forecast's first step: one start (or carry) term and no self-wrap
+# ---------------------------------------------------------------------------
+# fwd_fix terms:  − v_state[n,d,t]·su + state_start·existing   ∀ (n,d,t) ∈ nodeState_first_dt (no loss here)
+# roll-continue:  − v_state[n,d,t]·su + roll_continue_state
+# so the first-step row of a bind_forward_only + fix_start node holds one v_state column (its own step) and the
+# start (or carry) energy in its RHS: −(start energy + inflow of the step).  A forecast that branches mid-horizon
+# lags to the pre-reveal history instead (no start term).
+#
+# stochastics.json (alternative system): hydro_reservoir node_type storage, existing 5000 (virtual_unitsize unset =
+# 1 MWh, so 5000 MWh), storage_start_end_method fix_start, storage_state_start 0.5 (2500 MWh), inflow 400 MW;
+# storage_binding_method unset = bind_forward_only; no self_discharge_loss; timeline y2020 steps of 1 h.
+# 2_day_stochastic_dispatch fans out at period1 / t0001 (the solve's first step) into realized / upper / lower /
+# mid; 1_week_rolling_wind fans out in every roll (horizon 96 h, jump 24 h).
+
+STOCH_JSON = REPO / "tests" / "fixtures" / "stochastics.json"
+MIDHORIZON_JSON = REPO / "tests" / "fixtures" / "stoch_two_period_midhorizon_nreal0.json"
+HYDRO = "hydro_reservoir"
+HYDRO_EXISTING = 5000.0
+HYDRO_INFLOW = 400.0
+
+
+def _overlay_steps(tmp_path_factory, fixture: Path, base: str, alt: str, values: list,
+                   entities: list = ()) -> list:
+    from flextool.engine import run_chain_from_db
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+    from tests.engine.test_cyclic_fix_start import _lp_snapshot
+
+    data = _lp_snapshot()._overlay(json.loads(fixture.read_text()), name=alt, base=base, values=values,
+                                   entities=list(entities))
+    work = tmp_path_factory.mktemp(alt)
+    (work / "f.json").write_text(json.dumps(data))
+    url = json_to_db(work / "f.json", work / "f.sqlite")
+    migrate_database(url)
+    steps = list(run_chain_from_db(url, alt, work_folder=work / "w", keep_solutions=True).values())
+    assert steps and all(s.solution.optimal for s in steps)
+    return steps
+
+
+def _state_terms(pb, family: str, node: str) -> dict[str, tuple[dict[str, float], tuple[float, float]]]:
+    """``{row: ({v_state column: non-zero coefficient}, (lower, upper))}`` of ``family[node,…]``."""
+    terms = {k: v for k, v in row_terms(pb, family, f"{node},").items() if k.startswith(f"{family}[")}
+    bounds = row_bounds(pb, family, f"{node},")
+    return {k: ({c: x for c, x in cols.items() if c.startswith("v_state[") and x != 0.0}, bounds[k])
+            for k, cols in terms.items()}
+
+
+def _the_fan(steps: list):
+    """The 2day_dispatch solve (the fan) of a 2_day_stochastic_dispatch run."""
+    (step,) = [s for s in steps if s.solve_name == "2day_dispatch"]
+    return step
+
+
+def _first_steps(fd, node: str) -> list[tuple[str, str]]:
+    return utf8(fd.nodeState_first_dt).filter(pl.col("n") == node).sort("d", "t").select("d", "t").rows()
+
+
+def test_forecast_first_step_takes_the_start_once(tmp_path_factory):
+    """2_day_stochastic_dispatch (fan at the solve's first step): each forecast's first-step row has its own state
+    column only (−su) and RHS −(0.5·5000 + 400·1 h) = −2900.  Before, the row also wrapped to the forecast's last
+    step (+su·S[d,t0048]): a self-wrap on top of the start."""
+    step = _the_fan(_overlay_steps(tmp_path_factory, STOCH_JSON, "2_day_stochastic_dispatch", "fsf_fan", []))
+    fd = step.flex_data
+    first = _first_steps(fd, HYDRO)
+    assert [d for d, _t in first] == ["period1_lower", "period1_mid", "period1_realized", "period1_upper"]
+    su = _su(fd, HYDRO)
+    rows = _state_terms(build(fd), "nodeBalance_eq", HYDRO)
+    rhs = -(0.5 * HYDRO_EXISTING + HYDRO_INFLOW * 1.0)
+    for d, t in first:
+        assert t == "t0001"
+        cols, (lo, hi) = rows[f"nodeBalance_eq[{HYDRO},{d},{t}]"]
+        assert cols == {f"v_state[{HYDRO},{d},{t}]": pytest.approx(-su)}, d
+        assert lo == pytest.approx(rhs) and hi == pytest.approx(rhs), d
+
+
+def test_forecast_first_step_within_solve_keeps_its_own_wrap(tmp_path_factory):
+    """bind_within_solve twin: each forecast wraps to its own last step (t0048 of the 48 h 2day timeset), never to
+    another forecast's, and the row has no start term (the cyclic node's fix_start is the pin row): RHS −400."""
+    step = _the_fan(_overlay_steps(tmp_path_factory, STOCH_JSON, "2_day_stochastic_dispatch", "fsf_fan_ws",
+                                   [["node", HYDRO, "storage_binding_method", "bind_within_solve"]]))
+    fd = step.flex_data
+    first = _first_steps(fd, HYDRO)
+    assert len(first) == 4
+    su = _su(fd, HYDRO)
+    rows = _state_terms(build(fd), "nodeBalance_eq", HYDRO)
+    for d, t in first:
+        cols, (lo, hi) = rows[f"nodeBalance_eq[{HYDRO},{d},{t}]"]
+        assert cols == {f"v_state[{HYDRO},{d},{t}]": pytest.approx(-su),
+                        f"v_state[{HYDRO},{d},t0048]": pytest.approx(su)}, d
+        assert lo == pytest.approx(-HYDRO_INFLOW) and hi == pytest.approx(-HYDRO_INFLOW), d
+
+
+def test_midhorizon_forecast_first_step_continues_from_the_history(tmp_path_factory):
+    """stoch_two_period_midhorizon_nreal0.json ``midhorizon`` (p2035 = t0001-t0003 before the reveal, p2040 fans
+    out into high / low at t0004) plus a storage node ``store`` (existing 20, virtual_unitsize 1 = 20 MWh,
+    bind_forward_only + fix_start 0.5, no inflow) linked to elec.  The solve's first step p2035/t0001 takes the
+    start: −su·S, RHS −0.5·20 = −10.  Each p2040 forecast's first step lags to the last pre-reveal step
+    (+su·S[p2035,t0003]) and has no start term (RHS 0) and no self-wrap."""
+    ents = [["node", "store"], ["connection", "store_conn"], ["connection__node__node", ["store_conn", "elec", "store"]]]
+    vals = [["node", "store", "node_type", "storage"], ["node", "store", "existing", 20.0],
+            ["node", "store", "virtual_unitsize", 1.0],
+            ["node", "store", "penalty_up", 10000.0], ["node", "store", "penalty_down", 10000.0],
+            ["node", "store", "storage_binding_method", "bind_forward_only"],
+            ["node", "store", "storage_start_end_method", "fix_start"], ["node", "store", "storage_state_start", 0.5],
+            ["connection", "store_conn", "existing", 50.0], ["connection", "store_conn", "efficiency", 0.9]]
+    (step,) = _overlay_steps(tmp_path_factory, MIDHORIZON_JSON, "midhorizon", "fsf_mid", vals, ents)
+    fd = step.flex_data
+    assert _first_steps(fd, "store") == [("p2035", "t0001")]
+    su = _su(fd, "store")
+    rows = _state_terms(build(fd), "nodeBalance_eq", "store")
+    cols, (lo, hi) = rows["nodeBalance_eq[store,p2035,t0001]"]
+    assert cols == {"v_state[store,p2035,t0001]": pytest.approx(-su)}
+    assert lo == pytest.approx(-0.5 * 20.0) and hi == pytest.approx(lo)
+    for b in ("high", "low"):
+        cols, (lo, hi) = rows[f"nodeBalance_eq[store,p2040_{b},t0004]"]
+        assert cols == {"v_state[store,p2035,t0003]": pytest.approx(su),
+                        f"v_state[store,p2040_{b},t0004]": pytest.approx(-su)}, b
+        assert lo == pytest.approx(0.0, abs=1e-12) and hi == pytest.approx(0.0, abs=1e-12), b
+
+
+def _assert_one_start_or_carry(step, family: str, start: float, hours) -> int:
+    """Every forecast's start row in ``family`` holds one non-zero state column of its own period (−su) and RHS
+    −(start energy + inflow·hours(d)): roll 0 starts from fix_start (start·existing), later rolls from the carry."""
+    fd = step.flex_data
+    su = _su(fd, HYDRO)
+    carry = _carry(fd, HYDRO)
+    energy = start * HYDRO_EXISTING if carry is None else carry
+    rows = _state_terms(build(fd), family, HYDRO)
+    first = _first_steps(fd, HYDRO)
+    assert first
+    for d, t in first:
+        cols, (lo, hi) = rows[f"{family}[{HYDRO},{d},{t}]"]
+        assert list(cols.values()) == [pytest.approx(-su)], (step.solve_name, d, cols)
+        assert next(iter(cols)).startswith(f"v_state[{HYDRO},{d},"), (step.solve_name, d, cols)
+        rhs = -(energy + HYDRO_INFLOW * hours(fd, d))
+        assert lo == pytest.approx(rhs) and hi == pytest.approx(rhs), (step.solve_name, d)
+    return len(first)
+
+
+def test_rolling_forecast_first_step_takes_the_start_or_the_carry_once(tmp_path_factory):
+    """1_week_rolling_wind with storage_state_start 0.3: roll 0's forecasts start from 0.3·5000 = 1500 MWh (RHS
+    −(1500 + 400) = −1900), each later roll's forecasts from the realized carry (RHS −(carry + 400)); one state
+    column per row in every roll (forecast and realization rolls)."""
+    steps = _overlay_steps(tmp_path_factory, STOCH_JSON, "1_week_rolling_wind", "fsf_roll",
+                           [["node", HYDRO, "storage_state_start", 0.3]])
+    assert len(steps) > 2
+    assert _carry(steps[0].flex_data, HYDRO) is None
+    assert all(_carry(s.flex_data, HYDRO) is not None for s in steps[2:])
+    fan_rows = [_assert_one_start_or_carry(s, "nodeBalance_eq", 0.3, lambda _fd, _d: 1.0) for s in steps]
+    assert fan_rows[0] == 3       # roll 0: lower / mid / upper (realized is the realization solve's)
+
+
+def test_rolling_blocks_forecast_takes_the_start_or_the_carry_once(tmp_path_factory):
+    """Same with bind_intraperiod_blocks: each forecast's block (the roll's part of the 168 h 1week timeblock)
+    has one nodeBalanceBlock_eq row with one non-zero state column (−su; the block's state is one value) and RHS
+    −(start energy + 400 · the block's hours): roll 0 −(1500 + 400·96) = −39 900."""
+    steps = _overlay_steps(tmp_path_factory, STOCH_JSON, "1_week_rolling_wind", "fsf_roll_blocks",
+                           [["node", HYDRO, "storage_binding_method", "bind_intraperiod_blocks"],
+                            ["node", HYDRO, "storage_state_start", 0.3]])
+
+    def hours(fd, d):
+        return float(utf8(fd.dt).filter(pl.col("d") == d).height)       # 1 h steps
+
+    assert hours(steps[0].flex_data, "period1_mid") == 96.0
+    for s in steps:
+        assert _assert_one_start_or_carry(s, "nodeBalanceBlock_eq", 0.3, hours) > 0

@@ -476,9 +476,8 @@ def test_output_stochastic(tmp_path_factory):
     """Stochastic 2-day dispatch with a lossy hydro reservoir: the forecasts-only fan realizes no step, so its
     normal v_self_discharge output has no rows; written over every forecast-branch (d, t) of v_state it has
     exactly those rows and non-zero values; the model's previous-state columns are the writer's links.  The
-    reservoir is bind_forward_only + fix_start, whose branch first-step rows take both a self-wrap and the start
-    (item 137, pre-existing): no value check here, the values are compared on sound rows in
-    test_output_stochastic_values."""
+    reservoir is bind_forward_only + fix_start: each forecast's first-step row starts from the start state (no
+    self-wrap); the values are compared with the LP in test_output_stochastic_values."""
     from flextool.engine import run_chain_from_db
     from flextool.lean_parquet import read_lean_parquet
     from flextool.update_flextool.db_migration import migrate_database
@@ -697,20 +696,27 @@ def test_duplicate_loss_keys_raise():
         _self_discharge.loss_coefficients(d, dt.with_columns(n=pl.lit("s")).select("n", "d", "t"))
 
 
-@pytest.mark.parametrize("method", ["bind_within_solve", "bind_within_period"])
+@pytest.mark.parametrize("method", ["bind_within_solve", "bind_within_period", "bind_forward_only"])
 def test_output_stochastic_values(tmp_path_factory, method):
-    """Stochastic 2-day dispatch, lossy hydro_reservoir with a sound previous state per row (bind_within_solve /
-    bind_within_period): every loss written over the forecast-branch rows (``_self_discharge_all_rows``) equals
-    the loss the LP row implies, read from the row's own state coefficients and the solution:
-    (Σ_{positive} S⁻ − S)·su − Σ coef·S."""
+    """Stochastic 2-day dispatch, lossy hydro_reservoir (bind_within_solve / bind_within_period / bind_forward_only):
+    every loss written over the forecast-branch rows (``_self_discharge_all_rows``) equals the loss the LP row
+    implies, read from the row's own state coefficients and the solution: (Σ_{positive} S⁻ − S)·su − Σ coef·S.
+
+    A bind_forward_only forecast's first step has no previous-state column: it starts from the fix_start energy
+    E0 = storage_state_start · existing = 0.5 · 5000 MWh = 2500 MWh (stochastics.json, alternative system).  Its
+    row is −(1 + α)·su·S + (1 − β)·E0 + flows = −inflow (fix_start header), so the constant (1 − β)·E0 sits in the
+    RHS: (1 − β)·E0 = −RHS − inflow, inflow = 400 MW · 1 h.  The implied loss is then
+    (E0 − S·su) − coef·S − (1 − β)·E0 = α·su·S + β·E0."""
 
     steps = _run_json(tmp_path_factory, STOCH_JSON, "2_day_stochastic_dispatch", [
         ["node", "hydro_reservoir", "storage_binding_method", method],
         ["node", "hydro_reservoir", "self_discharge_loss", 0.01]], "sdo_sv")
-    compared = 0
+    compared = starts = 0
     for step in steps:
         fd = step.flex_data
-        rows = row_terms(build(fd), "nodeBalance_eq", "hydro_reservoir,")
+        pb = build(fd)
+        rows = row_terms(pb, "nodeBalance_eq", "hydro_reservoir,")
+        bounds = row_bounds(pb, "nodeBalance_eq", "hydro_reservoir,")
         sol = utf8(step.solution.value("v_state")).filter(pl.col("n") == "hydro_reservoir")
         S = {f"v_state[hydro_reservoir,{d},{t}]": v for d, t, v in sol.select("d", "t", "value").iter_rows()}
         su = float(utf8(fd.p_state_unitsize.frame).filter(pl.col("n") == "hydro_reservoir")["value"][0])
@@ -723,11 +729,20 @@ def test_output_stochastic_values(tmp_path_factory, method):
                 continue
             vs = {c: v for c, v in cols.items() if c.startswith("v_state[")}
             pos = [c for c, v in vs.items() if v > 0]
-            assert len(pos) == 1, (name, vs)
-            lp_loss = (S[pos[0]] - S[f"v_state[hydro_reservoir,{d},{t}]"]) * su - sum(v * S[c] for c, v in vs.items())
+            now = S[f"v_state[hydro_reservoir,{d},{t}]"]
+            if not pos and method == "bind_forward_only":
+                assert t == "t0001" and list(vs) == [f"v_state[hydro_reservoir,{d},{t}]"], (name, vs)
+                e0 = 0.5 * 5000.0
+                kept_start = -bounds[name][0] - 400.0 * 1.0      # (1 − β)·E0
+                lp_loss = (e0 - now * su) - sum(v * S[c] for c, v in vs.items()) - kept_start
+                starts += 1
+            else:
+                assert len(pos) == 1, (name, vs)
+                lp_loss = (S[pos[0]] - now) * su - sum(v * S[c] for c, v in vs.items())
             assert rep[(d, t)] == pytest.approx(lp_loss, rel=1e-9, abs=1e-9), name
             compared += 1
     assert compared > 0
+    assert starts == (4 if method == "bind_forward_only" else 0)    # one start row per forecast
 
 
 def test_output_duplicate_previous_state_raises(tmp_path_factory):
