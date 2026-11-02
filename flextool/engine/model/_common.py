@@ -11,6 +11,7 @@ from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.preprocess.params._branch import inherit_anchor_period
 
 
 def _has_rows(frame) -> bool:
@@ -392,3 +393,28 @@ def _connection_procs(d) -> "pl.DataFrame | None":
     return (pss.select(pl.col("p").cast(pl.Utf8)).unique(maintain_order=True)
             .join(units, on="p", how="anti"))
 
+
+def _period_branch_pairs(d) -> "pl.DataFrame | None":
+    """(anchor, br) pairs of every stochastic forecast branch and its anchor period; None when there are none.
+
+    Built from ``period_branch_full`` (the full unfiltered ``period__branch.csv`` map, already on
+    ``flex_data`` by model-build time — the same source ``_non_anticipativity._forecast_star`` reads for
+    the forecast ties) rather than ``branch_anchor_pairs``, which needs a ``provider`` the model build
+    does not have.  Self rows (``d == b``, trunks / deterministic periods) are dropped.
+    """
+    pbf = getattr(d, "period_branch_full", None)
+    if not _has_rows(pbf):
+        return None
+    pairs = (pbf.select(pl.col("d").cast(pl.Utf8).alias("anchor"), pl.col("b").cast(pl.Utf8).alias("br"))
+             .filter(pl.col("anchor") != pl.col("br")))
+    return pairs if pairs.height > 0 else None
+
+
+def branch_periods_inherit(d, frame: pl.DataFrame, group_keys: "tuple[str, ...]") -> pl.DataFrame:
+    """``frame`` (period column ``d``) with its period labels' rows copied to their forecast branch periods.
+
+    :func:`inherit_anchor_period` with :func:`_period_branch_pairs`: a forecast that has a row of its own keeps
+    it; identity outside stochastic solves.  The period caps of a forecast read their period-keyed inputs (period
+    share, f_d_k, the realized carry) through it, so every forecast continues from its period's realized history.
+    """
+    return inherit_anchor_period(frame, _period_branch_pairs(d), group_keys=group_keys)

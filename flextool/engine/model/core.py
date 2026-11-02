@@ -95,6 +95,7 @@ from flextool.engine.model._common import (
     _utf8_keys,
     _var_view,
     chain_prior,
+    branch_periods_inherit,
     check_max_cap,
     leaf_rows,
     minus_prior,
@@ -2787,7 +2788,12 @@ def _co2_period_cap_with_carry(d) -> Param:
     a 6h jump) gets the FULL per-window cap again on every one of those rolls, since nothing carries
     what was already realized -- over-allowing roughly by the number of rolls touching the period.
 
-    cap[g,d] = co2_max_period[g,d]·f_d_k[d] − co2_cum_realized_tonnes[g,d] / period_share[d]
+    cap[g,d] = co2_max_period[g,d]·f_d_k[d] − co2_cum_realized_tonnes[g,α(d)] / period_share[d]
+
+    α(d) is the period label of a forecast branch period d (d itself otherwise): the realization solve carries
+    the realized tonnes under the label, and share, f_d_k and the realized tonnes of a forecast come from α(d)
+    unless it has its own row (``branch_periods_inherit``), so every forecast continues from its period's
+    realized emissions.
 
     f_d_k[d] -- ``p_co2_f_d_k``, the raw ``solve_data/f_d_k.csv`` Param, 1.0 when it has no row for
     ``d`` or is absent entirely (the old, full-cap-every-roll behaviour) -- is the per-period "share of
@@ -2804,14 +2810,16 @@ def _co2_period_cap_with_carry(d) -> Param:
     cap = keys.join(d.p_co2_max_period.frame.rename({"value": "cap"}), on=["g", "d"], how="left")
     fdk = getattr(d, "p_co2_f_d_k", None)
     if fdk is not None:
-        cap = (cap.join(fdk.frame.rename({"value": "fdk"}), on="d", how="left")
+        cap = (cap.join(branch_periods_inherit(d, fdk.frame, ()).rename({"value": "fdk"}), on="d", how="left")
                .with_columns(pl.col("fdk").fill_null(1.0)))
     else:
         cap = cap.with_columns(fdk=pl.lit(1.0))
-    cap = cap.join(d.p_period_share.frame.rename({"value": "share"}), on="d", how="left")
+    cap = cap.join(branch_periods_inherit(d, d.p_period_share.frame, ()).rename({"value": "share"}),
+                   on="d", how="left")
     realized = getattr(d, "p_co2_cum_realized_tonnes", None)
     if realized is not None:
-        cap = (cap.join(realized.frame.rename({"value": "realized"}), on=["g", "d"], how="left")
+        cap = (cap.join(branch_periods_inherit(d, realized.frame, ("g",)).rename({"value": "realized"}),
+                        on=["g", "d"], how="left")
                .with_columns(pl.col("realized").fill_null(0.0)))
     else:
         cap = cap.with_columns(realized=pl.lit(0.0))
@@ -2833,10 +2841,12 @@ def _eq_co2_max_period(b: _Build) -> None:
     #     · co2_content[c]·w[d,t]
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_noEff, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
     #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
-    #   ≤ co2_max_period[g,d] · f_d_k[d]  −  co2_cum_realized_tonnes[g,d] / period_share[d]
+    #   ≤ co2_max_period[g,d] · f_d_k[d]  −  co2_cum_realized_tonnes[g,α(d)] / period_share[d]
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
     #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
-    #   α(d) = the period label of a forecast branch period d, d itself otherwise
+    #   α(d) = the period label of a forecast branch period d, d itself otherwise; period_share, f_d_k and the
+    #   realized carry of a forecast come from α(d) unless it has its own row: every forecast continues from
+    #   its period's realized history (the realization solve's carry, OD4)
     # Caps the annualised CO2 emissions of a group in each period (tonnes per year): dividing by
     # period_share, the LHS is the emissions of the solve's own steps of d annualised over their hours.
     # The RHS (_co2_period_cap_with_carry) is this period's remaining budget as of this roll: f_d_k[d]

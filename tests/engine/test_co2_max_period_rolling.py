@@ -483,3 +483,35 @@ def test_stochastic_total_cap_reached_share_counts_each_hour_once(tmp_path_facto
         realization = steps[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"].flex_data
         assert stochastic.co2_horizon_fraction_reached == pytest.approx(min(24 * k + 96, 168) / 168, rel=1e-12), k
         assert realization.co2_horizon_fraction_reached == pytest.approx((24 * k + 24) / 168, rel=1e-12), k
+
+
+def _gas_tonnes(step) -> float:
+    """CO2 of the gas burnt over a solve's steps (gas co2_content 0.2): v_flow · unitsize · slope · step_duration."""
+    fd = step.flex_data
+    size = float(utf8(fd.p_unitsize.frame).filter(pl.col("p") == "gas_plant")["value"][0])
+    vf = utf8(step.solution.value("v_flow")).filter((pl.col("p") == "gas_plant") & (pl.col("source") == "gas_market"))
+    slope = utf8(fd.p_slope.frame).filter(pl.col("p") == "gas_plant").select("d", "t", slope="value")
+    sd = utf8(fd.p_step_duration.frame).select("d", "t", sd="value")
+    rows = vf.join(slope, on=["d", "t"], how="inner").join(sd, on=["d", "t"], how="inner")
+    assert rows.height == vf.height > 0
+    return float((rows["value"] * size * rows["slope"] * rows["sd"] * 0.2).sum())
+
+
+def test_stochastic_forecast_period_cap_carries_realized_history(stochastic_fan_rolls) -> None:
+    """Each forecast's ``co2_max_period`` RHS continues from its period's realized emissions:
+    ``2e6 · f_d_k − R_k / period_share``, R_k = the tonnes emitted by realization rolls 0..k−1 (read from their
+    solutions), period_share = 168/8760.  Before, a forecast joined the realized carrier on its own name, found
+    nothing and took R = 0, so every forecast could emit the period's realized tonnes again."""
+    share = 168 / 8760
+    realized = 0.0
+    for k in range(7):
+        fd = stochastic_fan_rolls[f"{STOCH_SOLVE}_roll_{k}"].flex_data
+        if k > 0:
+            assert realized > 0.0, k
+        rhs = _forecast_rhs(fd)
+        assert set(rhs) == set(FORECASTS), k
+        for b in FORECASTS:
+            want = STOCH_CAP * min(24 * k + 96, 168) / 168 - realized / share
+            assert rhs[b] == pytest.approx(want, rel=1e-9), (k, b)
+            assert rhs[b] >= 0.0, (k, b)
+        realized += _gas_tonnes(stochastic_fan_rolls[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"])

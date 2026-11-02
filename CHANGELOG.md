@@ -6,7 +6,9 @@
   realization rolls had already realized, so its tier budget shrank as the week advanced. After the
   realized purchases were subtracted it could turn negative and make the roll infeasible. Each forecast
   now counts its period's realized hours plus its own window. The `co2_max_total` share of a fan
-  counts those hours once, and so does the fallback weight of the cumulative ladder.
+  counts those hours once, and so does the fallback weight of the cumulative ladder. A forecast's
+  `co2_max_period` cap also subtracts the emissions already realized in its period; before, every
+  forecast could emit them again.
 
 - **Normal outputs hold realized results only, with or without `output_horizon`.** `output_horizon = yes`
   no longer changes the parquet / CSV / plot / summary outputs: forecast-branch rows, rolling look-ahead

@@ -18,7 +18,7 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Expr
 
-from flextool.engine.model._common import _has_rows
+from flextool.engine.model._common import _has_rows, _period_branch_pairs, branch_periods_inherit
 from flextool.engine.preprocess.params._branch import branch_anchor_pairs, inherit_anchor_period
 
 if TYPE_CHECKING:
@@ -363,22 +363,6 @@ def _eq_ladder_balance(b: _Build) -> None:
     )
 
 
-def _period_branch_pairs(d) -> "pl.DataFrame | None":
-    """(anchor, br) pairs of every stochastic forecast branch and its anchor period; None when there are none.
-
-    Built from ``period_branch_full`` (the full unfiltered ``period__branch.csv`` map, already on
-    ``flex_data`` by model-build time — the same source ``_non_anticipativity._forecast_star`` reads for
-    the forecast ties) rather than ``branch_anchor_pairs``, which needs a ``provider`` the model build
-    does not have.  Self rows (``d == b``, trunks / deterministic periods) are dropped.
-    """
-    pbf = getattr(d, "period_branch_full", None)
-    if not _has_rows(pbf):
-        return None
-    pairs = (pbf.select(pl.col("d").cast(pl.Utf8).alias("anchor"), pl.col("b").cast(pl.Utf8).alias("br"))
-             .filter(pl.col("anchor") != pl.col("br")))
-    return pairs if pairs.height > 0 else None
-
-
 def _eq_tier_cap_annual(b: _Build) -> None:
     """ladder_tier_cap_annual_roll: purchase per tier and period up to the tier's annual quantity."""
     d = b.d
@@ -392,10 +376,12 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     # ─── EQ. ─── ladder_tier_cap_annual_roll ─────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_n v_trade[c,n,d,i] · commodity_unitsize[c]
-    #   ≤  quantity_ann[c,i,d] · period_share[d] · f_d_k[d] − realized_ann[c,i,d]
+    #   ≤  quantity_ann[c,i,d] · period_share[d] · f_d_k[d] − realized_ann[c,i,α(d)]
     #   ∀ (c,i,d) with (c,n,d,i) ∈ cndi_ladder_ann and quantity_ann[c,i,d] < 1e29
     #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
-    #   α(d) = the period label of a forecast branch period d, d itself otherwise
+    #   α(d) = the period label of a forecast branch period d, d itself otherwise; period_share, f_d_k and the
+    #   realized carry of a forecast come from α(d) unless it has its own row: every forecast continues from
+    #   its period's realized history (the realization solve's carry, OD4)
     # quantity_ann is a per-YEAR amount (GMPL "per-year MWh"): period_share[d] scales it down to this
     # period's own share of the modelled year, matching the price term's inflation_op/period_share
     # annualisation (#89) — a 48h solve of a 48h period gets 48h/8760 of the annual tier, not the whole
@@ -408,27 +394,14 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     # only part of that (#143's fix applies here too — no clamp needed, the row is feasible by
     # construction instead of approximately-compliant). Unlimited tiers (quantity ≥ 1e29) get no row.
     # Branch periods of a stochastic solve use their anchor period's quantity (and price) unless they
-    # have their own (inherit_branch_periods).  period_share and f_d_k are plain engine params, keyed by
-    # period and never authored for the per-solve-minted branch names, so they need the same anchor
-    # fallback here (_period_branch_pairs + inherit_anchor_period) — without it the join below leaves a
-    # null share/fdk for every branch row, the null propagates into cap, and the branch's tier-1 budget
-    # silently clamps to 0 instead of its anchor's share.
-    # realized_ann (the carried cross-roll purchase) is keyed (c, i, d) and, like share/fdk, is only ever
-    # populated for the ANCHOR's own name (handoff/cumulative_commodity carries the realized branch's
-    # history under the real period name — see _extract_cumulative_commodity, #59): a branch period has no
-    # row of its own there either, so without the same anchor fallback it joined to null -> 0 "already
-    # bought", letting a branch re-open the anchor's already-spent budget in full instead of inheriting
-    # what every future of that year has, in truth, already spent (#59).
-    pairs = _period_branch_pairs(d)
-    share_frame = d.p_period_share.frame
-    fdk_frame = d.p_f_d_k.frame if d.p_f_d_k is not None else None
-    realized_frame = d.p_ladder_cum_realized_mwh.frame if d.p_ladder_cum_realized_mwh is not None else None
-    if pairs is not None:
-        share_frame = inherit_anchor_period(share_frame, pairs, group_keys=())
-        if fdk_frame is not None:
-            fdk_frame = inherit_anchor_period(fdk_frame, pairs, group_keys=())
-        if realized_frame is not None:
-            realized_frame = inherit_anchor_period(realized_frame, pairs, group_keys=("c", "i"))
+    # have their own (inherit_branch_periods).  share, f_d_k and the realized carry of a forecast come from
+    # α(d) unless it has its own row (branch_periods_inherit): every forecast continues from its period's
+    # realized history (the realization solve's carry, OD4); without it a null share/fdk would clamp the
+    # tier to 0, and a realized 0 would re-open the period's already-spent budget (#59).
+    share_frame = branch_periods_inherit(d, d.p_period_share.frame, ())
+    fdk_frame = branch_periods_inherit(d, d.p_f_d_k.frame, ()) if d.p_f_d_k is not None else None
+    realized_frame = (branch_periods_inherit(d, d.p_ladder_cum_realized_mwh.frame, ("c", "i"))
+                      if d.p_ladder_cum_realized_mwh is not None else None)
     keys = cndi_ann_finite.select("c", "i", "d").unique()
     cap_df = (keys.join(d.p_ladder_ann_quantity.frame.rename({"value": "quantity"}), on=["c", "i", "d"], how="left")
               .join(share_frame.rename({"value": "share"}), on="d", how="left"))
