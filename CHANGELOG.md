@@ -24,6 +24,11 @@
   `storage_include_solve_fix_method`, unit input `capacity_max_coeff` / `capacity_min_coeff`) and lists any values
   they held; an input `capacity_max_coeff` value moves to `input_share_max` (its name since database version 70)
   where that input has none of its own. `solve_mode` `single_shot` becomes `single_solve`. Results unchanged.
+- **Docs: `increase_reserve_ratio` applies to upward and downward reserve alike.** The ratio stands for the
+  variability of a flow, which can go either way, so each participating flow raises both requirements (unlike
+  `large_failure_ratio`, which is directional). The reference and the parameter descriptions now say so; the model
+  is unchanged. The reference also lists the database version 77 parameter shapes, the group retirement limits and
+  the group `invest_method` value `not_active`.
 - **Fix: Excel export keeps period + time maps of parameters without stochastic values.** Such a value (for
   example a period + time `energy_margin_adder`) was dropped when a model was exported to xlsx; it is now written on
   its own multi-index sheet and read back on import. Behaviour-change markers of a database (its metadata) are now

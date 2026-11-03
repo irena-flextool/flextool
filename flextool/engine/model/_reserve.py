@@ -685,7 +685,9 @@ def add_constraints(b: "_Build") -> None:
     #   section term only for min_load_efficiency units with online variables (v_online_linear / _integer)
     #   reserve_sum is replaced by v_reserve_total for (r,ud,g) ∈ rug_total
     # The requirement grows with the flows into and out of the group's nodes
-    # (e.g. variable generation and consumption).  A flow out of a node counts
+    # (e.g. variable generation and consumption), in the upward and the downward
+    # rows alike: the ratio stands for the flow's variability, which can go
+    # either way (unlike large_failure, which is directional).  A flow out of a node counts
     # as drawn from it, as in nodeBalance_eq: on an efficiency arc the input is
     # v_flow · slope plus the min-load section (_drawn_terms).  The reverse flow
     # of a one-variable (and DC) arc arrives at the arc's source and leaves its
