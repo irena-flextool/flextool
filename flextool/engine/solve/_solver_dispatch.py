@@ -394,7 +394,8 @@ def run_one_solve(
                 logger=logger,
                 work_folder=work_folder,
             )
-        return problem.solve(keep_solver=True)
+        # Names reach HiGHS only when a HiGHS option writes a file with them.
+        return problem.solve(keep_solver=True, highs_names="auto")
 
     # Commercial path.  Always subprocess: write MPS via the cheap
     # ``Problem.write_mps`` (polars→MPS, no LpView), spawn the solver's

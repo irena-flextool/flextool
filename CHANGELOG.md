@@ -1,5 +1,10 @@
 ## Unreleased
 
+- **Lower peak memory in large in-process HiGHS solves.** The LP's column and row names are no longer copied into
+  HiGHS (a few GB on large models); they are passed only when a HiGHS option writes a file that carries them
+  (`write_solution_to_file`, `write_model_to_file`, `write_basis_file`, …), so such files keep the real names.
+  Autoscale's coefficient bucketing keeps its per-column tables as arrays. Results and outputs are unchanged.
+  Requires polar-high 3.12.0.
 - **The default `storage_start_end_method` is now `fix_nothing`.** Storage nodes without their own method start
   free. Before, where some node had a `storage_state_start`, the old default `fix_start` fixed them at the start: at
   their own `storage_state_start`, or at 0 when only other nodes had one. The database upgrade writes `fix_start` on

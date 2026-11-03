@@ -101,6 +101,77 @@ class OutputWriterState:
 
 
 # ---------------------------------------------------------------------------
+# LP names when the solve kept them out of HiGHS
+# ---------------------------------------------------------------------------
+
+
+class _NamedHighsView:
+    """The live ``highspy.Highs`` with its LP names served from Python.
+
+    The in-process solve keeps the column / row names out of HiGHS unless a
+    HiGHS option writes a file that carries them (polar-high
+    ``highs_names="auto"``; ``Solution.highs_names_passed`` is then
+    ``False``).  HiGHS then reports no names, but the output extractors
+    read them through ``allVariableNames()`` and ``getLp().row_names_``.
+    This view answers those two from ``Solution.col_names`` /
+    ``row_names`` (position-aligned with the LP) and forwards every other
+    attribute to the instance.  ``getLp()`` returns only ``row_names_``,
+    which also avoids HiGHS' full post-solve LP copy.
+
+    Row names match what HiGHS holds when the names are passed: an unnamed
+    row (``None`` / ``""``) is ``row_<i>``.  ``passColName`` /
+    ``passRowName`` rename on the Solution lists, and on HiGHS too once the
+    names are there.
+    """
+
+    class _LpNames:
+        __slots__ = ("row_names_",)
+
+        def __init__(self, row_names: list[str]):
+            self.row_names_ = row_names
+
+    def __init__(self, highs: object, sol: "Solution"):
+        self._highs = highs
+        self._sol = sol
+        self._lp_names: _NamedHighsView._LpNames | None = None
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._highs, name)
+
+    def allVariableNames(self) -> list[str]:
+        return self._sol.col_names
+
+    def getLp(self) -> "_NamedHighsView._LpNames":
+        if self._lp_names is None:
+            self._lp_names = self._LpNames(
+                [n if n else f"row_{i}" for i, n in enumerate(self._sol.row_names)]
+            )
+        return self._lp_names
+
+    def passColName(self, col_id: int, name: str) -> None:
+        self._sol.col_names[col_id] = name
+        if getattr(self._sol, "highs_names_passed", True):
+            self._highs.passColName(col_id, name)
+
+    def passRowName(self, row_id: int, name: str) -> None:
+        self._sol.row_names[row_id] = name
+        if self._lp_names is not None:
+            self._lp_names.row_names_[row_id] = name if name else f"row_{row_id}"
+        if getattr(self._sol, "highs_names_passed", True):
+            self._highs.passRowName(row_id, name)
+
+
+def _names_highs(sol: "Solution") -> object:
+    """``sol.highs`` as the output extractors should see it: the instance
+    itself when it holds the LP names (or is the cold-path shim), else a
+    :class:`_NamedHighsView` over it."""
+    h = getattr(sol, "highs", None)
+    if h is None or getattr(sol, "highs_names_passed", True):
+        return h
+    return _NamedHighsView(h, sol)
+
+
+# ---------------------------------------------------------------------------
 # Variable-name reconciliation
 # ---------------------------------------------------------------------------
 
@@ -117,7 +188,7 @@ _VAR_RENAME: dict[str, str] = {
 }
 
 
-def _rename_invest_columns(sol: "Solution") -> None:
+def _rename_invest_columns(sol: "Solution", h: object | None = None) -> None:
     """Rename ``v_invest_p`` / ``v_invest_n`` / ``v_divest_*`` columns
     in-place on the live HiGHS instance to the unified flextool names.
 
@@ -132,9 +203,12 @@ def _rename_invest_columns(sol: "Solution") -> None:
 
     ``passColName`` is invoked per column-id derived from the polars
     Var's ``frame["col_id"]``.  This is O(n_cols_to_rename) — typically
-    < 1000 for realistic cases.  No-op if ``sol.highs is None``.
+    < 1000 for realistic cases.  No-op if ``sol.highs is None``.  ``h`` is
+    the instance to rename on (default ``sol.highs``; the writer passes its
+    :class:`_NamedHighsView` when the names were kept out of HiGHS).
     """
-    h = getattr(sol, "highs", None)
+    if h is None:
+        h = getattr(sol, "highs", None)
     if h is None:
         return  # Solution synthesized outside a real solve — adapter
                 # caller is responsible for ensuring this doesn't happen
@@ -187,6 +261,8 @@ def _restore_space_mangled_names(sol: "Solution") -> None:
     h = getattr(sol, "highs", None)
     if h is None or not hasattr(h, "passRowName"):
         return  # cold/subprocess shim (immune) or no live solver
+    if not getattr(sol, "highs_names_passed", True):
+        return  # names never reached HiGHS, so nothing was mangled
 
     col_names = getattr(sol, "col_names", None)
     if col_names is not None:
@@ -262,11 +338,15 @@ def write_outputs_for_solve(
     output_dir = work_folder / "output_raw"
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # LP names: from HiGHS when the solve passed them, else from the
+    # Solution's Python lists through a view (see _NamedHighsView).
+    h = _names_highs(sol)
+
     # Variable-name shim — flextool's writers see ``v_invest[…]`` /
     # ``v_divest[…]`` after this call.  In-place mutation on the live
-    # HiGHS; safe because the Solution is read-only post-solve and the
-    # adapter consumes it once.
-    _rename_invest_columns(sol)
+    # HiGHS (or the Solution's name list); safe because the Solution is
+    # read-only post-solve and the adapter consumes it once.
+    _rename_invest_columns(sol, h)
 
     # Undo HiGHS' space→underscore name mangling.  When the in-process
     # solve writes a solution file (``write_solution_to_file=true`` — no

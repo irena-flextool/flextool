@@ -514,4 +514,7 @@ def _build_warm_problem(
     build_flextool(pb, data, scale_the_objective=scale_the_objective, solve_name=solve_name)
     if solver_options:
         pb.set_solver_options(solver_options)
-    return WarmProblem(pb)
+    # LP names stay in Python (Solution.col_names / row_names) and go to
+    # HiGHS only when a HiGHS option writes a file that carries them; the
+    # output writer reads them through _NamedHighsView otherwise.
+    return WarmProblem(pb, highs_names="auto")
