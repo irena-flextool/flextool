@@ -578,38 +578,52 @@ def _eq_non_sync(b: _Build) -> None:
 
     rhs: dict = {}
     # Every right-hand-side term is × ns_limit, so without any limit the right-hand side is 0.
-    out_factor = p_us * d.p_step_duration * pgns * invc if pgns is not None else None
+    has_out_factor = pgns is not None
+
+    def out_factor(arcs: pl.DataFrame) -> Param:
+        # unitsize · Δt · ns_limit · icap, with unitsize first narrowed to the arcs' processes: the term's inner
+        # join with the variable keeps only those, and the unnarrowed product is a (p, d, t, g) cross join over
+        # every process.  Same cells, same multiplication order, so the coefficients are unchanged.  The keys
+        # take unitsize's dtype (never the reverse), so the product's join dtypes stay as they were.
+        p_dtype = p_us.frame.schema["p"]
+        keys = arcs.select("p").unique()
+        if keys.schema["p"] != p_dtype:
+            keys = keys.select(pl.col("p").cast(p_dtype, strict=False)).drop_nulls()
+        us = Param(p_us.dims, p_us.frame.join(keys, on="p", how="semi"), name=p_us.name)
+        return us * d.p_step_duration * pgns * invc
     pss_noEff = d.process_source_sink_noEff
-    if out_factor is not None and pss_noEff is not None and pss_noEff.height > 0 and b.v_flow is not None:
+    if has_out_factor and pss_noEff is not None and pss_noEff.height > 0 and b.v_flow is not None:
         out_noEff = _not_inside(pss_noEff.rename({"source": "n"}).join(gn_in_gns, on="n", how="inner")
                                 .rename({"n": "source"}))
         if out_noEff.height > 0:
-            rhs["out_noEff"] = Sum(Where(b.v_flow, out_noEff) * out_factor, over=("p", "source", "sink"))
+            rhs["out_noEff"] = Sum(Where(b.v_flow, out_noEff) * out_factor(out_noEff), over=("p", "source", "sink"))
     pss_eff = d.process_source_sink_eff
-    if out_factor is not None and pss_eff is not None and pss_eff.height > 0 and b.v_flow is not None:
+    if has_out_factor and pss_eff is not None and pss_eff.height > 0 and b.v_flow is not None:
         out_eff = _not_inside(pss_eff.rename({"source": "n"}).join(gn_in_gns, on="n", how="inner")
                               .rename({"n": "source"}))
         if out_eff.height > 0:
             if d.p_slope is not None:
-                term = Where(b.v_flow, out_eff) * d.p_slope * out_factor
+                term = Where(b.v_flow, out_eff) * d.p_slope * out_factor(out_eff)
             else:
-                term = Where(b.v_flow, out_eff) * out_factor
+                term = Where(b.v_flow, out_eff) * out_factor(out_eff)
             rhs["out_eff"] = Sum(term, over=("p", "source", "sink"))
             if (d.process_min_load_eff is not None and d.process_min_load_eff.height > 0
                     and d.p_section is not None):
                 out_mle = out_eff.join(d.process_min_load_eff, on="p", how="inner")
                 if out_mle.height > 0:
                     if b.v_online_linear is not None:
-                        rhs["out_section_lin"] = Sum(Where(b.v_online_linear, out_mle) * d.p_section * out_factor,
-                                                     over=("p", "source", "sink"))
+                        rhs["out_section_lin"] = Sum(
+                            Where(b.v_online_linear, out_mle) * d.p_section * out_factor(out_mle),
+                            over=("p", "source", "sink"))
                     if b.v_online_integer is not None:
-                        rhs["out_section_int"] = Sum(Where(b.v_online_integer, out_mle) * d.p_section * out_factor,
-                                                     over=("p", "source", "sink"))
-    if out_factor is not None and back is not None:
+                        rhs["out_section_int"] = Sum(
+                            Where(b.v_online_integer, out_mle) * d.p_section * out_factor(out_mle),
+                            over=("p", "source", "sink"))
+    if has_out_factor and back is not None:
         back_out = _not_inside(back.rename({"sink": "n"}).join(gn_in_gns, on="n", how="inner")
                                .rename({"n": "sink"}))
         if back_out.height > 0:
-            rhs["out_back"] = Sum(Where(b.v_flow_back, back_out) * out_factor, over=("p", "source", "sink"))
+            rhs["out_back"] = Sum(Where(b.v_flow_back, back_out) * out_factor(back_out), over=("p", "source", "sink"))
     p_neg = d.p_negative_inflow
     if p_neg is not None and pgns is not None and gn_in_gns.height > 0:
         exo_out = (gn_in_gns.join(p_neg.frame.rename({"value": "v"}), on="n", how="inner")

@@ -8,6 +8,9 @@
   already loaded, and memory freed before flextool was imported is returned as well. Where it cannot be applied
   (for example on macOS), one warning names the remedy: import flextool before polars, or start Python with
   `_RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0`.
+- **Lower peak memory when building the non-synchronous limit of a group.** The constraint no longer combines the
+  unit size of every process with every time step before picking the processes that feed the group; on a large
+  model this removes several GB from the peak of the scaling step. The model is unchanged.
 
 - **Fix: the online commitment no longer links across a gap in the timeline.** The units online at the first step
   after a gap were compared with the units online at the step before the gap, so a start-up (or a free shut-down)
