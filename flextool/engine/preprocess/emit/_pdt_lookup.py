@@ -534,8 +534,8 @@ class PdLookup:
 # ---------------------------------------------------------------------------
 
 class PdtLookup:
-    """Mod's 7/9-branch ``pdtProcess`` / ``pdtNode`` resolution, plus the ``pdtProcess``-only genuine
-    period × time (``pdt``) tier (Q13).
+    """Mod's 7/9-branch ``pdtProcess`` / ``pdtNode`` resolution, plus the genuine period × time (``pdt``)
+    tier.
 
     Outer index ``(e, param, d, t)``.  Cascade:
 
@@ -548,8 +548,8 @@ class PdtLookup:
          over ts ∈ first_timesteps[d], tb ∈ solve_branch[d].
       2. parent-period-fold: for each pe with (pe, d) ∈ period__branch,
          sum pbt rows over ts ∈ first_timesteps[d], tb ∈ solve_branch[pe].
-      2b. pdt row (``pdtProcess`` only — ``pdt_csv`` is ``None`` for
-         ``pdtNode``): a genuine 2-D period × time map, read before
+      2b. pdt row (``pdt_process`` / ``pdt_node``; empty when ``pdt_csv``
+         is ``None``): a genuine 2-D period × time map, read before
          pd/pt so it outranks the 1-D tiers for an entity that authors
          more than one shape of the same parameter.  A stochastic branch
          period without its own pdt row uses its anchor period's row
@@ -642,7 +642,7 @@ class PdtLookup:
                             hit = True
             if hit:
                 return total
-        # Branch 2b: genuine period x time map (``pdtProcess`` only; always empty for ``pdtNode``).
+        # Branch 2b: genuine period x time map.
         v = self._pdt.get((e, param, d, t))
         if v is not None:
             return v

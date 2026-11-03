@@ -314,6 +314,7 @@ def derive_pdtNode(input_dir: Path, solve_data_dir: Path,
         group_entity_csv=input_dir / "group__node.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
         param_def1=NODE_PARAM_DEF1,
+        pdt_csv=input_dir / "pdt_node.csv",
         time_first_priority=True,
         class_default_values=read_class_defaults(
             input_dir / "default_values.csv", "node", provider=provider,
@@ -375,7 +376,7 @@ def derive_pdtNode_vectorized(input_dir: Path, solve_data_dir: Path,
 
     Cascade (``PdtLookup`` 9-branch, **time-first** —
     ``time_first_priority=True`` ⇒ ``pt`` BEFORE ``pd``):
-    fold(branch1 stoch + branch2 parent) → ``pt`` → ``pd`` → ``p`` →
+    fold(branch1 stoch + branch2 parent) → ``pdt`` → ``pt`` → ``pd`` → ``p`` →
     ``param ∈ NODE_PARAM_DEF1 (= {"availability"})`` → ``1.0`` →
     **class-default** (``read_class_defaults(default_values.csv,
     "node")`` keyed on ``param``) → ``0.0``.
@@ -399,6 +400,7 @@ def derive_pdtNode_vectorized(input_dir: Path, solve_data_dir: Path,
         group_entity_csv=input_dir / "group__node.csv",
         group_stochastic_csv=input_dir / "groupIncludeStochastics.csv",
         param_def1=NODE_PARAM_DEF1,
+        pdt_csv=input_dir / "pdt_node.csv",
         time_first_priority=True,
         class_default_values=class_defaults,
         provider=provider,
@@ -413,6 +415,8 @@ def derive_pdtNode_vectorized(input_dir: Path, solve_data_dir: Path,
 
     grid = build_entity_dt_grid(domain, dt, key_cols=key_cols)
 
+    pdt_df = lift_dict_to_lookup(
+        lookup._pdt, ["node", "param", "period", "time"], "v_pdt")
     pd_df = lift_dict_to_lookup(
         lookup._pd, ["node", "param", "period"], "v_pd")
     pt_df = lift_dict_to_lookup(
@@ -451,6 +455,7 @@ def derive_pdtNode_vectorized(input_dir: Path, solve_data_dir: Path,
 
     out = (
         grid
+        .join(pdt_df, on=out_cols, how="left")
         .join(pt_df, on=["node", "param", "time"], how="left")
         .join(pd_df, on=["node", "param", "period"], how="left")
         .join(p_df, on=["node", "param"], how="left")
@@ -466,6 +471,7 @@ def derive_pdtNode_vectorized(input_dir: Path, solve_data_dir: Path,
     out = out.with_columns(
         coalesce_value([
             pl.col("v_fold"),   # branches 1-2 (fold)
+            pl.col("v_pdt"),    # branch 2b (period x time map)
             pl.col("v_pt"),     # branch 3 (time-first ⇒ pt before pd)
             pl.col("v_pd"),     # branch 4
             pl.col("v_p"),      # branch 5

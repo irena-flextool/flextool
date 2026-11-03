@@ -334,6 +334,10 @@ def test_vectorized_pdtNode_branch_period_inherits_anchor_pd(tmp_path):
     * ``lake.storage``: ``pt`` 7.0 and anchor ``pd`` 5.0 → ``pt`` wins in
       ``d1_b`` as in ``d1`` (time-first, the inherited ``pd`` is below it).
     * ``lake.cost``: ``d1_b`` authors its own ``pd`` (2.0) → it wins.
+    * ``lake.flow``: a genuine period x time (``pdt``) row for the anchor on
+      top of a ``pd`` row AND a ``pt`` row of the same param — the pdt tier
+      outranks both on the anchor, and ``d1_b`` (no pdt row of its own)
+      inherits the anchor's pdt row rather than falling through to ``pt``.
     """
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
@@ -347,14 +351,17 @@ def test_vectorized_pdtNode_branch_period_inherits_anchor_pd(tmp_path):
         "node": pl.Utf8, "param": pl.Utf8, "branch": pl.Utf8,
         "time_start": pl.Utf8, "time": pl.Utf8, "value": pl.Float64}))
     put("input", "pd_node", pl.DataFrame({
-        "node": ["city", "lake", "lake", "lake"],
-        "param": ["penalty_up", "storage", "cost", "cost"],
-        "period": ["d1", "d1", "d1", "d1_b"],
-        "value": [8000.0, 5.0, 9.0, 2.0],
+        "node": ["city", "lake", "lake", "lake", "lake"],
+        "param": ["penalty_up", "storage", "cost", "cost", "flow"],
+        "period": ["d1", "d1", "d1", "d1_b", "d1"],
+        "value": [8000.0, 5.0, 9.0, 2.0, 10.0],
     }))
     put("input", "pt_node", pl.DataFrame({
-        "node": ["lake"], "param": ["storage"], "time": ["t1"],
-        "value": [7.0]}))
+        "node": ["lake", "lake"], "param": ["storage", "flow"], "time": ["t1", "t1"],
+        "value": [7.0, 20.0]}))
+    put("input", "pdt_node", pl.DataFrame({
+        "node": ["lake"], "param": ["flow"], "period": ["d1"], "time": ["t1"],
+        "value": [30.0]}))
     put("input", "p_node", pl.DataFrame(schema={
         "node": pl.Utf8, "param": pl.Utf8, "value": pl.Float64}))
     put("input", "default_values", pl.DataFrame({
@@ -370,8 +377,8 @@ def test_vectorized_pdtNode_branch_period_inherits_anchor_pd(tmp_path):
     put("input", "groupIncludeStochastics", pl.DataFrame(schema={
         "group": pl.Utf8}))
     put("solve_data", "node__TimeParam_in_use", pl.DataFrame({
-        "node": ["city", "lake", "lake"],
-        "param": ["penalty_up", "storage", "cost"]}))
+        "node": ["city", "lake", "lake", "lake"],
+        "param": ["penalty_up", "storage", "cost", "flow"]}))
     put("solve_data", "steps_in_use", pl.DataFrame({
         "period": ["d1", "d1_b"], "time": ["t1", "t1"]}))
 
@@ -385,6 +392,8 @@ def test_vectorized_pdtNode_branch_period_inherits_anchor_pd(tmp_path):
     assert leg[("lake", "storage", "d1")] == leg[("lake", "storage", "d1_b")] == repr(7.0), leg
     assert leg[("lake", "cost", "d1")] == repr(9.0), leg
     assert leg[("lake", "cost", "d1_b")] == repr(2.0), leg
+    assert leg[("lake", "flow", "d1")] == repr(30.0), "pdt must outrank pt and pd on the anchor"
+    assert leg[("lake", "flow", "d1_b")] == repr(30.0), "d1_b must inherit the anchor's pdt row, not fall through"
     assert df_vec.equals(df_legacy), (
         f"branch-period pd: vectorized != legacy.\n"
         f"legacy:\n{df_legacy}\nvec:\n{df_vec}")

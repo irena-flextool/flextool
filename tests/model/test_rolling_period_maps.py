@@ -599,3 +599,38 @@ def test_node_period_time_2d_maps_equal_time_maps_in_stochastic_rolling(tmp_path
                               periods=branch_periods)
     _assert_node_steps_equal(as_2d, as_1d, fields=("p_node_availability", "p_state_self_discharge",
                                                    "p_penalty_up"), steps=rolls)
+
+
+def _csv_dump_pdt_node(tmp_path_factory, shape: str) -> pl.DataFrame:
+    """Run ``1week_rolling`` (node values of *shape*) with ``csv_dump=True`` and snapshot the last roll's Provider the way ``--csv-dump``
+    does (``cmd_run_flextool``); return that dump's ``solve_data/pdtNode.csv`` rows of the ``NODE_BASE``
+    (node, param) pairs, sorted."""
+    from flextool.engine import run_chain_from_db
+
+    alt = f"c8_dump_{shape}"
+    url, scen = make_db(tmp_path_factory, alt=alt, values=_node_values(shape, T168, [PERIOD]), base_chain=ROLL_CHAIN,
+                        fixture_json=_deterministic_rolling_json(tmp_path_factory, alt))
+    work = tmp_path_factory.mktemp(f"{alt}_w")
+    steps = run_chain_from_db(url, scen, work_folder=work, keep_solutions=True, csv_dump=True)
+    last = next(reversed(list(steps.values())))
+    assert "_roll_" in next(reversed(list(steps))), list(steps)
+    last.flex_data_provider.snapshot_processed_inputs(work)
+    pairs = pl.DataFrame({"node": [n for n, _ in NODE_BASE], "param": [p for _, p in NODE_BASE]})
+    dump = pl.read_csv(work / "solve_data" / "pdtNode.csv", infer_schema_length=0)
+    return (dump.join(pairs, on=["node", "param"], how="semi")
+                .with_columns(pl.col("value").cast(pl.Float64))
+                .sort("node", "param", "period", "time"))
+
+
+def test_csv_dump_pdt_node_shows_period_time_2d_maps(tmp_path_factory) -> None:
+    """``--csv-dump`` of a roll: ``solve_data/pdtNode.csv`` shows a 2-D period x time map of node availability,
+    self_discharge_loss and penalties exactly like the equivalent 1-D time map, i.e. the authored value at each
+    (period1, t) of the roll — not the class default."""
+    as_2d = _csv_dump_pdt_node(tmp_path_factory, "2d")
+    as_1d = _csv_dump_pdt_node(tmp_path_factory, "1d")
+    assert as_2d.height > 0
+    assert set(as_2d.select("node", "param").unique().iter_rows()) == set(NODE_BASE)
+    authored = {k: _mild_curve(b, T168) for k, b in NODE_BASE.items()}
+    for node, param, _period, t, v in as_2d.iter_rows():
+        assert v == pytest.approx(authored[(node, param)][t], rel=1e-12), (node, param, t, v)
+    assert as_2d.equals(as_1d)

@@ -312,6 +312,20 @@ _PARAMETER_SPECS: list[dict] = [
         "param_print": True,
     },
     {
+        # Genuine 2-D maps of the same parameters: outer index "period", inner index "time". Neither ``pt_node``
+        # (``filter_out_index: "period"`` drops a period-outer map) nor ``pd_node`` (``filter_in_type: ["1d_map"]``
+        # rejects a 2-D map's dimension count) carries one, so without this spec the emit ``pdtNode`` frame (the
+        # penalty seed and the ``--csv-dump`` ``solve_data/pdtNode.csv``) showed the class default for a period x
+        # time map. ``filter_out_index: "time"`` rejects the (disallowed) time-outer shape.
+        "cl_pars": [("node", "penalty_down"), ("node", "penalty_up"), ("node", "self_discharge_loss"),
+                    ("node", "availability"), ("node", "storage_state_reference_value")],
+        "header": "node,nodeParam,period,time,pdt_node",
+        "filename": "input/pdt_node.csv",
+        "filter_in_type": ["2d_map"],
+        "filter_out_index": "time",
+        "param_print": True,
+    },
+    {
         "cl_pars": [("node", "inflow")],
         "header": "node,time,pt_node_inflow",
         "filename": "input/pt_node_inflow.csv",

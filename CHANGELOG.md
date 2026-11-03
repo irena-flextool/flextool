@@ -1,5 +1,9 @@
 ## Unreleased
 
+- **`--csv-dump` shows period + time maps of node `availability`, `penalty_up` / `penalty_down` and
+  `self_discharge_loss`.** The dumped `solve_data/pdtNode.csv` listed the default
+  value for such a map instead of the authored one. Only the debug dump was wrong: the model already used the
+  authored values, so results are unchanged.
 - **Lower peak memory in large in-process HiGHS solves.** The LP's column and row names are no longer copied into
   HiGHS (a few GB on large models); they are passed only when a HiGHS option writes a file that carries them
   (`write_solution_to_file`, `write_model_to_file`, `write_basis_file`, …), so such files keep the real names.
