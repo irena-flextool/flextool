@@ -65,7 +65,10 @@ from flextool.engine.preprocess.params._branch import (
     period_branch_pairs_lf,
     period_in_use_set_lf,
 )
-from flextool.engine.preprocess.params._direct import _e_period_param_union
+from flextool.engine.preprocess.params._direct import (
+    _e_period_param_union,
+    pdtReserve_upDown_group_reservation_from_source,
+)
 from flextool.engine.preprocess.params._per_solve_sets import (
     solve_period_timeset_frame,
     timeset_duration_lf,
@@ -74,7 +77,6 @@ from flextool.engine.preprocess.params._per_solve_sets import (
 from flextool.engine.input._solve_state import CommissioningLagError, FlexToolConfigError, LineageFilterError
 from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
-    parameter_entity_values,
     parameter_has_values,
     promote_param_to_dt,
     resolve_param_shape,
@@ -2987,6 +2989,24 @@ def p_min_load_pdt_from_source(source: "InputSource",
     if out.height == 0:
         return None
     return Param(("p", "d", "t"), out)
+
+
+def process_minload_from_p_min_load(p_min_load: "Param | None") -> pl.DataFrame | None:
+    """``process_minload`` ``(p,)``: the units whose ``min_load`` is above 0 on some (d, t) of this solve.
+
+    Read from the solve-resolved ``p_min_load`` (not the raw parameter), so a unit whose map has values only in
+    other periods of the model gets no ``minFlow_minload`` floor, and the floor's units always have a
+    ``p_min_load`` row.  None when no unit qualifies.
+    """
+    if p_min_load is None:
+        return None
+    out = (p_min_load.frame.lazy()
+           .filter(pl.col("value") > 0)
+           .select(pl.col("p"))
+           .unique()
+           .sort("p")
+           .collect())
+    return out if out.height > 0 else None
 
 
 # ===========================================================================
@@ -9517,8 +9537,8 @@ def prundt_from_source(
 
     A relationship ``(p, r, ud, n)`` (``process_reserve_upDown_node_active_from_source``) is kept when its
     ``(r, ud)`` has a requirement (:func:`~flextool.engine.preprocess._reserve_methods.demanded_reserves`):
-    a non-zero ``reservation`` on some group of ``(r, ud)``, or a dynamic / n-1 group driven by an
-    ``increase_reserve_ratio`` (of a relationship at a node of the group, or of the group itself) /
+    a ``reservation`` whose sum over the groups of ``(r, ud)`` and the solve's (d, t) is not 0, or a
+    dynamic / n-1 group driven by an ``increase_reserve_ratio`` (of a relationship at a node of the group, or of the group itself) /
     ``large_failure_ratio``.  The solve_data producer
     (``emit/_reserve_sets._compute_process_reserve_active``) applies the same rule, so ``prundt`` and the
     ratio sets the model reads agree.  A reserve without a requirement gets no ``v_reserve`` columns
@@ -9552,13 +9572,22 @@ def prundt_from_source(
         return [tuple(str(x) for x in row)
                 for row in df.select(pl.col(c).cast(pl.Utf8) for c in cols).iter_rows()]
 
-    # 1. Reservation: (r, ud) with a non-zero reservation entry anywhere (entity by entity; a
-    #    stochastic-time reservation contributes its folded values).
+    # 1. Reservation: (r, ud) whose reservation, summed over its groups and this solve's (d, t), is not 0
+    #    (the solve-resolved values; a stochastic-time reservation contributes its fold) — the emit's rule.
     reservation_pairs: set[tuple[str, str]] = set()
-    res = parameter_entity_values(source, "reserve__upDown__group", "reservation")
-    if res is not None and res.height > 0:
-        res = res.with_columns(pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
-        reservation_pairs = set(_labels(res.filter(pl.col("value") != 0.0), ("reserve", "upDown")))
+    res = pdtReserve_upDown_group_reservation_from_source(source, period_filter=dt)
+    if res is not None and res.frame.height > 0:
+        # A value without a d / t axis (a constant) holds on every (d, t) of the solve.
+        axes = [c for c in ("d", "t") if c in res.frame.columns]
+        dt_keys = dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique().lazy()
+        vals = res.frame.lazy().select(*(pl.col(c).cast(pl.Utf8) for c in ("r", "ud", *axes)),
+                                       pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
+        on_dt = vals.join(dt_keys, on=axes, how="inner") if axes else vals.join(dt_keys, how="cross")
+        sums = (on_dt
+                .group_by("r", "ud").agg(pl.col("value").sum())
+                .filter(pl.col("value") != 0.0)
+                .collect())
+        reservation_pairs = set(_labels(sums, ("r", "ud")))
     # 2./3. Dynamic and n-1 groups and the ratios that drive them.
     group_methods: list[tuple[str, ...]] = []
     for part in ("dynamic", "n_1"):

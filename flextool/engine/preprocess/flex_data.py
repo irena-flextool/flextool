@@ -2762,7 +2762,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         process_online=p_online,
         process_online_linear=p_online_lin,
         process_online_integer=p_online_int,
-        process_minload=None,  # the projection pass (_AUTHORITATIVE_SETS) writes it
+        process_minload=None,  # load_flextool sets it from the solve's p_min_load
         process_min_load_eff=p_min_load_eff,
         p_online_dt=p_odt,
         pdt_online_linear=pdt_online_lin,
@@ -4804,6 +4804,13 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # period's tier curve.  Runs after every producer of the ladder Params (load_data and the
         # direct-parameter pass).
         _commodity_ladder.inherit_branch_periods(flex_data, provider)
+
+        # The minFlow_minload floor's units: min_load > 0 on some (d, t) of this solve, read from the
+        # solve-resolved p_min_load (every DB path, synthetic sub-solves included, has produced it by now).
+        # A reader-less load keeps the dumped set.
+        if db_reader is not None:
+            from flextool.engine.preprocess.params._derived import process_minload_from_p_min_load
+            flex_data.process_minload = process_minload_from_p_min_load(flex_data.p_min_load)
 
         # Phase 4.6 — end-of-load FlexData → Enum sweep.  With the global
         # flipped on above, the cascade emits Enum-typed dim columns

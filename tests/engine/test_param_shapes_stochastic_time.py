@@ -27,7 +27,6 @@ from flextool.engine.input._param_shapes import (
     broadcast_to_period,
     broadcast_to_period_time,
     deactivate_stochastic_time_source,
-    parameter_entity_values,
     parameter_has_values,
     resolve_param_shape,
     stochastic_time_entities,
@@ -256,18 +255,13 @@ def test_broadcast_to_period_rejects_stochastic_entities() -> None:
 # Shape-agnostic raw reads
 
 
-def test_parameter_has_values_and_entity_values(emit_scope) -> None:
+def test_parameter_has_values(emit_scope) -> None:
     src = _reader(_with_time_map(_rank3()))
     assert parameter_has_values(src, "unit", "availability")
-    vals = parameter_entity_values(src, "unit", "availability")
-    assert set(vals.columns) == {"name", "value"}
-    by = vals.group_by("name").agg(pl.col("value").sort())
-    assert dict(by.iter_rows()) == {"u1": [0.7, 0.8, 1.0, 1.0], "u3": [0.5, 0.6]}
     empty = InMemoryReader(entities={"unit": pl.DataFrame({"name": ["u1"]})},
                            parameters={("unit", "availability"): pl.DataFrame(
                                schema={"name": pl.Utf8, "value": pl.Float64})})
     assert not parameter_has_values(empty, "unit", "availability")
-    assert parameter_entity_values(empty, "unit", "availability") is None
 
 
 # ---------------------------------------------------------------------------
@@ -304,13 +298,11 @@ def test_spinedb_default_does_not_reach_stochastic_entity(tmp_path_factory) -> N
     try:
         resolved = resolve_param_shape(src, "unit", "availability", period_filter=dt)
         out = _cells(broadcast_to_period_time(resolved, "p", dt))
-        vals = parameter_entity_values(src, "unit", "availability")
     finally:
         deactivate_branch_anchor_pairs(branch_token)
         deactivate_stochastic_time_source(token)
     want = {(u, "p2020", t): (0.8 if u == "coal_plant" else 1.0) for u in units for t in TIMESTEPS[:2]}
     assert out == want
-    assert sorted(vals.filter(pl.col("name") == "coal_plant")["value"].to_list()) == [0.8, 0.8]
 
 
 # ---------------------------------------------------------------------------

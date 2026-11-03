@@ -363,7 +363,7 @@ def validate_min_load_efficiency_inputs(db, logger: logging.Logger) -> None:
     * ``efficiency_at_min_load`` not above 0 (the fuel use at minimum load would be infinite);
     * ``min_load`` not below 1 (the curve between minimum and full load would have no length).
 
-    Warning: a unit with a ``min_load`` value above 0 anywhere (folded as ``process_minload`` does) and no
+    Warning: a unit with a ``min_load`` value above 0 in any value (over the whole database, not one solve) and no
     ``efficiency_at_min_load``.  Such a unit uses its ``efficiency`` at minimum load too (a flat curve: the fuel
     use is output / efficiency, as with constant_efficiency, while the minimum load still applies).  Cells that an
     ``efficiency_at_min_load`` map leaves out get the efficiency in the same way, without a warning.  ``db`` is

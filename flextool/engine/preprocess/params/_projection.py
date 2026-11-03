@@ -19,7 +19,8 @@ The helpers are intentionally tiny (5–25 LOC each).  Common patterns:
 
 1. **Filter on a method discriminator.**  Pull the entity-level method
    parameter, filter to a specific value, project the entity column.
-   Example: ``process_minload`` is the units with non-zero ``min_load``.
+   Example: ``process_online_linear`` is the units and connections with
+   ``startup_method = linear``.
 
 2. **Distinct projection.**  Pull a Map / 1d_map parameter, take
    ``.unique()`` over the entity dimension(s).  Example:
@@ -55,7 +56,6 @@ from flextool.engine.input._axis_enums import (
 )
 from flextool.engine.input._param_shapes import (
     facet_long_frame,
-    parameter_entity_values,
     resolve_facet_groups,
 )
 from flextool.engine.preprocess._reserve_methods import RESERVE_METHODS_BY_PARTITION
@@ -1176,25 +1176,6 @@ def process_online_integer(source: "InputSource") -> pl.DataFrame:
     return _online_by_startup(source, ("binary",))
 
 
-def process_minload(source: "InputSource") -> pl.DataFrame:
-    """Units with ``min_load > 0`` (anywhere in their value).  Schema: ``[p]``, one row per unit.
-
-    ``min_load`` defaults to 0.0 (per §5.3) — entities with the default
-    are filtered out.  A period / time map gives one row per index, a
-    stochastic-time value its folded values (``parameter_entity_values``),
-    so the units are de-duplicated.
-    """
-    df = parameter_entity_values(source, "unit", "min_load")
-    if df is None:
-        return _empty({"p": pl.Utf8})
-    return (df.lazy()
-              .filter(pl.col("value") > 0)
-              .select(alias_to_axis("name", "p"))
-              .unique()
-              .sort("p")
-              .collect())
-
-
 def process_min_load_eff(source: "InputSource") -> pl.DataFrame:
     """Units with ``conversion_method='min_load_efficiency'``.  Schema: ``[p]``."""
     df = _try_param(source, "unit", "conversion_method")
@@ -1524,27 +1505,6 @@ def process_reserve_upDown_node_large_failure_ratio(source: "InputSource") -> pl
 # §1.16 — Cumulative / group-invest Projections
 # ---------------------------------------------------------------------------
 
-def _e_param_set(source: "InputSource", parameter_name: str,
-                  positive_only: bool = True) -> pl.DataFrame:
-    """Distinct entities (across unit/node/connection) where the
-    parameter has a (non-zero, positive if ``positive_only``) value.
-
-    Schema: ``[e]``.
-    """
-    parts: list[pl.LazyFrame] = []
-    for cls in ("unit", "node", "connection"):
-        df = _try_param(source, cls, parameter_name)
-        if df is None:
-            continue
-        flt = df.lazy()
-        if positive_only:
-            flt = flt.filter(pl.col("value") > 0)
-        parts.append(flt.select(alias_to_axis("name", "e")))
-    if not parts:
-        return _empty({"e": pl.Utf8})
-    return pl.concat(parts).unique().sort("e").collect()
-
-
 # Mirror ``invest_total_sets.py:25-32``.
 _INVEST_METHODS_INVEST_TOTAL: frozenset[str] = frozenset((
     "invest_total", "invest_period_total",
@@ -1615,40 +1575,6 @@ def e_invest_total(source: "InputSource") -> pl.DataFrame:
 def e_divest_total(source: "InputSource") -> pl.DataFrame:
     """Entities whose ``invest_method`` ∈ DIVEST_TOTAL enum subset."""
     return _e_invest_method_filter(source, _INVEST_METHODS_DIVEST_TOTAL)
-
-
-def ed_invest_cumulative(source: "InputSource",
-                          ed_invest: pl.DataFrame | None = None) -> pl.DataFrame:
-    """Subset of ``ed_invest`` whose entity carries
-    ``cumulative_max_capacity > 0`` OR ``cumulative_min_capacity > 0``
-    (the cumulative-cap rows).  Schema: ``[e, d]``.
-
-    NOTE: ``ed_invest`` is itself Derived (Γ.3); this Projection only
-    runs when ``ed_invest`` is supplied externally — without it we
-    cannot resolve the (e, d) tuples.  When ``ed_invest`` is None we
-    return an empty frame and the caller (CSV-side) keeps its native
-    value.
-    """
-    if ed_invest is None or ed_invest.height == 0:
-        return _empty({"e": pl.Utf8, "d": pl.Utf8})
-
-    parts: list[pl.LazyFrame] = []
-    for parameter_name in ("cumulative_max_capacity", "cumulative_min_capacity"):
-        for cls in ("unit", "node", "connection"):
-            df = _try_param(source, cls, parameter_name)
-            if df is None:
-                continue
-            parts.append(df.lazy()
-                           .filter(pl.col("value") > 0)
-                           .select(alias_to_axis("name", "e")))
-
-    if not parts:
-        return _empty({"e": pl.Utf8, "d": pl.Utf8})
-    cum_e = pl.concat(parts).unique().collect()
-    return (ed_invest.lazy()
-              .join(cum_e.lazy(), on="e", how="inner")
-              .sort("e", "d")
-              .collect())
 
 
 def group_entity(source: "InputSource") -> pl.DataFrame:
@@ -1930,7 +1856,6 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "nodeBalance": nodeBalance,
     "nodeState": nodeState,
     "process_unit": process_unit,
-    "process_minload": process_minload,
     "process_min_load_eff": process_min_load_eff,
     "process_online": process_online,
     "process_online_linear": process_online_linear,
@@ -2021,7 +1946,7 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
 
 # Set projections whose empty result means "no member" (field set to None), not "keep the seed".
 _AUTHORITATIVE_SETS: tuple[str, ...] = (
-    "groupCapacityMargin", "groupInertia", "groupNonSync", "process_minload",
+    "groupCapacityMargin", "groupInertia", "groupNonSync",
     "process_online", "process_online_linear", "process_online_integer", "process_sink_nonSync",
     # Method-gated (invest_method), a complete read of entity__invest_method —
     # "nothing in the DB" must not fall back to a stale/wrong seed.
@@ -2053,8 +1978,7 @@ def apply_projection_params(source: "InputSource",
 
     The sets in :data:`_AUTHORITATIVE_SETS` are the exception: an empty
     projection sets the field to None.  Their seed may mean something else
-    (the group sets were once derived from the limit values, the emit's
-    ``process_minload.csv`` lists the min_load_efficiency units), and a
+    (the group sets were once derived from the limit values), and a
     method / flag / value set read from the DB is complete, so "nothing in
     the DB" must not fall back to the seed.
     """

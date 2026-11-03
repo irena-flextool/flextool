@@ -1324,42 +1324,6 @@ def parameter_has_values(source: "InputSource", entity_class: str, parameter_nam
     return df is not None and df.height > 0
 
 
-def parameter_entity_values(source: "InputSource", entity_class: str,
-                            parameter_name: str) -> "pl.DataFrame | None":
-    """The parameter's rows with at least the class-dim columns and ``value``; None when there are none.
-
-    Without stochastic-time entities this is ``source.parameter(...)`` (every authored or default row, as
-    before).  With them: the other entities' rows (``(dim columns, value)``) plus each stochastic entity's
-    folded values on the solve's (d, t) (:func:`stochastic_time_values`).  For readers that test values
-    entity by entity (any ``min_load > 0``, any ``reservation ≠ 0``) and not cell by cell.
-    """
-    ents = stochastic_time_entities(source, entity_class, parameter_name)
-    if not ents:
-        try:
-            df = source.parameter(entity_class, parameter_name)
-        except KeyError:
-            return None
-        return df if df.height > 0 else None
-    key = (entity_class, parameter_name)
-    dim_cols = _entity_dim_columns_for_frame(pl.DataFrame(), source, entity_class)
-    view = _stochastic_view(source, entity_class, parameter_name, ents)
-    parts: list[pl.DataFrame] = []
-    try:
-        direct = view.parameter(entity_class, parameter_name)
-    except KeyError:
-        direct = None
-    if direct is not None and direct.height > 0:
-        drop = pl.DataFrame([list(e) for e in sorted(ents)], schema={c: pl.Utf8 for c in dim_cols}, orient="row")
-        parts.append(direct.select(*(pl.col(c).cast(pl.Utf8) for c in dim_cols),
-                                   pl.col("value").cast(pl.Float64, strict=False))
-                     .join(drop, on=dim_cols, how="anti"))
-    folded = stochastic_time_values(key, ents, dim_cols)
-    _warn_entities_without_fold(key, ents, folded.select(dim_cols))
-    parts.append(folded.select(*dim_cols, "value"))
-    out = pl.concat(parts)
-    return out if out.height > 0 else None
-
-
 def _try_parameter_frame(
     source: "InputSource",
     entity_class: str,

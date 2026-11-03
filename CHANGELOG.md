@@ -1,5 +1,10 @@
 ## Unreleased
 
+- **A unit whose `min_load` map has no value above 0 in a solve's periods no longer stops the solve** ("feature
+  'min_load' is active but ... `p_min_load`"), and it gets no minimum-load constraint rows in that solve. A
+  reserve whose `reservation` adds up to 0 over a solve's time steps (for example a period map with values only
+  for other periods) gets no reserve variables in that solve, as on the CSV path. Results of solves that ran
+  before are unchanged.
 - **A solve without `period_timeset` that uses the model's only timeset now gets the same periods everywhere.**
   A `price_ladder_annual` given without periods now applies in every period of such a solve when the model has no
   `periods_available` either; before, it was skipped with a warning (results change; an upgraded database prints a

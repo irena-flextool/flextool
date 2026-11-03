@@ -4,8 +4,9 @@ Moved from ``tests/engine/loaders/test_a04_a05_online_ramp.py`` (c24 S1-8).
 They overlay CSVs on a copied work folder and load it reader-less
 (``_csv_reload.load_from_dump(workdir)``, no ``db_url``):
 
-* the online tests: ``process_online`` / ``_linear`` / ``_integer`` /
-  ``process_minload`` are ``_AUTHORITATIVE_SETS`` and
+* the online tests: ``process_online`` / ``_linear`` / ``_integer``
+  are ``_AUTHORITATIVE_SETS`` (``process_minload`` comes from the
+  solve-resolved ``p_min_load``) and
   ``process_min_load_eff`` a ``SIMPLE_PROJECTIONS`` set, re-derived from
   the DB on every production load.  On the provider path a header-only
   ``process_online`` overlay still gives ``[coal_plant]``, a dropped
