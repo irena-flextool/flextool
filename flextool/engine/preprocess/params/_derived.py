@@ -3474,17 +3474,32 @@ def _entity_invest_filter(source: "InputSource",
                 .select("e").unique())
 
 
-def _has_capacity_constraint_invest_set(source: "InputSource"
+#: User-constraint coefficients that give an entity its ``ed_invest`` pairs (the investment variable appears in
+#: the constraint) and its ``ed_divest`` pairs (the retirement variable appears).
+_CAPACITY_CONSTRAINT_INVEST_COEFFS: tuple[str, ...] = (
+    "constraint_invested_capacity_coeff",
+    "constraint_cumulative_pre_built_capacity_coeff",
+    "constraint_capacity_coeff",
+)
+_CAPACITY_CONSTRAINT_DIVEST_COEFFS: tuple[str, ...] = (
+    *_CAPACITY_CONSTRAINT_INVEST_COEFFS,
+    "constraint_retired_capacity_coeff",
+)
+
+
+def _has_capacity_constraint_invest_set(source: "InputSource", *, divest: bool = False
                                           ) -> pl.LazyFrame:
-    """Set of entities with any ``constraint_invested_capacity_coeff``
-    or ``constraint_pre_built_capacity_coeff`` row.  Mirrors
-    flextool's ``_has_capacity_constraint_invest`` predicate
-    (``invest_divest_sets.py:172-174``).  Returns a lazy frame ``[e]``.
+    """Set of entities that a user-constraint coefficient links to their
+    investment variable (``divest=False``: invested, pre-built or capacity
+    coefficient) or to their retirement variable (``divest=True``: those and
+    the retired-capacity coefficient).  Such an entity gets its invest /
+    divest pairs even when its annuity is zero.  Mirrors flextool's
+    ``_has_capacity_constraint_invest`` predicate.  Returns a lazy frame ``[e]``.
     """
     parts: list[pl.LazyFrame] = []
+    names = _CAPACITY_CONSTRAINT_DIVEST_COEFFS if divest else _CAPACITY_CONSTRAINT_INVEST_COEFFS
     for ec in ("unit", "node", "connection"):
-        for pname in ("constraint_invested_capacity_coeff",
-                       "constraint_pre_built_capacity_coeff"):
+        for pname in names:
             df = _try_param(source, ec, pname)
             if df is None:
                 continue
@@ -3901,7 +3916,7 @@ def ed_divest_set_from_source(source: "InputSource",
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
     ed_lf = _entityDivest_set(source)
-    has_cc = _has_capacity_constraint_invest_set(source)
+    has_cc = _has_capacity_constraint_invest_set(source, divest=True)
     eead_pred = _eead_pairs(source, ed_lf, period_invest)
 
     pi_lf = axis_lazyframe({"d": period_invest})

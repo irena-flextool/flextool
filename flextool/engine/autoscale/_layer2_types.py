@@ -412,10 +412,14 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
 
     # ── User-defined constraints: composite LHS, RHS in caller's
     # coordinates.  Layer 2 skips per-row scaling.
-    # flextool/engine/model/core.py _eq_user_constraints (process_constraint_equal / _less_than / _greater_than)
+    # flextool/engine/model/core.py _eq_user_constraints (process_constraint_equal / _less_than / _greater_than;
+    # the _period variants are the one-row-per-period rows of constraints without flow or state terms)
     "process_constraint_equal": CstrFamily(None),
     "process_constraint_less_than": CstrFamily(None),
     "process_constraint_greater_than": CstrFamily(None),
+    "process_constraint_equal_period": CstrFamily(None),
+    "process_constraint_less_than_period": CstrFamily(None),
+    "process_constraint_greater_than_period": CstrFamily(None),
 
     # ── Node-balance fix (used by manual demand patching).  Zero RHS
     # in the most common case; treat as DIMENSIONLESS so the row

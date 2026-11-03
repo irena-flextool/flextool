@@ -668,6 +668,10 @@ class FlexData:
     p_node_constraint_state_coeff: Param | None = None  # (n, cn) — user-cstr v_state coefficient
     p_node_constraint_prebuilt_capacity_coeff: Param | None = None  # (n, cn)
     p_process_constraint_prebuilt_capacity_coeff: Param | None = None  # (p, cn)
+    p_node_constraint_capacity_coeff: Param | None = None  # (n, cn) — storage capacity in service
+    p_process_constraint_capacity_coeff: Param | None = None  # (p, cn) — capacity in service
+    p_node_constraint_retired_capacity_coeff: Param | None = None  # (n, cn) — storage capacity retired in d
+    p_process_constraint_retired_capacity_coeff: Param | None = None  # (p, cn) — capacity retired in d
 
     # ─── Profiles ─────────────────────────────────────────────────────────
     process_profile_upper: pl.DataFrame | None = None    # (p, source, sink, f)

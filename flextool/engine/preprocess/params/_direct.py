@@ -2177,6 +2177,11 @@ def apply_direct_params_a(source: "InputSource",
     flex_data.p_process_constraint_prebuilt_capacity_coeff = (
         _process_constraint_coef(source,
                                  "constraint_cumulative_pre_built_capacity_coeff"))
+    for kind in ("capacity", "retired_capacity"):
+        setattr(flex_data, f"p_node_constraint_{kind}_coeff",
+                _node_constraint_coef(source, f"constraint_{kind}_coeff"))
+        setattr(flex_data, f"p_process_constraint_{kind}_coeff",
+                _process_constraint_coef(source, f"constraint_{kind}_coeff"))
 
     # ─── §5.2.1 invest/divest total caps (entity-unioned) ───────────────
     # Max variants: keyed on entityInvest (resp. entityDivest), one row

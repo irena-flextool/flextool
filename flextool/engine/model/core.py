@@ -46,7 +46,7 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       ramp_{sink,source}_{up,down}_constraint
   Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n]
   Conversion          conversion_indirect (delayed inputs from [_delay]); minInputShare
-  Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}
+  Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}[_period]
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
                       storage_state_start_binding[_cyclic_period]; storage_state_end_binding;
                       storage_state_solve_horizon_reference_value
@@ -3106,77 +3106,81 @@ def _eq_user_constraints(b: _Build) -> None:
     v_invest_p, v_invest_n = b.v_invest_p, b.v_invest_n
     lookback = d.edd_invest_lookback_set
 
-    # ─── EQ. ─── process_constraint_{equal,less_than,greater_than} ───────────
+    # ─── EQ. ─── process_constraint_{equal,less_than,greater_than}[_period] ──
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,s,k) ∈ flow_constraint[cn]} v_flow[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
-    #   + Σ_n v_invest_n[n,d]·state_unitsize[n]·node_invested_coef[n,cn]
-    #   + Σ_p v_invest_p[p,d]·unitsize[p]·process_invested_coef[p,cn]
     #   + Σ_n v_state[n,d,t]·state_unitsize[n]·node_state_coef[n,cn]
-    #   + Σ_n existing[n,d]·node_prebuilt_coef[n,cn]
-    #   + Σ_p existing_count[p,d]·unitsize[p]·process_prebuilt_coef[p,cn]
-    #   + Σ_{(p,d′,d) ∈ edd_invest_lookback} v_invest_p[p,d′]·unitsize[p]·process_prebuilt_coef[p,cn]
-    #   + Σ_{(n,d′,d) ∈ edd_invest_lookback} v_invest_n[n,d′]·state_unitsize[n]·node_prebuilt_coef[n,cn]
-    #   = / ≤ / ≥  constant[cn]
-    #   ∀ (cn,d,t) ∈ cdt_{eq,le,ge}
-    # A linear constraint authored by the user over flows (MW), invested capacity, storage states (MWh) and
-    # the capacity built before d: existing capacity plus the investments of earlier periods
-    # (edd_invest_lookback holds d′ < d).  The invested-capacity terms count the investment made in d only.
-    # Terms without data are absent; a constraint with no term at all gets no row.  The existing-capacity
-    # terms are constants and enter as Param terms.  The constraint axis is cn (c is the commodity axis).
-    # Dims: every variable term reduces to (cn, d, t), or (cn, d) for invest terms broadcast over t.
-    var_terms: list = []
+    #   + Σ_e v_invest[e,d]·us[e]·invested_coef[e,cn]
+    #   + Σ_e v_divest[e,d]·us[e]·retired_coef[e,cn]
+    #   + Σ_e pre[e,d]·prebuilt_coef[e,cn]
+    #   + Σ_e cap[e,d]·capacity_coef[e,cn]
+    #   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
+    #   ∀ (cn,d,t) ∈ cdt_{eq,le,ge} with a flow or state coefficient   (process_constraint_*)
+    #   ∀ (cn,d) of the other constraints of cdt_{eq,le,ge}             (process_constraint_*_period)
+    # where, for e a process p (us = unitsize, existing = existing_count·unitsize) or a storage node n
+    # (us = state_unitsize, existing = state existing capacity), MW (MWh):
+    #   pre[e,d] = existing[e,d] + Σ_{(e,d′,d) ∈ edd_invest_lookback} v_invest[e,d′]·us[e]
+    #                            − Σ_{(e,d′,d) ∈ edd/ndd_divest_active, d′ ≠ d} v_divest[e,d′]·us[e]
+    #   cap[e,d] = existing[e,d] + Σ_{(e,d′,d) ∈ edd_invest_set} v_invest[e,d′]·us[e]
+    #                            − Σ_{(e,d′,d) ∈ edd/ndd_divest_active} v_divest[e,d′]·us[e]
+    # A linear constraint authored by the user over flows (MW), storage states (MWh) and capacities.  The
+    # invested and retired terms count the decisions of d; pre is the capacity in service at the start of d
+    # (existing plus earlier investments still alive, minus earlier retirements, also those of the same solve:
+    # a single solve and a chain of solves give the same row); cap is the capacity in service in d, the
+    # measure of maxFlow and the cumulative-capacity rows.  Without a construction lead time
+    # cap = pre + invested − retired.  With one, edd_invest_lookback / edd_invest_set count an investment from
+    # its commissioning period while the invested term counts it in its decision period.
+    # Terms without data are absent.  The existing-capacity terms are constants and enter as Param terms.
+    # A constraint without flow and state terms is the same in every step of a period, so it gets one row per
+    # period (the _period family) instead of one per step.  The constraint axis is cn (c is the commodity
+    # axis).  Dims: flow and state terms (cn, d, t); every capacity term (cn, d), broadcast over t on the
+    # per-step rows.
+    flow_terms: list = []
     if _has_rows(d.flow_constraint_idx):
-        var_terms.append(Sum(
+        flow_terms.append(Sum(
             Where(b.v_flow * d.p_unitsize, d.flow_constraint_idx) * d.p_flow_constraint_coef,
             over=("p", "source", "sink"),
         ))
+    invest_terms: list = []
     if b.has_invest_n and d.p_node_constraint_invested_capacity_coeff is not None:
         coef = d.p_node_constraint_invested_capacity_coeff
-        var_terms.append(Sum(
+        invest_terms.append(Sum(
             Where(v_invest_n * Param(("n",), d.p_state_unitsize.frame), coef.frame.select("n", "cn")) * coef,
             over=("n",),
         ))
     if b.has_invest_p and d.p_process_constraint_invested_capacity_coeff is not None:
         coef = d.p_process_constraint_invested_capacity_coeff
-        var_terms.append(Sum(
+        invest_terms.append(Sum(
             Where(v_invest_p * d.p_unitsize, coef.frame.select("p", "cn")) * coef,
             over=("p",),
         ))
+    state_terms: list = []
+    state_cns: list = []
     if b.has_storage and d.p_node_constraint_state_coeff is not None:
         coef = d.p_node_constraint_state_coeff
-        var_terms.append(Sum(
+        state_terms.append(Sum(
             Where(b.v_state * Param(("n",), d.p_state_unitsize.frame), coef.frame.select("n", "cn")) * coef,
             over=("n",),
         ))
+        state_cns = _collected(coef.frame).get_column("cn").cast(pl.Utf8).unique().to_list()
 
     const_terms: list = []
     node_pre = d.p_node_constraint_prebuilt_capacity_coeff
     proc_pre = d.p_process_constraint_prebuilt_capacity_coeff
-    if node_pre is not None and d.p_state_existing_capacity is not None:
-        node_existing = (d.p_state_existing_capacity.frame
-                         .join(node_pre.frame.rename({"value": "coef"}), on="n", how="inner")
-                         .with_columns(value=pl.col("value") * pl.col("coef"))
-                         .group_by(["cn", "d"]).agg(pl.col("value").sum())
-                         .select("cn", "d", "value"))
-        if node_existing.height > 0:
-            const_terms.append(Param(("cn", "d"), node_existing))
-    if proc_pre is not None and d.p_process_existing_count is not None and d.p_unitsize is not None:
-        proc_existing = (d.p_process_existing_count.frame.rename({"value": "ec"})
-                         .join(d.p_unitsize.frame.rename({"value": "us"}), on="p", how="inner")
-                         .with_columns(cap=pl.col("ec") * pl.col("us"))
-                         .join(proc_pre.frame.rename({"value": "coef"}), on="p", how="inner")
-                         .with_columns(value=pl.col("cap") * pl.col("coef"))
-                         .group_by(["cn", "d"]).agg(pl.col("value").sum())
-                         .select("cn", "d", "value"))
-        if proc_existing.height > 0:
-            const_terms.append(Param(("cn", "d"), proc_existing))
+    node_cap = d.p_node_constraint_capacity_coeff
+    proc_cap = d.p_process_constraint_capacity_coeff
+    for coef in (node_pre, proc_pre, node_cap, proc_cap):
+        existing = _user_constraint_existing(d, coef, node=coef is node_pre or coef is node_cap)
+        if existing is not None:
+            const_terms.append(existing)
 
+    capacity_terms: list = []
     if b.has_invest_p and proc_pre is not None and _has_rows(lookback):
         invested = _var_view(v_invest_p, "__at_back_uc", {"d": "d_invest"}, to_axis=True)
         earlier = (lookback.pipe(rename_to_axis, {"e": "p"})
                    .join(proc_pre.frame.select("p", "cn"), on="p", how="inner"))
         if earlier.height > 0:
-            var_terms.append(Sum(
+            capacity_terms.append(Sum(
                 Where(invested * d.p_unitsize, earlier) * proc_pre,
                 over=("p", "d_invest"),
             ))
@@ -3185,18 +3189,62 @@ def _eq_user_constraints(b: _Build) -> None:
         earlier = (lookback.pipe(rename_to_axis, {"e": "n"})
                    .join(node_pre.frame.select("n", "cn"), on="n", how="inner"))
         if earlier.height > 0:
-            var_terms.append(Sum(
+            capacity_terms.append(Sum(
                 Where(invested * Param(("n",), d.p_state_unitsize.frame), earlier) * node_pre,
                 over=("n", "d_invest"),
             ))
+    netted: set[str] = set()
+    for axis in ("p", "n"):
+        raw_unitsize = d.p_unitsize if axis == "p" else d.p_state_unitsize
+        if raw_unitsize is None:
+            continue
+        unitsize = raw_unitsize if axis == "p" else Param(("n",), raw_unitsize.frame)
+        has_invest, has_divest = ((b.has_invest_p, b.has_divest_p) if axis == "p"
+                                  else (b.has_invest_n, b.has_divest_n))
+        invest, divest = (v_invest_p, b.v_divest_p) if axis == "p" else (v_invest_n, b.v_divest_n)
+        active = d.edd_divest_active if axis == "p" else d.ndd_divest_active
+        pre, cap = (proc_pre, proc_cap) if axis == "p" else (node_pre, node_cap)
+        retired = (d.p_process_constraint_retired_capacity_coeff if axis == "p"
+                   else d.p_node_constraint_retired_capacity_coeff)
+        # Pre-built: the retirements of the earlier periods.
+        if has_divest and pre is not None and _has_rows(active):
+            earlier = (active.filter(pl.col("d_divest").cast(pl.Utf8) != pl.col("d").cast(pl.Utf8))
+                       .join(pre.frame.select(axis, "cn"), on=axis, how="inner"))
+            if earlier.height > 0:
+                view = _var_view(divest, "__at_div_pre_uc", {"d": "d_divest"}, to_axis=True)
+                capacity_terms.append(-Sum(Where(view * unitsize, earlier) * pre, over=(axis, "d_divest")))
+                netted.update(earlier.get_column("cn").cast(pl.Utf8).to_list())
+        # Capacity in service: the investments alive in d and every retirement up to d.
+        if has_invest and cap is not None and _has_rows(d.edd_invest_set):
+            alive = (_entity_rows(d.edd_invest_set, "e", _collected(cap.frame), axis)
+                     .join(cap.frame.select(axis, "cn"), on=axis, how="inner"))
+            if alive.height > 0:
+                view = _var_view(invest, "__at_inv_cap_uc", {"d": "d_invest"}, to_axis=True)
+                capacity_terms.append(Sum(Where(view * unitsize, alive) * cap, over=(axis, "d_invest")))
+        if has_divest and cap is not None and _has_rows(active):
+            gone = active.join(cap.frame.select(axis, "cn"), on=axis, how="inner")
+            if gone.height > 0:
+                view = _var_view(divest, "__at_div_cap_uc", {"d": "d_divest"}, to_axis=True)
+                capacity_terms.append(-Sum(Where(view * unitsize, gone) * cap, over=(axis, "d_divest")))
+        # Retired in d.
+        if has_divest and retired is not None:
+            capacity_terms.append(Sum(
+                Where(divest * unitsize, retired.frame.select(axis, "cn")) * retired,
+                over=(axis,),
+            ))
+    if netted:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice("user_constraint_prebuilt_nets_retirements", "user constraints", sorted(netted),
+                                  detail="Results change only if the model retires capacity.")
 
-    if not (var_terms or const_terms):
+    # Term order of the per-step rows: flow, invested, state, pre-built, then the newer capacity terms.
+    step_terms = flow_terms + invest_terms + state_terms + capacity_terms
+    period_terms = invest_terms + capacity_terms
+    if not (step_terms or const_terms):
         return
-    lhs: dict = {}
-    if var_terms:
-        lhs["contribution"] = _sum_terms(var_terms)
-    for i, const in enumerate(const_terms):
-        lhs[f"prebuilt_const_{i}"] = const
+    op_cns = set(state_cns)
+    if flow_terms:
+        op_cns.update(d.flow_constraint_idx.get_column("cn").cast(pl.Utf8).unique().to_list())
     for over, sense, name in (
         (d.cdt_eq, "==", "process_constraint_equal"),
         (d.cdt_le, "<=", "process_constraint_less_than"),
@@ -3204,13 +3252,50 @@ def _eq_user_constraints(b: _Build) -> None:
     ):
         if not _has_rows(over):
             continue
-        m.add_cstr(
-            name,
-            over      = over,
-            sense     = sense,
-            lhs_terms = lhs,
-            rhs_terms = {"constant": d.p_constraint_constant},
-        )
+        is_op = pl.col("cn").cast(pl.Utf8).is_in(sorted(op_cns))
+        for rows, terms, family in ((over.filter(is_op), step_terms, name),
+                                    (over.filter(~is_op).select("cn", "d").unique(maintain_order=True),
+                                     period_terms, name + "_period")):
+            if rows.height == 0 or not (terms or const_terms):
+                continue
+            lhs: dict = {}
+            if terms:
+                lhs["contribution"] = _sum_terms(terms)
+            for i, const in enumerate(const_terms):
+                lhs[f"prebuilt_const_{i}"] = const
+            m.add_cstr(
+                family,
+                over      = rows,
+                sense     = sense,
+                lhs_terms = lhs,
+                rhs_terms = {"constant": d.p_constraint_constant},
+            )
+
+
+def _collected(frame) -> pl.DataFrame:
+    return frame.collect() if isinstance(frame, pl.LazyFrame) else frame
+
+
+def _user_constraint_existing(d, coef: "Param | None", *, node: bool) -> "Param | None":
+    """``Σ_e existing[e,d]·coef[e,cn]`` as a ``(cn, d)`` Param (MW, MWh for nodes); None without rows."""
+    if coef is None:
+        return None
+    if node:
+        if d.p_state_existing_capacity is None:
+            return None
+        frame = (d.p_state_existing_capacity.frame
+                 .join(coef.frame.rename({"value": "coef"}), on="n", how="inner")
+                 .with_columns(value=pl.col("value") * pl.col("coef")))
+    else:
+        if d.p_process_existing_count is None or d.p_unitsize is None:
+            return None
+        frame = (d.p_process_existing_count.frame.rename({"value": "ec"})
+                 .join(d.p_unitsize.frame.rename({"value": "us"}), on="p", how="inner")
+                 .with_columns(cap=pl.col("ec") * pl.col("us"))
+                 .join(coef.frame.rename({"value": "coef"}), on="p", how="inner")
+                 .with_columns(value=pl.col("cap") * pl.col("coef")))
+    frame = _collected(frame.group_by(["cn", "d"]).agg(pl.col("value").sum()).select("cn", "d", "value"))
+    return Param(("cn", "d"), frame) if frame.height > 0 else None
 
 
 def _eq_max_state(b: _Build) -> None:

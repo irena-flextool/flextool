@@ -56,7 +56,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             id="user_constraint_prebuilt_nets_retirements",
             summary=("The pre-built capacity term of a user constraint "
                      "(constraint_cumulative_pre_built_capacity_coeff) now subtracts the capacity retired in "
-                     "earlier periods, also within the same solve, so a single solve and a chain of solves agree."),
+                     "earlier periods of the same solve too (before: only retirements of earlier solves of a "
+                     "chain), so a single solve and a chain of solves agree."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "user_constraint_prebuilt_nets_retirements"),
         ),
     )

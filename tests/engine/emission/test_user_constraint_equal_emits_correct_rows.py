@@ -7,7 +7,10 @@ Fixture: ``work_coal_chp`` — defines one user constraint
 power flow ratio).  Other fixtures exercise the LE / GE variants.
 
 We assert:
-  * row count = ``data.cdt_eq.height``;
+  * row count = the ``data.cdt_eq`` rows of the constraints with a flow
+    term (``flow_constraint_idx``); the fixture's other ``equal``
+    constraints have no term in this solve (their entities are not in
+    it), so they are capacity-only constraints and get no per-step rows;
   * the GE / LE variants are *absent* (their cdt_*  sets are empty);
   * the constraint family is present;
   * the constraint sense is ``==``.
@@ -21,6 +24,7 @@ Goal: <100 ms; build-only.
 
 from __future__ import annotations
 
+import polars as pl
 import pytest
 
 from tests.engine.emission._helpers import (
@@ -40,7 +44,11 @@ def test_user_constraint_equal_emits_correct_rows(scenario_run)-> None:
         "fixture invariant: cdt_eq must be non-empty"
     )
 
-    assert_cstr_row_count(pb, "process_constraint_equal", data.cdt_eq.height)
+    flow_cns = data.flow_constraint_idx.get_column("cn").cast(pl.Utf8).unique().to_list()
+    assert "coal_chp_fix" in flow_cns
+    per_step = data.cdt_eq.filter(pl.col("cn").cast(pl.Utf8).is_in(flow_cns)).height
+    assert 0 < per_step < data.cdt_eq.height
+    assert_cstr_row_count(pb, "process_constraint_equal", per_step)
     assert_cstr_present(pb, "process_constraint_equal")
 
     # LE / GE variants are not wired in this fixture (cdt_le / cdt_ge None).

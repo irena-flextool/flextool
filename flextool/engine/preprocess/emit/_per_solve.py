@@ -625,24 +625,21 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     node_set = frozenset(_read_singles(input_dir / "node.csv", provider=provider))
     entity_set = _read_singles(input_dir / "entity.csv", provider=provider)
 
-    pcc_inv = _read_pairs(
-        input_dir / "p_process_constraint_invested_capacity_coeff.csv", provider=provider
-    )
-    pcc_pre = _read_pairs(
-        input_dir / "p_process_constraint_pre_built_capacity_coeff.csv", provider=provider
-    )
-    ncc_inv = _read_pairs(
-        input_dir / "p_node_constraint_invested_capacity_coeff.csv", provider=provider
-    )
-    ncc_pre = _read_pairs(
-        input_dir / "p_node_constraint_pre_built_capacity_coeff.csv", provider=provider
-    )
-    has_capacity_constraint = (
-        frozenset(p for p, _ in pcc_inv)
-        | frozenset(p for p, _ in pcc_pre)
-        | frozenset(n for n, _ in ncc_inv)
-        | frozenset(n for n, _ in ncc_pre)
-    )
+    def _coeff_entities(kinds: tuple[str, ...]) -> frozenset[str]:
+        """Entities with a user-constraint coefficient of one of ``kinds`` (``p_<process|node>_constraint_<kind>
+        _coeff.csv``, written by ``input_derivation._specs``)."""
+        out: set[str] = set()
+        for cls in ("process", "node"):
+            for kind in kinds:
+                out.update(e for e, _ in _read_pairs(
+                    input_dir / f"p_{cls}_constraint_{kind}_coeff.csv", provider=provider))
+        return frozenset(out)
+
+    # Mirror of ``_derived._has_capacity_constraint_invest_set``: an invested, pre-built or capacity coefficient
+    # links the investment variable; those and a retired-capacity coefficient link the retirement variable.
+    invest_kinds = ("invested_capacity", "cumulative_pre_built_capacity", "capacity")
+    has_capacity_constraint = _coeff_entities(invest_kinds)
+    has_retire_constraint = _coeff_entities((*invest_kinds, "retired_capacity"))
 
     eea = _read_pdv(solve_data_dir / "ed_entity_annual.csv", provider=provider)
     eead = _read_pdv(solve_data_dir / "ed_entity_annual_divest.csv", provider=provider)
@@ -684,7 +681,7 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
 
     ed_divest_pairs: list[tuple[str, str]] = []
     for e in entityDivest:
-        has_cap = e in has_capacity_constraint
+        has_cap = e in has_retire_constraint
         for d in period_invest:
             if eead.get((e, d), 0.0) != 0.0 or has_cap:
                 ed_divest_pairs.append((e, d))
