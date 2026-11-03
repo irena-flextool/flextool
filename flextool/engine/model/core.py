@@ -179,9 +179,15 @@ RAMP: tuple[str, ...] = ("dt_ramp_link", "p_step_duration", "p_process_existing_
 # Checked whenever a group has capacity_margin_method = manual: without period_invest or the group scaling the
 # capacity margin would be skipped without a word.
 CAPACITY_MARGIN: tuple[str, ...] = ("period_invest", "p_inv_group_cap")
-INVEST: tuple[str, ...] = ("p_entity_max_units",)
+# Investment adds the units of the earlier investment periods still in service (edd_invest_set, processes and
+# nodes); without it an investment would add no capacity.
+INVEST: tuple[str, ...] = ("p_entity_max_units", "edd_invest_set")
 DIVEST: tuple[str, ...] = ("p_entity_max_units", "edd_divest_active",
                             "pd_divest_set")
+# The node analogue of DIVEST: a node retirement removes its capacity through ndd_divest_active and costs per
+# state unit (p_state_unitsize); without them a node divest would cost or earn but never lose capacity.
+DIVEST_N: tuple[str, ...] = ("p_entity_max_units", "ndd_divest_active", "nd_divest_set",
+                              "p_state_unitsize")
 
 
 def _check_covers_dt(d, field: str, feature: str, *, positive: bool = False) -> None:
@@ -533,6 +539,8 @@ def _prepare(b: _Build) -> None:
         _check(d, INVEST, "invest")
     if b.has_divest_p:
         _check(d, DIVEST, "divest")
+    if b.has_divest_n:
+        _check(d, DIVEST_N, "divest")
     if b.has_online:
         _validate_no_online_dc_lines(d)
         _check(d, ONLINE, "online")
@@ -1200,12 +1208,12 @@ def _node_in_service(b: _Build, nodes: pl.DataFrame, tag: str, coef: "Param | No
     """
     d = b.d
     invested = divested = None
-    if b.has_invest_n and d.edd_invest_set is not None:
+    if b.has_invest_n:
         view = _var_view(b.v_invest_n, "__at_invest" + tag, {"d": "d_invest"}, to_axis=True)
         alive = _entity_rows(d.edd_invest_set, "e", nodes, "n")
         if alive.height > 0:
             invested = Sum(Where(view if coef is None else view * coef, alive), over=("d_invest",))
-    if b.has_divest_n and d.ndd_divest_active is not None:
+    if b.has_divest_n:
         view = _var_view(b.v_divest_n, "__at_divest" + tag, {"d": "d_divest"}, to_axis=True)
         active = _entity_rows(d.ndd_divest_active, "n", nodes, "n")
         if active.height > 0:
@@ -1471,7 +1479,7 @@ def _fix_start_terms(b: _Build) -> dict:
                     .select("n", "d", "t", "value"))
     if start_energy.height > 0:
         terms["fwd_fix_existing_pos"] = Param(("n", "d", "t"), _keep_prev_values(b, start_energy))
-    if b.has_invest_n and d.edd_invest_set is not None:
+    if b.has_invest_n:
         invested = _var_view(b.v_invest_n, "__at_fwd_fix", {"d": "d_invest"},
                              to_axis=True)
         alive = (_entity_rows(d.edd_invest_set, "e", nodes, "n")
@@ -1479,7 +1487,7 @@ def _fix_start_terms(b: _Build) -> dict:
         if alive.height > 0:
             term = Sum(Where(invested * start * su, alive), over=("d_invest",))
             terms["fwd_fix_invest_pos"] = term if loss is None else term * loss.keep_prev
-    if b.has_divest_n and d.ndd_divest_active is not None:
+    if b.has_divest_n:
         divested = _var_view(b.v_divest_n, "__at_fwd_fix", {"d": "d_divest"},
                              to_axis=True)
         active = (_entity_rows(d.ndd_divest_active, "n", nodes, "n")
@@ -3687,12 +3695,12 @@ def _eq_profiles(b: _Build) -> None:
     # where v_flow is the input, 1/slope on a direct unit's input→output arc).  The fixed profile has no
     # reserve term.  The invest/divest terms are restricted to the (p,f) pairs of the method's set.
     invested = divested = None
-    if b.has_invest_p and d.edd_invest_set is not None:
+    if b.has_invest_p:
         alive = _entity_rows(d.edd_invest_set, "e", d.process_source_sink, "p")
         if alive.height > 0:
             invest_view = _var_view(b.v_invest_p, "__at_invest_prof", {"d": "d_invest"}, to_axis=True)
             invested = Sum(Where(invest_view, alive), over=("d_invest",))
-    if b.has_divest_p and d.edd_divest_active is not None:
+    if b.has_divest_p:
         # edd_divest_active and process_source_sink carry different p vocabularies: cast to the former.
         procs = d.process_source_sink.select(pl.col("p").cast(d.edd_divest_active.schema["p"], strict=False)).unique()
         active = d.edd_divest_active.join(procs, on="p", how="semi")

@@ -54,7 +54,7 @@ def _lp_snapshot():
     return sys.modules[name]
 
 
-def _overlay(data: dict) -> tuple[dict, str]:
+def _overlay(data: dict, extra: tuple = ()) -> tuple[dict, str]:
     lps = _lp_snapshot()
     retire = lps._pmap({"p2020": 40.0, "p2025": 0.0, "p2030": 0.0, "p2035": 0.0})
     data = lps._overlay(
@@ -65,18 +65,19 @@ def _overlay(data: dict) -> tuple[dict, str]:
             ["node", "battery", "retire_max_period", retire],
             ["node", "battery", "salvage_value", 1000.0],
             ["node", "battery", "discount_rate", 0.05],
+            *extra,
         ])
     return data, "storage_divest_history"
 
 
-def _solve(tmp_path_factory, monkeypatch):
-    """Build the DB from the overlay and run it, under autoscale-strict."""
+def _solve(tmp_path_factory, monkeypatch, extra: tuple = ()):
+    """Build the DB from the overlay (plus ``extra`` values) and run it, under autoscale-strict."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
-    data, scenario = _overlay(json.loads((FIXTURES / "tests.json").read_text()))
+    data, scenario = _overlay(json.loads((FIXTURES / "tests.json").read_text()), extra)
     work = tmp_path_factory.mktemp("storage_divest_history")
     json_path = work / "fixture.json"
     json_path.write_text(json.dumps(data))
@@ -101,3 +102,29 @@ def test_divested_storage_capacity_stays_retired_in_later_periods(tmp_path_facto
     for d in PERIODS:
         max_state = state.filter(pl.col("d") == d)["value"].max()
         assert max_state <= 10.0 + 1e-6, f"{d}: v_state reaches {max_state}, expected <= 10"
+
+
+@pytest.mark.parametrize("field", ["ndd_divest_active", "edd_invest_set"])
+def test_node_divest_without_its_retirement_map_is_refused(tmp_path_factory, monkeypatch, field):
+    """A node-divest-only model whose retirement map is missing stops the build, and so
+    does an investing model without its in-service investment map.
+
+    Before, only process divest was checked: the node consumers skipped the missing map, so the node's
+    retirement earned its salvage value without ever reducing the storage capacity (and a missing investment
+    map dropped the investment from the capacity).
+    """
+    import dataclasses
+
+    from polar_high import Problem
+
+    from flextool.engine import build_flextool
+
+    # The inverter invests but never retires (invest_total), so only the battery node divests.
+    step = _solve(tmp_path_factory, monkeypatch,
+                  extra=(["connection", "battery_inverter", "invest_method", "invest_total"],))
+    fd = step.flex_data
+    assert fd is not None
+    assert fd.pd_divest_set is None or fd.pd_divest_set.height == 0, "the model must divest nodes only"
+    assert fd.nd_divest_set is not None and fd.nd_divest_set.height > 0
+    with pytest.raises(ValueError, match=field):
+        build_flextool(Problem(), dataclasses.replace(fd, **{field: None}))

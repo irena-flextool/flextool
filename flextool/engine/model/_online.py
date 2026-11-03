@@ -92,12 +92,12 @@ def add_constraints(b: "_Build") -> None:
         # They sit on the LHS of the rows whose capacity is existing + invested − divested.
         invest_term = None
         divest_term = None
-        if b.v_invest_p is not None and d.edd_invest_set is not None:
+        if b.v_invest_p is not None:
             v_inv_at_uc = _var_view(b.v_invest_p, f"__at_invest_uc{sfx}", {"d": "d_invest"}, to_axis=True)
             edd_inv_p_uc = _entity_rows(d.edd_invest_set, "e", online_set, "p")
             if edd_inv_p_uc.height > 0:
                 invest_term = -Sum(Where(v_inv_at_uc, edd_inv_p_uc), over=("d_invest",))
-        if b.v_divest_p is not None and d.edd_divest_active is not None:
+        if b.v_divest_p is not None:
             v_div_at_uc = _var_view(b.v_divest_p, f"__at_divest_uc{sfx}", {"d": "d_divest"}, to_axis=True)
             # online_set and edd_divest_active carry different p vocabularies: cast before the join.
             p_on = online_set.select(pl.col("p").cast(d.edd_divest_active.schema["p"], strict=False)).unique()
