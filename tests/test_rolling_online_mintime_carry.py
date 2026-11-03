@@ -13,7 +13,7 @@ continue the previous roll's last realized step (``dt_ramp_carry``, ``jump ==
 1``) and counts each history step's ``hours_to_end``.  The fullYear periods
 p2020 → p2025 reuse one timeset, so p2025's first step does not continue p2020
 and takes no carry — forcing one across would be a unit-commitment
-infeasibility no node penalty slack can absorb (STEP-0 finding).
+infeasibility no node penalty slack can absorb.
 
 All scenarios are built from JSON (CLAUDE.md invariant #3), never a
 checked-in .sqlite.  The witnesses drive the full rolling chain and read
@@ -163,13 +163,14 @@ def test_composition_carrier1_and_carrier2_active(updown_run):
     assert not _cross_boundary_violations(rows, 5, "dn")
 
 
-# ──────────── period-aware: within-period carries, across does not ───────
+# ─────── timeline-aware: carries where the timeline continues, not across a new year ───────
 @pytest.fixture(scope="module")
 def cross_period_run(tmp_path_factory):
     """min_uptime=6 (> jump), method=min_uptime.  The fullYear rolling
     timeline has a roll straddling the p2020→p2025 period boundary; a NAIVE
-    cross-period carry makes that roll infeasible even with node slack
-    (STEP-0 finding).  The period-aware carry keeps it feasible."""
+    cross-period carry makes that roll infeasible even with node slack.
+    The timeline-aware carry (only where the next step continues the
+    timeline) keeps it feasible."""
     from spinedb_api import DatabaseMapping, import_data
     url = _db(tmp_path_factory, "db_c2_xp")
     scen = "coal_min_up6_roll"
@@ -193,17 +194,17 @@ def cross_period_run(tmp_path_factory):
     return {"steps": steps, "workdir": workdir}
 
 
-def test_period_aware_cross_period_feasible(cross_period_run):
+def test_timeline_aware_carry_keeps_the_new_year_roll_feasible(cross_period_run):
     """A min_uptime=6 roll straddling the period boundary stays optimal — the
-    period-aware carry does NOT force a cross-period obligation (which would
+    timeline-aware carry does NOT force a cross-period obligation (which would
     be infeasible).  HEAD with a naive cross-period carry is infeasible."""
     steps = cross_period_run["steps"]
     nonopt = [n for n, s in steps.items() if not s.optimal]
     assert not nonopt, f"cross-period rolls not optimal: {nonopt[:5]}"
 
 
-def test_period_aware_within_period_carries_across_does_not(cross_period_run):
-    """Explicit period-aware behaviour: on the roll whose window first enters
+def test_timeline_aware_carry_continues_the_timeline_not_a_new_year(cross_period_run):
+    """Explicit timeline-aware behaviour: on the roll whose window first enters
     a NEW period, the carry holds NO obligation for that new period's early
     steps (no history there yet / no cross-period carry), while within-period
     continuation rolls DO carry (uptime_carry non-empty with all rows in a
@@ -329,8 +330,8 @@ def test_min_downtime_cross_boundary_binds(downtime_run):
         f"min_downtime obligation was not honoured (HEAD re-starts to ~0.8)")
 
 
-def test_downtime_carry_is_period_aware_and_present(downtime_run):
-    """The down-leg carry is actually built and period-aware (every carried
+def test_downtime_carry_is_timeline_aware_and_present(downtime_run):
+    """The down-leg carry is actually built and timeline-aware (every carried
     row's period equals its carried predecessor's period, by construction)."""
     any_dn_carry = False
     for step in downtime_run["steps"].values():

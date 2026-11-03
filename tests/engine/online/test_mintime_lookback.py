@@ -191,6 +191,17 @@ def test_history_hours_to_end_walks_back_from_the_last_realized_step():
     assert history_hours_to_end(cells, link, ("X", "t3"), 4.0) is None
 
 
+def test_history_without_the_ramp_links_raises():
+    """Several realized cells but no predecessor links: the history cannot be walked back from the last step, so
+    building it raises (before, it silently kept the last step only and dropped the earlier start-ups).  A single
+    realized cell needs no link: hours_to_end is its own duration."""
+    cells = pl.DataFrame({"d": ["P", "P"], "t": ["t1", "t2"], "dur": [1.0, 1.0]})
+    with pytest.raises(ValueError, match="dt_ramp_link"):
+        history_hours_to_end(cells, None, ("P", "t2"), 4.0)
+    one = pl.DataFrame({"d": ["P"], "t": ["t2"], "dur": [2.0]})
+    assert history_hours_to_end(one, None, ("P", "t2"), 4.0).rows() == [("P", "t2", 2.0)]
+
+
 def test_roll_carry_reaches_the_continuing_period_and_its_forecasts_only():
     """History of the previous roll: Q,t1..t3 (1 h each, hours_to_end 3, 2, 1), start-ups 1, 0, 1, shut-downs
     0, 1, 0; it ends at Q,t3.  This roll: Q,t4..t6 and the forecasts A, B (t4, t5) continue Q,t3 (roots Q,t4,

@@ -155,10 +155,16 @@ def history_hours_to_end(cells: pl.DataFrame, link: "pl.DataFrame | None", last:
 
     ``hours_to_end(last) = dur(last)``; an ancestor adds the durations of the chain from it up to *last*.  The chain
     stops where :func:`mintime_lookback` stops (a step without a predecessor among *cells*).  ``None`` when *last*
-    is not a cell or ``dur(last) ≥ l_max`` (no minimum time reaches past the end)."""
+    is not a cell or ``dur(last) ≥ l_max`` (no minimum time reaches past the end).  Raises ``ValueError`` when
+    *link* is ``None`` although there are several realized cells (the predecessor links were not built, so the
+    history cannot be walked; the consumer raises in the same case, :func:`mintime_lookback`)."""
     steps = (cells.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8), pl.col("dur").cast(pl.Float64))
              .unique(subset=["d", "t"], keep="first", maintain_order=True)
              .with_row_index("i"))
+    if link is None and steps.height > 1:
+        raise ValueError(
+            "history_hours_to_end: the solve realized several time steps but has no ramp predecessor links "
+            "(dt_ramp_link); the minimum up/down-time history cannot be built")
     hit = steps.filter((pl.col("d") == last[0]) & (pl.col("t") == last[1]))
     if hit.height == 0:
         return None
