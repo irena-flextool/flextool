@@ -76,15 +76,15 @@ PATCHED_SCENARIOS: dict[str, tuple[str | list[str], list, list]] = {
         *_invest_retire_limits("node", "battery"),
         *_invest_retire_limits("connection", "battery_inverter"),
     ], []),
-    # lp_snapshot's nonsync_internal_dc without its is_DC line: a non-synchronous group {west, east} with flagged
-    # wind; west_east runs inside the group.  No tests.json scenario has a non-synchronous group.  (With an is_DC
-    # connection the projected ``connection_dc_power_flow`` has a row; the dump writes it with a ``connection``
-    # column, and the reload's ``_dc_power_flow.load_data`` reads ``process``, so the reload fails.)
+    # lp_snapshot's nonsync_internal_dc: a non-synchronous group {west, east} with flagged wind; west_east runs
+    # inside the group and west_north (is_DC) crosses its boundary.  No tests.json scenario has a non-synchronous
+    # group.
     "nonsync_internal": (["init", "west", "coal", "wind", "network"], [
         ["group", "gwe", "has_non_synchronous", "yes"],
         ["group", "gwe", "non_synchronous_limit", 0.3],
         ["group", "gwe", "penalty_non_synchronous", 4000.0],
         ["unit__outputNode", ["wind_plant", "west"], "is_non_synchronous", "yes"],
+        ["connection", "west_north", "is_DC", "yes"],
     ], [["group", "gwe"], ["group__node", ["gwe", "west"]], ["group__node", ["gwe", "east"]]]),
 }
 

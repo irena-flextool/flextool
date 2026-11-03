@@ -191,7 +191,7 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
     # ─── DC power flow ────────────────────────────────────────────────
     "node_dc_power_flow": ("input", "node_dc_power_flow.csv", {"n": "node"}),
     "connection_dc_power_flow": ("input", "connection_dc_power_flow.csv",
-                                  {"p": "connection"}),
+                                  {"p": "process"}),
     "node_reference_angle": ("input", "node_reference_angle.csv", {"n": "node"}),
     # ─── Stochastics ──────────────────────────────────────────────────
     "pdt_branch_weight": ("solve_data", "pdt_branch_weight.csv",

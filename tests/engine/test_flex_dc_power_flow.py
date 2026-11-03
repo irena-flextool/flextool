@@ -148,3 +148,25 @@ def test_hvdc_link_with_startup_method_outside_dc_power_flow(tmp_path_factory, c
     assert fd.process_online_linear is not None
     assert "west_north" in _names(fd.process_online_linear, "p")
     assert "dc_power_flow_with_angles groups" not in capsys.readouterr().out
+
+
+def test_dc_power_flow_sets_survive_a_dump_reload(tmp_path_factory):
+    """The dump of a DC power-flow run reloads to the same DC power-flow sets.
+
+    Before, the dump wrote ``connection_dc_power_flow.csv`` with a ``connection`` column while the loader reads
+    ``process`` (the column derive_dc_power_flow writes), so the reload failed.
+    """
+    from flextool.engine.model import _dc_power_flow
+    from tests._support.provider import provider_from_csv_dirs
+    from tests.engine._unit_db import make_db
+
+    url, scen = make_db(tmp_path_factory, alt="dump_case14", values=[], base_chain=["base"],
+                        fixture_json=CASE14_JSON)
+    fd = _run_one(tmp_path_factory, url, scen).flex_data
+    dump = fd.dump_csvs(tmp_path_factory.mktemp("case14_dump") / "dump")
+    provider = provider_from_csv_dirs(dump / "input", dump / "solve_data")
+    reloaded = _dc_power_flow.load_data(dump / "input", provider=provider)
+    for field, col in (("node_dc_power_flow", "n"), ("connection_dc_power_flow", "p"),
+                       ("node_reference_angle", "n")):
+        assert _names(reloaded[field], col) == _names(getattr(fd, field), col), field
+    assert len(_names(fd.connection_dc_power_flow, "p")) == 20
