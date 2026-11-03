@@ -227,3 +227,30 @@ def test_a_roll_into_a_period_that_does_not_continue_takes_no_carry(period_runs)
         assert _rolled([first, second], var).equals(_uc(single, var)), var
     su = _uc(single, "v_startup").filter(pl.col("value") > 0.5)
     assert su.select("d", "t").rows() == [("p2025", "t0049")]
+
+
+ROLLING_36_24 = [["solve", SOLVE, "solve_mode", b64("rolling_window", "str")],
+                 ["solve", SOLVE, "rolling_solve_horizon", b64(36.0, "float")],
+                 ["solve", SOLVE, "rolling_solve_jump", b64(24.0, "float")]]
+
+
+@pytest.mark.solver
+def test_a_period_start_inside_a_rolling_window_wraps_within_its_own_stretch(tmp_path_factory):
+    """A roll whose window holds the end of p2020 and the start of p2025 (which does not continue p2020): p2025's
+    first step wraps to the last p2025 step inside the window.
+
+    Hand derivation (the period_runs demand; horizon 36 h, jump 24 h): roll 1 holds p2020 t0001-t0024 and the
+    look-ahead p2025 t0049-t0060, all high (400 MW, only the coal plant serves it), so the unit is online at every
+    step.  p2025 t0049 wraps to t0060, online, so v_startup[p2025,t0049] = v_online[t0049] − v_online[t0060] = 0
+    and v_online[p2025,t0049] = 1.  Before, t0049 had no online predecessor and started from zero units online:
+    a start-up of 1 there.
+    """
+    demand = {t: -HIGH for t in BLOCK_1 + BLOCK_2[:12]}
+    demand.update({t: 0.0 for t in BLOCK_2[12:]})
+    values = uc(PLANT, 0.4, "binary") + [["unit", PLANT, "startup_cost", b64(50.0, "float")],
+                                         ["node", "west", "inflow", time_map(demand, 0.0)]] + _two_periods()
+    first = _run(tmp_path_factory, "period_start_in_window", values + ROLLING_36_24, TWO_PERIODS_ENTS)[0]
+    at = (pl.col("d") == "p2025") & (pl.col("t") == "t0049")
+    assert _uc(first, "v_online").filter(at)["value"].to_list() == [1.0]
+    assert _uc(first, "v_startup").filter(at)["value"].to_list() == [0.0]
+    assert ("p2025", "t0049", "p2025", "t0060") in utf8(first.flex_data.dt_online_wrap).rows()
