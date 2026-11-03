@@ -351,6 +351,16 @@ def _group_entity_invest(provider) -> pd.DataFrame:
     return joined.select(["group", "entity"]).to_pandas()
 
 
+def _rp_block_first(flex_data, solve_steps) -> "pd.MultiIndex | None":
+    """``(period, time)`` of the representative-block starts of the solves at hand (``None`` when unknown)."""
+    frames = [fd.rp_block_first for fd in ([st[1] for st in solve_steps] if solve_steps else [flex_data])
+              if fd is not None and getattr(fd, "rp_block_first", None) is not None]
+    if not frames:
+        return None
+    rows = pl.concat([f.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)) for f in frames]).unique()
+    return pd.MultiIndex.from_arrays([rows["d"].to_list(), rows["t"].to_list()], names=["period", "time"])
+
+
 def _read_outputs(
     output_dir,
     *,
@@ -930,9 +940,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
     # If results already exist as parquet files, read them
     if read_parquet_dir:
+        from flextool.plot_outputs.format_helpers import TIMELINE_BREAKS_FILE, load_timeline_breaks
+        break_index = load_timeline_breaks(parquet_dir)
         results = {}
         for filename in os.listdir(parquet_dir):
-            if filename.endswith('.parquet') and filename != 'timeline_breaks.parquet':
+            if filename.endswith('.parquet') and filename != TIMELINE_BREAKS_FILE:
                 key = filename[:-8]  # Remove '.parquet' extension
                 filepath = os.path.join(parquet_dir, filename)
                 results[key] = read_lean_parquet(filepath)
@@ -957,6 +969,13 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # Pre-process results to be closer to what needed for output writing
         r = post_process_results(par, s, v)
         start = log_time("Post-processed outputs", start, timing_recorder)
+
+        # The realized steps at which a time-series plot starts a new line (gaps in the timeline,
+        # representative-block starts, periods that do not continue the previous one).
+        from flextool.process_outputs._timeline_breaks import timeline_breaks
+        break_index = timeline_breaks(
+            s.dt_realize_dispatch, s.ramp_link,
+            block_first=_rp_block_first(flex_data, solve_steps), scenario=scenario_name)
 
         # Call the final processing functions for each category of outputs
         # and make a dict of dataframes to hold final results
@@ -1029,11 +1048,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             write_lean_parquet(df, f'{parquet_dir}/{name}.parquet',
                                column_metadata=col_meta)
 
-        # Item 163 (Q2): the GMPL model wrote ``solve_data/timeline_breaks.csv``;
-        # nothing in the polars cascade writes it (no producer since v4), so this
-        # read was always absent in a fresh run.  Dropped rather than routed
-        # through a work-folder read; rebuilding the timeline breaks from
-        # FlexData is tracked as a follow-up (github_issues.md item 170).
+        # The plot break steps, written also when empty so a parquet replay knows there are none.
+        from flextool.plot_outputs.format_helpers import write_timeline_breaks
+        write_timeline_breaks(parquet_dir, break_index)
 
         start = log_time("Wrote to parquet", start, timing_recorder)
 
@@ -1054,14 +1071,12 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
     if 'parquet' in write_methods or read_parquet_dir:
         try:
             from flextool.plot_outputs.orchestrator import compute_all_plot_plans
-            from flextool.plot_outputs.format_helpers import load_timeline_breaks
-            plan_break_times = load_timeline_breaks(parquet_dir)
             plan_results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
             single_plot_settings = settings.get('plots', {})
             compute_all_plot_plans(
                 plan_results, single_plot_settings, parquet_dir,
                 active_settings=active_configs, plot_rows=plot_rows,
-                break_times=plan_break_times,
+                break_times=break_index,
                 color_path=resolve_plot_settings_path(Path(output_location)),
             )
             start = log_time("Computed plot plans", start, timing_recorder)
@@ -1140,9 +1155,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         delete_plots = not bool(single_result)
         results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
         # Load timeline breaks for visual gaps in time-series plots
-        from flextool.plot_outputs.format_helpers import load_timeline_breaks
-        break_times = load_timeline_breaks(parquet_dir)
-        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_times, color_path=resolve_plot_settings_path(Path(output_location)))
+        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_index, color_path=resolve_plot_settings_path(Path(output_location)))
 
         start = log_time('Plotted figures', start, timing_recorder)
 

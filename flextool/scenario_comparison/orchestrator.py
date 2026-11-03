@@ -313,7 +313,7 @@ def run(
     # Load timeline breaks from all scenario parquet dirs.
     # For --parquet-base-dir mode (subdir=''): parquets at base_dir/name/
     # For DB mode (subdir='output_parquet'): parquets at folder/subdir/name/
-    from flextool.plot_outputs.format_helpers import load_timeline_breaks
+    from flextool.plot_outputs.format_helpers import load_timeline_breaks, write_timeline_breaks
     break_dirs = []
     for name, folder in scenario_folders.items():
         if parquet_subdir:
@@ -333,10 +333,9 @@ def run(
         meta = {"scenarios": scenarios}
         with open(os.path.join(comparison_parquet_dir, "_metadata.json"), "w") as f:
             json.dump(meta, f)
-        if break_times:
-            # Save break times so the viewer can load them
-            bt_df = pd.DataFrame({"break_time": list(break_times)})
-            write_lean_parquet(bt_df, os.path.join(comparison_parquet_dir, "timeline_breaks.parquet"), index=False)
+        # The union of the scenarios' break steps: a break of one scenario also cuts the others' lines,
+        # since the scenarios share one time axis.
+        write_timeline_breaks(comparison_parquet_dir, break_times)
         print(f"Wrote comparison parquets to: {comparison_parquet_dir}")
 
     # Compute and save dispatch metadata (cross-scenario ylims) for the viewer

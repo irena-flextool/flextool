@@ -337,19 +337,10 @@ def combine_scenario_parquets(
         json.dump(meta, f)
 
     # 6. Merge timeline breaks from all scenarios
-    break_times: set[str] = set()
-    for scenario_name in scenario_folders:
-        tb_path = parquet_base / scenario_name / "timeline_breaks.parquet"
-        if tb_path.exists():
-            try:
-                tb_df = read_lean_parquet(tb_path)
-                if "time" in tb_df.columns:
-                    break_times.update(tb_df["time"].astype(str))
-            except Exception:
-                pass
-    if break_times:
-        bt_df = pd.DataFrame({"break_time": sorted(break_times)})
-        write_lean_parquet(bt_df, output_dir / "timeline_breaks.parquet", index=False)
+    # (a break of one scenario also cuts the others' lines: the scenarios share one time axis)
+    from flextool.plot_outputs.format_helpers import load_timeline_breaks, write_timeline_breaks
+    break_times = load_timeline_breaks(*(parquet_base / name for name in scenario_folders))
+    write_timeline_breaks(output_dir, break_times)
 
     written_count = sum(
         1 for df in combined_dfs.values()
@@ -382,7 +373,7 @@ def combine_scenario_parquets(
             plot_settings = _derive_comparison_settings(
                 flatten_new_format(settings.get("plots", {}))
             )
-            bt = break_times if break_times else None
+            bt = break_times if len(break_times) else None
             compute_all_plot_plans(
                 combined_dfs, plot_settings, output_dir,
                 plot_rows=(0, 167), break_times=bt,

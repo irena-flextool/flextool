@@ -453,6 +453,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "group_node": DIMENSION_TABLE,
     "group_process": DIMENSION_TABLE,
     "group_process_node": DIMENSION_TABLE,
+    "timeline_breaks": DIMENSION_TABLE,
     "nodeGroupDispatch": DIMENSION_TABLE,
     "nodeGroupIndicators": DIMENSION_TABLE,
     "flowGroupIndicators": DIMENSION_TABLE,

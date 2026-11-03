@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from matplotlib.ticker import Formatter, FuncFormatter
 
 from flextool.lean_parquet import read_lean_parquet
+from flextool.process_outputs._timeline_breaks import BREAK_LEVELS as _BREAK_LEVELS, empty_breaks
 
 
 # ── superscript digits for nice exponent display (single source) ──
@@ -247,99 +248,172 @@ def _chunk_average_df(df: pd.DataFrame, chunk_size: int) -> pd.DataFrame:
 #  Timeline breaks
 # ---------------------------------------------------------------------------
 
-def load_timeline_breaks(*parquet_dirs: str | os.PathLike) -> set[str]:
-    """Load timeline break timesteps from one or more parquet directories.
+TIMELINE_BREAKS_FILE = 'timeline_breaks.parquet'
+_PERIOD_NAMES = ('period', 'd')
+_TIME_NAMES = ('time', 't')
 
-    Reads ``timeline_breaks.parquet`` from each directory and returns the
-    union of all break timestep identifiers (e.g. ``{'t1336', 't2848'}``).
-    Returns an empty set if no files are found.
+logger = logging.getLogger(__name__)
+
+
+def write_timeline_breaks(parquet_dir: str | os.PathLike, breaks: pd.MultiIndex) -> None:
+    """Write the ``(period, time)`` break steps to ``<parquet_dir>/timeline_breaks.parquet``.
+
+    Two Utf8 columns ``period`` and ``time``; written also when there are no breaks, so a replay knows the
+    scenario has none.
     """
-    break_times: set[str] = set()
+    import json
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pa.table(
+        {lv: pa.array([str(v) for v in breaks.get_level_values(lv)], type=pa.string()) for lv in _BREAK_LEVELS})
+    table = table.replace_schema_metadata({b'flextool': json.dumps({}).encode()})
+    pq.write_table(table, os.path.join(str(parquet_dir), TIMELINE_BREAKS_FILE))
+
+
+def load_timeline_breaks(*parquet_dirs: str | os.PathLike) -> pd.MultiIndex:
+    """The union of the ``(period, time)`` break steps in ``timeline_breaks.parquet`` of each directory.
+
+    A missing file, or a file of an earlier format (without both a ``period`` and a ``time`` column), contributes
+    no breaks: such results are drawn without gaps until the scenario is run again.  Returns an empty
+    ``(period, time)`` index when nothing is found.
+    """
+    frames = []
     for d in parquet_dirs:
-        path = os.path.join(str(d), 'timeline_breaks.parquet')
-        if os.path.exists(path):
-            try:
-                df = read_lean_parquet(path)
-                if 'time' in df.columns:
-                    break_times.update(df['time'].astype(str))
-            except Exception:
-                pass
-    return break_times
+        path = os.path.join(str(d), TIMELINE_BREAKS_FILE)
+        if not os.path.exists(path):
+            continue
+        try:
+            df = read_lean_parquet(path)
+        except Exception:  # noqa: BLE001
+            logger.debug("Could not read timeline breaks %s", path, exc_info=True)
+            continue
+        if not set(_BREAK_LEVELS) <= set(df.columns):
+            logger.debug("Timeline breaks %s are in an earlier format (no period and time columns); ignored", path)
+            continue
+        frames.append(df[_BREAK_LEVELS].astype(str))
+    if not frames:
+        return empty_breaks()
+    out = pd.concat(frames, ignore_index=True).drop_duplicates()
+    return pd.MultiIndex.from_frame(out, names=_BREAK_LEVELS)
+
+
+def has_timeline_breaks(breaks: pd.MultiIndex | None) -> bool:
+    """True when ``breaks`` holds at least one break step."""
+    return breaks is not None and len(breaks) > 0
+
+
+def _level_position(names, candidates: tuple[str, ...]) -> int | None:
+    for i, name in enumerate(names):
+        if name is not None and str(name).lower() in candidates:
+            return i
+    return None
+
+
+def _break_positions(
+    df: pd.DataFrame,
+    breaks: pd.MultiIndex,
+    period: object = None,
+) -> np.ndarray:
+    """Row positions of ``df`` at which a break starts a new line (sorted, never 0).
+
+    A row index with a period and a time level matches the ``(period, time)`` pairs.  A row index with only a time
+    level matches on time, restricted to the period of the frame: ``period`` (the file member the frame was cut
+    to), else the periods of a ``period`` column level (a subplot or line per period).  Time matching applies only
+    when those periods share one set of break times (when the period is unknown, when the breaks hold exactly one
+    period); otherwise no breaks are applied, since the rows are shared.
+    """
+    none = np.empty(0, dtype=np.intp)
+    names = list(df.index.names)
+    t_lvl = _level_position(names, _TIME_NAMES)
+    if t_lvl is None:
+        logger.debug("Timeline breaks not applied: the rows have no time level (%s)", names)
+        return none
+    times = df.index.get_level_values(t_lvl).astype(str)
+    p_lvl = _level_position(names, _PERIOD_NAMES)
+    if p_lvl is not None:
+        rows = pd.MultiIndex.from_arrays([df.index.get_level_values(p_lvl).astype(str), times], names=_BREAK_LEVELS)
+        pos = np.flatnonzero(rows.isin(breaks))
+    else:
+        b_period = breaks.get_level_values('period').astype(str)
+        b_time = breaks.get_level_values('time').astype(str)
+        if period is not None:
+            periods = [str(period)]
+        else:
+            c_lvl = _level_position(df.columns.names, _PERIOD_NAMES)
+            periods = (None if c_lvl is None
+                       else df.columns.get_level_values(c_lvl).astype(str).unique().tolist())
+        if periods is None:
+            if b_period.nunique() != 1:
+                logger.debug("Timeline breaks not applied: time-only rows and breaks in %d periods",
+                             b_period.nunique())
+                return none
+            sel = b_time
+        else:
+            per = pd.DataFrame({'period': b_period, 'time': b_time})
+            per = per[per['period'].isin(periods)]
+            time_sets = {p: frozenset(per.loc[per['period'] == p, 'time']) for p in periods}
+            if len(set(time_sets.values())) != 1:
+                logger.debug("Timeline breaks not applied: periods %s on shared time rows break at "
+                             "different steps", periods)
+                return none
+            sel = pd.Index(sorted(next(iter(time_sets.values()))))
+        pos = np.flatnonzero(times.isin(sel))
+    return pos[pos > 0]
 
 
 def split_at_timeline_breaks(
     df: pd.DataFrame,
-    break_times: set[str],
+    breaks: pd.MultiIndex | None,
+    period: object = None,
 ) -> list[pd.DataFrame]:
     """Split a DataFrame into contiguous segments at timeline discontinuities.
 
-    Returns a list of DataFrames, one per contiguous block.  Plotting each
-    segment separately produces clean gaps (lines/areas stop and restart)
-    rather than plunging to zero at NaN values.
-
-    Works with both simple and MultiIndex row indices.
+    Returns a list of DataFrames, one per contiguous block.  ``breaks`` holds the ``(period, time)`` steps at
+    which a new line starts; how a frame's rows are matched to them is described in :func:`_break_positions`.
     """
-    if not break_times or df.empty:
+    if not has_timeline_breaks(breaks) or df.empty:
         return [df]
-
-    # Find the time level in the index
-    if isinstance(df.index, pd.MultiIndex):
-        time_level = df.index.nlevels - 1  # default: last level
-        for i, name in enumerate(df.index.names):
-            if name and str(name).lower() in ('time', 't'):
-                time_level = i
-                break
-        time_vals = df.index.get_level_values(time_level).astype(str)
-    else:
-        time_vals = df.index.astype(str)
-
-    # Find integer positions where breaks occur
-    break_positions = [i for i, t in enumerate(time_vals) if t in break_times]
-    if not break_positions:
+    pos = _break_positions(df, breaks, period)
+    if len(pos) == 0:
         return [df]
-
-    # Split into contiguous segments
-    segments: list[pd.DataFrame] = []
-    prev = 0
-    for pos in break_positions:
-        if prev < pos:
-            segments.append(df.iloc[prev:pos])
-        prev = pos
-    if prev < len(df):
-        segments.append(df.iloc[prev:])
-
-    return segments
+    bounds = np.concatenate(([0], pos, [len(df)]))
+    return [df.iloc[a:b] for a, b in zip(bounds[:-1], bounds[1:])]
 
 
 def insert_timeline_breaks(
     df: pd.DataFrame,
-    break_times: set[str],
+    breaks: pd.MultiIndex | None,
     gap_rows: int = 3,
+    period: object = None,
 ) -> pd.DataFrame:
     """Insert NaN rows before timeline discontinuities for visual gaps.
 
-    Inserts *gap_rows* NaN rows (default 3) between contiguous blocks
-    so the gap is clearly visible in plots.
+    Inserts *gap_rows* NaN rows (default 3) before each break row so the gap is clearly visible in plots; the gap
+    rows carry the index label of the row before them.  ``period``: the period the frame was cut to (a file
+    member), for frames whose rows have no period level.
     """
-    if not break_times or df.empty:
+    if not has_timeline_breaks(breaks) or df.empty:
         return df
-
-    segments = split_at_timeline_breaks(df, break_times)
-    if len(segments) <= 1:
+    pos = _break_positions(df, breaks, period)
+    if len(pos) == 0:
         return df
+    n = len(df)
+    at = np.repeat(pos, gap_rows)
+    take = np.insert(np.arange(n), at, np.repeat(pos - 1, gap_rows))
+    is_gap = np.insert(np.zeros(n, dtype=bool), at, True)
+    out = df.iloc[take]
+    labels = out.index
+    out = out.reset_index(drop=True).where(np.broadcast_to(~is_gap[:, None], out.shape))
+    out.index = labels
+    return out
 
-    # Insert NaN rows between segments
-    parts: list[pd.DataFrame] = []
-    for i, seg in enumerate(segments):
-        if i > 0:
-            prev_seg = parts[-1]
-            gap_index = prev_seg.index[-1:].repeat(gap_rows)
-            nan_block = pd.DataFrame(
-                np.nan,
-                index=gap_index,
-                columns=df.columns,
-            )
-            parts.append(nan_block)
-        parts.append(seg)
 
-    return pd.concat(parts)
+def file_member_period(file_member, file_level_names: list) -> object:
+    """The period of a file member when the frame was split into files by period, else ``None``."""
+    if file_member is None:
+        return None
+    members = file_member if isinstance(file_member, tuple) else (file_member,)
+    pos = _level_position(file_level_names, _PERIOD_NAMES)
+    return None if pos is None or pos >= len(members) else members[pos]

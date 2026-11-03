@@ -396,6 +396,14 @@ for _key, _producer, _note in (
     )
 del _key, _producer, _note
 
+# Plot support: the realized steps at which a time-series plot starts a new line.
+REGISTRY["timeline_breaks"] = _proc(
+    "timeline_breaks", columns=("period", "time"),
+    note="(period, time) steps whose step-adjacency predecessor is not a realized step (a gap in the timeline, a "
+         "representative-block start, a period that does not continue the previous one); written also when empty.",
+    producer="flextool.process_outputs._timeline_breaks.timeline_breaks",
+)
+
 
 # ---------------------------------------------------------------------------
 # Public API

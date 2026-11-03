@@ -24,6 +24,8 @@ import matplotlib.pyplot as plt
 import logging
 from flextool.plot_outputs.format_helpers import (
     generate_split_filename, split_into_chunks, _chunk_average_df,
+    file_member_period,
+    has_timeline_breaks,
     insert_timeline_breaks,
 )
 from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, default_ylabel_for, flatten_new_format
@@ -639,7 +641,7 @@ def prepare_plot_data(
     plot_config: PlotConfig,
     plot_name: str = '',
     plot_rows: tuple[int, int] = (0, 167),
-    break_times: set[str] | None = None,
+    break_times: pd.MultiIndex | None = None,
     only_file_index: int | None = None,
     period_weights=None,
     color_path: Path | None = None,
@@ -743,8 +745,10 @@ def prepare_plot_data(
             df_fm = df_fm * cfg.multiply_by
 
         # Insert NaN rows at timeline breaks for visual gaps
-        if chart_type == 'time' and break_times:
-            df_fm = insert_timeline_breaks(df_fm, break_times)
+        if chart_type == 'time' and has_timeline_breaks(break_times):
+            file_level_names = [df_processed.columns.names[i] for i in file_levels]
+            df_fm = insert_timeline_breaks(
+                df_fm, break_times, period=file_member_period(file_member, file_level_names))
 
         # Determine max items
         default_max_items = 10
@@ -899,7 +903,7 @@ def prepare_plot_data(
 def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         active_settings=['default'], plot_rows=(0, 167), delete_existing_plots=True,
         plot_file_format='png', only_first_file=False,
-        break_times: set[str] | None = None,
+        break_times: pd.MultiIndex | None = None,
         color_path: Path | None = None):
     """
     Plot dataframes from a dictionary according to key suffixes.

@@ -153,7 +153,7 @@ class ResultViewer(tk.Toplevel):
         # parquets.  The key prefix disambiguates the two flavours so
         # cache lookups never alias.
         self._yaml_cache: dict[Path, dict] = {}
-        self._break_times_cache: dict[str, set[str] | None] = {}
+        self._break_times_cache: "dict[str, pd.MultiIndex | None]" = {}
         self._parquet_cache_key: tuple = ("", "")
         self._parquet_cache_df: pd.DataFrame | None = None
 
@@ -2891,30 +2891,16 @@ class ResultViewer(tk.Toplevel):
         self._parquet_cache_df = df
         return df
 
-    def _load_break_times(self, scenario: str) -> set[str] | None:
-        """Load timeline break times from parquet, cached per scenario."""
+    def _load_break_times(self, scenario: str) -> "pd.MultiIndex | None":
+        """The scenario's timeline break steps ``(period, time)``, cached per scenario; ``None`` when none."""
         if scenario in self._break_times_cache:
             return self._break_times_cache[scenario]
+        from flextool.plot_outputs.format_helpers import load_timeline_breaks
 
-        path = self._project_path / "output_parquet" / scenario / "timeline_breaks.parquet"
-        if not path.exists():
-            self._break_times_cache[scenario] = None
-            return None
-
-        try:
-            df = read_lean_parquet(path)
-            # Extract break time values as strings
-            if df.empty:
-                result: set[str] | None = None
-            else:
-                # The parquet has a column with break time values
-                result = set(df.iloc[:, 0].astype(str))
-            self._break_times_cache[scenario] = result
-            return result
-        except Exception:  # noqa: BLE001
-            logger.warning("Failed to read timeline breaks for %s", scenario, exc_info=True)
-            self._break_times_cache[scenario] = None
-            return None
+        breaks = load_timeline_breaks(self._project_path / "output_parquet" / scenario)
+        result = breaks if len(breaks) else None
+        self._break_times_cache[scenario] = result
+        return result
 
     def _make_figure_cache_key(
         self, scenario: str, result_key: str, sub_config: str,
@@ -3415,68 +3401,28 @@ class ResultViewer(tk.Toplevel):
 
     def _load_comparison_break_times(
         self, viewer_scenarios: list[str] | None = None,
-    ) -> set[str] | None:
-        """Return the union of timeline-break times across viewer scenarios.
+    ) -> "pd.MultiIndex | None":
+        """The union of the timeline break steps ``(period, time)`` of the viewer scenarios.
 
-        Phase E: ``_regenerate_comparison`` no longer writes a combined
-        ``output_parquet_comparison/timeline_breaks.parquet``, so we
-        union the per-scenario ``output_parquet/<scen>/timeline_breaks
-        .parquet`` files at view time instead.  Falls back to the
-        legacy combined file when no viewer scenarios are passed and
-        the combined file happens to exist (e.g. CLI run).
-
-        Cached under the ``"_comparison"`` slot so repeat callers
-        don't re-read the per-scenario files.
+        The scenarios share one time axis, so a break of one scenario also cuts the others' lines.  Read from the
+        per-scenario ``output_parquet/<scen>/timeline_breaks.parquet`` files; without viewer scenarios, from the
+        combined ``output_parquet_comparison/timeline_breaks.parquet`` (a CLI comparison run).  Cached per set of
+        selected scenarios.
         """
-        if "_comparison" in self._break_times_cache:
-            return self._break_times_cache["_comparison"]
+        from flextool.plot_outputs.format_helpers import load_timeline_breaks
 
-        scenarios = list(viewer_scenarios or [])
+        scenarios = sorted(viewer_scenarios or [])
+        cache_key = "_comparison:" + "\x1f".join(scenarios)
+        if cache_key in self._break_times_cache:
+            return self._break_times_cache[cache_key]
         if scenarios:
-            union: set[str] = set()
-            any_present = False
-            for scen in scenarios:
-                p = (
-                    self._project_path
-                    / "output_parquet" / scen / "timeline_breaks.parquet"
-                )
-                if not p.exists():
-                    continue
-                any_present = True
-                try:
-                    df = read_lean_parquet(p)
-                    if not df.empty:
-                        union.update(df.iloc[:, 0].astype(str))
-                except Exception:  # noqa: BLE001
-                    logger.warning(
-                        "Failed to read timeline breaks for %s", scen,
-                        exc_info=True,
-                    )
-            result: set[str] | None = union if any_present else None
-            self._break_times_cache["_comparison"] = result
-            return result
-
-        # Legacy fallback (no viewer scenarios passed and / or CLI-built
-        # combined file is around): read the combined parquet.
-        path = (
-            self._project_path
-            / "output_parquet_comparison"
-            / "timeline_breaks.parquet"
-        )
-        if not path.exists():
-            self._break_times_cache["_comparison"] = None
-            return None
-        try:
-            df = read_lean_parquet(path)
-            if df.empty:
-                result = None
-            else:
-                result = set(df.iloc[:, 0].astype(str))
-            self._break_times_cache["_comparison"] = result
-            return result
-        except Exception:  # noqa: BLE001
-            self._break_times_cache["_comparison"] = None
-            return None
+            dirs = [self._project_path / "output_parquet" / scen for scen in scenarios]
+        else:
+            dirs = [self._project_path / "output_parquet_comparison"]
+        breaks = load_timeline_breaks(*dirs)
+        result = breaks if len(breaks) else None
+        self._break_times_cache[cache_key] = result
+        return result
 
     # ------------------------------------------------------------------
     # Comparison scenarios tree (viewer-mode check state)
