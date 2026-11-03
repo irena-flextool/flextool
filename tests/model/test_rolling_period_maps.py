@@ -447,3 +447,155 @@ def test_silent_x_time_maps_stay_out_of_period_universe(availability_db, tmp_pat
     monkeypatch.setattr(_per_solve, "_emit_singles", spy)
     run(tmp_path_factory, availability_db, AVAILABILITY_SCENARIO)
     assert seen and all(v == ["p2020"] for v in seen), seen
+
+
+# ---------------------------------------------------------------------------
+# Node availability, penalty_up / penalty_down and self_discharge_loss given as a period x time (2-D) map.
+#
+# On a roll / nested sub-solve these fields come from the DB-direct producers (``apply_direct_params_b`` resolves
+# ``p_node_availability`` and ``p_state_self_discharge`` through ``_param_shapes`` over the step's own ``dt``;
+# ``apply_penalty_params`` replaces the ``pdtNode`` seed of ``p_penalty_up`` / ``_down``), so a 2-D map must give
+# the same per-(n, d, t) value as the equivalent 1-D time map and, for a constant, as the scalar:
+#
+#     field_2d[n, d, t] = field_1d[n, d, t] (= field_scalar[n, d, t] for a constant)   every (d, t) of the step
+#
+# The fields keep their authored axes ((n, t) for a time map, (n, d, t) for a 2-D map, (n) for a scalar), so
+# every comparison is made after broadcasting the field over the step's ``dt``.
+
+NODE_FIELDS = ("p_node_availability", "p_state_self_discharge", "p_penalty_up", "p_penalty_down")
+NODE_BASE = {("hydro_reservoir", "availability"): 0.8, ("hydro_reservoir", "self_discharge_loss"): 0.001,
+             ("demand_node", "penalty_up"): 5000.0, ("demand_node", "penalty_down"): 4000.0}
+
+
+def _node_cells(field, dt) -> pl.DataFrame:
+    """``field`` broadcast over ``dt``: sorted ``(n, d, t, value)``, values rounded to 9 decimals."""
+    f = _frame(field)
+    grid = _frame(dt).select("d", "t").unique()
+    if {"d", "t"} <= set(f.columns):
+        f = f.join(grid, on=["d", "t"], how="semi")
+    elif "t" in f.columns:
+        f = f.join(grid, on="t", how="inner")
+    elif "d" in f.columns:
+        f = f.join(grid, on="d", how="inner")
+    else:
+        f = f.join(grid, how="cross")
+    return (f.select("n", "d", "t", pl.col("value").cast(pl.Float64).round(9))
+             .sort("n", "d", "t"))
+
+
+def _node_values(shape: str, times: list, periods: list, base: dict = NODE_BASE, *, constant: bool = False) -> list:
+    """``shape``: ``"2d"`` (one ``{t: v}`` block per period), ``"1d"`` (one ``{t: v}`` time map) or ``"scalar"``."""
+    out = []
+    for (node, param), b in base.items():
+        curve = {t: b for t in times} if constant else _mild_curve(b, times)
+        if shape == "2d":
+            val = ptmap({p: curve for p in periods})
+        elif shape == "1d":
+            val = tmap(curve)
+        else:
+            val = scalar(b)
+        out.append(["node", node, param, val])
+    return out
+
+
+def _assert_node_steps_equal(case: dict, twin: dict, fields=NODE_FIELDS, steps=None) -> None:
+    assert list(case) == list(twin)
+    for name in steps if steps is not None else list(case):
+        dc, dw = case[name].flex_data, twin[name].flex_data
+        for field in fields:
+            c, w = _node_cells(getattr(dc, field), dc.dt), _node_cells(getattr(dw, field), dw.dt)
+            assert c.height > 0, (name, field)
+            assert c.equals(w), (name, field)
+        assert case[name].solution.obj == pytest.approx(twin[name].solution.obj, rel=1e-9), name
+
+
+@pytest.mark.parametrize("single", [False, True], ids=["rolling", "single"])
+def test_node_period_time_2d_maps_equal_time_maps(tmp_path_factory, single: bool) -> None:
+    """``1week_rolling`` (7 rolls) and the same solve as one single solve: a 2-D ``{period1: {t: v}}`` map of
+    hydro_reservoir availability / self_discharge_loss and demand_node penalty_up / penalty_down gives the same
+    four fields on every (d, t) and the same objective as the equivalent 1-D time map."""
+    as_2d = _roll(tmp_path_factory, _node_values("2d", T168, [PERIOD]), single=single)
+    as_1d = _roll(tmp_path_factory, _node_values("1d", T168, [PERIOD]), single=single)
+    if single:
+        assert len(as_2d) == 1
+    else:
+        _assert_rolls(as_2d)
+    _assert_node_steps_equal(as_2d, as_1d)
+
+
+@pytest.mark.parametrize("mode", ["single", "rolling", "stochastic_rolling"])
+def test_node_constant_equals_equivalent_maps(tmp_path_factory, mode: str) -> None:
+    """A constant c authored as a scalar, as a 2-D period x time map and as a 1-D time map gives the same four
+    node fields and objective, in a single solve, in rolls and in stochastic rolls."""
+    if mode == "stochastic_rolling":
+        from tests.model.test_stochastic_time_params import ROLLING, STOCH_NODE, STOCH_UNIT, _run
+
+        def runs(shape):
+            return _run(tmp_path_factory, ROLLING, _node_values(shape, T168, [PERIOD], constant=True),
+                        STOCH_UNIT + STOCH_NODE)
+    else:
+        def runs(shape):
+            return _roll(tmp_path_factory, _node_values(shape, T168, [PERIOD], constant=True),
+                         single=mode == "single")
+
+    sc, as_2d, as_1d = runs("scalar"), runs("2d"), runs("1d")
+    _assert_node_steps_equal(as_2d, sc)
+    _assert_node_steps_equal(as_1d, sc)
+
+
+def test_node_period_time_2d_maps_equal_time_maps_on_nested_investment_sub_solves(tmp_path_factory) -> None:
+    """Nested investment (``invest_5weeks``): battery availability / self_discharge_loss and west penalty_up as
+    one ``{t: v}`` block per ``NESTED_PERIODS`` period (2-D) vs one time curve (1-D), on every
+    ``invest_5weeks_<p>`` sub-solve.  The timestep names are discovered from the scalar baseline."""
+    baseline = _nested(tmp_path_factory, as_map=False)
+    times = sorted({t for step in baseline.values() for t in _frame(step.flex_data.dt)["t"].to_list()})
+    assert times
+    base = {("battery", "availability"): 0.9, ("battery", "self_discharge_loss"): 0.002,
+            ("west", "penalty_up"): 6000.0}
+    no_nested_children = ["solve", "invest_5weeks", "contains_solves",
+                          b64({"type": "array", "value_type": "str", "data": []}, "array")]
+
+    def run_nested(shape: str) -> dict:
+        values = _node_values(shape, times, NESTED_PERIODS, base) + [no_nested_children]
+        key = json.dumps(["nested_node", values])
+        if key not in _RUNS:
+            url, scen = make_db(tmp_path_factory, alt=f"c8_{len(_RUNS)}", values=values,
+                                base_chain=NESTED_CHAIN, fixture_json=TESTS_JSON)
+            _RUNS[key] = run(tmp_path_factory, url, scen)
+        return _RUNS[key]
+
+    as_2d, as_1d = run_nested("2d"), run_nested("1d")
+    assert list(as_2d) == [f"invest_5weeks_{p}" for p in NESTED_PERIODS]
+    _assert_node_steps_equal(as_2d, as_1d, fields=("p_node_availability", "p_state_self_discharge", "p_penalty_up"))
+
+
+def test_node_period_time_2d_maps_equal_time_maps_in_stochastic_rolling(tmp_path_factory) -> None:
+    """Stochastic rolling (``1_week_rolling_wind``): hydro_reservoir availability / self_discharge_loss as a 2-D
+    map vs a 1-D time map, next to demand_node's stochastic-time penalty_up (same in both runs).  Each roll mints
+    branch periods; the 2-D map has rows only for ``period1``, so a branch period must take its anchor's values
+    (the anchor inheritance of ``broadcast_to_period_time``).  The stochastic-time node keeps its branch values,
+    read from the ``pdtNode`` emit (``_param_shapes.STOCHASTIC_TIME_PARAMS``)."""
+    from tests.model.test_stochastic_time_params import (
+        AT_ROLL, ROLLING, STOCH_NODE, STOCH_UNIT, _assert_branch_values, _cells, _r3, _run,
+    )
+
+    hydro = {k: v for k, v in NODE_BASE.items() if k[0] == "hydro_reservoir"}
+    penalty = [["node", "demand_node", "penalty_up", _r3(10000.0, AT_ROLL, True)]]
+    as_2d = _run(tmp_path_factory, ROLLING, _node_values("2d", T168, [PERIOD], hydro) + penalty,
+                 STOCH_UNIT + STOCH_NODE)
+    as_1d = _run(tmp_path_factory, ROLLING, _node_values("1d", T168, [PERIOD], hydro) + penalty,
+                 STOCH_UNIT + STOCH_NODE)
+    rolls = [k for k in as_2d if "_roll_" in k and not is_realization(k)]
+    assert len(rolls) == 7, list(as_2d)
+    for name in rolls:
+        step = as_2d[name]
+        branch_periods = set(_frame(step.flex_data.dt)["d"].to_list()) - {PERIOD}
+        assert branch_periods, name
+        for field in ("p_node_availability", "p_state_self_discharge"):
+            cells = _node_cells(getattr(step.flex_data, field), step.flex_data.dt).filter(
+                pl.col("n") == "hydro_reservoir")
+            assert branch_periods <= set(cells["d"].to_list()), (name, field)
+        _assert_branch_values(_cells(step, "p_penalty_up", ["n"]), ("demand_node",), 10000.0,
+                              periods=branch_periods)
+    _assert_node_steps_equal(as_2d, as_1d, fields=("p_node_availability", "p_state_self_discharge",
+                                                   "p_penalty_up"), steps=rolls)
