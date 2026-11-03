@@ -407,6 +407,20 @@ def _snap_start(t_star: float, method: str, seams: list[float]) -> float:
     return lo if (t_star - lo) < (hi - t_star) - YEAR_TOL else hi
 
 
+def lead_time_decisions(source: "InputSource", anchor_ed_lf: pl.LazyFrame) -> pl.DataFrame:
+    """``[e, d, L, method]`` (Utf8 keys): the decisions of ``anchor_ed_lf`` with a construction lead time > 0 and a
+    method other than ``immediate``."""
+    lead_lf = (_resolve_per_period_lf(
+                    _per_entity_param_lf(source, "construction_lead_time"),
+                    anchor_ed_lf, fill=0.0)
+                 .rename({"value": "L"})
+                 .select("e", "d", "L"))
+    return (_construction_method_with_default_lf(source, lead_lf)
+              .filter((pl.col("L") > 0.0) & (pl.col("method") != _CONSTRUCTION_METHOD_IMMEDIATE))
+              .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "L", "method")
+              .collect())
+
+
 def _solve_walk_years(source: "InputSource",
                          active_solve: str | None,
                          workdir: Path | None = None,
@@ -494,15 +508,7 @@ def commissioning_year_lf(source: "InputSource",
             f"solve '{active_solve}' has a year.")
 
     # Per-(e, o) lead time over the anchor grid, then the method; only decisions with a lead time can move.
-    lead_lf = (_resolve_per_period_lf(
-                    _per_entity_param_lf(source, "construction_lead_time"),
-                    anchor_ed_lf, fill=0.0)
-                 .rename({"value": "L"})
-                 .select("e", "d", "L"))
-    lead_df = (_construction_method_with_default_lf(source, lead_lf)
-                 .filter((pl.col("L") > 0.0) & (pl.col("method") != _CONSTRUCTION_METHOD_IMMEDIATE))
-                 .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "L", "method")
-                 .collect())
+    lead_df = lead_time_decisions(source, anchor_ed_lf)
     if lead_df.height == 0 or not in_use_yr:
         return None
 

@@ -5989,7 +5989,8 @@ def _offer_invest_set(flex_data: object,
                          ) -> tuple["pl.DataFrame | None", "pl.LazyFrame | None"]:
     """``(ed_invest offered, commission frame)``: drop the investment decisions whose capacity would start to
     operate after the solve or the model horizon (with a warning), and keep the start of operation of the rest
-    on ``flex_data.ed_invest_commission`` (``[e, d, d_c]``, the decisions with a lead time; ``None`` without).
+    on ``flex_data.ed_invest_commission`` (``[e, d, d_c, yr_c]``, the decisions with a lead time: the start
+    period and its year on the solve calendar; ``None`` without).
 
     When decisions are dropped, the invest-set fields of ``flex_data`` are cleared, so no earlier value (seed)
     brings them back where the offered set leaves one empty."""
@@ -6008,7 +6009,7 @@ def _offer_invest_set(flex_data: object,
     offered, late = _offered(ed_inv, commission_lf)
     _warn(source, active_solve, late, list(period_in_use), read_run_calendar(provider))
     kept = (commission_lf.filter(pl.col("yr_c").is_finite())
-                         .select("e", "d", "d_c").collect())
+                         .select("e", "d", "d_c", "yr_c").collect())
     flex_data.ed_invest_commission = kept if kept.height > 0 else None
     if late is not None:
         # The sets built from ed_invest_set are set below only where they have rows; clear the earlier values
@@ -10144,6 +10145,21 @@ def apply_synthetic_invest_sets(flex_data: object,
     # Construction lead time: drop the decisions whose capacity would start to operate after the solve or the
     # model horizon (with a warning) before every set below is built from ed_invest_set.
     synth_commission_lf = None
+    # A per-period sub-solve counts one year per period on its own calendar and takes its costs from the
+    # emitted seeds, so the start of operation and the cost window of a construction lead time cannot be
+    # placed in it.
+    from flextool.engine.preprocess.params._existing import (
+        _construction_lag_configured as _lag_configured,
+        lead_time_decisions as _lead_time_decisions,
+    )
+    if ed_inv is not None and ed_inv.height > 0 and _lag_configured(source):
+        lagged = _lead_time_decisions(source, ed_inv.lazy().select("e", "d"))
+        if lagged.height > 0:
+            entities = ", ".join(sorted({str(e) for e in lagged["e"].to_list()}))
+            raise FlexToolConfigError(
+                f"construction_lead_time is not supported in the per-period sub-solves of solve '{base}' "
+                f"(invest_periods given as a map, sub-solve '{active_solve}'); entities: {entities}.  Give each "
+                "investment step its own solve in the model's solves, or remove the lead time.")
     if workdir is not None:
         ed_inv, synth_commission_lf = _offer_invest_set(
             flex_data, source, active_solve,

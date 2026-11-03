@@ -545,6 +545,7 @@ def period_walk_iterator(
         life_lf: pl.LazyFrame,
         factor_side: str,
         lineage: pl.DataFrame | None = None,
+        commission_lf: pl.LazyFrame | None = None,
         ) -> pl.LazyFrame:
     """Δ.5-era public alias delegating to :mod:`._walks`.
 
@@ -569,7 +570,7 @@ def period_walk_iterator(
         source, active_solve, ed_lf,
         period_in_use, period_universe,
         window_method=method, life_lf=life_lf,
-        factor_side=factor_side, lineage=lineage)
+        factor_side=factor_side, lineage=lineage, commission_lf=commission_lf)
 
 
 # ---------------------------------------------------------------------------
@@ -600,6 +601,52 @@ def _ed_lifetime_lf(source: "InputSource",
                   life=pl.when(in_class).then(pl.col("value")).otherwise(0.0),
               )
               .select("e", "d", "life"))
+
+
+def _ed_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame) -> pl.LazyFrame:
+    """Lazy ``(e, d, life)`` of :func:`_ed_lifetime_lf` over the given ``(e, d)`` pairs."""
+    cls_lf = _entity_class_lookup_lf(_entity_class_lf(source))
+    in_class = pl.col("is_process").fill_null(False) | pl.col("is_node").fill_null(False)
+    resolved = _resolve_per_period_lf(_per_entity_param_lf(source, "lifetime"),
+                                      ed_lf.select("e", "d").join(cls_lf, on="e", how="left"), fill=0.0)
+    return (resolved
+              .with_columns(life=pl.when(in_class).then(pl.col("value")).otherwise(0.0))
+              .select("e", "d", "life"))
+
+
+def _at_start_of_operation(anchor_lf: pl.LazyFrame,
+                              compute,
+                              commission: pl.DataFrame | None,
+                              col: str,
+                              ) -> pl.LazyFrame:
+    """``compute(anchor_lf)`` (``[e, d, col]``) with the value of a decision with a construction lead time taken at
+    the period its capacity starts to operate (``commission`` ``[e, d, d_c]``): invest cost, interest rate,
+    lifetime and fixed cost of new capacity are those of the build period.  Without ``commission`` it is
+    ``compute(anchor_lf)`` itself."""
+    base = compute(anchor_lf)
+    if commission is None or commission.height == 0:
+        return base
+    schema = anchor_lf.collect_schema()
+    e_dt, d_dt = schema.get("e", pl.Utf8), schema.get("d", pl.Utf8)
+    cmap = (commission.lazy()
+              .select(pl.col("e").cast(pl.Utf8).cast(e_dt, strict=False),
+                      pl.col("d").cast(pl.Utf8).cast(d_dt, strict=False),
+                      pl.col("d_c").cast(pl.Utf8).cast(d_dt, strict=False)))
+    at_start = (compute(cmap.select("e", pl.col("d_c").alias("d")).unique())
+                  .select("e", pl.col("d").alias("d_c"), pl.col(col).alias("_at_start")))
+    return (base
+              .join(cmap, on=["e", "d"], how="left")
+              .join(at_start, on=["e", "d_c"], how="left")
+              .with_columns(pl.coalesce("_at_start", col).alias(col))
+              .select("e", "d", col))
+
+
+def _commission_walk_lf(commission: pl.DataFrame | None) -> pl.LazyFrame | None:
+    """``[e, d, yr_c]`` for the walks: the cost window of a decision with a lead time starts where its capacity
+    starts to operate."""
+    if commission is None or commission.height == 0:
+        return None
+    return commission.lazy().select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "yr_c")
 
 
 # ---------------------------------------------------------------------------
@@ -716,12 +763,17 @@ def npv_invest_discounted_lf(
         period_universe: list[str],
         *,
         lineage: pl.DataFrame | None = None,
+        commission: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
     """Variant 1: ``ed_entity_annual_discounted`` (invest-side NPV).
 
     Per (e ∈ entityInvest, d ∈ period_invest)::
 
         ann[e, d] × Σ_{d_all ∈ period_in_use, window(d, d_all)} inv_factor[d_all]
+
+    ``commission`` (``[e, d, d_c, yr_c]``, the decisions with a construction lead time): the annuity of such a
+    decision is that of its build period ``d_c`` (invest cost, interest rate and lifetime there) and its window
+    starts at ``yr_c``, so it is paid only over the years the capacity operates within the solve.
 
     where ``window`` switches between bounded / unbounded based on
     ``e``'s lifetime_method (``reinvest_choice`` / ``no_investment`` →
@@ -747,9 +799,11 @@ def npv_invest_discounted_lf(
         alias_to_axis("d", "d"))
     ed_anchor_lf = entity_invest_set.join(pi_lf, how="cross")
 
-    # Annuity (invest cost).
-    ann_lf = _per_method_annuity_lf(
-        source, ed_anchor_lf, "invest_cost", _INVEST_NOT_ALLOWED)
+    # Annuity (invest cost), of the build period for a decision with a lead time.
+    ann_lf = _at_start_of_operation(
+        ed_anchor_lf,
+        lambda lf: _per_method_annuity_lf(source, lf, "invest_cost", _INVEST_NOT_ALLOWED),
+        commission, "ann")
 
     # Lifetime methods: per-entity dispatch.
     all_e_lf = ed_anchor_lf.select("e").unique()
@@ -770,18 +824,23 @@ def npv_invest_discounted_lf(
     # life_lf for the bounded walk (uses edEntity_lifetime per L236).
     pwh_lf = pl.LazyFrame({"d": list({d for d in period_invest})}).with_columns(
         alias_to_axis("d", "d"))
-    life_lf = _ed_lifetime_lf(source, all_e_lf, pwh_lf)
+    if commission is None or commission.height == 0:
+        life_lf = _ed_lifetime_lf(source, all_e_lf, pwh_lf)
+    else:
+        life_lf = _at_start_of_operation(
+            all_e_lf.join(pwh_lf, how="cross"), lambda lf: _ed_lifetime_on_lf(source, lf), commission, "life")
+    commission_lf = _commission_walk_lf(commission)
 
     bounded = period_walk_iterator(
         source, active_solve, ed_anchor_lf,
         period_in_use, period_universe,
         bounded=True, life_lf=life_lf, factor_side="inv",
-        lineage=lineage)
+        lineage=lineage, commission_lf=commission_lf)
     unbounded = period_walk_iterator(
         source, active_solve, ed_anchor_lf,
         period_in_use, period_universe,
         bounded=False, life_lf=life_lf, factor_side="inv",
-        lineage=lineage)
+        lineage=lineage, commission_lf=commission_lf)
 
     # Combine.
     bounded = bounded.rename({"factor": "factor_b"})
@@ -917,8 +976,12 @@ def lifetime_fixed_cost_invest_lf(
         period_universe: list[str],
         *,
         lineage: pl.DataFrame | None = None,
+        commission: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
     """Variant 3: ``ed_lifetime_fixed_cost`` (invest-side lifetime FC).
+
+    ``commission`` (``[e, d, d_c, yr_c]``): a decision with a construction lead time pays the fixed cost (and
+    takes the lifetime) of its build period ``d_c``, over the years from ``yr_c`` its capacity operates.
 
     Per (e ∈ entity, d ∈ period_with_history)::
 
@@ -945,7 +1008,7 @@ def lifetime_fixed_cost_invest_lf(
         alias_to_axis("d", "d"))
     ed_anchor_lf = all_e_lf.join(pwh_lf, how="cross")
 
-    fc_lf = _ed_fixed_cost_raw_lf(source, ed_anchor_lf)
+    fc_lf = _at_start_of_operation(ed_anchor_lf, lambda lf: _ed_fixed_cost_raw_lf(source, lf), commission, "fc")
 
     elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
     has_choice_or_no = (elm_lf
@@ -958,19 +1021,23 @@ def lifetime_fixed_cost_invest_lf(
                        .select("e").unique()
                        .with_columns(has_automatic=pl.lit(True)))
 
-    # life_lf via edEntity_lifetime (per L306).
-    life_lf = _ed_lifetime_lf(source, all_e_lf, pwh_lf)
+    # life_lf via edEntity_lifetime (per L306); of the build period for a decision with a lead time.
+    if commission is None or commission.height == 0:
+        life_lf = _ed_lifetime_lf(source, all_e_lf, pwh_lf)
+    else:
+        life_lf = _at_start_of_operation(ed_anchor_lf, lambda lf: _ed_lifetime_on_lf(source, lf), commission, "life")
+    commission_lf = _commission_walk_lf(commission)
 
     bounded = period_walk_iterator(
         source, active_solve, ed_anchor_lf,
         period_in_use, period_universe,
         bounded=True, life_lf=life_lf, factor_side="ops",
-        lineage=lineage)
+        lineage=lineage, commission_lf=commission_lf)
     unbounded = period_walk_iterator(
         source, active_solve, ed_anchor_lf,
         period_in_use, period_universe,
         bounded=False, life_lf=life_lf, factor_side="ops",
-        lineage=lineage)
+        lineage=lineage, commission_lf=commission_lf)
 
     bounded = bounded.rename({"factor": "factor_b"})
     unbounded = unbounded.rename({"factor": "factor_u"})
@@ -1159,6 +1226,7 @@ def ed_entity_annual_discounted_from_source(
         period_universe: list[str],
         *,
         lineage: pl.DataFrame | None = None,
+        commission: pl.DataFrame | None = None,
         ) -> "Param | None":
     """Public entry: ``ed_entity_annual_discounted[e, d]``.
 
@@ -1179,7 +1247,7 @@ def ed_entity_annual_discounted_from_source(
     out = (npv_invest_discounted_lf(
               source, active_solve,
               period_invest, period_in_use, period_universe,
-              lineage=lineage)
+              lineage=lineage, commission=commission)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
@@ -1227,6 +1295,7 @@ def ed_lifetime_fixed_cost_from_source(
         period_universe: list[str],
         *,
         lineage: pl.DataFrame | None = None,
+        commission: pl.DataFrame | None = None,
         ) -> "Param | None":
     """Public entry: ``ed_lifetime_fixed_cost[e, d]``.
 
@@ -1241,7 +1310,7 @@ def ed_lifetime_fixed_cost_from_source(
     out = (lifetime_fixed_cost_invest_lf(
               source, active_solve,
               period_with_history, period_in_use, period_universe,
-              lineage=lineage)
+              lineage=lineage, commission=commission)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
@@ -1374,11 +1443,13 @@ def apply_npv(flex_data: object,
         if value is not None:
             setattr(flex_data, field, value)
 
+    # Construction lead time: the decisions' start of operation (apply_derived_c, which runs before).
+    commission = getattr(flex_data, "ed_invest_commission", None)
     _set_if("ed_entity_annual_discounted",
             ed_entity_annual_discounted_from_source(
                 source, active_solve,
                 period_invest, period_in_use, period_universe,
-                lineage=_npv_lineage))
+                lineage=_npv_lineage, commission=commission))
 
     _set_if("ed_entity_annual_divest_discounted",
             ed_entity_annual_divest_discounted_from_source(
@@ -1390,7 +1461,7 @@ def apply_npv(flex_data: object,
             ed_lifetime_fixed_cost_from_source(
                 source, active_solve,
                 period_with_history, period_in_use, period_universe,
-                lineage=_npv_lineage))
+                lineage=_npv_lineage, commission=commission))
 
     _set_if("ed_lifetime_fixed_cost_divest",
             ed_lifetime_fixed_cost_divest_from_source(
@@ -1409,3 +1480,4 @@ __all__ = [
     "ed_lifetime_fixed_cost_divest_from_source",
     "apply_npv",
 ]
+

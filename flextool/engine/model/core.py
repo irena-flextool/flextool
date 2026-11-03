@@ -4255,9 +4255,12 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · annual_discounted[p,d] · bw[d]
     #   + Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · lifetime_fixed_cost[p,d] · bw[d]
-    # Cost of process capacity built in period d, currency/MW: the investment annuity summed over the
-    # discounted years the capacity serves within the horizon, and the inflation-adjusted fixed cost
-    # over its remaining lifetime.  No w_op: both factors are already per period.
+    # Cost of process capacity decided in period d, currency/MW: the investment annuity summed over the
+    # discounted years it operates within the horizon, and the inflation-adjusted fixed cost over the same
+    # years of its lifetime.  With a construction lead time the capacity operates from its start of operation
+    # c(d): both windows start there, and the invest cost, interest rate, lifetime and fixed cost are those of
+    # c(d) (invest_cost is an overnight cost); without one c(d) = d.  No w_op: both factors are already per
+    # period.
     if b.has_invest_p:
         annu = _cost(d.ed_entity_annual_discounted, "p")
         lf = _cost(d.ed_lifetime_fixed_cost, "p")

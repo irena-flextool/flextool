@@ -692,8 +692,8 @@ class FlexData:
     nd_divest_set: pl.DataFrame | None = None        # (n, d)
     edd_invest_set: pl.DataFrame | None = None       # (e, d_invest, d)
     edd_invest_lookback_set: pl.DataFrame | None = None  # (e, d_invest, d) strict d_invest<d
-    # (e, d, d_c) — start of operation d_c (a run period) of each offered investment decision d with a
-    # construction lead time; None without lead times (apply_derived_c).
+    # (e, d, d_c, yr_c) — start of operation d_c (a run period; yr_c its year on the solve calendar) of each
+    # offered investment decision d with a construction lead time; None without lead times (apply_derived_c).
     ed_invest_commission: pl.DataFrame | None = None
     # Construction lead time (apply_derived_c; all None when no investment decision of the solve has one):
     # (e, d_invest, d) the period d in which the capacity of decision d_invest starts to operate ((e, o, o) for a

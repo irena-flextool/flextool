@@ -261,10 +261,10 @@ def period_walk_iterator(
         ``yr_avail = coalesce(yr_c, yr_d)`` instead of ``yr_d`` (both the
         lower bound and the lifetime-expiry upper bound
         ``yr_avail + life``), so ordered capacity becomes available at its
-        commissioning seam, not the order period.  ``None`` (the default,
-        and every NPV/cost caller) leaves ``yr_avail ≡ yr_d`` — the filters
-        are byte-identical to today, so cost stays keyed on the order
-        period.
+        commissioning seam, not the order period.  The invest-side NPV and
+        fixed-cost walks pass it too, so new capacity is paid only over the
+        years it operates.  ``None`` (the default, and every walk of a model
+        without lead times) leaves ``yr_avail ≡ yr_d``.
 
     Returns
     -------
@@ -358,9 +358,9 @@ def period_walk_iterator(
 
     # Slice H — construction lead time.  Swap the anchor year ``yr_d`` for
     # a per-(e, d_invest) COMMISSIONING year ``yr_c`` in the availability
-    # filters (design §2.5).  ``commission_lf`` is passed only by the
-    # availability callers; the NPV/cost callers never pass it, so cost
-    # stays keyed on the order period (overnight, unchanged).
+    # filters (design §2.5).  ``commission_lf`` is passed by the availability
+    # callers and by the invest-side annuity / fixed-cost walks (cost over the
+    # operating years); the divest walks never pass it.
     if commission_lf is not None:
         # [F3a] MANDATORY cast — the walk's e/d dtypes may be Enum while
         # commission_lf emits Utf8.  A dtype-skewed left-join yields
