@@ -367,6 +367,46 @@ def _construction_method_with_default_lf(source: "InputSource",
               ))
 
 
+def _solve_years_represented(source: "InputSource", active_solve: str | None) -> dict[str, float] | None:
+    """``{period: years_represented}`` of ``solve.years_represented`` for the active solve; ``None`` without it."""
+    if active_solve is None:
+        return None
+    try:
+        df = source.parameter("solve", "years_represented")
+    except (KeyError, AttributeError):
+        return None
+    if df is None or df.height == 0 or "period" not in df.columns:
+        return None
+    sub = df.filter(pl.col("name").cast(pl.Utf8) == active_solve)
+    if sub.height == 0:
+        return None
+    out: dict[str, float] = {}
+    for d, v in sub.select(pl.col("period").cast(pl.Utf8), "value").iter_rows():
+        try:
+            out[str(d)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _snap_start(t_star: float, method: str, seams: list[float]) -> float:
+    """The period start (or the end of the horizon) that ``t_star`` rounds to with ``method``; ``+inf`` when
+    ``next_seam`` finds no seam at or after ``t_star``."""
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+    lo = max((s for s in seams if s <= t_star + YEAR_TOL), default=None)
+    hi = min((s for s in seams if s >= t_star - YEAR_TOL), default=None)
+    if method == "previous_seam":
+        return lo if lo is not None else float("inf")
+    if method == "next_seam":
+        return hi if hi is not None else float("inf")
+    # closest_seam: the nearer one; a tie goes to the later seam.
+    if hi is None:
+        return lo if lo is not None else float("inf")
+    if lo is None:
+        return hi
+    return lo if (t_star - lo) < (hi - t_star) - YEAR_TOL else hi
+
+
 def commissioning_year_lf(source: "InputSource",
                               active_solve: str | None,
                               anchor_ed_lf: pl.LazyFrame,
@@ -374,39 +414,42 @@ def commissioning_year_lf(source: "InputSource",
                               *,
                               workdir: Path | None = None,
                               provider: "object | None" = None,
+                              run_calendar: "object | None" = None,
                               ) -> pl.LazyFrame | None:
-    """Lazy ``[e, d, yr_c]`` — the commissioning year ``c = snap(yr(o)+L)``
-    per (entity, order-period ``o``), or ``None`` when no entity has a
-    lag-active method (Slice H design §2.4).
+    """Lazy ``[e, d, yr_c, d_c, L, yr_c_run]`` — the start of operation of each investment decision ``(e, d)``
+    with an effective construction lead time, or ``None`` when no decision has one.
 
-    ``d`` is the order period ``o``.  ``yr_c`` is the cumulative-year
-    coordinate of the seam the ordered capacity commissions on, snapped per
-    ``construction_lead_time_method``:
+    ``d`` is the decision period ``o``.  The start of operation is ``t* = yr(o) + L`` rounded by
+    ``construction_lead_time_method`` to a *seam* of the run calendar (every period start of the whole run and
+    the end of the model horizon):
 
-    * ``previous_seam`` — last seam ``<= t*``;
-    * ``next_seam``     — first seam ``>= t*`` (``+inf`` if none, i.e. the
-      order buys no in-horizon capacity — OQ-7);
-    * ``closest_seam``  — nearer of the two, exact tie -> the later seam;
-      snaps to the last seam when ``t*`` is beyond the horizon.
+    * ``previous_seam`` — the last seam ``<= t*``;
+    * ``next_seam``     — the first seam ``>= t*``;
+    * ``closest_seam``  — the nearer of the two, a tie goes to the later seam.
 
-    where ``t* = yr(o) + L``.  Rows resolving to ``immediate`` (or where the
-    snapped ``yr_c`` equals ``yr(o)`` — e.g. ``L == 0``) are dropped: they
-    must not perturb the availability walk (the walk keeps ``yr_d`` for any
-    (e, d) absent from this frame, giving byte-parity).  Returns ``None`` if
-    the resulting frame is empty.
+    ``yr_c_run`` is the rounded start on the run calendar (``+inf`` when it is at or after the end of the model
+    horizon: the capacity would never operate), ``d_c`` the run period that starts there (null for ``+inf``).
+    ``yr_c`` is the same start on the solve's own year calendar (the one the availability walk compares
+    against), ``+inf`` when ``d_c`` is not a period of the solve (the investment would start to operate after
+    the solve).  Decisions that resolve to ``immediate`` or whose start rounds back onto ``o`` are left out, so a
+    model without lead times gets ``None`` (the walks keep ``yr_d``, byte-identical).
 
-    **[F2] Seam-calendar identity under recourse.**  The seam years are
-    read from :func:`._derived._p_years_d_lf` through the *identical*
-    provider/workdir resolution :func:`._walks.period_walk_iterator`
-    uses (the Slice-D fallback block), so that under recourse a branch order
-    period's ``yr(o)`` lands on the same calendar the walk compares
-    ``yr_dall`` against.  Reproduced verbatim below.
+    ``run_calendar`` is the :class:`._run_calendar.RunCalendar` of the run; without one (a solve built on its
+    own) the solve's in-use periods and its ``years_represented`` stand in for it.
+
+    The solve's year of ``o`` comes from :func:`._derived._p_years_d_lf` through the same provider / workdir
+    resolution :func:`._walks.period_walk_iterator` uses, so a branch period's year lands on the calendar the
+    walk compares against.  The solve calendar and the run calendar differ by a constant offset (a solve that is
+    not handed the run history counts years from its own first period); a varying offset, or two solves giving
+    a period different years, raises :class:`CommissioningLagError` on a model with a lead time.
     """
+    from flextool.engine.input._solve_state import CommissioningLagError
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL, solve_calendar
+
     if not period_in_use:
         return None
-    # [F2] Mirror period_walk_iterator's provider/workdir fallback block
-    # (_walks.py:269-276) VERBATIM so this helper's _p_years_d_lf
-    # call hits the identical calendar as the walk's yr_dall.
+    # Mirror period_walk_iterator's provider/workdir fallback block so this helper's _p_years_d_lf call hits the
+    # identical calendar as the walk's yr_dall.
     if provider is None:
         from flextool.engine.preprocess.params._derived import (
             _recourse_walk_provider,
@@ -416,133 +459,96 @@ def commissioning_year_lf(source: "InputSource",
         if provider is not None and workdir is None:
             workdir = _recourse_walk_workdir()
 
-    # [F2b] Whether this model genuinely configures a lag (some entity has
-    # ``construction_lead_time > 0``).  Gates the loud-on-desync guards below
-    # so a no-lag model stays byte-identical (returns ``None`` silently) while
-    # a lag-configured model can never SILENTLY produce an empty commissioning
-    # frame from an unresolvable seam calendar — the exact silent-no-lag the
-    # Slice H guards exist to prevent (e.g. a stale recourse walker Provider
-    # resolving ``p_years_d.csv`` from the wrong solve → no in-use seam).
-    _lag_cfg = _construction_lag_configured(source)
+    # Whether the model configures a lag (some construction_lead_time > 0): a calendar problem is then an error
+    # instead of a silent unlagged solve.
+    lag_cfg = _construction_lag_configured(source)
 
     from flextool.engine.preprocess.params._derived import _p_years_d_lf
     pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
-        if _lag_cfg:
-            from flextool.engine.input._solve_state import CommissioningLagError
+        if lag_cfg:
             raise CommissioningLagError(
-                "commissioning_year_lf could not resolve a period-year "
-                "calendar (_p_years_d_lf returned None) on a model with a "
-                "configured construction_lead_time (> 0); refusing to "
-                "silently solve the unlagged model (Slice H F2b).")
+                "The start of operation of investments with a construction_lead_time cannot be found: the solve "
+                f"'{active_solve}' has no period years.")
         return None
+    walk_yr: dict[str, float] = {}
+    for d, y in pyd_lf.select(pl.col("d").cast(pl.Utf8), "yr").collect().iter_rows():
+        if d is not None and y is not None:
+            walk_yr.setdefault(str(d), float(y))
+    in_use = [str(d) for d in period_in_use]
+    in_use_yr = {d: walk_yr[d] for d in in_use if d in walk_yr}
+    if lag_cfg and not in_use_yr:
+        raise CommissioningLagError(
+            "The start of operation of investments with a construction_lead_time cannot be found: no period of "
+            f"solve '{active_solve}' has a year.")
 
-    # Per-(e, o) lead time over the anchor grid, then resolve the method.
+    # Per-(e, o) lead time over the anchor grid, then the method; only decisions with a lead time can move.
     lead_lf = (_resolve_per_period_lf(
                     _per_entity_param_lf(source, "construction_lead_time"),
                     anchor_ed_lf, fill=0.0)
                  .rename({"value": "L"})
                  .select("e", "d", "L"))
-    lead_lf = _construction_method_with_default_lf(source, lead_lf)
-
-    # Order-period year yr(o).  Align pyd.d to the anchor d dtype and
-    # fill_null(0.0) exactly as the walk does for yr_d (calendar identity).
-    d_dt = anchor_ed_lf.collect_schema().get("d", pl.Utf8)
-    pyd_d = pyd_lf.rename({"yr": "yr_o"})
-    if d_dt != pl.Utf8:
-        pyd_d = pyd_d.with_columns(pl.col("d").cast(d_dt, strict=False))
-    work = (lead_lf
-              .join(pyd_d, on="d", how="left")
-              .with_columns(pl.col("yr_o").fill_null(0.0)))
-
-    # Seam set S = distinct period-boundary years over ``period_in_use``
-    # (design §2.1) — the values ``yr_dall`` actually takes in the walk.
-    # Restricting to period_in_use is load-bearing: a stray out-of-horizon
-    # period in ``p_years_d`` would otherwise become a phantom ``hi`` seam
-    # and corrupt closest/next snapping (design §2.2 relies on S being
-    # exactly the in-use year set).  Branch-invariant as a set (branch
-    # copies duplicate anchor years).
-    seams = (pyd_lf
-               .filter(pl.col("d").cast(pl.Utf8).is_in(period_in_use))
-               .select(pl.col("yr").alias("seam"))
-               .unique()
-               .sort("seam"))
-
-    # [F2b] An EMPTY seam set on a lag-configured model is a calendar
-    # DESYNC — none of the in-use periods resolved a year (e.g. the seam
-    # calendar came from the wrong solve's ``p_years_d.csv`` via a stale
-    # recourse walker Provider, whose periods don't intersect
-    # ``period_in_use``).  Every snap would then collapse to null → an empty
-    # frame → the lag SILENTLY vanishes.  This is distinct from a legitimate
-    # round-to-zero / immediate model, whose seam set is non-empty (the lag
-    # simply snaps back onto the order period).  Surface it loudly.
-    if _lag_cfg and seams.select(pl.len()).collect().item() == 0:
-        from flextool.engine.input._solve_state import CommissioningLagError
-        raise CommissioningLagError(
-            "commissioning_year_lf resolved an EMPTY seam set over "
-            "period_in_use on a model with a configured "
-            "construction_lead_time (> 0) — the period-year calendar does "
-            "not cover any in-use period (calendar desync, e.g. a stale "
-            "recourse walker Provider); refusing to silently solve the "
-            "unlagged model (Slice H F2b).")
-
-    inf = float("inf")
-    work = (work
-              .with_columns(t_star=pl.col("yr_o") + pl.col("L"))
-              .sort("t_star"))
-    # lo = last seam <= t*  (always exists: yr(o) <= t*, yr(o) in S).
-    work = work.join_asof(
-        seams.rename({"seam": "lo"}),
-        left_on="t_star", right_on="lo", strategy="backward")
-    # hi = first seam >= t*  (null when t* is beyond the last seam).
-    work = work.join_asof(
-        seams.rename({"seam": "hi"}),
-        left_on="t_star", right_on="hi", strategy="forward")
-
-    closest = (pl.when(pl.col("hi").is_null())
-                 .then(pl.col("lo"))
-                 .when((pl.col("t_star") - pl.col("lo"))
-                       < (pl.col("hi") - pl.col("t_star")))
-                 .then(pl.col("lo"))
-                 .otherwise(pl.col("hi")))
-    next_seam = (pl.when(pl.col("hi").is_null())
-                   .then(pl.lit(inf))
-                   .otherwise(pl.col("hi")))
-    yr_c = (pl.when(pl.col("method") == "previous_seam")
-              .then(pl.col("lo"))
-              .when(pl.col("method") == "next_seam")
-              .then(next_seam)
-              .when(pl.col("method") == "closest_seam")
-              .then(closest)
-              .otherwise(pl.col("yr_o")))  # immediate / unknown -> no lag
-
-    out = (work
-             .with_columns(yr_c=yr_c.cast(pl.Float64))
-             # Drop immediate rows and any snap that lands on the order
-             # period (L=0, or a snap back to yr(o)) — they must not
-             # perturb the walk (byte-parity by omission).
-             .filter((pl.col("method") != "immediate")
-                     & (pl.col("yr_c") != pl.col("yr_o")))
-             .select("e", "d", "yr_c"))
-
-    out_df = out.collect()
-    if out_df.height == 0:
+    lead_df = (_construction_method_with_default_lf(source, lead_lf)
+                 .filter((pl.col("L") > 0.0) & (pl.col("method") != _CONSTRUCTION_METHOD_IMMEDIATE))
+                 .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "L", "method")
+                 .collect())
+    if lead_df.height == 0 or not in_use_yr:
         return None
-    return out_df.lazy()
+
+    rc = run_calendar
+    if rc is None:
+        rc = solve_calendar(in_use_yr, _solve_years_represented(source, active_solve))
+    if rc.conflicts:
+        period, s_a, y_a, s_b, y_b = rc.conflicts[0]
+        raise CommissioningLagError(
+            f"Construction lead times need one year for each period, but solve '{s_a}' puts period '{period}' "
+            f"{y_a:g} years and solve '{s_b}' {y_b:g} years from the start of the model.  Give the solves the "
+            f"same years_represented for the periods they share.")
+    offsets = {d: rc.years[d] - y for d, y in in_use_yr.items() if d in rc.years}
+    if not offsets:
+        raise CommissioningLagError(
+            f"The periods of solve '{active_solve}' are not on the run calendar; the start of operation of "
+            "investments with a construction_lead_time cannot be found.")
+    offset = next(iter(offsets.values()))
+    for d, off in offsets.items():
+        if abs(off - offset) > YEAR_TOL:
+            raise CommissioningLagError(
+                f"Solve '{active_solve}' puts period '{d}' {in_use_yr[d]:g} years after its start, which does "
+                "not match the run calendar.  Construction lead times need one year for each period.")
+    seams = rc.seams()
+    horizon_end = rc.horizon_end
+    inf = float("inf")
+
+    rows: list[tuple[str, str, float, str | None, float, float]] = []
+    for e, o, lead, method in lead_df.iter_rows():
+        yr_o_run = walk_yr.get(o, 0.0) + offset
+        yr_c_run = _snap_start(yr_o_run + float(lead), str(method), seams)
+        if abs(yr_c_run - yr_o_run) <= YEAR_TOL:
+            continue  # rounds back onto the decision period: no lag
+        if horizon_end is not None and yr_c_run >= horizon_end - YEAR_TOL:
+            yr_c_run = inf
+        d_c = None if yr_c_run == inf else rc.period_at(yr_c_run)
+        yr_c = inf
+        if yr_c_run != inf:
+            for y in in_use_yr.values():
+                if abs(y + offset - yr_c_run) <= YEAR_TOL:
+                    yr_c = y
+                    break
+        rows.append((e, o, yr_c, d_c, float(lead), yr_c_run))
+    if not rows:
+        return None
+    out = pl.DataFrame(rows, schema={"e": pl.Utf8, "d": pl.Utf8, "yr_c": pl.Float64, "d_c": pl.Utf8,
+                                     "L": pl.Float64, "yr_c_run": pl.Float64}, orient="row")
+    return out.lazy()
 
 
 def _construction_lag_configured(source: "InputSource") -> bool:
-    """True when some entity carries a non-default (> 0)
-    ``construction_lead_time`` — i.e. the model genuinely configures a
-    commissioning lag (Slice H MINOR-3).
+    """True when some entity carries a ``construction_lead_time > 0``: the model configures a lag.
 
-    Used to decide whether a :func:`commissioning_year_lf` failure must be
-    LOUD (a lag-configured model → surface the bug rather than silently
-    solve the wrong, unlagged model) or is harmless (no lag anywhere → the
-    helper legitimately returns ``None`` and the walk keeps ``yr_d``, so a
-    swallow-to-``None`` is byte-parity-safe).  Deliberately conservative:
-    any ``construction_lead_time > 0`` counts, even paired with an explicit
-    ``immediate`` method, so a real misconfiguration is never masked.
+    Decides whether a :func:`commissioning_year_lf` failure must be loud (a lag-configured model) or is
+    harmless (no lag anywhere: the helper returns ``None`` and the walk keeps ``yr_d``).  Any
+    ``construction_lead_time > 0`` counts, even with an explicit ``immediate`` method, so a misconfiguration is
+    never masked.
     """
     try:
         lead = _per_entity_param_lf(source, "construction_lead_time")
@@ -554,57 +560,64 @@ def _construction_lag_configured(source: "InputSource") -> bool:
         return False
 
 
-def assert_no_forced_out_of_horizon_commission(
-        source: "InputSource",
-        commission_lf: pl.LazyFrame | None,
-        ) -> None:
-    """[F5] Forbid a FORCED order whose commissioning is out-of-horizon.
+def offered_invest_set(ed_invest: pl.DataFrame,
+                         commission_lf: pl.LazyFrame | None,
+                         ) -> tuple[pl.DataFrame, pl.DataFrame | None]:
+    """``(offered, not_offered)``: ``ed_invest`` without the decisions whose capacity would start to operate
+    after the solve (``yr_c = +inf``), and those decisions (``[e, d, d_c, L, yr_c_run]``; ``None`` when every
+    decision is offered).  Without a lead time ``ed_invest`` is returned unchanged."""
+    if commission_lf is None or ed_invest is None or ed_invest.height == 0:
+        return ed_invest, None
+    late = (commission_lf.filter(pl.col("yr_c").is_infinite())
+                         .select("e", "d", "d_c", "L", "yr_c_run").collect())
+    if late.height == 0:
+        return ed_invest, None
+    key = pl.concat_str([pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)], separator="\x1f")
+    late_keys = late.select(key.alias("k"))["k"]
+    offered = ed_invest.filter(~key.is_in(late_keys.implode()))
+    return offered, late
 
-    An order whose ``next_seam`` commissioning falls beyond the last seam
-    gets ``yr_c = +inf`` (buys no in-horizon capacity — OQ-7).  For a
-    *voluntary* order that is harmless (the model just never picks it).
-    But when ``invest_forced`` or ``invest_min_period`` PINS
-    ``v_invest >= target`` at that order period, the solve would pay the
-    annuity ``[yr_d, yr_d+life)`` for capacity it never receives (or the
-    forced target becomes unmeetable).  Raise a clear
-    :class:`FlexToolConfigError` rather than solve a silently-degenerate
-    model (design §6 OQ-7 F5).
 
-    ``commission_lf`` is the frame from :func:`commissioning_year_lf`
-    (``None`` -> nothing to check).  Only its ``+inf`` rows are
-    out-of-horizon; ``closest_seam`` / ``previous_seam`` always snap to an
-    in-horizon seam.
-    """
-    if commission_lf is None:
+def warn_investments_not_offered(source: "InputSource",
+                                     active_solve: str | None,
+                                     not_offered: pl.DataFrame | None,
+                                     period_in_use: list[str],
+                                     run_calendar: "object | None" = None,
+                                     ) -> None:
+    """Warn once per run for each entity and solve whose investment decisions are not offered because the
+    capacity would start to operate after the end of the solve or of the model horizon.  Names the entity, its
+    lead time, the decision periods and the horizon."""
+    if not_offered is None or not_offered.height == 0:
         return
-    oo = (commission_lf
-            .filter(pl.col("yr_c").is_infinite())
-            .select("e", "d"))
-    if oo.collect().height == 0:
-        return
-    # Does invest_forced or invest_min_period pin v_invest > 0 at (e, o)?
-    forced_parts: list[pl.LazyFrame] = []
-    for name in ("invest_forced", "invest_min_period"):
-        resolved = _resolve_per_period_lf(
-            _per_entity_param_lf(source, name), oo, fill=0.0)
-        forced_parts.append(
-            resolved.filter(pl.col("value") > 0.0).select("e", "d"))
-    forced = pl.concat(forced_parts, how="vertical").unique()
-    bad = oo.join(forced, on=["e", "d"], how="inner").collect()
-    if bad.height > 0:
-        pairs = ", ".join(f"({e}, {d})"
-                          for e, d in bad.select("e", "d").rows())
-        from flextool.engine.input._solve_state import FlexToolConfigError
-        raise FlexToolConfigError(
-            "construction_lead_time_method=next_seam pins a forced "
-            "investment (invest_forced / invest_min_period) whose "
-            "commissioning falls beyond the model horizon for: "
-            f"{pairs}.  The forced capacity would never be delivered "
-            "in-horizon while still charged its annuity from the order "
-            "period.  Either shorten the lead time, move the order earlier, "
-            "extend the horizon, drop the forced/min-period requirement, or "
-            "use a non-next_seam method (design §6 OQ-7 F5)."
-        )
+    from flextool.engine import _behaviour_changes
+
+    classes = {str(e): str(ec) for e, ec in _entity_class_lf(source)
+               .select(pl.col("e").cast(pl.Utf8), "ec").collect().iter_rows()}
+    model_end = getattr(run_calendar, "last_period", None)
+    solve_end = str(period_in_use[-1]) if period_in_use else "?"
+    for (e,), grp in not_offered.sort("e", "d").group_by(["e"], maintain_order=True):
+        e = str(e)
+        cls = classes.get(e, "entity")
+        for after_model, part in ((True, grp.filter(pl.col("yr_c_run").is_infinite())),
+                                  (False, grp.filter(~pl.col("yr_c_run").is_infinite()))):
+            if part.height == 0:
+                continue
+            leads = sorted({float(v) for v in part["L"].to_list()})
+            lead_txt = " / ".join(f"{v:g}" for v in leads)
+            periods = ", ".join(str(d) for d in part["d"].to_list())
+            if after_model:
+                horizon = (f"the end of the model horizon (the end of period {model_end})" if model_end
+                           else "the end of the model horizon")
+                text = (f"Warning: {cls} {e}: construction_lead_time {lead_txt} years; investments decided in "
+                        f"{periods} would start to operate after {horizon} and are not offered.")
+                key = ("construction_lead_time_after_model", active_solve, e)
+            else:
+                text = (f"Warning: {cls} {e}: construction_lead_time {lead_txt} years; investments decided in "
+                        f"{periods} would start to operate after the end of solve {active_solve} "
+                        f"({solve_end}) and are not offered. Use a longer solve horizon or "
+                        f"construction_lead_time_method immediate.")
+                key = ("construction_lead_time_after_solve", active_solve, e)
+            _behaviour_changes.warn_once(key, text)
 
 
 # ---------------------------------------------------------------------------

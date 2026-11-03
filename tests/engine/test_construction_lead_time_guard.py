@@ -195,7 +195,7 @@ def test_build_commission_lf_surfaces_helper_error_when_lag_configured(
     monkeypatch.setattr(
         "flextool.engine.preprocess.params._existing.commissioning_year_lf",
         _raise_runtime)
-    with pytest.raises(CommissioningLagError, match="MINOR-3"):
+    with pytest.raises(CommissioningLagError, match="construction_lead_time"):
         _build_commission_lf(
             _source_with_lead(6.0), "s", _ed_lf("nuke"), PERIODS, None)
 

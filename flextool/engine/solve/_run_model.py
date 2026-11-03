@@ -60,6 +60,7 @@ from flextool.engine.preprocess import _provider_keys
 from flextool.engine.preprocess import _provider_translators
 
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess.params._run_calendar import RUN_CALENDAR_KEY, build_run_calendar
 from flextool.engine.solve._realized_overlap import (
     effective_realized_invest_periods,
     find_realized_invest_overlaps,
@@ -598,6 +599,10 @@ def native_run_model(state, solver) -> int:
                 cumulative_contributions.append((period[0], period[1]))
                 cumulative_period_names.add(period[0])
 
+    # The run calendar: the year of every period of the run (the start of operation of an investment with a
+    # construction lead time is rounded on it).  The same frame goes to every sub-solve.
+    run_calendar = build_run_calendar(solve_period_history, state.solve.real_solves)
+
     # ------------------------------------------------------------------
     # 3. Stochastic branching expansion.
     # ------------------------------------------------------------------
@@ -1091,6 +1096,7 @@ def native_run_model(state, solver) -> int:
             if state.solve.solve_modes.get(cs) == "rolling_window"
             else _roll_period_whole({}, {}, []))
         # Written for every sub-solve, as the level Provider is shared by the iters of a level.
+        sub_solve_provider.put(RUN_CALENDAR_KEY, run_calendar)
         sub_solve_provider.put(_provider_keys.SOLVE_DATA_STORAGE_SOLVE_AT_MODEL_END,
                                pl.DataFrame({"value": [storage_solve_at_model_end[i]]}, schema={"value": pl.Boolean}))
         pb_time, pb_succ = make_period_block(active_time_lists[solve])

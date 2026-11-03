@@ -690,6 +690,9 @@ class FlexData:
     nd_divest_set: pl.DataFrame | None = None        # (n, d)
     edd_invest_set: pl.DataFrame | None = None       # (e, d_invest, d)
     edd_invest_lookback_set: pl.DataFrame | None = None  # (e, d_invest, d) strict d_invest<d
+    # (e, d, d_c) — start of operation d_c (a run period) of each offered investment decision d with a
+    # construction lead time; None without lead times (apply_derived_c).
+    ed_invest_commission: pl.DataFrame | None = None
     edd_divest_active: pl.DataFrame | None = None    # (p, d_divest, d) where d_divest ≤ d
     ndd_divest_active: pl.DataFrame | None = None    # (n, d_divest, d) where d_divest ≤ d — node analogue
     p_entity_max_units: Param | None = None          # (e, d)
@@ -6135,6 +6138,25 @@ def build_handoff_from_solution(
         for d in iter_periods:
             iter_keys.add((e, d))
 
+    # ---- this solve's realized investments, keyed by the period they start to operate ----
+    # Without a construction lead time that is the decision period.  With one it is the start of operation
+    # (``ed_invest_commission``, found by this solve on the run calendar), so a later solve counts the
+    # capacity, and its lifetime, from there.
+    commission_of: dict[tuple[str, str], str] = {}
+    _commission = getattr(flex_data, "ed_invest_commission", None)
+    if _commission is not None and _commission.height > 0:
+        for _e, _o, _dc in _commission.select(
+                pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("d_c").cast(pl.Utf8)).iter_rows():
+            if _dc is not None:
+                commission_of[(_e, _o)] = _dc
+    realized_by_ed: dict[tuple[str, str], float] = {}
+    for (_e, _o), _v in invest_by_ed.items():
+        if _o not in realize_invest:
+            continue
+        _key = (_e, commission_of.get((_e, _o), _o))
+        realized_by_ed[_key] = realized_by_ed.get(_key, 0.0) + _v
+    iter_keys.update(realized_by_ed)
+
     # ---- compute realized_invest + realized_existing per (e, d) ----
     # The handoff is a CHAIN-CUMULATIVE record: every solve carries
     # forward prior solves' (e, d) contributions and ADDS its own.
@@ -6156,9 +6178,9 @@ def build_handoff_from_solution(
         # at periods belonging to that solve's period_first set.
         if first_solve and d in period_first:
             existing += pre_existing.get((d, e), 0.0)
-        # This solve's invest contribution at (e, d).
-        if (e, d) in invest_by_ed and d in realize_invest:
-            v = invest_by_ed[(e, d)]
+        # This solve's invest contribution starting to operate at (e, d).
+        if (e, d) in realized_by_ed:
+            v = realized_by_ed[(e, d)]
             us = unitsize.get(e, 1.0)
             existing += v * us
             invested += v * us

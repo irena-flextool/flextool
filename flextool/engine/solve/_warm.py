@@ -98,7 +98,7 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "ed_invest_set", "ed_divest_set",
     "pd_invest_set", "pd_divest_set",
     "nd_invest_set", "nd_divest_set",
-    "edd_invest_set", "edd_invest_lookback_set", "edd_divest_active",
+    "edd_invest_set", "edd_invest_lookback_set", "ed_invest_commission", "edd_divest_active",
     "ndd_divest_active",
     "e_invest_total", "e_divest_total",
     "ed_invest_period_set", "ed_divest_period_set",

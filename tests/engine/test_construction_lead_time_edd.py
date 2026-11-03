@@ -9,22 +9,24 @@ calendar (seams ``S = {0, 5, 8, 20}``), without invoking the LP.  Pins:
   snapped commissioning year, per method;
 * §7c byte-parity — ``immediate`` / ``L=0`` == no lead time at all;
 * §7f lifetime-from-commissioning — a bounded cohort's window is
-  ``[yr_c, yr_c + life)``, not ``[yr_c, yr_order + life)``.
+  ``[yr_c, yr_c + life)``, not ``[yr_c, yr_order + life)``;
+* a decision whose rounded start is at or after the end of the horizon is not offered.
 
 The §2.5 [F3] silent-no-lag guard is pinned in
 ``test_construction_lead_time_guard``.
 """
 from __future__ import annotations
 
+import math
+
 import polars as pl
 import pytest
 
 from flextool.engine.preprocess.params._existing import (
-    assert_no_forced_out_of_horizon_commission,
     commissioning_year_lf,
     edd_invest_set_lf,
+    offered_invest_set,
 )
-from flextool.engine.input._solve_state import FlexToolConfigError
 
 PERIODS = ["p1", "p2", "p3", "p4"]
 YEARS = [0.0, 5.0, 8.0, 20.0]
@@ -64,8 +66,7 @@ def _years_df() -> pl.DataFrame:
 
 
 def _source(*, entity="nuke", lifetime_method="reinvest_automatic",
-            life=None, lead=None, method=None,
-            invest_forced=None) -> _StubSource:
+            life=None, lead=None, method=None) -> _StubSource:
     entities = {"unit": pl.DataFrame({"name": [entity]})}
     params: dict[tuple[str, str], pl.DataFrame] = {
         ("solve", "years_from_start"): _years_df(),
@@ -81,10 +82,6 @@ def _source(*, entity="nuke", lifetime_method="reinvest_automatic",
     if method is not None:
         params[("unit", "construction_lead_time_method")] = pl.DataFrame(
             {"name": [entity], "value": [method]})
-    if invest_forced is not None:
-        period, val = invest_forced
-        params[("unit", "invest_forced")] = pl.DataFrame(
-            {"name": [entity], "period": [period], "value": [float(val)]})
     return _StubSource(entities, params)
 
 
@@ -154,37 +151,48 @@ def test_bounded_cohort_no_lag_control() -> None:
     assert _alive(src) == ["p1", "p2", "p3"]
 
 
-# --- §7k [F5] forced-order out-of-horizon guard -------------------------
+# --- decisions starting after the horizon are not offered ---------------
 
-def _commission(src, order="p3"):
+def _commission(src, orders):
     return commissioning_year_lf(
-        src, "s", pl.LazyFrame({"e": ["nuke"], "d": [order]}), PERIODS)
+        src, "s", pl.LazyFrame({"e": ["nuke"] * len(orders), "d": orders}), PERIODS)
 
 
-def test_forced_out_of_horizon_raises() -> None:
-    """order p3 (yr 8), L=15 next_seam -> t*=23 > 20 -> yr_c=+inf; with
-    invest_forced pinned at (nuke, p3) the guard raises FlexToolConfigError
-    rather than pay-for-never-delivered capacity."""
-    src = _source(lead=15.0, method="next_seam", invest_forced=("p3", 1.0))
-    commission_lf = _commission(src, "p3")
-    with pytest.raises(FlexToolConfigError, match="beyond the model horizon"):
-        assert_no_forced_out_of_horizon_commission(src, commission_lf)
+def _with_years_represented(src):
+    """The calendar's periods last 5, 3, 12 and 5 years: the horizon ends at 25."""
+    src._params[("solve", "years_represented")] = pl.DataFrame(
+        {"name": ["s"] * 4, "period": PERIODS, "value": [5.0, 3.0, 12.0, 5.0]})
+    return src
 
 
-def test_voluntary_out_of_horizon_does_not_raise() -> None:
-    """Same out-of-horizon order but NOT forced -> allowed (the sentinel
-    makes it inert; the model simply never picks it)."""
-    src = _source(lead=15.0, method="next_seam")
-    commission_lf = _commission(src, "p3")
-    # No raise.
-    assert_no_forced_out_of_horizon_commission(src, commission_lf)
+def test_start_after_horizon_is_not_offered() -> None:
+    """Horizon end 25 (p4 starts at 20 and lasts 5 years).  L=15, next_seam: the p3 decision (yr 8, t* = 23)
+    rounds to the horizon end, so its capacity never operates and it is not offered; the p1 decision (t* = 15)
+    rounds to p4 (20) and is offered.  closest_seam gives the same: |23 - 20| = 3 > |25 - 23| = 2, so p3 rounds to
+    the horizon end."""
+    for method in ("next_seam", "closest_seam"):
+        src = _with_years_represented(_source(lead=15.0, method=method))
+        commission_lf = _commission(src, ["p1", "p3"])
+        ed = pl.DataFrame({"e": ["nuke", "nuke"], "d": ["p1", "p3"]})
+        offered, late = offered_invest_set(ed, commission_lf)
+        assert offered["d"].to_list() == ["p1"], method
+        assert late["d"].to_list() == ["p3"], method
+        assert math.isinf(late["yr_c_run"][0])
 
 
-def test_forced_in_horizon_does_not_raise() -> None:
-    """A forced order whose commissioning IS in-horizon (closest_seam snaps
-    to the last seam) is fine — only +inf (next_seam past the horizon)
-    trips the guard."""
-    src = _source(lead=15.0, method="closest_seam",
-                  invest_forced=("p3", 1.0))
-    commission_lf = _commission(src, "p3")
-    assert_no_forced_out_of_horizon_commission(src, commission_lf)
+def test_previous_seam_start_inside_horizon_is_offered() -> None:
+    """The same p3 decision with previous_seam rounds t* = 23 down to p4 (20): offered."""
+    src = _with_years_represented(_source(lead=15.0, method="previous_seam"))
+    commission_lf = _commission(src, ["p3"])
+    offered, late = offered_invest_set(pl.DataFrame({"e": ["nuke"], "d": ["p3"]}), commission_lf)
+    assert offered["d"].to_list() == ["p3"]
+    assert late is None
+    row = commission_lf.collect().row(0, named=True)
+    assert (row["yr_c"], row["d_c"]) == (20.0, "p4")
+
+
+def test_no_lead_time_offers_every_decision() -> None:
+    ed = pl.DataFrame({"e": ["nuke"], "d": ["p3"]})
+    offered, late = offered_invest_set(ed, _commission(_source(lead=None, method=None), ["p3"]))
+    assert offered.equals(ed)
+    assert late is None

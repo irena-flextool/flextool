@@ -1916,6 +1916,7 @@ def master_network_data(
     new.ed_divest_set = _keep_entity_frame(data.ed_divest_set)
     new.edd_invest_set = _keep_entity_frame(data.edd_invest_set)
     new.edd_invest_lookback_set = _keep_entity_frame(data.edd_invest_lookback_set)
+    new.ed_invest_commission = _keep_entity_frame(getattr(data, "ed_invest_commission", None))
     new.edd_divest_active = _keep_entity_frame(data.edd_divest_active)
     new.p_entity_max_units = _keep_entity_param(data.p_entity_max_units)
     new.ed_lifetime_fixed_cost = _keep_entity_param(data.ed_lifetime_fixed_cost)

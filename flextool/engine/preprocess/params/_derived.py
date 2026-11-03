@@ -5928,22 +5928,20 @@ def _build_commission_lf(source: "InputSource",
                              ed_lf: "pl.LazyFrame",
                              period_in_use,
                              workdir: "Path | None",
+                             *,
+                             provider: "object | None" = None,
                              ) -> "pl.LazyFrame | None":
-    """Slice H — build the commissioning-year frame, surfacing failures.
+    """The start-of-operation frame of the investment decisions (construction lead time), failures surfaced.
 
-    Shared by :func:`apply_derived_c` and
-    :func:`apply_synthetic_invest_sets` (both thread the result into the
-    availability walk).  Returns the ``[e, d, yr_c]`` lag frame, or ``None``
-    when there are no in-use periods / no entity has a lag-active method.
+    Shared by :func:`apply_derived_c` and :func:`apply_synthetic_invest_sets`.  Returns the frame of
+    :func:`._existing.commissioning_year_lf` on the run calendar the sub-solve ``provider`` carries, or ``None``
+    when there are no in-use periods or no decision has a lead time.  ``provider`` gives only the run calendar;
+    the solve's year calendar is resolved as the availability walks resolve it.
 
-    A :class:`CommissioningLagError` from the helper propagates unchanged.
-    Any OTHER helper failure is swallowed to ``None`` ONLY when the model
-    configures no construction lead time (``construction_lead_time`` all
-    ``<= 0`` -> the helper legitimately returns ``None`` -> byte-parity for
-    existing models).  On a genuinely lag-configured model the failure is
-    re-raised as :class:`CommissioningLagError` so a real misconfiguration
-    is never masked into a silently-unlagged (byte-parity-looking but
-    wrong) solve (Slice H MINOR-3).
+    A :class:`CommissioningLagError` from the helper propagates unchanged.  Any other helper failure is
+    swallowed to ``None`` only when the model configures no construction lead time (byte-parity for models
+    without one); on a lag-configured model it is re-raised as :class:`CommissioningLagError`, so a
+    misconfiguration never turns into a silently unlagged solve.
     """
     if not period_in_use:
         return None
@@ -5951,20 +5949,61 @@ def _build_commission_lf(source: "InputSource",
         _construction_lag_configured as _lag_configured,
         commissioning_year_lf as _commissioning_year_lf,
     )
+    from flextool.engine.preprocess.params._run_calendar import read_run_calendar
     try:
         return _commissioning_year_lf(
             source, active_solve, ed_lf, list(period_in_use),
-            workdir=workdir)
+            workdir=workdir, run_calendar=read_run_calendar(provider))
     except CommissioningLagError:
         raise
     except Exception as exc:
         if _lag_configured(source):
             raise CommissioningLagError(
-                "commissioning_year_lf failed on a model with a configured "
-                "construction_lead_time (> 0); refusing to silently solve "
-                "the unlagged model (Slice H MINOR-3)."
+                "Finding the start of operation of investments with a construction_lead_time failed; refusing "
+                "to solve the model without the lead time."
             ) from exc
         return None
+
+
+def _offer_invest_set(flex_data: object,
+                         source: "InputSource",
+                         active_solve: str | None,
+                         ed_inv: "pl.DataFrame | None",
+                         period_in_use,
+                         workdir: "Path | None",
+                         *,
+                         provider: "object | None" = None,
+                         ) -> tuple["pl.DataFrame | None", "pl.LazyFrame | None"]:
+    """``(ed_invest offered, commission frame)``: drop the investment decisions whose capacity would start to
+    operate after the solve or the model horizon (with a warning), and keep the start of operation of the rest
+    on ``flex_data.ed_invest_commission`` (``[e, d, d_c]``, the decisions with a lead time; ``None`` without).
+
+    When decisions are dropped, the invest-set fields of ``flex_data`` are cleared, so no earlier value (seed)
+    brings them back where the offered set leaves one empty."""
+    flex_data.ed_invest_commission = None
+    if ed_inv is None or ed_inv.height == 0 or not period_in_use:
+        return ed_inv, None
+    from flextool.engine.preprocess.params._existing import (
+        offered_invest_set as _offered,
+        warn_investments_not_offered as _warn,
+    )
+    from flextool.engine.preprocess.params._run_calendar import read_run_calendar
+    commission_lf = _build_commission_lf(
+        source, active_solve, ed_inv.lazy().select("e", "d"), period_in_use, workdir, provider=provider)
+    if commission_lf is None:
+        return ed_inv, None
+    offered, late = _offered(ed_inv, commission_lf)
+    _warn(source, active_solve, late, list(period_in_use), read_run_calendar(provider))
+    kept = (commission_lf.filter(pl.col("yr_c").is_finite())
+                         .select("e", "d", "d_c").collect())
+    flex_data.ed_invest_commission = kept if kept.height > 0 else None
+    if late is not None:
+        # The sets built from ed_invest_set are set below only where they have rows; clear the earlier values
+        # (seeds) so a set left empty by the dropped decisions does not keep them.
+        for name in ("ed_invest_set", "pd_invest_set", "nd_invest_set", "ed_invest_period_set",
+                     "edd_invest_set", "edd_invest_lookback_set"):
+            setattr(flex_data, name, None)
+    return offered, commission_lf
 
 
 def apply_derived_c(
@@ -6094,6 +6133,16 @@ def apply_derived_c(
     # structural filter to preserve the SET-frame contract.
     ed_inv_db = ed_invest_set_from_source(
         source, active_solve, workdir, ctx=ctx, provider=provider)
+    # Construction lead time: the start of operation of each investment decision, on the run calendar.  The
+    # decisions whose capacity would start to operate after the solve or the model horizon are not offered.
+    # The frame is threaded into the availability walks below (edd_invest_lookback_set + edd_invest_set);
+    # ``None`` when no decision has a lead time (byte-parity).
+    _c_period_in_use = _period_in_use_set(source, active_solve, workdir,
+                                             ctx=ctx, provider=provider)
+    ed_inv_db, commission_lf = _offer_invest_set(
+        flex_data, source, active_solve,
+        ed_inv_db if ed_inv_db is not None else getattr(flex_data, "ed_invest_set", None),
+        _c_period_in_use, workdir, provider=provider)
     if ed_inv_db is not None and ed_inv_db.height > 0:
         flex_data.ed_invest_set = ed_inv_db
 
@@ -6191,28 +6240,6 @@ def apply_derived_c(
     # edd_invest_lookback uses the (possibly-overlaid) ed_invest_set.
     ed_inv_used = ed_inv_db if (ed_inv_db is not None and ed_inv_db.height > 0) \
                    else getattr(flex_data, "ed_invest_set", None)
-
-    # Slice H — construction lead time.  Build the commissioning-year frame
-    # ONCE per solve over the ed_invest order-period anchors and thread it
-    # into BOTH availability walks below (edd_invest_lookback_set +
-    # edd_invest_set).  ``None`` when no entity has a lag-active method ->
-    # byte-parity.  provider is left to the helper's [F2] mirror (matching
-    # the walks, which resolve provider=None -> _recourse_walk_provider());
-    # the NPV/cost walks never receive it, so cost stays at the order period.
-    _c_period_in_use = _period_in_use_set(source, active_solve, workdir,
-                                             ctx=ctx, provider=provider)
-    commission_lf = None
-    if ed_inv_used is not None and ed_inv_used.height > 0 and _c_period_in_use:
-        from flextool.engine.preprocess.params._existing import (
-            assert_no_forced_out_of_horizon_commission as _assert_no_forced_ooh,
-        )
-        # [MINOR-3] Failures on a lag-configured model surface as a
-        # CommissioningLagError (never a silent unlagged solve).
-        commission_lf = _build_commission_lf(
-            source, active_solve, ed_inv_used.lazy().select("e", "d"),
-            _c_period_in_use, workdir)
-        # [F5] Surface a forced out-of-horizon order as a config error.
-        _assert_no_forced_ooh(source, commission_lf)
 
     try:
         eil_db = edd_invest_lookback_set_from_source(
@@ -10068,6 +10095,14 @@ def apply_synthetic_invest_sets(flex_data: object,
     # Γ.6.D forbidden filter is applied internally by the helper.
     ed_inv = ed_invest_set_from_source(
         source, active_solve, workdir=workdir, provider=provider)
+    # Construction lead time: drop the decisions whose capacity would start to operate after the solve or the
+    # model horizon (with a warning) before every set below is built from ed_invest_set.
+    synth_commission_lf = None
+    if workdir is not None:
+        ed_inv, synth_commission_lf = _offer_invest_set(
+            flex_data, source, active_solve,
+            ed_inv if ed_inv is not None else getattr(flex_data, "ed_invest_set", None),
+            _period_in_use_set(source, active_solve, workdir, provider=provider), workdir, provider=provider)
     if ed_inv is not None and ed_inv.height > 0:
         flex_data.ed_invest_set = ed_inv
     ed_div = ed_divest_set_from_source(
@@ -10119,23 +10154,9 @@ def apply_synthetic_invest_sets(flex_data: object,
         period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
         period_with_history = (_read_period_with_history(workdir, provider=provider)
                                   or list(period_in_use))
-        # Slice H — commissioning-year frame for the synthetic snapshot
-        # (deterministic lag applies to every solve).  provider is left to
-        # the helper's [F2] mirror (matching the walk, provider=None); the
-        # per-sub-solve anchor scope armed at the top of this fn feeds it.
-        # [MINOR-3] Failures on a lag-configured model surface loud.
-        commission_lf = _build_commission_lf(
-            source, active_solve, ed_inv.lazy().select("e", "d"),
-            period_in_use, workdir)
-        # [MINOR-2/F5] Mirror apply_derived_c: the synthetic invest path
-        # also threads commission_lf into the availability walk, so a forced
-        # next_seam order with +inf commissioning must be caught here too
-        # (this path may run without apply_derived_c preceding).
-        if commission_lf is not None:
-            from flextool.engine.preprocess.params._existing import (
-                assert_no_forced_out_of_horizon_commission as _assert_no_forced_ooh,
-            )
-            _assert_no_forced_ooh(source, commission_lf)
+        # The start of operation of the decisions with a construction lead time was found (and the decisions
+        # starting after the solve dropped) where ed_invest_set was built above.
+        commission_lf = synth_commission_lf
         # Slice D §8 — synthetic edd lineage filter (gated + hoisted check).
         # Build on-demand from the provider (branch-cluster runs later); the
         # anchor-pairs holder armed at the top of this fn is the conjunct.
