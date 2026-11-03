@@ -52,6 +52,7 @@ import polars as pl
 import spinedb_api as api
 
 from flextool.engine.input._constants import HOURS_PER_YEAR
+from flextool.engine.input._timeline_rules import SYNTHETIC_TIMESET
 from flextool.engine.input._solve_config import (
     DictMode,
     get_single_entities,
@@ -441,10 +442,9 @@ class TimelineConfig:
         """
         logger = logging.getLogger(__name__)
 
-        # Rule 1: No timeset → synthesise "full_timeline" from sole timeline.
+        # Rule 1: No timeset → synthesise one timeset, SYNTHETIC_TIMESET, from the sole timeline.
         if not self.timesets and len(self.timelines) == 1:
-            timeset_name = "full_timeline"
-            self.timesets = list(timeset_name)
+            self.timesets = [SYNTHETIC_TIMESET]
 
         # Rule 2: No timeset_durations + sole timeline → block the whole
         # timeline as one timeset_duration entry.  The guard is evaluated
@@ -584,6 +584,19 @@ class TimelineConfig:
                     solve_config.timesets_used_by_solves[solve] = (
                         period__timeset_list
                     )
+                elif not self.timeset_durations:
+                    message = (
+                        f"Solve '{solve}' has no 'period_timeset' and no "
+                        f"timeset is available: FlexTool creates one from "
+                        f"the timeline only when the model has exactly one "
+                        f"timeline (it has {len(self.timelines)}). Please "
+                        f"define a timeset with 'timeline' and "
+                        f"'timeset_duration' and use 'period_timeset' "
+                        f"parameter of 'solve' class to define which "
+                        f"periods and which timesets are part of the solve"
+                    )
+                    logger.error(message)
+                    raise FlexToolConfigError(message)
                 else:
                     message = (
                         "More than one timeset available and FlexTool "

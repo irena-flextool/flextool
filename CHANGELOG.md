@@ -1,5 +1,9 @@
 ## Unreleased
 
+- **A model with no timeset now runs on the whole timeline** instead of stopping with "More than one timeset
+  available". With one timeline, FlexTool creates the timeset `full_timeline` covering it and uses it for every
+  period of the solve, as documented. With several timelines and no timeset the error now says that no timeset is
+  available.
 - **`--csv-dump` shows period + time maps of node `availability`, `penalty_up` / `penalty_down` and
   `self_discharge_loss`.** The dumped `solve_data/pdtNode.csv` listed the default
   value for such a map instead of the authored one. Only the debug dump was wrong: the model already used the
