@@ -39,7 +39,7 @@ def _force_highs_names(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
 
 
 def test_build_warm_problem_keeps_names_out_by_default(scenario_run) -> None:
-    from flextool.engine.output._writer import _NamedHighsView, _names_highs
+    from flextool.engine.output._writer import _NamedHighsView, highs_with_names
     from tests._support.load import load_scenario
 
     data = load_scenario(scenario_run("wind_battery_invest"))
@@ -47,14 +47,14 @@ def test_build_warm_problem_keeps_names_out_by_default(scenario_run) -> None:
     sol = wp.solve()
     assert sol.highs_names_passed is False
     assert sol.highs.allVariableNames() == []
-    assert isinstance(_names_highs(sol), _NamedHighsView)
+    assert isinstance(highs_with_names(sol), _NamedHighsView)
 
 
 def test_view_names_equal_highs_names_with_invest_rename(scenario_run, monkeypatch) -> None:
     """``allVariableNames()`` / ``getLp().row_names_`` through the view equal
     what HiGHS returns when it holds the names, before and after the
     ``v_invest_*`` rename; no row name is empty."""
-    from flextool.engine.output._writer import _names_highs, _rename_invest_columns
+    from flextool.engine.output._writer import highs_with_names, _rename_invest_columns
     from tests._support.load import load_scenario
 
     data = load_scenario(scenario_run("wind_battery_invest"))
@@ -65,7 +65,7 @@ def test_view_names_equal_highs_names_with_invest_rename(scenario_run, monkeypat
             sols[mode] = _warm._build_warm_problem(data, solve_name="test").solve()
     ref, got = sols["always"], sols["auto"]
     assert ref.highs_names_passed and not got.highs_names_passed
-    ref_h, view = _names_highs(ref), _names_highs(got)
+    ref_h, view = highs_with_names(ref), highs_with_names(got)
     assert ref_h is ref.highs
     assert np.array_equal(ref.col_value, got.col_value)
 
@@ -89,7 +89,7 @@ def test_view_unnamed_rows_match_highs() -> None:
     import highspy
     from polar_high.engine import Solution, _pass_warm_names
 
-    from flextool.engine.output._writer import _names_highs
+    from flextool.engine.output._writer import highs_with_names
 
     col_names = ["x[a]", "y[b]"]
     row_names = [None, "c1[a]", ""]
@@ -110,7 +110,7 @@ def test_view_unnamed_rows_match_highs() -> None:
         col_names=list(col_names), row_names=list(row_names), vars={},
         highs=h, highs_names_passed=False,
     )
-    view = _names_highs(sol)
+    view = highs_with_names(sol)
     assert list(view.getLp().row_names_) == list(named.getLp().row_names_)
     assert view.allVariableNames() == named.allVariableNames()
     view.passRowName(2, "c2[b]")

@@ -461,13 +461,14 @@ def _self_discharge_all_rows(step, out_dir: Path):
     import dataclasses
 
     from flextool.lean_parquet import read_lean_parquet
+    from flextool.engine.output._writer import highs_with_names
     from flextool.process_outputs.read_highs_solution import write_v_self_discharge
 
     st = utf8(step.solution.value("v_state")).select(pl.col("d").alias("period"), pl.col("t").alias("step"))
     st = st.unique(maintain_order=True)
     fd = dataclasses.replace(step.flex_data, realized_dispatch=st)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = write_v_self_discharge(step.solution.highs, solve_name=step.solve_name, output_dir=out_dir,
+    path = write_v_self_discharge(highs_with_names(step.solution), solve_name=step.solve_name, output_dir=out_dir,
                                   flex_data=fd)
     return read_lean_parquet(path), list(st.iter_rows())
 

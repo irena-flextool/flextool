@@ -244,13 +244,14 @@ def _over_all_lp_steps(step, out_dir: Path):
     import dataclasses
     from types import SimpleNamespace
 
+    from flextool.engine.output._writer import highs_with_names
     from flextool.process_outputs.read_highs_solution import write_v_dual_reserve_balance
 
     rows = (utf8(step.solution.value("vq_reserve")).select(pl.col("d").alias("period"), pl.col("t").alias("step"))
             .unique(maintain_order=True))
     fd = dataclasses.replace(step.flex_data, realized_dispatch=rows)
     out_dir.mkdir(parents=True, exist_ok=True)
-    write_v_dual_reserve_balance(step.solution.highs, solve_name=step.solve_name, output_dir=out_dir, flex_data=fd)
+    write_v_dual_reserve_balance(highs_with_names(step.solution), solve_name=step.solve_name, output_dir=out_dir, flex_data=fd)
     return SimpleNamespace(flex_data=fd, solution=step.solution, solve_name=step.solve_name), out_dir
 
 

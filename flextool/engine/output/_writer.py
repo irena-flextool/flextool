@@ -161,7 +161,7 @@ class _NamedHighsView:
             self._highs.passRowName(row_id, name)
 
 
-def _names_highs(sol: "Solution") -> object:
+def highs_with_names(sol: "Solution") -> object:
     """``sol.highs`` as the output extractors should see it: the instance
     itself when it holds the LP names (or is the cold-path shim), else a
     :class:`_NamedHighsView` over it."""
@@ -340,7 +340,7 @@ def write_outputs_for_solve(
 
     # LP names: from HiGHS when the solve passed them, else from the
     # Solution's Python lists through a view (see _NamedHighsView).
-    h = _names_highs(sol)
+    h = highs_with_names(sol)
 
     # Variable-name shim — flextool's writers see ``v_invest[…]`` /
     # ``v_divest[…]`` after this call.  In-place mutation on the live
