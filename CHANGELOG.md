@@ -1,5 +1,20 @@
 ## Unreleased
 
+- **The default `storage_start_end_method` is now `fix_nothing`.** Storage nodes that relied on the old `fix_start`
+  default start free; where another node had a `storage_state_start` they were fixed at the start before (at 0, or
+  at their own `storage_state_start`) — a notice names them (results change). Where no node had a
+  `storage_state_start`, the old default fixed nothing and results are unchanged.
+- **`fix_start` / `fix_end` / `fix_start_end` without `storage_state_start` / `storage_state_end` is now an error
+  naming the nodes** (before: the start or end was silently not fixed, or fixed at 0). The database upgrade rewrites
+  such nodes where it can tell what they did (`fix_nothing`, or a start / end value of 0) without changing results,
+  and lists them; the error remains only where scenarios used the node differently.
+- **Behaviour-change notices.** When a release changes what an existing model does, the database upgrade marks the
+  database (metadata `flextool_behaviour_change:<change>`, in the database editor's Metadata tab) and runs print a
+  notice naming the version, its publication date, what changed and the affected entities, once per run. Deleting
+  the marker stops the notice; new databases have none.
+- **`dispatch_realization_method = separate_dispatch` without a `realized: yes` branch is now an error naming the
+  solve** (before: it was accepted although there was no branch to realize).
+
 - **Database version 77: the value types of the database match what FlexTool reads.** The investment and
   retirement limits per period of units, nodes, connections and groups, `co2_max_period`, `startup_cost` and the
   user-constraint `constant` can now be a constant or a period map; `efficiency`, `min_load` and

@@ -278,6 +278,24 @@ elif next_version == N:
 - At least one review approval is recommended before merging.
 - Prefer merge commits over squash to preserve commit history.
 
+## Releasing
+
+A release is a version tag pushed to GitHub; `publish.yml` builds it and uploads it to PyPI.  Checklist:
+
+1. **Version** — set `version` in `pyproject.toml` (the tag must match it).
+2. **CHANGELOG** — rename `## Unreleased` to `## Release X.Y.Z (D.M.YYYY) — <short title>`.
+3. **Behaviour-change registry** — in `flextool/engine/_behaviour_changes.py`, set `since="X.Y.Z"` and
+   `published="D.M.YYYY"` (the heading's version and date) on every entry still `None`.  Runs on databases upgraded
+   across a behaviour change print a notice naming that version and date.
+   `tests/engine/test_behaviour_change_registry.py` fails while an entry is unfilled under a released CHANGELOG,
+   or names a version/date with no matching heading; `publish.yml` runs it before building, so such a release
+   never reaches PyPI.
+4. **Tag** — an annotated tag `vX.Y.Z` on the release commit, pushed.
+
+A change that alters what an existing model does gets a registry entry (summary, how to silence it) and a marker
+(`metadata` named `flextool_behaviour_change:<id>`) written by the database migration on upgraded databases only;
+the engine calls `_behaviour_changes.notice(...)` with the entities whose results change.
+
 ## Solver
 
 FlexTool uses the HiGHS solver, called via the `highspy` Python package (installed automatically via pip).
