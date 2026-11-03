@@ -122,3 +122,33 @@ def test_value_survives_workbook_round_trip(round_tripped, cls, byname, name, va
 def test_behaviour_markers_survive_workbook_round_trip(round_tripped) -> None:
     _, markers = round_tripped
     assert MARKER in markers
+
+
+def test_restored_markers_keep_one_item_per_name(tmp_path) -> None:
+    """The import's own upgrade may already have written a marker the workbook also carries, with another value.
+    Restoring matches by name: one item per name, the JSON rewrite lists merged (database items first), a plain
+    value taken from the workbook."""
+    import json
+
+    rt = tmp_path / "target.sqlite"
+    initialize_database(str(MASTER_TEMPLATE), str(rt))
+    url = f"sqlite:///{rt}"
+    rewritten = "flextool_behaviour_change:storage_fix_method_rewritten"
+    stored = {"since": 77, "rewrites": [["ev", "A", "fix_start", "fix_nothing"]], "undecided": []}
+    restored = {"since": 77,
+                "rewrites": [["ev", "A", "fix_start", "fix_nothing"], ["bat", "B", "fix_end", "fix_nothing"]],
+                "undecided": [["n", "C", "fix_start", ["S1", "S2"]]]}
+    with DatabaseMapping(url) as db:
+        db.add_item("metadata", name=rewritten, value=json.dumps(stored))
+        db.add_item("metadata", name=MARKER[0], value="76")
+        db.commit_session("markers of the import's own upgrade")
+    restore_behaviour_markers(url, [(rewritten, json.dumps(restored)), MARKER])
+    with DatabaseMapping(url) as db:
+        items = [(m["name"], m["value"]) for m in db.get_items("metadata")
+                 if m["name"] in (rewritten, MARKER[0])]
+    assert sorted(name for name, _ in items) == sorted([rewritten, MARKER[0]])
+    values = dict(items)
+    assert values[MARKER[0]] == MARKER[1]
+    merged = json.loads(values[rewritten])
+    assert merged["rewrites"] == [["ev", "A", "fix_start", "fix_nothing"], ["bat", "B", "fix_end", "fix_nothing"]]
+    assert merged["undecided"] == [["n", "C", "fix_start", ["S1", "S2"]]]

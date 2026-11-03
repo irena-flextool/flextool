@@ -13,6 +13,7 @@ adds entities, alternatives, entity_alternatives, and parameter_values.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from typing import Any
@@ -890,18 +891,56 @@ def _purge_database(db: DatabaseMapping, keep_entities: bool = False) -> None:
 # ---------------------------------------------------------------------------
 
 
+def merge_behaviour_marker_values(stored: str, restored: str) -> str:
+    """The value of a marker that is both in the database (*stored*) and in the workbook (*restored*).
+
+    Two JSON objects are merged: list fields are unioned (stored items first, then the workbook's new ones),
+    other fields take the workbook's value.  Otherwise the workbook's value wins.
+    """
+    try:
+        old, new = json.loads(stored), json.loads(restored)
+    except (TypeError, ValueError):
+        return restored
+    if not (isinstance(old, dict) and isinstance(new, dict)):
+        return restored
+    merged = dict(old)
+    for key, value in new.items():
+        if isinstance(value, list) and isinstance(old.get(key), list):
+            merged[key] = list(old[key]) + [item for item in value if item not in old[key]]
+        else:
+            merged[key] = value
+    return json.dumps(merged)
+
+
 def restore_behaviour_markers(db_url: str, markers: list[tuple[str, str]]) -> None:
     """Write behaviour-change markers read from a workbook back into the
-    database metadata (see :func:`read_behaviour_markers`)."""
+    database metadata (see :func:`read_behaviour_markers`).
+
+    Markers are matched by name, so a name stays unique: a marker the
+    database already has (e.g. written by the import's own upgrade) is
+    updated with :func:`merge_behaviour_marker_values`, and any duplicates
+    of that name are removed."""
     if not markers:
         return
     with DatabaseMapping(db_url, create=False) as db:
-        added = False
+        changed = False
         for name, value in markers:
-            if not db.get_item("metadata", name=name, value=value):
+            same = [md for md in db.get_items("metadata") if md["name"] == name]
+            if not same:
                 db.add_item("metadata", name=name, value=value)
-                added = True
-        if added:
+                changed = True
+                continue
+            merged = same[0]["value"]
+            for md in same[1:]:
+                merged = merge_behaviour_marker_values(merged, md["value"])
+            merged = merge_behaviour_marker_values(merged, value)
+            if merged != same[0]["value"]:
+                db.update_item("metadata", id=same[0]["id"], value=merged)
+                changed = True
+            if len(same) > 1:
+                db.remove_items("metadata", *[md["id"] for md in same[1:]])
+                changed = True
+        if changed:
             db.commit_session("Restored behaviour-change markers from the workbook")
 
 
