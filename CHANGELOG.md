@@ -1,9 +1,11 @@
 ## Unreleased
 
-- **The default `storage_start_end_method` is now `fix_nothing`.** Storage nodes that relied on the old `fix_start`
-  default start free; where another node had a `storage_state_start` they were fixed at the start before (at 0, or
-  at their own `storage_state_start`) — a notice names them (results change). Where no node had a
-  `storage_state_start`, the old default fixed nothing and results are unchanged.
+- **The default `storage_start_end_method` is now `fix_nothing`.** Storage nodes without their own method start
+  free. Before, where some node had a `storage_state_start`, the old default `fix_start` fixed them at the start: at
+  their own `storage_state_start`, or at 0 when only other nodes had one. The database upgrade writes `fix_start` on
+  the nodes that have their own `storage_state_start`, so their results are unchanged (a notice names them). The
+  other nodes now start free (results change; a notice names them). Where no node had a `storage_state_start`, the
+  old default fixed nothing and results are unchanged.
 - **`fix_start` / `fix_end` / `fix_start_end` without `storage_state_start` / `storage_state_end` is now an error
   naming the nodes** (before: the start or end was silently not fixed, or fixed at 0). The database upgrade rewrites
   such nodes where it can tell what they did (`fix_nothing`, or a start / end value of 0) without changing results,

@@ -42,15 +42,17 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
         BehaviourChange(
             id="storage_default_fix_nothing",
             summary=("The default storage_start_end_method is now fix_nothing: a storage node without its own "
-                     "storage_start_end_method starts free. Before, it was fixed at a storage state of 0 at the "
-                     "start of the model when another node had a storage_state_start (results change)."),
+                     "storage_start_end_method starts free. Before, when some node had a storage_state_start, it "
+                     "was fixed at the start: at its own storage_state_start, or at 0 when only other nodes had "
+                     "one (results change)."),
             silence="Set storage_start_end_method on these nodes (fix_nothing keeps the new behaviour).",
         ),
         BehaviourChange(
             id="storage_fix_method_rewritten",
-            summary=("A fix_start / fix_end / fix_start_end without storage_state_start / storage_state_end is now "
-                     "an error. The database upgrade rewrote these nodes to what they did before, so results are "
-                     "unchanged."),
+            summary=("The database upgrade rewrote storage_start_end_method on these nodes, so results are "
+                     "unchanged. A fix_start / fix_end / fix_start_end without storage_state_start / "
+                     "storage_state_end is now an error. The default is now fix_nothing, so a node that used the "
+                     "old default fix_start with its own storage_state_start now has fix_start written."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "storage_fix_method_rewritten"),
         ),
         BehaviourChange(

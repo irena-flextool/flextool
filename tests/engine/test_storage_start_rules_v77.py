@@ -7,7 +7,8 @@
 * ``fix_start`` / ``fix_end`` / ``fix_start_end`` without the node's own ``storage_state_start`` /
   ``storage_state_end`` stop the run with one error naming every such node.
 * The upgrade rewrites explicit fix methods without their value to what they did (``fix_nothing``, or an added 0)
-  where every scenario agrees and nothing else changes, and announces it.
+  where every scenario agrees and nothing else changes, and announces it.  A node that used the old default with
+  its own start value gets ``fix_start`` written in that value's alternative (results unchanged).
 
 Databases: ``tests/fixtures/tests.json`` (battery: bind_within_timeblock, fix_start, storage_state_start 0.1;
 ev_battery: bind_within_timeblock, fix_nothing, no start value), edited as JSON and built under the pytest tmp dir.
@@ -289,13 +290,39 @@ def test_upgrade_leaves_a_fix_scenarios_used_differently(tmp_path_factory):
     _as_v76(upgraded)
     url = _db(tmp_path_factory, "rewrite_mixed", upgraded)
     marker = json.loads(_markers(url)[PREFIX + "storage_fix_method_rewritten"])
-    assert marker["rewrites"] == []
+    # battery used the old default with its own start value: the upgrade writes that default explicitly.
+    assert marker["rewrites"] == [["battery", "bstart", "default fix_start", "fix_start"]]
     assert marker["undecided"] == [["ev_battery", "ev", "fix_start", ["with_start", "without_start"]]]
     with pytest.raises(FlexToolConfigError) as exc:
         run(tmp_path_factory, url, scen)
     text = str(exc.value)
     assert "ev_battery (fix_start, missing storage_state_start)" in text
     assert "scenarios with_start, without_start used it differently" in text
+
+
+def test_upgrade_writes_the_old_default_on_a_node_with_its_own_start(tmp_path_factory, capsys):
+    """battery without its own method but with its storage_state_start 0.1 (alternative battery), ev_battery
+    fix_nothing: the old default fix_start pinned battery at 0.1.  The upgrade writes fix_start on battery in
+    alternative battery, so the LP equals the twin that says fix_start (as before the upgrade); the run names
+    the rewrite, and no node is left for the default notice."""
+    upgraded = _data()
+    _drop(upgraded, "battery", "storage_start_end_method")
+    _alt(upgraded, "other")
+    scen = _scenario(upgraded, "case", CHAIN)
+    _scenario(upgraded, "case_other", CHAIN + ["other"])
+    twin = json.loads(json.dumps(upgraded))
+    _put(twin, "battery", "storage_start_end_method", "fix_start", "str", "battery")
+    _as_v76(upgraded)
+    capsys.readouterr()
+    url = _db(tmp_path_factory, "default_explicit", upgraded)
+    assert "node battery [battery]: default fix_start -> fix_start" in capsys.readouterr().out
+    marker = json.loads(_markers(url)[PREFIX + "storage_fix_method_rewritten"])
+    assert marker["rewrites"] == [["battery", "battery", "default fix_start", "fix_start"]]
+    lp = _first_lp(tmp_path_factory, url, scen)
+    lines = _notice_lines(capsys.readouterr().out)
+    assert any("battery (alternative battery: default fix_start -> fix_start)" in ln for ln in lines), lines
+    assert not [ln for ln in lines if "fix_nothing keeps the new behaviour" in ln], lines
+    assert lp == _first_lp(tmp_path_factory, _db(tmp_path_factory, "default_explicit_twin", twin), scen)
 
 
 def test_storage_steps_rerun_change_nothing(tmp_path_factory):
@@ -307,6 +334,7 @@ def test_storage_steps_rerun_change_nothing(tmp_path_factory):
     url = _db(tmp_path_factory, "rerun", upgraded)
     with DatabaseMapping(url) as db:
         m._v77_storage_fix_rewrite(db)
+        m._v77_storage_default_explicit(db)
         m._v77_storage_default(db)
         with pytest.raises(NothingToCommit):
             db.commit_session("re-run")
@@ -392,6 +420,25 @@ def test_classify_ignores_values_of_nodes_switched_off():
     plan = classify_storage_fix({("n", "A"): "fix_start"}, {("m", "A"): 0.3}, {},
                                 {"S1": ["A"], "S2": ["A"]}, inactive=frozenset({("S2", "m")}))
     assert plan.undecided == (("n", "A", "fix_start", ("S1", "S2")),)
+
+
+def test_classify_default_writes_the_old_default_where_the_node_has_its_own_start():
+    """n has no stored method and its start 0.4 at A in S1 and S2: fix_start is written at A.  k has no value:
+    nothing is written for it (it starts free now; the run names it)."""
+    from flextool.update_flextool.db_migration import classify_storage_default
+
+    writes = classify_storage_default({}, {("n", "A"): 0.4}, {}, {"S1": ["A"], "S2": ["A", "B"]}, "fix_start")
+    assert writes == (("n", "A"),)
+
+
+def test_classify_default_never_overrides_a_lower_stored_method():
+    """n relies on the default in S1 (start 0.4 at A).  In S2 its method fix_nothing comes from L, below A: a
+    fix_start at A would pin it there, so nothing is written for n."""
+    from flextool.update_flextool.db_migration import classify_storage_default
+
+    writes = classify_storage_default({("n", "L"): "fix_nothing"}, {("n", "A"): 0.4}, {},
+                                      {"S1": ["A"], "S2": ["L", "A"]}, "fix_start")
+    assert writes == ()
 
 
 def test_database_without_scenarios_is_one_scenario_of_all_alternatives(tmp_path_factory):

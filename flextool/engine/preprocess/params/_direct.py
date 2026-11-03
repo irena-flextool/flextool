@@ -541,9 +541,11 @@ def _storage_behaviour_notices(source: "InputSource", flex_data) -> None:
     """The database version 77 storage notices, for the storage nodes of this solve (each needs its marker).
 
     * ``storage_default_fix_nothing``: a storage node without its own ``storage_start_end_method`` whose results
-      change — the old default ``fix_start`` pinned it at 0 when some node had a ``storage_state_start`` (with no
-      start value anywhere it did nothing, the same as ``fix_nothing`` now).
-    * ``storage_fix_method_rewritten``: a storage node whose method the upgrade rewrote (or gave a 0 start / end).
+      change — when some node had a ``storage_state_start``, the old default ``fix_start`` fixed it at its own
+      start value, or at 0 without one (with no start value anywhere it did nothing, the same as ``fix_nothing``
+      now).  The upgrade writes ``fix_start`` on the nodes with their own start value, so they are rarely left.
+    * ``storage_fix_method_rewritten``: a storage node whose method the upgrade rewrote, gave a 0 start / end, or
+      wrote the old default on.
     """
     from flextool.engine import _behaviour_changes as bc
     default_on = bc.has_marker("storage_default_fix_nothing")

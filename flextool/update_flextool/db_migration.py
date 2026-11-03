@@ -5040,6 +5040,68 @@ def classify_storage_fix(methods, starts, ends, scenarios, inactive=frozenset())
         records=tuple(records))
 
 
+def _v77_default_behaviour(scenario_alts, node, part, methods, values, default, off=frozenset()):
+    """How *node* starts (``part="start"``) or ends in one scenario when a node without a stored method takes
+    *default*: ``"free"``, ``("own", value)`` or ``"error"`` (a fix without its value under the version 77 rule,
+    i.e. *default* ``fix_nothing``).  Before version 77 (any other *default*) such a fix pinned the node at 0
+    when some node of the scenario had a value for that part, else it did nothing."""
+    winner = _v77_winner(scenario_alts, methods, node)
+    method = methods[(node, winner)] if winner is not None else default
+    if method not in _V77_FIXES[part]:
+        return "free"
+    own = _v77_winner(scenario_alts, values, node)
+    if own is not None:
+        return ("own", values[(node, own)])
+    if default == "fix_nothing":
+        return "error"
+    anyone = any(_v77_winner(scenario_alts, values, other) is not None
+                 for other in {k[0] for k in values} - set(off))
+    return ("own", 0.0) if anyone else "free"
+
+
+def classify_storage_default(methods, starts, ends, scenarios, old_default, inactive=frozenset()) -> tuple:
+    """The ``(node, alternative)`` where the version 77 upgrade writes the old default *old_default* as an
+    explicit ``storage_start_end_method``, so that the node keeps its results under the new default
+    ``fix_nothing``.
+
+    Arguments as :func:`classify_storage_fix`.  A candidate is a node that has no stored method in a scenario
+    but has its own value there for a part the old default fixes; the write goes into the alternative that
+    gives that value.  A node's writes are kept only when, in every scenario where a written value gives the
+    node's method, the node starts and ends as it did under the old default (so a write never overrides a
+    stored method of a lower alternative that behaved differently).  Nodes without an own value are left: they
+    start free now and the run names them (``storage_default_fix_nothing``).
+    """
+    if old_default not in _V77_FIXES["start"] | _V77_FIXES["end"]:
+        return ()
+    tables = {"start": starts, "end": ends}
+    off = {s: frozenset(n for sc, n in inactive if sc == s) for s in scenarios}
+    parts = [p for p in ("start", "end") if old_default in _V77_FIXES[p]]
+    candidates: dict[str, set] = {}
+    for s, alts in scenarios.items():
+        for node in sorted({k[0] for p in parts for k in tables[p]}):
+            if (s, node) in inactive or _v77_winner(alts, methods, node) is not None:
+                continue
+            own = _v77_winner(alts, tables[parts[0]], node)
+            if own is not None:
+                candidates.setdefault(node, set()).add(own)
+    writes = []
+    for node, alternatives in sorted(candidates.items()):
+        new_methods = dict(methods)
+        new_methods.update({(node, a): old_default for a in alternatives})
+        keep = True
+        for s, alts in scenarios.items():
+            if (s, node) in inactive or _v77_winner(alts, new_methods, node) not in alternatives:
+                continue
+            for part in ("start", "end"):
+                before = _v77_default_behaviour(alts, node, part, methods, tables[part], old_default, off[s])
+                after = _v77_default_behaviour(alts, node, part, new_methods, tables[part], "fix_nothing", off[s])
+                if after != before:
+                    keep = False
+        if keep:
+            writes.extend((node, a) for a in sorted(alternatives))
+    return tuple(writes)
+
+
 def _v77_storage_inputs(db):
     """``classify_storage_fix`` arguments read from *db*."""
     def stored(name):
@@ -5106,21 +5168,60 @@ def _v77_storage_fix_rewrite(db) -> None:
               "naming them):")
         for node, alternative, method, where in plan.undecided:
             print(f"  node {node} [{alternative}]: {method} (scenarios {', '.join(where)})")
+    _v77_record_storage_rewrites(db, plan.records, [[n, a, m, list(w)] for n, a, m, w in plan.undecided])
+
+
+def _v77_record_storage_rewrites(db, records, undecided=None) -> None:
+    """Merge *records* ``(node, alternative, old, written)`` into the marker ``storage_fix_method_rewritten``;
+    *undecided* replaces its undecided list (None keeps the stored one).  Written when either list is
+    non-empty."""
     name = BEHAVIOUR_CHANGE_MARKER_PREFIX + "storage_fix_method_rewritten"
     previous = [md for md in db.get_items("metadata") if md["name"] == name]
-    rewrites = []
+    stored: dict = {}
     if previous:
         try:
-            rewrites = [list(r) for r in json.loads(previous[0]["value"]).get("rewrites", [])]
-        except (TypeError, ValueError, AttributeError):
-            rewrites = []
-    for record in plan.records:
+            stored = json.loads(previous[0]["value"])
+        except (TypeError, ValueError):
+            stored = {}
+        if not isinstance(stored, dict):
+            stored = {}
+    rewrites = [list(r) for r in stored.get("rewrites", [])]
+    for record in records:
         if list(record) not in rewrites:
             rewrites.append(list(record))
-    undecided = [[n, a, m, list(w)] for n, a, m, w in plan.undecided]
+    if undecided is None:
+        undecided = [list(u) for u in stored.get("undecided", [])]
     if rewrites or undecided:
         _v77_set_marker(db, "storage_fix_method_rewritten",
                         json.dumps({"since": 77, "rewrites": rewrites, "undecided": undecided}))
+
+
+def _v77_storage_default_explicit(db) -> None:
+    """Write the old default ``storage_start_end_method`` explicitly on the nodes that relied on it with their
+    own start (or end) value (:func:`classify_storage_default`), so they keep their results under the new
+    default ``fix_nothing``; record them in the marker ``storage_fix_method_rewritten`` (old method ``default
+    <old default>``).  Runs before :func:`_v77_storage_default` changes the default."""
+    pdef = _pdef_or_none(db, "node", "storage_start_end_method")
+    if pdef is None or pdef["default_value"] is None:
+        return
+    default = from_database(pdef["default_value"], pdef["default_type"])
+    if default not in _V77_FIXES["start"] | _V77_FIXES["end"]:
+        return
+    methods, starts, ends, scenarios, inactive = _v77_storage_inputs(db)
+    writes = classify_storage_default(methods, starts, ends, scenarios, default, inactive)
+    if not writes:
+        return
+    val, typ = to_database(default)
+    for node, alternative in writes:
+        db.add_parameter_value(entity_class_name="node", entity_byname=(node,),
+                               parameter_definition_name="storage_start_end_method", alternative_name=alternative,
+                               value=val, type=typ)
+    print(f"v77: the default storage_start_end_method is now fix_nothing; {default} written on the nodes that "
+          "used the old default with their own start value (results unchanged):")
+    for node, alternative in writes:
+        print(f"  node {node} [{alternative}]: default {default} -> {default}")
+    _v77_record_storage_rewrites(db, [(node, alternative, f"default {default}", default)
+                                      for node, alternative in writes])
 
 
 def _v77_storage_default(db) -> None:
@@ -5162,6 +5263,11 @@ def _migrate_v77_schema_batch(db) -> None:
       predates.
     * Stale definitions dropped (their values listed), ``single_shot`` →
       ``single_solve``.
+    * Storage start / end: explicit fix methods without their value are
+      rewritten to what they did; nodes that used the old default
+      ``fix_start`` with their own start value get it written explicitly;
+      the default becomes ``fix_nothing`` (results unchanged except for
+      default nodes without an own value, which a notice names).
 
     Idempotent: re-running finds nothing to change.
     """
@@ -5171,6 +5277,7 @@ def _migrate_v77_schema_batch(db) -> None:
     _v77_behaviour_markers(db)
     _v77_drop_stale_definitions(db)
     _v77_storage_fix_rewrite(db)
+    _v77_storage_default_explicit(db)
     _v77_storage_default(db)
     _commit_step(db,
         "v77: schema batch — widened type lists, owner-reviewed descriptions, group retirement limits, "
