@@ -5,7 +5,7 @@ maxShutdown, online_change, maxFlow_online, maxFlow_online_shutdown,
 maxFlow_online_shutdown_branch, maxFlow_back_online, maxOutputSum_online, maxInputFlow_online,
 maxInputFlow_online_shutdown, maxInputFlow_online_shutdown_branch, minimum_uptime, minimum_downtime and
 online_fix_eq.  The ``_branch`` rows exist only at a branch point (several mid-horizon branches continuing from
-the same trunk step, c14c critique item 1); every other fixture never emits them.  Each exists once per UC
+the same trunk step); every other fixture never emits them.  Each exists once per UC
 class present: ``linear`` (continuous v_online) and ``integer`` (integer
 v_online), suffixed ``_linear`` / ``_integer``.  A process is online by its startup method (units: also by
 ``minimum_time_method``); a connection with a startup method has online capacity in service covering both flow
@@ -205,7 +205,7 @@ def add_constraints(b: "_Build") -> None:
         # ─────────────────────────────────────────────────────────────────────
         # v_shutdown[p,d,t] + v_online[p,d,t] − Σ v_invest_p[p,d″] + Σ v_divest_p[p,d″]  ≤  existing_count[p,d]
         #   ∀ (p,d,t) ∈ p_idx whose online predecessor is v_online of the SAME period d (a dt_ramp_link with
-        #   d_previous = d, or a dt_online_wrap — owner question Q-c14c-A default)
+        #   d_previous = d, or a dt_online_wrap; the same-period predecessor keeps the shutdown bound)
         # Units shut down in a step are offline in it.  Not built where the predecessor is in another period
         # or carried from an earlier roll (capacity may differ there — a unit online at the end of the
         # previous period / roll must still be able to "shut down" even if this step's capacity is lower);
@@ -647,9 +647,8 @@ def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *, input_side: bool) -> "p
 def _successor_steps(d) -> "pl.LazyFrame":
     """``(_d, _t, d_next, t_next)`` Utf8: every successor ``(d_next, t_next)`` whose ramp predecessor
     (``dt_ramp_link``) is ``(_d, _t)`` — the same period (today's only case) or the next continuing period
-    (c14c §2.4, item 1 / #98: dropped the ``d_previous == d`` filter so the pre-shutdown limit also applies
-    across a continuing period boundary).  Several rows per predecessor at a branch point (several mid-horizon
-    branches continuing from the same trunk step) — callers must not sum across them (critique item 1): that
+    (no ``d_previous == d`` filter, so the pre-shutdown limit also applies across a continuing period boundary).  Several rows per predecessor at a branch point (several mid-horizon
+    branches continuing from the same trunk step) — callers must not sum across them: that
     would let several branches each buy back a whole unit of ramp room from the trunk step instead of each
     being bound by its own (mutually exclusive) branch."""
     link = getattr(d, "dt_ramp_link", None)

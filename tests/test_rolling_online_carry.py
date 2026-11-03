@@ -1,59 +1,25 @@
-"""Regression: rolling online-commitment carry (OC1, Carrier 1).
+"""Rolling online-commitment carry.
 
-A rolling-window unit-commitment solve used to re-charge a unit's startup
-cost at EVERY roll boundary, even when the unit stayed committed across
-the boundary.  The online dynamics reference the predecessor commitment
-at ``t_previous_within_solve``, which at a roll's first step cyclically
-wraps to the roll's OWN last look-ahead step (``_block_layout.py``) — a
-physically meaningless value on a continuation roll, with zero memory of
-the prior roll's realized commitment.
+In a rolling unit-commitment solve the units online at a step are compared with the units online at the step's
+predecessor (``online_change``).  Each step takes its predecessor from exactly one of three sources:
 
-The fix is the online analog of the storage ``roll_end_state →
-p_roll_continue_state`` carry (purely internal / derived — no schema, no
-migration): the prior roll's committed-jump-end ``v_online`` is carried as
-``SolveHandoff.roll_end_online`` and overlaid as
-``FlexData.p_roll_continue_online``; at the continuation roll's first step
-the spurious cyclic predecessor is sliced out of the online Lag frame and
-the carried value is injected as the predecessor constant, so::
+* a ramp link (``dt_ramp_link``): the step directly before it on the timeline, inside this roll;
+* the carry (``dt_online_carry``): at the first step of a continuation roll whose predecessor was realized by the
+  previous roll, the previous roll's committed-jump-end ``v_online`` (``SolveHandoff.roll_end_online`` overlaid
+  as ``FlexData.p_roll_continue_online``) enters as a constant, so a unit that stays committed across the roll
+  boundary pays no start-up and a genuine OFF to ON start still does;
+* the stretch wrap (``dt_online_wrap``): any other step cycles to the last step of its own stretch of the period
+  in this roll.
 
-    v_startup[first] >= v_online[first] - carried
+Driven witness: ``coal_min_load_fullYear_roll`` (a ``min_load_efficiency`` coal unit on the fullYear timeline,
+``rolling_solve_horizon=8``, ``rolling_solve_jump=4`` -> 72 rolls spanning p2020/p2025/p2030/p2035, so
+multiple-period roll windows are exercised).
 
-(no startup when the unit stays committed; a genuine OFF→ON start still
-pays — ``carried ≈ 0`` leaves the full charge).
-
-Driven witness: ``coal_min_load_fullYear_roll`` (a ``min_load_efficiency``
-coal unit on the fullYear timeline, ``rolling_solve_horizon=8``,
-``rolling_solve_jump=4`` → 72 rolls spanning p2020/p2025/p2030/p2035, so
-multiple-period roll windows are exercised).  Pre-fix (pre-OC1) the realized
-coal ``v_startup`` summed to 7.284 (startup cost 364 200 €); with the OC1
-carry alone it dropped to 5.854 (292 700 €).
-
-c14c (#98/#99/N1) re-derives this baseline again: part B
-(``c34a2650``, "startups and shutdowns equal the change in units online")
-makes ``v_startup``/``v_shutdown`` an EXACT function of the online
-trajectory everywhere, not only at the roll boundary the OC1 carry
-targets — closing slack that previously let the realized total sit below
-the honest per-step increment at some INTERIOR steps too.  Bisected on
-``git archive`` exports of c14c's commits: unchanged (5.854) through part
-A (``2f5e11ca``), changes to 5.898 at part B (``c34a2650``) and stays
-there through part C / review.  Independently re-verified (not copied
-from the new code's output): recomputing the yearly total from
-``v_online_linear`` deltas stitched with the same ``p_roll_continue_online``
-/ ``roll_end_online`` carriers this module already tests
-(``Σ max(0, online[t] - predecessor[t])`` over every step of every roll,
-not just each roll's first step) reproduces 5.898000000000001 to the
-last bit — the realized total is forced by the (already-tested-correct)
-online path, not an LP alternate-optimum artifact.
-
-The four periods reuse the fullYear timeset, so the first roll of p2025,
-p2030 and p2035 starts a new year that does not continue the previous
-roll's last realized step on the timeline.  Like ramp limits and the
-minimum up / down time carry, the commitment carry stops there: those
-rolls take no carry (``dt_online_carry`` is ``None``) and their first step
-cycles within its stretch (``dt_online_wrap``: the period's last step in
-the roll).  The yearly total therefore re-charges those three new-year
-starts and is checked against the same Delta-online re-derivation, with
-each roll's first-step predecessor being the carried value or the wrap.
+The four periods reuse the fullYear timeset, so the first roll of p2025, p2030 and p2035 starts a new year that
+does not continue the previous roll's last realized step on the timeline.  Like ramp limits and the minimum up /
+down time carry, the commitment carry stops there: those rolls take no carry and their first step wraps.  The
+realized start-up total is checked against the re-derivation Sum max(0, online[t] - predecessor[t]) over every
+step of every roll, with each roll's first-step predecessor being the carried value or the wrap target.
 """
 from __future__ import annotations
 
