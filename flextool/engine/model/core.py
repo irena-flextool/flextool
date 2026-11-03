@@ -163,9 +163,11 @@ USER_CSTR: tuple[str, ...]   = ("p_constraint_constant",)
 PROFILES:  tuple[str, ...]   = ("p_profile_value", "p_process_existing_count")
 STORAGE:   tuple[str, ...]   = ("nodeState", "dtttdt",
                                 "p_state_upper", "p_state_unitsize")
+# Online reads its predecessors only from the ramp links (dt_ramp_link) and the stretch wrap (dt_online_wrap):
+# without them every step would start from zero units online (a start-up charged at every step).
 ONLINE: tuple[str, ...] = (
     "process_online", "p_online_dt",
-    "dtttdt", "p_process_existing_count",
+    "dt_ramp_link", "dt_online_wrap", "p_process_existing_count",
 )
 # The minFlow_minload floor's field: checked when some unit has min_load > 0 (process_minload), so a loader gap
 # does not drop the floor silently.  An online unit without min_load has none (min_load 0).

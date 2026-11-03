@@ -36,7 +36,7 @@ from polar_high import Param, Problem
 from flextool.engine import build_flextool
 from flextool.engine.preprocess.flex_data import FlexData
 
-from .conftest import solver_options
+from .conftest import online_link_fields, solver_options
 
 
 def _solve(data: FlexData) -> tuple[Problem, Any]:
@@ -115,9 +115,10 @@ def _make_two_kind_uc_data() -> FlexData:
     # empty here); it is kept as 0 (no floor).
     p_min_load = Param(("p",),
         pl.DataFrame({"p": ["u_lin", "u_int"], "value": [0.0, 0.0]}))
+    # A small start-up cost so the start-ups are not degenerate (test_..._suffix_isolation checks them).
     p_startup_cost = Param(("p", "d"),
         pl.DataFrame({"p": ["u_lin", "u_int"], "d": ["d1", "d1"],
-                      "value": [0.0, 0.0]}))
+                      "value": [1.0, 1.0]}))
 
     # 2-step cyclic dtttdt.
     dtttdt = pl.DataFrame({
@@ -127,6 +128,8 @@ def _make_two_kind_uc_data() -> FlexData:
         "d_previous": ["d1", "d1"],
         "t_previous_within_solve": ["t02", "t01"],
     })
+    # Online predecessors: t02 follows t01 (dt_ramp_link); t01, the solve's first step (jump 0), wraps to t02.
+    online_links = online_link_fields(dt, dtttdt, jump=[0.0, 1.0])
 
     return FlexData(
         dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
@@ -150,6 +153,7 @@ def _make_two_kind_uc_data() -> FlexData:
         p_startup_cost=p_startup_cost,
         p_process_existing_count=p_process_existing_count,
         dtttdt=dtttdt,
+        **online_links,
     )
 
 
@@ -176,6 +180,12 @@ def test_linear_and_integer_uc_constraint_suffix_isolation():
     # process (1 process × 1 period × 2 steps = 2 rows).
     assert pb.cstr_row_count("maxOnline_linear") == 2
     assert pb.cstr_row_count("maxOnline_integer") == 2
+    # Hand-calc: t01 wraps to t02 and t02 follows t01, so the commitment of each unit is one cycle of two
+    # steps.  Demand is the same 25 MW at both steps, so a constant commitment serves it, and around a cycle
+    # Σ v_startup = Σ v_shutdown; with a positive start-up cost the optimum starts nothing.  (With no
+    # predecessor every step would start its units from zero: Σ v_startup ≥ 0.25 for the 25 MW.)
+    total = sum(float(sol.value(f"v_startup_{k}")["value"].sum()) for k in ("linear", "integer"))
+    assert total == pytest.approx(0.0, abs=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -299,3 +309,13 @@ def test_min_capacity_coef_scales_minload_floor(toy_uc_3t):
                    for n in pb1.cstr_names())
     vf1 = sol1.value("v_flow").sort(["d", "t"])["value"].to_list()
     assert all(v == pytest.approx(0.4, rel=1e-6) for v in vf1), vf1
+
+
+@pytest.mark.parametrize("field", ["dt_ramp_link", "dt_online_wrap"])
+def test_online_without_its_predecessor_links_raises(field):
+    """The online dynamics read their predecessors only from ``dt_ramp_link`` and ``dt_online_wrap``.  Without
+    either, every step would start from zero units online, so the build raises the online required-field
+    error instead of building that LP."""
+    data = dataclasses.replace(_make_two_kind_uc_data(), **{field: None})
+    with pytest.raises(ValueError, match=rf"feature 'online' is active.*{field}"):
+        build_flextool(Problem(), data)

@@ -34,7 +34,7 @@ from flextool.engine import build_flextool, InMemoryReader
 from flextool.engine.preprocess.params import _derived as drv
 from flextool.engine.preprocess.flex_data import FlexData
 
-from .conftest import solver_options
+from .conftest import online_link_fields, solver_options
 
 
 # Two periods, two steps each — enough to show a period Map differ per period.
@@ -116,6 +116,9 @@ def _build_uc_2period(p_min_load_param: Param) -> FlexData:
              "t_previous_within_solve": "t01"},
         ]
     dtttdt = pl.DataFrame(rows)
+    # Online predecessors: t02 follows t01 in each period (dt_ramp_link); t01, a period start that does not
+    # continue the period before (jump 0), wraps to its period's t02 (dt_online_wrap).
+    online_links = online_link_fields(dt, dtttdt, jump=[0.0, 1.0] * len(_PERIODS))
 
     return FlexData(
         dt=dt, p_step_duration=p_step, p_timestep_weight=p_rp,
@@ -138,6 +141,7 @@ def _build_uc_2period(p_min_load_param: Param) -> FlexData:
         p_startup_cost=p_startup_cost,
         p_process_existing_count=p_process_existing_count,
         dtttdt=dtttdt,
+        **online_links,
     )
 
 
@@ -227,6 +231,11 @@ def test_scalar_min_load_floor_unchanged():
     floors = _floor_per_period(sol)
     assert floors["d1"] == pytest.approx(0.4, abs=1e-6)
     assert floors["d2"] == pytest.approx(0.4, abs=1e-6)
+    # Hand-calc: the 10 MW demand needs the one existing unit online at every step (up-penalty 1e6), and each
+    # period's t01 wraps to its t02, so the unit stays online around each period's cycle: no start-up (with no
+    # predecessor every step would start the unit: 4 start-ups).
+    assert sol.value("v_online_integer")["value"].min() == pytest.approx(1.0, abs=1e-6)
+    assert float(sol.value("v_startup_integer")["value"].sum()) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_scalar_min_load_parity_with_direct_param():

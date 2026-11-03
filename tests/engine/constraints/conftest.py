@@ -42,6 +42,18 @@ from flextool.engine.preprocess.flex_data import FlexData
 
 
 # ---------------------------------------------------------------------------
+# Online / ramp predecessor links, built the way the engine builds them.
+
+def online_link_fields(dt: pl.DataFrame, dtttdt: pl.DataFrame, jump: list[float]) -> dict:
+    """``dt_ramp_link`` and ``dt_online_wrap`` of a hand-built timeline, through the engine's own pipeline
+    (``apply_derived_e``): the ``dtttdt`` rows with their timeline ``jump`` (1 where the predecessor is the step
+    directly before on the timeline) go through ``ramp_link_from_jump`` and then ``ramp_link_fields``."""
+    from flextool.engine.preprocess.params._ramp_links import ramp_link_fields, ramp_link_from_jump
+    steps = dtttdt.with_columns(jump=pl.Series(jump, dtype=pl.Float64))
+    return ramp_link_fields(dt, ramp_link_from_jump(steps))
+
+
+# ---------------------------------------------------------------------------
 # Solver options (deterministic single-thread HiGHS).
 
 def solver_options() -> dict[str, Any]:
@@ -389,10 +401,8 @@ def toy_uc_3t() -> FlexData:
         "t_previous_within_solve": ["t03", "t01", "t02"],
     })
     # The online dynamics: t02 / t03 follow their adjacent predecessor (dt_ramp_link); t01, the solve's first
-    # step, wraps to the last step of its stretch, t03 (dt_online_wrap).
-    from flextool.engine.preprocess.params._ramp_links import ramp_link_fields
-    ramp_links = ramp_link_fields(dt, pl.DataFrame({"d": ["d1", "d1"], "t": ["t02", "t03"],
-                                                    "d_previous": ["d1", "d1"], "t_previous": ["t01", "t02"]}))
+    # step (no adjacent predecessor, jump 0), wraps to the last step of its stretch, t03 (dt_online_wrap).
+    ramp_links = online_link_fields(dt, dtttdt, jump=[0.0, 1.0, 1.0])
 
     # min_uptime/downtime lookback rows: for each (p, d, t), include
     # (d, t) self plus 1 step back (since min_time=2 and step_duration=1
