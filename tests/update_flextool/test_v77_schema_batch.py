@@ -141,7 +141,8 @@ def test_new_definitions_and_parameter_groups(migrated) -> None:
         assert after["types"][("group", f"retire_{bound}_total")] == ("float",)
         assert after["groups"][("group", f"retire_{bound}_period")] == "retirement"
     for cls in ("unit", "node", "connection"):
-        for name in ("constraint_capacity_coeff", "constraint_retired_capacity_coeff"):
+        for name in ("constraint_capacity_coeff", "constraint_retired_capacity_coeff",
+                     "constraint_in_construction_capacity_coeff"):
             assert after["types"][(cls, name)] == ("1d_map",)
             assert after["groups"][(cls, name)] == "constraint"
 

@@ -4375,6 +4375,10 @@ def _v77_texts() -> dict[tuple[str, str], str]:
             "plus investments still in service minus retirements). Coefficient per MW.")
         t[(cls, "constraint_retired_capacity_coeff")] = (
             "Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.")
+        t[(cls, "constraint_in_construction_capacity_coeff")] = (
+            "Puts the capacity in construction in each period on the left side of the user constraint. Capacity is "
+            "in construction from the period of the investment decision until it comes online. It is zero without "
+            "a construction lead time. Coefficient per MW.")
     t[("node", "invest_max_period")] = (
         "[MWh] Largest allowed storage investment in each period. Counts only what is built in that period; existing "
         "capacity and retirements do not change it. Constant or period.")
@@ -4416,6 +4420,10 @@ def _v77_texts() -> dict[tuple[str, str], str]:
     t[("node", "constraint_retired_capacity_coeff")] = (
         "Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per "
         "MWh.")
+    t[("node", "constraint_in_construction_capacity_coeff")] = (
+        "Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity "
+        "is in construction from the period of the investment decision until it comes online. It is zero without a "
+        "construction lead time. Coefficient per MWh.")
     t[("group", "invest_max_period")] = (
         "[MW or MWh] Largest allowed investment in each period, summed over the group's units and connections (MW) "
         "and storage nodes (MWh). Constant or period.")
@@ -4700,8 +4708,8 @@ def _v77_types_and_descriptions(db) -> None:
 
 
 def _v77_new_definitions(db) -> None:
-    """Group retirement limits and the user-constraint capacity
-    coefficients (default None, no value list)."""
+    """Group retirement limits and the user-constraint capacity, retired and
+    in-construction coefficients (default None, no value list)."""
     texts = _v77_texts()
     new_defs: list[tuple[str, str, tuple[str, ...], str, str, int]] = []
     if db.get_item("entity_class", name="group"):
@@ -4711,7 +4719,8 @@ def _v77_new_definitions(db) -> None:
     for cls in ("unit", "node", "connection"):
         if not db.get_item("entity_class", name=cls):
             continue
-        for name in ("constraint_capacity_coeff", "constraint_retired_capacity_coeff"):
+        for name in ("constraint_capacity_coeff", "constraint_retired_capacity_coeff",
+                     "constraint_in_construction_capacity_coeff"):
             new_defs.append((cls, name, ("1d_map",), "constraint", "a36784", 70))
     for cls, name, types, group, color, priority in new_defs:
         _ensure_parameter_group(db, group, color, priority)
@@ -5324,8 +5333,9 @@ def _migrate_v77_schema_batch(db) -> None:
       one, so no allowed type is dropped.
     * Descriptions rewritten (owner-reviewed texts).
     * New: group ``retire_{max,min}_{period,total}`` and the unit / node /
-      connection ``constraint_capacity_coeff`` and
-      ``constraint_retired_capacity_coeff``.
+      connection ``constraint_capacity_coeff``,
+      ``constraint_retired_capacity_coeff`` and
+      ``constraint_in_construction_capacity_coeff``.
     * ``group.invest_method`` gets the list ``group_invest_methods``:
       ``not_allowed`` is ``not_active`` there (also the new default).
     * Behaviour-change markers (database metadata) for the changes this DB

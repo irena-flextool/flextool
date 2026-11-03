@@ -635,9 +635,10 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
                     input_dir / f"p_{cls}_constraint_{kind}_coeff.csv", provider=provider))
         return frozenset(out)
 
-    # Mirror of ``_derived._has_capacity_constraint_invest_set``: an invested, pre-built or capacity coefficient
-    # links the investment variable; those and a retired-capacity coefficient link the retirement variable.
-    invest_kinds = ("invested_capacity", "cumulative_pre_built_capacity", "capacity")
+    # Mirror of ``_derived._has_capacity_constraint_invest_set``: an invested, pre-built, capacity or
+    # in-construction coefficient links the investment variable; those and a retired-capacity coefficient link the
+    # retirement variable.
+    invest_kinds = ("invested_capacity", "cumulative_pre_built_capacity", "capacity", "in_construction_capacity")
     has_capacity_constraint = _coeff_entities(invest_kinds)
     has_retire_constraint = _coeff_entities((*invest_kinds, "retired_capacity"))
 

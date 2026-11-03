@@ -17,6 +17,7 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Expr, Var
 
 from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
+from flextool.engine.model import _lead_time
 from flextool.engine.model._common import (
     _entities_of_kind,
     _entity_rows,
@@ -213,12 +214,18 @@ def _eq_min_entity_period(b: _Build) -> None:
 
     # ─── EQ. ─── min{Invest,Divest}_entity_period_{p,n} ──────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_invest_p[p,d] · unitsize[p]        ≥ invest_min_period[p,d]   ∀ (p,d) ∈ ed_invest_period_set ∩ pd_invest_set
-    # v_invest_n[n,d] · state_unitsize[n]  ≥ invest_min_period[n,d]   ∀ (n,d) ∈ ed_invest_period_set ∩ nd_invest_set
+    # Σ_{(p,o,d) ∈ edd_invest_commission} v_invest_p[p,o] · unitsize[p] + carried_commission[p,d]
+    #                                      ≥ invest_min_period[p,d]   ∀ (p,d) with a decision coming online in d,
+    #                                                                   p ∈ ed_invest_period_set
+    # (n: v_invest_n with state_unitsize[n], n ∈ ed_invest_period_set ∩ nd_invest_set)
     # v_divest_p[p,d] · unitsize[p]        ≥ divest_min_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ pd_divest_set
     # v_divest_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ nd_divest_set
-    # Forces a minimum capacity to be built or retired in a period; the floor twin of
-    # max{Invest,Divest}_entity_period in model/core.py.  Capacity in MW (MWh for storage nodes).
+    # Forces a minimum capacity to come online or be retired in a period; the floor twin of
+    # max{Invest,Divest}_entity_period in model/core.py.  Capacity in MW (MWh for storage nodes).  Without a
+    # construction lead time c(o) = o: v_invest_p[p,d] · unitsize[p] ≥ invest_min_period[p,d] over
+    # ed_invest_period_set ∩ pd_invest_set.  With one, a period of an entity with a lead time where nothing can
+    # come online (no decision early enough in the solve) and the carried capacity is below the floor is a
+    # configuration error.
     for name, period_set, cap, var, axis, kind in (
         ("minInvest_entity_period_p", d.ed_invest_period_set, d.ed_invest_min_period, b.v_invest_p, "p", "invest"),
         ("minInvest_entity_period_n", d.ed_invest_period_set, d.ed_invest_min_period, b.v_invest_n, "n", "invest"),
@@ -227,6 +234,10 @@ def _eq_min_entity_period(b: _Build) -> None:
     ):
         unitsize = _unitsize(d, axis)
         if not _has_rows(period_set) or cap is None or var is None or unitsize is None:
+            continue
+        if kind == "invest" and _lead_time.active(d):
+            entities = period_set.rename({"e": axis}).join(var.frame.select(axis, "d"), on=[axis, "d"], how="semi")
+            _lead_time.period_limit(b, name, axis, var, unitsize, entities, cap, ">=", "invest_min_period")
             continue
         over = period_set.rename({"e": axis}).join(var.frame.select(axis, "d"), on=[axis, "d"], how="inner")
         if over.height == 0:
@@ -418,6 +429,11 @@ def _eq_group_entity_period(b: _Build) -> None:
     #   ∀ (g,d) ∈ gd_invest_period, restricted to the (g,d) some member actually has the variable for
     #   Divest: v_divest_p with group_retire_{max,min}_period over gd_divest_period (same restriction)
     #   _n: the node analogues with v_invest_n / v_divest_n and state_unitsize[n]
+    # With a construction lead time the invest rows count capacity coming online in d:
+    #   Σ_{p : (g,p) ∈ group_entity} (Σ_{(p,o,d) ∈ edd_invest_commission} v_invest_p[p,o] · unitsize[p]
+    #                                 + carried_commission[p,d])  ≤ / ≥ group_invest_{max,min}_period[g,d]
+    #   over the (g,d) where a member's decision comes online, g with a per-period limit (c(o) = o without a lead
+    #   time: the form above).
     # Bounds the capacity a group of entities builds or retires in one period, MW (MWh for storage
     # nodes); processes and storage nodes of a group get separate rows.  Group retire_{max,min}_period is
     # not a schema parameter, so the divest rows are reachable only with off-schema data.  Under recourse
@@ -453,6 +469,9 @@ def _eq_group_entity_period(b: _Build) -> None:
             # there would be vacuous on the LHS (empty sum) while the RHS min/max still carries
             # the branch's (inherited-or-own) cap, turning an unconstrained branch into an
             # infeasible one for the ">=" (min) sense.
+            if kind == "invest" and _lead_time.active(d):
+                _group_period_limit_online(b, name, axis, var, unitsize, members, gd_idx, cap, sense, param_name)
+                continue
             terms = (members.join(var.frame.select(axis, "d"), on=axis, how="inner")
                      .join(gd_idx, on=["g", "d"], how="inner"))
             if terms.height == 0:
@@ -468,6 +487,43 @@ def _eq_group_entity_period(b: _Build) -> None:
                 lhs_terms = {kind:  Sum(Where(var * unitsize, terms.select("g", axis, "d")), over=(axis,))},
                 rhs_terms = {"cap": cap},
             )
+
+
+def _group_period_limit_online(b: _Build, name: str, axis: str, var, unitsize, members: pl.DataFrame,
+                               gd_idx: pl.DataFrame, cap: Param, sense: str, param_name: str | None) -> None:
+    """The group per-period invest row with a construction lead time: the members' capacity coming online in d
+    (decisions of this solve and capacity carried from earlier solves) against the group limit, over the (g, d)
+    where a member's decision comes online, for the groups of ``gd_idx``."""
+    d = b.d
+    rows = _lead_time.commission_rows(d, var, axis)
+    rows, mem = align_join_dtypes(rows, members.select("g", axis), [axis])
+    rows = rows.join(mem, on=axis, how="inner")
+    # The groups with a per-period limit; the row period is where the capacity comes online, which need not be an
+    # investment period of the group.
+    rows, gd = align_join_dtypes(rows, gd_idx.select("g").unique(), ["g"])
+    rows = rows.join(gd, on="g", how="semi")
+    if rows.height == 0:
+        return
+    over = rows.select("g", "d").unique().sort("g", "d")
+    if sense == "<=":
+        check_max_cap(over, cap.frame, "g", True, param_name=param_name)  # FA-12
+    lhs: dict = {"invest": _lead_time.decided_sum(var, unitsize, rows.select("g", axis, "d_invest", "d"),
+                                                  "__at_online_g", (axis, "d_invest"))}
+    car = _lead_time.carried(d, "commission", axis, members.select(axis).unique())
+    if car is not None:
+        car, mem = align_join_dtypes(car, members.select("g", axis), [axis])
+        car_g = (car.join(mem, on=axis, how="inner").group_by("g", "d").agg(pl.col("value").sum()))
+        car_g, over_k = align_join_dtypes(car_g, over, ["g", "d"])
+        car_g = car_g.join(over_k, on=["g", "d"], how="semi")
+        if car_g.height > 0:
+            lhs["carried"] = Param(("g", "d"), car_g.select("g", "d", "value"))
+    b.m.add_cstr(
+        name,
+        over      = over,
+        sense     = sense,
+        lhs_terms = lhs,
+        rhs_terms = {"cap": cap},
+    )
 
 
 def _eq_group_invest_total(b: _Build) -> None:

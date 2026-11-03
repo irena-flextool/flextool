@@ -24,6 +24,7 @@ carriers, named metric columns for multi-value):
 
     realized_invest        [entity, period, value]
     realized_existing      [entity, period, value]
+    realized_commission    [entity, period, commission_period, value]
     divest_cumulative      [entity, value]
     roll_end_state         [node, value]
     roll_end_online        [process, value]
@@ -90,6 +91,14 @@ class SolveHandoff:
     # File equivalent: ``p_entity_period_existing_capacity`` column of
     #   solve_data/p_entity_period_existing_capacity.csv.
     realized_existing: pl.DataFrame | None = None
+
+    # Realized investments with a construction lead time, chain-cumulative: decision period, the period the
+    # capacity starts to operate in (found by the deciding solve on the run calendar) and the capacity
+    # (post-unitsize).  ``realized_invest`` / ``realized_existing`` key these by the start of operation; this
+    # carrier keeps the decision period, so a later solve knows what comes online and what is in construction in
+    # its periods.  Producer: ``build_handoff_from_solution``.  Consumer: ``apply_existing_chain``
+    # (``p_entity_carried_commission`` / ``p_entity_carried_in_construction``).  In-memory only.
+    realized_commission: pl.DataFrame | None = None
 
     # Cumulative divested capacity per entity (scalar, not per-period).
     # Carries pre-existing decay forward across solves.
@@ -213,7 +222,7 @@ class SolveHandoff:
     cum_sim_hours: pl.DataFrame | None = None
 
     _FIELDS = (
-        "realized_invest", "realized_existing", "divest_cumulative",
+        "realized_invest", "realized_existing", "realized_commission", "divest_cumulative",
         "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
         "roll_end_step", "online_history", "fix_online", "fix_reserve",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",

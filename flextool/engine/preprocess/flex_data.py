@@ -672,6 +672,8 @@ class FlexData:
     p_process_constraint_capacity_coeff: Param | None = None  # (p, cn) — capacity in service
     p_node_constraint_retired_capacity_coeff: Param | None = None  # (n, cn) — storage capacity retired in d
     p_process_constraint_retired_capacity_coeff: Param | None = None  # (p, cn) — capacity retired in d
+    p_node_constraint_in_construction_capacity_coeff: Param | None = None  # (n, cn) — storage in construction
+    p_process_constraint_in_construction_capacity_coeff: Param | None = None  # (p, cn) — capacity in construction
 
     # ─── Profiles ─────────────────────────────────────────────────────────
     process_profile_upper: pl.DataFrame | None = None    # (p, source, sink, f)
@@ -693,6 +695,17 @@ class FlexData:
     # (e, d, d_c) — start of operation d_c (a run period) of each offered investment decision d with a
     # construction lead time; None without lead times (apply_derived_c).
     ed_invest_commission: pl.DataFrame | None = None
+    # Construction lead time (apply_derived_c; all None when no investment decision of the solve has one):
+    # (e, d_invest, d) the period d in which the capacity of decision d_invest starts to operate ((e, o, o) for a
+    # decision without a lead time) and the periods d in which it is in construction; (e, L) the entities with a
+    # lead time and their longest lead time (years).
+    edd_invest_commission: pl.DataFrame | None = None
+    edd_invest_in_construction: pl.DataFrame | None = None
+    e_construction_lead_time: pl.DataFrame | None = None
+    # (e, d) MW (MWh): investments realized by earlier solves of a chain with a construction lead time that start to
+    # operate in d / are in construction in d (apply_existing_chain, from the handoff realized_commission).
+    p_entity_carried_commission: Param | None = None
+    p_entity_carried_in_construction: Param | None = None
     edd_divest_active: pl.DataFrame | None = None    # (p, d_divest, d) where d_divest ≤ d
     ndd_divest_active: pl.DataFrame | None = None    # (n, d_divest, d) where d_divest ≤ d — node analogue
     p_entity_max_units: Param | None = None          # (e, d)
@@ -6036,7 +6049,12 @@ def build_handoff_from_solution(
     prior_existing: dict[tuple[str, str], float] = {}
     prior_invested: dict[tuple[str, str], float] = {}
     prior_divested: dict[str, float] = {}
+    prior_commission: list[tuple[str, str, str, float]] = []
     if prior_handoff is not None:
+        if getattr(prior_handoff, "realized_commission", None) is not None:
+            for r in prior_handoff.realized_commission.iter_rows(named=True):
+                prior_commission.append((str(r["entity"]), str(r["period"]), str(r["commission_period"]),
+                                         float(r["value"])))
         if prior_handoff.realized_existing is not None:
             for r in prior_handoff.realized_existing.iter_rows(named=True):
                 prior_existing[(str(r["entity"]), str(r["period"]))] = float(r["value"])
@@ -6150,11 +6168,16 @@ def build_handoff_from_solution(
             if _dc is not None:
                 commission_of[(_e, _o)] = _dc
     realized_by_ed: dict[tuple[str, str], float] = {}
+    # The realized investments with a lead time, also by decision period: a later solve counts them as
+    # coming online / in construction (``realized_commission``, chain-cumulative).
+    commission_rows: list[tuple[str, str, str, float]] = list(prior_commission)
     for (_e, _o), _v in invest_by_ed.items():
         if _o not in realize_invest:
             continue
         _key = (_e, commission_of.get((_e, _o), _o))
         realized_by_ed[_key] = realized_by_ed.get(_key, 0.0) + _v
+        if (_e, _o) in commission_of:
+            commission_rows.append((_e, _o, commission_of[(_e, _o)], _v * unitsize.get(_e, 1.0)))
     iter_keys.update(realized_by_ed)
 
     # ---- compute realized_invest + realized_existing per (e, d) ----
@@ -7153,6 +7176,9 @@ def build_handoff_from_solution(
         realized_existing=pl.DataFrame(
             exist_rows, schema=["entity", "period", "value"], orient="row",
         ) if exist_rows else None,
+        realized_commission=pl.DataFrame(
+            commission_rows, schema=["entity", "period", "commission_period", "value"], orient="row",
+        ) if commission_rows else None,
         divest_cumulative=pl.DataFrame(
             div_rows, schema=["entity", "value"], orient="row",
         ) if div_rows else None,

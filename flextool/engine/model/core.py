@@ -77,12 +77,13 @@ from flextool.engine.model import _dc_power_flow
 from flextool.engine.model import _delay
 from flextool.engine.model import _exact
 from flextool.engine.model import _group_slack
+from flextool.engine.model import _lead_time
 from flextool.engine.model import _non_anticipativity
 from flextool.engine.model import _online
 from flextool.engine.model import _reserve
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
-from flextool.engine.input._axis_enums import alias_to_axis, rename_to_axis
+from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, rename_to_axis
 from flextool.engine.model._common import (
     _availability_factor,
     _connection_procs,
@@ -2577,13 +2578,19 @@ def _eq_invest_period_caps(b: _Build) -> None:
 
     # ─── EQ. ─── max{Invest,Divest}_entity_period_{p,n} ──────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_invest_p[p,d] · unitsize[p]        ≤ invest_max_period[p,d]   ∀ (p,d) ∈ ed_invest_period_set ∩ pd_invest_set
-    # v_invest_n[n,d] · state_unitsize[n]  ≤ invest_max_period[n,d]   ∀ (n,d) ∈ ed_invest_period_set ∩ nd_invest_set
+    # Σ_{(p,o,d) ∈ edd_invest_commission} v_invest_p[p,o] · unitsize[p] + carried_commission[p,d]
+    #                                      ≤ invest_max_period[p,d]   ∀ (p,d) with a decision coming online in d,
+    #                                                                   p ∈ ed_invest_period_set
+    # (n: v_invest_n with state_unitsize[n], n ∈ ed_invest_period_set ∩ nd_invest_set)
     # v_divest_p[p,d] · unitsize[p]        ≤ divest_max_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ pd_divest_set
     # v_divest_n[n,d] · state_unitsize[n]  ≤ divest_max_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ nd_divest_set
-    # Caps the capacity built or retired in one period for entities with a per-period limit
-    # (e.g. invest_method = invest_period_total).  The cap is raw capacity with unitsize on the LHS, as in
-    # the other invest caps, so the row dual is in objective units per unit of capacity.
+    # Caps the capacity coming online or retired in one period for entities with a per-period limit
+    # (e.g. invest_method = invest_period_total).  An investment decided in o comes online in d = c(o)
+    # (construction lead time); without a lead time c(o) = o and the row is v_invest_p[p,d] · unitsize[p] ≤
+    # invest_max_period[p,d] over ed_invest_period_set ∩ pd_invest_set, the form built when no decision of the
+    # solve has a lead time.  carried_commission is the capacity earlier solves of a chain decided that comes
+    # online in d.  The cap is raw capacity with unitsize on the LHS, as in the other invest caps, so the row
+    # dual is in objective units per unit of capacity.
     for name, active, period_set, var_set, cap, var, axis, kind, param_name in (
         ("maxInvest_entity_period_p", b.has_invest_p, d.ed_invest_period_set, d.pd_invest_set,
          d.ed_invest_max_period, b.v_invest_p, "p", "invest", "invest_max_period"),
@@ -2596,13 +2603,23 @@ def _eq_invest_period_caps(b: _Build) -> None:
     ):
         if not active or not _has_rows(period_set):
             continue
+        unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
+        if kind == "invest" and _lead_time.active(d):
+            if cap is None:
+                continue
+            entities = period_set.pipe(rename_to_axis, {"e": axis}).join(var_set, on=[axis, "d"], how="semi")
+            rows = _lead_time.commission_rows(d, var, axis).select(axis, "d").unique()
+            rows, ents = align_join_dtypes(rows, entities.select(axis).unique(), [axis])
+            check_max_cap(rows.join(ents, on=axis, how="semi"), cap.frame.pipe(rename_to_axis, {"e": axis}),
+                          axis, True, param_name=param_name)  # FA-12
+            _lead_time.period_limit(b, name, axis, var, unitsize, entities, cap, "<=", param_name)
+            continue
         over = period_set.pipe(rename_to_axis, {"e": axis}).join(var_set, on=[axis, "d"], how="inner")
         if over.height == 0 or cap is None:
             continue
         cap_frame = cap.frame.pipe(rename_to_axis, {"e": axis})
         check_max_cap(over, cap_frame, axis, True, param_name=param_name)  # FA-12
         cap_param = Param((axis, "d"), cap_frame.select(axis, "d", "value"))
-        unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
         m.add_cstr(
             name,
             over      = over,
@@ -3120,7 +3137,8 @@ def _eq_user_constraints(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,s,k) ∈ flow_constraint[cn]} v_flow[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
     #   + Σ_n v_state[n,d,t]·state_unitsize[n]·node_state_coef[n,cn]
-    #   + Σ_e v_invest[e,d]·us[e]·invested_coef[e,cn]
+    #   + Σ_e inv[e,d]·invested_coef[e,cn]
+    #   + Σ_e con[e,d]·in_construction_coef[e,cn]
     #   + Σ_e v_divest[e,d]·us[e]·retired_coef[e,cn]
     #   + Σ_e pre[e,d]·prebuilt_coef[e,cn]
     #   + Σ_e cap[e,d]·capacity_coef[e,cn]
@@ -3129,17 +3147,22 @@ def _eq_user_constraints(b: _Build) -> None:
     #   ∀ (cn,d) of the other constraints of cdt_{eq,le,ge}             (process_constraint_*_period)
     # where, for e a process p (us = unitsize, existing = existing_count·unitsize) or a storage node n
     # (us = state_unitsize, existing = state existing capacity), MW (MWh):
-    #   pre[e,d] = existing[e,d] + Σ_{(e,d′,d) ∈ edd_invest_lookback} v_invest[e,d′]·us[e]
+    #   inv[e,d] = Σ_{(e,o,d) ∈ edd_invest_commission} v_invest[e,o]·us[e] + carried_commission[e,d]
+    #   con[e,d] = Σ_{(e,o,d) ∈ edd_invest_in_construction} v_invest[e,o]·us[e] + carried_in_construction[e,d]
+    #   pre[e,d] = existing[e,d] − carried_commission[e,d] + Σ_{(e,d′,d) ∈ edd_invest_lookback} v_invest[e,d′]·us[e]
     #                            − Σ_{(e,d′,d) ∈ edd/ndd_divest_active, d′ ≠ d} v_divest[e,d′]·us[e]
     #   cap[e,d] = existing[e,d] + Σ_{(e,d′,d) ∈ edd_invest_set} v_invest[e,d′]·us[e]
     #                            − Σ_{(e,d′,d) ∈ edd/ndd_divest_active} v_divest[e,d′]·us[e]
     # A linear constraint authored by the user over flows (MW), storage states (MWh) and capacities.  The
-    # invested and retired terms count the decisions of d; pre is the capacity in service at the start of d
-    # (existing plus earlier investments still alive, minus earlier retirements, also those of the same solve:
-    # a single solve and a chain of solves give the same row); cap is the capacity in service in d, the
-    # measure of maxFlow and the cumulative-capacity rows.  Without a construction lead time
-    # cap = pre + invested − retired.  With one, edd_invest_lookback / edd_invest_set count an investment from
-    # its commissioning period while the invested term counts it in its decision period.
+    # invested term is the capacity that comes online in d (an investment decided in o with a construction
+    # lead time comes online in c(o); without one c(o) = o and inv[e,d] = v_invest[e,d]·us[e]); the
+    # in-construction term is the capacity decided but not yet online (zero without a lead time); the retired
+    # term counts the retirements of d; pre is the capacity in service at the start of d (existing plus earlier
+    # investments still alive, minus earlier retirements, also those of the same solve: a single solve and a
+    # chain of solves give the same row); cap is the capacity in service in d, the measure of maxFlow and the
+    # cumulative-capacity rows.  cap = pre + inv − retired, with or without a lead time.  carried_* are the
+    # investments earlier solves of a chain decided with a lead time (constants; existing holds them from their
+    # start of operation, so pre subtracts the part coming online in d).
     # Terms without data are absent.  The existing-capacity terms are constants and enter as Param terms.
     # A constraint without flow and state terms is the same in every step of a period, so it gets one row per
     # period (the _period family) instead of one per step.  The constraint axis is cn (c is the commodity
@@ -3154,18 +3177,46 @@ def _eq_user_constraints(b: _Build) -> None:
             over=("p", "source", "sink"),
         ))
     invest_terms: list = []
-    if b.has_invest_n and d.p_node_constraint_invested_capacity_coeff is not None:
-        coef = d.p_node_constraint_invested_capacity_coeff
+    lead_time = _lead_time.active(d)
+    for axis, has_invest, var, coef in (
+        ("n", b.has_invest_n, v_invest_n, d.p_node_constraint_invested_capacity_coeff),
+        ("p", b.has_invest_p, v_invest_p, d.p_process_constraint_invested_capacity_coeff),
+    ):
+        if not has_invest or coef is None:
+            continue
+        unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
+        if lead_time:
+            # The investments coming online in d: v_invest[e,o] with c(o) = d.
+            online = (_lead_time.commission_rows(d, var, axis)
+                      .join(coef.frame.select(axis, "cn"), on=axis, how="inner"))
+            if online.height > 0:
+                invest_terms.append(Sum(
+                    Where(_var_view(var, "__at_online_uc", {"d": "d_invest"}, to_axis=True) * unitsize, online)
+                    * coef,
+                    over=(axis, "d_invest"),
+                ))
+            continue
         invest_terms.append(Sum(
-            Where(v_invest_n * Param(("n",), d.p_state_unitsize.frame), coef.frame.select("n", "cn")) * coef,
-            over=("n",),
+            Where(var * unitsize, coef.frame.select(axis, "cn")) * coef,
+            over=(axis,),
         ))
-    if b.has_invest_p and d.p_process_constraint_invested_capacity_coeff is not None:
-        coef = d.p_process_constraint_invested_capacity_coeff
-        invest_terms.append(Sum(
-            Where(v_invest_p * d.p_unitsize, coef.frame.select("p", "cn")) * coef,
-            over=("p",),
-        ))
+    # In construction in d: v_invest[e,o] with o ≤ d < c(o).
+    for axis, has_invest, var, coef in (
+        ("n", b.has_invest_n, v_invest_n, d.p_node_constraint_in_construction_capacity_coeff),
+        ("p", b.has_invest_p, v_invest_p, d.p_process_constraint_in_construction_capacity_coeff),
+    ):
+        if not has_invest or coef is None or not lead_time:
+            continue
+        rows = _lead_time.in_construction_rows(d, var, axis)
+        if rows is None:
+            continue
+        building = rows.join(coef.frame.select(axis, "cn"), on=axis, how="inner")
+        if building.height > 0:
+            unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
+            invest_terms.append(Sum(
+                Where(_var_view(var, "__at_constr_uc", {"d": "d_invest"}, to_axis=True) * unitsize, building) * coef,
+                over=(axis, "d_invest"),
+            ))
     state_terms: list = []
     state_cns: list = []
     if b.has_storage and d.p_node_constraint_state_coeff is not None:
@@ -3185,6 +3236,20 @@ def _eq_user_constraints(b: _Build) -> None:
         existing = _user_constraint_existing(d, coef, node=coef is node_pre or coef is node_cap)
         if existing is not None:
             const_terms.append(existing)
+    # Capacity earlier solves of a chain decided with a construction lead time: coming online in d it is in the
+    # invested term, not in pre-built (existing carries it from d on); in construction in d it is in the
+    # in-construction term.
+    for coef, kind, node, sign in (
+        (d.p_node_constraint_invested_capacity_coeff, "commission", True, 1.0),
+        (d.p_process_constraint_invested_capacity_coeff, "commission", False, 1.0),
+        (node_pre, "commission", True, -1.0),
+        (proc_pre, "commission", False, -1.0),
+        (d.p_node_constraint_in_construction_capacity_coeff, "in_construction", True, 1.0),
+        (d.p_process_constraint_in_construction_capacity_coeff, "in_construction", False, 1.0),
+    ):
+        carried = _user_constraint_carried(d, coef, kind, node=node, sign=sign)
+        if carried is not None:
+            const_terms.append(carried)
 
     capacity_terms: list = []
     if b.has_invest_p and proc_pre is not None and _has_rows(lookback):
@@ -3373,6 +3438,23 @@ def _check_user_constraints_without_terms(b: _Build, empty_rows: list[tuple[pl.D
 
 def _collected(frame) -> pl.DataFrame:
     return frame.collect() if isinstance(frame, pl.LazyFrame) else frame
+
+
+def _user_constraint_carried(d, coef: "Param | None", kind: str, *, node: bool, sign: float) -> "Param | None":
+    """``sign · Σ_e carried[e,d]·coef[e,cn]`` as a ``(cn, d)`` Param: the capacity earlier solves of a chain decided
+    with a construction lead time that comes online (``kind="commission"``) or is in construction
+    (``kind="in_construction"``) in d; None without rows."""
+    if coef is None:
+        return None
+    axis = "n" if node else "p"
+    carried = _lead_time.carried(d, kind, axis)
+    if carried is None:
+        return None
+    carried, coef_frame = align_join_dtypes(carried, coef.frame.rename({"value": "coef"}), [axis])
+    frame = (carried.join(coef_frame, on=axis, how="inner")
+             .with_columns(value=pl.col("value") * pl.col("coef") * sign))
+    frame = _collected(frame.group_by(["cn", "d"]).agg(pl.col("value").sum()).select("cn", "d", "value"))
+    return Param(("cn", "d"), frame) if frame.height > 0 else None
 
 
 def _user_constraint_existing(d, coef: "Param | None", *, node: bool) -> "Param | None":

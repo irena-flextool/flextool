@@ -578,7 +578,8 @@ def _user_constraint_sides(
                 "p_node_constraint_invested_capacity_coeff",
                 "p_node_constraint_prebuilt_capacity_coeff",
                 "p_node_constraint_capacity_coeff",
-                "p_node_constraint_retired_capacity_coeff"):
+                "p_node_constraint_retired_capacity_coeff",
+                "p_node_constraint_in_construction_capacity_coeff"):
         f = _frame_of(getattr(data, fld, None))
         if f is None or "cn" not in f.columns:
             continue
@@ -600,7 +601,8 @@ def _user_constraint_sides(
     for fld in ("p_process_constraint_invested_capacity_coeff",
                 "p_process_constraint_prebuilt_capacity_coeff",
                 "p_process_constraint_capacity_coeff",
-                "p_process_constraint_retired_capacity_coeff"):
+                "p_process_constraint_retired_capacity_coeff",
+                "p_process_constraint_in_construction_capacity_coeff"):
         f = _frame_of(getattr(data, fld, None))
         if f is None or "cn" not in f.columns:
             continue
@@ -1522,6 +1524,8 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "p_process_constraint_capacity_coeff",
     "p_node_constraint_retired_capacity_coeff",
     "p_process_constraint_retired_capacity_coeff",
+    "p_node_constraint_in_construction_capacity_coeff",
+    "p_process_constraint_in_construction_capacity_coeff",
     "groupCapacityMargin", "groupInertia", "groupNonSync", "group_node",
     "process_sink_inertia", "process_source_inertia",
     "process_sink_nonSync", "process_group_inside_nonSync",
@@ -1581,6 +1585,8 @@ _MASTER_CN_KEYED_FIELDS: tuple[str, ...] = (
     "p_process_constraint_capacity_coeff",
     "p_node_constraint_retired_capacity_coeff",
     "p_process_constraint_retired_capacity_coeff",
+    "p_node_constraint_in_construction_capacity_coeff",
+    "p_process_constraint_in_construction_capacity_coeff",
 )
 
 #: Arc-keyed CO2-priced flow frames → keep master-local arc rows
@@ -1917,6 +1923,12 @@ def master_network_data(
     new.edd_invest_set = _keep_entity_frame(data.edd_invest_set)
     new.edd_invest_lookback_set = _keep_entity_frame(data.edd_invest_lookback_set)
     new.ed_invest_commission = _keep_entity_frame(getattr(data, "ed_invest_commission", None))
+    new.edd_invest_commission = _keep_entity_frame(getattr(data, "edd_invest_commission", None))
+    new.edd_invest_in_construction = _keep_entity_frame(getattr(data, "edd_invest_in_construction", None))
+    new.e_construction_lead_time = _keep_entity_frame(getattr(data, "e_construction_lead_time", None))
+    new.p_entity_carried_commission = _keep_entity_param(getattr(data, "p_entity_carried_commission", None))
+    new.p_entity_carried_in_construction = _keep_entity_param(
+        getattr(data, "p_entity_carried_in_construction", None))
     new.edd_divest_active = _keep_entity_frame(data.edd_divest_active)
     new.p_entity_max_units = _keep_entity_param(data.p_entity_max_units)
     new.ed_lifetime_fixed_cost = _keep_entity_param(data.ed_lifetime_fixed_cost)

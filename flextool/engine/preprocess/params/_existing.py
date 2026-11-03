@@ -407,6 +407,33 @@ def _snap_start(t_star: float, method: str, seams: list[float]) -> float:
     return lo if (t_star - lo) < (hi - t_star) - YEAR_TOL else hi
 
 
+def _solve_walk_years(source: "InputSource",
+                         active_solve: str | None,
+                         workdir: Path | None = None,
+                         provider: "object | None" = None,
+                         ) -> dict[str, float] | None:
+    """``{period: year}`` of the solve's own calendar, resolved as :func:`._walks.period_walk_iterator` resolves
+    it (the same provider / workdir fallback), so these years are the ones the availability walk compares;
+    ``None`` when the solve has no period years."""
+    if provider is None:
+        from flextool.engine.preprocess.params._derived import (
+            _recourse_walk_provider,
+            _recourse_walk_workdir,
+        )
+        provider = _recourse_walk_provider()
+        if provider is not None and workdir is None:
+            workdir = _recourse_walk_workdir()
+    from flextool.engine.preprocess.params._derived import _p_years_d_lf
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
+    if pyd_lf is None:
+        return None
+    walk_yr: dict[str, float] = {}
+    for d, y in pyd_lf.select(pl.col("d").cast(pl.Utf8), "yr").collect().iter_rows():
+        if d is not None and y is not None:
+            walk_yr.setdefault(str(d), float(y))
+    return walk_yr
+
+
 def commissioning_year_lf(source: "InputSource",
                               active_solve: str | None,
                               anchor_ed_lf: pl.LazyFrame,
@@ -448,33 +475,17 @@ def commissioning_year_lf(source: "InputSource",
 
     if not period_in_use:
         return None
-    # Mirror period_walk_iterator's provider/workdir fallback block so this helper's _p_years_d_lf call hits the
-    # identical calendar as the walk's yr_dall.
-    if provider is None:
-        from flextool.engine.preprocess.params._derived import (
-            _recourse_walk_provider,
-            _recourse_walk_workdir,
-        )
-        provider = _recourse_walk_provider()
-        if provider is not None and workdir is None:
-            workdir = _recourse_walk_workdir()
-
     # Whether the model configures a lag (some construction_lead_time > 0): a calendar problem is then an error
     # instead of a silent unlagged solve.
     lag_cfg = _construction_lag_configured(source)
 
-    from flextool.engine.preprocess.params._derived import _p_years_d_lf
-    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
-    if pyd_lf is None:
+    walk_yr = _solve_walk_years(source, active_solve, workdir, provider)
+    if walk_yr is None:
         if lag_cfg:
             raise CommissioningLagError(
                 "The start of operation of investments with a construction_lead_time cannot be found: the solve "
                 f"'{active_solve}' has no period years.")
         return None
-    walk_yr: dict[str, float] = {}
-    for d, y in pyd_lf.select(pl.col("d").cast(pl.Utf8), "yr").collect().iter_rows():
-        if d is not None and y is not None:
-            walk_yr.setdefault(str(d), float(y))
     in_use = [str(d) for d in period_in_use]
     in_use_yr = {d: walk_yr[d] for d in in_use if d in walk_yr}
     if lag_cfg and not in_use_yr:
@@ -618,6 +629,135 @@ def warn_investments_not_offered(source: "InputSource",
                         f"construction_lead_time_method immediate.")
                 key = ("construction_lead_time_after_solve", active_solve, e)
             _behaviour_changes.warn_once(key, text)
+
+
+def lead_time_sets(source: "InputSource",
+                     active_solve: str | None,
+                     ed_invest: pl.DataFrame,
+                     edd_invest: pl.DataFrame | None,
+                     commission_lf: pl.LazyFrame,
+                     period_in_use: list[str],
+                     workdir: Path | None = None,
+                     *,
+                     lineage: pl.DataFrame | None = None,
+                     ) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """``(edd_invest_commission, edd_invest_in_construction)``, both ``[e, d_invest, d]`` (Utf8), of a solve with
+    construction lead times.
+
+    * commission: the period ``d`` in which the capacity of decision ``(e, d_invest)`` starts to operate — the
+      periods of ``edd_invest`` at the start year ``yr_c`` (the branch periods of that year along the decision's
+      lineage under recourse).  A decision without a lead time starts in its own period: ``(e, o, o)``.
+    * in construction: the periods ``d`` with ``yr(d_invest) <= yr(d) < yr_c`` of the decisions with a lead time,
+      lineage-filtered like the availability walk.
+
+    ``commission_lf`` is the frame of :func:`commissioning_year_lf` (offered decisions keep a finite ``yr_c``).
+    """
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+
+    schema = {"e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8}
+    lag = (commission_lf.filter(pl.col("yr_c").is_finite())
+                        .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8).alias("d_invest"), "yr_c")
+                        .collect())
+    walk_yr = _solve_walk_years(source, active_solve, workdir) or {}
+    years = pl.DataFrame({"d": list(walk_yr), "yr_d": list(walk_yr.values())},
+                         schema={"d": pl.Utf8, "yr_d": pl.Float64})
+    ed = ed_invest.select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8).alias("d_invest")).unique()
+    plain = (ed.join(lag.select("e", "d_invest"), on=["e", "d_invest"], how="anti")
+               .with_columns(d=pl.col("d_invest")))
+    if edd_invest is not None and edd_invest.height > 0:
+        moved = (edd_invest.select(pl.col(c).cast(pl.Utf8) for c in ("e", "d_invest", "d"))
+                 .join(lag, on=["e", "d_invest"], how="inner")
+                 .join(years, on="d", how="left")
+                 .filter((pl.col("yr_d") - pl.col("yr_c")).abs() <= YEAR_TOL)
+                 .select("e", "d_invest", "d"))
+    else:
+        moved = pl.DataFrame(schema=schema)
+    commission = (pl.concat([plain.select("e", "d_invest", "d"), moved], how="vertical")
+                    .unique().sort("e", "d_invest", "d"))
+
+    in_construction = pl.DataFrame(schema=schema)
+    if lag.height > 0:
+        anchor = lag.select("e", pl.col("d_invest").alias("d"))
+        anchor = anchor.join(years.rename({"yr_d": "yr_o"}), on="d", how="left")
+        life_lf = (lag.rename({"d_invest": "d"})
+                      .join(years.rename({"yr_d": "yr_o"}), on="d", how="left")
+                      # The window ends just before the start of operation (YEAR_TOL keeps that period out).
+                      .select("e", "d", (pl.col("yr_c") - pl.col("yr_o").fill_null(0.0) - YEAR_TOL).alias("life"))
+                      .lazy())
+        walk = period_walk_iterator(
+            source, active_solve, anchor.select("e", "d").lazy(),
+            [str(d) for d in period_in_use], [str(d) for d in period_in_use],
+            window_method=WindowMethod.BOUNDED, life_lf=life_lf, factor_side=None,
+            workdir=workdir, lineage=lineage)
+        in_construction = (walk.select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8).alias("d_invest"),
+                                       pl.col("d_all").cast(pl.Utf8).alias("d"))
+                               .unique().sort("e", "d_invest", "d").collect())
+    return commission, in_construction
+
+
+def carried_lead_time_capacity(source: "InputSource",
+                                  active_solve: str | None,
+                                  realized_commission: pl.DataFrame | None,
+                                  period_in_use: list[str],
+                                  workdir: Path | None = None,
+                                  run_calendar: "object | None" = None,
+                                  ) -> tuple["Param | None", "Param | None"]:
+    """``(carried_commission, carried_in_construction)`` Params ``[e, d]`` (MW, MWh for storage) of a solve of a
+    chain: the investments that earlier solves realized with a construction lead time, by the period of this solve
+    in which they start to operate, and by the periods in which they are still in construction
+    (``yr(decision) <= yr(d) < yr(start)``).
+
+    ``realized_commission`` is the handoff carrier ``[entity, period, commission_period, value]``; the years are
+    those of the run calendar (the solve's own years shifted onto it).  ``(None, None)`` without carried
+    investments in this solve's periods.
+    """
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+
+    if realized_commission is None or realized_commission.height == 0 or not period_in_use:
+        return None, None
+    walk_yr = _solve_walk_years(source, active_solve, workdir) or {}
+    rc_years = dict(getattr(run_calendar, "years", None) or {})
+    offset = 0.0
+    if rc_years:
+        shared = [d for d in walk_yr if d in rc_years]
+        if shared:
+            offset = rc_years[shared[0]] - walk_yr[shared[0]]
+
+    def run_year(d: str) -> float | None:
+        if d in rc_years:
+            return rc_years[d]
+        if d in walk_yr:
+            return walk_yr[d] + offset
+        return None
+
+    in_use = [(str(d), run_year(str(d))) for d in period_in_use]
+    comm: dict[tuple[str, str], float] = {}
+    cons: dict[tuple[str, str], float] = {}
+    for e, o, c, v in realized_commission.select(
+            pl.col("entity").cast(pl.Utf8), pl.col("period").cast(pl.Utf8),
+            pl.col("commission_period").cast(pl.Utf8),
+            pl.col("value").cast(pl.Float64, strict=False)).iter_rows():
+        if v is None or v == 0.0:
+            continue
+        yr_o, yr_c = run_year(o), run_year(c)
+        if yr_o is None or yr_c is None:
+            continue
+        for d, yr_d in in_use:
+            if yr_d is None:
+                continue
+            if abs(yr_d - yr_c) <= YEAR_TOL:
+                comm[(e, d)] = comm.get((e, d), 0.0) + v
+            elif yr_o - YEAR_TOL <= yr_d < yr_c - YEAR_TOL:
+                cons[(e, d)] = cons.get((e, d), 0.0) + v
+
+    def as_param(rows: dict[tuple[str, str], float]) -> "Param | None":
+        if not rows:
+            return None
+        df = pl.DataFrame([(e, d, v) for (e, d), v in sorted(rows.items())],
+                          schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64}, orient="row")
+        return Param(("e", "d"), df)
+
+    return as_param(comm), as_param(cons)
 
 
 # ---------------------------------------------------------------------------
@@ -1689,6 +1829,22 @@ def apply_existing_chain(flex_data: object,
         p_entity_divested=ped,
         solve_first=solve_first,
         edd_history=edd_hist_df)
+
+    # Investments that earlier solves realized with a construction lead time: the capacity coming online and in
+    # construction in this solve's periods (constants of the per-period invest limits and user constraints).
+    realized_commission = None
+    if provider is not None:
+        from flextool.engine.preprocess import _provider_keys as K
+        from flextool.engine.preprocess._provider_translators import read_handoff_frame
+        realized_commission = read_handoff_frame(provider, K.HANDOFF_REALIZED_COMMISSION)
+    if (realized_commission is None or realized_commission.height == 0) and handoff is not None:
+        realized_commission = getattr(handoff, "realized_commission", None)
+    from flextool.engine.preprocess.params._run_calendar import read_run_calendar
+    carried_commission, carried_in_construction = carried_lead_time_capacity(
+        source, active_solve, realized_commission, period_in_use, workdir,
+        run_calendar=read_run_calendar(provider))
+    flex_data.p_entity_carried_commission = carried_commission
+    flex_data.p_entity_carried_in_construction = carried_in_construction
 
 
 __all__ = [

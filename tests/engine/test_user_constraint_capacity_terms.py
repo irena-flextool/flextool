@@ -3,8 +3,8 @@
 * ``constraint_capacity_coeff`` puts the capacity in service in each period on the left side; without a
   construction lead time it equals the sum of the pre-built, invested and retired terms with the same
   coefficient (same row, single solve, chain of solves and recourse solve).
-* With a construction lead time the two differ by the investments that enter service in the period minus
-  those ordered in it (hand derivation in :func:`test_lead_time_difference`).
+* With a construction lead time the invested term counts the capacity coming online, so the identity holds
+  as well (:func:`test_lead_time_keeps_identity`).
 * ``constraint_cumulative_pre_built_capacity_coeff`` subtracts the retirements of earlier periods, so a single
   solve and a chain of solves agree.
 * A constraint without flow or state terms is written once per period; with a flow term once per step; the
@@ -115,31 +115,24 @@ def test_capacity_twin_under_recourse(tmp_path_factory) -> None:
     assert branch_rows, sorted(cap)
 
 
-def test_lead_time_difference(tmp_path_factory) -> None:
-    """coal_plant with a 5-year construction lead time over p2020 … p2035 (5 years apart): an order of d
-    enters service in the next period.  Capacity in service in d holds v_invest[d − 1] (and earlier orders);
-    pre-built holds the orders in service before d, i.e. up to v_invest[d − 2]; invested holds v_invest[d].
-    So capacity − (pre-built + invested − retired) = us·v_invest[d − 1] − us·v_invest[d], with us the unit
-    size (for p2020 only −us·v_invest[p2020]; an order of p2035 would enter service after the horizon, so the
-    model has no v_invest[p2035] and the difference there is us·v_invest[p2030]).  Retirements cancel."""
+def test_lead_time_keeps_identity(tmp_path_factory) -> None:
+    """coal_plant with a 5-year construction lead time over p2020 … p2035 (5 years apart): an investment decided
+    in d comes online in the next period.  The invested term counts it there (v_invest[d − 1] in d), as capacity
+    in service and pre-built do, so capacity = pre-built + invested − retired row by row, as without a lead time.
+    The p2035 decision would start to operate at the end of the horizon and is not offered."""
     values = TWIN_VALUES + [["unit", PLANT, "construction_lead_time", b64(5.0, "float")]]
     url, scen = make_db(tmp_path_factory, alt="uc_cap_lead", values=values, base_chain=SINGLE,
                         entities=TWIN_ENTITIES)
     step = list(run(tmp_path_factory, url, scen).values())[-1]
     us = float(utf8(step.flex_data.p_unitsize.frame).filter(pl.col("p") == PLANT)["value"][0])
     pb = build(step.flex_data)
+    _assert_twin(pb)
     cap = _period_rows(pb, GE + "_period", "c_cap")
-    twin = _period_rows(pb, GE + "_period", "c_twin")
-    periods = ["p2020", "p2025", "p2030", "p2035"]
-    assert sorted(cap) == periods
-    for k, d in enumerate(periods):
-        diff = {c: cap[d][0].get(c, 0.0) - twin[d][0].get(c, 0.0) for c in set(cap[d][0]) | set(twin[d][0])}
-        diff = {c: v for c, v in diff.items() if abs(v) > 1e-12}
-        expected = {f"v_invest_p[{PLANT},{d}]": -us} if d != "p2035" else {}
-        if k > 0:
-            expected[f"v_invest_p[{PLANT},{periods[k - 1]}]"] = us
-        assert diff == pytest.approx(expected, rel=1e-12), d
-        assert cap[d][1] == pytest.approx(twin[d][1], rel=1e-12), d
+    assert sorted(cap) == ["p2020", "p2025", "p2030", "p2035"]
+    # Capacity in service in p2030: the decisions of p2020 and p2025 (in service from p2025 and p2030).
+    coal = {c: v for c, v in cap["p2030"][0].items() if c.startswith(f"v_invest_p[{PLANT},")}
+    assert coal == pytest.approx({f"v_invest_p[{PLANT},p2020]": us, f"v_invest_p[{PLANT},p2025]": us}, rel=1e-12)
+    assert not any(c == f"v_invest_p[{PLANT},p2035]" for t, _ in cap.values() for c in t)
 
 
 GROW_ENTITIES = [["constraint", "c_grow", None]]

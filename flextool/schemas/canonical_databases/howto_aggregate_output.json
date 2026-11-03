@@ -908,6 +908,14 @@
     ],
     [
       "connection",
+      "constraint_in_construction_capacity_coeff",
+      null,
+      null,
+      "Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
+      "constraint"
+    ],
+    [
+      "connection",
       "constraint_invested_capacity_coeff",
       null,
       null,
@@ -1685,6 +1693,14 @@
       null,
       null,
       "Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retirements). Investments with a construction lead time count when they enter service. Coefficient per MWh.",
+      "constraint"
+    ],
+    [
+      "node",
+      "constraint_in_construction_capacity_coeff",
+      null,
+      null,
+      "Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -2540,6 +2556,14 @@
     ],
     [
       "unit",
+      "constraint_in_construction_capacity_coeff",
+      null,
+      null,
+      "Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
+      "constraint"
+    ],
+    [
+      "unit",
       "constraint_invested_capacity_coeff",
       null,
       null,
@@ -3158,6 +3182,12 @@
     [
       "connection",
       "constraint_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "constraint_in_construction_capacity_coeff",
       "map",
       1
     ],
@@ -3932,6 +3962,12 @@
     [
       "node",
       "constraint_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "constraint_in_construction_capacity_coeff",
       "map",
       1
     ],
@@ -4712,6 +4748,12 @@
     [
       "unit",
       "constraint_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "constraint_in_construction_capacity_coeff",
       "map",
       1
     ],

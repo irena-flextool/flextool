@@ -153,6 +153,7 @@ DERIVED_CT_METHOD_OVERRIDES = "derived/ct_method_overrides"
 
 HANDOFF_REALIZED_INVEST = "handoff/realized_invest"
 HANDOFF_REALIZED_EXISTING = "handoff/realized_existing"
+HANDOFF_REALIZED_COMMISSION = "handoff/realized_commission"
 HANDOFF_DIVEST_CUMULATIVE = "handoff/divest_cumulative"
 HANDOFF_ROLL_END_STATE = "handoff/roll_end_state"
 HANDOFF_UPWARD_ROLL_END_STATE = "handoff/upward_roll_end_state"

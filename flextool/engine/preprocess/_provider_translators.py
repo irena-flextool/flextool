@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
     K.HANDOFF_REALIZED_INVEST:    ("entity", "period", "value"),
     K.HANDOFF_REALIZED_EXISTING:  ("entity", "period", "value"),
+    K.HANDOFF_REALIZED_COMMISSION: ("entity", "period", "commission_period", "value"),
     K.HANDOFF_DIVEST_CUMULATIVE:  ("entity", "value"),
     K.HANDOFF_ROLL_END_STATE:     ("node", "value"),
     K.HANDOFF_UPWARD_ROLL_END_STATE: ("node", "value"),
@@ -76,7 +77,7 @@ ROLL_FORWARD_FIELDS: frozenset = frozenset((
     "cum_sim_hours",
 ))
 PIN_FIELDS: frozenset = frozenset((
-    "realized_invest", "realized_existing", "divest_cumulative",
+    "realized_invest", "realized_existing", "realized_commission", "divest_cumulative",
     "fix_online", "fix_reserve", "fix_storage_quantity", "fix_storage_price",
     "fix_storage_usage",
 ))
@@ -86,6 +87,7 @@ PIN_FIELDS: frozenset = frozenset((
 _FIELD_TO_KEY: tuple[tuple[str, str], ...] = (
     ("realized_invest",     K.HANDOFF_REALIZED_INVEST),
     ("realized_existing",   K.HANDOFF_REALIZED_EXISTING),
+    ("realized_commission", K.HANDOFF_REALIZED_COMMISSION),
     ("divest_cumulative",   K.HANDOFF_DIVEST_CUMULATIVE),
     ("roll_end_state",      K.HANDOFF_ROLL_END_STATE),
     ("upward_roll_end_state", K.HANDOFF_UPWARD_ROLL_END_STATE),

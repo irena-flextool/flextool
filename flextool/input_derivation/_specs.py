@@ -199,6 +199,11 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/p_node_constraint_retired_capacity_coeff.csv",
     },
     {
+        "cl_pars": [("node", "constraint_in_construction_capacity_coeff")],
+        "header": "node,constraint,p_node_constraint_in_construction_capacity_coeff",
+        "filename": "input/p_node_constraint_in_construction_capacity_coeff.csv",
+    },
+    {
         "cl_pars": [("node", "constraint_state_coeff")],
         "header": "node,constraint,p_node_constraint_state_coeff",
         "filename": "input/p_node_constraint_state_coeff.csv",
@@ -747,6 +752,13 @@ _PARAMETER_SPECS: list[dict] = [
                     ("connection", "constraint_retired_capacity_coeff")],
         "header": "process,constraint,p_process_constraint_retired_capacity_coeff",
         "filename": "input/p_process_constraint_retired_capacity_coeff.csv",
+        "filter_in_type": ["1d_map"],
+    },
+    {
+        "cl_pars": [("unit", "constraint_in_construction_capacity_coeff"),
+                    ("connection", "constraint_in_construction_capacity_coeff")],
+        "header": "process,constraint,p_process_constraint_in_construction_capacity_coeff",
+        "filename": "input/p_process_constraint_in_construction_capacity_coeff.csv",
         "filter_in_type": ["1d_map"],
     },
     # Units only: a connection ``delay`` is not implemented and is ignored

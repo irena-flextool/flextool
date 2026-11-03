@@ -3490,6 +3490,7 @@ _CAPACITY_CONSTRAINT_INVEST_COEFFS: tuple[str, ...] = (
     "constraint_invested_capacity_coeff",
     "constraint_cumulative_pre_built_capacity_coeff",
     "constraint_capacity_coeff",
+    "constraint_in_construction_capacity_coeff",
 )
 _CAPACITY_CONSTRAINT_DIVEST_COEFFS: tuple[str, ...] = (
     *_CAPACITY_CONSTRAINT_INVEST_COEFFS,
@@ -3500,8 +3501,8 @@ _CAPACITY_CONSTRAINT_DIVEST_COEFFS: tuple[str, ...] = (
 def _has_capacity_constraint_invest_set(source: "InputSource", *, divest: bool = False
                                           ) -> pl.LazyFrame:
     """Set of entities that a user-constraint coefficient links to their
-    investment variable (``divest=False``: invested, pre-built or capacity
-    coefficient) or to their retirement variable (``divest=True``: those and
+    investment variable (``divest=False``: invested, pre-built, capacity or
+    in-construction coefficient) or to their retirement variable (``divest=True``: those and
     the retired-capacity coefficient).  Such an entity gets its invest /
     divest pairs even when its annuity is zero.  Mirrors flextool's
     ``_has_capacity_constraint_invest`` predicate.  Returns a lazy frame ``[e]``.
@@ -4403,8 +4404,13 @@ def p_entity_max_units_from_source(source: "InputSource",
                                        *,
                                        ctx: "SolveContext | None" = None,
                                        provider: "object | None" = None,
+                                       commission: "pl.DataFrame | None" = None,
                                        ) -> "Param | None":
     """Per-(e, d) maximum new-unit count = ``max_capacity / unitsize``.
+
+    ``commission`` (``[e, d, d_c]``, the decisions with a construction lead time) reads the per-period
+    invest_max_period of a decision at the period ``d_c`` its capacity starts to operate in: the per-period
+    limits count capacity coming online.
 
     Mirrors flextool's ``entity_period_calc_params.py:1718-1761``:
       ``p_entity_max_capacity[e, d]`` is the per-(entity, period)
@@ -4492,9 +4498,16 @@ def p_entity_max_units_from_source(source: "InputSource",
     #                     | authored[e, anchor(d)]  (recourse branch period without its own value)
     #                     | 0
     # imp / cmc are resolved for every d ∈ period_in_use (not only invest periods).
+    # With a construction lead time imp[e,d] is imp[e,c(d)], at the period c(d) the decision's capacity starts to
+    # operate in.
     #
     # invest_max_period[e, d]: constant or period map via the shape resolver, default 0.
     imp_map = _ed_period_value_map(source, "invest_max_period", piu)
+    if commission is not None and commission.height > 0:
+        imp_map = dict(imp_map)
+        for _e, _o, _dc in commission.select(
+                pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("d_c").cast(pl.Utf8)).iter_rows():
+            imp_map[(_e, _o)] = imp_map.get((_e, _dc), 0.0)
     # ed_invest_period: rows in ed_invest_pairs whose method ∈ INVEST_PERIOD.
     ed_invest_period = {(e, d) for (e, d) in ed_invest.iter_rows()
                          if methods_by_e.get(e, set()) & _INVEST_METHODS_INVEST_PERIOD}
@@ -6006,6 +6019,35 @@ def _offer_invest_set(flex_data: object,
     return offered, commission_lf
 
 
+def _apply_lead_time_sets(flex_data: object,
+                              source: "InputSource",
+                              active_solve: str | None,
+                              ed_inv: "pl.DataFrame | None",
+                              commission_lf: "pl.LazyFrame | None",
+                              period_in_use,
+                              workdir: "Path | None",
+                              *,
+                              lineage: "pl.DataFrame | None" = None,
+                              ) -> None:
+    """``flex_data.edd_invest_commission`` / ``edd_invest_in_construction`` / ``e_construction_lead_time`` (``[e, L]``,
+    the longest lead time of the entity's decisions) of a solve where some investment decision has a construction
+    lead time (offered or not); all ``None`` otherwise, so the model keeps the formulation without lead times."""
+    flex_data.edd_invest_commission = None
+    flex_data.edd_invest_in_construction = None
+    flex_data.e_construction_lead_time = None
+    if commission_lf is None or ed_inv is None or ed_inv.height == 0:
+        return
+    from flextool.engine.preprocess.params._existing import lead_time_sets as _lead_time_sets
+    commission, in_construction = _lead_time_sets(
+        source, active_solve, ed_inv, getattr(flex_data, "edd_invest_set", None), commission_lf,
+        list(period_in_use), workdir, lineage=lineage)
+    flex_data.edd_invest_commission = commission if commission.height > 0 else None
+    flex_data.edd_invest_in_construction = in_construction if in_construction.height > 0 else None
+    lagged = (commission_lf.select(pl.col("e").cast(pl.Utf8), "L").group_by("e").agg(pl.col("L").max())
+                           .sort("e").collect())
+    flex_data.e_construction_lead_time = lagged if lagged.height > 0 else None
+
+
 def apply_derived_c(
     flex_data: object,
     source: "InputSource",
@@ -6270,6 +6312,9 @@ def apply_derived_c(
             lineage=_c_lineage, commission_lf=commission_lf).collect()
         if edd_inv_db is not None and edd_inv_db.height > 0:
             flex_data.edd_invest_set = edd_inv_db
+    # Construction lead time: the period each decision starts to operate in and the periods it is in construction.
+    _apply_lead_time_sets(flex_data, source, active_solve, ed_inv_used, commission_lf, _c_period_in_use, workdir,
+                          lineage=_c_lineage)
 
     pd_div_used = getattr(flex_data, "pd_divest_set", None)
     # A failure here (or in the node call below) propagates: a missing active-divest set would leave the
@@ -6293,7 +6338,8 @@ def apply_derived_c(
         pae_for_max_units = getattr(flex_data, "p_entity_all_existing", None)
         pemu_db = p_entity_max_units_from_source(
             source, ed_inv_used, active_solve, workdir=workdir,
-            p_entity_all_existing=pae_for_max_units, ctx=ctx)
+            p_entity_all_existing=pae_for_max_units, ctx=ctx,
+            commission=getattr(flex_data, "ed_invest_commission", None))
     except FlexToolConfigError:
         # A shape error from the resolver: keeping the legacy CSV seed would hide it
         # behind a wrong p_entity_max_units (the seed misses recourse branch periods).
@@ -10181,6 +10227,8 @@ def apply_synthetic_invest_sets(flex_data: object,
             edd_inv = None
         if edd_inv is not None and edd_inv.height > 0:
             flex_data.edd_invest_set = edd_inv
+        _apply_lead_time_sets(flex_data, source, active_solve, ed_inv, commission_lf, period_in_use, workdir,
+                              lineage=_s_lineage)
 
 
 # ---------------------------------------------------------------------------
