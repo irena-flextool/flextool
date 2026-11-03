@@ -82,6 +82,8 @@
 - **Docs: `existing` is capacity, not a number of units.** The `existing` and `virtual_unitsize` descriptions (in
   the database and the reference) said that with `virtual_unitsize` set, `existing` counts units; FlexTool has
   always read it as MW (MWh for storage) and divided it by `virtual_unitsize`.
+- **Docs: `constraint_invested_capacity_coeff` is a coefficient per MW (MWh for storage).** Its description said
+  "Not multiplied by unitsize"; FlexTool has always applied it to the invested capacity in MW (MWh).
 - **Docs: `increase_reserve_ratio` applies to upward and downward reserve alike.** The ratio stands for the
   variability of a flow, which can go either way, so each participating flow raises both requirements (unlike
   `large_failure_ratio`, which is directional). The reference and the parameter descriptions now say so; the model

@@ -4406,6 +4406,10 @@ def _v77_texts() -> dict[tuple[str, str], str]:
             "Puts the capacity in service at the start of each period on the left side of the user constraint "
             "(before that period's investments and retirements). Investments with a construction lead time count "
             f"when they enter service. Coefficient per {unit[1:-1]}.")
+        t[(cls, "constraint_invested_capacity_coeff")] = (
+            "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] \u2014 "
+            "new-build capacity decided in the current period \u2014 on the left side of the user-defined "
+            f"constraint. Coefficient per {unit[1:-1]}.")
     t[("node", "constraint_capacity_coeff")] = (
         "Puts the node's storage capacity in service in each period on the left side of the user constraint "
         "(existing plus investments still in service minus retirements). Coefficient per MWh.")

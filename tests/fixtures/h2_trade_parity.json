@@ -7981,7 +7981,7 @@
         null
       ],
       null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] \u2014 new-build capacity decided in the current period \u2014 on the left side of the user-defined constraint. Not multiplied by unitsize.",
+      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] \u2014 new-build capacity decided in the current period \u2014 on the left side of the user-defined constraint. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -8960,7 +8960,7 @@
         null
       ],
       null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] \u2014 new-build capacity decided in the current period \u2014 on the left side of the user-defined constraint. Not multiplied by unitsize.",
+      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] \u2014 new-build capacity decided in the current period \u2014 on the left side of the user-defined constraint. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -10005,7 +10005,7 @@
         null
       ],
       null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] \u2014 new-build capacity decided in the current period \u2014 on the left side of the user-defined constraint. Not multiplied by unitsize.",
+      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] \u2014 new-build capacity decided in the current period \u2014 on the left side of the user-defined constraint. Coefficient per MW.",
       "constraint"
     ],
     [
