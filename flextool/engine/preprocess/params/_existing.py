@@ -1030,7 +1030,8 @@ def edd_invest_set_lf(source: "InputSource",
     return (edd
               .join(inv_pairs, on=["e", "d_history"], how="inner")
               .pipe(rename_to_axis, {"d_history": "d_invest"})
-              .select("e", "d_invest", "d"))
+              .select("e", "d_invest", "d")
+              .sort("e", "d_invest", "d"))  # the join's row order varies run to run
 
 
 def edd_invest_lookback_set_lf(source: "InputSource",

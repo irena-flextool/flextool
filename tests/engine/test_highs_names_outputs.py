@@ -146,12 +146,8 @@ def _run_twins(url: str, scenario: str, tmp_path: Path, monkeypatch, solver_conf
             out[mode] = _outputs(work)
     assert out["auto"].keys() == out["always"].keys()
     for name, ref in out["always"].items():
-        got = out["auto"][name]
-        # Row order of some set outputs (e.g. edd_invest) varies between
-        # runs of the same mode, so compare the rows, not their order
-        # (``__set_marker__`` is the row position).
-        got, ref = (f.drop("__set_marker__", strict=False) for f in (got, ref))
-        assert got.sort(got.columns).equals(ref.sort(ref.columns)), name
+        # Rows in the same order (``__set_marker__`` is the row position of a set output).
+        assert out["auto"][name].equals(ref), name
 
 
 @pytest.mark.solver

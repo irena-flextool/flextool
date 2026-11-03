@@ -1,5 +1,9 @@
 ## Unreleased
 
+- **Output files come out in the same row and column order on every run.** The rows of some set outputs (for
+  example `edd_invest`, `period_in_use` and `d_realize_invest`) and the entity columns of some per-entity
+  outputs could change order from one run to the next; a rerun of the same model now writes identical files.
+  The values are unchanged, apart from the last digit of some sums whose terms were added in a varying order.
 - **A map whose index depth or level names do not fit its parameter is now an error** naming the entity, the
   parameter and what the parameter takes (for example a 2-level `commodity.price`, or a ladder tier level named
   `period`); before, such values were dropped without a message. **Maps without index names at different

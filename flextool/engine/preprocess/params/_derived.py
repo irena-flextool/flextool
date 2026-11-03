@@ -7649,7 +7649,7 @@ def period_block_family_from_source(source: "InputSource",
             nxt = block_firsts[(i + 1) % len(block_firsts)]
             pbs_rows.append((period, b, nxt))
     period_block = (pl.DataFrame(pb_rows, schema=["d", "b_first"],
-                                    orient="row").unique()
+                                    orient="row").unique(maintain_order=True)
                     if pb_rows else None)
     period_block_succ = (pl.DataFrame(pbs_rows,
                                           schema=["d", "b_first", "b_next"],
@@ -7657,7 +7657,7 @@ def period_block_family_from_source(source: "InputSource",
                           if pbs_rows else None)
     period_block_time = (pl.DataFrame(pbt_rows,
                                           schema=["d", "b_first", "t"],
-                                          orient="row").unique()
+                                          orient="row").unique(maintain_order=True)
                           if pbt_rows else None)
 
     return dict(
@@ -8117,7 +8117,7 @@ def dtt_timeline_matching_from_workdir(workdir: Path | None,
     return (df
             .pipe(rename_to_axis, {"period": "d", "step": "t", "upper_step": "t_upper"})
             .select("d", "t", "t_upper")
-            .unique())
+            .unique(maintain_order=True))
 
 
 def period_branch_from_source(source: "InputSource",
@@ -8148,7 +8148,7 @@ def period_branch_from_source(source: "InputSource",
             return (pb
                     .pipe(rename_to_axis, {"d_anchor": "d", "b": "d_upper"})
                     .select("d_upper", "d")
-                    .unique())
+                    .unique(maintain_order=True))
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period__branch.csv"
         if _provider_has_key(provider, p):  # Phase E-h — seed-aware
@@ -8157,7 +8157,7 @@ def period_branch_from_source(source: "InputSource",
                 return (df
                         .pipe(rename_to_axis, {"period": "d", "branch": "d_upper"})
                         .select("d_upper", "d")
-                        .unique())
+                        .unique(maintain_order=True))
     return None
 
 
@@ -8232,7 +8232,7 @@ def dtttdt_block_interior_from_dtttdt(dtttdt: pl.DataFrame | None,
         if not rows:
             return None
         return (pl.DataFrame(rows, schema=["d", "t", "t_previous"],
-                                orient="row").unique())
+                                orient="row").unique(maintain_order=True))
     if "t_previous_within_timeset" not in dtttdt.columns:
         return None
     out = (dtttdt
@@ -9865,7 +9865,7 @@ def dtt__delay_duration_from_source(
         n = len(steps)
         if n == 0:
             continue
-        for td in durations:
+        for td in sorted(durations):  # a set: its order varies with the hash seed
             try:
                 td_int = int(float(td))
                 td_float = float(td)

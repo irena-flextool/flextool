@@ -2047,7 +2047,8 @@ def _load_user_constraints(inp: Path, pss: pl.DataFrame | None, dt: pl.DataFrame
         if src_match.height + sink_match.height > 0:
             joined = (pl.concat([src_match, sink_match], how="vertical")
                         .group_by(["p","source","sink","cn"])
-                        .agg(pl.col("coef").sum()))
+                        .agg(pl.col("coef").sum())
+                        .sort("p", "source", "sink", "cn"))  # group_by order varies run to run
             flow_cstr_idx  = joined.select("p","source","sink","cn")
     # Δ.12-drop: ``p_node_constraint_invested_capacity_coeff`` /
     # ``p_process_constraint_invested_capacity_coeff`` /
@@ -2951,6 +2952,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         .group_by("n", "d")
         .agg(pl.col("t").min().alias("t"))
         .select("n", "d", "t")
+        .sort("n", "d")  # group_by order varies run to run
         .collect()
     )
 
@@ -3043,29 +3045,29 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         elif "method" in sbm.columns:
             sbm = sbm.pipe(rename_to_axis, {"node":"n"})
         binding_within_timeblock = (sbm.filter(pl.col("method")=="bind_within_timeblock")
-                                     .select("n").unique())
+                                     .select("n").unique(maintain_order=True))
         fo = (sbm.filter(pl.col("method")=="bind_forward_only")
-                 .select("n").unique())
+                 .select("n").unique(maintain_order=True))
         if fo.height > 0:
             binding_forward_only = fo
         ws = (sbm.filter(pl.col("method")=="bind_within_solve")
-                 .select("n").unique())
+                 .select("n").unique(maintain_order=True))
         if ws.height > 0:
             binding_within_solve = ws
         wp = (sbm.filter(pl.col("method")=="bind_within_period")
-                 .select("n").unique())
+                 .select("n").unique(maintain_order=True))
         if wp.height > 0:
             binding_within_period = wp
         wsbw = (sbm.filter(pl.col("method")=="bind_within_solve_blended_weights")
-                   .select("n").unique())
+                   .select("n").unique(maintain_order=True))
         if wsbw.height > 0:
             binding_within_solve_blended_weights = wsbw
         wpbw = (sbm.filter(pl.col("method")=="bind_within_period_blended_weights")
-                   .select("n").unique())
+                   .select("n").unique(maintain_order=True))
         if wpbw.height > 0:
             binding_within_period_blended_weights = wpbw
         fobw = (sbm.filter(pl.col("method")=="bind_forward_only_blended_weights")
-                   .select("n").unique())
+                   .select("n").unique(maintain_order=True))
         if fobw.height > 0:
             binding_forward_only_blended_weights = fobw
 
@@ -3247,7 +3249,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         if df_nsrp.height > 0 and "node" in df_nsrp.columns:
             nodeState_rp = (df_nsrp
                             .pipe(rename_to_axis, {"node": "n"})
-                            .select("n").unique())
+                            .select("n").unique(maintain_order=True))
             if nodeState_rp.height == 0:
                 nodeState_rp = None
 
@@ -3262,7 +3264,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         df = _provider_read(provider, key, path)
         if df.height == 0:
             return None
-        df = df.rename(plain).pipe(rename_to_axis, axis).select(*keep).unique()
+        df = df.rename(plain).pipe(rename_to_axis, axis).select(*keep).unique(maintain_order=True)
         return df if df.height > 0 else None
 
     rp_base_period_set = _rp_frame(_K_rp.SOLVE_DATA_RP_BASE_PERIOD_SET, "rp_base_period_set.csv",
@@ -3416,8 +3418,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     ndt_fix_storage_quantity = None
     if p_fix_storage_quantity is not None:
         fsq_frame = p_fix_storage_quantity.frame
-        n_fix_storage_quantity = fsq_frame.select("n").unique()
-        ndt_fix_storage_quantity = fsq_frame.select("n", "d", "t").unique()
+        n_fix_storage_quantity = fsq_frame.select("n").unique(maintain_order=True)
+        ndt_fix_storage_quantity = fsq_frame.select("n", "d", "t").unique(maintain_order=True)
 
     # Phase B4-pre — read the rolling-handoff fix_storage_usage carrier
     # from the canonical handoff Provider key
@@ -3476,7 +3478,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             dtt_timeline_matching = (df_tlm
                 .pipe(rename_to_axis,
                       {"period": "d", "step": "t", "upper_step": "t_upper"})
-                .select("d", "t", "t_upper").unique())
+                .select("d", "t", "t_upper").unique(maintain_order=True))
             if dtt_timeline_matching.height == 0:
                 dtt_timeline_matching = None
 
@@ -3487,7 +3489,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         if df_pb.height > 0:
             period_branch = (df_pb
                 .pipe(rename_to_axis, {"period": "d", "branch": "d_upper"})
-                .select("d_upper", "d").unique())
+                .select("d_upper", "d").unique(maintain_order=True))
             if period_branch.height == 0:
                 period_branch = None
 
@@ -3502,7 +3504,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     if _provider_has(provider, "solve_data/period_last", pl_path):
         df = _provider_read(provider, "solve_data/period_last", pl_path)
         if df.height > 0:
-            period_last_df = df.pipe(rename_to_axis, {"period": "d"}).select("d").unique()
+            period_last_df = df.pipe(rename_to_axis, {"period": "d"}).select("d").unique(maintain_order=True)
 
     # nodeState_last_dt: (n, d, t) — the last step of each period for every storage node, used as the index
     # for ``node_balance_fix_quantity_eq_lower`` and the storage usage / cyclic start rows.  Built from the
@@ -3823,7 +3825,7 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
         if df.height == 0:
             return None
         rename = {s: d for s, d in src_to_dst.items() if s in df.columns}
-        out_df = df.pipe(rename_to_axis, rename).select(*src_to_dst.values()).unique()
+        out_df = df.pipe(rename_to_axis, rename).select(*src_to_dst.values()).unique(maintain_order=True)
         return out_df if out_df.height > 0 else None
 
     # Δ.17 — ``_read_set_drop_zeros`` / ``_read_e_d_param`` / ``_read_e_param``
@@ -4023,14 +4025,15 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
     if _provider_has(provider, "solve_data/period_in_use_set", piu_path):
         df = _provider_read(provider, "solve_data/period_in_use_set", piu_path)
         if df.height > 0 and "period" in df.columns:
-            period_in_use_set = df.pipe(rename_to_axis, {"period": "d"}).select("d").unique()
+            period_in_use_set = df.pipe(rename_to_axis, {"period": "d"}).select("d").unique(maintain_order=True)
 
     label_steps = None
     ls_path = sd / "label_steps.csv"
     if _provider_has(provider, "solve_data/label_steps", ls_path):
         df = _provider_read(provider, "solve_data/label_steps", ls_path)
         if df.height > 0 and {"period", "step"}.issubset(df.columns):
-            label_steps = df.pipe(rename_to_axis, {"period": "d", "step": "t"}).select("d", "t").unique()
+            label_steps = (df.pipe(rename_to_axis, {"period": "d", "step": "t"})
+                           .select("d", "t").unique(maintain_order=True))
 
     # groupIncludeStochastics: (g,)
     gis_path = inp / "groupIncludeStochastics.csv"
@@ -6664,7 +6667,8 @@ def build_handoff_from_solution(
                             alias_to_axis("d", "period"),
                             alias_to_axis("t", "step"),
                             pl.col("p_fix_storage_quantity"),
-                        ))
+                        )
+                        .sort("node", "period", "step"))  # the joins' row order varies run to run
                     if fq_rows.height > 0:
                         fix_storage_quantity_df = fq_rows
 

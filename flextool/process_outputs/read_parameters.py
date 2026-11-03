@@ -157,7 +157,7 @@ def _pdX_per_entity(
     be present.
     """
     if flex_data is not None and flex_data.dt is not None and flex_data.dt.height > 0:
-        d_pdf = flex_data.dt.select("d").unique().to_pandas()
+        d_pdf = flex_data.dt.select("d").unique(maintain_order=True).to_pandas()
         periods_full = d_pdf["d"].tolist()
     else:
         periods_full = []
@@ -1010,7 +1010,7 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     if (flex_data.process_source_sink is not None
             and flex_data.process_source_sink.height > 0):
         universe.extend(
-            flex_data.process_source_sink.select("p").unique()
+            flex_data.process_source_sink.select("p").unique(maintain_order=True)
                 .to_pandas()["p"].tolist()
         )
     # Also include any commodity nodes that show up in process_source_sink
@@ -1018,7 +1018,7 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     if (flex_data.process_source_sink is not None
             and flex_data.process_source_sink.height > 0):
         for col in ("source", "sink"):
-            extra = flex_data.process_source_sink.select(col).unique().to_pandas()[col].tolist()
+            extra = flex_data.process_source_sink.select(col).unique(maintain_order=True).to_pandas()[col].tolist()
             universe.extend(extra)
     # Every invest / divest variable entity.  ``ed_invest_set`` /
     # ``ed_divest_set`` carry the (e, d) variable index that becomes the
@@ -1032,7 +1032,7 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     for invest_set in (flex_data.ed_invest_set, flex_data.ed_divest_set):
         if invest_set is not None and invest_set.height > 0:
             universe.extend(
-                invest_set.select("e").unique().to_pandas()["e"].tolist()
+                invest_set.select("e").unique(maintain_order=True).to_pandas()["e"].tolist()
             )
     # Solve-invariant whole-model carrier (covers cross-solve invest
     # candidates absent from this sub-solve's sets — see docstring).
@@ -1041,7 +1041,7 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
             and getattr(carrier, "frame", None) is not None
             and carrier.frame.height > 0):
         universe.extend(
-            carrier.frame.select("e").unique().to_pandas()["e"].tolist()
+            carrier.frame.select("e").unique(maintain_order=True).to_pandas()["e"].tolist()
         )
     # Deduplicate while keeping insertion order.
     return list(dict.fromkeys(universe))

@@ -675,7 +675,7 @@ def read_sets(
     for src in (flex_data.ed_invest_set, flex_data.ed_divest_set):
         if (src is not None and src.height > 0
                 and "d" in src.columns):
-            for d in src.select("d").unique().to_pandas()["d"].tolist():
+            for d in src.select("d").unique(maintain_order=True).to_pandas()["d"].tolist():
                 if d in seen:
                     continue
                 if realized_filter is not None and d not in realized_filter:

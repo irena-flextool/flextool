@@ -176,7 +176,7 @@ def period_branch_pairs_lf(
             return (pb_df.lazy()
                           .select(alias_to_axis("d_anchor", "d"),
                                   cast_dim(pl.col("b"), _enums, "b"))
-                          .unique())
+                          .unique(maintain_order=True))
     if workdir is None:
         return _empty_lf(schema)
     p = Path(workdir) / "solve_data" / "period__branch.csv"
@@ -186,7 +186,7 @@ def period_branch_pairs_lf(
     return lf.select(
         cast_dim(pl.col("d"), _enums, "d"),
         cast_dim(pl.col("b"), _enums, "b"),
-    ).unique()
+    ).unique(maintain_order=True)
 
 
 def solve_branch_weights_lf(
@@ -280,7 +280,7 @@ def period_in_use_set_lf(workdir: Path | None,
     if ctx is not None:
         piu_df = getattr(ctx, "period_in_use", None)
         if piu_df is not None and piu_df.height > 0:
-            return piu_df.lazy().select("d").unique()
+            return piu_df.lazy().select("d").unique(maintain_order=True)
     if workdir is not None:
         p = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         df = _provider_get(provider, p)
@@ -288,7 +288,7 @@ def period_in_use_set_lf(workdir: Path | None,
             col = df.columns[0]
             return (df.lazy()
                       .select(alias_to_axis(col, "d"))
-                      .unique())
+                      .unique(maintain_order=True))
     # Fall back to source-derived realized + invest.
     if source is None or active_solve is None:
         return _empty_lf(schema)
@@ -306,7 +306,7 @@ def period_in_use_set_lf(workdir: Path | None,
                        .select(alias_to_axis("value", "d")))
     if not parts:
         return _empty_lf(schema)
-    return pl.concat(parts).unique()
+    return pl.concat(parts).unique(maintain_order=True)
 
 
 def realized_dispatch_lf(workdir: Path | None,
@@ -327,7 +327,7 @@ def realized_dispatch_lf(workdir: Path | None,
     return (df.lazy()
               .select(alias_to_axis(d_col, "d"),
                       alias_to_axis(t_col, "t"))
-              .unique())
+              .unique(maintain_order=True))
 
 
 def fix_storage_timesteps_lf(workdir: Path | None,
@@ -348,7 +348,7 @@ def fix_storage_timesteps_lf(workdir: Path | None,
     return (df.lazy()
               .select(alias_to_axis(d_col, "d"),
                       alias_to_axis(t_col, "t"))
-              .unique())
+              .unique(maintain_order=True))
 
 
 def steps_in_use_lf(workdir: Path | None,
@@ -369,7 +369,7 @@ def steps_in_use_lf(workdir: Path | None,
     return (df.lazy()
               .select(alias_to_axis(d_col, "d"),
                       alias_to_axis(t_col, "t"))
-              .unique())
+              .unique(maintain_order=True))
 
 
 def fan_period_labels(pb_set: "set[tuple[str, str]]") -> set[str]:
@@ -998,9 +998,9 @@ def _lineage_inputs(
       empty by contract, so under enum activation the ctx frame's
       anchor column is null-poisoned.  Fallback reads the raw
       provider/workdir CSV directly (NOT via
-      :func:`period_branch_pairs_lf`, whose ``.unique()`` does not
-      maintain row order — ``pos`` below is derived from the (d, d)
-      self-row order, which must stay the period order).
+      :func:`period_branch_pairs_lf`, which de-duplicates the rows —
+      ``pos`` below is derived from the (d, d) self-row order, which
+      must stay the period order).
     * ``piu_list`` — ``period_in_use`` members, de-duplicated in row
       order.  Order is content-irrelevant for the lineage frames
       (``pos`` comes from the anchors); it only steers iteration.
