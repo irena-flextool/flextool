@@ -5688,7 +5688,7 @@ def _extract_cumulative_commodity(
     # ``_load_finite_ladder_tiers`` reads BOTH
     # ``commodity_ladder_cumulative`` and ``commodity_ladder_annual``
     # for this same reason.
-    finite_tiers: set[tuple[str, int]] = set()
+    finite_tiers: set[tuple[str, str]] = set()
     cilc_df = None
     if flex_data is not None and getattr(flex_data, "ci_ladder_cumulative", None) is not None:
         cilc_df = flex_data.ci_ladder_cumulative
@@ -5705,10 +5705,7 @@ def _extract_cumulative_commodity(
         i_col = "tier" if "tier" in cilc_df.columns else "i"
         if c_col in cilc_df.columns and i_col in cilc_df.columns:
             for r in cilc_df.iter_rows(named=True):
-                try:
-                    finite_tiers.add((str(r[c_col]), int(r[i_col])))
-                except (TypeError, ValueError, KeyError):
-                    continue
+                finite_tiers.add((str(r[c_col]), str(r[i_col])))
 
     # Annual-ladder tier set (commodity__tier_ann) — additive.
     cta_df = None
@@ -5726,10 +5723,7 @@ def _extract_cumulative_commodity(
         i_col = "tier" if "tier" in cta_df.columns else "i"
         if c_col in cta_df.columns and i_col in cta_df.columns:
             for r in cta_df.iter_rows(named=True):
-                try:
-                    finite_tiers.add((str(r[c_col]), int(r[i_col])))
-                except (TypeError, ValueError, KeyError):
-                    continue
+                finite_tiers.add((str(r[c_col]), str(r[i_col])))
 
     if not finite_tiers:
         return None
@@ -5740,7 +5734,7 @@ def _extract_cumulative_commodity(
     # source carries a finite quantity for it (the annual cap evaluates
     # per period, so any finite-cap period qualifies the tier).
     _INFINITE_TIER_THRESHOLD = 1e29
-    qty_finite: set[tuple[str, int]] = set()
+    qty_finite: set[tuple[str, str]] = set()
     for prov_key, csv_path in (
         ("input/commodity_ladder_cumulative",
          (Path(sd).parent / "input" / "commodity_ladder_cumulative.csv")),
@@ -5758,12 +5752,11 @@ def _extract_cumulative_commodity(
         if not {"commodity", "tier", "quantity"}.issubset(qdf.columns):
             continue
         for r in qdf.iter_rows(named=True):
+            c, i = str(r["commodity"]), str(r["tier"])
             try:
-                c = str(r["commodity"])
-                i = int(r["tier"])
                 q = float(r["quantity"])
-            except (TypeError, ValueError, KeyError):
-                continue
+            except (TypeError, ValueError):
+                continue  # not a number: no finite cap
             if q != q or q >= _INFINITE_TIER_THRESHOLD:
                 continue
             qty_finite.add((c, i))
@@ -5827,16 +5820,11 @@ def _extract_cumulative_commodity(
 
     # v_trade extraction — schema from _commodity_ladder.add_variables.
     v_trade_df = sol.value("v_trade")
-    this_roll: dict[tuple[str, int, str], float] = {}
+    this_roll: dict[tuple[str, str, str], float] = {}
     if v_trade_df is not None and v_trade_df.height > 0:
         for r in v_trade_df.iter_rows(named=True):
-            try:
-                c = str(r["c"])
-                i = int(r["i"])
-                d = str(r["d"])
-                v = float(r["value"])
-            except (TypeError, ValueError, KeyError):
-                continue
+            c, i, d = str(r["c"]), str(r["i"]), str(r["d"])
+            v = float(r["value"])
             if (c, i) not in finite_tiers:
                 continue
             hz = horizon_hrs.get(d, 0.0)
@@ -5850,14 +5838,11 @@ def _extract_cumulative_commodity(
     # Prior accumulator (carry across solves).
     # Canonical schema is [commodity, tier, period, p_ladder_cum_realized_mwh]
     # (Phase 4.1a).
-    prior: dict[tuple[str, int, str], float] = {}
+    prior: dict[tuple[str, str, str], float] = {}
     if prior_handoff is not None and prior_handoff.cumulative_commodity is not None:
         for r in prior_handoff.cumulative_commodity.iter_rows(named=True):
-            try:
-                key = (str(r["commodity"]), int(r["tier"]), str(r["period"]))
-                prior[key] = float(r["p_ladder_cum_realized_mwh"])
-            except (TypeError, ValueError, KeyError):
-                continue
+            key = (str(r["commodity"]), str(r["tier"]), str(r["period"]))
+            prior[key] = float(r["p_ladder_cum_realized_mwh"])
 
     if not this_roll and not prior:
         return None
@@ -5867,7 +5852,8 @@ def _extract_cumulative_commodity(
                 for (c, i, d) in keys]
     return pl.DataFrame(
         rows,
-        schema=["commodity", "tier", "period", "p_ladder_cum_realized_mwh"],
+        schema={"commodity": pl.Utf8, "tier": pl.Utf8, "period": pl.Utf8,
+                "p_ladder_cum_realized_mwh": pl.Float64},
         orient="row",
     )
 

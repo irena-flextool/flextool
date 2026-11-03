@@ -1,5 +1,10 @@
 ## Unreleased
 
+- **Price-ladder tier labels are kept as written.** Tiers such as `01` or `a` are now their own tiers. Before, a
+  label was read as a whole number: tiers `01`, `02`, ... were bought at no cost, `1` and `01` were merged, and
+  tiers like `a` were dropped (results change; an upgraded database whose ladder has such labels prints a notice
+  naming the commodities). A tier with a `quantity` but no `price` is now an error naming the commodity, period
+  and tier (before: price 0). A tier without a `quantity` stays unlimited.
 - **A unit whose `min_load` map has no value above 0 in a solve's periods no longer stops the solve** ("feature
   'min_load' is active but ... `p_min_load`"), and it gets no minimum-load constraint rows in that solve. A
   reserve whose `reservation` adds up to 0 over a solve's time steps (for example a period map with values only

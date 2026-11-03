@@ -57,5 +57,6 @@ def test_migration_markers_are_registered() -> None:
     """Every marker the database upgrade writes has a registry entry (else its notice could never print)."""
     assert db_migration.BEHAVIOUR_CHANGE_MARKER_PREFIX == MARKER_PREFIX
     written = set(db_migration._V77_UNCONDITIONAL_MARKERS) | {"storage_default_fix_nothing",
-                                                              "storage_fix_method_rewritten"}
+                                                              "storage_fix_method_rewritten",
+                                                              "ladder_tier_labels_as_written"}
     assert written <= set(BEHAVIOUR_CHANGES)

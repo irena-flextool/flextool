@@ -300,7 +300,9 @@ def annual_within_period_db_url(
         tier1_quantity_mwh=1e9,
         tier2_price=1000.0,
         scenario_name="coal_ann_within_period",
-        alternative_name="ladder_ann_on",
+        # Its own alternative: written into ladder_ann_on, the ladder would be merged into that
+        # alternative's period -> tier ladder (a value with keys at two depths, which is an error).
+        alternative_name="ladder_ann_within",
     )
     return url
 

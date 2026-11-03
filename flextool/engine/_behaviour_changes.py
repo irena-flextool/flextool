@@ -72,6 +72,13 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "dc_power_flow_lines_beside_dc_links"),
         ),
         BehaviourChange(
+            id="ladder_tier_labels_as_written",
+            summary=("Price-ladder tier labels are now kept as written: tiers such as 01 or a are their own "
+                     "tiers. Before, a label was read as a whole number, so 01 became 1 (such tiers were bought "
+                     "at no cost, and 1 and 01 were merged) and tiers like a were dropped (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "ladder_tier_labels_as_written"),
+        ),
+        BehaviourChange(
             id="price_ladder_periods_from_solve_periods",
             summary=("A price_ladder_annual given without periods now applies in every period of a solve that "
                      "has no period_timeset (the model's only timeset is used). Before, when the model had no "

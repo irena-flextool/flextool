@@ -2089,6 +2089,35 @@ def p_commodity_price_from_source(source: "InputSource",
 # two Params keyed ``(c, i, d)`` (annual) / ``(c, i)`` (cumulative) with
 # ``value`` being the price (resp. quantity) only.
 
+def _check_ladder_tiers_have_prices(parameter_name: str, long: pl.LazyFrame, dims: tuple[str, ...]) -> None:
+    """Raise when a tier of a price ladder has no price (a tier without a quantity is unlimited, but every tier
+    needs a price).  ``long`` is the ladder's long frame ``(c, i, [d], facet, value)``; a depth-2 annual
+    ladder already carries the solve's periods in ``d``."""
+    off_depth = long.filter(pl.col("facet").is_null()).select("c").unique().sort("c").collect()
+    if off_depth.height > 0:
+        names = ", ".join(f"'{c}'" for c in off_depth["c"].cast(pl.Utf8).to_list())
+        raise FlexToolConfigError(
+            f"commodity {names}, parameter '{parameter_name}': the value has keys at different index depths "
+            "(some entries have fewer levels than the others), so they cannot be read as tiers. Use one form "
+            "for the whole value: tier -> price / quantity, or period -> tier -> price / quantity.")
+    missing = (long.group_by(*dims)
+                   .agg(pl.col("facet").cast(pl.Utf8).eq("price").any().alias("has_price"),
+                        pl.col("facet").cast(pl.Utf8).eq("quantity").any().alias("has_quantity"))
+                   .filter(~pl.col("has_price"))
+                   .sort(*dims)
+                   .collect())
+    if missing.height == 0:
+        return
+    lines = []
+    for row in missing.iter_rows(named=True):
+        where = f" (period {row['d']})" if "d" in row else ""
+        what = "a quantity but no price" if row["has_quantity"] else "no price"
+        lines.append(f"tier '{row['i']}' of commodity '{row['c']}'{where} has {what}")
+    raise FlexToolConfigError(
+        f"commodity.{parameter_name}: every tier needs a price ({'; '.join(lines)}). Add the price, or remove "
+        "the tier.")
+
+
 def _ladder_split(source: "InputSource", parameter_name: str,
                     *, period_filter: "pl.DataFrame | None") -> tuple[Param | None, Param | None]:
     """Return ``(price_param, quantity_param)`` from the named ladder parameter, read by shape at every
@@ -2123,6 +2152,7 @@ def _ladder_split(source: "InputSource", parameter_name: str,
     qty_lf   = base.filter(pl.col("facet") == "quantity").select(*out_dims, "value")
     price_df = price_lf.collect()
     qty_df = qty_lf.collect()
+    _check_ladder_tiers_have_prices(parameter_name, base, out_dims)
     p_price = Param(out_dims, price_df) if price_df.height > 0 else None
     p_qty = Param(out_dims, qty_df) if qty_df.height > 0 else None
     return p_price, p_qty

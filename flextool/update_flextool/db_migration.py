@@ -5249,6 +5249,39 @@ def _v77_storage_default(db) -> None:
     db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
 
 
+def _v77_map_key_paths(value, prefix=()):
+    """Every key path (outer to inner) to a leaf of a parsed Map value."""
+    if not isinstance(value, Map):
+        yield prefix
+        return
+    for key, child in zip(value.indexes, value.values):
+        yield from _v77_map_key_paths(child, (*prefix, str(key)))
+
+
+def _v77_ladder_tier_marker(db) -> None:
+    """Write the marker ``ladder_tier_labels_as_written`` when a price ladder has a tier label that earlier
+    releases read as another tier: a label that is not a whole number written plainly (``01`` was read as
+    ``1``, ``a`` was dropped).  The tier is the level above price / quantity."""
+    commodities: set[str] = set()
+    for name in ("price_ladder_annual", "price_ladder_cumulative"):
+        for pv in db.find_parameter_values(entity_class_name="commodity", parameter_definition_name=name):
+            if pv["type"] != "map":
+                continue
+            for path in _v77_map_key_paths(from_database(pv["value"], pv["type"])):
+                if len(path) < 2:
+                    continue
+                tier = path[-2]
+                try:
+                    plain = str(int(tier)) == tier
+                except ValueError:
+                    plain = False
+                if not plain:
+                    commodities.add(pv["entity_byname"][0])
+    if commodities:
+        _v77_set_marker(db, "ladder_tier_labels_as_written", json.dumps({"since": 77, "commodities":
+                                                                          sorted(commodities)}))
+
+
 def _migrate_v77_schema_batch(db) -> None:
     """Schema batch v77 (v76 -> v77).
 
@@ -5265,7 +5298,8 @@ def _migrate_v77_schema_batch(db) -> None:
     * ``group.invest_method`` gets the list ``group_invest_methods``:
       ``not_allowed`` is ``not_active`` there (also the new default).
     * Behaviour-change markers (database metadata) for the changes this DB
-      predates.
+      predates (the price-ladder tier-label marker only when a ladder has a
+      tier label that is not a plain whole number).
     * Stale definitions dropped (their values listed), ``single_shot`` →
       ``single_solve``.
     * Storage start / end: explicit fix methods without their value are
@@ -5280,6 +5314,7 @@ def _migrate_v77_schema_batch(db) -> None:
     _v77_new_definitions(db)
     _v77_group_invest_methods(db)
     _v77_behaviour_markers(db)
+    _v77_ladder_tier_marker(db)
     _v77_drop_stale_definitions(db)
     _v77_storage_fix_rewrite(db)
     _v77_storage_default_explicit(db)
