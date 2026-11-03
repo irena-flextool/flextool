@@ -50,6 +50,7 @@ import polars as pl
 
 from flextool.engine.input._axis_enums import alias_to_axis
 from flextool.engine.input._constants import HOURS_PER_YEAR
+from flextool.engine.input._timeline_rules import TimeStructure, solve_period_timesets
 
 if TYPE_CHECKING:
     from flextool.engine.input._input_source import InputSource
@@ -58,6 +59,8 @@ if TYPE_CHECKING:
 __all__ = [
     "PerSolveAggregates",
     "derive_per_solve_aggregates",
+    "solve_period_timeset_frame",
+    "time_structure_from_source",
     "timeset_duration_lf",
     "timeset_timeline_lf",
 ]
@@ -143,28 +146,78 @@ def _timeline_step_duration_lf(source: "InputSource"
     ))
 
 
-def _period_timeset_lf(source: "InputSource", active_solve: str
-                        ) -> pl.LazyFrame | None:
-    """Lazy ``[d, ts]`` for the active solve from ``solve.period_timeset``.
+def _names(source: "InputSource", entity_class: str) -> list[str]:
+    try:
+        frame = source.entities(entity_class)
+    except KeyError:
+        return []
+    if frame.height == 0 or "name" not in frame.columns:
+        return []
+    return [str(n) for n in frame.get_column("name").to_list()]
 
-    Returns ``None`` when the parameter is absent OR the filter for the
-    active solve is empty (synthetic rolling-horizon / nested-invest
-    sub-solves whose names aren't in Spine — caller handles None).
+
+def _array_values(source: "InputSource", entity_class: str, parameter: str) -> dict[str, list[str]]:
+    """``{entity: [value, ...]}`` of a 1-D array parameter in array order; other shapes are left out."""
+    frame = _try_param(source, entity_class, parameter)
+    if frame is None or len(frame.columns) != 3 or frame.columns[0] != "name" or frame.columns[2] != "value":
+        return {}
+    index_col = frame.columns[1]
+    out: dict[str, list[str]] = {}
+    for name, value in frame.sort("name", index_col, maintain_order=True).select("name", "value").iter_rows():
+        out.setdefault(str(name), []).append(str(value))
+    return out
+
+
+def time_structure_from_source(source: "InputSource") -> TimeStructure:
+    """The :class:`~flextool.engine.input._timeline_rules.TimeStructure` of *source*'s scenario."""
+    period_timeset: dict[str, list[tuple[str, str]]] = {}
+    p_ts = _try_param(source, "solve", "period_timeset")
+    period_col = next((c for c in ("period", "x") if p_ts is not None and c in p_ts.columns), None)
+    if p_ts is not None and period_col is not None:
+        for name, d, ts in p_ts.select("name", period_col, "value").iter_rows():
+            period_timeset.setdefault(str(name), []).append((str(d), str(ts)))
+    ts_dur = _try_param(source, "timeset", "timeset_duration")
+    tl_dur = _try_param(source, "timeline", "timestep_duration")
+    return TimeStructure(
+        period_timeset=period_timeset,
+        model_solves=list(_array_values(source, "model", "solves").items()),
+        models=_names(source, "model"),
+        solves=_names(source, "solve"),
+        timesets=_names(source, "timeset"),
+        timesets_with_duration=frozenset(
+            str(n) for n in ts_dur.get_column("name").unique().to_list()) if ts_dur is not None else frozenset(),
+        n_timelines=tl_dur.get_column("name").n_unique() if tl_dur is not None else 0,
+        invest_periods=_array_values(source, "solve", "invest_periods"),
+        realized_periods=_array_values(source, "solve", "realized_periods"),
+        periods_available=_array_values(source, "model", "periods_available"),
+        contained_solves=frozenset(
+            s for values in _array_values(source, "solve", "contains_solves").values() for s in values),
+    )
+
+
+def solve_period_timeset_frame(source: "InputSource", active_solve: str) -> pl.DataFrame | None:
+    """``[d, ts]`` of *active_solve*: its ``solve.period_timeset`` rows, else the Rule 1 / 5b default of
+    ``create_assumptive_parts`` (:func:`~flextool.engine.input._timeline_rules.solve_period_timesets`).
+
+    The one reader of the period → timeset mapping for every DB-side reader; each caller applies its own
+    axis cast to ``d``.  Authored rows keep the source's ``period`` column dtype and row order; a default
+    frame is ``Utf8``.  Returns ``None`` when the solve has neither (a synthetic rolling-horizon / nested
+    sub-solve, a contained solve, or a model the CSV path rejects) -- the caller falls through.
     """
     p_ts = _try_param(source, "solve", "period_timeset")
-    if p_ts is None:
+    if p_ts is not None:
+        period_col = next((c for c in ("period", "x") if c in p_ts.columns), None)
+        if period_col is None:
+            return None
+        authored = (p_ts.filter(pl.col("name") == active_solve)
+                        .select(pl.col(period_col).alias("d"), pl.col("value").alias("ts")))
+        if authored.height > 0:
+            return authored
+    pairs = solve_period_timesets(active_solve, time_structure_from_source(source))
+    if pairs is None:
         return None
-    period_col = next((c for c in ("period", "x") if c in p_ts.columns),
-                      None)
-    if period_col is None:
-        return None
-    lf = (p_ts.lazy()
-              .filter(pl.col("name") == active_solve)
-              .select(alias_to_axis(period_col, "d"),
-                      pl.col("value").alias("ts")))
-    if lf.collect().height == 0:
-        return None
-    return lf
+    return pl.DataFrame({"d": [d for d, _ in pairs], "ts": [ts for _, ts in pairs]},
+                        schema={"d": pl.Utf8, "ts": pl.Utf8})
 
 
 def timeset_duration_lf(
@@ -330,7 +383,8 @@ def derive_per_solve_aggregates(
 
     Returns ``None`` when:
       * ``timeline.timestep_duration`` is absent;
-      * ``solve.period_timeset`` for *active_solve* is empty (synthetic
+      * *active_solve* has no ``solve.period_timeset`` and no Rule 1 / 5b
+        default (:func:`solve_period_timeset_frame`; synthetic
         rolling/nested sub-solves whose names aren't in Spine — caller
         falls through to the workdir path);
       * ``timeset.timeset_duration`` or ``timeset.timeline`` is absent AND
@@ -345,9 +399,10 @@ def derive_per_solve_aggregates(
     once per per-solve iteration and reuse across the override chain
     (``_dt_period_active_steps``).
     """
-    pt_lf = _period_timeset_lf(source, active_solve)
-    if pt_lf is None:
+    pt = solve_period_timeset_frame(source, active_solve)
+    if pt is None:
         return None
+    pt_lf = pt.lazy().select(alias_to_axis("d", "d"), pl.col("ts"))
     tl_lf = _timeline_step_duration_lf(source)
     if tl_lf is None:
         return None

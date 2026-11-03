@@ -1,5 +1,10 @@
 ## Unreleased
 
+- **A solve without `period_timeset` that uses the model's only timeset now gets the same periods everywhere.**
+  A `price_ladder_annual` given without periods now applies in every period of such a solve when the model has no
+  `periods_available` either; before, it was skipped with a warning (results change; an upgraded database prints a
+  notice naming the commodities). A multi-period stochastic solve without `period_timeset` now has the
+  forecast-branch period names of its later periods too.
 - **A model with no timeset now runs on the whole timeline** instead of stopping with "More than one timeset
   available". With one timeline, FlexTool creates the timeset `full_timeline` covering it and uses it for every
   period of the solve, as documented. With several timelines and no timeset the error now says that no timeset is

@@ -65,9 +65,10 @@ def _iter_flat_ladder_rows(api, value, commodity: str,
         return []
 
 
-def _collect_periods(backend, provider, api) -> list[str]:
+def _collect_periods(backend, provider, api) -> tuple[list[str], bool]:
     """Return the model's period list (for 1d-map → per-period expansion
-    of ``price_ladder_annual``).
+    of ``price_ladder_annual``), and whether it came only from the solve
+    periods of the Rule 1 / 5b default (fallback 3).
 
     Step 2.5-F Phase E
     ------------------
@@ -77,7 +78,8 @@ def _collect_periods(backend, provider, api) -> list[str]:
     ``_PARAMETER_SPECS`` pass for ``model.periods_available``.  DB
     fallbacks (in order) cover the case where the parameter is set as a
     raw map or where periods come exclusively from
-    ``solve.period_timeset``.
+    ``solve.period_timeset`` -- or, for a solve without one, from its
+    invest / realized periods (the Rule 1 / 5b default).
     """
     periods: list[str] = []
     seen: set[str] = set()
@@ -94,7 +96,7 @@ def _collect_periods(backend, provider, api) -> list[str]:
                     periods.append(v)
                     seen.add(v)
     if periods:
-        return periods
+        return periods, False
 
     # Fallback 1: raw map on model.periods_available.
     for pv in backend.find_parameter_values(
@@ -114,7 +116,7 @@ def _collect_periods(backend, provider, api) -> list[str]:
                     periods.append(c)
                     seen.add(c)
     if periods:
-        return periods
+        return periods, False
 
     # Fallback 2: scan solve.period_timeset map indexes.
     for pv in backend.find_parameter_values(
@@ -134,7 +136,23 @@ def _collect_periods(backend, provider, api) -> list[str]:
                 if p and p not in seen:
                     periods.append(p)
                     seen.add(p)
-    return periods
+
+    # Fallback 3: the periods of the solves without ``period_timeset`` that
+    # the Rule 1 / 5b default of ``create_assumptive_parts`` maps to a
+    # timeset (item #175).  Imported here so that importing this module does
+    # not initialise the ``flextool.engine`` package.
+    from flextool.engine.input._timeline_rules import solve_period_timesets, time_structure_from_backend
+
+    authored_only = len(periods)
+    time_structure = time_structure_from_backend(backend)
+    for solve in time_structure.solves:
+        if solve in time_structure.period_timeset:
+            continue
+        for p, _ts in solve_period_timesets(solve, time_structure) or []:
+            if p not in seen:
+                periods.append(p)
+                seen.add(p)
+    return periods, authored_only == 0 and len(periods) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +262,7 @@ def derive_commodity_ladder_annual(
     api = backend.api
     rows: list[tuple[str, str, int, str, str]] = []
     periods_cache: list[str] | None = None
+    periods_from_solves = False
 
     for pv in backend.find_parameter_values(
         entity_class_name="commodity",
@@ -280,7 +299,11 @@ def derive_commodity_ladder_annual(
                 val = entry[-1]
                 per_tier.setdefault(tier_str, {})[facet] = str(val)
             if periods_cache is None:
-                periods_cache = _collect_periods(backend, provider, api)
+                periods_cache, periods_from_solves = _collect_periods(backend, provider, api)
+            if periods_from_solves:
+                # Before, these periods were not found and the ladder was skipped.
+                from flextool.engine import _behaviour_changes
+                _behaviour_changes.notice("price_ladder_periods_from_solve_periods", "commodities", [commodity])
             if not periods_cache:
                 logger.warning(
                     "commodity.price_ladder_annual on '%s' is 2d_map but "

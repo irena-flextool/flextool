@@ -564,7 +564,11 @@ def _collect_stochastic_branch_period_tokens(backend: Any) -> list[str]:
         ent = param.get("entity_byname")
         key = ent[0] if isinstance(ent, (tuple, list)) else str(ent)
         solve_periods[key] = [str(i) for i in pv.indexes]
+    # Imported here: ``flextool.engine`` imports this module while it initialises.
+    from flextool.engine.input._timeline_rules import solve_period_timesets, time_structure_from_backend
+
     out: list[str] = []
+    time_structure = None
     for param in rows:
         if param.get("type") != "map":
             continue
@@ -584,9 +588,16 @@ def _collect_stochastic_branch_period_tokens(backend: Any) -> list[str]:
         # Continuation splice: every period of the declaring solve's
         # horizon × every declared branch name.  Appended after the
         # map-keyed tokens so single-period fixtures keep the exact
-        # pre-existing vocabulary order.
+        # pre-existing vocabulary order.  A solve without
+        # ``period_timeset`` takes its periods from the Rule 1 / 5b
+        # default of ``create_assumptive_parts`` (item #175).
         ent = param.get("entity_byname")
         key = ent[0] if isinstance(ent, (tuple, list)) else str(ent)
+        if key not in solve_periods:
+            if time_structure is None:
+                time_structure = time_structure_from_backend(backend)
+            pairs = solve_period_timesets(key, time_structure)
+            solve_periods[key] = _dedup_keep_order([d for d, _ts in pairs or []])
         for period_str in solve_periods.get(key, []):
             for branch in _dedup_keep_order(branch_names):
                 out.append(f"{period_str}_{branch}")

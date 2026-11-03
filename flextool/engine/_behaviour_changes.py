@@ -71,6 +71,13 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "(results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "dc_power_flow_lines_beside_dc_links"),
         ),
+        BehaviourChange(
+            id="price_ladder_periods_from_solve_periods",
+            summary=("A price_ladder_annual given without periods now applies in every period of a solve that "
+                     "has no period_timeset (the model's only timeset is used). Before, when the model had no "
+                     "periods_available either, the ladder was skipped with a warning (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "price_ladder_periods_from_solve_periods"),
+        ),
     )
 }
 

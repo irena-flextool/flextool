@@ -67,6 +67,7 @@ from flextool.engine.preprocess.params._branch import (
 )
 from flextool.engine.preprocess.params._direct import _e_period_param_union
 from flextool.engine.preprocess.params._per_solve_sets import (
+    solve_period_timeset_frame,
     timeset_duration_lf,
     timeset_timeline_lf,
 )
@@ -549,7 +550,8 @@ def dt_and_step_duration_from_source(
     Algorithm (audit §3.1.1):
 
       1. ``solve.realized_periods`` → list of periods active in this solve.
-      2. ``solve.period_timeset[active_solve, period]`` → timeset for each.
+      2. ``solve.period_timeset[active_solve, period]`` → timeset for each
+         (or the Rule 1 / 5b default, :func:`solve_period_timeset_frame`).
       3. ``timeset.timeline[ts]`` → which timeline supplies step_duration.
       4. ``timeset.timeset_duration[ts]`` is a 1d_map ``(start_step → count)``
          describing one or more contiguous timestep blocks.
@@ -592,20 +594,12 @@ def dt_and_step_duration_from_source(
             return None
         realized_p = pl.concat(parts).unique()
 
-    p_ts = _try_param(source, "solve", "period_timeset")
-    if p_ts is None:
+    # period → timeset of the active solve: ``solve.period_timeset``, or the
+    # Rule 1 / 5b default of ``create_assumptive_parts`` (item #175).
+    pt_frame = solve_period_timeset_frame(source, active_solve)
+    if pt_frame is None:
         return None
-    # period_timeset has: name (solve), <period_col>, value (timeset).
-    # Discover the period column (the source picks it from the Map's
-    # index_name; the schema tolerates either 'period' or 'x').
-    p_ts_cols = p_ts.columns
-    period_col = next((c for c in ("period", "x") if c in p_ts_cols), None)
-    if period_col is None:
-        return None
-    pt = (p_ts.lazy()
-              .filter(pl.col("name") == active_solve)
-              .select(alias_to_axis(period_col, "d"),
-                      pl.col("value").alias("ts")))
+    pt = pt_frame.lazy().select(alias_to_axis("d", "d"), pl.col("ts"))
     # Broadcast timesets to stochastic-branch periods: when a period
     # appears in period_in_use_set without a direct period_timeset row,
     # use the anchor's timeset via ``period__branch.csv`` (anchor → branch
@@ -1005,13 +999,13 @@ def solve_has_rp_timeset(source: "InputSource", active_solve: str | None) -> boo
     """
     if active_solve is None:
         return False
-    pt = _try_param(source, "solve", "period_timeset")
     rpw = _try_param_explicit(source, "timeset", "representative_period_weights")
-    if pt is None or rpw is None or rpw.height == 0 or "name" not in rpw.columns:
+    if rpw is None or rpw.height == 0 or "name" not in rpw.columns:
         return False
-    if "value" not in pt.columns:
+    pt = solve_period_timeset_frame(source, active_solve)
+    if pt is None:
         return False
-    active_ts = set(pt.filter(pl.col("name") == active_solve).get_column("value").cast(pl.Utf8).to_list())
+    active_ts = set(pt.get_column("ts").cast(pl.Utf8).to_list())
     rp_ts = {str(n) for n in rpw.get_column("name").to_list()}
     return bool(active_ts & rp_ts)
 
@@ -1085,20 +1079,16 @@ def p_timestep_weight_from_source(
         out = default_lf.collect()
         return Param(("d", "t"), out) if out.height > 0 else None
 
-    pt = _try_param(source, "solve", "period_timeset")
+    # period → timeset of the active solve: ``solve.period_timeset``, or the Rule 1 / 5b default
+    # (item #175) -- so the sole timeset's ``timeset_weights`` apply without an authored mapping.
+    pt = solve_period_timeset_frame(source, active_solve)
     if pt is None:
-        out = default_lf.collect()
-        return Param(("d", "t"), out) if out.height > 0 else None
-    pt_cols = pt.columns
-    period_col = next((c for c in ("period", "x") if c in pt_cols), None)
-    if period_col is None:
         out = default_lf.collect()
         return Param(("d", "t"), out) if out.height > 0 else None
     # A stochastic branch period is a copy of its anchor period: it takes the anchor's timeset (and so
     # its timeset_weights) through the active branch-anchor pairs, like every period-keyed input.
     period_timeset = inherit_active_branch_periods(
-        pt.filter(pl.col("name") == active_solve)
-          .select(pl.col(period_col).cast(pl.Utf8).alias("d"), pl.col("value").alias("ts")),
+        pt.select(pl.col("d").cast(pl.Utf8), pl.col("ts")),
         group_keys=(), period_col="d")
     period_timeset_lf = period_timeset.lazy().select(alias_to_axis("d", "d"), pl.col("ts"))
 
@@ -7017,33 +7007,17 @@ def _dt_period_active_steps(source: "InputSource",
         if wd_result is not None:
             return wd_result
 
-    p_ts = _try_param(source, "solve", "period_timeset")
-    if p_ts is None:
-        # Try preprocessing-only fallback before bailing.
+    # period → timeset of the active solve: ``solve.period_timeset``, or the
+    # Rule 1 / 5b default (item #175).
+    pt_frame = solve_period_timeset_frame(source, active_solve)
+    if pt_frame is None:
+        # No mapping for the active solve (synthetic rolling-horizon /
+        # nested-invest sub-solve): preprocessing-only fallback.
         if workdir is not None:
             return _dt_period_active_steps_from_workdir(
                 source, workdir, ctx=ctx, provider=provider)
         return None
-    period_col = next((c for c in ("period", "x")
-                        if c in p_ts.columns), None)
-    if period_col is None:
-        return None
-    pt_eager_full = (p_ts
-                       .filter(pl.col("name") == active_solve)
-                       .pipe(rename_to_axis, {period_col: "d"})
-                       .select("d", pl.col("value").alias("ts")))
-    if pt_eager_full.height == 0:
-        # Active solve isn't in the source's period_timeset (synthetic
-        # rolling-horizon / nested-invest sub-solve).  Try preprocessing-
-        # only fallback.
-        if workdir is not None:
-            wd_result = _dt_period_active_steps_from_workdir(
-                source, workdir, ctx=ctx, provider=provider)
-            if wd_result is not None:
-                return wd_result
-        # No fallback available — caller will bail.
-        # (We continue with the empty pt_eager_full, which produces
-        # an empty anchor_to_ts and the function returns None below.)
+    pt_eager_full = pt_frame.pipe(rename_to_axis, {"d": "d"})
     # Anchor → timeset map for the active solve.
     anchor_to_ts: dict[str, str] = dict(
         zip(pt_eager_full["d"].to_list(),
