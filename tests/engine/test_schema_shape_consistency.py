@@ -19,10 +19,10 @@ import pytest
 
 from flextool._resources import package_data_path
 from flextool.engine.input._param_shapes import (
-    _SHAPE_LABELS,
     PARAM_ALLOWED_SHAPES,
     STOCHASTIC_TIME_PARAMS,
     Shape,
+    shape_rank,
 )
 
 SCHEMA = package_data_path("schemas/spinedb_schema.json")
@@ -30,10 +30,10 @@ SCHEMA = package_data_path("schemas/spinedb_schema.json")
 
 def _type_name(shape: Shape) -> str:
     """Schema type name of a resolver shape: ``float`` / ``str`` at rank 0,
-    else ``<rank>d_map`` with the rank from the shape's index labels."""
+    else ``<rank>d_map`` with the shape's rank."""
     if shape == Shape.SCALAR_STR:
         return "str"
-    rank = len(_SHAPE_LABELS[shape])
+    rank = shape_rank(shape)
     return "float" if rank == 0 else f"{rank}d_map"
 
 

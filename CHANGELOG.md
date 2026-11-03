@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **A map whose index depth or level names do not fit its parameter is now an error** naming the entity, the
+  parameter and what the parameter takes (for example a 2-level `commodity.price`, or a ladder tier level named
+  `period`); before, such values were dropped without a message. **Maps without index names at different
+  depths within one parameter are read per depth:** a one-level map keyed by time steps next to a period x time
+  map is now read over time (before, its values were lost; results change, and an upgraded database prints a
+  notice naming the entities). A one-line note says when a map's shape was read from its depth or keys; name the
+  index levels to make it explicit.
 - **Price-ladder tier labels are kept as written.** Tiers such as `01` or `a` are now their own tiers. Before, a
   label was read as a whole number: tiers `01`, `02`, ... were bought at no cost, `1` and `01` were merged, and
   tiers like `a` were dropped (results change; an upgraded database whose ladder has such labels prints a notice

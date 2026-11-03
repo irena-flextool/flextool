@@ -79,6 +79,14 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "ladder_tier_labels_as_written"),
         ),
         BehaviourChange(
+            id="unnamed_maps_read_per_depth",
+            summary=("Maps without index names that have different depths within one parameter are now read "
+                     "per depth: a one-level map keyed by time steps next to a period x time map is read over "
+                     "time. Before, its time steps were read as periods and its values were lost (results "
+                     "change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "unnamed_maps_read_per_depth"),
+        ),
+        BehaviourChange(
             id="price_ladder_periods_from_solve_periods",
             summary=("A price_ladder_annual given without periods now applies in every period of a solve that "
                      "has no period_timeset (the model's only timeset is used). Before, when the model had no "
@@ -133,6 +141,11 @@ def warn_once(key, text: str) -> bool:
     _warned.add(key)
     print(text, flush=True)
     return True
+
+
+def already_warned(key) -> bool:
+    """Whether :func:`warn_once` printed a message with *key* earlier in this run."""
+    return key in _warned
 
 
 def has_marker(change_id: str) -> bool:

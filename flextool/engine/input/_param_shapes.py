@@ -861,6 +861,121 @@ def check_index_name_path(entity_class: str, parameter_name: str, entity_name: s
     return shape
 
 
+def shape_rank(shape: Shape) -> int:
+    """The number of index levels of a value of *shape* (0 for a constant): the length of its
+    :data:`_SHAPE_LABELS` entry.  The single source of a shape's depth (also the schema's map rank)."""
+    return len(_SHAPE_LABELS[shape])
+
+
+#: What each map shape is over, in user words (:func:`allowed_shapes_in_words`).
+_SHAPE_WORDS: "dict[Shape, str]" = {
+    Shape.MAP_PERIOD: "periods",
+    Shape.MAP_TIME: "time",
+    Shape.MAP_PERIOD_TIME: "periods and time",
+    Shape.MAP_TIME_PERIOD: "time and periods",
+    Shape.MAP_TIER_FACET: "tiers and price / quantity",
+    Shape.MAP_PERIOD_TIER_FACET: "periods, tiers and price / quantity",
+}
+_FACET_SHAPES: "frozenset[Shape]" = frozenset((Shape.MAP_TIER_FACET, Shape.MAP_PERIOD_TIER_FACET))
+
+
+def _levels(n: int) -> str:
+    return f"{n} level" if n == 1 else f"{n} levels"
+
+
+def allowed_shapes_in_words(allowed: "set[Shape]") -> str:
+    """*allowed* for a user message: ``a constant, or a map over periods or over time (1 level)``."""
+    parts: list[str] = []
+    if allowed & {Shape.SCALAR, Shape.SCALAR_STR}:
+        parts.append("a constant")
+    by_rank: "dict[int, list[Shape]]" = {}
+    for shape in allowed:
+        if shape_rank(shape):
+            by_rank.setdefault(shape_rank(shape), []).append(shape)
+    for rank in sorted(by_rank):
+        over = " or over ".join(_SHAPE_WORDS[s] for s in sorted(by_rank[rank], key=lambda s: s.value))
+        parts.append(f"a map over {over} ({_levels(rank)})")
+    return ", or ".join(parts)
+
+
+def _entity_text(entity: "tuple[str, ...]") -> str:
+    return "/".join(str(e) for e in entity)
+
+
+def _label_path_problem(path: "tuple[str | None, ...]", allowed: "set[Shape]",
+                        period_time_param: bool) -> "str | None":
+    """Why one value with raw per-level labels *path* cannot be one of the *allowed* shapes, or None.
+
+    (1) its depth is not the rank of an allowed shape; (2) an explicit label is one that no allowed shape of
+    that depth has at that level (a period / time parameter places its levels by label, so there the order of
+    ``period`` and ``time`` is free).  Silent labels (``x`` / empty) are accepted: their axis is decided from
+    the value's keys later.  Price-ladder levels: level 1 of a 3-level ladder is the period (named ``period``
+    or unnamed); the tier and price / quantity levels may have any name except ``period`` / ``time``.
+    """
+    norm = ["time" if n == "t" else n for n in (_normalise_label(lbl) for lbl in path)]
+    depth = len(norm)
+    candidates = [s for s in allowed if shape_rank(s) == depth]
+    if not candidates:
+        return ("the value is a constant" if depth == 0
+                else f"the value has {depth} index level{'' if depth == 1 else 's'}")
+    explicit = [(pos, n) for pos, n in enumerate(norm) if n is not None]
+    if not explicit:
+        return None
+    if all(s in _FACET_SHAPES for s in candidates):
+        for pos, n in explicit:
+            if depth == 3 and pos == 0:
+                if n != "period":
+                    return (f"level 1 of the value is named {path[pos]!r}; level 1 of a 3-level ladder is the "
+                            "period (name it 'period' or leave it unnamed)")
+                continue
+            if n in ("period", "time"):
+                return (f"level {pos + 1} of the value is named {path[pos]!r}, but that is a tier or a "
+                        "price / quantity level")
+        return None
+    for shape in candidates:
+        labels = _SHAPE_LABELS[shape]
+        if period_time_param:
+            names = [n for _pos, n in explicit]
+            if all(n in labels for n in names) and len(set(names)) == len(names):
+                return None
+        elif all(labels[pos] == n for pos, n in explicit):
+            return None
+    named = ", ".join(f"level {pos + 1} {path[pos]!r}" for pos, _n in explicit)
+    return f"the index levels of the value are named {named}"
+
+
+def _check_entity_label_paths(source: "InputSource", entity_class: str, parameter_name: str,
+                              allowed: "set[Shape]") -> None:
+    """Check every entity's raw label path (:meth:`InputSource.parameter_entity_label_paths`) against
+    *allowed* (:func:`_label_path_problem`) and raise :class:`FlexToolConfigError` naming the entities whose
+    value cannot be one of the allowed shapes.  A source without per-entity paths is not checked.  Memoised on
+    the run's reader (the paths do not depend on the solve)."""
+    fn = getattr(source, "parameter_entity_label_paths", None)
+    if fn is None:
+        return
+
+    def check() -> bool:
+        try:
+            paths = fn(entity_class, parameter_name)
+        except KeyError:
+            return True
+        pt = (entity_class, parameter_name) in PERIOD_TIME_PARAMS
+        problems = []
+        for entity, path in sorted(paths.items()):
+            problem = _label_path_problem(tuple(path), allowed, pt)
+            if problem is not None:
+                problems.append(f"{entity_class} {_entity_text(entity)!r}, parameter {parameter_name!r}: "
+                                f"{problem}")
+        if problems:
+            more = f" (and {len(problems) - 5} more)" if len(problems) > 5 else ""
+            raise FlexToolConfigError(
+                f"{'; '.join(problems[:5])}{more}. This parameter takes {allowed_shapes_in_words(allowed)}. "
+                "Name the map's index levels 'period' / 'time' as the parameter expects, or leave them unnamed.")
+        return True
+
+    _run_memo(source, ("entity_label_path_check", entity_class, parameter_name), check)
+
+
 class _UnrecognisedIndex(Exception):
     """Internal sentinel for :func:`_shape_from_indices` — caller maps
     to :class:`FlexToolConfigError` with full context."""
@@ -1697,6 +1812,21 @@ def _per_entity_resolved(
         t=pl.when(pl.col("__axis") == "t").then(shared).otherwise(None),
     ).select(*ent_cols, "period", "t", "value")
 
+    return _axis_frame_resolved(out, ent_cols, allowed, entity_class, parameter_name)
+
+
+def _axis_frame_resolved(
+    out: "pl.DataFrame",
+    ent_cols: "list[str]",
+    allowed: "set[Shape]",
+    entity_class: str,
+    parameter_name: str,
+) -> "ResolvedShape":
+    """The :class:`ResolvedShape` of a frame ``[*ent_cols, period, t, value]`` whose rows carry a null
+    ``period`` and / or ``t`` where their entity's value has no such level: each entity's shape (its non-null
+    axes) is checked with :func:`_validate_shape_variants`, and the result is ``MAP_PERIOD_TIME`` when both
+    axes occur, otherwise the lone one (or ``SCALAR``), with the canonical column order (``period`` before
+    ``t``)."""
     variants: "set[tuple[str, ...]]" = set()
     for row in out.select(*ent_cols, "period", "t").unique(subset=ent_cols, maintain_order=True).iter_rows(
             named=True):
@@ -1730,6 +1860,139 @@ def _per_entity_resolved(
         period_index_column="period" if shape in (Shape.MAP_PERIOD, Shape.MAP_PERIOD_TIME) else None,
         time_index_column="t" if shape in (Shape.MAP_TIME, Shape.MAP_PERIOD_TIME) else None,
     )
+
+
+def _unnamed_mixed_depths(source: "InputSource", entity_class: str,
+                          parameter_name: str) -> "dict[int, list[tuple[str, ...]]] | None":
+    """The entities by map depth when their maps have more than one depth (constants aside) and some level is
+    unnamed -- the case the reader's single positional unroll cannot place; None otherwise (also for a source
+    without per-entity label paths).  With every level named, the reader places each row by its labels."""
+    fn = getattr(source, "parameter_entity_label_paths", None)
+    if fn is None:
+        return None
+    try:
+        paths = fn(entity_class, parameter_name)
+    except KeyError:
+        return None
+    by_depth: "dict[int, list[tuple[str, ...]]]" = {}
+    for entity, path in paths.items():
+        by_depth.setdefault(len(path), []).append(entity)
+    if len([d for d in by_depth if d > 0]) < 2 or not has_silent_labels(set(paths.values())):
+        return None
+    return by_depth
+
+
+def _resolve_by_depth(
+    source: "InputSource",
+    entity_class: str,
+    parameter_name: str,
+    allowed: "set[Shape]",
+    by_depth: "dict[int, list[tuple[str, ...]]]",
+    period_filter: "pl.DataFrame | None",
+) -> "ResolvedShape | None":
+    """Resolve each depth group of *by_depth* on a view without the other groups' values (the existing rules
+    per group: allow-list labels, value-domain probe, per-entity split) and union the groups into one
+    ``[entities, period, t, value]`` :class:`ResolvedShape` (:func:`_axis_frame_resolved`).
+
+    A group that resolves to nothing has no value in this solve (its keys are not periods or time steps of
+    the solve), except without *period_filter*, where its unnamed levels cannot be told apart: that raises
+    :class:`FlexDataIntegrityError` naming the entities.  When a one-level group is read over time next to
+    deeper maps, the behaviour-change notice ``unnamed_maps_read_per_depth`` names those entities (before,
+    their keys were read as periods)."""
+    parts: list[pl.DataFrame] = []
+    ent_cols: "list[str] | None" = None
+    for depth in sorted(by_depth):
+        others = frozenset(e for d, ents in by_depth.items() if d != depth for e in ents)
+        view = _view_without(source, entity_class, parameter_name, others, "shape_depth")
+        resolved = _resolve_param_shape(view, entity_class, parameter_name, period_filter)
+        if resolved is None:
+            if period_filter is None:
+                names = ", ".join(repr(_entity_text(e)) for e in sorted(by_depth[depth])[:5])
+                raise FlexDataIntegrityError(
+                    f"{entity_class} {names}, parameter {parameter_name!r}: the value is a map with "
+                    f"{_levels(depth)} without index names next to maps of other depths, and here there are no "
+                    "solve periods or time steps to tell its levels apart. Name the index levels "
+                    "('period' / 'time').")
+            continue
+        ent_cols = list(resolved.entity_dim_columns)
+        frame = resolved.frame
+        parts.append(frame.select(
+            *(pl.col(c).cast(pl.Utf8) for c in ent_cols),
+            (pl.col(resolved.period_index_column).cast(pl.Utf8) if resolved.period_index_column
+             else pl.lit(None, dtype=pl.Utf8)).alias("period"),
+            (pl.col(resolved.time_index_column).cast(pl.Utf8) if resolved.time_index_column
+             else pl.lit(None, dtype=pl.Utf8)).alias("t"),
+            "value"))
+    if not parts or ent_cols is None:
+        return None
+    out = pl.concat(parts, how="vertical_relaxed")
+    deeper = [d for d in by_depth if d > 1]
+    if 1 in by_depth and deeper:
+        one_level = pl.DataFrame([list(e) for e in by_depth[1]], schema={c: pl.Utf8 for c in ent_cols},
+                                 orient="row")
+        over_time = (out.join(one_level, on=ent_cols, how="semi")
+                        .filter(pl.col("t").is_not_null() & pl.col("period").is_null())
+                        .select(ent_cols).unique().sort(ent_cols))
+        if over_time.height > 0:
+            from flextool.engine import _behaviour_changes
+            _behaviour_changes.notice(
+                "unnamed_maps_read_per_depth", f"{entity_class} {parameter_name} values",
+                [_entity_text(row) for row in over_time.iter_rows()])
+    return _axis_frame_resolved(out, ent_cols, allowed, entity_class, parameter_name)
+
+
+_AXIS_WORDS: "dict[tuple[bool, bool], str]" = {
+    (True, True): "periods and time", (True, False): "periods", (False, True): "time",
+}
+
+
+def _shape_read_notice(source: "InputSource", entity_class: str, parameter_name: str,
+                       resolved: "ResolvedShape") -> None:
+    """Print once per (class, parameter) and run which axes the unnamed maps of the parameter were read
+    over (their shape was taken from their depth or keys).  Price ladders are left out: their levels are
+    placed by depth by definition."""
+    if resolved.shape in _FACET_SHAPES or resolved.frame is None:
+        return
+    from flextool.engine import _behaviour_changes
+    key = ("shape_read_from_depth", entity_class, parameter_name)
+    if _behaviour_changes.already_warned(key):
+        return
+    fn = getattr(source, "parameter_entity_label_paths", None)
+    if fn is None:
+        return
+    try:
+        paths = fn(entity_class, parameter_name)
+    except KeyError:
+        return
+    unnamed = [e for e, p in paths.items() if p and any(_normalise_label(lbl) is None for lbl in p)]
+    if not unnamed:
+        return
+    ent_cols = list(resolved.entity_dim_columns)
+    frame = resolved.frame
+    has_p = (pl.col(resolved.period_index_column).is_not_null().any() if resolved.period_index_column
+             else pl.lit(False))
+    has_t = (pl.col(resolved.time_index_column).is_not_null().any() if resolved.time_index_column
+             else pl.lit(False))
+    wanted = pl.DataFrame([list(e) for e in unnamed], schema={c: pl.Utf8 for c in ent_cols}, orient="row")
+    axes = (frame.lazy()
+                 .with_columns(pl.col(c).cast(pl.Utf8) for c in ent_cols)
+                 .join(wanted.lazy(), on=ent_cols, how="semi")
+                 .group_by(ent_cols).agg(has_p.alias("p"), has_t.alias("t"))
+                 .sort(ent_cols).collect())
+    groups: "dict[str, list[str]]" = {}
+    for row in axes.iter_rows(named=True):
+        words = _AXIS_WORDS.get((bool(row["p"]), bool(row["t"])))
+        if words is not None:
+            groups.setdefault(words, []).append(_entity_text(tuple(row[c] for c in ent_cols)))
+    if not groups:
+        return
+    read = []
+    for words, names in groups.items():
+        more = f" and {len(names) - 3} more" if len(names) > 3 else ""
+        read.append(f"{', '.join(repr(n) for n in names[:3])}{more} over {words}")
+    _behaviour_changes.warn_once(
+        key, f"Note: {entity_class} '{parameter_name}' has maps without index names; read {'; '.join(read)} from "
+             "their depth and keys. Name the index levels to make this explicit.")
 
 
 def resolve_param_shape(
@@ -1792,7 +2055,26 @@ def resolve_param_shape(
     (the source plugin's None-skip per §4.5), or when every entity was dropped by the per-entity fallback
     and the source has no default to broadcast over the rest.  Otherwise returns a :class:`ResolvedShape`
     carrying everything :func:`broadcast_to_period_time` / :func:`broadcast_to_period` need.
+
+    Every entity's own label path is checked first (:func:`_check_entity_label_paths`): a depth the
+    parameter does not take, or a ``period`` / ``time`` name on the wrong level, raises
+    :class:`FlexToolConfigError` naming the entity.  When the entities' maps have different depths and some
+    level is unnamed, each depth is read on its own (:func:`_resolve_by_depth`).  When a shape was read from
+    an unnamed map's depth or keys, a one-line note says so (once per parameter and run).
     """
+    resolved = _resolve_param_shape(source, entity_class, parameter_name, period_filter)
+    if resolved is not None:
+        _shape_read_notice(source, entity_class, parameter_name, resolved)
+    return resolved
+
+
+def _resolve_param_shape(
+    source: "InputSource",
+    entity_class: str,
+    parameter_name: str,
+    period_filter: "pl.DataFrame | None",
+) -> "ResolvedShape | None":
+    """:func:`resolve_param_shape` without the note."""
     key = (entity_class, parameter_name)
     allowed = PARAM_ALLOWED_SHAPES.get(key)
     if allowed is None:
@@ -1818,6 +2100,12 @@ def resolve_param_shape(
             if resolved is None:
                 return None
         return dataclasses.replace(resolved, stochastic_entities=stochastic, stochastic_key=key)
+
+    _check_entity_label_paths(source, entity_class, parameter_name, allowed)
+    if not allowed & _FACET_SHAPES:
+        by_depth = _unnamed_mixed_depths(source, entity_class, parameter_name)
+        if by_depth:
+            return _resolve_by_depth(source, entity_class, parameter_name, allowed, by_depth, period_filter)
 
     df = _try_parameter_frame(source, entity_class, parameter_name)
     if df is None or df.height == 0:
@@ -1917,7 +2205,9 @@ def resolve_param_shape(
                         df, ent_cols, axis_of, allowed, entity_class, parameter_name,
                     )
             # Nothing silent was classifiable (no period_filter, no ``parameter_entity_label_paths`` on
-            # the source, or no entity at all matches one axis and not the other).  Per Δ.17c policy:
+            # the source, or no entity at all matches one axis and not the other).  The depth is an allowed
+            # one: a depth the parameter does not take was raised by _check_entity_label_paths above.
+            # Per Δ.17c policy:
             # don't raise; return None so the caller falls back to its non-resolver pathway (typically the
             # seed CSV).  Δ.18+ punch-list: re-author fixtures so every Map level carries an explicit
             # ``index_name``.
@@ -2044,8 +2334,10 @@ def resolve_facet_groups(
     row's values into them positionally).
 
     Each element of the result is a facet :class:`ResolvedShape` (``Shape.MAP_TIER_FACET`` /
-    ``Shape.MAP_PERIOD_TIER_FACET``); a depth outside :data:`PARAM_ALLOWED_SHAPES`' allow-list is rejected
-    by :func:`resolve_param_shape` as today (``FlexToolConfigError``).  A source without
+    ``Shape.MAP_PERIOD_TIER_FACET``).  Each entity's label path is checked first
+    (:func:`_check_entity_label_paths`): a depth outside :data:`PARAM_ALLOWED_SHAPES`' allow-list, a level 1 of
+    a 3-level ladder named other than ``period``, or a ``period`` / ``time`` name on a tier or price / quantity
+    level raises ``FlexToolConfigError`` naming the entity.  Different depths are fine (split here).  A source without
     ``parameter_entity_label_paths`` (or that raises ``KeyError`` for this key) falls back to a single
     whole-frame :func:`resolve_param_shape` call -- the pre-existing behaviour for every reader that
     cannot report per-entity depths.
@@ -2061,6 +2353,9 @@ def resolve_facet_groups(
     if paths is None:
         resolved = resolve_param_shape(source, entity_class, parameter_name)
         return [resolved] if resolved is not None else []
+    allowed = PARAM_ALLOWED_SHAPES.get((entity_class, parameter_name))
+    if allowed is not None:
+        _check_entity_label_paths(source, entity_class, parameter_name, allowed)
 
     by_depth: "dict[int, list[tuple[str, ...]]]" = {}
     for ent, path in paths.items():

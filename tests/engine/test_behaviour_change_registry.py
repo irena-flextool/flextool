@@ -58,5 +58,6 @@ def test_migration_markers_are_registered() -> None:
     assert db_migration.BEHAVIOUR_CHANGE_MARKER_PREFIX == MARKER_PREFIX
     written = set(db_migration._V77_UNCONDITIONAL_MARKERS) | {"storage_default_fix_nothing",
                                                               "storage_fix_method_rewritten",
-                                                              "ladder_tier_labels_as_written"}
+                                                              "ladder_tier_labels_as_written",
+                                                              "unnamed_maps_read_per_depth"}
     assert written <= set(BEHAVIOUR_CHANGES)

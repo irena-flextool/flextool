@@ -5282,6 +5282,37 @@ def _v77_ladder_tier_marker(db) -> None:
                                                                           sorted(commodities)}))
 
 
+def _v77_unnamed_map_depth(value) -> int | None:
+    """The depth of a parsed Map value whose levels all lack an index name (``x`` / empty), else None."""
+    depth = 0
+    cur = value
+    while isinstance(cur, Map):
+        if (cur.index_name or "x").strip().lower() != "x":
+            return None
+        depth += 1
+        if not cur.values:
+            break
+        cur = cur.values[0]
+    return depth or None
+
+
+def _v77_unnamed_mixed_depth_marker(db) -> None:
+    """Write the marker ``unnamed_maps_read_per_depth`` when some parameter has maps without index names at
+    one level on some entities and at more levels on others: earlier releases read such one-level maps into
+    the deeper maps' first level (a time map lost its values).  The run names the entities whose one-level
+    map is now read over time."""
+    depths: dict[tuple[str, str], set[int]] = {}
+    for pv in db.get_items("parameter_value"):
+        if pv["type"] != "map":
+            continue
+        depth = _v77_unnamed_map_depth(from_database(pv["value"], pv["type"]))
+        if depth is not None:
+            depths.setdefault((pv["entity_class_name"], pv["parameter_definition_name"]), set()).add(depth)
+    mixed = sorted(f"{cls}.{name}" for (cls, name), ds in depths.items() if 1 in ds and max(ds) > 1)
+    if mixed:
+        _v77_set_marker(db, "unnamed_maps_read_per_depth", json.dumps({"since": 77, "parameters": mixed}))
+
+
 def _migrate_v77_schema_batch(db) -> None:
     """Schema batch v77 (v76 -> v77).
 
@@ -5299,7 +5330,8 @@ def _migrate_v77_schema_batch(db) -> None:
       ``not_allowed`` is ``not_active`` there (also the new default).
     * Behaviour-change markers (database metadata) for the changes this DB
       predates (the price-ladder tier-label marker only when a ladder has a
-      tier label that is not a plain whole number).
+      tier label that is not a plain whole number; the unnamed-map marker
+      only when a parameter has unnamed maps of one and of more levels).
     * Stale definitions dropped (their values listed), ``single_shot`` →
       ``single_solve``.
     * Storage start / end: explicit fix methods without their value are
@@ -5315,6 +5347,7 @@ def _migrate_v77_schema_batch(db) -> None:
     _v77_group_invest_methods(db)
     _v77_behaviour_markers(db)
     _v77_ladder_tier_marker(db)
+    _v77_unnamed_mixed_depth_marker(db)
     _v77_drop_stale_definitions(db)
     _v77_storage_fix_rewrite(db)
     _v77_storage_default_explicit(db)

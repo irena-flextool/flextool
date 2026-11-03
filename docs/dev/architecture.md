@@ -460,6 +460,29 @@ An entity whose keys match both axes raises, naming it — the same rule a singl
 one entity's own Map already raises on. See `tests/engine/test_param_shapes_silent_per_entity.py` and
 `tests/engine/test_silent_label_params.py` (items #167 / #168 of `specs/github_issues.md`).
 
+##### Every entity's index path is checked; unnamed maps of different depths are read per depth
+
+Before any shape is resolved, `_check_entity_label_paths` checks each entity's own raw label path
+(`parameter_entity_label_paths`), not only the parameter's combined one: a depth that is not the
+`shape_rank` of an allowed shape, or an explicit name that no allowed shape of that depth has on that level
+(`period` / `time`; for the price ladders, level 1 of a 3-level ladder is the period and the tier and
+price / quantity levels may not be named `period` / `time`), raises `FlexToolConfigError` in plain words
+(`allowed_shapes_in_words`): *"commodity 'coal', parameter 'price': the value has 2 index levels; this
+parameter takes a constant, or a map over periods or over time (1 level)"*. A depth that stays ambiguous
+between allowed shapes is accepted; value-domain probing decides it. `shape_rank(shape)` =
+`len(_SHAPE_LABELS[shape])` is the one source of a shape's depth (also the schema's map rank,
+`tests/engine/test_schema_shape_consistency.py`).
+
+When a non-ladder parameter's entities have maps of more than one depth and some level is unnamed, the
+reader's single positional unroll cannot place them (it puts every row into the deepest map's columns), so
+`_resolve_by_depth` resolves each depth group on a `_view_without` the others (as `resolve_facet_groups`
+does for ladders) with the usual rules, and unions the groups into one `[entities, period, t, value]` frame
+(`_axis_frame_resolved`). It raises only where those rules cannot place a group: keys on both axes, or an
+ambiguous group without a `period_filter`. With every level named, the reader places rows by label and no
+split happens. When an unnamed map's shape was read from its depth or keys, `resolve_param_shape` prints one
+note per (class, parameter) and run (`_behaviour_changes.warn_once`, `print(flush=True)`); ladders are left
+out (their levels are placed by depth by definition).
+
 `_param_shapes` is the **I/O contract only** — it validates user-authored
 DB shapes and errors to the user on mismatch. Model-internal axes (e.g.
 the rolling-solve `roll` axis) are deliberately excluded; they are never
