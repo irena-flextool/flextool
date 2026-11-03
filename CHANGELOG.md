@@ -11,6 +11,15 @@
   across a gap, a representative-period start or into another period, the same as ramp limits and the minimum
   up / down time look-back. In a stochastic solve that branches mid-horizon, the steps before the reveal cycle among
   themselves.
+- **Fix: the units online carried into the next roll stop at a gap, a new year and a representative-period
+  start.** A rolling or nested solve took over the units online realized at the end of the previous roll at its
+  first step whatever came between them: across a gap in the timeline, into a new year that reuses the same
+  timeset, at a representative-period start, and, when no step matched, on the first step of the solve anyway.
+  The commitment is now carried only to the steps from which ramp limits and the minimum up / down time continue
+  (the steps that continue the previous roll's last realized step on the timeline, including a continuing period,
+  every forecast branch starting there and a solve with longer time steps). Elsewhere the first step cycles within
+  its own stretch of the period, as within a solve. A carried commitment without the step it was realized at now
+  stops with an error instead of being placed on the first step.
 - **Fix: a solve with longer time steps continues the finer dispatch realized before it.** In nested and rolling
   solves, the ramp limit and the minimum up / down time carry of a solve's first step were taken over from the
   previous solve only when the step before it on its own timeline was the very step realized last. A solve with
