@@ -13,7 +13,8 @@ leaves one empty).
 
 A run calls :func:`start_run` with the markers of its input database (:func:`read_markers`).  :func:`notice`
 prints with ``print(..., flush=True)`` and announces each entity of a change once per run, so rolls and repeated
-solves of the same run do not repeat it.
+solves of the same run do not repeat it.  :func:`warn_once` gives other run-time warnings the same once-per-run
+scope.
 """
 from __future__ import annotations
 
@@ -73,6 +74,7 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
 
 _markers: dict[str, str] = {}
 _announced: set[tuple[str, str]] = set()
+_warned: set = set()
 
 
 def read_markers(db) -> dict[str, str]:
@@ -104,6 +106,17 @@ def start_run(markers: Mapping[str, str] | None) -> None:
     _markers.clear()
     _markers.update(dict(markers or {}))
     _announced.clear()
+    _warned.clear()
+
+
+def warn_once(key, text: str) -> bool:
+    """Print *text* unless a message with *key* was printed earlier in this run (rolls and repeated solves of a
+    run print it once).  Returns True when it printed."""
+    if key in _warned:
+        return False
+    _warned.add(key)
+    print(text, flush=True)
+    return True
 
 
 def has_marker(change_id: str) -> bool:

@@ -253,6 +253,7 @@ class _Build:
     m: Any
     d: Any
     include_existing_fixed_cost: bool = False
+    solve_name: str | None = None
 
     # ── feature flags ──
     has_proc: bool = False
@@ -350,7 +351,7 @@ class _Build:
 
 
 def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
-                   scale_the_objective: float = 1.0) -> None:
+                   scale_the_objective: float = 1.0, solve_name: str | None = None) -> None:
     """Build the FlexTool LP into ``m`` from the data ``d``.
 
     Every block is conditional on its data: a feature with an empty index
@@ -363,8 +364,9 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     the objective as a constant (OBJ. existing_fixed_cost).  It changes the
     objective value, not the solution.  Off by default.
     ``scale_the_objective``: multiplier on the whole objective (1.0 = none).
+    ``solve_name``: the solve this LP is for; named in the configuration errors and warnings of the build.
     """
-    b = _Build(m=m, d=d, include_existing_fixed_cost=include_existing_fixed_cost)
+    b = _Build(m=m, d=d, include_existing_fixed_cost=include_existing_fixed_cost, solve_name=solve_name)
     # Objective steps return their term (or None); terms are summed in this
     # order.  Constraint steps return None.
     obj = None
@@ -3142,7 +3144,9 @@ def _eq_user_constraints(b: _Build) -> None:
     # A constraint without flow and state terms is the same in every step of a period, so it gets one row per
     # period (the _period family) instead of one per step.  The constraint axis is cn (c is the commodity
     # axis).  Dims: flow and state terms (cn, d, t); every capacity term (cn, d), broadcast over t on the
-    # per-step rows.
+    # per-step rows.  A row whose terms all vanish in the solve (its entities have no flow, state, investment
+    # or retirement there) is left out: a configuration error when the remaining existing-capacity constant
+    # sense constant cannot hold, else a warning naming the constraint.
     flow_terms: list = []
     if _has_rows(d.flow_constraint_idx):
         flow_terms.append(Sum(
@@ -3248,11 +3252,13 @@ def _eq_user_constraints(b: _Build) -> None:
     # Term order of the per-step rows: flow, invested, state, pre-built, then the newer capacity terms.
     step_terms = flow_terms + invest_terms + state_terms + capacity_terms
     period_terms = invest_terms + capacity_terms
-    if not (step_terms or const_terms):
-        return
     op_cns = set(state_cns)
     if flow_terms:
         op_cns.update(d.flow_constraint_idx.get_column("cn").cast(pl.Utf8).unique().to_list())
+    # The (cn, d) that keep a variable in this solve; a row elsewhere would read constant sense constant.
+    live_period = _user_constraint_live_keys(period_terms)
+    live_step = live_period | _user_constraint_live_keys(flow_terms + state_terms)
+    empty_rows: list[tuple[pl.DataFrame, str]] = []
     for over, sense, name in (
         (d.cdt_eq, "==", "process_constraint_equal"),
         (d.cdt_le, "<=", "process_constraint_less_than"),
@@ -3261,14 +3267,18 @@ def _eq_user_constraints(b: _Build) -> None:
         if not _has_rows(over):
             continue
         is_op = pl.col("cn").cast(pl.Utf8).is_in(sorted(op_cns))
-        for rows, terms, family in ((over.filter(is_op), step_terms, name),
-                                    (over.filter(~is_op).select("cn", "d").unique(maintain_order=True),
-                                     period_terms, name + "_period")):
-            if rows.height == 0 or not (terms or const_terms):
+        for rows, terms, live, family in ((over.filter(is_op), step_terms, live_step, name),
+                                          (over.filter(~is_op).select("cn", "d").unique(maintain_order=True),
+                                           period_terms, live_period, name + "_period")):
+            if rows.height == 0:
                 continue
-            lhs: dict = {}
-            if terms:
-                lhs["contribution"] = _sum_terms(terms)
+            has_var = (pl.repeat(True, rows.height, eager=True) if "*" in live
+                       else _cn_d_key(rows).is_in(sorted(live)))
+            empty_rows.append((rows.filter(~has_var).select("cn", "d"), sense))
+            rows = rows.filter(has_var)
+            if rows.height == 0:
+                continue
+            lhs: dict = {"contribution": _sum_terms(terms)}
             for i, const in enumerate(const_terms):
                 lhs[f"prebuilt_const_{i}"] = const
             m.add_cstr(
@@ -3278,6 +3288,87 @@ def _eq_user_constraints(b: _Build) -> None:
                 lhs_terms = lhs,
                 rhs_terms = {"constant": d.p_constraint_constant},
             )
+    _check_user_constraints_without_terms(b, empty_rows, const_terms)
+
+
+def _cn_d_key(frame: pl.DataFrame) -> pl.Series:
+    """``cn`` and ``d`` of each row joined into one Utf8 key (for membership tests across Enum dtypes)."""
+    return frame.select(pl.concat_str([pl.col("cn").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)],
+                                      separator="\x1f")).to_series()
+
+
+def _user_constraint_live_keys(terms: list) -> set[str]:
+    """The :func:`_cn_d_key` keys of the (cn, d) where a term of *terms* has a non-zero variable coefficient.
+
+    ``{"*"}`` (every row has a variable) when a term cannot be reduced to (cn, d) here.
+    """
+    keys: set[str] = set()
+    for expr in terms:
+        for term in expr.terms:
+            if "cn" not in term.dims or "d" not in term.dims or term.where_frames or term.where_map_frames:
+                # Not reducible to (cn, d) here: count every row of the family as having a variable.
+                return {"*"}
+            frame = (term.lazy.filter(pl.col("coef") != 0.0).select("cn", "d").unique().collect())
+            keys.update(_cn_d_key(frame).to_list())
+    return keys
+
+
+def _check_user_constraints_without_terms(b: _Build, empty_rows: list[tuple[pl.DataFrame, str]],
+                                          const_terms: list) -> None:
+    """User-constraint rows left without a variable in this solve: an error where ``constant sense constant``
+    cannot hold, else a warning (once per constraint per run) — the row is left out either way."""
+    d = b.d
+    empty = [(rows, sense) for rows, sense in empty_rows if rows.height > 0]
+    if not empty:
+        return
+    keys = ["cn", "d"]
+
+    def by_cn_d(param: "Param | None", alias: str) -> pl.DataFrame | None:
+        if param is None:
+            return None
+        frame = _collected(param.frame).with_columns(pl.col(c).cast(pl.Utf8) for c in param.dims)
+        return frame.rename({"value": alias}).select(*param.dims, alias)
+
+    rhs = by_cn_d(d.p_constraint_constant, "rhs")
+    consts = [f for f in (by_cn_d(c, f"lhs_{i}") for i, c in enumerate(const_terms)) if f is not None]
+    failing: list[str] = []
+    holding: dict[str, list[str]] = {}
+    shown = {"==": "=", "<=": "<=", ">=": ">="}
+    for rows, sense in empty:
+        frame = rows.with_columns(pl.col(c).cast(pl.Utf8) for c in keys).unique(maintain_order=True)
+        if rhs is not None:
+            frame = frame.join(rhs, on=[c for c in rhs.columns if c in keys], how="left")
+        else:
+            frame = frame.with_columns(rhs=pl.lit(0.0))
+        lhs_cols = []
+        for const in consts:
+            frame = frame.join(const, on=[c for c in const.columns if c in keys], how="left")
+            lhs_cols.append(const.columns[-1])
+        frame = frame.with_columns(
+            rhs=pl.col("rhs").fill_null(0.0),
+            lhs=pl.sum_horizontal([pl.col(c).fill_null(0.0) for c in lhs_cols]) if lhs_cols else pl.lit(0.0))
+        for row in frame.select("cn", "d", "lhs", "rhs").iter_rows(named=True):
+            lhs, rhs_value = float(row["lhs"]), float(row["rhs"])
+            tol = 1e-9 * max(1.0, abs(lhs), abs(rhs_value))
+            holds = {"==": abs(lhs - rhs_value) <= tol, "<=": lhs <= rhs_value + tol,
+                     ">=": lhs >= rhs_value - tol}[sense]
+            text = f"{lhs:g} {shown[sense]} {rhs_value:g}"
+            if holds:
+                holding.setdefault(row["cn"], []).append(f"period {row['d']}: {text}")
+            else:
+                failing.append(f"{row['cn']} (period {row['d']}: {text})")
+    where = f"solve '{b.solve_name}'" if b.solve_name else "this solve"
+    if failing:
+        raise FlexToolConfigError(
+            f"User constraints without any variable in {where} cannot hold: {', '.join(failing)}. Their "
+            "coefficients only refer to flows, storage states, investments or retirements that this solve does "
+            "not have. Remove the constraint from the solve, or give it a term that the solve has.")
+    from flextool.engine import _behaviour_changes
+    for cn, cases in sorted(holding.items()):
+        _behaviour_changes.warn_once(
+            ("user_constraint_without_terms", cn),
+            f"Warning: user constraint '{cn}' has no variable in {where} ({'; '.join(cases)}). It always holds "
+            "there, so it is left out.")
 
 
 def _collected(frame) -> pl.DataFrame:

@@ -48,8 +48,13 @@
   an investment counts as invested in the period it is decided and in pre-built and capacity from the period it
   enters service.
 - **User constraints with only capacity terms are written once per period** instead of once per time step (the
-  rows were identical; results unchanged). In the `output_horizon` raw dump these rows are
+  rows were identical). In the `output_horizon` raw dump these rows are
   `process_constraint_{equal,less_than,greater_than}_period` with dimensions (constraint, period).
+- **A user constraint with no term left in a solve gets no row.** This happens when its coefficients only refer
+  to flows, storage states, investments or retirements that the solve does not have. When the remaining row cannot
+  hold (for example 0 >= 5, or one period of a period-map `constant`), the run stops with an error naming the
+  constraint, the solve and the period. Before, the solve was infeasible without naming the constraint. When the
+  row always holds (for example 0 >= 0), a warning names the constraint once per run.
 - **Fix: a user-constraint pre-built coefficient now gives a zero-cost entity its investment variable** (results
   change only for such entities). An entity without investment cost that a user constraint linked only through
   `constraint_cumulative_pre_built_capacity_coeff` got no investment variable, because the link was looked up under

@@ -484,6 +484,7 @@ def _build_warm_problem(
     *,
     scale_the_objective: float = 1.0,
     solver_options: dict | None = None,
+    solve_name: str | None = None,
 ) -> WarmProblem:
     """Build a fresh :class:`polar_high.WarmProblem` from a FlexData
     snapshot.
@@ -498,6 +499,8 @@ def _build_warm_problem(
         HiGHS options to apply via ``pb.set_solver_options`` BEFORE
         wrapping in :class:`WarmProblem`.  The orchestrator passes None
         and sets the resolved set on the inner Problem afterwards.
+    solve_name
+        The solve the LP is for (named in the build's configuration errors).
 
     No Param is declared mutable: the warm path pushes no updates, so the
     build skips polar-high's per-cell tracking pass.
@@ -508,7 +511,7 @@ def _build_warm_problem(
     from flextool.engine.model.core import build_flextool
 
     pb = Problem()
-    build_flextool(pb, data, scale_the_objective=scale_the_objective)
+    build_flextool(pb, data, scale_the_objective=scale_the_objective, solve_name=solve_name)
     if solver_options:
         pb.set_solver_options(solver_options)
     return WarmProblem(pb)

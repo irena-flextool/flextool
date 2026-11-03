@@ -3410,6 +3410,7 @@ def _drive_cascade(
                         data,
                         scale_the_objective=effective_obj_scale,
                         solver_options=None,
+                        solve_name=complete_solve_name,
                     )
                     _phase_prof("build_done")
                     if _memrec_local is not None and _emit_phase:
@@ -3723,7 +3724,8 @@ def _drive_cascade(
                 self._release_warm_problem()
                 pb = Problem()
                 _phase_prof("build_start")
-                build_flextool(pb, data, scale_the_objective=effective_obj_scale)
+                build_flextool(pb, data, scale_the_objective=effective_obj_scale,
+                               solve_name=complete_solve_name)
                 _phase_prof("build_done")
                 if _memrec_local is not None and _emit_phase:
                     _memrec_local.checkpoint(
