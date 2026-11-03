@@ -109,6 +109,7 @@ _logger = logging.getLogger(__name__)
 # term (correct, just unbounded) rather than raising ``ImportError``.
 try:  # pragma: no cover - exercised by both-polar_high verification runs
     from polar_high.autoscale._coef_walk import (  # noqa: F401
+        ArrayClassifier as _ArrayClassifier,
         CoefWalkRecipe as _CoefWalkRecipe,
         Log2HistogramReducer as _Log2HistogramReducer,
         bounded_coefficient_walk as _bounded_coefficient_walk,
@@ -246,6 +247,61 @@ _AccVal = tuple[float, int, float, float]
 _INIT_ACC: _AccVal = (0.0, 0, math.inf, 0.0)
 
 
+def _var_col_ids(problem: Any) -> list[tuple[np.ndarray, QuantityType, bool]]:
+    """Per Var, in ``problem._vars`` order: ``(col_ids, column_type,
+    has_multiplier_param)``.
+
+    Raises :class:`KeyError` naming the variable when it is not registered
+    in ``VARIABLE_FAMILIES``.
+    """
+    out: list[tuple[np.ndarray, QuantityType, bool]] = []
+    for name, var in problem._vars.items():
+        try:
+            fam = lookup_var(name)
+        except KeyError as exc:
+            raise KeyError(
+                f"Layer 2: variable {name!r} not in VARIABLE_FAMILIES — "
+                "register it in _layer2_types.py before solving."
+            ) from exc
+        out.append((
+            var.frame["col_id"].to_numpy().astype(np.int64, copy=False),
+            fam.column_type,
+            fam.multiplier_param is not None,
+        ))
+    return out
+
+
+def _col_type_table(
+    problem: Any,
+) -> tuple[np.ndarray, np.ndarray, list[QuantityType]]:
+    """Per-``col_id`` column type and multiplier flag as numpy arrays.
+
+    Returns ``(type_idx, has_mp, types)``: ``type_idx[c]`` (int16) is the
+    index into ``types`` of column ``c``'s :class:`QuantityType` (``-1`` for
+    a ``col_id`` no Var owns), ``has_mp[c]`` whether its family carries a
+    ``multiplier_param``.  ``types`` lists each distinct column type once,
+    in first-appearance order over ``problem._vars``.  One small integer per
+    LP column instead of a Python object per column; a ``col_id`` owned by
+    two Vars keeps the later one (Var order).
+    """
+    per_var = _var_col_ids(problem)
+    types: list[QuantityType] = []
+    idx_of: dict[QuantityType, int] = {}
+    n_cols = 0
+    for cids, ct, _mp in per_var:
+        if ct not in idx_of:
+            idx_of[ct] = len(types)
+            types.append(ct)
+        if cids.size:
+            n_cols = max(n_cols, int(cids.max()) + 1)
+    type_idx = np.full(n_cols, -1, dtype=np.int16)
+    has_mp = np.zeros(n_cols, dtype=bool)
+    for cids, ct, mp in per_var:
+        type_idx[cids] = idx_of[ct]
+        has_mp[cids] = mp
+    return type_idx, has_mp, types
+
+
 def _build_col_id_classification(problem: Any) -> pl.DataFrame:
     """Return a per-``col_id`` classification table.
 
@@ -259,25 +315,23 @@ def _build_col_id_classification(problem: Any) -> pl.DataFrame:
     every objective / constraint term's lazy plan.  ``has_multiplier_param``
     drives :func:`_effective_matrix_type`'s branch — when set *and* the
     constraint family has a ``rhs_type``, the matrix entry is bucketed
-    against the row's type rather than the column's.
+    against the row's type rather than the column's.  Rows follow
+    ``problem._vars`` order, each Var's ``col_id`` in frame order.
     """
-    col_ids: list[int] = []
-    type_ids: list[int] = []
-    has_mp: list[bool] = []
-    for name, var in problem._vars.items():
-        try:
-            fam = lookup_var(name)
-        except KeyError as exc:
-            raise KeyError(
-                f"Layer 2: variable {name!r} not in VARIABLE_FAMILIES — "
-                "register it in _layer2_types.py before solving."
-            ) from exc
-        ct_id = _qty_to_id(fam.column_type)
-        mp = fam.multiplier_param is not None
-        ids = var.frame["col_id"].to_numpy().tolist()
-        col_ids.extend(int(c) for c in ids)
-        type_ids.extend([ct_id] * len(ids))
-        has_mp.extend([mp] * len(ids))
+    per_var = _var_col_ids(problem)
+    if not per_var:
+        col_ids = np.zeros(0, dtype=np.int64)
+        type_ids = np.zeros(0, dtype=np.int32)
+        has_mp = np.zeros(0, dtype=bool)
+    else:
+        col_ids = np.concatenate([cids for cids, _ct, _mp in per_var])
+        type_ids = np.concatenate([
+            np.full(cids.size, _QTY_TO_ID[ct], dtype=np.int32)
+            for cids, ct, _mp in per_var
+        ])
+        has_mp = np.concatenate([
+            np.full(cids.size, mp, dtype=bool) for cids, _ct, mp in per_var
+        ])
     return pl.DataFrame(
         {
             "col_id": pl.Series(col_ids, dtype=pl.Int64),
@@ -439,58 +493,38 @@ def _layer2_bucket_profiler() -> Any:
     return _emit
 
 
-def _build_col_id_eff_t(problem: Any) -> dict[int, tuple[QuantityType, bool]]:
-    """Per-``col_id`` ``(column_type, has_multiplier_param)`` lookup.
-
-    Drives the walk's ``classify`` closures — the Python-side analogue of
-    the ``col_id → (column_type_id, has_multiplier_param)`` classification
-    table :func:`_build_col_id_classification` joins into the lazy plan.
-    """
-    out: dict[int, tuple[QuantityType, bool]] = {}
-    for name, var in problem._vars.items():
-        fam = lookup_var(name)  # KeyError already filtered by the caller.
-        ct = fam.column_type
-        mp = fam.multiplier_param is not None
-        for cid in var.frame["col_id"].to_numpy().tolist():
-            out[int(cid)] = (ct, mp)
-    return out
+def _cost_classifier(
+    type_idx: np.ndarray, types: list[QuantityType],
+) -> Any:
+    """``ArrayClassifier`` for the objective (cost) walk: ``eff_t ==
+    column_type`` (no rhs_type); a ``col_id`` no Var owns has no bucket."""
+    return _ArrayClassifier(type_idx, types)
 
 
-def _classify_matrix(
-    col_eff: dict[int, tuple[QuantityType, bool]],
+def _matrix_classifier(
+    type_idx: np.ndarray,
+    has_mp: np.ndarray,
+    types: list[QuantityType],
     rhs_t: QuantityType | None,
-):
-    """Return a ``col_id -> QuantityType | None`` classifier for a matrix
-    family with row type ``rhs_t``.
+) -> Any:
+    """``ArrayClassifier`` for a matrix family with row type ``rhs_t``.
 
-    Reproduces :func:`_effective_matrix_type`'s branch row-for-row: when the
+    Reproduces :func:`_effective_matrix_type`'s branch per column: when the
     column carries a multiplier param AND the family has an ``rhs_type`` the
     entry buckets against the row's type, else against the column's own type.
-    A ``col_id`` with no registered family classifies to ``None`` (the
-    reducer drops it — same as the old inner-join missing the row).
+    A ``col_id`` with no registered family has no bucket (the reducer drops
+    it — same as the old inner-join missing the row).
     """
-
-    def classify(cid: int):
-        ent = col_eff.get(int(cid))
-        if ent is None:
-            return None
-        col_t, has_mp = ent
-        if has_mp and rhs_t is not None:
-            return rhs_t
-        return col_t
-
-    return classify
-
-
-def _classify_cost(col_eff: dict[int, tuple[QuantityType, bool]]):
-    """Return a ``col_id -> column_type | None`` classifier for the
-    objective (cost) walk — ``eff_t == column_type`` (no rhs_type)."""
-
-    def classify(cid: int):
-        ent = col_eff.get(int(cid))
-        return None if ent is None else ent[0]
-
-    return classify
+    if rhs_t is None:
+        return _ArrayClassifier(type_idx, types)
+    keys = list(types)
+    if rhs_t in keys:
+        rhs_idx = keys.index(rhs_t)
+    else:
+        rhs_idx = len(keys)
+        keys.append(rhs_t)
+    bucket = np.where(has_mp & (type_idx >= 0), np.int16(rhs_idx), type_idx)
+    return _ArrayClassifier(bucket.astype(np.int16, copy=False), keys)
 
 
 def _merge_hist_into_accumulator(
@@ -556,7 +590,7 @@ def bucket_coefficients(
     dict[QuantityType, _AccVal],
     dict[QuantityType, _AccVal],
     dict[QuantityType, _AccVal],
-    dict[int, QuantityType],
+    tuple[np.ndarray, list[QuantityType]],
 ]:
     """Walk ``problem._vars``, ``problem._cstrs``, ``problem._obj_terms``
     and aggregate every nonzero finite coefficient magnitude by its
@@ -570,9 +604,9 @@ def bucket_coefficients(
     * ``bound_acc[t]`` — finite variable bounds (same packing).
       RHS magnitudes are not bucketed here — they are handled per-family
       via the row_factor logic.
-    * ``col_id_to_type`` — column id → its column QuantityType.  Used
-      by :func:`apply_layer2` to push per-column factors back into the
-      lazy term plans.
+    * ``(type_idx, types)`` — per-``col_id`` column type as an index
+      array into ``types`` (``-1`` = no Var owns the column); see
+      :func:`_col_type_table`.
 
     Implementation note (rewrite 2026-05-31, Phase D-5 step 3): per term
     the per-type histogram is accumulated by walking the block-COO
@@ -596,13 +630,9 @@ def bucket_coefficients(
     classification = _build_col_id_classification(problem)
     classification_lazy = classification.lazy()
 
-    # ── col_id → column QuantityType (consumed by apply_layer2).  Built
-    # before the capability branch so both paths share it.
-    col_id_to_type: dict[int, QuantityType] = {}
-    for name, var in problem._vars.items():
-        fam = lookup_var(name)  # KeyError already filtered above.
-        for cid in var.frame["col_id"].to_numpy().tolist():
-            col_id_to_type[int(cid)] = fam.column_type
+    # ── col_id → column type as numpy arrays.  Built before the capability
+    # branch so both paths return it.
+    type_idx, has_mp, col_types = _col_type_table(problem)
 
     matrix_acc: dict[QuantityType, _AccVal] = {}
     cost_acc: dict[QuantityType, _AccVal] = {}
@@ -692,11 +722,10 @@ def bucket_coefficients(
                 if agg is not None:
                     _merge_into_accumulator(matrix_acc, agg)
 
-        return matrix_acc, cost_acc, bound_acc, col_id_to_type
+        return matrix_acc, cost_acc, bound_acc, (type_idx, col_types)
 
     # ── Bounded coefficient-walk path (Phase D-5 step 3).  Reached only when
     # this polar_high ships ``_coef_walk`` (gated above at import).
-    col_eff = _build_col_id_eff_t(problem)
     dense_axes = getattr(problem, "_dense_axes", None)
     profile = _layer2_bucket_profiler()
 
@@ -712,7 +741,7 @@ def bucket_coefficients(
     # ── Objective: rhs_t is N/A → eff_t == column_type.  Route each term
     # through the bounded column-mode walk when it carries a Var seed the
     # walk can rebuild; otherwise (fully-collapsed Sum) keep the collect.
-    cost_classify = _classify_cost(col_eff)
+    cost_classify = _cost_classifier(type_idx, col_types)
     for ti, term in enumerate(problem._obj_terms):
         if term.lazy is None:
             continue
@@ -756,6 +785,8 @@ def bucket_coefficients(
     # product to materialise — the Sum already reduced it).
     from polar_high.autoscale._coef_walk import CoefWalkRecipe
 
+    # One classifier per distinct row type (only a few), built on first use.
+    matrix_classifiers: dict[QuantityType | None, Any] = {}
     for cname, proto, over in problem._cstrs:
         try:
             rhs_t = resolve_cstr_rhs_type(cname)
@@ -765,7 +796,12 @@ def bucket_coefficients(
                 "— register it in _layer2_types.py before solving."
             ) from exc
         rhs_t_id = _qty_to_id(rhs_t)
-        matrix_classify = _classify_matrix(col_eff, rhs_t)
+        matrix_classify = matrix_classifiers.get(rhs_t)
+        if matrix_classify is None:
+            matrix_classify = _matrix_classifier(
+                type_idx, has_mp, col_types, rhs_t,
+            )
+            matrix_classifiers[rhs_t] = matrix_classify
         for ti, term in enumerate(proto.expr.terms):
             # Route a dim-bound LHS term (real ``over`` grid, open dims, a
             # rebuildable Var/Sum recipe) through the bounded walk; anything
@@ -812,7 +848,7 @@ def bucket_coefficients(
                         path="collect",
                     )
 
-    return matrix_acc, cost_acc, bound_acc, col_id_to_type
+    return matrix_acc, cost_acc, bound_acc, (type_idx, col_types)
 
 
 # ---------------------------------------------------------------------------
@@ -932,7 +968,7 @@ def apply_layer2(
     immutable" property.  Returns a :class:`Layer2Plan` carrying the
     inverse transform for :func:`unscale_solution`.
     """
-    matrix_acc, cost_acc, bound_acc, col_id_to_type = bucket_coefficients(problem)
+    matrix_acc, cost_acc, bound_acc, _ = bucket_coefficients(problem)
     exponents = choose_scale_powers(matrix_acc, cost_acc, bound_acc)
 
     # Per-type bucket-range reporting (computed from the accumulators that

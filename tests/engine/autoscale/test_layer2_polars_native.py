@@ -356,11 +356,12 @@ def test_closed_form_per_type_exponent(register_test_families):
 
 def test_empty_problem():
     pb = Problem()
-    matrix_acc, cost_acc, bound_acc, col_id_to_type = bucket_coefficients(pb)
+    matrix_acc, cost_acc, bound_acc, (type_idx, col_types) = bucket_coefficients(pb)
     assert matrix_acc == {}
     assert cost_acc == {}
     assert bound_acc == {}
-    assert col_id_to_type == {}
+    assert type_idx.size == 0
+    assert col_types == []
     assert choose_scale_powers(matrix_acc, cost_acc, bound_acc) == {}
 
 
@@ -651,3 +652,69 @@ def test_effective_type_falls_back_to_column_when_rhs_none(register_test_familie
 
     matrix_acc, _, _, _ = bucket_coefficients(pb)
     assert QuantityType.DIMENSIONLESS in matrix_acc
+
+
+def test_array_classifiers_match_per_column_callables(register_test_families, monkeypatch):
+    """The numpy column tables bucket every coefficient exactly as the
+    per-``col_id`` Python lookup they replace: the accumulators are equal
+    (keys, insertion order, values) when the walk is driven by plain
+    callables built from ``lookup_var`` per column."""
+    import flextool.engine.autoscale._layer2 as l2
+    from flextool.engine.autoscale._layer2_types import lookup_var
+
+    add_var, add_cstr = register_test_families
+    _register_wide_lp_families(add_var, add_cstr)
+    add_var("v_test_flow_cb", VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"))
+    add_cstr("test_pow_cb", CstrFamily(QuantityType.POWER))
+    add_cstr("test_none_cb", CstrFamily(None))
+
+    def build() -> Problem:
+        pb = _build_wide_lp()
+        v = pb.add_var("v_test_flow_cb", "i", pl.DataFrame({"i": [0, 1, 2]}), lower=0.0, upper=2.0)
+        w = pb._vars["v_test_energy_pn"]
+        pb.add_cstr("test_pow_cb", sense="<=",
+                    lhs_terms={"f": Sum(v * 300.0, over=("i",)), "e": Sum(w * 7.0, over=("i",))},
+                    rhs_terms={"cap": 10.0})
+        pb.add_cstr("test_none_cb", sense="<=",
+                    lhs_terms={"f": Sum(v * 0.02, over=("i",))}, rhs_terms={"cap": 1.0})
+        return pb
+
+    with_arrays = l2.bucket_coefficients(build())
+
+    def per_column(pb):
+        eff = {}
+        for name, var in pb._vars.items():
+            fam = lookup_var(name)
+            for cid in var.frame["col_id"].to_list():
+                eff[int(cid)] = (fam.column_type, fam.multiplier_param is not None)
+        return eff
+
+    holder: dict = {}
+
+    def cost_cb(type_idx, types):
+        eff = holder["eff"]
+        return lambda c: None if int(c) not in eff else eff[int(c)][0]
+
+    def matrix_cb(type_idx, has_mp, types, rhs_t):
+        eff = holder["eff"]
+
+        def classify(c):
+            ent = eff.get(int(c))
+            if ent is None:
+                return None
+            return rhs_t if (ent[1] and rhs_t is not None) else ent[0]
+        return classify
+
+    pb_ref = build()
+    holder["eff"] = per_column(pb_ref)
+    monkeypatch.setattr(l2, "_cost_classifier", cost_cb)
+    monkeypatch.setattr(l2, "_matrix_classifier", matrix_cb)
+    with_callables = l2.bucket_coefficients(pb_ref)
+
+    for got, ref in zip(with_arrays[:3], with_callables[:3]):
+        assert list(got) == list(ref)
+        assert got == ref
+    assert QuantityType.POWER in with_arrays[0]
+    type_idx, types = with_arrays[3]
+    for cid, (ct, _mp) in holder["eff"].items():
+        assert types[type_idx[cid]] == ct
