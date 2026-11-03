@@ -556,6 +556,8 @@ def _prepare(b: _Build) -> None:
     b.process_indirect_dt = (compute_process_indirect_dt(d)
                              if b.has_indirect else None)
     _validate_storage_binding_disjoint(d)
+    if b.has_storage:
+        _validate_storage_start_end_values(d)
     if b.has_rp:
         b.rp_start_idx = compute_nodeState_rp_block_first_dt(d)
     if b.has_online_lin:
@@ -649,6 +651,59 @@ def _validate_storage_binding_disjoint(d) -> None:
                     "migration step) and ensure each node has exactly one "
                     "storage_binding_method value."
                 )
+
+
+STORAGE_START_END_MESSAGE = (
+    "Storage node(s) fix the storage state without the value to fix it at: {items}. Set storage_state_start "
+    "(0-1) on these nodes, or set storage_start_end_method to fix_nothing (or fix_end) if the start should not be "
+    "fixed; likewise storage_state_end (0-1), or fix_nothing (or fix_start) if the end should not be fixed. "
+    "Databases exported to Excel by earlier FlexTool versions may carry fix_start copied from the old default.")
+
+
+def _param_nodes(p) -> set[str]:
+    """The nodes a node Param ``(n,)`` has a row for."""
+    if p is None:
+        return set()
+    return {str(n) for n in p.frame.get_column("n").to_list()}
+
+
+def _validate_storage_start_end_values(d) -> None:
+    """Raise when a storage node fixes its start (fix_start, fix_start_end) without its own storage_state_start,
+    or its end (fix_end, fix_start_end) without its own storage_state_end; every such node is named at once.
+
+    The database upgrade to version 77 rewrote the nodes where it could tell what the method did; the nodes it
+    could not decide for (scenarios used the stored value differently) are in its marker and named here."""
+    storage = {str(n) for n in d.nodeState.get_column("n").to_list()} if _has_rows(d.nodeState) else set()
+    if not storage:
+        return
+    fix_start = ({str(n) for n in d.storage_fix_start.get_column("n").to_list()}
+                 if _has_rows(d.storage_fix_start) else set())
+    fix_end = ({str(n) for n in d.storage_fix_end.get_column("n").to_list()}
+               if _has_rows(getattr(d, "storage_fix_end", None)) else set())
+    missing_start = sorted((fix_start & storage) - _param_nodes(d.p_state_start))
+    missing_end = sorted((fix_end & storage) - _param_nodes(getattr(d, "p_state_end", None)))
+    if not missing_start and not missing_end:
+        return
+    methods: dict[str, str] = {}
+    for n in fix_start:
+        methods[n] = "fix_start_end" if n in fix_end else "fix_start"
+    for n in fix_end - fix_start:
+        methods[n] = "fix_end"
+    items = []
+    for n in sorted(set(missing_start) | set(missing_end)):
+        params = [p for p, miss in (("storage_state_start", missing_start), ("storage_state_end", missing_end))
+                  if n in miss]
+        items.append(f"{n} ({methods[n]}, missing {' and '.join(params)})")
+    message = STORAGE_START_END_MESSAGE.format(items="; ".join(items))
+    from flextool.engine import _behaviour_changes
+    undecided = _behaviour_changes.marker_json("storage_fix_method_rewritten").get("undecided") or []
+    named = set(missing_start) | set(missing_end)
+    for entry in undecided:
+        node, alternative, _method, scenarios = entry[0], entry[1], entry[2], entry[3]
+        if node in named:
+            message += (f" The database upgrade could not choose for {node} (alternative {alternative}) because "
+                        f"scenarios {', '.join(scenarios)} used it differently.")
+    raise FlexToolConfigError(message)
 
 
 def _two_way_one_var_arcs(d) -> "pl.DataFrame | None":

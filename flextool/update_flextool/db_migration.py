@@ -1,6 +1,7 @@
 import json
 import os
 import argparse
+from dataclasses import dataclass
 from typing import Callable
 from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database, Map
 from spinedb_api.exception import NothingToCommit
@@ -4891,6 +4892,254 @@ def _v77_drop_stale_definitions(db) -> None:
             db.remove_items("list_value", lv["id"])
 
 
+_V77_STORAGE_START_END_DESCRIPTION = (
+    "Whether the storage state is fixed at the start and/or end of the whole model. fix_nothing (default): not "
+    "fixed. fix_start, fix_end and fix_start_end use storage_state_start and storage_state_end, which must then "
+    "have a value.")
+_V77_FIXES = {"start": frozenset(("fix_start", "fix_start_end")), "end": frozenset(("fix_end", "fix_start_end"))}
+_V77_NO_SCENARIO = "(all alternatives)"
+
+
+@dataclass(frozen=True)
+class StorageFixPlan:
+    """What the version 77 upgrade does to the explicit storage fix methods without their value.
+
+    ``methods``: ``(node, alternative, old method, new method)`` rewrites; ``values``: ``(node, alternative,
+    parameter)`` gets the value 0; ``undecided``: ``(node, alternative, method, scenarios)`` left for the person
+    (the run-time error names them).  ``records``: ``(node, alternative, old method, what was written)``."""
+    methods: tuple = ()
+    values: tuple = ()
+    undecided: tuple = ()
+    records: tuple = ()
+
+
+def _v77_winner(alternatives, table, node):
+    for alternative in reversed(alternatives):
+        if (node, alternative) in table:
+            return alternative
+    return None
+
+
+def _v77_storage_behaviour(scenario_alts, node, part, methods, values, *, new: bool, off=frozenset()):
+    """How *node* starts (``part="start"``) or ends in one scenario: ``"free"``, ``("own", value)`` or, under the
+    version 77 rule (*new*), ``"error"`` for a fix without its value.  Before version 77 such a fix did nothing
+    when no node of the scenario had a value for that part, else it fixed the node at 0.  *off*: the nodes
+    switched off in the scenario (their values are not read)."""
+    winner = _v77_winner(scenario_alts, methods, node)
+    if winner is None or methods[(node, winner)] not in _V77_FIXES[part]:
+        return "free"
+    own = _v77_winner(scenario_alts, values, node)
+    if own is not None:
+        return ("own", values[(node, own)])
+    if new:
+        return "error"
+    anyone = any(_v77_winner(scenario_alts, values, other) is not None
+                 for other in {k[0] for k in values} - set(off))
+    return ("own", 0.0) if anyone else "free"
+
+
+def classify_storage_fix(methods, starts, ends, scenarios, inactive=frozenset()) -> StorageFixPlan:
+    """Decide, per stored ``storage_start_end_method`` value, what the version 77 upgrade writes.
+
+    *methods* ``{(node, alternative): method}`` (stored values only), *starts* / *ends* ``{(node, alternative):
+    value}`` of ``storage_state_start`` / ``storage_state_end``, *scenarios* ``{scenario: [alternative, ...]}``
+    lowest rank first (the last one wins), *inactive* ``{(scenario, node)}`` nodes switched off in a scenario
+    (their values are not read there).  A database without scenarios is passed as one scenario of all
+    alternatives.
+
+    For a value v = (n, A) let W(v) be the scenarios where A gives n's method.  Separately for the start and the
+    end (when the method fixes it): (1) n's own value present in every scenario of W(v) → kept; (2) missing, and
+    no node has a value in every scenario (the fix did nothing) → the part is dropped from the method
+    (fix_start → fix_nothing, fix_start_end → fix_end, ...); (3) missing, and some node has a value in every
+    scenario (the fix pinned n at 0) → the value 0 is added for n in A; (4) otherwise → left (undecided).  Then
+    every scenario is re-resolved with all rewrites applied; a node whose start or end would change in any
+    scenario has its rewrites dropped (undecided).  So the rewrites keep every result unchanged.
+    """
+    tables = {"start": starts, "end": ends}
+    params = {"start": "storage_state_start", "end": "storage_state_end"}
+    nodes = sorted({k[0] for k in methods})
+    off = {s: frozenset(n for sc, n in inactive if sc == s) for s in scenarios}
+
+    def scen_of(node, alternative):
+        return [s for s, alts in scenarios.items()
+                if (s, node) not in inactive and alternative in alts and _v77_winner(alts, methods, node) == alternative]
+
+    candidates: dict[tuple, tuple] = {}
+    undecided: dict[tuple, tuple] = {}
+    for (node, alternative), method in sorted(methods.items()):
+        where = scen_of(node, alternative)
+        if not where:
+            continue
+        drop: list[str] = []
+        add: list[str] = []
+        left = False
+        for part in ("start", "end"):
+            if method not in _V77_FIXES[part]:
+                continue
+            table = tables[part]
+            own = [_v77_winner(scenarios[s], table, node) is not None for s in where]
+            if all(own):
+                continue
+            old = [_v77_storage_behaviour(scenarios[s], node, part, methods, table, new=False, off=off[s])
+                   for s in where]
+            if not any(own) and all(b == "free" for b in old):
+                drop.append(part)
+            elif not any(own) and all(b == ("own", 0.0) for b in old):
+                add.append(part)
+            else:
+                left = True
+        if left:
+            undecided[(node, alternative)] = (method, tuple(where))
+        elif drop or add:
+            keep = [p for p in ("start", "end") if method in _V77_FIXES[p] and p not in drop]
+            new_method = {("start", "end"): "fix_start_end", ("start",): "fix_start",
+                          ("end",): "fix_end"}.get(tuple(keep), "fix_nothing")
+            candidates[(node, alternative)] = (method, new_method, tuple(add), tuple(where))
+
+    while True:
+        new_methods = dict(methods)
+        new_tables = {p: dict(t) for p, t in tables.items()}
+        for (node, alternative), (_old, new_method, add, _w) in candidates.items():
+            new_methods[(node, alternative)] = new_method
+            for part in add:
+                new_tables[part][(node, alternative)] = 0.0
+        changed: dict[str, set] = {}
+        for s, alts in scenarios.items():
+            for node in nodes:
+                if (s, node) in inactive:
+                    continue
+                for part in ("start", "end"):
+                    before = _v77_storage_behaviour(alts, node, part, methods, tables[part], new=False, off=off[s])
+                    after = _v77_storage_behaviour(alts, node, part, new_methods, new_tables[part], new=True,
+                                                   off=off[s])
+                    if after != before and after != "error":
+                        changed.setdefault(node, set()).add(s)
+        hit = [k for k in candidates if k[0] in changed]
+        if not hit:
+            break
+        for key in hit:
+            method, _new, _add, where = candidates.pop(key)
+            undecided[key] = (method, tuple(sorted(set(where) | changed[key[0]])))
+
+    rewrites, values, records = [], [], []
+    for (node, alternative), (old, new_method, add, _w) in sorted(candidates.items()):
+        written = []
+        if new_method != old:
+            rewrites.append((node, alternative, old, new_method))
+            written.append(new_method)
+        for part in add:
+            values.append((node, alternative, params[part]))
+            written.append(f"{params[part]} = 0")
+        records.append((node, alternative, old, " and ".join(written)))
+    return StorageFixPlan(
+        methods=tuple(rewrites), values=tuple(values),
+        undecided=tuple((n, a, m, tuple(sorted(w))) for (n, a), (m, w) in sorted(undecided.items())),
+        records=tuple(records))
+
+
+def _v77_storage_inputs(db):
+    """``classify_storage_fix`` arguments read from *db*."""
+    def stored(name):
+        return {(pv["entity_name"], pv["alternative_name"]): pv["parsed_value"]
+                for pv in db.find_parameter_values(entity_class_name="node", parameter_definition_name=name)}
+    methods = stored("storage_start_end_method") if _pdef_or_none(db, "node", "storage_start_end_method") else {}
+    starts = stored("storage_state_start") if _pdef_or_none(db, "node", "storage_state_start") else {}
+    ends = stored("storage_state_end") if _pdef_or_none(db, "node", "storage_state_end") else {}
+    scenarios: dict[str, list[str]] = {}
+    for scen in db.get_items("scenario"):
+        rows = sorted(db.get_items("scenario_alternative", scenario_name=scen["name"]), key=lambda r: r["rank"])
+        scenarios[scen["name"]] = [r["alternative_name"] for r in rows]
+    if not scenarios:
+        scenarios[_V77_NO_SCENARIO] = [a["name"] for a in db.get_items("alternative")]
+    node_class = db.get_item("entity_class", name="node")
+    by_default = bool(node_class["active_by_default"]) if node_class else True
+    activity = {(ea["entity_byname"][0], ea["alternative_name"]): bool(ea["active"])
+                for ea in db.get_items("entity_alternative", entity_class_name="node")}
+    inactive = set()
+    for s, alts in scenarios.items():
+        for node in {k[0] for k in (*methods, *starts, *ends)}:
+            winner = _v77_winner(alts, activity, node)
+            if not (activity[(node, winner)] if winner is not None else by_default):
+                inactive.add((s, node))
+    return methods, starts, ends, scenarios, frozenset(inactive)
+
+
+def _v77_set_marker(db, change_id: str, value: str) -> None:
+    name = BEHAVIOUR_CHANGE_MARKER_PREFIX + change_id
+    existing = [md for md in db.get_items("metadata") if md["name"] == name]
+    if existing:
+        if existing[0]["value"] != value:
+            db.update_item("metadata", id=existing[0]["id"], value=value)
+        return
+    db.add_item("metadata", name=name, value=value)
+
+
+def _v77_storage_fix_rewrite(db) -> None:
+    """Rewrite the explicit storage fix methods that have no value to fix at, where results stay unchanged
+    (:func:`classify_storage_fix`), and record them in the marker ``storage_fix_method_rewritten``
+    (``{"since": 77, "rewrites": [[node, alternative, old, written], ...], "undecided": [[node, alternative,
+    method, [scenario, ...]], ...]}``)."""
+    methods, starts, ends, scenarios, inactive = _v77_storage_inputs(db)
+    if not any(m in _V77_FIXES["start"] | _V77_FIXES["end"] for m in methods.values()):
+        return
+    plan = classify_storage_fix(methods, starts, ends, scenarios, inactive)
+    ids = {(pv["entity_name"], pv["alternative_name"]): pv["id"]
+           for pv in db.find_parameter_values(entity_class_name="node",
+                                              parameter_definition_name="storage_start_end_method")}
+    for node, alternative, _old, new_method in plan.methods:
+        val, typ = to_database(new_method)
+        db.update_parameter_value(id=ids[(node, alternative)], value=val, type=typ)
+    zero_val, zero_type = to_database(0.0)
+    for node, alternative, param in plan.values:
+        db.add_parameter_value(entity_class_name="node", entity_byname=(node,), parameter_definition_name=param,
+                               alternative_name=alternative, value=zero_val, type=zero_type)
+    if plan.records:
+        print("v77: storage_start_end_method without its storage_state_start / storage_state_end is now an error; "
+              "rewritten to what it did before (results unchanged):")
+        for node, alternative, old, written in plan.records:
+            print(f"  node {node} [{alternative}]: {old} -> {written}")
+    if plan.undecided:
+        print("v77: left for you to decide (scenarios used the value differently; the run stops with an error "
+              "naming them):")
+        for node, alternative, method, where in plan.undecided:
+            print(f"  node {node} [{alternative}]: {method} (scenarios {', '.join(where)})")
+    name = BEHAVIOUR_CHANGE_MARKER_PREFIX + "storage_fix_method_rewritten"
+    previous = [md for md in db.get_items("metadata") if md["name"] == name]
+    rewrites = []
+    if previous:
+        try:
+            rewrites = [list(r) for r in json.loads(previous[0]["value"]).get("rewrites", [])]
+        except (TypeError, ValueError, AttributeError):
+            rewrites = []
+    for record in plan.records:
+        if list(record) not in rewrites:
+            rewrites.append(list(record))
+    undecided = [[n, a, m, list(w)] for n, a, m, w in plan.undecided]
+    if rewrites or undecided:
+        _v77_set_marker(db, "storage_fix_method_rewritten",
+                        json.dumps({"since": 77, "rewrites": rewrites, "undecided": undecided}))
+
+
+def _v77_storage_default(db) -> None:
+    """``node.storage_start_end_method``: default ``fix_nothing`` (from a default that fixed something) and the
+    version 77 description.  A default that fixed something writes the marker ``storage_default_fix_nothing``
+    (value ``77``; for an old default other than ``fix_start`` the JSON ``{"since": 77, "old_default": ...}``).
+    A None default stays None (it already fixed nothing)."""
+    pdef = _pdef_or_none(db, "node", "storage_start_end_method")
+    if pdef is None:
+        return
+    if pdef["description"] != _V77_STORAGE_START_END_DESCRIPTION:
+        db.update_parameter_definition(id=pdef["id"], description=_V77_STORAGE_START_END_DESCRIPTION)
+    default = (from_database(pdef["default_value"], pdef["default_type"])
+               if pdef["default_value"] is not None else None)
+    if default not in _V77_FIXES["start"] | _V77_FIXES["end"]:
+        return
+    _v77_set_marker(db, "storage_default_fix_nothing",
+                    "77" if default == "fix_start" else json.dumps({"since": 77, "old_default": default}))
+    val, typ = to_database("fix_nothing")
+    db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
+
+
 def _migrate_v77_schema_batch(db) -> None:
     """Schema batch v77 (v76 -> v77).
 
@@ -4918,6 +5167,8 @@ def _migrate_v77_schema_batch(db) -> None:
     _v77_group_invest_methods(db)
     _v77_behaviour_markers(db)
     _v77_drop_stale_definitions(db)
+    _v77_storage_fix_rewrite(db)
+    _v77_storage_default(db)
     _commit_step(db,
         "v77: schema batch — widened type lists, owner-reviewed descriptions, group retirement limits, "
         "user-constraint capacity coefficients, group_invest_methods (not_active), behaviour-change markers, "

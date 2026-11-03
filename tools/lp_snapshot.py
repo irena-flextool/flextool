@@ -1305,7 +1305,8 @@ def _coarse_dc_values(storage: bool) -> tuple[list, list]:
             ["group", "blk", "new_stepduration", 2.0]]
     if storage:
         vals += [["node", "bus_14", "node_type", "storage"], ["node", "bus_14", "existing", 100.0],
-                 ["node", "bus_14", "storage_state_start", 0.5]]
+                 ["node", "bus_14", "storage_state_start", 0.5],
+                 ["node", "bus_14", "storage_start_end_method", "fix_start"]]
     return ents, vals
 
 

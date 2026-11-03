@@ -43,6 +43,7 @@ def _solve_config_with_method(
     *,
     solve_modes=None,
     contains_solves=None,
+    stochastic_branches=None,
 ) -> SolveConfig:
     sc = object.__new__(SolveConfig)
     sc.model_solve = model_solve
@@ -55,6 +56,10 @@ def _solve_config_with_method(
     # ``_validate_model_solve`` also runs the sibling stochastic_invest
     # fail-fast pass; keep it inert.
     sc.stochastic_invest_method = {}
+    # separate_dispatch dispatches the realized branch: by default every solve gets one ``realized: yes`` row
+    # (period, branch, analysis_time, realized, weight).
+    sc.stochastic_branches = (stochastic_branches if stochastic_branches is not None
+                              else {s: [("p1", "real", "t0001", "yes", 1.0)] for s in method_map})
     return sc
 
 
@@ -299,3 +304,37 @@ def test_run_site_sibling_name_no_ops():
     )
     # sibling absent from the dispatch dict → no raise.
     _dispatch_realization_raw_guard(sc, "my_solve__realized_dispatch")
+
+
+# ===========================================================================
+# separate_dispatch needs a realized: yes branch
+# ===========================================================================
+
+
+@pytest.mark.parametrize("rows", [
+    [],
+    [("p1", "high", "t0001", "no", 0.5), ("p1", "low", "t0001", "no", 0.5)],
+], ids=["no_branches", "no_realized_branch"])
+def test_separate_dispatch_without_realized_branch_raises(rows):
+    """``separate_dispatch`` runs a dispatch solve of the realized branch; without a ``realized: yes`` row the
+    guard stops the run naming the solve (both call sites use the same guard)."""
+    from flextool.engine.solve._orchestration import _dispatch_realization_raw_guard, _validate_model_solve
+
+    sc = _solve_config_with_method(
+        {"m": ["my_solve"]}, {"my_solve": "separate_dispatch"},
+        solve_modes={"my_solve": "single_solve"}, stochastic_branches={"my_solve": rows},
+    )
+    with pytest.raises(FlexToolConfigError, match="my_solve.*realized: yes"):
+        _dispatch_realization_raw_guard(sc, "my_solve")
+    state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
+    with pytest.raises(FlexToolConfigError, match="my_solve"):
+        _validate_model_solve(state)
+
+
+def test_within_solve_without_realized_branch_passes():
+    """The default within_solve needs no realized branch."""
+    from flextool.engine.solve._orchestration import _dispatch_realization_raw_guard
+
+    sc = _solve_config_with_method({"m": ["my_solve"]}, {"my_solve": "within_solve"},
+                                   stochastic_branches={"my_solve": []})
+    _dispatch_realization_raw_guard(sc, "my_solve")  # no raise

@@ -1524,7 +1524,7 @@
       "storage_start_end_method",
       null,
       "storage_start_end_methods",
-      "Choice whether the start and end states of storage are fixed in the beginning and end of the whole model timeline (not between solves). Uses 'storage_state_start' and 'storage_state_end'. Options: 'fix_nothing', 'fix_start', 'fix_end', 'fix_start_end'. By default, storage start state is bound to 0 to avoid creation of free energy.",
+      "Whether the storage state is fixed at the start and/or end of the whole model. fix_nothing (default): not fixed. fix_start, fix_end and fix_start_end use storage_state_start and storage_state_end, which must then have a value.",
       "storage"
     ],
     [

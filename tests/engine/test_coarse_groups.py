@@ -241,7 +241,8 @@ def _dc(tmp_path_factory, alt, storage: bool):
             ["group", "blk", "new_stepduration", _f(2.0)]]
     if storage:
         vals += [["node", "bus_14", "node_type", _s("storage")], ["node", "bus_14", "existing", _f(100.0)],
-                 ["node", "bus_14", "storage_state_start", _f(0.5)]]
+                 ["node", "bus_14", "storage_state_start", _f(0.5)],
+                 ["node", "bus_14", "storage_start_end_method", _s("fix_start")]]
     return _last(_run(tmp_path_factory, alt, vals, _chain(DC, "dc_opf_test"), ents, DC))
 
 

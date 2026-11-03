@@ -1780,6 +1780,16 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
             + "; ".join(reasons)
             + "."
         )
+    # The separate realized dispatch solve dispatches the realized branch: without a ``realized: yes`` row in
+    # stochastic_branches there is nothing to realize.
+    rows = (getattr(solve_cfg, "stochastic_branches", None) or {}).get(base_name) or []
+    if not any(len(row) > 3 and str(row[3]).strip().lower() == "yes" for row in rows):
+        raise FlexToolConfigError(
+            f"Solve '{base_name}' sets dispatch_realization_method='separate_dispatch', which runs a separate "
+            f"dispatch solve of the realized branch, but its stochastic_branches have no branch with realized: "
+            f"yes. Mark the branch to realize with realized: yes, or set dispatch_realization_method to "
+            f"within_solve."
+        )
 
 
 def _spawn_realized_dispatch_siblings(
@@ -4742,6 +4752,10 @@ def run_chain_from_db(
     db_url = str(input_db_url)
     if "://" not in db_url:
         db_url = f"sqlite:///{db_url}"
+
+    # Behaviour-change notices fire only for an upgraded database's markers; each entity once per run.
+    from flextool.engine import _behaviour_changes
+    _behaviour_changes.start_run(_behaviour_changes.read_markers_from_url(db_url))
 
     if work_folder is None:
         work_folder = Path(tempfile.mkdtemp(prefix="flextool_run_chain_"))

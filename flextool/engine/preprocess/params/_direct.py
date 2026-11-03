@@ -537,6 +537,33 @@ def p_state_start_from_source(source: "InputSource") -> Param | None:
     return _entity_scalar_explicit(source, "node", "storage_state_start", "n")
 
 
+def _storage_behaviour_notices(source: "InputSource", flex_data) -> None:
+    """The database version 77 storage notices, for the storage nodes of this solve (each needs its marker).
+
+    * ``storage_default_fix_nothing``: a storage node without its own ``storage_start_end_method`` whose results
+      change — the old default ``fix_start`` pinned it at 0 when some node had a ``storage_state_start`` (with no
+      start value anywhere it did nothing, the same as ``fix_nothing`` now).
+    * ``storage_fix_method_rewritten``: a storage node whose method the upgrade rewrote (or gave a 0 start / end).
+    """
+    from flextool.engine import _behaviour_changes as bc
+    default_on = bc.has_marker("storage_default_fix_nothing")
+    rewritten = bc.marker_json("storage_fix_method_rewritten").get("rewrites") or []
+    if not default_on and not rewritten:
+        return
+    state = getattr(flex_data, "nodeState", None)
+    if state is None or state.height == 0:
+        return
+    storage = [str(n) for n in state.get_column("n").to_list()]
+    if default_on and flex_data.p_state_start is not None and flex_data.p_state_start.frame.height > 0:
+        explicit = _entity_scalar_explicit(source, "node", "storage_start_end_method", "n")
+        authored = set() if explicit is None else {str(n) for n in explicit.frame.get_column("n").to_list()}
+        bc.notice("storage_default_fix_nothing", "storage nodes", sorted(n for n in storage if n not in authored))
+    in_solve = set(storage)
+    lines = [f"{n} (alternative {alt}: {old} -> {new})" for n, alt, old, new in rewritten if n in in_solve]
+    if lines:
+        bc.notice("storage_fix_method_rewritten", "storage nodes", lines)
+
+
 def p_state_end_from_source(source: "InputSource") -> Param | None:
     """``node.storage_state_end`` → ``Param(("n",), [n, value])``: the end state of a fix_end / fix_start_end node,
     a share of its storage capacity.
@@ -2170,6 +2197,7 @@ def apply_direct_params_a(source: "InputSource",
     # ─── Δ.4 second wave — node scalars (storage feature) ───────────────
     flex_data.p_state_start = p_state_start_from_source(source)
     flex_data.p_state_end = p_state_end_from_source(source)
+    _storage_behaviour_notices(source, flex_data)
 
     # ─── Δ.4 second wave — process scalars (online / UC feature) ────────
     # ``p_min_load`` is produced authoritatively as a shape-correct
