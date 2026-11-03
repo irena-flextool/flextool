@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Dispatch and other time-series plots again leave a gap at timeline breaks**: after a gap in the timeline, at
+  the start of every representative period (also between two adjacent representative periods) and at the first
+  step of a period that does not continue the previous one (also a later year that reuses the same timeset).
+  Since version 4 no breaks were found, so every plot drew a straight line across them. Rolling windows that
+  follow each other on the timeline stay one line. A break now applies to its own period only (before, a break
+  time cut every period with a step of that name). The breaks are written to
+  `output_parquet/<scenario>/timeline_breaks.parquet` (columns `period`, `time`); results saved with an earlier
+  form of this file are drawn without gaps until the scenario is run again.
 - **Output files come out in the same row and column order on every run.** The rows of some set outputs (for
   example `edd_invest`, `period_in_use` and `d_realize_invest`) and the entity columns of some per-entity
   outputs could change order from one run to the next; a rerun of the same model now writes identical files.
