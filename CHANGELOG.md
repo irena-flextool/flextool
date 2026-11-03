@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Fix: memory is returned to the system when polars was imported before flextool.** FlexTool sets the memory
+  allocator of polars to give freed memory back to the operating system about a second after it goes idle, but the
+  setting only took effect when flextool was imported first. In a Spine Toolbox console where an earlier tool had
+  imported polars, in a notebook or in a script that imported polars first, freed memory stayed with the process
+  and peak memory on a large model could be about twice as high. The setting is now also applied when polars is
+  already loaded, and memory freed before flextool was imported is returned as well. Where it cannot be applied
+  (for example on macOS), one warning names the remedy: import flextool before polars, or start Python with
+  `_RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0`.
+
 - **Fix: the online commitment no longer links across a gap in the timeline.** The units online at the first step
   after a gap were compared with the units online at the step before the gap, so a start-up (or a free shut-down)
   was counted across the gap. The first step of a solve or of a period that does not continue the previous one

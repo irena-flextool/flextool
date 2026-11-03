@@ -838,6 +838,29 @@ an on-disk MPS file, trading ~5-10 GB peak RSS for slower per-solve
 build time. The orchestrator emits a one-time warning when it disables
 warm-start because of this flag.
 
+**Memory: polars allocator.** polars links jemalloc statically, and its
+own decay settings (`dirty_decay_ms:500,muzzy_decay_ms:-1`) leave freed
+pages resident for good, which roughly doubles peak RSS on large models.
+FlexTool wants `dirty_decay_ms:1000,muzzy_decay_ms:0`
+(`flextool/_allocator.py`, called first thing in `flextool/__init__.py`).
+jemalloc reads `_RJEM_MALLOC_CONF` once, when `import polars` loads the
+runtime library, so there are two paths:
+- polars not loaded yet (CLI, GUI, a fresh Toolbox run): `setdefault` the
+  variable; a value from the shell wins as a whole.
+- polars loaded first (a Toolbox console, a notebook, a script): append
+  FlexTool's values to the variable for child processes and write the two
+  decay values at runtime with jemalloc's `mallctl` (`arenas.*` and every
+  initialised `arena.<i>.*`), which also returns pages freed before
+  flextool was imported. `_rjem_mallctl` is a local symbol, so its address
+  comes from the library's ELF `.symtab` and the load base of its exported
+  `PyInit_*`; the function's first bytes in memory must equal those in the
+  file before it is called. A value set before polars was imported was
+  already read by jemalloc and is left alone. Any failure (macOS Mach-O,
+  stripped symbol table, a mismatch, a failing call) prints one warning
+  on stderr with the remedy: import flextool before polars, or start
+  Python with `_RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0`.
+  Windows (mimalloc) and builds without jemalloc are a silent no-op.
+
 ## Solver outputs: folder layout
 
 ```
