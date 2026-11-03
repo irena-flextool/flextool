@@ -1798,6 +1798,8 @@ def migrate_database(
                 _migrate_v75(db)
             elif next_version == 76:
                 _migrate_v76_dispatch_realization_method(db)
+            elif next_version == 77:
+                _migrate_v77_schema_batch(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -4294,6 +4296,632 @@ def _migrate_v76_dispatch_realization_method(db) -> None:
         "structure. 'separate_dispatch' accepted (W4b) for a single "
         "top-level single_solve — engine auto-spawns the "
         "<solve>__realized_dispatch sibling."
+    )
+
+
+# ─── v77: schema batch ─────────────────────────────────────────────────
+
+# Value-type order used when a type list is widened (the union keeps the
+# definition's existing types and adds the target ones; this order makes
+# the stored tuple independent of which side a type came from).
+_V77_TYPE_ORDER = (
+    "float", "str", "bool", "duration", "date_time", "array", "time_pattern",
+    "time_series", "1d_map", "2d_map", "3d_map", "4d_map", "5d_map",
+)
+
+_V77_PERIOD_TYPES = ("float", "1d_map")
+
+# Target type lists (v77 §1.A).  Each is unioned with the definition's
+# current list, so a type a DB already allows is never dropped (e.g.
+# unit.efficiency keeps its stochastic 3d_map).
+_V77_TYPE_TARGETS: dict[tuple[str, str], tuple[str, ...]] = {
+    **{(cls, f"{kind}_{bound}_period"): _V77_PERIOD_TYPES
+       for cls in ("unit", "node", "connection")
+       for kind in ("invest", "retire")
+       for bound in ("max", "min")},
+    ("group", "invest_max_period"): _V77_PERIOD_TYPES,
+    ("group", "invest_min_period"): _V77_PERIOD_TYPES,
+    ("group", "co2_max_period"): _V77_PERIOD_TYPES,
+    ("unit", "efficiency"): ("float", "1d_map", "2d_map", "3d_map"),
+    ("unit", "min_load"): ("float", "1d_map", "2d_map", "3d_map"),
+    ("connection", "efficiency"): ("float", "1d_map", "2d_map"),
+    ("unit", "efficiency_at_min_load"): ("float", "1d_map", "2d_map"),
+    ("unit", "startup_cost"): _V77_PERIOD_TYPES,
+    ("connection", "startup_cost"): _V77_PERIOD_TYPES,
+    ("profile", "profile"): ("float", "1d_map", "2d_map", "3d_map"),
+    ("node", "self_discharge_loss"): ("float", "1d_map", "2d_map"),
+    ("group", "capacity_margin_method"): ("str",),
+    ("node", "energy_margin_method"): ("str",),
+    ("node", "penalty_method"): ("str",),
+    ("solve", "dispatch_realization_method"): ("str",),
+    ("solve", "scaling"): ("str",),
+    ("solve", "stochastic_invest_method"): ("str",),
+    ("node", "energy_margin_multiplier"): ("float",),
+    ("node", "energy_margin_adder"): ("float", "1d_map", "2d_map"),
+    ("solve", "shared_invest_periods"): ("array",),
+    ("solve", "shared_operation_periods"): ("array",),
+    ("constraint", "constant"): _V77_PERIOD_TYPES,
+}
+
+
+def _v77_texts() -> dict[tuple[str, str], str]:
+    """Descriptions written by v77 (owner-reviewed texts, 2026-11-03)."""
+    t: dict[tuple[str, str], str] = {}
+    for cls in ("unit", "connection"):
+        t[(cls, "invest_max_period")] = (
+            "[MW] Largest allowed investment in each period. Counts only what is built in that period; existing "
+            "capacity and retirements do not change it. Constant or period.")
+        t[(cls, "invest_min_period")] = (
+            "[MW] Smallest required investment in each period. Counts only what is built in that period; existing "
+            "capacity and retirements do not change it. Constant or period.")
+        t[(cls, "retire_max_period")] = (
+            "[MW] Largest allowed retirement in each period. Counts only what is retired in that period; existing "
+            "capacity and investments do not change it. Constant or period.")
+        t[(cls, "retire_min_period")] = (
+            "[MW] Smallest required retirement in each period. Counts only what is retired in that period; existing "
+            "capacity and investments do not change it. Constant or period.")
+        t[(cls, "invest_max_total")] = (
+            "[MW] Largest allowed total investment over all solves. Every investment counts, also reinvestments and "
+            "investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit "
+            "the capacity in service, use cumulative_max_capacity. Constant.")
+        t[(cls, "invest_min_total")] = (
+            "[MW] Smallest required total investment over all solves. Every investment counts, also reinvestments "
+            "and investments that are no longer in service. Retirements and existing capacity do not reduce it. To "
+            "limit the capacity in service, use cumulative_max_capacity. Constant.")
+        t[(cls, "startup_cost")] = "[CUR/MW] Cost of starting up one MW of capacity. Constant or period."
+        t[(cls, "constraint_capacity_coeff")] = (
+            f"Puts the {cls}'s capacity in service in each period on the left side of the user constraint (existing "
+            "plus investments still in service minus retirements). Coefficient per MW.")
+        t[(cls, "constraint_retired_capacity_coeff")] = (
+            "Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.")
+    t[("node", "invest_max_period")] = (
+        "[MWh] Largest allowed storage investment in each period. Counts only what is built in that period; existing "
+        "capacity and retirements do not change it. Constant or period.")
+    t[("node", "invest_min_period")] = (
+        "[MWh] Smallest required storage investment in each period. Counts only what is built in that period; "
+        "existing capacity and retirements do not change it. Constant or period.")
+    t[("node", "retire_max_period")] = (
+        "[MWh] Largest allowed retirement of storage capacity in each period. Counts only what is retired in that "
+        "period; existing capacity and investments do not change it. Constant or period.")
+    t[("node", "retire_min_period")] = (
+        "[MWh] Smallest required retirement of storage capacity in each period. Counts only what is retired in that "
+        "period; existing capacity and investments do not change it. Constant or period.")
+    t[("node", "invest_max_total")] = (
+        "[MWh] Largest allowed total investment over all solves. Every investment counts, also reinvestments and "
+        "investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit "
+        "the capacity in service, use cumulative_max_capacity. Constant.")
+    t[("node", "invest_min_total")] = (
+        "[MWh] Smallest required total investment over all solves. Every investment counts, also reinvestments and "
+        "investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit "
+        "the capacity in service, use cumulative_max_capacity. Constant.")
+    for cls, unit in (("unit", "[MW]"), ("connection", "[MW]"), ("node", "[MWh]")):
+        t[(cls, "retire_max_total")] = (
+            f"{unit} Largest allowed total retirement over all solves. Investments and existing capacity do not "
+            "change it. Constant.")
+        t[(cls, "retire_min_total")] = (
+            f"{unit} Smallest required total retirement over all solves. Investments and existing capacity do not "
+            "change it. Constant.")
+        t[(cls, "constraint_cumulative_pre_built_capacity_coeff")] = (
+            "Puts the capacity in service at the start of each period on the left side of the user constraint "
+            "(before that period's investments and retirements). Investments with a construction lead time count "
+            f"when they enter service. Coefficient per {unit[1:-1]}.")
+    t[("node", "constraint_capacity_coeff")] = (
+        "Puts the node's storage capacity in service in each period on the left side of the user constraint "
+        "(existing plus investments still in service minus retirements). Coefficient per MWh.")
+    t[("node", "constraint_retired_capacity_coeff")] = (
+        "Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per "
+        "MWh.")
+    t[("group", "invest_max_period")] = (
+        "[MW or MWh] Largest allowed investment in each period, summed over the group's units and connections (MW) "
+        "and storage nodes (MWh). Constant or period.")
+    t[("group", "invest_min_period")] = (
+        "[MW or MWh] Smallest required investment in each period, summed over the group's units and connections "
+        "(MW) and storage nodes (MWh). Constant or period.")
+    t[("group", "invest_max_total")] = (
+        "[MW or MWh] Largest allowed total investment of the group over all solves. Every investment counts; "
+        "retirements do not reduce it. Constant.")
+    t[("group", "invest_min_total")] = (
+        "[MW or MWh] Smallest required total investment of the group over all solves. Every investment counts; "
+        "retirements do not reduce it. Constant.")
+    t[("group", "retire_max_period")] = (
+        "[MW or MWh] Largest allowed retirement in each period, summed over the group's members. Needs a retire "
+        "…_period option in the group's invest_method. Constant or period.")
+    t[("group", "retire_min_period")] = (
+        "[MW or MWh] Smallest required retirement in each period, summed over the group's members. Needs a retire "
+        "…_period option in the group's invest_method. Constant or period.")
+    t[("group", "retire_max_total")] = (
+        "[MW or MWh] Largest allowed total retirement of the group over all solves. Needs a retire …_total option "
+        "in the group's invest_method. Constant.")
+    t[("group", "retire_min_total")] = (
+        "[MW or MWh] Smallest required total retirement of the group over all solves. Needs a retire …_total "
+        "option in the group's invest_method. Constant.")
+    t[("group", "invest_method")] = (
+        "How the group limits investment and retirement of its members. not_active: the group sets no limits. "
+        "invest / retire / invest_retire: which decisions the limits apply to. _period uses the …_period limits, "
+        "_total the …_total limits, _period_total both. no_limit: no limits even if values are set. "
+        "cumulative_limits: uses the cumulative capacity limits.")
+    t[("group", "co2_max_period")] = (
+        "[tCO2/a] Largest annual CO2 emissions in each period. In a rolling solve, each roll may use the part of "
+        "the limit its horizon reaches, minus what earlier rolls already emitted in that period. Constant or "
+        "period.")
+    t[("group", "co2_max_total")] = (
+        "[tCO2] Largest CO2 emissions over the whole model horizon. Each period counts its annual emissions times "
+        "its years_represented. Rolling solves and chains of solves pass the remaining budget on. Each stochastic "
+        "forecast gets the whole remaining budget. Constant.")
+    t[("unit", "efficiency")] = (
+        "[factor] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its "
+        "conversion_flow_coeff (default 1, giving plain sum of outputs / sum of inputs). A min_load_efficiency "
+        "unit can have different efficiency below full load (see efficiency_at_min_load). No effect on a unit "
+        "without inputs or without outputs. Constant, period, time, period+time or stochastic time.")
+    t[("unit", "min_load")] = (
+        "[0-1] Minimum load of the unit as a share of its online capacity. Applies only if the unit has online "
+        "variables. No value means 0. Constant, period, time, period+time or stochastic time.")
+    t[("unit", "efficiency_at_min_load")] = (
+        "[e.g. 0.4 means 40%] Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight "
+        "line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the "
+        "efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, "
+        "period, time or period+time.")
+    t[("connection", "efficiency")] = (
+        "[factor, typically 0-1] Efficiency of the connection. Constant, period, time or period+time.")
+    t[("profile", "profile")] = (
+        "[factor, typically 0-1] Profile values, e.g. the availability of wind power (capacity factor). Constant, "
+        "period, time, period+time or stochastic time.")
+    t[("unit", "startup_method")] = (
+        "Whether the unit has online variables. linear: any share of the capacity can be online. binary: whole "
+        "units only (slower to solve). Online status links to the previous time step; that link stops at a gap in "
+        "the timeline.")
+    t[("connection", "startup_method")] = (
+        "Gives the connection online capacity in both directions. Flows and reserves are limited by the online "
+        "capacity, and startup_cost is paid per MW brought online. No minimum load or minimum up/down time. Not "
+        "allowed for dc_power_flow_with_angles lines.")
+    t[("unit", "min_uptime")] = (
+        "[hours] Minimum time the unit stays online after a start. Needs minimum_time_method. The look-back stops "
+        "at a gap in the timeline and at the first step of a solve. Constant.")
+    t[("unit", "min_downtime")] = (
+        "[hours] Minimum time the unit stays offline after a stop. Needs minimum_time_method. The look-back stops "
+        "at a gap in the timeline and at the first step of a solve. Constant.")
+    for cls in ("unit__inputNode", "unit__outputNode"):
+        t[(cls, "ramp_speed_up")] = (
+            "[share of capacity per minute] Largest increase of the flow between two time steps. No limit across a "
+            "gap in the timeline. Constant.")
+        t[(cls, "ramp_speed_down")] = (
+            "[share of capacity per minute] Largest decrease of the flow between two time steps. No limit across a "
+            "gap in the timeline. Constant.")
+        t[(cls, "ramp_method")] = (
+            "Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.")
+        t[(cls, "conversion_flow_coeff")] = (
+            "[factor, default 1] Fuel-equivalent energy per unit of this flow. It enters the unit's conversion "
+            "equation, not the node balance. Applies to simple units too. 0 takes the flow out of the capacity, ramp "
+            "and minimum load limits.")
+    for cls, unit in (("unit", "[MW]"), ("connection", "[MW]"), ("node", "[MWh]")):
+        t[(cls, "virtual_unitsize")] = (
+            f"{unit} Size of one unit. Investments, retirements and binary startups move whole units of this size. "
+            f"No value: the existing capacity, or 1000 {unit[1:-1]} without it.")
+    t[("connection", "is_DC")] = (
+        "Whether the connection is DC. Its flow into a group with a non-synchronous limit counts as "
+        "non-synchronous, in both directions. Default no.")
+    t[("group", "has_inertia")] = (
+        "Whether the group has an inertia constraint. Without yes, inertia_limit is ignored.")
+    t[("group", "inertia_limit")] = (
+        "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no "
+        "requirement. Constant or period.")
+    t[("group", "has_non_synchronous")] = (
+        "Whether the group has a non-synchronous share limit. Without yes, non_synchronous_limit is ignored.")
+    t[("group", "non_synchronous_limit")] = (
+        "[share, e.g. 0.8] Largest share of non-synchronous supply in the group, measured against the real demand. "
+        "Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means "
+        "0. Constant or period.")
+    t[("group", "capacity_margin_method")] = (
+        "Whether the group needs a capacity margin in investment solves. none: no margin. manual: the group needs "
+        "capacity_margin MW above its peak net load.")
+    t[("group", "capacity_margin")] = (
+        "[MW] Capacity the group needs above its peak net load. Used only with capacity_margin_method manual, and "
+        "only in investment periods. No value means 0. Constant or period.")
+    t[("reserve__upDown__unit__node", "max_share")] = (
+        "[factor] Largest share of the unit's built capacity at this node that can be held as this reserve. At an "
+        "input node, the capacity is the unit's full-load input there. Without a value the unit offers no "
+        "reserve. Constant.")
+    t[("reserve__upDown__connection__node", "max_share")] = (
+        "[factor] Largest share of the connection's built capacity that can be held as this reserve at this node. "
+        "Constant.")
+    t[("reserve__upDown__unit__node", "increase_reserve_ratio")] = (
+        "[factor] The reserve requirement grows by this ratio times the flow between the unit and the node, for "
+        "upward and downward reserve alike. At an input node, the flow is what the unit draws. Constant.")
+    t[("reserve__upDown__connection__node", "increase_reserve_ratio")] = (
+        "[factor] The reserve requirement grows by this ratio times the flow between the connection and the node, "
+        "in either direction, for upward and downward reserve alike. Constant.")
+    t[("reserve__upDown__group", "increase_reserve_ratio")] = (
+        "[factor] Only for dynamic reserve methods. The requirement grows by this ratio times the demand of the "
+        "group's nodes in each step (MW, real demand). Constant.")
+    t[("reserve__upDown__unit__node", "large_failure_ratio")] = (
+        "[factor] With a large_failure method, the reserve must cover the loss of this unit's flow times this "
+        "ratio. Its own reserve does not count. Constant.")
+    t[("reserve__upDown__connection__node", "large_failure_ratio")] = (
+        "[factor] With a large_failure method, the reserve must cover the loss of this connection's flow times "
+        "this ratio. Its own reserve does not count. Constant.")
+    t[("reserve__upDown__group", "reserve_method")] = (
+        "Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only or their "
+        "combinations. Dynamic and large_failure requirements need no separate reservation.")
+    t[("group", "new_stepduration")] = (
+        "[hours] Balances the energy of the group's nodes once per step of this length instead of every time step, "
+        "e.g. daily hydrogen next to hourly electricity. Within the step, energy can move freely between time "
+        "steps, and a storage node has one state per step. Flows, online status, reserves and profiles keep the "
+        "solve's time step; the model is not made smaller. Listing units or connections has no effect. Must be a "
+        "multiple of the solve's step.")
+    t[("timeset", "timeset_weights")] = (
+        "Weight of each time step (map, index time). Weights how much each step counts in costs, energy and demand "
+        "scaling. Normalised per period. Forecast branches use the weights of their period. Other shapes are an "
+        "error. Cannot be set on a timeset that also has representative_period_weights (error).")
+    t[("timeset", "representative_period_weights")] = (
+        "Representative-period weighting map (rank-2 nested Map: base period start timestep -> representative "
+        "period start timestep -> weight).  Created by the representative-periods preprocess tool; declares how "
+        "much each representative period stands in for each base period.  Its presence enables RP-aware "
+        "storage-binding ('*_blended_weights'); its absence silently downgrades those methods to the non-RP "
+        "behaviour.  Mutually exclusive with 'timeset_weights' on the same timeset. Not allowed in a stochastic "
+        "solve.")
+    t[("node", "storage_binding_method")] = (
+        _STORAGE_BINDING_METHOD_DESCRIPTION_V55 + " The blended_weights methods do not work with stochastic branches.")
+    t[("node", "self_discharge_loss")] = (
+        "[e.g. 0.01 means 1% per hour] Share of the stored energy lost each hour. Constant, period, time or "
+        "period+time.")
+    t[("node", "storage_state_start")] = (
+        "[0-1] Storage state at the start of the first solve, as a share of the storage capacity. Needed by "
+        "fix_start and fix_start_end. Constant.")
+    t[("node", "storage_state_end")] = (
+        "[0-1] Storage state at the end of the last solve, as a share of the storage capacity. Needed by fix_end "
+        "and fix_start_end. Constant.")
+    t[("flowGroup", "max_cumulative_flow")] = (
+        "[MW] Largest allowed average flow into the group. A constant gives one limit per solve; a period map "
+        "gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or "
+        "period.")
+    t[("flowGroup", "min_cumulative_flow")] = (
+        "[MW] Smallest required average flow into the group. A constant gives one limit per solve; a period map "
+        "gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or "
+        "period.")
+    t[("commodity", "price_ladder_annual")] = (
+        "Stepped supply curve for price_method price_ladder_annual. Map of tier → price and quantity (optionally "
+        "per period). Quantity is per year; a shorter solve gets its share by the hours it covers. quantity = inf "
+        "can be used to mark an unlimited last tier.")
+    t[("solve", "stochastic_branches")] = (
+        "Forecast branches of the solve (map: period, branch, analysis_time, realized → probability weight). "
+        "Weights are normalised per start time. At most one branch per start time may be realized: yes. That "
+        "branch is not a weighted forecast; it adds a realization solve over the committed time steps. Without "
+        "it, the solve reports investments only.")
+    t[("solve", "stochastic_invest_method")] = (
+        "How stochastic branches invest. none (default): one shared investment plan for all branches. recourse: "
+        "each branch also invests at and after its branching period.")
+    t[("solve", "dispatch_realization_method")] = (
+        "How the committed part of a stochastic solve is realized. within_solve (default): a realized: yes branch "
+        "gets a realization solve automatically. separate_dispatch: always runs a separate realized dispatch "
+        "solve; needs a realized: yes branch (error otherwise).")
+    t[("solve", "shared_operation_periods")] = (
+        "Periods where operations are the same in every stochastic branch. No value: the committed time steps. "
+        "Empty array: none.")
+    t[("solve", "shared_invest_periods")] = (
+        "Periods where investments are the same in every stochastic branch (with recourse). No value or empty "
+        "array: none.")
+    t[("solve", "scaling")] = (
+        "Numerical scaling of this solve's LP. full (default): FlexTool rescales variables, constraints and costs "
+        "and sets the solver's scaling. basic: no per-quantity rescaling. solver_only: only the solver's own "
+        "scaling. off: no scaling at all. Try basic or solver_only if a solve fails numerically. The --scaling run "
+        "option overrides it.")
+    t[("model", "output_horizon")] = (
+        "Debug flag. yes writes one raw parquet file per LP variable and constraint, with every row of every solve "
+        "and a realized column. Normal outputs do not change.")
+    t[("node", "energy_margin_multiplier")] = (
+        "[factor] Multiplier applied to this node's inflow in the investment solve only, when energy_margin_method "
+        "= 'inflow_multiplier'. Offsets representative-period VRE optimism (rep-period average VRE availability "
+        "exceeds the annual average). 1 = off. e.g. 1.1 builds ~10% more capacity to serve the true annual demand "
+        "under the true (lower) annual VRE. Constant.")
+    t[("node", "energy_margin_adder")] = (
+        "[MWh] Extra demand (negative inflow) added to this node in the investment solve only, when "
+        "energy_margin_method = 'inflow_adder'. Raises adequacy headroom without changing dispatch demand. 0 = "
+        "off. Constant, period or period+time.")
+    t[("constraint", "constant")] = (
+        "Right-hand side of the user constraint. A period map gives each period its own value; it must cover every "
+        "period of the solve. Constant or period.")
+    return t
+
+
+_V77_CONSTRAINT_CLASS_DESCRIPTION = (
+    "A constraint with only capacity terms is written once per period, otherwise once per time step."
+)
+
+_V77_GROUP_INVEST_METHODS = (
+    "not_active", "invest_no_limit", "invest_period", "invest_total", "invest_period_total",
+    "retire_no_limit", "retire_period", "retire_total", "retire_period_total",
+    "invest_retire_no_limit", "invest_retire_period", "invest_retire_total",
+    "invest_retire_period_total", "cumulative_limits",
+)
+
+# Behaviour changes recorded on every database migrated from below v77; a
+# notice for one fires only while its marker is present.  The storage
+# default marker is written by the storage step (conditional on the old
+# default).
+BEHAVIOUR_CHANGE_MARKER_PREFIX = "flextool_behaviour_change:"
+_V77_UNCONDITIONAL_MARKERS = ("user_constraint_prebuilt_nets_retirements",)
+
+# Definitions the schema no longer has but old databases may still carry.
+_V77_STALE_DEFINITIONS = (
+    ("solve", "discount_years"),
+    ("unit", "max_relative_capacity"),
+    ("node", "max_relative_capacity"),
+    ("connection", "max_relative_capacity"),
+    ("unit__inputNode", "max_relative_capacity"),
+    ("unit__outputNode", "max_relative_capacity"),
+    ("node", "storage_include_solve_fix_method"),
+    ("unit__inputNode", "capacity_max_coeff"),
+    ("unit__inputNode", "capacity_min_coeff"),
+)
+
+
+def _v77_union_types(existing, target) -> tuple[str, ...]:
+    """``existing ∪ target`` in :data:`_V77_TYPE_ORDER` order (unknown
+    names last, in first-seen order)."""
+    seen: list[str] = []
+    for name in (*(existing or ()), *target):
+        if name not in seen:
+            seen.append(name)
+    order = {n: i for i, n in enumerate(_V77_TYPE_ORDER)}
+    return tuple(sorted(seen, key=lambda n: (order.get(n, len(order)), seen.index(n))))
+
+
+def _v77_types_and_descriptions(db) -> None:
+    """Widen the type lists of §1.A (union with the current list) and write
+    the v77 descriptions.  Definitions a DB does not have are skipped."""
+    texts = _v77_texts()
+    for (cls, name), target in _V77_TYPE_TARGETS.items():
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            continue
+        union = _v77_union_types(pdef["parameter_type_list"], target)
+        if tuple(pdef["parameter_type_list"] or ()) != union:
+            db.update_parameter_definition(id=pdef["id"], parameter_type_list=union)
+    for (cls, name), text in texts.items():
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None or pdef["description"] == text:
+            continue
+        db.update_parameter_definition(id=pdef["id"], description=text)
+    try:
+        constraint_class = db.item(db.mapped_table("entity_class"), name="constraint")
+    except SpineDBAPIError:
+        constraint_class = None
+    if constraint_class and constraint_class["description"] != _V77_CONSTRAINT_CLASS_DESCRIPTION:
+        db.update_item("entity_class", id=constraint_class["id"], description=_V77_CONSTRAINT_CLASS_DESCRIPTION)
+
+
+def _v77_new_definitions(db) -> None:
+    """Group retirement limits and the user-constraint capacity
+    coefficients (default None, no value list)."""
+    texts = _v77_texts()
+    new_defs: list[tuple[str, str, tuple[str, ...], str, str, int]] = []
+    if db.get_item("entity_class", name="group"):
+        for bound in ("max", "min"):
+            new_defs.append(("group", f"retire_{bound}_period", _V77_PERIOD_TYPES, "retirement", "a3b08c", 25))
+            new_defs.append(("group", f"retire_{bound}_total", ("float",), "retirement", "a3b08c", 25))
+    for cls in ("unit", "node", "connection"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        for name in ("constraint_capacity_coeff", "constraint_retired_capacity_coeff"):
+            new_defs.append((cls, name, ("1d_map",), "constraint", "a36784", 70))
+    for cls, name, types, group, color, priority in new_defs:
+        _ensure_parameter_group(db, group, color, priority)
+        fields = {
+            "parameter_type_list": types,
+            "parameter_group_name": group,
+            "description": texts[(cls, name)],
+        }
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            db.add_parameter_definition(entity_class_name=cls, name=name, **fields)
+        elif any(pdef[k] != v for k, v in fields.items()):
+            db.update_parameter_definition(id=pdef["id"], **fields)
+
+
+def _v77_group_invest_methods(db) -> None:
+    """Give ``group.invest_method`` its own value list, where ``not_active``
+    replaces ``not_allowed``.
+
+    A value bound to a list is stored as a reference to one list member, and
+    spinedb_api refuses to switch the list of a definition that has values.
+    So: read every group value, add the new list, remove the values, switch
+    the definition's list and default, and write every value again
+    (``not_allowed`` → ``not_active``, others unchanged) so each reference
+    resolves in the new list.
+    """
+    pdef = _pdef_or_none(db, "group", "invest_method")
+    if pdef is None:
+        return
+    existing_members = {
+        lv["parsed_value"] for lv in db.get_items("list_value", parameter_value_list_name="group_invest_methods")
+    }
+    missing = [m for m in _V77_GROUP_INVEST_METHODS if m not in existing_members]
+    if missing:
+        add_value_list_manual(db, [["group_invest_methods", m] for m in missing])
+    default_val, default_type = to_database("not_active")
+    if pdef["parameter_value_list_name"] == "group_invest_methods":
+        if from_database(pdef["default_value"], pdef["default_type"]) != "not_active":
+            db.update_parameter_definition(id=pdef["id"], default_value=default_val, default_type=default_type)
+        return
+    values = [
+        (tuple(pv["entity_byname"]), pv["alternative_name"], pv["parsed_value"], pv["id"])
+        for pv in db.get_items("parameter_value", entity_class_name="group",
+                               parameter_definition_name="invest_method")
+    ]
+    if values:
+        db.remove_items("parameter_value", *[v[3] for v in values])
+    db.update_parameter_definition(
+        id=pdef["id"], parameter_value_list_name="group_invest_methods",
+        default_value=default_val, default_type=default_type)
+    renamed = []
+    for byname, alternative, parsed, _id in values:
+        new_value = "not_active" if parsed == "not_allowed" else parsed
+        if new_value != parsed:
+            renamed.append(f"group {'/'.join(byname)} [{alternative}]")
+        val, typ = to_database(new_value)
+        db.add_parameter_value(
+            entity_class_name="group", entity_byname=byname, parameter_definition_name="invest_method",
+            alternative_name=alternative, value=val, type=typ)
+    if renamed:
+        print("v77: group invest_method not_allowed is now called not_active for: " + ", ".join(renamed))
+
+
+def _v77_behaviour_markers(db) -> None:
+    """Record the behaviour changes this DB predates (database metadata,
+    not alternative-scoped)."""
+    for change_id in _V77_UNCONDITIONAL_MARKERS:
+        name = BEHAVIOUR_CHANGE_MARKER_PREFIX + change_id
+        if not db.get_item("metadata", name=name, value="77"):
+            db.add_item("metadata", name=name, value="77")
+
+
+def remove_behaviour_change_markers(db) -> int:
+    """Remove every ``flextool_behaviour_change:*`` metadata item from an
+    open mapping (not committed).  Used by the tools that regenerate the
+    repository's template, example and fixture JSONs: those are new
+    databases, not upgraded ones, and must not print notices.  Returns the
+    number removed."""
+    ids = [md["id"] for md in db.get_items("metadata")
+           if str(md["name"]).startswith(BEHAVIOUR_CHANGE_MARKER_PREFIX)]
+    if ids:
+        db.remove_items("metadata", *ids)
+    return len(ids)
+
+
+def migrate_repository_database(database_path: str) -> None:
+    """Migrate a repository database (master template, canonical example,
+    test fixture) and drop the behaviour-change markers the migration wrote.
+
+    The one shared path of the tools that regenerate the repository's JSONs:
+    a database built from those JSONs is new, so it must not carry markers
+    (only upgraded user databases print behaviour-change notices).
+    """
+    migrate_database(database_path)
+    url = database_path if "://" in database_path else "sqlite:///" + database_path
+    with DatabaseMapping(url) as db:
+        if remove_behaviour_change_markers(db):
+            db.commit_session("Removed behaviour-change markers (repository database)")
+
+
+def _v77_drop_stale_definitions(db) -> None:
+    """Drop definitions the schema no longer has; list every value they held.
+
+    ``unit__inputNode.capacity_{max,min}_coeff`` were renamed
+    ``input_share_{max,min}`` in v70.  A DB that carries the old name has a
+    collided rename (both names present) or never had the new one:
+
+    * new name present: ``capacity_max_coeff`` values move to
+      ``input_share_max`` where that (entity, alternative) has no value of its
+      own; ``capacity_min_coeff`` values are deleted (their old meaning is
+      unrelated to the input share, as in v70); then the old definition goes.
+    * new name absent: the definition is renamed as v70 does (values of
+      ``capacity_max_coeff`` kept, those of ``capacity_min_coeff`` deleted).
+
+    The ``solve_mode`` value ``single_shot`` (the engine runs it as
+    ``single_solve``) becomes ``single_solve`` and leaves the value list.
+    """
+    zero_val, zero_type = to_database(0.0)
+    renames = {
+        ("unit__inputNode", "capacity_max_coeff"): ("input_share_max", _V70_INPUT_SHARE_MAX_DESCRIPTION, None),
+        ("unit__inputNode", "capacity_min_coeff"): ("input_share_min", _V70_INPUT_SHARE_MIN_DESCRIPTION,
+                                                    (zero_val, zero_type)),
+    }
+    for cls, name in _V77_STALE_DEFINITIONS:
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            continue
+        values = list(db.find_parameter_values(entity_class_name=cls, parameter_definition_name=name))
+        keep_values = name == "capacity_max_coeff"
+        rename = renames.get((cls, name))
+        if rename is not None and _pdef_or_none(db, cls, rename[0]) is None:
+            new_name, description, default = rename
+            if not keep_values and values:
+                print(f"v77: deleted the old {cls} {name} values (now {new_name}, a different meaning; "
+                      "re-author if needed):")
+                for pv in values:
+                    print("  " + _describe_pv(pv))
+                db.remove_items("parameter_value", *[pv["id"] for pv in values])
+            fields = {"description": description}
+            if default is not None:
+                fields["default_value"], fields["default_type"] = default
+            db.update_parameter_definition(id=pdef["id"], name=new_name, **fields)
+            continue
+        moved: list = []
+        if rename is not None and keep_values and values:
+            taken = {(tuple(pv["entity_byname"]), pv["alternative_name"])
+                     for pv in db.find_parameter_values(entity_class_name=cls,
+                                                        parameter_definition_name=rename[0])}
+            for pv in values:
+                key = (tuple(pv["entity_byname"]), pv["alternative_name"])
+                if key in taken:
+                    continue
+                db.add_parameter_value(
+                    entity_class_name=cls, entity_byname=key[0], parameter_definition_name=rename[0],
+                    alternative_name=key[1], value=pv["value"], type=pv["type"])
+                moved.append(pv)
+        if moved:
+            print(f"v77: moved {cls} {name} values to {rename[0]} (its name since v70):")
+            for pv in moved:
+                print("  " + _describe_pv(pv))
+        moved_ids = {pv["id"] for pv in moved}
+        dropped = [pv for pv in values if pv["id"] not in moved_ids]
+        if dropped:
+            print(f"v77: {cls}.{name} is no longer a FlexTool parameter; deleted its values:")
+            for pv in dropped:
+                print("  " + _describe_pv(pv))
+        db.remove_items("parameter_definition", pdef["id"])
+    # The value list of the dropped storage_include_solve_fix_method, when nothing else uses it.
+    if db.get_item("parameter_value_list", name="storage_include_solve_fix_method") and not any(
+            pd["parameter_value_list_name"] == "storage_include_solve_fix_method"
+            for pd in db.get_items("parameter_definition")):
+        db.remove_item("parameter_value_list",
+                       db.get_item("parameter_value_list", name="storage_include_solve_fix_method")["id"])
+
+    shots = [pv for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="solve_mode")
+             if pv["parsed_value"] == "single_shot"]
+    if shots:
+        print("v77: solve_mode single_shot is now single_solve (it already ran as one) for:")
+        for pv in shots:
+            print("  " + _describe_pv(pv))
+        val, typ = to_database("single_solve")
+        for pv in shots:
+            db.update_parameter_value(id=pv["id"], value=val, type=typ)
+    for lv in db.get_items("list_value", parameter_value_list_name="solve_mode"):
+        if lv["parsed_value"] == "single_shot":
+            db.remove_items("list_value", lv["id"])
+
+
+def _migrate_v77_schema_batch(db) -> None:
+    """Schema batch v77 (v76 -> v77).
+
+    * Type lists widened to what the engine reads (period maps for the
+      investment / retirement / CO2 period limits and startup costs, period +
+      time maps for efficiencies, min_load, profiles and self-discharge, a
+      period map for the user-constraint constant, and the missing type
+      lists of ten definitions).  Each list is the union with the current
+      one, so no allowed type is dropped.
+    * Descriptions rewritten (owner-reviewed texts).
+    * New: group ``retire_{max,min}_{period,total}`` and the unit / node /
+      connection ``constraint_capacity_coeff`` and
+      ``constraint_retired_capacity_coeff``.
+    * ``group.invest_method`` gets the list ``group_invest_methods``:
+      ``not_allowed`` is ``not_active`` there (also the new default).
+    * Behaviour-change markers (database metadata) for the changes this DB
+      predates.
+    * Stale definitions dropped (their values listed), ``single_shot`` →
+      ``single_solve``.
+
+    Idempotent: re-running finds nothing to change.
+    """
+    _v77_types_and_descriptions(db)
+    _v77_new_definitions(db)
+    _v77_group_invest_methods(db)
+    _v77_behaviour_markers(db)
+    _v77_drop_stale_definitions(db)
+    _commit_step(db,
+        "v77: schema batch — widened type lists, owner-reviewed descriptions, group retirement limits, "
+        "user-constraint capacity coefficients, group_invest_methods (not_active), behaviour-change markers, "
+        "stale definitions dropped, single_shot -> single_solve."
     )
 
 

@@ -890,6 +890,21 @@ def _purge_database(db: DatabaseMapping, keep_entities: bool = False) -> None:
 # ---------------------------------------------------------------------------
 
 
+def restore_behaviour_markers(db_url: str, markers: list[tuple[str, str]]) -> None:
+    """Write behaviour-change markers read from a workbook back into the
+    database metadata (see :func:`read_behaviour_markers`)."""
+    if not markers:
+        return
+    with DatabaseMapping(db_url, create=False) as db:
+        added = False
+        for name, value in markers:
+            if not db.get_item("metadata", name=name, value=value):
+                db.add_item("metadata", name=name, value=value)
+                added = True
+        if added:
+            db.commit_session("Restored behaviour-change markers from the workbook")
+
+
 def write_sheet_data_to_db(
     sheet_data_list: list[SheetData],
     db_url: str,

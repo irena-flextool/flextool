@@ -294,6 +294,8 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # UC startup cost — Spine schema declares ``unit.startup_cost`` as
     # scalar OR 1d_map(period).  Cascade: pd → p (write_pUnit / startup
     # cost wiring in ``_load_online``).
+    # User-constraint right-hand side: constant, or a period map that covers every period of the solve.
+    ("constraint", "constant"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("unit", "startup_cost"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # Connection startup cost (connections with a startup_method): same shapes as the unit's.
     ("connection", "startup_cost"): {Shape.SCALAR, Shape.MAP_PERIOD},

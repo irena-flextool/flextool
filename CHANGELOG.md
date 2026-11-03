@@ -1,5 +1,34 @@
 ## Unreleased
 
+- **Database version 77: the value types of the database match what FlexTool reads.** The investment and
+  retirement limits per period of units, nodes, connections and groups, `co2_max_period`, `startup_cost` and the
+  user-constraint `constant` can now be a constant or a period map; `efficiency`, `min_load` and
+  `efficiency_at_min_load` of a unit, `efficiency` of a connection, `profile`, `self_discharge_loss` and
+  `energy_margin_adder` also take period + time maps. Ten parameters that had no allowed value type (for example
+  `penalty_method`, `scaling`, `shared_operation_periods`) now have one, so the database editor offers them. The
+  upgrade only adds types; stored values are unchanged. Parameter descriptions were rewritten as short statements
+  of what each parameter does.
+- **A user-constraint `constant` can vary by period.** A period map gives each period its own right-hand side; it
+  must cover every period of the solve (a missing period is an error naming the constraint). Constraints with a
+  constant value are unchanged.
+- **Groups have their own `invest_method` values: `not_allowed` is now `not_active`** (the default: the group sets
+  no investment or retirement limits). The upgrade renames stored group values; a group value `not_allowed` in a
+  database that was not upgraded stops the run with an error. Unit, node and connection values are unchanged.
+  Results unchanged.
+- **Group retirement limits in the database.** `retire_max_period`, `retire_min_period`, `retire_max_total` and
+  `retire_min_total` of a group (with a *retire* option in its `invest_method`) were read by FlexTool but missing
+  from the database; they are now there.
+- **New user-constraint parameters `constraint_capacity_coeff` and `constraint_retired_capacity_coeff`** on units,
+  nodes and connections (the capacity in service, and the capacity retired, in each period).
+- **The upgrade drops parameters FlexTool no longer has** (`discount_years`, `max_relative_capacity`,
+  `storage_include_solve_fix_method`, unit input `capacity_max_coeff` / `capacity_min_coeff`) and lists any values
+  they held; an input `capacity_max_coeff` value moves to `input_share_max` (its name since database version 70)
+  where that input has none of its own. `solve_mode` `single_shot` becomes `single_solve`. Results unchanged.
+- **Fix: Excel export keeps period + time maps of parameters without stochastic values.** Such a value (for
+  example a period + time `energy_margin_adder`) was dropped when a model was exported to xlsx; it is now written on
+  its own multi-index sheet and read back on import. Behaviour-change markers of a database (its metadata) are now
+  also written to the workbook and restored on import.
+
 - **Fix: memory is returned to the system when polars was imported before flextool.** FlexTool sets the memory
   allocator of polars to give freed memory back to the operating system about a second after it goes idle, but the
   setting only took effect when flextool was imported first. In a Spine Toolbox console where an earlier tool had

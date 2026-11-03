@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from flextool._resources import package_data_path
-from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_migration import migrate_repository_database
 from flextool.update_flextool.export_database import export_database
 from flextool.update_flextool.initialize_database import initialize_database
 
@@ -123,7 +123,7 @@ def migrate_all() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             staging = os.path.join(tmp, "staging.sqlite")
             initialize_database(str(json_abs), staging)
-            migrate_database(staging)
+            migrate_repository_database(staging)
             export_database(staging, str(json_abs))
         print(f"migrated canonical JSON: {db.json_name}")
 
@@ -175,7 +175,7 @@ def verify_all() -> int:
             staging = os.path.join(tmp, "staging.sqlite")
             regenerated = Path(tmp) / db.json_name
             initialize_database(str(json_abs), staging)
-            migrate_database(staging)
+            migrate_repository_database(staging)
             export_database(staging, str(regenerated))
             with open(json_abs) as f:
                 committed_text = f.read()

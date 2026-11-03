@@ -576,7 +576,7 @@
     [
       "constraint",
       [],
-      null,
+      "A constraint with only capacity terms is written once per period, otherwise once per time step.",
       281107035649330,
       true
     ],
@@ -849,7 +849,7 @@
       "price_ladder_annual",
       null,
       null,
-      "Stepped supply curve for price_method='price_ladder_annual'.  Two forms accepted: 2d map with rows 'tier,price,quantity' applies the same per-year limit every period; 3d map with rows 'period,tier,price,quantity' varies the limit per period.  1-based integer tier.  quantity=inf marks an unbounded tail tier.",
+      "Stepped supply curve for price_method price_ladder_annual. Map of tier → price and quantity (optionally per period). Quantity is per year; a shorter solve gets its share by the hours it covers. quantity = inf can be used to mark an unlimited last tier.",
       "basics"
     ],
     [
@@ -892,10 +892,18 @@
     ],
     [
       "connection",
+      "constraint_capacity_coeff",
+      null,
+      null,
+      "Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW.",
+      "constraint"
+    ],
+    [
+      "connection",
       "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
+      "Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retirements). Investments with a construction lead time count when they enter service. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -904,6 +912,14 @@
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize.",
+      "constraint"
+    ],
+    [
+      "connection",
+      "constraint_retired_capacity_coeff",
+      null,
+      null,
+      "Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -965,7 +981,7 @@
         "float"
       ],
       null,
-      "[factor, typically between 0-1] Efficiency of a connection. Constant or time.",
+      "[factor, typically 0-1] Efficiency of the connection. Constant, period, time or period+time.",
       "basics"
     ],
     [
@@ -997,7 +1013,7 @@
       "invest_max_period",
       null,
       null,
-      "[MW] Maximum investment. Period.",
+      "[MW] Largest allowed investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
       "investment"
     ],
     [
@@ -1005,7 +1021,7 @@
       "invest_max_total",
       null,
       null,
-      "[MW] Maximum investment over all solves. Constant.",
+      "[MW] Largest allowed total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -1021,7 +1037,7 @@
       "invest_min_period",
       null,
       null,
-      "[MW] Minimum investment. Period.",
+      "[MW] Smallest required investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
       "investment"
     ],
     [
@@ -1029,7 +1045,7 @@
       "invest_min_total",
       null,
       null,
-      "[MW] Minimum investment over all solves. Constant.",
+      "[MW] Smallest required total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -1040,7 +1056,7 @@
         "str"
       ],
       "yes_no",
-      "A flag whether the connection is DC (the flow will not be counted as synchronous if there is a non_synchronous_limit). Default false.",
+      "Whether the connection is DC. Its flow into a group with a non-synchronous limit counts as non-synchronous, in both directions. Default no.",
       "network"
     ],
     [
@@ -1080,7 +1096,7 @@
       "retire_max_period",
       null,
       null,
-      "[MW] Maximum retired capacity. Period.",
+      "[MW] Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
       "retirement"
     ],
     [
@@ -1088,7 +1104,7 @@
       "retire_max_total",
       null,
       null,
-      "[MW] Maximum retired capacity over all solves. Constant.",
+      "[MW] Largest allowed total retirement over all solves. Investments and existing capacity do not change it. Constant.",
       "retirement"
     ],
     [
@@ -1096,7 +1112,7 @@
       "retire_min_period",
       null,
       null,
-      "[MW] Maximum retired capacity. Period.",
+      "[MW] Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
       "retirement"
     ],
     [
@@ -1104,7 +1120,7 @@
       "retire_min_total",
       null,
       null,
-      "[MW] Minimum retired capacity over all solves. Constant.",
+      "[MW] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.",
       "retirement"
     ],
     [
@@ -1120,7 +1136,7 @@
       "startup_cost",
       null,
       null,
-      "[CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant.",
+      "[CUR/MW] Cost of starting up one MW of capacity. Constant or period.",
       "tech_advanced"
     ],
     [
@@ -1128,7 +1144,7 @@
       "startup_method",
       null,
       "startup_methods",
-      "Choice of startup method",
+      "Gives the connection online capacity in both directions. Flows and reserves are limited by the online capacity, and startup_cost is paid per MW brought online. No minimum load or minimum up/down time. Not allowed for dc_power_flow_with_angles lines.",
       "tech_advanced"
     ],
     [
@@ -1144,7 +1160,7 @@
       "virtual_unitsize",
       null,
       null,
-      "[MW] Size of single connection - used for integer (lumped) investments.",
+      "[MW] Size of one unit. Investments, retirements and binary startups move whole units of this size. No value: the existing capacity, or 1000 MW without it.",
       "basics"
     ],
     [
@@ -1171,7 +1187,7 @@
         "float"
       ],
       null,
-      "A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.",
+      "Right-hand side of the user constraint. A period map gives each period its own value; it must cover every period of the solve. Constant or period.",
       "constraint"
     ],
     [
@@ -1212,7 +1228,7 @@
       "max_cumulative_flow",
       null,
       null,
-      "[MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+      "[MW] Largest allowed average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or period.",
       "flow_limit"
     ],
     [
@@ -1228,7 +1244,7 @@
       "min_cumulative_flow",
       null,
       null,
-      "[MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.",
+      "[MW] Smallest required average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or period.",
       "flow_limit"
     ],
     [
@@ -1260,7 +1276,7 @@
       "capacity_margin",
       null,
       null,
-      "[MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode. Constant or period.",
+      "[MW] Capacity the group needs above its peak net load. Used only with capacity_margin_method manual, and only in investment periods. No value means 0. Constant or period.",
       "investment"
     ],
     [
@@ -1271,7 +1287,7 @@
         "str"
       ],
       "capacity_margin_methods",
-      "Whether the node group enforces a capacity margin in the investment mode. 'none' (default) = no constraint. 'manual' requires the group to have 'capacity_margin' MW of capacity above the peak net load. Replaces the former has_capacity_margin yes/no flag; reserved for a future 'automatic' mode.",
+      "Whether the group needs a capacity margin in investment solves. none: no margin. manual: the group needs capacity_margin MW above its peak net load.",
       "investment"
     ],
     [
@@ -1279,7 +1295,7 @@
       "co2_max_period",
       null,
       null,
-      "[tCO2] Annualized maximum limit for emitted CO2 in each period.",
+      "[tCO2/a] Largest annual CO2 emissions in each period. In a rolling solve, each roll may use the part of the limit its horizon reaches, minus what earlier rolls already emitted in that period. Constant or period.",
       "emission"
     ],
     [
@@ -1287,7 +1303,7 @@
       "co2_max_total",
       null,
       null,
-      "[tCO2] Maximum limit for emitted CO2 in the whole solve.",
+      "[tCO2] Largest CO2 emissions over the whole model horizon. Each period counts its annual emissions times its years_represented. Rolling solves and chains of solves pass the remaining budget on. Each stochastic forecast gets the whole remaining budget. Constant.",
       "emission"
     ],
     [
@@ -1341,7 +1357,7 @@
         "str"
       ],
       "yes_no",
-      "A flag whether the group of nodes has an inertia constraint active.\n",
+      "Whether the group has an inertia constraint. Without yes, inertia_limit is ignored.",
       "network"
     ],
     [
@@ -1352,7 +1368,7 @@
         "str"
       ],
       "yes_no",
-      "A flag whether the group of nodes has the non-synchronous share constraint active.",
+      "Whether the group has a non-synchronous share limit. Without yes, non_synchronous_limit is ignored.",
       "network"
     ],
     [
@@ -1368,7 +1384,7 @@
       "inertia_limit",
       null,
       null,
-      "[MWs] Minimum for synchronous inertia in the group of nodes. Constant or period.",
+      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no requirement. Constant or period.",
       "network"
     ],
     [
@@ -1376,7 +1392,7 @@
       "invest_max_period",
       null,
       null,
-      "[MW or MWh] Maximum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Period.",
+      "[MW or MWh] Largest allowed investment in each period, summed over the group's units and connections (MW) and storage nodes (MWh). Constant or period.",
       "investment"
     ],
     [
@@ -1384,15 +1400,18 @@
       "invest_max_total",
       null,
       null,
-      "[MW or MWh] Maximum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. Constant.",
+      "[MW or MWh] Largest allowed total investment of the group over all solves. Every investment counts; retirements do not reduce it. Constant.",
       "investment"
     ],
     [
       "group",
       "invest_method",
-      null,
-      "invest_methods",
-      "Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total.\r\n",
+      [
+        "\"not_active\"",
+        "str"
+      ],
+      "group_invest_methods",
+      "How the group limits investment and retirement of its members. not_active: the group sets no limits. invest / retire / invest_retire: which decisions the limits apply to. _period uses the …_period limits, _total the …_total limits, _period_total both. no_limit: no limits even if values are set. cumulative_limits: uses the cumulative capacity limits.",
       "investment"
     ],
     [
@@ -1400,7 +1419,7 @@
       "invest_min_period",
       null,
       null,
-      "[MW or MWh] Minimum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Period.",
+      "[MW or MWh] Smallest required investment in each period, summed over the group's units and connections (MW) and storage nodes (MWh). Constant or period.",
       "investment"
     ],
     [
@@ -1408,7 +1427,7 @@
       "invest_min_total",
       null,
       null,
-      "[MW or MWh] Minimum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all solves. Constant.",
+      "[MW or MWh] Smallest required total investment of the group over all solves. Every investment counts; retirements do not reduce it. Constant.",
       "investment"
     ],
     [
@@ -1416,7 +1435,7 @@
       "new_stepduration",
       null,
       null,
-      "Hours. Members of this group operate at this step duration. Overrides the solve-level new_stepduration for these entities. Used for multi-resolution models where some nodes (e.g. fuel markets) need coarser dispatch resolution than others (e.g. power systems).",
+      "[hours] Balances the energy of the group's nodes once per step of this length instead of every time step, e.g. daily hydrogen next to hourly electricity. Within the step, energy can move freely between time steps, and a storage node has one state per step. Flows, online status, reserves and profiles keep the solve's time step; the model is not made smaller. Listing units or connections has no effect. Must be a multiple of the solve's step.",
       "solve_advanced"
     ],
     [
@@ -1424,7 +1443,7 @@
       "non_synchronous_limit",
       null,
       null,
-      "[share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.",
+      "[share, e.g. 0.8] Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant or period.",
       "network"
     ],
     [
@@ -1483,6 +1502,38 @@
       null,
       "Name of the reference bus node (angle fixed to zero) for DC power flow. Optional — if not specified, automatically selected as the node with the largest existing capacity in each connected component of the DC power flow network.",
       "network"
+    ],
+    [
+      "group",
+      "retire_max_period",
+      null,
+      null,
+      "[MW or MWh] Largest allowed retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest_method. Constant or period.",
+      "retirement"
+    ],
+    [
+      "group",
+      "retire_max_total",
+      null,
+      null,
+      "[MW or MWh] Largest allowed total retirement of the group over all solves. Needs a retire …_total option in the group's invest_method. Constant.",
+      "retirement"
+    ],
+    [
+      "group",
+      "retire_min_period",
+      null,
+      null,
+      "[MW or MWh] Smallest required retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest_method. Constant or period.",
+      "retirement"
+    ],
+    [
+      "group",
+      "retire_min_total",
+      null,
+      null,
+      "[MW or MWh] Smallest required total retirement of the group over all solves. Needs a retire …_total option in the group's invest_method. Constant.",
+      "retirement"
     ],
     [
       "group",
@@ -1560,7 +1611,7 @@
       "output_horizon",
       null,
       "yes_no",
-      "Outputs the flows in the horizons. Used for testing the model.",
+      "Debug flag. yes writes one raw parquet file per LP variable and constraint, with every row of every solve and a realized column. Normal outputs do not change.",
       "output"
     ],
     [
@@ -1594,7 +1645,7 @@
       "model",
       "version",
       [
-        "76",
+        "77",
         "float"
       ],
       null,
@@ -1622,10 +1673,18 @@
     ],
     [
       "node",
+      "constraint_capacity_coeff",
+      null,
+      null,
+      "Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MWh.",
+      "constraint"
+    ],
+    [
+      "node",
       "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
+      "Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retirements). Investments with a construction lead time count when they enter service. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -1634,6 +1693,14 @@
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize.",
+      "constraint"
+    ],
+    [
+      "node",
+      "constraint_retired_capacity_coeff",
+      null,
+      null,
+      "Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -1695,7 +1762,7 @@
         "float"
       ],
       null,
-      "[MWh] Extra demand (negative inflow) added to this node in the investment solve only, when energy_margin_method = 'inflow_adder'. Raises adequacy headroom without changing dispatch demand. 0 = off. Constant or period.",
+      "[MWh] Extra demand (negative inflow) added to this node in the investment solve only, when energy_margin_method = 'inflow_adder'. Raises adequacy headroom without changing dispatch demand. 0 = off. Constant, period or period+time.",
       "investment"
     ],
     [
@@ -1717,7 +1784,7 @@
         "float"
       ],
       null,
-      "[factor] Multiplier applied to this node's inflow in the investment solve only, when energy_margin_method = 'inflow_multiplier'. Offsets representative-period VRE optimism (rep-period average VRE availability exceeds the annual average). 1 = off. e.g. 1.1 builds ~10% more capacity to serve the true annual demand under the true (lower) annual VRE. Constant or period.",
+      "[factor] Multiplier applied to this node's inflow in the investment solve only, when energy_margin_method = 'inflow_multiplier'. Offsets representative-period VRE optimism (rep-period average VRE availability exceeds the annual average). 1 = off. e.g. 1.1 builds ~10% more capacity to serve the true annual demand under the true (lower) annual VRE. Constant.",
       "investment"
     ],
     [
@@ -1776,7 +1843,7 @@
       "invest_max_period",
       null,
       null,
-      "[MWh] Maximum storage investment. Period.",
+      "[MWh] Largest allowed storage investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
       "investment"
     ],
     [
@@ -1784,7 +1851,7 @@
       "invest_max_total",
       null,
       null,
-      "[MWh] Maximum investment over all solves. Constant.",
+      "[MWh] Largest allowed total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -1800,7 +1867,7 @@
       "invest_min_period",
       null,
       null,
-      "[MWh] Minimum storage investment. Period.",
+      "[MWh] Smallest required storage investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
       "investment"
     ],
     [
@@ -1808,7 +1875,7 @@
       "invest_min_total",
       null,
       null,
-      "[MWh] Minimum investment over all solves. Constant.",
+      "[MWh] Smallest required total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -1884,7 +1951,7 @@
       "retire_max_period",
       null,
       null,
-      "[MWh] Maximum retired storage capacity. Period.",
+      "[MWh] Largest allowed retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
       "retirement"
     ],
     [
@@ -1892,7 +1959,7 @@
       "retire_max_total",
       null,
       null,
-      "[MWh] Maximum retired storage capacity over all solves. Constant.",
+      "[MWh] Largest allowed total retirement over all solves. Investments and existing capacity do not change it. Constant.",
       "retirement"
     ],
     [
@@ -1900,7 +1967,7 @@
       "retire_min_period",
       null,
       null,
-      "[MWh] Minimum retired storage capacity. Period.",
+      "[MWh] Smallest required retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
       "retirement"
     ],
     [
@@ -1908,7 +1975,7 @@
       "retire_min_total",
       null,
       null,
-      "[MWh] Minimum retired storage capacity over all solves. Constant.",
+      "[MWh] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.",
       "retirement"
     ],
     [
@@ -1924,7 +1991,7 @@
       "self_discharge_loss",
       null,
       null,
-      "[e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.",
+      "[e.g. 0.01 means 1% per hour] Share of the stored energy lost each hour. Constant, period, time or period+time.",
       "storage"
     ],
     [
@@ -1932,7 +1999,7 @@
       "storage_binding_method",
       null,
       "storage_binding_methods",
-      "Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind_within_timeblock' cycles state within each timeblock (cycle closes at block boundaries); 'bind_within_period' cycles within each FlexTool period and chains blocks inside the period; 'bind_within_solve' cycles across the whole solve horizon; 'bind_forward_only' (default) chains state forward across the solve with no end-to-start closure; 'bind_within_solve_blended_weights' is the representative-period variant of bind_within_solve (RP weighting + solve-level cycle closure); 'bind_within_period_blended_weights' is the RP variant of bind_within_period (per-period RP weighting, each period closes independently); 'bind_forward_only_blended_weights' is the RP variant of bind_forward_only (RP weighting, no cycle closure). One additional value, 'bind_intraperiod_blocks', is structurally an aggregation method rather than a cycle-scope method: state is held constant within each block and the block-total flow is balanced at the boundary. Silent-degrade behaviour: any '*_blended_weights' method on a node in a solve whose active timeset has no representative_period_weights is automatically downgraded to the corresponding non-RP variant for that solve, so the same storage entity can drive an RP investment solve and a chronological dispatch solve back-to-back. Separate parameters (e.g. 'storage_state_start') can force additional bindings. By default, storage start state is bound to 0.",
+      "Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind_within_timeblock' cycles state within each timeblock (cycle closes at block boundaries); 'bind_within_period' cycles within each FlexTool period and chains blocks inside the period; 'bind_within_solve' cycles across the whole solve horizon; 'bind_forward_only' (default) chains state forward across the solve with no end-to-start closure; 'bind_within_solve_blended_weights' is the representative-period variant of bind_within_solve (RP weighting + solve-level cycle closure); 'bind_within_period_blended_weights' is the RP variant of bind_within_period (per-period RP weighting, each period closes independently); 'bind_forward_only_blended_weights' is the RP variant of bind_forward_only (RP weighting, no cycle closure). One additional value, 'bind_intraperiod_blocks', is structurally an aggregation method rather than a cycle-scope method: state is held constant within each block and the block-total flow is balanced at the boundary. Silent-degrade behaviour: any '*_blended_weights' method on a node in a solve whose active timeset has no representative_period_weights is automatically downgraded to the corresponding non-RP variant for that solve, so the same storage entity can drive an RP investment solve and a chronological dispatch solve back-to-back. Separate parameters (e.g. 'storage_state_start') can force additional bindings. By default, storage start state is bound to 0. The blended_weights methods do not work with stochastic branches.",
       "storage"
     ],
     [
@@ -1964,7 +2031,7 @@
       "storage_state_end",
       null,
       null,
-      "[0-1] Relative state of storage at the end of the last model solve (overrides 'storage_state_end_reference'). Constant.",
+      "[0-1] Storage state at the end of the last solve, as a share of the storage capacity. Needed by fix_end and fix_start_end. Constant.",
       "storage"
     ],
     [
@@ -1988,7 +2055,7 @@
       "storage_state_start",
       null,
       null,
-      "[0-1] Relative state of storage at the beginning of the first model solve (irrespective of when the model starts). Constant.",
+      "[0-1] Storage state at the start of the first solve, as a share of the storage capacity. Needed by fix_start and fix_start_end. Constant.",
       "storage"
     ],
     [
@@ -1996,7 +2063,7 @@
       "virtual_unitsize",
       null,
       null,
-      "[MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage capacity.",
+      "[MWh] Size of one unit. Investments, retirements and binary startups move whole units of this size. No value: the existing capacity, or 1000 MWh without it.",
       "basics"
     ],
     [
@@ -2012,7 +2079,7 @@
       "profile",
       null,
       null,
-      "[factor, typically between 0-1]. Availability time series for a fluctuating resource like wind power. Time.",
+      "[factor, typically 0-1] Profile values, e.g. the availability of wind power (capacity factor). Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -2020,7 +2087,7 @@
       "increase_reserve_ratio",
       null,
       null,
-      "[factor] The reserve requirement is increased by the flow from the connection to the node multiplied by this ratio. Constant.",
+      "[factor] The reserve requirement grows by this ratio times the flow between the connection and the node, in either direction, for upward and downward reserve alike. Constant.",
       "reserve"
     ],
     [
@@ -2039,7 +2106,7 @@
       "large_failure_ratio",
       null,
       null,
-      "[factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.",
+      "[factor] With a large_failure method, the reserve must cover the loss of this connection's flow times this ratio. Its own reserve does not count. Constant.",
       "reserve"
     ],
     [
@@ -2047,7 +2114,7 @@
       "max_share",
       null,
       null,
-      "[factor] Maximum ratio for the transfer of reserve to this node. Constant.",
+      "[factor] Largest share of the connection's built capacity that can be held as this reserve at this node. Constant.",
       "reserve"
     ],
     [
@@ -2066,7 +2133,7 @@
       "increase_reserve_ratio",
       null,
       null,
-      "[factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.",
+      "[factor] Only for dynamic reserve methods. The requirement grows by this ratio times the demand of the group's nodes in each step (MW, real demand). Constant.",
       "reserve"
     ],
     [
@@ -2104,7 +2171,7 @@
         "str"
       ],
       "reserve_methods",
-      "Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only, timeseries_and_dynamic, timeseries_and_large_failure, dynamic_and_large_failure, all",
+      "Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only or their combinations. Dynamic and large_failure requirements need no separate reservation.",
       "reserve"
     ],
     [
@@ -2112,7 +2179,7 @@
       "increase_reserve_ratio",
       null,
       null,
-      "[factor] The reserve requirement is increased by generation from the unit to the node multiplied by this ratio. Constant.",
+      "[factor] The reserve requirement grows by this ratio times the flow between the unit and the node, for upward and downward reserve alike. At an input node, the flow is what the unit draws. Constant.",
       "reserve"
     ],
     [
@@ -2131,7 +2198,7 @@
       "large_failure_ratio",
       null,
       null,
-      "[factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit generation (multiplied by this ratio). Constant.",
+      "[factor] With a large_failure method, the reserve must cover the loss of this unit's flow times this ratio. Its own reserve does not count. Constant.",
       "reserve"
     ],
     [
@@ -2139,7 +2206,7 @@
       "max_share",
       null,
       null,
-      "[factor] Maximum ratio for the transfer of reserve to this node. Constant.",
+      "[factor] Largest share of the unit's built capacity at this node that can be held as this reserve. At an input node, the capacity is the unit's full-load input there. Without a value the unit offers no reserve. Constant.",
       "reserve"
     ],
     [
@@ -2213,7 +2280,7 @@
         "str"
       ],
       "dispatch_realization_methods",
-      "How the stochastic branches of a solve are realized into a committed dispatch. 'within_solve' (default) keeps realization inside the single optimisation — branches and their realized periods are resolved within one solve, byte-identical to prior behaviour. 'separate_dispatch' splits realization into a dedicated downstream dispatch stage (a second market-clearing pass over the revealed branch); this is the 2-stage seed of a future multi-stage sequential-market structure and is not yet implemented (lands in a later slice).",
+      "How the committed part of a stochastic solve is realized. within_solve (default): a realized: yes branch gets a realization solve automatically. separate_dispatch: always runs a separate realized dispatch solve; needs a realized: yes branch (error otherwise).",
       "solve_advanced"
     ],
     [
@@ -2304,7 +2371,7 @@
         "str"
       ],
       "scaling_modes",
-      "Numerical LP-autoscaler mode for this solve. 'full' (default) runs Layer 1 (detection) + Layer 2 (per-quantity-type column/row/cost rescaling) + Layer 3 (HiGHS user_*_scale). 'basic' drops Layer 2 (Layer 1 + Layer 3 only); 'solver_only' leaves scaling to the solver; 'off' disables all scaling including HiGHS-internal. Use 'basic' (or lower) for models whose Layer-2 rescaling mis-solves. The run-time --scaling flag / FLEXTOOL_SCALING env override this per-solve value.",
+      "Numerical scaling of this solve's LP. full (default): FlexTool rescales variables, constraints and costs and sets the solver's scaling. basic: no per-quantity rescaling. solver_only: only the solver's own scaling. off: no scaling at all. Try basic or solver_only if a solve fails numerically. The --scaling run option overrides it.",
       "solve_advanced"
     ],
     [
@@ -2312,7 +2379,7 @@
       "shared_invest_periods",
       null,
       null,
-      "Array of periods over which investment is SHARED (identical) across stochastic branches — the non-anticipative first-stage decision; later periods are per-branch recourse. Unset (default) or an empty Array means NO shared tie (byte-identical to prior behaviour: recourse stays per-branch, none stays shared). A period list -- e.g. the first period -- shares investment over those periods while later periods invest per-branch (recourse), the standard two-stage stochastic capacity-expansion mode. Requires stochastic_invest_method=recourse; a no-op under none (investment is already shared across all periods).",
+      "Periods where investments are the same in every stochastic branch (with recourse). No value or empty array: none.",
       "solve_advanced"
     ],
     [
@@ -2320,7 +2387,7 @@
       "shared_operation_periods",
       null,
       null,
-      "Array of periods over which operations are SHARED (identical) across stochastic branches — the non-anticipative first-stage decision; later periods are per-branch recourse. Unset (default) uses the legacy window = all realized-dispatch timesteps union the fix_storage timesteps (byte-identical to prior behaviour). An explicitly empty Array frees operations from t0 (classic two-stage capacity expansion: one shared here-and-now investment plus operations that branch freely per scenario). A period list shares operations only over those periods' timesteps.",
+      "Periods where operations are the same in every stochastic branch. No value: the committed time steps. Empty array: none.",
       "solve_advanced"
     ],
     [
@@ -2371,7 +2438,7 @@
       "stochastic_branches",
       null,
       null,
-      "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time",
+      "Forecast branches of the solve (map: period, branch, analysis_time, realized → probability weight). Weights are normalised per start time. At most one branch per start time may be realized: yes. That branch is not a weighted forecast; it adds a realization solve over the committed time steps. Without it, the solve reports investments only.",
       "solve_advanced"
     ],
     [
@@ -2382,7 +2449,7 @@
         "str"
       ],
       "stochastic_invest_methods",
-      "How stochastic branches participate in investment. 'none' (default) keeps investment realized-only: stochastic branches never enter the invest axis (v_invest stays on realized periods), byte-identical to prior behaviour. 'recourse' enables two-stage stochastic investment with recourse — shared (non-anticipative) investment before the branch point plus per-branch recourse investment at and after the branching period, with probability-weighted investment costs. Reserved for future expected-value and nested-tree modes.",
+      "How stochastic branches invest. none (default): one shared investment plan for all branches. recourse: each branch also invests at and after its branching period.",
       "solve_advanced"
     ],
     [
@@ -2417,7 +2484,7 @@
       "representative_period_weights",
       null,
       null,
-      "Representative-period weighting map (rank-2 nested Map: base period start timestep -> representative period start timestep -> weight).  Created by the representative-periods preprocess tool; declares how much each representative period stands in for each base period.  Its presence enables RP-aware storage-binding ('*_blended_weights'); its absence silently downgrades those methods to the non-RP behaviour.  Mutually exclusive with 'timeset_weights' on the same timeset.",
+      "Representative-period weighting map (rank-2 nested Map: base period start timestep -> representative period start timestep -> weight).  Created by the representative-periods preprocess tool; declares how much each representative period stands in for each base period.  Its presence enables RP-aware storage-binding ('*_blended_weights'); its absence silently downgrades those methods to the non-RP behaviour.  Mutually exclusive with 'timeset_weights' on the same timeset. Not allowed in a stochastic solve.",
       "solve_advanced"
     ],
     [
@@ -2441,7 +2508,7 @@
       "timeset_weights",
       null,
       null,
-      "Per-timestep weight map (index: timestep name, value: float) defining *representativeness*: each timestep's share of the year. Drives the annualisation of demand, energy, and cost alike (the inflow scaling, the annual energy outputs, and the operating-cost objective all use this same weight), so the energy the model is scaled to serve, reports, and costs all coincide. Use for non-RP models where timesteps represent unequal fractions of the year (e.g. seasonal yearsplit on a coarse timeslice structure). Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so that uniform input reproduces the default (weight = 1 per step). Must not be combined with representative_period_weights on the same timeset.",
+      "Weight of each time step (map, index time). Weights how much each step counts in costs, energy and demand scaling. Normalised per period. Forecast branches use the weights of their period. Other shapes are an error. Cannot be set on a timeset that also has representative_period_weights (error).",
       "solve_advanced"
     ],
     [
@@ -2457,10 +2524,18 @@
     ],
     [
       "unit",
+      "constraint_capacity_coeff",
+      null,
+      null,
+      "Puts the unit's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW.",
+      "constraint"
+    ],
+    [
+      "unit",
       "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline plus every v_invest made in periods strictly BEFORE d, retirements ignored — on the left side of the user-defined constraint. Enables learning-effect and period-over-period growth limits. Not multiplied by unitsize.",
+      "Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retirements). Investments with a construction lead time count when they enter service. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2469,6 +2544,14 @@
       null,
       null,
       "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Not multiplied by unitsize.",
+      "constraint"
+    ],
+    [
+      "unit",
+      "constraint_retired_capacity_coeff",
+      null,
+      null,
+      "Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2538,7 +2621,7 @@
         "float"
       ],
       null,
-      "[factor] Efficiency of a unit. Constant or time.",
+      "[factor] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum of outputs / sum of inputs). A min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -2546,7 +2629,7 @@
       "efficiency_at_min_load",
       null,
       null,
-      "[e.g. 0.4 means 40%] Efficiency of the unit at minimum load. Applies only if the unit has an online variable. Constant.",
+      "[e.g. 0.4 means 40%] Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, period, time or period+time.",
       "basics"
     ],
     [
@@ -2578,7 +2661,7 @@
       "invest_max_period",
       null,
       null,
-      "[MW] Maximum investment. Period.",
+      "[MW] Largest allowed investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
       "investment"
     ],
     [
@@ -2586,7 +2669,7 @@
       "invest_max_total",
       null,
       null,
-      "[MW] Maximum investment over all solves. Constant.",
+      "[MW] Largest allowed total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -2602,7 +2685,7 @@
       "invest_min_period",
       null,
       null,
-      "[MW] Minimum investment. Period.",
+      "[MW] Smallest required investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
       "investment"
     ],
     [
@@ -2610,7 +2693,7 @@
       "invest_min_total",
       null,
       null,
-      "[MW] Minimum investment over all solves. Constant.",
+      "[MW] Smallest required total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -2634,7 +2717,7 @@
       "min_downtime",
       null,
       null,
-      "[hours] Minimum time the unit must stay offline after shutting down. Requires minimum_time_method set to 'min_downtime' or 'both'. Constant.",
+      "[hours] Minimum time the unit stays offline after a stop. Needs minimum_time_method. The look-back stops at a gap in the timeline and at the first step of a solve. Constant.",
       "tech_advanced"
     ],
     [
@@ -2642,7 +2725,7 @@
       "min_load",
       null,
       null,
-      "[0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started up. Constant or time.",
+      "[0-1] Minimum load of the unit as a share of its online capacity. Applies only if the unit has online variables. No value means 0. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -2650,7 +2733,7 @@
       "min_uptime",
       null,
       null,
-      "[hours] Minimum time the unit must stay online after starting up. Requires minimum_time_method set to 'min_uptime' or 'both'. Constant.",
+      "[hours] Minimum time the unit stays online after a start. Needs minimum_time_method. The look-back stops at a gap in the timeline and at the first step of a solve. Constant.",
       "tech_advanced"
     ],
     [
@@ -2666,7 +2749,7 @@
       "retire_max_period",
       null,
       null,
-      "[MW] Maximum retired capacity. Period.",
+      "[MW] Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
       "retirement"
     ],
     [
@@ -2674,7 +2757,7 @@
       "retire_max_total",
       null,
       null,
-      "[MW] Maximum retired capacity over all solves. Constant.",
+      "[MW] Largest allowed total retirement over all solves. Investments and existing capacity do not change it. Constant.",
       "retirement"
     ],
     [
@@ -2682,7 +2765,7 @@
       "retire_min_period",
       null,
       null,
-      "[MW] Minimum retired capacity. Period.",
+      "[MW] Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
       "retirement"
     ],
     [
@@ -2690,7 +2773,7 @@
       "retire_min_total",
       null,
       null,
-      "[MW] Minimum retired capacity over all solves. Constant.",
+      "[MW] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.",
       "retirement"
     ],
     [
@@ -2706,7 +2789,7 @@
       "startup_cost",
       null,
       null,
-      "[CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant.",
+      "[CUR/MW] Cost of starting up one MW of capacity. Constant or period.",
       "tech_advanced"
     ],
     [
@@ -2714,7 +2797,7 @@
       "startup_method",
       null,
       "startup_methods",
-      "Choice of startup method. Linear startup means that the unit can start partially (anything between 0 and full capacity) but will face startup cost as well as minimum load limit based on the capacity started up. Binary startup means that the unit is either off or fully on, but it is computationally more demanding than linearized startups.",
+      "Whether the unit has online variables. linear: any share of the capacity can be online. binary: whole units only (slower to solve). Online status links to the previous time step; that link stops at a gap in the timeline.",
       "tech_advanced"
     ],
     [
@@ -2722,7 +2805,7 @@
       "virtual_unitsize",
       null,
       null,
-      "[MW] Size of a single unit - used for integer investments (lumped investments), minimum loads and start-up costs. If not given, assumed from the existing unit capacity.",
+      "[MW] Size of one unit. Investments, retirements and binary startups move whole units of this size. No value: the existing capacity, or 1000 MW without it.",
       "basics"
     ],
     [
@@ -2741,7 +2824,7 @@
         "float"
       ],
       null,
-      "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from capacity / ramp / min-load constraints entirely (hydro-pass-through pattern).",
+      "[factor, default 1] Fuel-equivalent energy per unit of this flow. It enters the unit's conversion equation, not the node balance. Applies to simple units too. 0 takes the flow out of the capacity, ramp and minimum load limits.",
       "basics"
     ],
     [
@@ -2806,7 +2889,7 @@
       "ramp_method",
       null,
       "ramp_methods",
-      "Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).",
+      "Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.",
       "tech_advanced"
     ],
     [
@@ -2814,7 +2897,7 @@
       "ramp_speed_down",
       null,
       null,
-      "[per unit / minute] Maximum ramp down speed. Constant.",
+      "[share of capacity per minute] Largest decrease of the flow between two time steps. No limit across a gap in the timeline. Constant.",
       "tech_advanced"
     ],
     [
@@ -2822,7 +2905,7 @@
       "ramp_speed_up",
       null,
       null,
-      "[per unit / minute] Maximum ramp up speed. Constant.",
+      "[share of capacity per minute] Largest increase of the flow between two time steps. No limit across a gap in the timeline. Constant.",
       "tech_advanced"
     ],
     [
@@ -2871,7 +2954,7 @@
         "float"
       ],
       null,
-      "[factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from capacity / ramp / min-load constraints entirely (hydro-pass-through pattern).",
+      "[factor, default 1] Fuel-equivalent energy per unit of this flow. It enters the unit's conversion equation, not the node balance. Applies to simple units too. 0 takes the flow out of the capacity, ramp and minimum load limits.",
       "basics"
     ],
     [
@@ -2914,7 +2997,7 @@
       "ramp_method",
       null,
       "ramp_methods",
-      "Choice of ramp methods.",
+      "Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.",
       "tech_advanced"
     ],
     [
@@ -2922,7 +3005,7 @@
       "ramp_speed_down",
       null,
       null,
-      "[per unit  / minute] Maximum ramp down speed. Constant.",
+      "[share of capacity per minute] Largest decrease of the flow between two time steps. No limit across a gap in the timeline. Constant.",
       "tech_advanced"
     ],
     [
@@ -2930,7 +3013,7 @@
       "ramp_speed_up",
       null,
       null,
-      "[per unit  / minute] Maximum ramp up speed. Constant.",
+      "[share of capacity per minute] Largest increase of the flow between two time steps. No limit across a gap in the timeline. Constant.",
       "tech_advanced"
     ]
   ],
@@ -3074,7 +3157,19 @@
     ],
     [
       "connection",
+      "constraint_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "connection",
       "constraint_invested_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "constraint_retired_capacity_coeff",
       "map",
       1
     ],
@@ -3158,6 +3253,12 @@
     ],
     [
       "connection",
+      "efficiency",
+      "map",
+      2
+    ],
+    [
+      "connection",
       "existing",
       "float",
       0
@@ -3195,6 +3296,12 @@
     [
       "connection",
       "invest_max_period",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "invest_max_period",
       "map",
       1
     ],
@@ -3208,6 +3315,12 @@
       "connection",
       "invest_method",
       "str",
+      0
+    ],
+    [
+      "connection",
+      "invest_min_period",
+      "float",
       0
     ],
     [
@@ -3267,12 +3380,24 @@
     [
       "connection",
       "retire_max_period",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "retire_max_period",
       "map",
       1
     ],
     [
       "connection",
       "retire_max_total",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "retire_min_period",
       "float",
       0
     ],
@@ -3305,6 +3430,12 @@
       "startup_cost",
       "float",
       0
+    ],
+    [
+      "connection",
+      "startup_cost",
+      "map",
+      1
     ],
     [
       "connection",
@@ -3341,6 +3472,12 @@
       "constant",
       "float",
       0
+    ],
+    [
+      "constraint",
+      "constant",
+      "map",
+      1
     ],
     [
       "constraint",
@@ -3446,6 +3583,18 @@
     ],
     [
       "group",
+      "capacity_margin_method",
+      "str",
+      0
+    ],
+    [
+      "group",
+      "co2_max_period",
+      "float",
+      0
+    ],
+    [
+      "group",
       "co2_max_period",
       "map",
       1
@@ -3537,6 +3686,12 @@
     [
       "group",
       "invest_max_period",
+      "float",
+      0
+    ],
+    [
+      "group",
+      "invest_max_period",
       "map",
       1
     ],
@@ -3550,6 +3705,12 @@
       "group",
       "invest_method",
       "str",
+      0
+    ],
+    [
+      "group",
+      "invest_min_period",
+      "float",
       0
     ],
     [
@@ -3634,6 +3795,42 @@
       "group",
       "reference_node",
       "str",
+      0
+    ],
+    [
+      "group",
+      "retire_max_period",
+      "float",
+      0
+    ],
+    [
+      "group",
+      "retire_max_period",
+      "map",
+      1
+    ],
+    [
+      "group",
+      "retire_max_total",
+      "float",
+      0
+    ],
+    [
+      "group",
+      "retire_min_period",
+      "float",
+      0
+    ],
+    [
+      "group",
+      "retire_min_period",
+      "map",
+      1
+    ],
+    [
+      "group",
+      "retire_min_total",
+      "float",
       0
     ],
     [
@@ -3734,7 +3931,19 @@
     ],
     [
       "node",
+      "constraint_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "node",
       "constraint_invested_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "constraint_retired_capacity_coeff",
       "map",
       1
     ],
@@ -3797,6 +4006,36 @@
       "discount_rate",
       "map",
       1
+    ],
+    [
+      "node",
+      "energy_margin_adder",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "energy_margin_adder",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "energy_margin_adder",
+      "map",
+      2
+    ],
+    [
+      "node",
+      "energy_margin_method",
+      "str",
+      0
+    ],
+    [
+      "node",
+      "energy_margin_multiplier",
+      "float",
+      0
     ],
     [
       "node",
@@ -3873,6 +4112,12 @@
     [
       "node",
       "invest_max_period",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "invest_max_period",
       "map",
       1
     ],
@@ -3886,6 +4131,12 @@
       "node",
       "invest_method",
       "str",
+      0
+    ],
+    [
+      "node",
+      "invest_min_period",
+      "float",
       0
     ],
     [
@@ -3950,6 +4201,12 @@
     ],
     [
       "node",
+      "penalty_method",
+      "str",
+      0
+    ],
+    [
+      "node",
       "penalty_up",
       "float",
       0
@@ -3963,12 +4220,24 @@
     [
       "node",
       "retire_max_period",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "retire_max_period",
       "map",
       1
     ],
     [
       "node",
       "retire_max_total",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "retire_min_period",
       "float",
       0
     ],
@@ -4007,6 +4276,12 @@
       "self_discharge_loss",
       "map",
       1
+    ],
+    [
+      "node",
+      "self_discharge_loss",
+      "map",
+      2
     ],
     [
       "node",
@@ -4083,8 +4358,20 @@
     [
       "profile",
       "profile",
+      "float",
+      0
+    ],
+    [
+      "profile",
+      "profile",
       "map",
       1
+    ],
+    [
+      "profile",
+      "profile",
+      "map",
+      2
     ],
     [
       "profile",
@@ -4226,6 +4513,12 @@
     ],
     [
       "solve",
+      "dispatch_realization_method",
+      "str",
+      0
+    ],
+    [
+      "solve",
       "fix_storage_periods",
       "array",
       1
@@ -4304,6 +4597,24 @@
     ],
     [
       "solve",
+      "scaling",
+      "str",
+      0
+    ],
+    [
+      "solve",
+      "shared_invest_periods",
+      "array",
+      1
+    ],
+    [
+      "solve",
+      "shared_operation_periods",
+      "array",
+      1
+    ],
+    [
+      "solve",
       "solve_mode",
       "str",
       0
@@ -4337,6 +4648,12 @@
       "stochastic_branches",
       "map",
       4
+    ],
+    [
+      "solve",
+      "stochastic_invest_method",
+      "str",
+      0
     ],
     [
       "solve",
@@ -4394,7 +4711,19 @@
     ],
     [
       "unit",
+      "constraint_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "unit",
       "constraint_invested_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "constraint_retired_capacity_coeff",
       "map",
       1
     ],
@@ -4486,6 +4815,12 @@
       "unit",
       "efficiency",
       "map",
+      2
+    ],
+    [
+      "unit",
+      "efficiency",
+      "map",
       3
     ],
     [
@@ -4493,6 +4828,18 @@
       "efficiency_at_min_load",
       "float",
       0
+    ],
+    [
+      "unit",
+      "efficiency_at_min_load",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "efficiency_at_min_load",
+      "map",
+      2
     ],
     [
       "unit",
@@ -4533,6 +4880,12 @@
     [
       "unit",
       "invest_max_period",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "invest_max_period",
       "map",
       1
     ],
@@ -4546,6 +4899,12 @@
       "unit",
       "invest_method",
       "str",
+      0
+    ],
+    [
+      "unit",
+      "invest_min_period",
+      "float",
       0
     ],
     [
@@ -4600,6 +4959,12 @@
       "unit",
       "min_load",
       "map",
+      2
+    ],
+    [
+      "unit",
+      "min_load",
+      "map",
       3
     ],
     [
@@ -4617,12 +4982,24 @@
     [
       "unit",
       "retire_max_period",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "retire_max_period",
       "map",
       1
     ],
     [
       "unit",
       "retire_max_total",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "retire_min_period",
       "float",
       0
     ],
@@ -4655,6 +5032,12 @@
       "startup_cost",
       "float",
       0
+    ],
+    [
+      "unit",
+      "startup_cost",
+      "map",
+      1
     ],
     [
       "unit",
@@ -5015,6 +5398,104 @@
       "flow_aggregator_methods",
       [
         "\"both\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"not_active\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"invest_no_limit\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"invest_period\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"invest_total\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"invest_period_total\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"retire_no_limit\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"retire_period\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"retire_total\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"retire_period_total\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"invest_retire_no_limit\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"invest_retire_period\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"invest_retire_total\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"invest_retire_period_total\"",
+        "str"
+      ]
+    ],
+    [
+      "group_invest_methods",
+      [
+        "\"cumulative_limits\"",
         "str"
       ]
     ],

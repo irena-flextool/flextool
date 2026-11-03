@@ -24,7 +24,7 @@ from pathlib import Path
 
 from spinedb_api import DatabaseMapping, export_data, import_data
 
-from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_migration import migrate_repository_database
 
 from flextool._resources import package_data_path
 
@@ -73,7 +73,7 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
         _create_db_from_template(SPINEDB_SCHEMA, db_path)
 
         # Step 2: Run all migrations
-        migrate_database(str(db_path))
+        migrate_repository_database(str(db_path))
 
         # Step 3: Export migrated DB
         new_data = _export_db_to_json(db_path)

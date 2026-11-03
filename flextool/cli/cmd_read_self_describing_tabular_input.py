@@ -2,8 +2,8 @@
 
 import argparse
 
-from flextool.process_inputs.read_self_describing_excel import read_self_describing_excel
-from flextool.process_inputs.write_self_describing_to_db import write_sheet_data_to_db
+from flextool.process_inputs.read_self_describing_excel import read_behaviour_markers, read_self_describing_excel
+from flextool.process_inputs.write_self_describing_to_db import restore_behaviour_markers, write_sheet_data_to_db
 
 
 def main() -> None:
@@ -43,6 +43,7 @@ def main() -> None:
         purge_first=not args.no_purge,
         keep_entities=args.keep_entities,
     )
+    restore_behaviour_markers(args.target_db_url, read_behaviour_markers(args.xlsx_path))
     print("Import complete!")
 
 

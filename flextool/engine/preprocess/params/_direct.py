@@ -66,20 +66,48 @@ def p_co2_content_from_source(source: "InputSource") -> Param | None:
                  df.lazy().rename({"name": "c"}).select("c", "value"))
 
 
-def p_constraint_constant_from_source(source: "InputSource") -> Param | None:
-    """``constraint.constant`` → ``Param(("cn",), [cn, value])``.
+def p_constraint_constant_from_source(source: "InputSource",
+                                      period_filter: pl.DataFrame | None = None,
+                                      ) -> Param | None:
+    """``constraint.constant`` → ``Param(("cn",))`` when every constraint has a
+    constant, else ``Param(("cn", "d"))``.
 
-    Default ``0.0`` — broadcast to every constraint via the source.
+    Default ``0.0`` — broadcast to every constraint via the source.  A period
+    map is resolved per constraint (``resolve_param_shape`` keeps the spread
+    scalar default of the other constraints as null-period rows, which
+    ``broadcast_to_period`` repeats over the solve's periods).  A period map
+    must cover every period of ``period_filter``; a missing period is an
+    error, as a user constraint has no other right-hand side for it.
 
     The constraint axis uses the column name ``cn`` (not ``c``) to avoid
     collision with the commodity axis — see
     ``schemas/flextool_axis_contract.json`` review note ``c_collision``.
     """
-    df = source.parameter("constraint", "constant")
-    if df.height == 0:
+    resolved = resolve_param_shape(source, "constraint", "constant", period_filter=period_filter)
+    if resolved is None or resolved.frame is None or resolved.frame.height == 0:
         return None
-    return Param(("cn",),
-                 df.lazy().rename({"name": "cn"}).select("cn", "value"))
+    if resolved.shape == Shape.SCALAR:
+        df = source.parameter("constraint", "constant")
+        return Param(("cn",),
+                     df.lazy().rename({"name": "cn"}).select("cn", "value"))
+    out = broadcast_to_period(resolved, "cn", period_filter, filter_zero=False)
+    if out is None or period_filter is None or period_filter.height == 0:
+        return out
+    frame = out.frame.collect() if isinstance(out.frame, pl.LazyFrame) else out.frame
+    mapped = (resolved.frame.filter(pl.col(resolved.period_index_column).is_not_null())
+              .get_column(resolved.entity_dim_columns[0]).cast(pl.Utf8).unique().to_list())
+    periods = period_filter.get_column("d").cast(pl.Utf8).unique().to_list()
+    missing: list[str] = []
+    for cn in sorted(mapped):
+        have = set(frame.filter(pl.col("cn").cast(pl.Utf8) == cn).get_column("d").cast(pl.Utf8).to_list())
+        lacking = sorted(set(periods) - have)
+        if lacking:
+            missing.append(f"{cn} (missing: {', '.join(lacking)})")
+    if missing:
+        raise FlexToolConfigError(
+            "constraint constant: a period map must give a value for every period of the solve; "
+            + "; ".join(missing))
+    return Param(("cn", "d"), frame.lazy())
 
 
 def constraint_sense_from_source(source: "InputSource") -> pl.DataFrame:
@@ -2108,7 +2136,6 @@ def apply_direct_params_a(source: "InputSource",
     """
     # ─── §5.2.1 scalar Params with FlexData fields — Δ.12b unconditional
     flex_data.p_co2_content = p_co2_content_from_source(source)
-    flex_data.p_constraint_constant = p_constraint_constant_from_source(source)
 
     # ─── §5.2.3 relationship 1d_map (constraint coefficients) ───────────
     flex_data.p_node_constraint_invested_capacity_coeff = (
@@ -2276,6 +2303,9 @@ def apply_direct_params_b(source: "InputSource",
     ):
         setattr(flex_data, field,
                 _filter_param_by_periods(fn(source, period_filter=dt), dt))
+
+    # User-constraint constant: scalar, or a period map over the dispatch periods (rows are (cn, d, t)).
+    flex_data.p_constraint_constant = p_constraint_constant_from_source(source, period_filter=dt)
 
     # ─── Δ.4b — group scalar (no period) ─────────────────────────────────
     for fn, field in (

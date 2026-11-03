@@ -47,6 +47,11 @@ class DatabaseContents:
     list_values: dict[str, list] = field(default_factory=dict)
     """value_list_name -> [allowed_values]."""
 
+    behaviour_markers: list[tuple[str, str]] = field(default_factory=list)
+    """Database metadata ``(name, value)`` of the behaviour-change markers
+    (``flextool_behaviour_change:<id>``); carried through xlsx so an
+    exported and re-imported model keeps its behaviour-change notices."""
+
 
 def _convert_numpy(value: Any) -> Any:
     """Convert numpy scalar types to native Python types for openpyxl compatibility."""
@@ -87,6 +92,7 @@ def read_database(db_url: str) -> DatabaseContents:
         _read_param_to_group(dc)
         _read_version(dc)
         _read_list_values(db, dc)
+        _read_behaviour_markers(db, dc)
     finally:
         db.close()
     return dc
@@ -212,6 +218,16 @@ def _read_version(dc: DatabaseContents) -> None:
             if dv is not None:
                 dc.version = float(dv)
             return
+
+
+def _read_behaviour_markers(db: DatabaseMapping, dc: DatabaseContents) -> None:
+    """Read the behaviour-change markers from the database metadata."""
+    from flextool.update_flextool.db_migration import BEHAVIOUR_CHANGE_MARKER_PREFIX
+
+    dc.behaviour_markers = sorted(
+        (str(md["name"]), str(md["value"])) for md in db.get_items("metadata")
+        if str(md["name"]).startswith(BEHAVIOUR_CHANGE_MARKER_PREFIX)
+    )
 
 
 def _read_list_values(db: DatabaseMapping, dc: DatabaseContents) -> None:

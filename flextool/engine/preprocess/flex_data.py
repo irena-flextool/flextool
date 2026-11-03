@@ -659,7 +659,7 @@ class FlexData:
     # ─── User-defined flow constraints ────────────────────────────────────
     flow_constraint_idx: pl.DataFrame | None = None  # (p, source, sink, cn)
     p_flow_constraint_coef: Param | None = None  # (p, source, sink, cn)
-    p_constraint_constant: Param | None = None   # (cn,)
+    p_constraint_constant: Param | None = None   # (cn,), or (cn, d) when some constraint has a period map
     cdt_eq: pl.DataFrame | None = None  # (cn, d, t)
     cdt_le: pl.DataFrame | None = None  # (cn, d, t)
     cdt_ge: pl.DataFrame | None = None  # (cn, d, t)

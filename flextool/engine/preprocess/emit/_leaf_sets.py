@@ -27,6 +27,7 @@ import polars as pl
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.input._axis_enums import alias_to_axis
 from flextool.engine.preprocess._provider_io import _emit
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +40,14 @@ _INVEST_METHOD_NOT_ALLOWED: frozenset[str] = frozenset((
 ))
 _DIVEST_METHOD_NOT_ALLOWED: frozenset[str] = frozenset((
     "not_allowed", "invest_period", "invest_total", "invest_no_limit",
+))
+# Groups have their own value list (``group_invest_methods``, database
+# version 77): ``not_active`` is the group's "no limits" value.
+_GROUP_INVEST_METHOD_NOT_ACTIVE: frozenset[str] = frozenset((
+    "not_active", "retire_period", "retire_total", "retire_no_limit",
+))
+_GROUP_DIVEST_METHOD_NOT_ACTIVE: frozenset[str] = frozenset((
+    "not_active", "invest_period", "invest_total", "invest_no_limit",
 ))
 
 _CO2_PRICE_METHOD: frozenset[str] = frozenset((
@@ -156,20 +165,32 @@ def derive_entity_divest(input_dir: Path,
     return _project_entity_by_method(df, _DIVEST_METHOD_NOT_ALLOWED, "entity")
 
 
+def _read_group_invest_methods(input_dir: Path, *, provider: "object | None") -> pl.DataFrame:
+    """``group__invest_method.csv`` as ``[entity, method]``; a group value
+    ``not_allowed`` (a database not upgraded to version 77) is an error."""
+    df = _read_csv(input_dir / "group__invest_method.csv",
+                   ["entity", "method"], provider=provider)
+    old = df.filter(pl.col("method") == "not_allowed")
+    if old.height > 0:
+        groups = ", ".join(sorted(set(old.get_column("entity").to_list())))
+        raise FlexToolConfigError(
+            f"group invest_method 'not_allowed' was renamed 'not_active' in database version 77 "
+            f"(groups: {groups}). Upgrade the database or set the value to not_active.")
+    return df
+
+
 def derive_group_invest(input_dir: Path,
                          *, provider: "object | None" = None,
                          ) -> pl.DataFrame:
-    df = _read_csv(input_dir / "group__invest_method.csv",
-                   ["entity", "method"], provider=provider)
-    return _project_entity_by_method(df, _INVEST_METHOD_NOT_ALLOWED, "group")
+    df = _read_group_invest_methods(input_dir, provider=provider)
+    return _project_entity_by_method(df, _GROUP_INVEST_METHOD_NOT_ACTIVE, "group")
 
 
 def derive_group_divest(input_dir: Path,
                          *, provider: "object | None" = None,
                          ) -> pl.DataFrame:
-    df = _read_csv(input_dir / "group__invest_method.csv",
-                   ["entity", "method"], provider=provider)
-    return _project_entity_by_method(df, _DIVEST_METHOD_NOT_ALLOWED, "group")
+    df = _read_group_invest_methods(input_dir, provider=provider)
+    return _project_entity_by_method(df, _GROUP_DIVEST_METHOD_NOT_ACTIVE, "group")
 
 
 def emit_invest_method_sets(input_dir: Path, solve_data_dir: Path,

@@ -27,7 +27,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_migration import migrate_repository_database
 
 
 # Resolved at runtime against the repository checkout — these fixtures live
@@ -79,7 +79,7 @@ def _migrate_one(json_path: Path, out_path: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         sqlite_path = Path(tmp) / "staging.sqlite"
         url = json_to_db(json_path, sqlite_path)
-        migrate_database(url)
+        migrate_repository_database(url)
         db_to_json(sqlite_path, out_path)
 
 

@@ -137,7 +137,9 @@ class TestBuildSheetSpecs:
 
     def test_total_sheet_count(self, sheet_specs: list[SheetSpec]) -> None:
         count = len(sheet_specs)
-        assert 55 <= count <= 65, f"Expected 55-65 sheets, got {count}"
+        # Database version 77 added profile_c / profile_p (profile can be a constant or a period map) and constraint_sense_p
+        # (constraint.constant can be a period map).
+        assert 55 <= count <= 68, f"Expected 55-68 sheets, got {count}"
 
     def test_specific_sheets_exist(self, sheet_specs: list[SheetSpec]) -> None:
         names = {s.sheet_name for s in sheet_specs}

@@ -1371,6 +1371,30 @@ def _convert_value(val: str, dtype: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def read_behaviour_markers(file_path: str) -> list[tuple[str, str]]:
+    """Behaviour-change markers ``(name, value)`` stored in an exported
+    workbook: on the navigate sheet below the version (columns F/G) or on the
+    version sheet below row 1 (columns A/B)."""
+    from flextool.update_flextool.db_migration import BEHAVIOUR_CHANGE_MARKER_PREFIX
+
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    markers: list[tuple[str, str]] = []
+    try:
+        for sheet_name, name_col in (("navigate", 6), ("version", 1)):
+            if sheet_name not in wb.sheetnames:
+                continue
+            ws = wb[sheet_name]
+            for row in range(1, min(ws.max_row, 200) + 1):
+                name = ws.cell(row=row, column=name_col).value
+                if isinstance(name, str) and name.startswith(BEHAVIOUR_CHANGE_MARKER_PREFIX):
+                    value = ws.cell(row=row, column=name_col + 1).value
+                    if value is not None:
+                        markers.append((name, str(value)))
+    finally:
+        wb.close()
+    return sorted(set(markers))
+
+
 def read_self_describing_excel(
     file_path: str,
     skip_sheets: set[str] | None = None,

@@ -63,7 +63,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
     ('capacity_margin', 'group'): QuantityType.POWER,
-    # [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the inv...
+    # [MW] Capacity the group needs above its peak net load. Used only with capacity_margin_method manual, and only in investment periods. No valu...
     # Pre-v70 input-side names, carried during the migration window
     # (renamed to input_share_max / input_share_min by db_migration v70).
     ('capacity_max_coeff', 'unit__inputNode'): QuantityType.FRACTION,
@@ -74,6 +74,18 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the un...
     # Legacy long-form aliases still present in the template DB until db_migration.py renames
     # max_capacity_coefficient → capacity_max_coeff and min_capacity_coefficient → capacity_min_coeff.
+    ('constraint_capacity_coeff', 'connection'): QuantityType.DIMENSIONLESS,
+    # Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service...
+    ('constraint_capacity_coeff', 'node'): QuantityType.DIMENSIONLESS,
+    # Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in servi...
+    ('constraint_capacity_coeff', 'unit'): QuantityType.DIMENSIONLESS,
+    # Puts the unit's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus...
+    ('constraint_retired_capacity_coeff', 'connection'): QuantityType.DIMENSIONLESS,
+    # Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.
+    ('constraint_retired_capacity_coeff', 'node'): QuantityType.DIMENSIONLESS,
+    # Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per MWh.
+    ('constraint_retired_capacity_coeff', 'unit'): QuantityType.DIMENSIONLESS,
+    # Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.
     ('max_capacity_coefficient', 'unit__inputNode'): QuantityType.FRACTION,
     ('max_capacity_coefficient', 'unit__outputNode'): QuantityType.FRACTION,
     ('min_capacity_coefficient', 'unit__inputNode'): QuantityType.FRACTION,
@@ -81,9 +93,9 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('co2_content', 'commodity'): QuantityType.EMISSION_INTENSITY,
     # [CO2 ton per MWh] Constant.
     ('co2_max_period', 'group'): QuantityType.EMISSION_MASS,
-    # [tCO2] Annualized maximum limit for emitted CO2 in each period.
+    # [tCO2/a] Largest annual CO2 emissions in each period. In a rolling solve, each roll may use the part of the limit its horizon reaches, minus...
     ('co2_max_total', 'group'): QuantityType.EMISSION_MASS,
-    # [tCO2] Maximum limit for emitted CO2 in the whole solve.
+    # [tCO2] Largest CO2 emissions over the whole model horizon. Each period counts its annual emissions times its years_represented. Rolling solv...
     ('co2_method', 'group'): QuantityType.DIMENSIONLESS,
     # Choice of the CO2 method: none, price, period, total, price_period, price_total, period_total, price_period_total
     ('co2_price', 'group'): QuantityType.PRICE_PER_MASS,
@@ -103,15 +115,15 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('debug', 'model'): QuantityType.DIMENSIONLESS,
     # Instruction set for performing model debugging and testing — a string toggle, no physical unit.
     ('constant', 'constraint'): QuantityType.DIMENSIONLESS,
-    # A constant offset for a user constraint (typically zero). The constant will be on the right side of the equation.
+    # Right-hand side of the user constraint. A period map gives each period its own value; it must cover every period of the solve. Constant or p...
     # User constraints aggregate LHS terms whose units depend on the user's coefficient choices; the RHS constant lives
     # in that same composite coordinate. Layer-2 does not apply a per-row factor — column scalers propagate via the LHS.
     ('constraint_cumulative_pre_built_capacity_coeff', 'connection'): QuantityType.DIMENSIONLESS,
-    # A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline...
+    # Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retir...
     ('constraint_cumulative_pre_built_capacity_coeff', 'node'): QuantityType.DIMENSIONLESS,
-    # A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline...
+    # Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retir...
     ('constraint_cumulative_pre_built_capacity_coeff', 'unit'): QuantityType.DIMENSIONLESS,
-    # A map of coefficients (index: constraint name, value: coefficient) that places the cumulative pre-built capacity at period d — data baseline...
+    # Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retir...
     # Legacy long-form names still present in the template DB until migration runs (db_migration.py renames *_coefficient → *_coeff).
     ('constraint_cumulative_pre_built_capacity_coefficient', 'connection'): QuantityType.DIMENSIONLESS,
     ('constraint_cumulative_pre_built_capacity_coefficient', 'node'): QuantityType.DIMENSIONLESS,
@@ -143,9 +155,9 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('contains_solves', 'solve'): QuantityType.DIMENSIONLESS,
     # Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences
     ('conversion_flow_coeff', 'unit__inputNode'): QuantityType.FRACTION,
-    # [factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from...
+    # [factor, default 1] Fuel-equivalent energy per unit of this flow. It enters the unit's conversion equation, not the node balance. Applies to...
     ('conversion_flow_coeff', 'unit__outputNode'): QuantityType.FRACTION,
-    # [factor] Energy-unit conversion factor for this flow in the node balance and conversion_indirect equations. Value of 0 removes the edge from...
+    # [factor, default 1] Fuel-equivalent energy per unit of this flow. It enters the unit's conversion equation, not the node balance. Applies to...
     # Legacy long-form alias still present in the template DB until db_migration.py renames flow_coefficient → conversion_flow_coeff.
     ('flow_coefficient', 'unit__inputNode'): QuantityType.FRACTION,
     ('flow_coefficient', 'unit__outputNode'): QuantityType.FRACTION,
@@ -182,17 +194,17 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('discount_rate', 'unit'): QuantityType.FRACTION,
     # [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model...
     ('efficiency', 'connection'): QuantityType.FRACTION,
-    # [factor, typically between 0-1] Efficiency of a connection. Constant or time.
+    # [factor, typically 0-1] Efficiency of the connection. Constant, period, time or period+time.
     ('efficiency', 'unit'): QuantityType.FRACTION,
-    # [factor] Efficiency of a unit. Constant or time.
+    # [factor] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum...
     ('efficiency_at_min_load', 'unit'): QuantityType.FRACTION,
-    # [e.g. 0.4 means 40%] Efficiency of the unit at minimum load. Applies only if the unit has an online variable. Constant.
+    # [e.g. 0.4 means 40%] Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this effic...
     ('energy_margin_multiplier', 'node'): QuantityType.DIMENSIONLESS,
-    # [factor] Multiplier applied to this node's inflow in the investment solve only (ratio, consumed at preprocessing; 1 = off).
+    # [factor] Multiplier applied to this node's inflow in the investment solve only, when energy_margin_method = 'inflow_multiplier'. Offsets rep...
     ('energy_margin', 'node'): QuantityType.DIMENSIONLESS,
     # Deprecated v65 name for energy_margin_multiplier; carried during the v65->v66 migration window so a pre-migration DB read is not silently un-scaled.
     ('energy_margin_adder', 'node'): QuantityType.ENERGY,
-    # [MWh] Extra demand (negative inflow) added to this node in the investment solve only (real energy; consumed at preprocessing; 0 = off).
+    # [MWh] Extra demand (negative inflow) added to this node in the investment solve only, when energy_margin_method = 'inflow_adder'. Raises ade...
     ('energy_margin_method', 'node'): QuantityType.DIMENSIONLESS,
     # Method choice {none, inflow_multiplier, inflow_adder} selecting whether/how the energy margin is applied.
     ('existing', 'connection'): QuantityType.POWER,
@@ -216,25 +228,25 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('has_capacity_margin', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has a capacity margin constraint in the investment mode.
     ('capacity_margin_method', 'group'): QuantityType.DIMENSIONLESS,
-    # Method for the group's capacity-margin constraint (none|manual).
+    # Whether the group needs a capacity margin in investment solves. none: no margin. manual: the group needs capacity_margin MW above its peak n...
     ('has_inertia', 'group'): QuantityType.DIMENSIONLESS,
-    # A flag whether the group of nodes has an inertia constraint active.
+    # Whether the group has an inertia constraint. Without yes, inertia_limit is ignored.
     ('has_non_synchronous', 'group'): QuantityType.DIMENSIONLESS,
-    # A flag whether the group of nodes has the non-synchronous share constraint active.
+    # Whether the group has a non-synchronous share limit. Without yes, non_synchronous_limit is ignored.
     ('include_stochastics', 'group'): QuantityType.DIMENSIONLESS,
     # Includes the stochastic branches to be used for the nodes/units/connections in this group
     ('increase_reserve_ratio', 'reserve__upDown__connection__node'): QuantityType.FRACTION,
-    # [factor] The reserve requirement is increased by the flow from the connection to the node multiplied by this ratio. Constant.
+    # [factor] The reserve requirement grows by this ratio times the flow between the connection and the node, in either direction, for upward and...
     ('increase_reserve_ratio', 'reserve__upDown__group'): QuantityType.FRACTION,
-    # [factor] The reserve is increased by the sum of demands from the group members multiplied by this ratio. Constant.
+    # [factor] Only for dynamic reserve methods. The requirement grows by this ratio times the demand of the group's nodes in each step (MW, real ...
     ('increase_reserve_ratio', 'reserve__upDown__unit__node'): QuantityType.FRACTION,
-    # [factor] The reserve requirement is increased by generation from the unit to the node multiplied by this ratio. Constant.
+    # [factor] The reserve requirement grows by this ratio times the flow between the unit and the node, for upward and downward reserve alike. At...
     ('inertia_constant', 'unit__inputNode'): QuantityType.INERTIA_PER_CAPACITY,
     # [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
     ('inertia_constant', 'unit__outputNode'): QuantityType.INERTIA_PER_CAPACITY,
     # [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
     ('inertia_limit', 'group'): QuantityType.INERTIA,
-    # [MWs] Minimum for synchronous inertia in the group of nodes. Constant or period.
+    # [MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no requirement. Constant or period.
     ('inflation_offset_investment', 'model'): QuantityType.DURATION,
     # [years] Offset for when investment costs occur within a year. Default 0 (beginning of year).
     ('inflation_offset_operations', 'model'): QuantityType.DURATION,
@@ -258,49 +270,49 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('invest_forced', 'node'): QuantityType.ENERGY,
     # (empty description) — inferred from ('existing', 'node') = [MWh]: forced storage-capacity investment.
     ('invest_max_period', 'connection'): QuantityType.POWER,
-    # [MW] Maximum investment. Period.
+    # [MW] Largest allowed investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it...
     ('invest_max_period', 'group'): QuantityType.UNKNOWN,
-    # [MW or MWh] Maximum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Period...
+    # [MW or MWh] Largest allowed investment in each period, summed over the group's units and connections (MW) and storage nodes (MWh). Constant ...
     ('invest_max_period', 'node'): QuantityType.ENERGY,
-    # [MWh] Maximum storage investment. Period.
+    # [MWh] Largest allowed storage investment in each period. Counts only what is built in that period; existing capacity and retirements do not ...
     ('invest_max_period', 'unit'): QuantityType.POWER,
-    # [MW] Maximum investment. Period.
+    # [MW] Largest allowed investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it...
     ('invest_max_total', 'connection'): QuantityType.POWER,
-    # [MW] Maximum investment over all solves. Constant.
+    # [MW] Largest allowed total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in ser...
     ('invest_max_total', 'group'): QuantityType.UNKNOWN,
-    # [MW or MWh] Maximum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all so...
+    # [MW or MWh] Largest allowed total investment of the group over all solves. Every investment counts; retirements do not reduce it. Constant.
     ('invest_max_total', 'node'): QuantityType.ENERGY,
-    # [MWh] Maximum investment over all solves. Constant.
+    # [MWh] Largest allowed total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in se...
     ('invest_max_total', 'unit'): QuantityType.POWER,
-    # [MW] Maximum investment over all solves. Constant.
+    # [MW] Largest allowed total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in ser...
     ('invest_method', 'connection'): QuantityType.DIMENSIONLESS,
     # Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits ...
     ('invest_method', 'group'): QuantityType.DIMENSIONLESS,
-    # Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits ...
+    # How the group limits investment and retirement of its members. not_active: the group sets no limits. invest / retire / invest_retire: which ...
     ('invest_method', 'node'): QuantityType.DIMENSIONLESS,
     # Choice of investment method: either not_allowed or then a combination of 1) investment or retirement and 2) investment limits per period, al...
     ('invest_method', 'unit'): QuantityType.DIMENSIONLESS,
     # Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits ...
     ('invest_min_period', 'connection'): QuantityType.POWER,
-    # [MW] Minimum investment. Period.
+    # [MW] Smallest required investment in each period. Counts only what is built in that period; existing capacity and retirements do not change ...
     ('invest_min_period', 'group'): QuantityType.UNKNOWN,
-    # [MW or MWh] Minimum investment per period to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Period...
+    # [MW or MWh] Smallest required investment in each period, summed over the group's units and connections (MW) and storage nodes (MWh). Constan...
     ('invest_min_period', 'node'): QuantityType.ENERGY,
-    # [MWh] Minimum storage investment. Period.
+    # [MWh] Smallest required storage investment in each period. Counts only what is built in that period; existing capacity and retirements do no...
     ('invest_min_period', 'unit'): QuantityType.POWER,
-    # [MW] Minimum investment. Period.
+    # [MW] Smallest required investment in each period. Counts only what is built in that period; existing capacity and retirements do not change ...
     ('invest_min_total', 'connection'): QuantityType.POWER,
-    # [MW] Minimum investment over all solves. Constant.
+    # [MW] Smallest required total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in s...
     ('invest_min_total', 'group'): QuantityType.UNKNOWN,
-    # [MW or MWh] Minimum investment to the virtual capacity of a group of units or to the storage capacity of a group of nodes. Total over all so...
+    # [MW or MWh] Smallest required total investment of the group over all solves. Every investment counts; retirements do not reduce it. Constant...
     ('invest_min_total', 'node'): QuantityType.ENERGY,
-    # [MWh] Minimum investment over all solves. Constant.
+    # [MWh] Smallest required total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in ...
     ('invest_min_total', 'unit'): QuantityType.POWER,
-    # [MW] Minimum investment over all solves. Constant.
+    # [MW] Smallest required total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in s...
     ('invest_periods', 'solve'): QuantityType.DIMENSIONLESS,
     # Array of periods where investments are allowed.
     ('is_DC', 'connection'): QuantityType.DIMENSIONLESS,
-    # A flag whether the connection is DC (the flow will not be counted as synchronous if there is a non_synchronous_limit). Default false.
+    # Whether the connection is DC. Its flow into a group with a non-synchronous limit counts as non-synchronous, in both directions. Default no.
     ('is_non_synchronous', 'unit__inputNode'): QuantityType.DIMENSIONLESS,
     # Chooses whether the unit is synchronously connected to this node.
     ('is_non_synchronous', 'unit__outputNode'): QuantityType.DIMENSIONLESS,
@@ -316,9 +328,9 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('is_enabled', 'reserve__upDown__unit__node'): QuantityType.DIMENSIONLESS,
     # Flag whether the reserve participation is enabled; disabled rows dropped.
     ('large_failure_ratio', 'reserve__upDown__connection__node'): QuantityType.FRACTION,
-    # [factor] Each connection using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of th...
+    # [factor] With a large_failure method, the reserve must cover the loss of this connection's flow times this ratio. Its own reserve does not c...
     ('large_failure_ratio', 'reserve__upDown__unit__node'): QuantityType.FRACTION,
-    # [factor] Each unit using the N-1 failure method will have a separate constraint to require sufficient reserve to cover a failure of the unit...
+    # [factor] With a large_failure method, the reserve must cover the loss of this unit's flow times this ratio. Its own reserve does not count. ...
     ('lifetime', 'connection'): QuantityType.DURATION,
     # [years] Used to calculate annuity together with interest rate. Constant or period.
     ('lifetime', 'node'): QuantityType.DURATION,
@@ -332,39 +344,47 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('lifetime_method', 'unit'): QuantityType.DIMENSIONLESS,
     # Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the en...
     ('max_cumulative_flow', 'flowGroup'): QuantityType.POWER,
-    # [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multipli...
+    # [MW] Largest allowed average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flo...
     ('max_flow_for_unconstrained_variables', 'model'): QuantityType.POWER,
     # [MW] Upper bound assigned to LP variables that have no other cap (invest_no_limit / invest_retire_no_limit capacity; flows through edges who...
     ('max_instant_flow', 'flowGroup'): QuantityType.POWER,
     # [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant or period.
     ('max_share', 'reserve__upDown__connection__node'): QuantityType.FRACTION,
-    # [factor] Maximum ratio for the transfer of reserve to this node. Constant.
+    # [factor] Largest share of the connection's built capacity that can be held as this reserve at this node. Constant.
     ('max_share', 'reserve__upDown__unit__node'): QuantityType.FRACTION,
-    # [factor] Maximum ratio for the transfer of reserve to this node. Constant.
+    # [factor] Largest share of the unit's built capacity at this node that can be held as this reserve. At an input node, the capacity is the uni...
     ('min_cumulative_flow', 'flowGroup'): QuantityType.POWER,
-    # [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multipli...
+    # [MW] Smallest required average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average f...
     ('min_downtime', 'unit'): QuantityType.DURATION,
-    # [hours] Minimum time the unit must stay offline after shutting down. Requires minimum_time_method set to 'min_downtime' or 'both'. Constant.
+    # [hours] Minimum time the unit stays offline after a stop. Needs minimum_time_method. The look-back stops at a gap in the timeline and at the...
     ('min_instant_flow', 'flowGroup'): QuantityType.POWER,
     # [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant or period.
     ('min_load', 'unit'): QuantityType.FRACTION,
-    # [0-1] Minimum load of the unit. Applies only if the unit has an online variable. With linear startups, it is the share of capacity started u...
+    # [0-1] Minimum load of the unit as a share of its online capacity. Applies only if the unit has online variables. No value means 0. Constant,...
     ('min_uptime', 'unit'): QuantityType.DURATION,
-    # [hours] Minimum time the unit must stay online after starting up. Requires minimum_time_method set to 'min_uptime' or 'both'. Constant.
+    # [hours] Minimum time the unit stays online after a start. Needs minimum_time_method. The look-back stops at a gap in the timeline and at the...
     ('minimum_time_method', 'unit'): QuantityType.DIMENSIONLESS,
     # Choice between minimum up- and downtimes (none, min_downtime, min_uptime, both). Setting this to anything other than 'none' will activate on...
     ('new_stepduration', 'group'): QuantityType.DURATION,
-    # Hours. Members of this group operate at this step duration. Overrides the solve-level new_stepduration for these entities. Used for multi-re...
+    # [hours] Balances the energy of the group's nodes once per step of this length instead of every time step, e.g. daily hydrogen next to hourly...
     ('new_stepduration', 'solve'): QuantityType.DURATION,
     # Hours. Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline will sum or average the other ti...
     ('node_type', 'node'): QuantityType.DIMENSIONLESS,
     # Role of this node in the LP.  'commodity' = price-exposed source/sink with no balance constraint (e.g. fuel imports, no storage); 'balance' ...
+    ('retire_max_period', 'group'): QuantityType.UNKNOWN,
+    # [MW or MWh] Largest allowed retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest...
+    ('retire_max_total', 'group'): QuantityType.UNKNOWN,
+    # [MW or MWh] Largest allowed total retirement of the group over all solves. Needs a retire …_total option in the group's invest_method. Const...
+    ('retire_min_period', 'group'): QuantityType.UNKNOWN,
+    # [MW or MWh] Smallest required retirement in each period, summed over the group's members. Needs a retire …_period option in the group's inve...
+    ('retire_min_total', 'group'): QuantityType.UNKNOWN,
+    # [MW or MWh] Smallest required total retirement of the group over all solves. Needs a retire …_total option in the group's invest_method. Con...
     ('shared_invest_periods', 'solve'): QuantityType.DIMENSIONLESS,
-    # Array of periods over which investment (v_invest/v_divest) is SHARED across stochastic branches (the standard two-stage mode). Unset/empty = no shared tie.
+    # Periods where investments are the same in every stochastic branch (with recourse). No value or empty array: none.
     ('shared_operation_periods', 'solve'): QuantityType.DIMENSIONLESS,
-    # Array of periods over which operations are SHARED across stochastic branches (Slice G). Unset = legacy realized_dispatch u fix_storage window; empty = operations free from t0.
+    # Periods where operations are the same in every stochastic branch. No value: the committed time steps. Empty array: none.
     ('non_synchronous_limit', 'group'): QuantityType.FRACTION,
-    # [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group. Constant or period.
+    # [share, e.g. 0.8] Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do...
     ('other_operational_cost', 'connection'): QuantityType.PRICE_PER_ENERGY,
     # [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time.
     ('other_operational_cost', 'unit__inputNode'): QuantityType.PRICE_PER_ENERGY,
@@ -376,7 +396,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('output_connection_flow_separate', 'model'): QuantityType.DIMENSIONLESS,
     # Boolean output toggle: produce connection flows separately for each direction. Flag.
     ('output_horizon', 'model'): QuantityType.DIMENSIONLESS,
-    # Outputs the flows in the horizons. Used for testing the model.
+    # Debug flag. yes writes one raw parquet file per LP variable and constraint, with every row of every solve and a realized column. Normal outp...
     ('output_node_balance_t', 'model'): QuantityType.DIMENSIONLESS,
     # Boolean output toggle: per-timestep node balance (inflows/outflows) for diagnostics. Flag.
     ('print_dispatch', 'group'): QuantityType.DIMENSIONLESS,
@@ -412,13 +432,13 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('price', 'commodity'): QuantityType.PRICE_PER_ENERGY,
     # [CUR/MWh or other unit] Price of the commodity. Constant, period or time.
     ('price_ladder_annual', 'commodity'): QuantityType.DIMENSIONLESS,
-    # Stepped supply curve for price_method='price_ladder_annual'.  Two forms accepted: 2d map with rows 'tier,price,quantity' applies the same pe...
+    # Stepped supply curve for price_method price_ladder_annual. Map of tier → price and quantity (optionally per period). Quantity is per year; a...
     ('price_ladder_cumulative', 'commodity'): QuantityType.DIMENSIONLESS,
     # Stepped supply curve for price_method='price_ladder_cumulative'.  2d map with rows 'tier,price,quantity' — one row per tier, giving the tier...
     ('price_method', 'commodity'): QuantityType.DIMENSIONLESS,
     # How the commodity's price enters the LP.  'price' = scalar or time-series price x flow (current behaviour); 'price_ladder_annual' = stepped ...
     ('profile', 'profile'): QuantityType.FRACTION,
-    # [factor, typically between 0-1]. Availability time series for a fluctuating resource like wind power. Time.
+    # [factor, typically 0-1] Profile values, e.g. the availability of wind power (capacity factor). Constant, period, time, period+time or stocha...
     ('profile_method', 'connection__profile'): QuantityType.DIMENSIONLESS,
     # Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.
     ('profile_method', 'node__profile'): QuantityType.DIMENSIONLESS,
@@ -430,17 +450,17 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('ramp_cost', 'unit__outputNode'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/MW] Cost of ramping the unit. Constant.
     ('ramp_method', 'unit__inputNode'): QuantityType.DIMENSIONLESS,
-    # Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 1...
+    # Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.
     ('ramp_method', 'unit__outputNode'): QuantityType.DIMENSIONLESS,
-    # Choice of ramp methods.
+    # Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.
     ('ramp_speed_down', 'unit__inputNode'): QuantityType.RAMP_RATE,
-    # [per unit / minute] Maximum ramp down speed. Constant.
+    # [share of capacity per minute] Largest decrease of the flow between two time steps. No limit across a gap in the timeline. Constant.
     ('ramp_speed_down', 'unit__outputNode'): QuantityType.RAMP_RATE,
-    # [per unit  / minute] Maximum ramp down speed. Constant.
+    # [share of capacity per minute] Largest decrease of the flow between two time steps. No limit across a gap in the timeline. Constant.
     ('ramp_speed_up', 'unit__inputNode'): QuantityType.RAMP_RATE,
-    # [per unit / minute] Maximum ramp up speed. Constant.
+    # [share of capacity per minute] Largest increase of the flow between two time steps. No limit across a gap in the timeline. Constant.
     ('ramp_speed_up', 'unit__outputNode'): QuantityType.RAMP_RATE,
-    # [per unit  / minute] Maximum ramp up speed. Constant.
+    # [share of capacity per minute] Largest increase of the flow between two time steps. No limit across a gap in the timeline. Constant.
     ('reactance', 'connection'): QuantityType.DIMENSIONLESS,
     # [p.u.] Per-unit reactance of the transmission line. Used for DC power flow when the connection is within a nodeGroup that has transfer_metho...
     ('realized_invest_periods', 'solve'): QuantityType.DIMENSIONLESS,
@@ -458,31 +478,31 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('reserve_duration', 'reserve__upDown__group'): QuantityType.DURATION,
     # [h] Time span over which committed reserve power must be sustainable from storage. Constant.
     ('reserve_method', 'reserve__upDown__group'): QuantityType.DIMENSIONLESS,
-    # Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only, timeseries_and_dynamic, timeseries_and_large_failur...
+    # Choice of reserve method: no_reserve, timeseries_only, dynamic_only, large_failure_only or their combinations. Dynamic and large_failure req...
     ('retire_max_period', 'connection'): QuantityType.POWER,
-    # [MW] Maximum retired capacity. Period.
+    # [MW] Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change ...
     ('retire_max_period', 'node'): QuantityType.ENERGY,
-    # [MWh] Maximum retired storage capacity. Period.
+    # [MWh] Largest allowed retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and inves...
     ('retire_max_period', 'unit'): QuantityType.POWER,
-    # [MW] Maximum retired capacity. Period.
+    # [MW] Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change ...
     ('retire_max_total', 'connection'): QuantityType.POWER,
-    # [MW] Maximum retired capacity over all solves. Constant.
+    # [MW] Largest allowed total retirement over all solves. Investments and existing capacity do not change it. Constant.
     ('retire_max_total', 'node'): QuantityType.ENERGY,
-    # [MWh] Maximum retired storage capacity over all solves. Constant.
+    # [MWh] Largest allowed total retirement over all solves. Investments and existing capacity do not change it. Constant.
     ('retire_max_total', 'unit'): QuantityType.POWER,
-    # [MW] Maximum retired capacity over all solves. Constant.
+    # [MW] Largest allowed total retirement over all solves. Investments and existing capacity do not change it. Constant.
     ('retire_min_period', 'connection'): QuantityType.POWER,
-    # [MW] Maximum retired capacity. Period.
+    # [MW] Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not chang...
     ('retire_min_period', 'node'): QuantityType.ENERGY,
-    # [MWh] Minimum retired storage capacity. Period.
+    # [MWh] Smallest required retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and inv...
     ('retire_min_period', 'unit'): QuantityType.POWER,
-    # [MW] Minimum retired capacity. Period.
+    # [MW] Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not chang...
     ('retire_min_total', 'connection'): QuantityType.POWER,
-    # [MW] Minimum retired capacity over all solves. Constant.
+    # [MW] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.
     ('retire_min_total', 'node'): QuantityType.ENERGY,
-    # [MWh] Minimum retired storage capacity over all solves. Constant.
+    # [MWh] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.
     ('retire_min_total', 'unit'): QuantityType.POWER,
-    # [MW] Minimum retired capacity over all solves. Constant.
+    # [MW] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.
     ('rolling_duration', 'solve'): QuantityType.DURATION,
     # Hours (Optional). Duration of rolling, if not stated, assumed to be the whole timeline of the solve
     ('rolling_solve_horizon', 'solve'): QuantityType.DURATION,
@@ -496,9 +516,9 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('salvage_value', 'unit'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/kW] Salvage value of the unit. Constant or period.
     ('scaling', 'solve'): QuantityType.DIMENSIONLESS,
-    # Numerical LP-autoscaler mode for this solve: 'off'/'solver_only'/'basic'/'full' (default). Solver-config choice, never an LP coefficient.
+    # Numerical scaling of this solve's LP. full (default): FlexTool rescales variables, constraints and costs and sets the solver's scaling. basi...
     ('self_discharge_loss', 'node'): QuantityType.FRACTION,
-    # [e.g. 0.01 means 1% every hour] Loss of stored energy over time. Constant or time.
+    # [e.g. 0.01 means 1% per hour] Share of the stored energy lost each hour. Constant, period, time or period+time.
     ('sense', 'constraint'): QuantityType.DIMENSIONLESS,
     # The sense of the constraint ('greater_than', 'less_than' or 'equal').
     ('share_loss_of_load', 'group'): QuantityType.DIMENSIONLESS,
@@ -536,21 +556,21 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('small_number_threshold', 'model'): QuantityType.DIMENSIONLESS,
     # Config scalar: LP coefficients/RHS below this magnitude are floored to 0. Not an LP coefficient itself.
     ('startup_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,
-    # [CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant.
+    # [CUR/MW] Cost of starting up one MW of capacity. Constant or period.
     ('startup_cost', 'unit'): QuantityType.PRICE_PER_CAPACITY,
-    # [CUR/MW] Cost of starting up one MW of 'virtual' capacity. Constant.
+    # [CUR/MW] Cost of starting up one MW of capacity. Constant or period.
     ('startup_method', 'connection'): QuantityType.DIMENSIONLESS,
-    # Choice of startup method
+    # Gives the connection online capacity in both directions. Flows and reserves are limited by the online capacity, and startup_cost is paid per...
     ('startup_method', 'unit'): QuantityType.DIMENSIONLESS,
-    # Choice of startup method. Linear startup means that the unit can start partially (anything between 0 and full capacity) but will face startu...
+    # Whether the unit has online variables. linear: any share of the capacity can be online. binary: whole units only (slower to solve). Online s...
     ('stochastic_branches', 'solve'): QuantityType.DIMENSIONLESS,
-    # [4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the...
+    # Forecast branches of the solve (map: period, branch, analysis_time, realized → probability weight). Weights are normalised per start time. A...
     ('stochastic_invest_method', 'solve'): QuantityType.DIMENSIONLESS,
-    # Opt-in mode string (none/recourse) for how stochastic branches participate in investment; a mode carries no physical unit.
+    # How stochastic branches invest. none (default): one shared investment plan for all branches. recourse: each branch also invests at and after...
     ('dispatch_realization_method', 'solve'): QuantityType.DIMENSIONLESS,
-    # Opt-in mode string (within_solve/separate_dispatch) for how stochastic branches are realized into dispatch; a mode carries no physical unit.
+    # How the committed part of a stochastic solve is realized. within_solve (default): a realized: yes branch gets a realization solve automatica...
     ('storage_binding_method', 'node'): QuantityType.DIMENSIONLESS,
-    # Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over an...
+    # Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind...
     ('storage_nested_fix_method', 'node'): QuantityType.DIMENSIONLESS,
     # Used in nested solve sequences. Set this storage as a long term storage, which end state is passed to the lower level solves as a target. *F...
     ('storage_solve_horizon_method', 'node'): QuantityType.DIMENSIONLESS,
@@ -558,13 +578,13 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('storage_start_end_method', 'node'): QuantityType.DIMENSIONLESS,
     # Choice whether the start and end states of storage are fixed in the beginning and end of the whole model timeline (not between solves). Uses...
     ('storage_state_end', 'node'): QuantityType.FRACTION,
-    # [0-1] Relative state of storage at the end of the last model solve (overrides 'storage_state_end_reference'). Constant.
+    # [0-1] Storage state at the end of the last solve, as a share of the storage capacity. Needed by fix_end and fix_start_end. Constant.
     ('storage_state_reference_price', 'node'): QuantityType.PRICE_PER_ENERGY,
     # [CUR/MWh] Price for the stored energy at the end of the solve horizon. Requires 'use_reference_price' in 'storage_solve_horizon_method'. Con...
     ('storage_state_reference_value', 'node'): QuantityType.FRACTION,
     # [0-1] Relative state of storage at then end of each solve (can be overwritten in the next solve).  Requires 'use_reference_value' in 'storag...
     ('storage_state_start', 'node'): QuantityType.FRACTION,
-    # [0-1] Relative state of storage at the beginning of the first model solve (irrespective of when the model starts). Constant.
+    # [0-1] Storage state at the start of the first solve, as a share of the storage capacity. Needed by fix_start and fix_start_end. Constant.
     ('timeline', 'timeset'): QuantityType.DIMENSIONLESS,
     # The name of the timeline that the timeset uses. (String)
     ('timeline_hole_multiplier', 'solve'): QuantityType.DIMENSIONLESS,
@@ -572,9 +592,9 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('timeset_duration', 'timeset'): QuantityType.DURATION,
     # Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps
     ('timeset_weights', 'timeset'): QuantityType.FRACTION,
-    # Per-timestep weight map (index: timestep name, value: float) applied to cost and slack terms in the objective. Use for non-RP models where t...
+    # Weight of each time step (map, index time). Weights how much each step counts in costs, energy and demand scaling. Normalised per period. Fo...
     ('representative_period_weights', 'timeset'): QuantityType.FRACTION,
-    # Rank-2 nested Map (base period -> representative period -> weight); RP weighting, mutually exclusive with timeset_weights.
+    # Representative-period weighting map (rank-2 nested Map: base period start timestep -> representative period start timestep -> weight).  Crea...
     ('timestep_duration', 'timeline'): QuantityType.DURATION,
     # Map of time steps in the timeline. Index: time step name, value: time step duration in hours.
     ('transfer_method', 'connection'): QuantityType.DIMENSIONLESS,
@@ -589,11 +609,11 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('version', 'model'): QuantityType.DIMENSIONLESS,
     # Contains database version information.
     ('virtual_unitsize', 'connection'): QuantityType.POWER,
-    # [MW] Size of single connection - used for integer (lumped) investments.
+    # [MW] Size of one unit. Investments, retirements and binary startups move whole units of this size. No value: the existing capacity, or 1000 ...
     ('virtual_unitsize', 'node'): QuantityType.ENERGY,
-    # [MWh] Size of a single storage unit - used for integer investments (lumped investments). If not given, assumed from the existing storage cap...
+    # [MWh] Size of one unit. Investments, retirements and binary startups move whole units of this size. No value: the existing capacity, or 1000...
     ('virtual_unitsize', 'unit'): QuantityType.POWER,
-    # [MW] Size of a single unit - used for integer investments (lumped investments), minimum loads and start-up costs. If not given, assumed from...
+    # [MW] Size of one unit. Investments, retirements and binary startups move whole units of this size. No value: the existing capacity, or 1000 ...
     ('years_represented', 'solve'): QuantityType.DURATION,
     # Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple p...
 }
@@ -620,6 +640,10 @@ _GROUP_CAPACITY_PARAMS: frozenset[str] = frozenset({
     "invest_max_total",
     "invest_min_period",
     "invest_min_total",
+    "retire_max_period",
+    "retire_max_total",
+    "retire_min_period",
+    "retire_min_total",
 })
 
 
