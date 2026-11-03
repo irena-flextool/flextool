@@ -642,6 +642,43 @@ def validate_connection_startup(db, provider) -> None:
         raise FlexToolConfigError(DC_ONLINE_MESSAGE.format(names=", ".join(hit)))
 
 
+def warn_existing_not_whole_units(db, provider) -> None:
+    """Print a warning for each unit / connection with integer online variables whose existing capacity is not a
+    whole number of units.
+
+    ``existing`` is capacity in MW and the unit count is ``existing / virtual_unitsize`` (the ``params._derived``
+    existing-count cascade).  An integer online variable (``process_online_integer``: ``startup_method = binary``)
+    counts whole units up to that count, so a count such as 4.75 cannot all be online.  The usual cause is
+    entering the number of units as ``existing``.  Nodes and investments have no integer variables, so they are not
+    checked.  Reads the integer set from the Provider (after ``emit_process_method_projections``).  ``db`` is
+    scenario-filtered, and the input derivation runs once per scenario, so each entity is reported once per run.
+    Results are unchanged.
+    """
+    key = "solve_data/process_online_integer"
+    if not provider.has(key):
+        return
+    frame = provider.get(key)
+    if frame is None or frame.height == 0:
+        return
+    integer = {str(x) for x in frame.get_column(frame.columns[0]).to_list()}
+    for cls in ("unit", "connection"):
+        unitsize = {name: vals[0] for name, vals in _explicit_values(db, cls, "virtual_unitsize").items()
+                    if name in integer and vals and vals[0] > 0.0}
+        for name, existing in sorted(_explicit_values(db, cls, "existing").items()):
+            size = unitsize.get(name)
+            if size is None:
+                continue
+            fractional = [(e, e / size) for e in dict.fromkeys(existing)
+                          if abs(e / size - round(e / size)) > 1e-6 * max(1.0, abs(e / size))]
+            if not fractional:
+                continue
+            counts = ", ".join(f"{c:g} ({e:g} MW / {size:g} MW)" for e, c in fractional)
+            print(f"Warning: {cls} '{name}' has integer online variables (whole units), but existing / "
+                  f"virtual_unitsize gives {counts} units, not a whole number. existing is the capacity in MW "
+                  f"(MWh for storage), not the number of units; with virtual_unitsize the number of units is "
+                  f"existing / virtual_unitsize.", flush=True)
+
+
 def validate_group_increase_reserve_ratio(db, logger: logging.Logger) -> None:
     """Warn once per reserve group with an ``increase_reserve_ratio`` but no dynamic ``reserve_method``.
 

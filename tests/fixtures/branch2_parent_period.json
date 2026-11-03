@@ -1927,7 +1927,7 @@
         null
       ],
       null,
-      "[MW] Existing capacity. Constant or Period",
+      "[MW] Capacity that already exists. With virtual_unitsize, the number of units is existing / virtual_unitsize. Constant or period.",
       "basics"
     ],
     [
@@ -2928,7 +2928,7 @@
         null
       ],
       null,
-      "[MWh] Existing storage capacity. Constant or Period",
+      "[MWh] Storage capacity that already exists. With virtual_unitsize, the number of units is existing / virtual_unitsize. Constant or period.",
       "basics"
     ],
     [
@@ -3984,7 +3984,7 @@
         null
       ],
       null,
-      "[MW] Existing capacity. Constant or Period",
+      "[MW] Capacity that already exists. With virtual_unitsize, the number of units is existing / virtual_unitsize. Constant or period.",
       "basics"
     ],
     [

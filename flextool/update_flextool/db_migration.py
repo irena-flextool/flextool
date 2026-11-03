@@ -4498,6 +4498,9 @@ def _v77_texts() -> dict[tuple[str, str], str]:
         t[(cls, "virtual_unitsize")] = (
             f"{unit} Size of one unit. Investments, retirements and binary startups move whole units of this size. "
             f"No value: the existing capacity, or 1000 {unit[1:-1]} without it.")
+        t[(cls, "existing")] = (
+            f"{unit} {'Storage capacity' if cls == 'node' else 'Capacity'} that already exists. With "
+            f"virtual_unitsize, the number of units is existing / virtual_unitsize. Constant or period.")
     t[("connection", "is_DC")] = (
         "Whether the connection is DC. Its flow into a group with a non-synchronous limit counts as "
         "non-synchronous, in both directions. Default no.")

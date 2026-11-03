@@ -132,6 +132,7 @@ def run(
         validate_connection_delay,
         validate_connection_startup,
         validate_group_increase_reserve_ratio,
+        warn_existing_not_whole_units,
         validate_unit_input_shares,
         validate_output_min_coeff,
     )
@@ -279,6 +280,7 @@ def run(
         _mid.emit_process_delayed__duration(input_dir, solve_data_dir, provider=provider)
         _calc.emit_entity_total_caps(input_dir, solve_data_dir, provider=provider)
         _calc.emit_process_method_projections(input_dir, provider=provider)
+        warn_existing_not_whole_units(db, provider)
         _calc.emit_process_VRE(input_dir, provider=provider)
         _calc.emit_process_arc_method_joins(input_dir, provider=provider)
         _calc.emit_process_profile_method_joins(input_dir, provider=provider)

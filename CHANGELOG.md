@@ -68,6 +68,13 @@
   connections; solved values unchanged).
 - **Fix: a node retirement or an investment without its period map stops with an error** naming the missing data
   (before: the retirement or investment was left out of the capacity without a word). Results unchanged.
+- **Warning when `existing` is not a whole number of units for a unit or connection with integer online
+  variables** (`startup_method = binary`). `existing` is the capacity in MW (MWh for storage); with
+  `virtual_unitsize` the number of units is `existing` / `virtual_unitsize`. The warning names the entity, the
+  resulting count and the unit size. Results unchanged.
+- **Docs: `existing` is capacity, not a number of units.** The `existing` and `virtual_unitsize` descriptions (in
+  the database and the reference) said that with `virtual_unitsize` set, `existing` counts units; FlexTool has
+  always read it as MW (MWh for storage) and divided it by `virtual_unitsize`.
 - **Docs: `increase_reserve_ratio` applies to upward and downward reserve alike.** The ratio stands for the
   variability of a flow, which can go either way, so each participating flow raises both requirements (unlike
   `large_failure_ratio`, which is directional). The reference and the parameter descriptions now say so; the model
