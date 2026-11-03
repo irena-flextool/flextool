@@ -182,32 +182,53 @@ def emit_step_jump(
                    derive_step_jump(step_lengths))
 
 
+_ROLL_FIRST_STEP_LINK_HEADERS = _STEP_JUMP_HEADERS + (
+    "previous_end_rank", "previous_end_root", "previous_end_index", "previous_end_branch",
+)
+
+
 def derive_roll_first_step_link(
     active_time_list: dict,
     complete_step_lengths: list[tuple[str, ...]],
+    complete_active_time_list: "dict | None" = None,
+    end_of=None,
 ) -> pl.DataFrame:
     """The complete solve's ``step_previous`` rows (7 Utf8 columns) of the first step of each period of
-    ``active_time_list`` (period -> steps with ``.timestep``), in period order.  Periods (or first steps)
-    that the complete solve does not have (stochastic branch periods) have no row."""
+    ``active_time_list`` (period -> steps with ``.timestep``), in period order, plus where the predecessor ends on
+    the base timeline (``previous_end_rank``, ``previous_end_root``, ``previous_end_index``,
+    ``previous_end_branch``: ``end_of(previous_period, previous_within_solve, its duration in
+    complete_active_time_list)``, ``solve._carry_routing._TimeIndex.end_of``; empty strings when unknown or without
+    ``end_of``).  Periods (or first steps) that the complete solve does not have (stochastic branch periods) have
+    no row."""
     by_key = {(row[0], row[1]): row for row in complete_step_lengths}
+    duration = {(str(period), str(step.timestep)): step.duration
+                for period, steps in (complete_active_time_list or {}).items() for step in steps}
     rows = []
     for period, steps in active_time_list.items():
         if not steps:
             continue
         row = by_key.get((period, steps[0].timestep))
-        if row is not None:
-            rows.append(row)
-    return _to_utf8_frame(_STEP_JUMP_HEADERS, rows)
+        if row is None:
+            continue
+        pos = None
+        if end_of is not None:
+            prev = (str(row[4]), str(row[5]))
+            if prev in duration:
+                pos = end_of(prev[0], prev[1], duration[prev])
+        rows.append(tuple(row) + tuple("" if v is None else str(v) for v in (pos or (None,) * 4)))
+    return _to_utf8_frame(_ROLL_FIRST_STEP_LINK_HEADERS, rows)
 
 
 def emit_roll_first_step_link(
     active_time_list: dict,
     complete_step_lengths: list[tuple[str, ...]],
     *, provider,
+    complete_active_time_list: "dict | None" = None,
+    end_of=None,
 ) -> None:
     """Emit ``roll_first_step_link`` (the adjacency gate of the ramp carry-in) to the Provider."""
     _emit(provider, "solve_data/roll_first_step_link.csv",
-          derive_roll_first_step_link(active_time_list, complete_step_lengths))
+          derive_roll_first_step_link(active_time_list, complete_step_lengths, complete_active_time_list, end_of))
 
 
 def derive_period_block_time(

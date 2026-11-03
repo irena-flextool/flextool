@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Fix: a solve with longer time steps continues the finer dispatch realized before it.** In nested and rolling
+  solves, the ramp limit and the minimum up / down time carry of a solve's first step were taken over from the
+  previous solve only when the step before it on its own timeline was the very step realized last. A solve with
+  longer steps than the dispatch realized before it (for example a 6-hour storage roll after an hourly dispatch)
+  never matched, so its first step had no ramp limit from the realized flow, the start-ups realized just before
+  it did not count towards `min_uptime` / `min_downtime`, and a warning said the look-back was cut short. The two
+  steps are now matched by where they end in time on the underlying timeline: when the step before the first step
+  ends exactly where the realized step ends, the solve continues it (the ramp uses the realized step's own
+  duration). A hole or an overlap between the two still gives no carry and the warning.
 - **Fix: the minimum up / down time obligation carried into the next roll follows the timeline.** The start-ups
   and shut-downs realized near the end of a roll were carried into the next roll only within a period of the same
   name, matched by sorting step names. The forecast branches of a stochastic roll therefore never took the
@@ -7,9 +16,7 @@
   previous one on the same timeline. The carry now starts at the first steps that continue the previous roll's last
   realized step on the timeline — the same steps from which ramp limits continue — and counts the hours from each
   realized start-up or shut-down to them, so every forecast branch and a continuing period take it; a period that
-  does not continue the previous one, a step after a gap and a representative-period start still take none. A roll
-  whose first step continues a step of another time resolution (for example a 6-hour storage roll after an hourly
-  dispatch) takes no carry either, as for ramp limits; the warning about a cut-short look-back names it.
+  does not continue the previous one, a step after a gap and a representative-period start still take none.
 - **Fix: minimum up and down times only look back along the timeline.** The look-back of `min_uptime` /
   `min_downtime` walked the time steps in the order of their names, so it reached from a forecast branch into
   the last hours of a sibling branch, from the first hours of an investment year into the end of an earlier

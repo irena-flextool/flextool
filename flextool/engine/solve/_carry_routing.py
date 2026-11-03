@@ -19,7 +19,9 @@ starts where its parent starts: it never sees the state its parent realised in t
 The same rule routes the other carriers tied to the realised end step (:data:`STEP_FIELDS`: the committed online
 state, the ramp-limited flows and the step itself, the min up / down time history), taken whole from the latest
 entry: the next roll's unit commitment and ramps continue from the dispatch that was realised last, also across a
-storage or investment solve in between.  The running totals (``cumulative_co2``, ``cumulative_commodity``,
+storage or investment solve in between.  The routed ``roll_end_step`` also says where that step ends on the base
+timeline (:func:`with_end_position`), so a solve with longer steps continues the finer dispatch realized before it
+when its own first step's predecessor ends at the same time.  The running totals (``cumulative_co2``, ``cumulative_commodity``,
 ``cum_sim_hours``) are not routed: every sub-solve passes them on (its own realised part added), so the sequential
 predecessor already holds the total realised before the sub-solve, at any level.
 
@@ -38,6 +40,8 @@ import polars as pl
 _LOG = logging.getLogger(__name__)
 
 Position = tuple[int, int]
+# (period rank, base timeline, base-timeline index after the step, branch period or None)
+EndPosition = tuple[int, str, int, "str | None"]
 
 # The SolveHandoff carriers tied to the realised end step, routed with the storage state.
 STEP_FIELDS: tuple[str, ...] = ("roll_end_online", "roll_end_flow", "roll_end_step", "online_history")
@@ -61,13 +65,17 @@ class CarryRouter:
     ``parent_roll``: sub-solve → the parent sub-solve it is nested in (None at the top level).
     ``siblings``: realised-dispatch sibling sub-solve → its parent sub-solve.
     ``position``: ``(period, step) → (period rank, timeline index)`` or None when unknown.
+    ``end_of``: ``(period, step, duration) → EndPosition`` or None (:meth:`_TimeIndex.end_of`); the routed
+    ``roll_end_step`` carries it (:func:`with_end_position`).
     """
 
     def __init__(self, parent_roll: dict, siblings: "dict | None" = None,
-                 position: "Callable[[str, str], Position | None] | None" = None) -> None:
+                 position: "Callable[[str, str], Position | None] | None" = None,
+                 end_of: "Callable[[str, str, float], EndPosition | None] | None" = None) -> None:
         self._parent_roll = dict(parent_roll)
         self._siblings = dict(siblings or {})
         self._position = position or (lambda _d, _t: None)
+        self._end_of = end_of
         self._entries: list[RealisedEntry] = []
         self._cutoff: dict[str, int] = {}
         self._warned: set = set()
@@ -157,7 +165,10 @@ class CarryRouter:
         when there is none: the sub-solve is the first of its level)."""
         entries = [e for e in self.sources(solve, first_step) if e.end_step is not None]
         handoff = entries[-1].handoff if entries else None
-        return {f: (getattr(handoff, f, None) if handoff is not None else None) for f in STEP_FIELDS}
+        out = {f: (getattr(handoff, f, None) if handoff is not None else None) for f in STEP_FIELDS}
+        if self._end_of is not None:
+            out["roll_end_step"] = with_end_position(out["roll_end_step"], self._end_of)
+        return out
 
     def _warn_shallower(self, solve: str, level: int, cutoff: int, first, first_step) -> None:
         """The first sub-solve of a level starts from fix_start although a shallower level realised a state before
@@ -189,6 +200,27 @@ class RoutedCarriers:
             setattr(self, name, frames.get(name))
 
 
+END_POSITION_COLUMNS: tuple[str, ...] = ("end_rank", "end_root", "end_index", "end_branch")
+
+
+def with_end_position(step: "pl.DataFrame | None",
+                      end_of: "Callable[[str, str, float], EndPosition | None]") -> "pl.DataFrame | None":
+    """``roll_end_step`` ``[period, step, duration]`` with :data:`END_POSITION_COLUMNS` (Utf8, empty when the step
+    cannot be placed): where the carried step ends on the base timeline.  A solve whose first step continues a step
+    of another length (a coarser solve after a finer dispatch) matches the carried step by this position
+    (``params._ramp_links.ramp_roll_carry``).  ``None`` / empty frames pass through."""
+    if step is None or step.height == 0:
+        return step
+    base = step.drop([c for c in END_POSITION_COLUMNS if c in step.columns])
+    cols: dict[str, list[str]] = {c: [] for c in END_POSITION_COLUMNS}
+    for period, name, duration in zip(base["period"].cast(pl.Utf8).to_list(), base["step"].cast(pl.Utf8).to_list(),
+                                      base["duration"].cast(pl.Utf8).to_list()):
+        pos = end_of(period, name, duration) if period is not None and name is not None else None
+        for c, v in zip(END_POSITION_COLUMNS, pos if pos is not None else (None,) * 4):
+            cols[c].append("" if v is None else str(v))
+    return base.with_columns(pl.Series(c, v, dtype=pl.Utf8) for c, v in cols.items())
+
+
 def _end_step(handoff) -> "tuple[str, str] | None":
     step = getattr(handoff, "roll_end_step", None)
     if step is None or step.height == 0:
@@ -209,6 +241,10 @@ class _TimeIndex:
         self._index: dict[tuple[str, str], int] = {}
         self._anchor: dict[str, str] = {}
         self._ends: dict[str, "Position | None"] = {}
+        # (base period, step) → (base timeline, index) of every placement; a step placed on two different spots
+        # (two solves putting the same period on different base timelines) has no end position (end_of).
+        self._placed: dict[tuple[str, str], "tuple[str, int] | None"] = {}
+        self._hours: dict[str, list[float]] = {}
 
         def base_of(timeline: str) -> str:
             seen: set = set()
@@ -241,13 +277,19 @@ class _TimeIndex:
                 for entry in steps:
                     pos = names.get(str(entry.timestep))
                     if pos is not None:
-                        self._index.setdefault((base, str(entry.timestep)), pos)
+                        key = (base, str(entry.timestep))
+                        self._index.setdefault(key, pos)
+                        if key not in self._placed:
+                            self._placed[key] = (root, pos)
+                        elif self._placed[key] != (root, pos):
+                            self._placed[key] = None
                 if steps:
                     last = steps[-1]
                     pos = names.get(str(last.timestep))
                     if pos is not None:
                         ends.append((self._rank[base], _covered_to(base_hours[root], pos, float(last.duration))))
             self._ends[solve] = max(ends) if ends else None
+        self._hours = base_hours
 
     def position(self, period: str, step: str) -> "Position | None":
         """``(period rank, base-timeline index)`` of the start of the step; None when it cannot be placed."""
@@ -255,6 +297,35 @@ class _TimeIndex:
         if base not in self._rank or (base, str(step)) not in self._index:
             return None
         return self._rank[base], self._index[(base, str(step))]
+
+    def end_of(self, period: str, step: str, duration: float) -> "EndPosition | None":
+        """Where a step ends on the base timeline: ``(period rank, base timeline, base index after the step, branch)``.
+
+        ``branch`` is the period itself for a stochastic branch period and None otherwise (a branch period ranks with
+        the period it branches from, so two sibling branches would otherwise share every position).  None when the
+        step cannot be placed, when two solves place it on different base timelines or indices, or when its
+        ``duration`` hours do not cover whole base steps exactly (a partial cover cannot be told apart from the
+        next whole one)."""
+        base = self._anchor.get(str(period), str(period))
+        placed = self._placed.get((base, str(step)))
+        if base not in self._rank or placed is None:
+            return None
+        root, start = placed
+        hours = self._hours.get(root)
+        try:
+            dur = float(duration)
+        except (TypeError, ValueError):
+            return None
+        if hours is None or not dur > 0:
+            return None
+        end, acc = start, 0.0
+        while end < len(hours) and acc < dur - 1e-9:
+            acc += hours[end]
+            end += 1
+        if abs(acc - dur) > 1e-6:
+            return None
+        branch = str(period) if str(period) in self._anchor else None
+        return self._rank[base], root, end, branch
 
     def end(self, solve: str) -> "Position | None":
         """``(period rank, base-timeline index after the solve's last step)``: where the sub-solve's horizon ends (the
@@ -270,6 +341,16 @@ def _covered_to(hours: list[float], start: int, duration: float) -> int:
         acc += hours[end]
         end += 1
     return max(end, start + 1)
+
+
+def make_time_index(solves: list, active_time_lists: dict, period_branch_lists: dict, *, complete_solve: dict,
+                    timesets_used_by_solves: dict, timesets__timeline: dict, timelines: dict,
+                    original_timeline: dict) -> _TimeIndex:
+    """The run's :class:`_TimeIndex` (``position`` for the carry routing, ``end_of`` for the seam match of a
+    continuing solve)."""
+    return _TimeIndex(solves, active_time_lists, period_branch_lists, complete_solve=complete_solve,
+                      timesets_used_by_solves=timesets_used_by_solves, timesets__timeline=timesets__timeline,
+                      timelines=timelines, original_timeline=original_timeline)
 
 
 def make_position(solves: list, active_time_lists: dict, period_branch_lists: dict, *, complete_solve: dict,
@@ -315,4 +396,5 @@ def first_step(active_time_list: dict) -> "tuple[str, str] | None":
     return None
 
 
-__all__ = ["STEP_FIELDS", "CarryRouter", "RealisedEntry", "RoutedCarriers", "first_step", "make_position", "reaches_model_end"]
+__all__ = ["STEP_FIELDS", "CarryRouter", "RealisedEntry", "RoutedCarriers", "first_step", "make_position",
+           "make_time_index", "reaches_model_end", "with_end_position", "END_POSITION_COLUMNS"]

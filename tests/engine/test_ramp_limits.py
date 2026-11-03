@@ -587,6 +587,48 @@ def test_roll_carry_needs_adjacency() -> None:
     assert ramp_roll_carry(dt, step, link("t0004", 1), pb, flows=carry, rp_block_first=rp) == (None, None)
 
 
+def test_roll_carry_matches_by_position_in_time() -> None:
+    """ramp_roll_carry: a first step whose complete-solve predecessor is a longer step continues the carried step
+    when the predecessor ends where the carried step ends on the base timeline (same period rank, base timeline and
+    end index; the same branch when both are branches).  Hand-built: the carried realized step is the 1-h
+    (p2020, t0024), starting at base index 23, so it ends at base index 24; the 6-h predecessor t0019 starts at
+    base index 18 and ends at 18 + 6 = 24."""
+    from flextool.engine.preprocess.params._ramp_links import ramp_roll_carry
+
+    def carried(period="p2020", step="t0024", rank="0", root="tl", index="24", branch=""):
+        return pl.DataFrame({"period": [period], "step": [step], "duration": ["1.0"], "end_rank": [rank],
+                             "end_root": [root], "end_index": [index], "end_branch": [branch]})
+
+    def link(d="p2020", t="t0025", prev_d="p2020", prev_t="t0019", jump="1", rank="0", root="tl", index="24",
+             branch=""):
+        return pl.DataFrame({"period": [d], "time": [t], "previous": [prev_t], "previous_within_timeset": [prev_t],
+                             "previous_period": [prev_d], "previous_within_solve": [prev_t], "jump": [jump],
+                             "previous_end_rank": [rank], "previous_end_root": [root],
+                             "previous_end_index": [index], "previous_end_branch": [branch]})
+
+    dt = pl.DataFrame({"d": ["p2020", "p2020"], "t": ["t0025", "t0031"]})
+    rows, _ = ramp_roll_carry(dt, carried(), link())
+    assert rows.rows() == [("p2020", "t0025", "p2020", "t0024", 1.0)]        # the 1-h carried step, its duration
+    assert ramp_roll_carry(dt, carried(), link(index="25")) == (None, None)  # a hole between the two steps
+    assert ramp_roll_carry(dt, carried(), link(jump="2")) == (None, None)    # not adjacent in the complete solve
+    assert ramp_roll_carry(dt, carried(), link(root="other")) == (None, None)  # another base timeline
+    assert ramp_roll_carry(dt, carried(index=""), link()) == (None, None)    # the carried step is not placed
+    # without the position columns (an override roll_end_step) only the name match applies
+    assert ramp_roll_carry(dt, carried().select("period", "step", "duration"), link()) == (None, None)
+    # a continuing period: the coarse first step of p2025 follows p2020's last 6-h step, which ends where the
+    # carried 1-h p2020 t0048 ends (base index 48; both in the rank of p2020)
+    dt25 = pl.DataFrame({"d": ["p2025"], "t": ["t0001"]})
+    rows, _ = ramp_roll_carry(dt25, carried(step="t0048", index="48"),
+                              link(d="p2025", t="t0001", prev_t="t0043", index="48"))
+    assert rows.select("d", "t", "t_previous").rows() == [("p2025", "t0001", "t0048")]
+    # forecast branches rank with their anchor: a carried step of branch b1 is not continued by branch b2
+    dtb = pl.DataFrame({"d": ["b2"], "t": ["t0025"]})
+    assert ramp_roll_carry(dtb, carried(period="b1", branch="b1"),
+                           link(d="b2", prev_d="b2", branch="b2")) == (None, None)
+    rows, _ = ramp_roll_carry(dtb, carried(period="b2", branch="b2"), link(d="b2", prev_d="b2", branch="b2"))
+    assert rows.select("d", "t").rows() == [("b2", "t0025")]
+
+
 # ---------------------------------------------------------------------------
 # ramp output
 

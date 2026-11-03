@@ -28,7 +28,7 @@ carriers, named metric columns for multi-value):
     roll_end_state         [node, value]
     roll_end_online        [process, value]
     roll_end_flow          [process, source, sink, period, step, duration, value]
-    roll_end_step          [period, step, duration]
+    roll_end_step          [period, step, duration]  (+ end_rank, end_root, end_index, end_branch once routed)
     online_history         [process, period, step, startup, shutdown, duration, hours_to_end]
     fix_storage_quantity   [node, period, step, p_fix_storage_quantity]
     fix_storage_price      [node, period, step, p_fix_storage_price]
@@ -145,7 +145,10 @@ class SolveHandoff:
 
     # The roll's last realized step in time (with its duration): the step the next roll's first step ramps
     # from (``_load_ramp_carry`` → ``dt_ramp_carry``, also read by the ramp output without ramp limits).
-    # Producer: ``flex_data._last_realized_step``.  In-memory only.
+    # Producer: ``flex_data._last_realized_step``.  In-memory only.  The carry routing
+    # (``solve._carry_routing.with_end_position``) adds where the step ends on the base timeline (``end_rank``,
+    # ``end_root``, ``end_index``, ``end_branch``), so a solve with other step lengths continues it by position; an
+    # override without those columns is matched by the step name only.
     roll_end_step: pl.DataFrame | None = None
 
     # The realized ``v_startup`` / ``v_shutdown`` per ``(process, period, step)`` that a minimum up / down time

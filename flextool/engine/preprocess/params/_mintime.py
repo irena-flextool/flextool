@@ -266,7 +266,8 @@ def cut_short_lookback_warnings(min_times: "dict[str, list[tuple[str, float]]]",
     the timeline (``jump == 1``) but is not a step of this solve, and the step is not one of the *carry_roots*
     ``(d, t)`` (``dt_ramp_carry``: the steps that continue the previous solve's last realized step, from which the
     roll carry of the realized on-line history starts).  Such a step continues a step that no history handed to this
-    solve ends at — for instance a solve whose steps are longer than those of the dispatch realized before it.
+    solve ends at: a hole or an overlap in time between the two solves (a solve with longer steps than the dispatch
+    realized before it continues that dispatch when the two steps end at the same time).
     ``min_times`` maps ``"min_uptime"`` / ``"min_downtime"`` to ``[(p, L)]``; ``first_step_link`` ``[period, time,
     previous_period, previous_within_solve, jump]``.  One message per process and parameter, naming the first such
     step.

@@ -57,6 +57,25 @@ def _with_fan_members(hit: pl.DataFrame, anchors: pl.DataFrame, firsts: pl.DataF
     return pl.concat([hit, branches]).unique(maintain_order=True)
 
 
+_END_SUFFIXES = ("rank", "root", "index", "branch")
+
+
+def _has_end_position(frame: pl.DataFrame, prefix: str) -> bool:
+    return all(f"{prefix}{c}" in frame.columns for c in _END_SUFFIXES)
+
+
+def _end_position(prefix: str) -> "list[pl.Expr]":
+    """Select expressions of the base-timeline end position columns ``<prefix>rank / root / index / branch``
+    (``solve._carry_routing``) as ``__rank`` (Int64), ``__root`` (Utf8), ``__index`` (Int64), ``__branch`` (Utf8);
+    an empty string (a step that cannot be placed) is null."""
+    def txt(c):
+        v = pl.col(f"{prefix}{c}").cast(pl.Utf8)
+        return pl.when(v == "").then(None).otherwise(v)
+
+    return [txt("rank").cast(pl.Int64, strict=False).alias("__rank"), txt("root").alias("__root"),
+            txt("index").cast(pl.Int64, strict=False).alias("__index"), txt("branch").alias("__branch")]
+
+
 def ramp_roll_carry(dt: "pl.DataFrame | None",
                     carried_step: "pl.DataFrame | None",
                     first_step_link: "pl.DataFrame | None",
@@ -67,15 +86,23 @@ def ramp_roll_carry(dt: "pl.DataFrame | None",
     """The first steps of this roll that ramp from the previous roll's last realized step.
 
     ``dt`` ``(d, t)`` in solve order.  ``carried_step`` ``[period, step, duration]``: the previous roll's last
-    realized step (one row).  ``first_step_link`` ``[period, time, previous_period, previous_within_solve, jump]``:
-    the complete (un-rolled) solve's ``step_previous`` rows of the first step of each period of this roll.
+    realized step (one row), optionally with ``end_rank, end_root, end_index, end_branch`` (where it ends on the
+    base timeline, ``solve._carry_routing.with_end_position``).  ``first_step_link`` ``[period, time,
+    previous_period, previous_within_solve, jump]``: the complete (un-rolled) solve's ``step_previous`` rows of the
+    first step of each period of this roll, optionally with ``previous_end_rank, previous_end_root,
+    previous_end_index, previous_end_branch`` (where that predecessor ends).
     ``period_branch`` ``[period, branch]``: a forecast branch period that starts at the same step as its anchor
     period continues from the same realized step.  ``flows`` ``[process, source, sink, period, step, duration,
     value]``: the previous roll's ``v_flow`` of the ramp-limited arcs at that step (``None`` without ramp limits).
     ``rp_block_first`` ``(d, t)``: representative-block starts never ramp from the step before them.
 
     A period's first step ``(d, t1)`` takes the carry when the complete solve's predecessor of ``t1`` is
-    adjacent (``jump == 1``) and is the carried step.  Returns ``(dt_ramp_carry, flows_out)``:
+    adjacent (``jump == 1``) and either is the carried step or ends where the carried step ends: the same period
+    rank (so the same period, or a branch of it), the same base timeline and the same base-timeline index after
+    the step, and, when both are forecast branch periods, the same branch.  So a solve with longer steps continues
+    the finer dispatch realized before it (a 6-h step whose predecessor ends at hour 24 continues the realized
+    1-h step that ends at hour 24); a hole or an overlap between the two gives no carry.  Without the end
+    position columns only the name match applies.  Returns ``(dt_ramp_carry, flows_out)``:
     ``dt_ramp_carry`` = ``(d, t, d_previous, t_previous, duration_previous)`` (also used by the ramp output) and
     ``flows_out`` = ``(p, source, sink, d, t, value)`` (``None`` without ``flows``), all keys Utf8;
     ``(None, None)`` when no step takes the carry (first roll, a single solve, a carried step that is not
@@ -99,9 +126,18 @@ def ramp_roll_carry(dt: "pl.DataFrame | None",
         pl.col("period").cast(pl.Utf8).alias("d"), pl.col("time").cast(pl.Utf8).alias("t"),
         pl.col("previous_period").cast(pl.Utf8).alias("d_previous"),
         pl.col("previous_within_solve").cast(pl.Utf8).alias("t_previous"),
-        pl.col("jump").cast(pl.Utf8).cast(pl.Float64, strict=False).alias("jump"))
-    anchors = (link.filter((pl.col("jump") == 1.0) & (pl.col("d_previous") == c_d) & (pl.col("t_previous") == c_t))
-               .select("d", "t"))
+        pl.col("jump").cast(pl.Utf8).cast(pl.Float64, strict=False).alias("jump"),
+        *(_end_position("previous_end_") if _has_end_position(first_step_link, "previous_end_") else []))
+    same = (pl.col("d_previous") == c_d) & (pl.col("t_previous") == c_t)
+    c_end = (carried_step.select(_end_position("end_")).unique().row(0)
+             if _has_end_position(carried_step, "end_") else None)
+    if c_end is not None and None not in c_end[:3] and "__rank" in link.columns:
+        c_rank, c_root, c_index, c_branch = c_end
+        at_end = ((pl.col("__rank") == c_rank) & (pl.col("__root") == c_root) & (pl.col("__index") == c_index))
+        if c_branch is not None:
+            at_end = at_end & (pl.col("__branch").is_null() | (pl.col("__branch") == c_branch))
+        same = same | at_end.fill_null(False)
+    anchors = link.filter((pl.col("jump") == 1.0) & same).select("d", "t")
     hit = _with_fan_members(firsts.join(anchors, on=["d", "t"], how="inner").select("d", "t"),
                             anchors, firsts, period_branch)
     if rp_block_first is not None and rp_block_first.height > 0:

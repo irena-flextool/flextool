@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
-from flextool.engine.solve._carry_routing import CarryRouter, make_position
+from flextool.engine.solve._carry_routing import CarryRouter, make_position, make_time_index, with_end_position
 
 
 def _handoff(value: float, step: tuple[str, str], node: str = "s"):
@@ -149,6 +149,40 @@ def test_position_uses_the_base_timeline_and_branch_anchor():
     assert pos("p1", "t06") < pos("p1", "t07") < pos("p1", "t08")
     assert pos("p1_hi", "t09") == pos("p1", "t09")
     assert pos("p9", "t01") is None
+
+
+def test_end_of_places_a_step_end_on_the_base_timeline():
+    """end_of: where a step ends on the base timeline.  The 6-h step t07 of the aggregated solve starts at base
+    index 6 and ends at 6 + 6 = 12; the hourly t12 starts at 11 and ends at 12, so the two ends compare equal.  A
+    duration that does not cover whole base steps (2.5 h of 1-h steps) has no end; a branch period carries its own
+    name; a step two solves place on different base indices has no end."""
+    E = SimpleNamespace
+    hourly = [E(timestep=f"t{i:02d}", index=i - 1, duration="1") for i in range(1, 13)]
+    six = [E(timestep="t01", index=0, duration="6"), E(timestep="t07", index=1, duration="6")]
+    index = make_time_index(
+        ["agg", "hour"], {"agg": {"p1": six}, "hour": {"p1": hourly, "p1_hi": hourly[6:]}},
+        {"hour": [("p1", "p1"), ("p1", "p1_hi")]},
+        complete_solve={"agg": "agg", "hour": "hour"},
+        timesets_used_by_solves={"agg": [("p1", "ts6")], "hour": [("p1", "ts1"), ("p1_hi", "ts1")]},
+        timesets__timeline={"ts6": "tl6", "ts1": "tl"},
+        timelines={"tl": [(f"t{i:02d}", 1.0) for i in range(1, 13)], "tl6": [("t01", 6.0), ("t07", 6.0)]},
+        original_timeline={"tl6": "tl"})
+    assert index.end_of("p1", "t07", 6.0) == (0, "tl", 12, None)
+    assert index.end_of("p1", "t12", "1") == (0, "tl", 12, None)
+    assert index.end_of("p1", "t01", 2.5) is None
+    assert index.end_of("p1_hi", "t12", 1.0) == (0, "tl", 12, "p1_hi")
+    assert index.end_of("p9", "t01", 1.0) is None
+    step = pl.DataFrame({"period": ["p1"], "step": ["t12"], "duration": [1.0]})
+    routed = with_end_position(step, index.end_of)
+    assert routed.select("end_rank", "end_root", "end_index", "end_branch").row(0) == ("0", "tl", "12", "")
+    clash = make_time_index(
+        ["a", "b"], {"a": {"p1": hourly[:2]}, "b": {"p1": hourly[:2]}}, {},
+        complete_solve={"a": "a", "b": "b"},
+        timesets_used_by_solves={"a": [("p1", "ts1")], "b": [("p1", "tsx")]},
+        timesets__timeline={"ts1": "tl", "tsx": "tlx"},
+        timelines={"tl": [("t01", 1.0), ("t02", 1.0)], "tlx": [("t00", 1.0), ("t01", 1.0), ("t02", 1.0)]},
+        original_timeline={})
+    assert clash.end_of("p1", "t01", 1.0) is None
 
 
 @pytest.mark.parametrize("handoff", [None, SimpleNamespace(roll_end_state=None, roll_end_step=None),

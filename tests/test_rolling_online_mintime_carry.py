@@ -374,3 +374,70 @@ def test_no_mintime_rolling_is_inert(_no_mintime_rolling):
         assert getattr(fd, "uptime_carry", None) is None
         assert getattr(fd, "downtime_carry", None) is None
         assert getattr(fd, "online_min_time", None) is None
+
+
+# ──────────── a coarser solve continues a finer dispatch (position in time) ────────────
+@pytest.fixture(scope="module")
+def nested_coarse_run(tmp_path_factory):
+    """Nested invest → rolling storage (48 h horizon / 24 h jump, 6-h steps) → rolling dispatch (24 h / 12 h, 1-h
+    steps) with coal unit commitment (linear, min_load 0.4, min_uptime 8 h, ramp limit 0.002).  The second storage
+    roll starts at the 6-h step (p2020, t0025); the dispatch realized before it ends with the 1-h (p2020, t0024)."""
+    import contextlib
+    import io
+
+    from tests.engine._unit_db import b64, make_db
+
+    def v(cls, ent, param, val):
+        return [cls, ent, param, b64(val, "str" if isinstance(val, str) else "float")]
+
+    chain = ["init", "west", "coal", "coal_invest", "wind", "wind_invest", "battery", "battery_invest",
+             "invest_solveSequence_5weeks", "invest_allYears_5weeks", "fullYear", "dispatch_fullYear_roll",
+             "storage_fullYear_6h", "invest_24h", "bind_battery_forward", "unlimited_investment"]
+    values = [v("unit__outputNode", ["coal_plant", "west"], "ramp_method", "ramp_limit"),
+              v("unit__outputNode", ["coal_plant", "west"], "ramp_speed_up", 0.002),
+              v("unit__outputNode", ["coal_plant", "west"], "ramp_speed_down", 0.002),
+              v("solve", "storage_fullYear_6h", "solve_mode", "rolling_window"),
+              v("solve", "storage_fullYear_6h", "rolling_solve_horizon", 48.0),
+              v("solve", "storage_fullYear_6h", "rolling_solve_jump", 24.0),
+              v("solve", "dispatch_fullYear_roll", "rolling_solve_horizon", 24.0),
+              v("solve", "dispatch_fullYear_roll", "rolling_solve_jump", 12.0),
+              v("node", "battery", "storage_nested_fix_method", "fix_nothing"),
+              v("unit", "coal_plant", "startup_method", "linear"),
+              v("unit", "coal_plant", "min_load", 0.4),
+              v("unit", "coal_plant", "min_uptime", 8.0)]
+    url, scen = make_db(tmp_path_factory, alt="nested_coarse_continues_fine", values=values, base_chain=chain)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("nested_coarse_run"),
+                                  keep_solutions=True)
+    return steps, out.getvalue()
+
+
+def test_coarser_solve_continues_the_finer_dispatch_by_position(nested_coarse_run):
+    """The 6-h storage step t0025 follows t0019 (6 h, base hours 19-24) in the storage timeline; the dispatch
+    realized before it ends with the 1-h t0024 (base hour 24).  Both end at base hour 24, so the storage roll
+    continues that step: the ramp carry comes from (p2020, t0024) with its 1-h duration, and the minimum up time
+    carry at t0025 is the realized start-ups of that dispatch within L = 8 h of its end: hours_to_end (from a step's
+    start to the end of t0024) = 25 - k for t00k, < 8 for k = 18..24.  No cut-short look-back warning."""
+    steps, printed = nested_coarse_run
+    names = list(steps)
+    storage = "storage_fullYear_6h_roll_1"
+    assert storage in names, names
+    before = [n for n in names[:names.index(storage)] if n.startswith("dispatch_fullYear_roll")]
+    dispatch = steps[before[-1]]
+    fd = steps[storage].flex_data
+    carry = fd.dt_ramp_carry
+    assert carry is not None
+    assert carry.select("d", "t", "d_previous", "t_previous").rows() == [("p2020", "t0025", "p2020", "t0024")]
+    assert carry["duration_previous"].to_list() == [1.0]
+    su = (dispatch.solution.value("v_startup_linear")
+          .with_columns(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "t"))
+          .filter((pl.col("p") == UNIT) & (pl.col("d") == "p2020")
+                  & pl.col("t").is_in([f"t{k:04d}" for k in range(18, 25)])))
+    assert su.height == 7
+    expected = float(su["value"].sum())
+    assert expected > 0.5, "witness inert: no start-up within 8 h of the dispatch's end"
+    uc = fd.uptime_carry.with_columns(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "t"))
+    at_root = uc.filter((pl.col("p") == UNIT) & (pl.col("d") == "p2020") & (pl.col("t") == "t0025"))
+    assert at_root["value"].to_list() == [pytest.approx(expected, abs=1e-6)]
+    assert "covers only 0 hours" not in printed

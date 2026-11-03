@@ -838,10 +838,12 @@ def native_run_model(state, solver) -> int:
         original_timeline=state.timeline.original_timeline,
     )
     _siblings = getattr(state.solve, "realized_dispatch_parent", {}) or {}
+    _time_index = _carry_routing.make_time_index(all_solves, active_time_lists, period__branch_lists, **_time_args)
     carry_router = _carry_routing.CarryRouter(
         parent_roll,
         siblings=_siblings,
-        position=_carry_routing.make_position(all_solves, active_time_lists, period__branch_lists, **_time_args),
+        position=_time_index.position,
+        end_of=_time_index.end_of,
     )
 
     # The sub-solves whose horizon holds the last step of the entire model (fix_end / fix_start_end pin the end
@@ -1071,11 +1073,15 @@ def native_run_model(state, solver) -> int:
         # A period label has no steps, but its first step is where a roll's fan continues from the previous
         # roll: its forecast branch periods start there (the carry matches the label, then its branches).
         _label_times = fan_label_time_lists.get(solve)
+        # Each predecessor also carries where it ends on the base timeline: a solve continues the previous one's
+        # last realized step by position in time when their step lengths differ.
         solve_writers.emit_roll_first_step_link(
             {**_label_times.active, **active_time_lists[solve]} if _label_times is not None
             else active_time_lists[solve],
             cached_complete_step_jumps[cs],
             provider=sub_solve_provider,
+            complete_active_time_list=complete_active_time_lists,
+            end_of=_time_index.end_of,
         )
         # Which periods a roll holds whole (bind_intraperiod_blocks loop there and chain elsewhere); written for
         # every sub-solve (header-only when not rolling): the level Provider is shared by the iters of a level.
