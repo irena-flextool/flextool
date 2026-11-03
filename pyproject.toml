@@ -66,8 +66,11 @@ dependencies = [
     # HiGHS-uncertified solve is usable — required, or that call AttributeErrors.
     # 3.8.0 adds per-element variable bounds (Param-valued ``upper``), which
     # the indirect-unit input-arc limit (input_share_max) uses on
-    # constant-capacity units.
-    "polar-high>=3.8.0",
+    # constant-capacity units.  3.12.0 adds the Layer-2 ArrayClassifier
+    # (column tables as numpy arrays) and highs_names="auto" (LP names stay
+    # out of HiGHS unless a HiGHS option writes a file with them), both used
+    # by the in-process solve; 3.9-3.11 were never tagged.
+    "polar-high>=3.12.0",
     # Autoscale Layer 3 drives HiGHS' power-of-two objective conditioning
     # through the ``user_objective_scale`` option.  HiGHS renamed the older
     # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older
