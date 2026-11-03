@@ -6226,39 +6226,27 @@ def apply_derived_c(
         period_in_use = _c_period_in_use
         period_with_history = (_read_period_with_history(workdir, provider=provider)
                                   or list(period_in_use))
-        try:
-            edd_inv_db = _edd_invest_lf(
-                source, active_solve, ed_inv_used.lazy(),
-                period_with_history, period_in_use, workdir,
-                lineage=_c_lineage, commission_lf=commission_lf).collect()
-        except (LineageFilterError, CommissioningLagError):
-            raise
-        except Exception:
-            edd_inv_db = None
+        # A failure here propagates: a missing edd_invest_set would drop every investment from the capacity.
+        edd_inv_db = _edd_invest_lf(
+            source, active_solve, ed_inv_used.lazy(),
+            period_with_history, period_in_use, workdir,
+            lineage=_c_lineage, commission_lf=commission_lf).collect()
         if edd_inv_db is not None and edd_inv_db.height > 0:
             flex_data.edd_invest_set = edd_inv_db
 
     pd_div_used = getattr(flex_data, "pd_divest_set", None)
-    try:
-        edda_db = edd_divest_active_from_source(
-            source, active_solve, pd_div_used,
-            provider=provider, lineage=_c_lineage, workdir=workdir, ctx=ctx)
-    except LineageFilterError:
-        raise
-    except Exception:
-        edda_db = None
+    # A failure here (or in the node call below) propagates: a missing active-divest set would leave the
+    # retirements out of the capacity.
+    edda_db = edd_divest_active_from_source(
+        source, active_solve, pd_div_used,
+        provider=provider, lineage=_c_lineage, workdir=workdir, ctx=ctx)
     if edda_db is not None and edda_db.height > 0:
         flex_data.edd_divest_active = edda_db
 
     nd_div_used = getattr(flex_data, "nd_divest_set", None)
-    try:
-        ndda_db = edd_divest_active_from_source(
-            source, active_solve, nd_div_used,
-            entity_col="n", provider=provider, lineage=_c_lineage, workdir=workdir, ctx=ctx)
-    except LineageFilterError:
-        raise
-    except Exception:
-        ndda_db = None
+    ndda_db = edd_divest_active_from_source(
+        source, active_solve, nd_div_used,
+        entity_col="n", provider=provider, lineage=_c_lineage, workdir=workdir, ctx=ctx)
     if ndda_db is not None and ndda_db.height > 0:
         flex_data.ndd_divest_active = ndda_db
 
