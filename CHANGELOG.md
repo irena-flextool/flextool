@@ -34,7 +34,27 @@
   `retire_min_total` of a group (with a *retire* option in its `invest_method`) were read by FlexTool but missing
   from the database; they are now there.
 - **New user-constraint parameters `constraint_capacity_coeff` and `constraint_retired_capacity_coeff`** on units,
-  nodes and connections (the capacity in service, and the capacity retired, in each period).
+  nodes and connections. `constraint_capacity_coeff` puts the capacity in service in each period (existing plus
+  investments still in service minus retirements, the capacity that limits the flows) on the left side of a user
+  constraint; `constraint_retired_capacity_coeff` puts the capacity retired in each period there. Shares of the
+  fleet, ratios between technologies and replacement rules can now account for retirements.
+- **The pre-built capacity term of user constraints subtracts earlier retirements** (results change).
+  `constraint_cumulative_pre_built_capacity_coeff` is now the capacity in service at the start of each period:
+  existing capacity plus earlier investments still in service minus the retirements of earlier periods. Before,
+  retirements decided earlier in the same solve were ignored while those of earlier solves of a chain were
+  subtracted, so one solve and a chain of solves of the same problem gave different results. Results change only
+  for models that retire capacity of an entity with this coefficient; upgraded databases print a notice naming the
+  constraints. Without a construction lead time, capacity in service = pre-built + invested − retired; with one,
+  an investment counts as invested in the period it is decided and in pre-built and capacity from the period it
+  enters service.
+- **User constraints with only capacity terms are written once per period** instead of once per time step (the
+  rows were identical; results unchanged). In the `output_horizon` raw dump these rows are
+  `process_constraint_{equal,less_than,greater_than}_period` with dimensions (constraint, period).
+- **Fix: a user-constraint pre-built coefficient now gives a zero-cost entity its investment variable** (results
+  change only for such entities). An entity without investment cost that a user constraint linked only through
+  `constraint_cumulative_pre_built_capacity_coeff` got no investment variable, because the link was looked up under
+  a wrong parameter name. The new capacity and retired-capacity coefficients link the investment and retirement
+  variables the same way.
 - **The upgrade drops parameters FlexTool no longer has** (`discount_years`, `max_relative_capacity`,
   `storage_include_solve_fix_method`, unit input `capacity_max_coeff` / `capacity_min_coeff`) and lists any values
   they held; an input `capacity_max_coeff` value moves to `input_share_max` (its name since database version 70)

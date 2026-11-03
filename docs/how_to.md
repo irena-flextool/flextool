@@ -311,7 +311,7 @@ When the `constraint_invested_capacity_coeff` for *battery* is set at 1 and for 
 
 `constraint_invested_capacity_coeff` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the entity to participate in multiple constraints. (This parameter was previously named `constraint_capacity_coefficient`; migration v32 renames existing DBs automatically. The old expression summed `v_invest` once per active investment period — incorrect in multi-period models — and has been fixed to emit just the current period's `v_invest`.)
 
-To tie cumulative, built-up capacity rather than the current period's new build, use `constraint_cumulative_pre_built_capacity_coeff`. It takes data-baseline capacity plus every `v_invest` made in periods strictly BEFORE the current one, ignoring retirements (learning-effect semantics). Paired with `constraint_invested_capacity_coeff`, it expresses period-over-period growth limits:
+To tie cumulative, built-up capacity rather than the current period's new build, use `constraint_cumulative_pre_built_capacity_coeff`. It takes the capacity in service at the start of the period: existing capacity plus the investments of earlier periods still in service, minus the retirements of earlier periods (an investment with a construction lead time counts from the period it enters service). Paired with `constraint_invested_capacity_coeff`, it expresses period-over-period growth limits:
 
 ```
 v_invest[e, d] <= growth_rate * pre_built[e, d]
@@ -319,19 +319,24 @@ v_invest[e, d] <= growth_rate * pre_built[e, d]
 
 is written as: `constraint_invested_capacity_coeff = { c: 1.0 }` and `constraint_cumulative_pre_built_capacity_coeff = { c: -growth_rate }` on entity `e`, with constraint `c` having `sense = less_than` and `constant = 0`. A 10% growth cap starting from 1000 MW of existing wind would allow 100 MW in period 1, 110 in period 2, 121 in period 3, and so on.
 
-Finally, FlexTool can mix several types of constraint coefficients: `constraint_invested_capacity_coeff`, `constraint_cumulative_pre_built_capacity_coeff`, `constraint_state_coeff` and `constraint_flow_coeff` allowing the user to create custom constraints between any types of entities in the model for the main variables in the model (*flow*, *state* as well as *invest*). So, the equation above is in full form:
+To tie the capacity in service in the period (the capacity that limits the flows, for example for a share of the fleet or a ratio between technologies), use `constraint_capacity_coeff`; for the capacity retired in the period, `constraint_retired_capacity_coeff`. Without a construction lead time, capacity in service = pre-built + invested − retired.
+
+Finally, FlexTool can mix several types of constraint coefficients: `constraint_invested_capacity_coeff`, `constraint_retired_capacity_coeff`, `constraint_cumulative_pre_built_capacity_coeff`, `constraint_capacity_coeff`, `constraint_state_coeff` and `constraint_flow_coeff` allowing the user to create custom constraints between any types of entities in the model for the main variables in the model (*flow*, *state* as well as *invest*). So, the equation above is in full form:
 
 ```
   + sum_i [constraint_invested_capacity_coeff(i) * v_invest]
            where i contains [node, unit, connection] belonging to the constraint
+  + sum_i [constraint_retired_capacity_coeff(i) * v_divest]
   + sum_i [constraint_cumulative_pre_built_capacity_coeff(i) * pre_built]
-           where pre_built = existing baseline + Σ v_invest from earlier periods
+           where pre_built = existing + Σ v_invest of earlier periods still in service − Σ v_divest of earlier periods
+  + sum_i [constraint_capacity_coeff(i) * capacity_in_service]
+           where capacity_in_service = existing + Σ v_invest still in service − Σ v_divest up to this period
   + sum_j [constraint_flow_coeff(j) * capacity]
            where j contains [unit--node, connection--node] belonging to the constraint
   + sum_k [constraint_state_coeff(k) * capacity]
            where k contains [node] belonging to the constraint
   =
-  constant
+  constant (a constant, or a period map giving each period its own value)
 
   where 'capacity' is existing capacity plus invested capacity
 ```
