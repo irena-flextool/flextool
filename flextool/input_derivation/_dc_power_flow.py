@@ -359,6 +359,11 @@ def derive_dc_power_flow(
     )
     provider.put("input/node_reference_angle", ref_angle_frame)
 
+    # Before, any is_DC connection replaced these lines and the reference node of a DC power-flow model.
+    if dc_pf_nodes and is_dc_connections:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice("dc_power_flow_lines_beside_dc_links", "groups", sorted(dc_pf_groups))
+
     # p_connection_susceptance — two columns ``process,
     # p_connection_susceptance``, sorted by process.  The legacy
     # ``open(..., "w").write(f"{conn},{susceptance_map[conn]}\n")`` emits

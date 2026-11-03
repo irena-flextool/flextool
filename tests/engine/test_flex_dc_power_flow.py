@@ -61,3 +61,90 @@ def test_dc_power_flow_parity(scenario_run):
         work / "output_raw" / "v_obj__dispatch.parquet"
     )["objective"][0]
     assert abs(sol.obj - flextool_obj) / max(1.0, flextool_obj) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# DC power-flow lines vs is_DC (HVDC) connections
+# ---------------------------------------------------------------------------
+
+CASE14_JSON = __import__("pathlib").Path(__file__).resolve().parents[1] / "fixtures" / "case14_dc_power_flow.json"
+DC_LINES_MARKER = "flextool_behaviour_change:dc_power_flow_lines_beside_dc_links"
+
+
+def _add_marker(url: str) -> None:
+    """Mark the database as upgraded from before the change, so its notice can print."""
+    from spinedb_api import DatabaseMapping
+
+    with DatabaseMapping(url) as db:
+        db.add_item("metadata", name=DC_LINES_MARKER, value="77")
+        db.commit_session("behaviour-change marker")
+
+
+def _run_one(tmp_path_factory, url: str, scenario: str):
+    from flextool.engine import run_chain_from_db
+
+    steps = run_chain_from_db(url, scenario, work_folder=tmp_path_factory.mktemp(f"{scenario}_w"),
+                              keep_solutions=True)
+    assert len(steps) == 1, list(steps)
+    step = next(iter(steps.values()))
+    assert step.solution is not None
+    return step
+
+
+def _names(df, col):
+    return sorted(str(x) for x in df.get_column(col).to_list())
+
+
+def test_is_dc_connection_inside_dc_power_flow_group_keeps_the_group_lines(tmp_path_factory, capsys):
+    """An is_DC connection inside a dc_power_flow_with_angles group is not a DC power-flow line; the group's
+    other lines and its reference_node stay as they are.
+
+    Hand derivation: case14 has 20 lines in group ac_network with reference_node bus_1.  Marking line_12_13 is_DC
+    takes it out of the lines (derive_dc_power_flow skips is_DC connections), so the lines are the base 20 minus
+    line_12_13, the reference node stays bus_1, and dc_flow_eq has 19 rows per (d,t) instead of 20.  Before, the
+    is_DC connections replaced the lines (only line_12_13) and the reference node moved to bus_12.
+    """
+    from tests.engine._unit_db import b64, build, cstr_over, make_db
+
+    url0, scen0 = make_db(tmp_path_factory, alt="ac_only", values=[], base_chain=["base"],
+                          fixture_json=CASE14_JSON)
+    url1, scen1 = make_db(tmp_path_factory, alt="hvdc_12_13", base_chain=["base"], fixture_json=CASE14_JSON,
+                          values=[["connection", "line_12_13", "is_DC", b64("yes", "str")]])
+    _add_marker(url0)
+    _add_marker(url1)
+
+    base = _run_one(tmp_path_factory, url0, scen0).flex_data
+    assert "dc_power_flow_with_angles groups" not in capsys.readouterr().out
+    hvdc = _run_one(tmp_path_factory, url1, scen1).flex_data
+    out = capsys.readouterr().out
+
+    base_lines = _names(base.connection_dc_power_flow, "p")
+    assert len(base_lines) == 20 and "line_12_13" in base_lines
+    assert _names(hvdc.connection_dc_power_flow, "p") == [p for p in base_lines if p != "line_12_13"]
+    assert _names(hvdc.node_reference_angle, "n") == ["bus_1"]
+    n_dt = hvdc.dt.height
+    assert cstr_over(build(base), "dc_flow_eq").height == 20 * n_dt
+    assert cstr_over(build(hvdc), "dc_flow_eq").height == 19 * n_dt
+
+    notices = [ln for ln in out.splitlines() if "dc_power_flow_with_angles groups" in ln]
+    assert len(notices) == 1, notices
+    assert "Affected groups: ac_network." in notices[0]
+
+
+def test_hvdc_link_with_startup_method_outside_dc_power_flow(tmp_path_factory, capsys):
+    """An is_DC connection with a startup_method in a model without DC power flow builds and solves.
+
+    Before, every is_DC connection was taken for a DC power-flow line, so its startup_method raised the
+    DC power-flow line error.
+    """
+    from tests.engine._unit_db import b64, make_db
+
+    url, scen = make_db(tmp_path_factory, alt="hvdc_online", base_chain=["init", "west", "coal", "wind", "network"],
+                        values=[["connection", "west_north", "is_DC", b64("yes", "str")],
+                                ["connection", "west_north", "startup_method", b64("linear", "str")]])
+    _add_marker(url)
+    fd = _run_one(tmp_path_factory, url, scen).flex_data
+    assert fd.connection_dc_power_flow is None
+    assert fd.process_online_linear is not None
+    assert "west_north" in _names(fd.process_online_linear, "p")
+    assert "dc_power_flow_with_angles groups" not in capsys.readouterr().out

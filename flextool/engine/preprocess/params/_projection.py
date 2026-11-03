@@ -1824,22 +1824,6 @@ def process_source_sink_undelayed(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# §1.18 — DC power flow
-# ---------------------------------------------------------------------------
-
-def connection_dc_power_flow(source: "InputSource") -> pl.DataFrame:
-    """Connections with ``is_DC='yes'``.  Schema: ``[p]``."""
-    df = _try_param(source, "connection", "is_DC")
-    if df is None:
-        return _empty({"p": pl.Utf8})
-    return (df.lazy()
-              .filter(pl.col("value") == "yes")
-              .select(alias_to_axis("name", "p"))
-              .sort("p")
-              .collect())
-
-
-# ---------------------------------------------------------------------------
 # §1.19 — Commodity ladder Projections
 # ---------------------------------------------------------------------------
 
@@ -2011,7 +1995,6 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "g_invest_total": g_invest_total,
     "g_divest_total": g_divest_total,
     "g_invest_cumulative": g_invest_cumulative,
-    "connection_dc_power_flow": connection_dc_power_flow,
     "commodity_with_ladder": commodity_with_ladder,
     "commodity_with_ladder_annual": commodity_with_ladder_annual,
     "commodity_with_ladder_cumulative": commodity_with_ladder_cumulative,

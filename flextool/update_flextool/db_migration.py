@@ -4640,7 +4640,7 @@ _V77_GROUP_INVEST_METHODS = (
 # default marker is written by the storage step (conditional on the old
 # default).
 BEHAVIOUR_CHANGE_MARKER_PREFIX = "flextool_behaviour_change:"
-_V77_UNCONDITIONAL_MARKERS = ("user_constraint_prebuilt_nets_retirements",)
+_V77_UNCONDITIONAL_MARKERS = ("user_constraint_prebuilt_nets_retirements", "dc_power_flow_lines_beside_dc_links")
 
 # Definitions the schema no longer has but old databases may still carry.
 _V77_STALE_DEFINITIONS = (

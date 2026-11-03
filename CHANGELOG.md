@@ -59,6 +59,15 @@
   `storage_include_solve_fix_method`, unit input `capacity_max_coeff` / `capacity_min_coeff`) and lists any values
   they held; an input `capacity_max_coeff` value moves to `input_share_max` (its name since database version 70)
   where that input has none of its own. `solve_mode` `single_shot` becomes `single_solve`. Results unchanged.
+- **Fix: DC power-flow lines are always the connections inside `dc_power_flow_with_angles` groups** (results
+  change for DC power-flow models that also have an `is_DC` connection; a notice names the groups). Such a model
+  used its `is_DC` connections as the DC power-flow lines: the group's lines got no angle constraints and the
+  reference node could change. An `is_DC` connection inside such a group is not a line; it keeps its own
+  `transfer_method`. A `startup_method` on an `is_DC` connection no longer raises the DC power-flow error, and the
+  "DC power flow per connection" output of a model without DC power flow is now empty (it listed the `is_DC`
+  connections; solved values unchanged).
+- **Fix: a node retirement or an investment without its period map stops with an error** naming the missing data
+  (before: the retirement or investment was left out of the capacity without a word). Results unchanged.
 - **Docs: `increase_reserve_ratio` applies to upward and downward reserve alike.** The ratio stands for the
   variability of a flow, which can go either way, so each participating flow raises both requirements (unlike
   `large_failure_ratio`, which is directional). The reference and the parameter descriptions now say so; the model

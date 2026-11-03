@@ -6274,8 +6274,6 @@ def apply_derived_c(
 #
 #   * §3.11 existing-entity fixed cost — ``p_entity_all_existing``
 #     (sum of pre_existing + previously_invested per (e, d)).
-#   * §3.16 DC PF — ``node_reference_angle`` (per-component reference
-#     pick: explicit ``group.reference_node`` else largest existing).
 #   * §3.13 reserve cleanup — narrow gate-on-equality overlay for the
 #     `_increase_reserve_ratio` / `_large_failure_ratio` Projection sets
 #     when the underlying SpineDB reserve relationships are present.
@@ -6454,133 +6452,6 @@ def p_entity_all_existing_from_source(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# §3.16 — DC power flow reference angle pick
-# ---------------------------------------------------------------------------
-
-
-def _bfs_components(adj: dict[str, set[str]],
-                      seed: set[str]) -> list[set[str]]:
-    """Return the connected components of an undirected graph (adj is a
-    set-of-neighbours dict) restricted to seed nodes.
-    """
-    seen: set[str] = set()
-    comps: list[set[str]] = []
-    for n in sorted(seed):
-        if n in seen:
-            continue
-        comp: set[str] = set()
-        stack = [n]
-        while stack:
-            x = stack.pop()
-            if x in seen:
-                continue
-            seen.add(x)
-            comp.add(x)
-            for nb in adj.get(x, ()):
-                if nb not in seen and nb in seen:
-                    pass
-                if nb not in seen:
-                    stack.append(nb)
-        comps.append(comp)
-    return comps
-
-
-def node_reference_angle_from_source(source: "InputSource",
-                                        ) -> pl.DataFrame | None:
-    """§3.16 — per-component DC PF reference node selection.
-
-    Algorithm (mirrors ``input_writer.py:_write_dc_power_flow_data``):
-
-      1. Build the undirected graph from ``connection__node__node``
-         restricted to connections with ``is_DC == 'yes'`` and to
-         endpoints that are nodes in the DC-PF subnetwork (the
-         endpoints of any DC connection).
-      2. Per connected component:
-         a. If any node belongs to a group with explicit
-            ``reference_node = node-name``, pick that node.
-         b. Else pick the node with the largest ``existing`` capacity
-            (ties → lexicographic tiebreak).
-
-    Returns a single-column ``[n]`` DataFrame, or ``None`` when the
-    fixture has no DC PF connections.
-    """
-    is_dc = _try_param(source, "connection", "is_DC")
-    if is_dc is None:
-        return None
-    dc_conns = is_dc.filter(pl.col("value") == "yes")["name"].unique().to_list()
-    if not dc_conns:
-        return None
-    cnn = _try_entities(source, "connection__node__node")
-    if cnn is None or cnn.height == 0:
-        return None
-    cols = cnn.columns
-    # Identify the connection col + two node cols.
-    if "connection" in cols:
-        conn_col = "connection"
-    else:
-        conn_col = cols[0]
-    node_cols = [c for c in cols if c != conn_col][:2]
-    if len(node_cols) < 2:
-        return None
-    cnn_dc = cnn.filter(pl.col(conn_col).is_in(dc_conns))
-    if cnn_dc.height == 0:
-        return None
-    # Build adjacency.
-    adj: dict[str, set[str]] = {}
-    for row in cnn_dc.iter_rows(named=True):
-        a = row[node_cols[0]]
-        b = row[node_cols[1]]
-        adj.setdefault(a, set()).add(b)
-        adj.setdefault(b, set()).add(a)
-    seed = set(adj.keys())
-    if not seed:
-        return None
-    comps = _bfs_components(adj, seed)
-    # Per-component pick.
-    # Preferred: explicit group.reference_node within the component.
-    grp_ref_df = _try_param(source, "group", "reference_node")
-    grp_ref_map: dict[str, str] = {}
-    if grp_ref_df is not None:
-        for row in grp_ref_df.iter_rows(named=True):
-            grp_ref_map[row["name"]] = row["value"]
-    explicit_refs: set[str] = set(grp_ref_map.values())
-
-    # Existing capacity per node.
-    ex_df = _try_param(source, "node", "existing")
-    ex_map: dict[str, float] = {}
-    if ex_df is not None:
-        for row in ex_df.iter_rows(named=True):
-            v = row["value"]
-            if v is None:
-                continue
-            try:
-                fv = float(v)
-            except (TypeError, ValueError):
-                continue
-            # If multi-period (period column present), keep max across
-            # periods so the "largest existing" picks something stable.
-            cur = ex_map.get(row["name"])
-            if cur is None or fv > cur:
-                ex_map[row["name"]] = fv
-
-    picks: list[str] = []
-    for comp in comps:
-        # 1. Explicit group reference inside component.
-        explicit = sorted(comp & explicit_refs)
-        if explicit:
-            picks.append(explicit[0])
-            continue
-        # 2. Largest existing tiebreak by name.
-        ranked = sorted(comp,
-                         key=lambda n: (-ex_map.get(n, 0.0), n))
-        if ranked:
-            picks.append(ranked[0])
-    if not picks:
-        return None
-    return pl.DataFrame({"n": sorted(set(picks))})
-
-
-# ---------------------------------------------------------------------------
 # §3.13 reserve helpers (narrow gate-on-equality overlays)
 # ---------------------------------------------------------------------------
 
@@ -6679,7 +6550,6 @@ def process_reserve_upDown_node_active_from_source(source: "InputSource",
 
 D_PUBLIC_FIELDS: tuple[str, ...] = (
     "p_entity_all_existing",
-    "node_reference_angle",
     "process_reserve_upDown_node_active",
 )
 
@@ -6696,12 +6566,11 @@ def apply_derived_d(
 
     Scope (Tier-1 selected items):
       * §3.11 ``p_entity_all_existing`` (simple existing-only path).
-      * §3.16 ``node_reference_angle`` (DC PF reference pick).
       * §3.13 ``process_reserve_upDown_node_active`` (reliability>0 set).
 
     Δ.12b — assignment is unconditional; helpers are authoritative
     producers.  ``None`` is the explicit "feature inactive" signal
-    (no DC-PF reference angle / no reserve relationships /
+    (no reserve relationships /
     no chained existing capacity).  Hard exceptions propagate.
     """
     active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
@@ -6716,17 +6585,6 @@ def apply_derived_d(
     # Calling it here meant the chain-summation read stale (or seed-only)
     # carriers on the first iteration.  Moved to ``_apply_db_overrides``
     # so it runs strictly after ``apply_derived_f``.
-
-    # ─── §3.16 node_reference_angle — Δ.12b: unconditional, with
-    #     CSV-fallback (Δ.16).  Some fixtures (e.g. ``work_dc_power_flow``
-    #     / ``case14.sqlite``) ship a pre-computed
-    #     ``input/node_reference_angle.csv`` but don't populate the
-    #     ``connection.is_DC`` parameter the source-side derivation
-    #     consumes.  Preserve the CSV-loaded value when the source path
-    #     produces nothing.
-    derived_ref = node_reference_angle_from_source(source)
-    if derived_ref is not None:
-        flex_data.node_reference_angle = derived_ref
 
     # ─── §3.13 process_reserve_upDown_node_active — Δ.12b: unconditional
     flex_data.process_reserve_upDown_node_active = (

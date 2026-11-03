@@ -60,6 +60,14 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "chain), so a single solve and a chain of solves agree."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "user_constraint_prebuilt_nets_retirements"),
         ),
+        BehaviourChange(
+            id="dc_power_flow_lines_beside_dc_links",
+            summary=("DC power-flow lines are the connections inside dc_power_flow_with_angles groups (other than "
+                     "is_DC connections). Before, a model with any is_DC connection used the is_DC connections "
+                     "instead: the group's lines had no angle constraints and the reference node could move "
+                     "(results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "dc_power_flow_lines_beside_dc_links"),
+        ),
     )
 }
 
