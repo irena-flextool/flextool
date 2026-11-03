@@ -11,14 +11,14 @@ goes idle.
   jemalloc reads it when polars loads.  ``import polars`` puts its own values in front, and the later ones win.
 * polars already loaded (a Spine Toolbox console, a notebook, a script that imported polars first): FlexTool's
   values are appended to the variable, for child processes, and the same two decay values are written at runtime
-  through jemalloc's ``mallctl``: the default for new arenas (``arenas.*``) and every initialised arena (``arena.<i>.*``).  The
-  ``mallctl`` symbol is local to the polars library (not exported), so its address is computed from the ELF symbol
-  table: load base = address of the library's exported ``PyInit_*`` function minus its symbol value.  The first
-  bytes of the function at the computed address are compared with the same bytes of the file before the function
-  is called; any mismatch, a non-ELF library (macOS) or a failing ``mallctl`` call prints one warning on stderr
-  with the remedy and changes nothing.  A ``_RJEM_MALLOC_CONF`` set before polars was imported has already been
-  read by jemalloc and wins as a whole, as it would with flextool imported first.  One set after polars was
-  imported (it then lacks polars' own values in front) has its decay keys written at runtime.
+  through jemalloc's ``mallctl``: the default for new arenas (``arenas.*``) and every initialised arena
+  (``arena.<i>.*``).  The ``mallctl`` symbol is local to the polars library (not exported), so its address is
+  computed from the ELF symbol table: load base = address of the library's exported ``PyInit_*`` function minus its
+  symbol value.  The first bytes of the function at the computed address are compared with the same bytes of the
+  file before the function is called; any mismatch, a non-ELF library (macOS) or a failing ``mallctl`` call prints
+  one warning on stderr with the remedy and changes nothing.  A ``_RJEM_MALLOC_CONF`` set before polars was
+  imported has already been read by jemalloc and wins as a whole, as it would with flextool imported first.  One
+  set after polars was imported (it then lacks polars' own values in front) has its decay keys written at runtime.
 
 Windows polars uses mimalloc, and a library without jemalloc has nothing to configure: both are a silent no-op.
 """

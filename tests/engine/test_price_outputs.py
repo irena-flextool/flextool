@@ -94,8 +94,8 @@ def _node_prices_over_all_lp_steps(step, wf: Path) -> dict[tuple[str, str, str],
     fd = dataclasses.replace(step.flex_data, realized_dispatch=rows)
     scale = float(pl.read_csv(Path(wf) / "solve_data" / "scale_the_objective.csv")["value"][0])
     out_dir = Path(wf) / "all_lp_steps"
-    write_v_dual_node_balance(highs_with_names(step.solution), solve_name=step.solve_name, output_dir=out_dir / "output_raw",
-                              flex_data=fd, scale_the_objective=scale)
+    write_v_dual_node_balance(highs_with_names(step.solution), solve_name=step.solve_name,
+                              output_dir=out_dir / "output_raw", flex_data=fd, scale_the_objective=scale)
     return _node_prices(out_dir, step.solve_name)
 
 

@@ -67,7 +67,8 @@ def test_conf_set_before_polars_wins_whichever_import_comes_first():
 
 
 def test_conf_set_after_polars_import_is_applied_at_runtime():
-    after = _decay(_polars_first(between=f"os.environ[{_allocator.ENV_VAR!r}] = 'dirty_decay_ms:2000,muzzy_decay_ms:7'"))
+    setting = f"os.environ[{_allocator.ENV_VAR!r}] = 'dirty_decay_ms:2000,muzzy_decay_ms:7'"
+    after = _decay(_polars_first(between=setting))
     assert after["arena.0.dirty_decay_ms"] == 2000 and after["arena.0.muzzy_decay_ms"] == 7
     assert after["arenas.dirty_decay_ms"] == 2000 and after["arenas.muzzy_decay_ms"] == 7
 
@@ -102,7 +103,8 @@ def test_pages_freed_before_flextool_is_imported_are_returned():
 def _polars_written_conf() -> str:
     """The value ``import polars`` writes when nothing was set before: the decay values jemalloc read at load."""
     ctl = _allocator.Mallctl.from_library(*_allocator.runtime_library())
-    return f"dirty_decay_ms:{ctl.read_ssize('opt.dirty_decay_ms')},muzzy_decay_ms:{ctl.read_ssize('opt.muzzy_decay_ms')}"
+    dirty, muzzy = ctl.read_ssize('opt.dirty_decay_ms'), ctl.read_ssize('opt.muzzy_decay_ms')
+    return f"dirty_decay_ms:{dirty},muzzy_decay_ms:{muzzy}"
 
 
 @pytest.fixture
