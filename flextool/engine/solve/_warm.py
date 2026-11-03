@@ -113,6 +113,8 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "p_online_dt", "pdt_online_linear", "pdt_online_integer",
     "pdt_uptime_set", "pdt_downtime_set",
     "uptime_lookback", "downtime_lookback",
+    # The online predecessor of the stretch starts (built with dt_ramp_link).
+    "dt_online_wrap",
     # Storage.
     "nodeState", "nodeState_dt", "nodeState_first_dt",
     "storage_bind_within_timeblock", "storage_bind_forward_only",

@@ -379,7 +379,7 @@ def toy_uc_3t() -> FlexData:
     p_process_existing_count = Param(("p", "d"),
         pl.DataFrame({"p": ["u"], "d": ["d1"], "value": [1.0]}))
 
-    # dtttdt with cyclic t_previous_within_solve (used by online dynamics).
+    # dtttdt with cyclic t_previous_within_solve.
     dtttdt = pl.DataFrame({
         "d": ["d1"]*3,
         "t": ["t01", "t02", "t03"],
@@ -388,6 +388,11 @@ def toy_uc_3t() -> FlexData:
         "d_previous": ["d1"]*3,
         "t_previous_within_solve": ["t03", "t01", "t02"],
     })
+    # The online dynamics: t02 / t03 follow their adjacent predecessor (dt_ramp_link); t01, the solve's first
+    # step, wraps to the last step of its stretch, t03 (dt_online_wrap).
+    from flextool.engine.preprocess.params._ramp_links import ramp_link_fields
+    ramp_links = ramp_link_fields(dt, pl.DataFrame({"d": ["d1", "d1"], "t": ["t02", "t03"],
+                                                    "d_previous": ["d1", "d1"], "t_previous": ["t01", "t02"]}))
 
     # min_uptime/downtime lookback rows: for each (p, d, t), include
     # (d, t) self plus 1 step back (since min_time=2 and step_duration=1
@@ -429,6 +434,7 @@ def toy_uc_3t() -> FlexData:
         p_startup_cost=p_startup_cost,
         p_process_existing_count=p_process_existing_count,
         dtttdt=dtttdt,
+        **ramp_links,
         uptime_lookback=uptime_lookback,
         downtime_lookback=downtime_lookback,
         pdt_uptime_set=pdt_uptime_set,

@@ -1062,3 +1062,32 @@ no carrier into a next solve); the calculated "full horizon" / "realized periods
 `tests/scenarios.yaml` pins `expected_objective: 0.0` (it reads the calculated full-horizon total).
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate 2_day_stochastic_dispatch`.
+
+## 2026-11-03 — `all/{unit__outputNode__dt,node__dt,costs__dt}.csv` (online commitment stops at timeline gaps)
+
+**Context.** The online commitment no longer links across a gap in the timeline (owner decision "Online state at
+timeline gaps (2026-11-02)"): a step without a ramp predecessor takes as its online predecessor the last step of its
+own stretch of the period (`params._ramp_links.online_stretch_wrap`).  The `all` fixture's `5weeks` timeset has four
+blocks per period (t0001-t0004, t0009-t0016, t0025-t0028, t0037-t0040).  lp_snapshot vs the parent: the only change
+is the `online_change_linear` predecessor of the four block starts of each of p2020 / p2025 — `t0001: t0040 → t0004`,
+`t0009: t0004 → t0016`, `t0025: t0016 → t0028`, `t0037: t0028 → t0040` (before, each block start took the step
+before the gap, and t0001 the last step of the period).  Each block now cycles on its own, so block 4 no longer pays
+a start-up at t0037 for having more units online than block 3 ended with (starts 36542.179 there → 0) and block 2
+re-commits inside itself (a start-up of 4876.847 at t0012); dispatch, slack and emissions shift accordingly in the
+blocks.  The calculated cost total drops 2766786.219 → 2729876.737.  `test_a_lot` (same blocks, its own LP changes the
+same way) and `test_a_lot_but_not_multi_year` still match their goldens and are not regenerated.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate all`.
+
+## 2026-11-03 — `coal_unit_size_MIP_wind/{unit__outputNode__dt,unit_online__dt,costs__dt}.csv` (same change)
+
+**Context.** Same change as the `all` entry above.  The scenario's investment solve `y2020_5week` uses the same
+`5weeks` blocks with a binary `coal_plant`; an lp_snapshot of both solves vs the parent shows, in `y2020_5week`, only
+the `online_change_integer` predecessors of the block starts of p2020 / p2025 (`t0001: t0040 → t0004`,
+`t0009: t0004 → t0016`, `t0025: t0016 → t0028`, `t0037: t0028 → t0040`).  With each block cycling on its own the
+investment solve builds a little less wind: the realized wind capacity in the `y2020_fullYear_dispatch` solve drops
+1.17674 → 1.14737 units, its only LP change (72 `maxFlow` and 72 `profile_flow_upper_limit` RHS of `wind_plant`).
+The dispatch therefore runs coal more (`unit__outputNode__dt`, `unit_online__dt`), and its costs rise
+164813.932 → 174931.579.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate coal_unit_size_MIP_wind`.

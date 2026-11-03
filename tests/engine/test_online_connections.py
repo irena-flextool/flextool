@@ -462,10 +462,11 @@ def _two_periods() -> list:
 def test_connection_online_outputs(tmp_path_factory) -> None:
     """E: write_outputs reports the connection's online status, startups and startup cost as the LP solved them.
     Fixture: two continuing periods (p2020 t0001–24, p2025 t0025–48), west_east (one-way, linear online, startup
-    cost 3) without existing capacity and with investment; east has demand only in p2025, so west_east invests
-    and starts up (in p2020 for west's spill, more in p2025).  connection_online__dt = v_online; connection_startup__d
-    = Σ_t v_startup / period share of the year (24 / 8760); costs__dt "starts" = v_startup × unitsize × 3 per step.
-    Unit outputs list units only."""
+    cost 3) without existing capacity and with investment only in p2025; east has demand only in p2025, so
+    west_east has no units in p2020 and starts up the units invested in p2025 at p2025's first step, which continues
+    p2020's last step (0 online).  connection_online__dt = v_online; connection_startup__d = Σ_t v_startup / period
+    share of the year (24 / 8760); costs__dt "starts" = v_startup × unitsize × 3 per step.  Unit outputs list units
+    only."""
     import pandas as pd
 
     from flextool._resources import package_data_path
@@ -473,7 +474,11 @@ def test_connection_online_outputs(tmp_path_factory) -> None:
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from flextool.process_outputs.write_outputs import write_outputs
 
-    vals = _two_periods() + _startup(WE, "linear") + [
+    p2025_only = {"value_type": "str", "data": ["p2025"]}
+    vals = [v for v in _two_periods() if v[2] not in ("invest_periods", "realized_invest_periods")] + [
+        ["solve", "y2020_2day_dispatch", "invest_periods", b64(p2025_only, "array")],
+        ["solve", "y2020_2day_dispatch", "realized_invest_periods", b64(p2025_only, "array")]]
+    vals += _startup(WE, "linear") + [
         ["connection", WE, "existing", b64(0.0, "float")],
         ["connection", WE, "invest_method", b64("invest_no_limit", "str")],
         ["connection", WE, "invest_cost", b64(1.0, "float")],

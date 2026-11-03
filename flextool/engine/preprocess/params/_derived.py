@@ -8522,10 +8522,12 @@ def apply_derived_e(
     dtttdt_db = None if dtttdt_jump is None else dtttdt_jump.drop("jump")
     if dtttdt_db is not None:
         flex_data.dtttdt = dtttdt_db
-        # Ramp predecessors: the adjacent (jump == 1) rows, without representative-block starts.
-        from flextool.engine.preprocess.params._ramp_links import ramp_link_from_jump
-        flex_data.dt_ramp_link = ramp_link_from_jump(
-            dtttdt_jump, _rp_block_first_utf8(workdir, provider))
+        # Ramp predecessors: the adjacent (jump == 1) rows, without representative-block starts; the online
+        # stretch wrap is derived from them (ramp_link_fields sets both).
+        from flextool.engine.preprocess.params._ramp_links import ramp_link_fields, ramp_link_from_jump
+        for _name, _value in ramp_link_fields(
+                flex_data.dt, ramp_link_from_jump(dtttdt_jump, _rp_block_first_utf8(workdir, provider))).items():
+            setattr(flex_data, _name, _value)
     # Minimum up/down-time look-backs along the final ramp predecessor links (the seed links when the source
     # timeline walk gives none).
     apply_mintime_lookbacks(flex_data, source, _roll_first_step_link(workdir, provider), active_solve)

@@ -737,6 +737,11 @@ class FlexData:
     # (d, t, d_previous, t_previous), Utf8: the steps whose predecessor in the un-rolled solve is adjacent on the
     # timeline (jump == 1), without the first steps of representative blocks (see params._ramp_links).
     dt_ramp_link: pl.DataFrame | None = None
+    # (d, t, d_previous, t_previous), Utf8: the online predecessor of the steps without a ramp predecessor (a stretch
+    # start: the first step of a solve or period, the step after a gap, a representative-block start) — the last step
+    # of its own stretch of the period (params._ramp_links.online_stretch_wrap).  Set with dt_ramp_link
+    # (ramp_link_fields).
+    dt_online_wrap: pl.DataFrame | None = None
     # (d, t, d_previous, t_previous, duration_previous): first steps of a continuation roll that ramp from the
     # previous roll's realized flow at (d_previous, t_previous); p_roll_continue_flow holds that flow.
     dt_ramp_carry: pl.DataFrame | None = None
@@ -2440,7 +2445,10 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
                 provider: "object | None" = None) -> dict:
     """Load ramp-limit sets and ramp_speed params, the ramp predecessor links (``dt_ramp_link``) and, on a
     continuation roll, the previous roll's flow (``dt_ramp_carry``, ``p_roll_continue_flow``).  The sets and
-    the carry are empty when no process_source_sink_ramp_limit_* row is populated."""
+    the carry are empty when no process_source_sink_ramp_limit_* row is populated.  ``dt_online_wrap`` is set with
+    ``dt_ramp_link`` (``params._ramp_links.ramp_link_fields``)."""
+    from flextool.engine.preprocess.params._ramp_links import ramp_link_fields
+
     blank = dict(
         process_source_sink_ramp_limit_sink_up=None,
         process_source_sink_ramp_limit_sink_down=None,
@@ -2450,7 +2458,7 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         p_ramp_speed_down_sink=None,
         p_ramp_speed_up_source=None,
         p_ramp_speed_down_source=None,
-        dt_ramp_link=_read_ramp_link(sd, provider=provider),
+        **ramp_link_fields(dt, _read_ramp_link(sd, provider=provider)),
         dt_ramp_carry=None,
         p_roll_continue_flow=None,
     )
@@ -2490,6 +2498,7 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         p_ramp_speed_up_source = None,
         p_ramp_speed_down_source = None,
         dt_ramp_link = blank["dt_ramp_link"],
+        dt_online_wrap = blank["dt_online_wrap"],
         dt_ramp_carry = dt_ramp_carry,
         p_roll_continue_flow = p_roll_continue_flow,
     )

@@ -40,6 +40,52 @@ def ramp_link_from_jump(steps: "pl.DataFrame | None",
     return out.collect()
 
 
+def online_stretch_wrap(dt: "pl.DataFrame | None", link: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """``(d, t, d_previous, t_previous)`` Utf8: the online predecessor of every step of ``dt`` that has no ramp
+    predecessor (is not a target of ``link`` = ``dt_ramp_link``): the last step of its own stretch.
+
+    A stretch is a run of ``dt`` steps (in solve order) of one period ``d`` that follow each other along ``link``;
+    it starts at a step that is not the target of a same-period link (the first step of a solve or of a period, the
+    step after a gap in the timeline, a representative-block start) and ends before the next such step.  The
+    commitment at a stretch start therefore cycles within its stretch, as a single block of one period does: it
+    never reaches across a gap or into another period (a period that continues the previous one is a ``link``
+    target and has no wrap).  ``None`` when ``dt`` or ``link`` is ``None``.  Raises ``ValueError`` when a
+    same-period link joins steps that are not consecutive steps of that period in ``dt``.
+    """
+    if dt is None or link is None:
+        return None
+    steps = (dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+             .with_row_index("__i")
+             .with_columns(pl.col("t").shift(1).over("d", order_by="__i").alias("__t_before")))
+    lk = link.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                     pl.col("d_previous").cast(pl.Utf8), pl.col("t_previous").cast(pl.Utf8))
+    same = lk.filter(pl.col("d") == pl.col("d_previous"))
+    checked = steps.join(same, on=["d", "t"], how="inner")
+    bad = checked.filter(pl.col("__t_before").is_null() | (pl.col("__t_before") != pl.col("t_previous")))
+    if bad.height > 0:
+        raise ValueError(
+            "online_stretch_wrap: a same-period ramp link joins steps that are not consecutive in the solve: "
+            f"{bad.select('d', 't', 't_previous').rows()[:5]}")
+    in_run = pl.col("__linked").not_().cum_sum().over("d", order_by="__i")
+    runs = (steps.join(same.select("d", "t").with_columns(pl.lit(True).alias("__linked")), on=["d", "t"],
+                       how="left")
+            .with_columns(pl.col("__linked").fill_null(False))
+            .sort("__i")
+            .with_columns(in_run.alias("__run")))
+    last = (runs.group_by("d", "__run").agg(pl.col("t").sort_by("__i").last().alias("t_previous")))
+    starts = runs.join(lk.select("d", "t"), on=["d", "t"], how="anti")
+    return (starts.join(last, on=["d", "__run"], how="inner")
+            .sort("__i")
+            .select("d", "t", pl.col("d").alias("d_previous"), "t_previous"))
+
+
+def ramp_link_fields(dt: "pl.DataFrame | None", link: "pl.DataFrame | None") -> dict:
+    """The FlexData fields derived from the ramp predecessor links: ``dt_ramp_link`` (*link*) and
+    ``dt_online_wrap`` (:func:`online_stretch_wrap` of ``dt`` and *link*).  Every setter of ``dt_ramp_link`` sets
+    both through this function, so the two never disagree."""
+    return {"dt_ramp_link": link, "dt_online_wrap": online_stretch_wrap(dt, link)}
+
+
 def _with_fan_members(hit: pl.DataFrame, anchors: pl.DataFrame, firsts: pl.DataFrame,
                       period_branch: "pl.DataFrame | None") -> pl.DataFrame:
     """*hit* (the first steps of this roll's periods that take a carry) plus the forecast branch periods of the

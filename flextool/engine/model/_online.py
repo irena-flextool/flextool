@@ -16,7 +16,7 @@ parameters).
 from typing import TYPE_CHECKING
 
 import polars as pl
-from polar_high import Lag, Param, Sum, Where
+from polar_high import Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.input._param_shapes import promote_param_to_dt
@@ -122,28 +122,19 @@ def add_constraints(b: "_Build") -> None:
                    lhs_terms=_lhs_with_invdiv(v_online, "online"),
                    rhs_terms={"max_units": d.p_process_existing_count})
 
-        # The online predecessor of every (p,d,t) ∈ p_idx (part A, #98 / N1), one of three disjoint pieces
-        # (each (p,d,t) matches at most one):
-        #   1. (d,t) ∈ dt_ramp_link → v_online[p,d_previous,t_previous] of the link: the interior adjacent
-        #      step, PLUS a continuing period boundary or a mid-horizon branch's first step (#98) — topics the
-        #      cyclic lag below cannot reach (Lag only matches within the same d).
-        #   2. else (d,t) ∈ dt_online_carry → p_roll_continue_online[p], a constant: the previous roll's
-        #      realized committed v_online, carried to the roll's real first step (and the forecast branches
-        #      starting with it) so a unit that stays committed is not charged a new startup there (N1: this
-        #      used to land on the (d,t)-name-sorted first row, not necessarily the roll's actual first step).
-        #   3. else v_online[p,d,t_previous_within_solve] of dtttdt (Lag): the cyclic wrap at a solve's / a
-        #      non-continuing period's first step, steps after a timeline gap, representative-block starts.
-        #      0 where that lag target is not in the solve.
+        # The online predecessor v_online_prev of every (p,d,t) ∈ p_idx, one of three disjoint pieces:
+        # v_online_prev[p,d,t] =
+        #   v_online[p,d′,t′]         (d,t,d′,t′) ∈ dt_ramp_link                adjacent predecessor (also a continuing
+        #                                                                         period, a mid-horizon branch's first step)
+        #   p_roll_continue_online[p] (d,t) ∈ dt_online_carry                  the previous solve's realized commitment
+        #   v_online[p,d,t″]          (d,t,d,t″) ∈ dt_online_wrap, (d,t) ∉ dt_online_carry
+        #                                                                         stretch start: the last step of its stretch
+        # A stretch is a run of steps of one period d along dt_ramp_link; it starts at the first step of a solve or of
+        # a period that does not continue the previous one, after a gap in the timeline and at a representative-block
+        # start.  No link across a gap, a representative-block start or a new year (as ramps and min up/down).  The
+        # successor side does not wrap: a stretch end has no successor (_successor_steps).
         rco = d.p_roll_continue_online
         d_dtype, t_dtype = p_idx.schema["d"], p_idx.schema["t"]
-        link_native = None
-        if d.dt_ramp_link is not None and d.dt_ramp_link.height > 0:
-            link_cast = d.dt_ramp_link.pipe(
-                rename_to_axis, {"d": "d", "t": "t", "d_previous": "d_previous", "t_previous": "t_previous"})
-            link_rows = (online_set.select("p").unique().join(link_cast, how="cross")
-                        .join(p_idx.select("p", "d", "t"), on=["p", "d", "t"], how="inner"))
-            if link_rows.height > 0:
-                link_native = link_rows
 
         carry_rows = None
         if d.dt_online_carry is not None and d.dt_online_carry.height > 0 and rco is not None:
@@ -160,12 +151,24 @@ def add_constraints(b: "_Build") -> None:
             if p_carry_rows.height > 0:
                 carry_rows = p_carry_rows
 
-        dtttdt_rest = d.dtttdt
-        if dtttdt_rest is not None and dtttdt_rest.height > 0:
-            excl = [f.select("d", "t").unique() for f in (link_native, carry_rows) if f is not None]
-            if excl:
-                excl_dt = excl[0] if len(excl) == 1 else pl.concat(excl).unique()
-                dtttdt_rest = dtttdt_rest.join(excl_dt, on=["d", "t"], how="anti")
+        prev_links = []
+        if d.dt_ramp_link is not None and d.dt_ramp_link.height > 0:
+            prev_links.append(d.dt_ramp_link)
+        if d.dt_online_wrap is not None and d.dt_online_wrap.height > 0:
+            wrap = d.dt_online_wrap
+            if carry_rows is not None:
+                carried_dt = carry_rows.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique()
+                wrap = wrap.join(carried_dt, on=["d", "t"], how="anti")
+            prev_links.append(wrap)
+        link_native = None
+        if prev_links:
+            link_cast = (pl.concat([f.select("d", "t", "d_previous", "t_previous") for f in prev_links])
+                         .pipe(rename_to_axis,
+                               {"d": "d", "t": "t", "d_previous": "d_previous", "t_previous": "t_previous"}))
+            link_rows = (online_set.select("p").unique().join(link_cast, how="cross")
+                        .join(p_idx.select("p", "d", "t"), on=["p", "d", "t"], how="inner"))
+            if link_rows.height > 0:
+                link_native = link_rows
 
         online_prev_terms: dict = {}
         if link_native is not None:
@@ -176,13 +179,11 @@ def add_constraints(b: "_Build") -> None:
         if carry_rows is not None:
             # Sparse Param at the carried boundary row(s) only; Param + Param outer-joins with 0-fill.
             online_prev_terms["roll_continue_online"] = Param(("p", "d", "t"), carry_rows)
-        if dtttdt_rest is not None and dtttdt_rest.height > 0:
-            online_prev_terms["online_prev_lag"] = Lag(v_online, dtttdt_rest, "t", "t_previous_within_solve")
 
         # ─── EQ. ─── online_change_{linear,integer} ──────────────────────────
         # ─────────────────────────────────────────────────────────────────────
         # v_online[p,d,t] − v_online_prev[p,d,t] − v_startup[p,d,t] + v_shutdown[p,d,t]  =  0
-        #   ∀ (p,d,t) ∈ p_idx;   v_online_prev as derived above (rules 1-3)
+        #   ∀ (p,d,t) ∈ p_idx;   v_online_prev as derived above (three pieces)
         # The change in units online is the units started minus the units shut down (Backbone's
         # q_startshut).  With maxStartup / maxShutdown below, a startup without a unit coming online, or a
         # shutdown without one going offline, is impossible; a fleet (unitsize < built) can still start and
@@ -202,8 +203,8 @@ def add_constraints(b: "_Build") -> None:
         # ─── EQ. ─── maxShutdown_{linear,integer} ─────────────────────────────
         # ─────────────────────────────────────────────────────────────────────
         # v_shutdown[p,d,t] + v_online[p,d,t] − Σ v_invest_p[p,d″] + Σ v_divest_p[p,d″]  ≤  existing_count[p,d]
-        #   ∀ (p,d,t) ∈ p_idx whose online predecessor is v_online of the SAME period d (rules 1 with
-        #   d_previous = d, and 3 — owner question Q-c14c-A default)
+        #   ∀ (p,d,t) ∈ p_idx whose online predecessor is v_online of the SAME period d (a dt_ramp_link with
+        #   d_previous = d, or a dt_online_wrap — owner question Q-c14c-A default)
         # Units shut down in a step are offline in it.  Not built where the predecessor is in another period
         # or carried from an earlier roll (capacity may differ there — a unit online at the end of the
         # previous period / roll must still be able to "shut down" even if this step's capacity is lower);

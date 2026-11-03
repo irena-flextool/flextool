@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **Fix: the online commitment no longer links across a gap in the timeline.** The units online at the first step
+  after a gap were compared with the units online at the step before the gap, so a start-up (or a free shut-down)
+  was counted across the gap. The first step of a solve or of a period that does not continue the previous one
+  wrapped to the period's last step when that step name existed in the solve, and otherwise started from zero units
+  online (a start-up charged at the first step of later periods). Now every step without an adjacent predecessor —
+  the first step of a solve or such a period, the step after a gap, the start of a representative period — takes
+  the units online at the last step of its own stretch of the period (the steps that follow each other up to the
+  next gap), as a solve with one block always did. The commitment thus cycles within each block and never reaches
+  across a gap, a representative-period start or into another period, the same as ramp limits and the minimum
+  up / down time look-back. In a stochastic solve that branches mid-horizon, the steps before the reveal cycle among
+  themselves.
 - **Fix: a solve with longer time steps continues the finer dispatch realized before it.** In nested and rolling
   solves, the ramp limit and the minimum up / down time carry of a solve's first step were taken over from the
   previous solve only when the step before it on its own timeline was the very step realized last. A solve with
