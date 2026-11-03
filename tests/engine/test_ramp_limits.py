@@ -264,7 +264,7 @@ def test_online_continues_across_period_boundary(tmp_path_factory) -> None:
     assert su == pytest.approx(0.0, abs=TOL)
 
 
-def test_online_roll_carry_steps_module(tmp_path_factory) -> None:
+def test_online_roll_carry_lands_on_the_rolls_first_step(tmp_path_factory) -> None:
     """A2.  The roll-carriers-take-the-last-realized-step fixture (review F3 / item 100: periods p2020 then
     a2025 — a name that sorts BEFORE p2020 — coal linear online with a ramp, rolls of 16 h / jump 10), with
     startup_cost 20 (> 0 — critique item 4: with cost 0 a zero-gain start/stop pair could inflate the relation

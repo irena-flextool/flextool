@@ -127,6 +127,7 @@ def add_constraints(b: "_Build") -> None:
         #   v_online[p,d′,t′]         (d,t,d′,t′) ∈ dt_ramp_link                adjacent predecessor (also a continuing
         #                                                                         period, a mid-horizon branch's first step)
         #   p_roll_continue_online[p] (d,t) ∈ dt_online_carry                  the previous solve's realized commitment
+        #                                                                         (dt_online_carry = dt_ramp_carry's steps)
         #   v_online[p,d,t″]          (d,t,d,t″) ∈ dt_online_wrap, (d,t) ∉ dt_online_carry
         #                                                                         stretch start: the last step of its stretch
         # A stretch is a run of steps of one period d along dt_ramp_link; it starts at the first step of a solve or of

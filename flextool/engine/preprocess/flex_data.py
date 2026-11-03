@@ -776,10 +776,9 @@ class FlexData:
     # non-rolling / no-online solves (→ byte-identical baseline path).
     p_roll_continue_online: Param | None = None              # (p,)
     # (d, t), Utf8: the step(s) of THIS roll that take the ``p_roll_continue_online`` carry as their online
-    # predecessor (params._ramp_links.online_roll_carry_steps) — the roll's real first step (and the forecast
-    # branches starting with it), with a timeline-order fallback when the complete solve's predecessor of no
-    # period's first step is the carried step (e.g. a nested child solve that doesn't contain it).  ``None``
-    # together with ``p_roll_continue_online`` (first roll / non-rolling / no-online solves).
+    # predecessor — the ramp's seam roots (``dt_ramp_carry``: the first steps whose complete-solve predecessor is
+    # adjacent and is, or ends where, the carried step ends, plus the forecast branches starting with them).
+    # ``None`` without a carry or where the seam is at a gap, a representative-period start or a new year.
     dt_online_carry: pl.DataFrame | None = None
     # OC1 #1 sub-slice (b) — separate_dispatch sibling online PIN.  The
     # parent's committed ``v_online`` over the jump (read from the
@@ -2670,23 +2669,19 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         if df_rco.height > 0:
             p_roll_continue_online = Param(("p",), df_rco)
 
-    # Part A / N1 fix — the step(s) of THIS roll that take the carry (``dt_online_carry``): the roll's real
-    # first step (plus forecast branches starting with it), not the (d, t)-name-sorted first row (N1, the bug
-    # this fixes).  Same source frames as the ramp carry (:func:`_load_ramp_carry` /
-    # ``params._ramp_links.ramp_roll_carry``): the previous roll's last realized step and the complete solve's
-    # ``step_previous`` rows of each period's first step.  ``None`` together with ``p_roll_continue_online``
-    # (first roll / non-rolling / no-online solves).
+    # The step(s) of THIS roll that take the carry (``dt_online_carry``) are the ramp's seam roots
+    # (``dt_ramp_carry``, set by :func:`load_flextool` once the ramp carry is read): the commitment continues the
+    # previous solve only where the timeline continues, and stops at a gap, a representative-period start and a
+    # new year, as ramp limits and the minimum up / down look-back do.  The roots are keyed on the carried step,
+    # so a carried commitment without it cannot be placed: raise instead of dropping it.
     dt_online_carry = None
     if p_roll_continue_online is not None:
-        from flextool.engine.preprocess.params._ramp_links import online_roll_carry_steps
         _rco_step = read_handoff_frame(provider, K.HANDOFF_ROLL_END_STEP)
-        _rco_link_path = sd / "roll_first_step_link.csv"
-        _rco_link = (_provider_read(provider, K.SOLVE_DATA_ROLL_FIRST_STEP_LINK, _rco_link_path)
-                    if _provider_has(provider, K.SOLVE_DATA_ROLL_FIRST_STEP_LINK, _rco_link_path) else None)
-        _rco_pb_path = sd / "period__branch.csv"
-        _rco_pb = (_provider_read(provider, "solve_data/period__branch", _rco_pb_path)
-                  if _provider_has(provider, "solve_data/period__branch", _rco_pb_path) else None)
-        dt_online_carry = online_roll_carry_steps(dt, _rco_step, _rco_link, _rco_pb)
+        if _rco_step is None or _rco_step.height == 0:
+            raise ValueError(
+                "handoff/roll_end_online: the carried online commitment needs the step it was realized at "
+                "(handoff/roll_end_step), which is missing; the commitment cannot be placed on this solve's "
+                "first steps.")
 
     # OC1 #1 sub-slice (b) — read the parent's committed v_online over the
     # jump (``handoff/fix_online``, schema ``[process, period, step,
@@ -4413,8 +4408,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
                               provider=provider)
         online["process_exact"] = _read_process_exact(inp, provider=provider)
         ramp = _load_ramp(inp, sd, proc["pss"], dt=dt, provider=provider)
-        # Part A, critique item 2: the online carry (rule 2) and the ramp carry / ramp link (rule 1) must agree
-        # — raise instead of silently falling back to a predecessor of 0 (params._ramp_links).
+        # The online carry lands on the ramp's seam roots: one adjacency for ramp, min up / down and online.
+        if online.get("p_roll_continue_online") is not None and ramp.get("dt_ramp_carry") is not None:
+            online["dt_online_carry"] = ramp["dt_ramp_carry"].select("d", "t").unique(maintain_order=True)
+        # The online carry and the ramp carry / ramp link must agree — raise instead of silently falling back to
+        # a predecessor of 0 (params._ramp_links).
         from flextool.engine.preprocess.params._ramp_links import check_online_ramp_carry_consistency
         _rco = online.get("p_roll_continue_online")
         _rcf = ramp.get("p_roll_continue_flow")

@@ -44,6 +44,16 @@ from the new code's output): recomputing the yearly total from
 not just each roll's first step) reproduces 5.898000000000001 to the
 last bit — the realized total is forced by the (already-tested-correct)
 online path, not an LP alternate-optimum artifact.
+
+The four periods reuse the fullYear timeset, so the first roll of p2025,
+p2030 and p2035 starts a new year that does not continue the previous
+roll's last realized step on the timeline.  Like ramp limits and the
+minimum up / down time carry, the commitment carry stops there: those
+rolls take no carry (``dt_online_carry`` is ``None``) and their first step
+cycles within its stretch (``dt_online_wrap``: the period's last step in
+the roll).  The yearly total therefore re-charges those three new-year
+starts and is checked against the same Delta-online re-derivation, with
+each roll's first-step predecessor being the carried value or the wrap.
 """
 from __future__ import annotations
 
@@ -69,15 +79,10 @@ UNIT = "coal_plant"
 STARTUP_COST = 100.0  # €/unit-start
 UNITSIZE = 500.0      # MW  → objective coef = STARTUP_COST * UNITSIZE
 
-# Driven baselines (see module docstring).  Pre-OC1 the cyclic-wrap
-# re-charge inflated the yearly realized startup to 7.284.  OC1's carry
-# alone dropped it to 5.854; c14c part B's exact online_change identity
-# (#99) closes additional interior-step slack the inequality form left,
-# landing the honest total at 5.898 — independently re-derived via the
-# Delta-online recomputation in the module docstring, not read off the
-# new code's own v_startup total.
-CORRECTED_TOTAL_STARTUP = 5.898
+# Driven baseline (see module docstring): with the cyclic wrap re-charged at
+# every roll boundary the yearly realized startup was 7.284.
 PREFIX_TOTAL_STARTUP = 7.284
+NEW_YEAR_ROLLS = 3    # the first rolls of p2025, p2030 and p2035
 
 
 def _add_scenario(db_url: str) -> None:
@@ -153,6 +158,25 @@ def _produced_value(step, unit: str) -> float | None:
     return float(row["value"][0]) if row.height else 0.0
 
 
+def _first_step_predecessor(step, unit: str) -> tuple[str, float]:
+    """The online predecessor of the roll's first step: ``("carry", carried value)`` when the step takes the carry
+    (it is in ``dt_online_carry``), else ``("wrap", v_online at its dt_online_wrap target)`` from the roll's own
+    solution."""
+    fd = step.flex_data
+    first = fd.dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).row(0)
+    oc = fd.dt_online_carry
+    if oc is not None and first in oc.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).rows():
+        return "carry", _carried_value(step, unit)
+    wrap = (fd.dt_online_wrap.select([pl.col(c).cast(pl.Utf8) for c in ("d", "t", "d_previous", "t_previous")])
+            .filter((pl.col("d") == first[0]) & (pl.col("t") == first[1])))
+    assert wrap.height == 1, f"first step {first} has neither a carry nor a wrap"
+    _, _, d_prev, t_prev = wrap.row(0)
+    on = step.solution.value("v_online_linear")
+    v = on.filter((pl.col("p").cast(pl.Utf8) == unit) & (pl.col("d").cast(pl.Utf8) == d_prev)
+                  & (pl.col("t").cast(pl.Utf8) == t_prev))
+    return "wrap", float(v["value"][0])
+
+
 def test_all_rolls_optimal(rolling_uc):
     """Every roll of the rolling UC solve reaches optimality with the carry."""
     steps = rolling_uc["steps"]
@@ -194,23 +218,29 @@ def test_carrier_produced_and_consumed(rolling_uc):
         )
 
 
-def test_total_startup_drops_to_corrected_value(rolling_uc):
-    """The yearly realized startup drops to the corrected (no boundary
-    re-charge) value — strictly below the pre-fix over-charged total."""
+def test_total_startup_equals_the_online_increments(rolling_uc):
+    """The yearly realized startup equals the honest increments of the realized online trajectory (the
+    Delta-online re-derivation of the module docstring): per roll, max(0, online_first - predecessor) at its first
+    step (the carried value, or the wrap at a new-year roll) plus max(0, online[k] - online[k-1]) at its other
+    realized steps.  Exactly the three new-year rolls take no carry, and the total stays below the every-boundary
+    re-charge."""
+    ordered = _ordered_steps(rolling_uc)
+    on = _per_roll_frame(rolling_uc["workdir"], "v_online_linear")
     su = _per_roll_frame(rolling_uc["workdir"], "v_startup_linear")
     total = sum(float(df[UNIT].sum()) for df in su.values())
-    assert total == pytest.approx(CORRECTED_TOTAL_STARTUP, abs=5e-3), (
-        f"realized yearly v_startup={total} (expected {CORRECTED_TOTAL_STARTUP})"
-    )
-    assert total < PREFIX_TOTAL_STARTUP - 1.0, (
-        f"startup {total} not meaningfully below pre-fix {PREFIX_TOTAL_STARTUP}"
-    )
-    # Objective-coef translation (startup_cost × unitsize): the saved cost.
-    # (7.284 - 5.898) * 100 * 500 = 69 300 € exactly, given the two pinned totals.
-    saved = (PREFIX_TOTAL_STARTUP - total) * STARTUP_COST * UNITSIZE
-    assert saved == pytest.approx(69_300.0, abs=100.0), (
-        f"saved startup cost {saved} € off expected ≈69 300 €"
-    )
+    expected, wraps = 0.0, 0
+    for i, (name, step) in enumerate(ordered):
+        o = on[_roll_index(name)][UNIT].to_list()
+        if i == 0:
+            kind, prev = "wrap", _first_step_predecessor(step, UNIT)[1]
+        else:
+            kind, prev = _first_step_predecessor(step, UNIT)
+            wraps += kind == "wrap"
+        expected += max(0.0, o[0] - prev) + sum(max(0.0, b - a) for a, b in zip(o, o[1:]))
+    assert wraps == NEW_YEAR_ROLLS
+    assert total == pytest.approx(expected, abs=5e-3), (
+        f"realized yearly v_startup={total} != the online increments {expected}")
+    assert total < PREFIX_TOTAL_STARTUP
 
 
 def test_boundary_startup_equals_increment(rolling_uc):
@@ -228,12 +258,14 @@ def test_boundary_startup_equals_increment(rolling_uc):
         r = _roll_index(ordered[i][0])
         online_first = float(on[r][UNIT][0])
         startup_first = float(su[r][UNIT][0])
-        carried = _carried_value(ordered[i][1], UNIT)
+        kind, carried = _first_step_predecessor(ordered[i][1], UNIT)
         expected = max(0.0, online_first - carried)
         assert startup_first == pytest.approx(expected, abs=1e-2), (
             f"roll {r}: startup_first={startup_first} != "
-            f"max(0, online_first={online_first} - carried={carried})={expected}"
+            f"max(0, online_first={online_first} - {kind}={carried})={expected}"
         )
+        if kind == "wrap":
+            continue
         # Suppression witness: a unit committed into this roll (carried>0)
         # whose first step keeps it on must NOT be re-charged the full online.
         if carried > 0.1 and online_first > carried + 1e-6:

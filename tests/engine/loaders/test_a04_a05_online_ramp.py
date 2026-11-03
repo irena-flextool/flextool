@@ -159,3 +159,67 @@ def test_ramp_directions_independent(ramp_run):
     assert data.process_source_sink_ramp_limit_sink_up.height == 1
     # The overlay is consumed: the un-overlaid load has no source_down set.
     assert run.last_flex_data.process_source_sink_ramp_limit_source_down is None
+
+
+# --- the online roll carry lands on the ramp's seam roots ------------------------------------------------------
+#
+# A continuation solve receives the previous solve's realized commitment (``handoff/roll_end_online``) and the step
+# it was realized at (``handoff/roll_end_step``).  The commitment is the online predecessor (``dt_online_carry``) of
+# exactly the first steps that the ramp carry continues (``dt_ramp_carry``): where the complete solve's predecessor
+# of a period's first step is adjacent (``jump == 1``) and is the carried step.  A seam at a gap, a new year or a
+# representative-period start (``jump != 1``, or an ``rp_block_first`` step) gives no carry: the step is a stretch
+# start and its commitment cycles within its stretch (``dt_online_wrap``).
+
+
+def _seam(P, *, jump: int, rp_first: bool = False) -> None:
+    """The coal_min_load solve made a continuation of a solve that realized (p2015, t0048): the coal plant was
+    online with 1 unit there; the complete solve's predecessor of p2020's first step t0001 is that step, with the
+    given ``jump``."""
+    put_frame(P, "handoff/roll_end_online", pl.DataFrame({"process": ["coal_plant"], "value": ["1.0"]}))
+    put_frame(P, "handoff/roll_end_step", pl.DataFrame({"period": ["p2015"], "step": ["t0048"],
+                                                         "duration": ["1.0"]}))
+    put_frame(P, "solve_data/roll_first_step_link",
+              pl.DataFrame({"period": ["p2020"], "time": ["t0001"], "previous_period": ["p2015"],
+                            "previous_within_solve": ["t0048"], "jump": [str(jump)]}))
+    if rp_first:
+        put_frame(P, "solve_data/rp_block_first", pl.DataFrame({"period": ["p2020"], "step": ["t0001"]}))
+
+
+def _first_step(data) -> tuple[str, str]:
+    dt = data.dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+    return dt.row(0)
+
+
+def test_online_carry_continues_an_adjacent_seam(online_run):
+    """jump 1, not an rp start: the first step continues the carried step, so it takes the commitment, and the
+    online carry steps are the ramp carry steps."""
+    run, P = online_run
+    _seam(P, jump=1)
+    data = load_scenario(run, provider=P)
+    assert _first_step(data) == ("p2020", "t0001")
+    assert data.p_roll_continue_online is not None
+    assert data.dt_online_carry.rows() == [("p2020", "t0001")]
+    assert data.dt_online_carry.equals(data.dt_ramp_carry.select("d", "t"))
+
+
+@pytest.mark.parametrize("jump, rp_first", [(2, False), (25, False), (1, True)],
+                         ids=["gap", "new_year", "rp_start"])
+def test_online_carry_stops_at_a_seam_that_is_not_adjacent(online_run, jump, rp_first):
+    """A seam after a gap (jump 2), at a new year that reuses the timeline (jump 25) or at a representative-period
+    start: no step takes the commitment (before, it was carried whatever the jump), so the first step keeps its
+    stretch wrap."""
+    run, P = online_run
+    _seam(P, jump=jump, rp_first=rp_first)
+    data = load_scenario(run, provider=P)
+    assert data.dt_ramp_carry is None
+    assert data.dt_online_carry is None
+    assert ("p2020", "t0001") in [(d, t) for d, t, _, _ in data.dt_online_wrap.rows()]
+
+
+def test_online_carry_without_its_step_raises(online_run):
+    """A carried commitment without the step it was realized at cannot be placed: the load raises instead of
+    putting it on the solve's first step (before, it silently fell back to that step)."""
+    run, P = online_run
+    put_frame(P, "handoff/roll_end_online", pl.DataFrame({"process": ["coal_plant"], "value": ["1.0"]}))
+    with pytest.raises(ValueError, match="roll_end_step"):
+        load_scenario(run, provider=P)

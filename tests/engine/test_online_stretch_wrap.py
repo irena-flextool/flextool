@@ -106,22 +106,56 @@ def _values(blocks):
         _timeset(blocks)]
 
 
+SOLVE = "y2020_2day_dispatch"
+ROLLING = [["solve", SOLVE, "solve_mode", b64("rolling_window", "str")],
+           ["solve", SOLVE, "rolling_solve_horizon", b64(24.0, "float")],
+           ["solve", SOLVE, "rolling_solve_jump", b64(24.0, "float")]]
+TWO_PERIODS_ENTS = [["timeset", "ta", None], ["timeset", "tb", None]]
+
+
+def _two_periods() -> list:
+    """p2020 on block 1 (t0001-t0024) and p2025 on block 2 (t0049-t0072) of one timeline: p2025 does not continue
+    p2020 (there is a gap between them)."""
+    def pmap(data, index_name="period"):
+        return {"index_type": "str", "index_name": index_name, "data": [[k, v] for k, v in data.items()]}
+    return [["timeset", "ta", "timeline", b64("y2020", "str")],
+            ["timeset", "tb", "timeline", b64("y2020", "str")],
+            ["timeset", "ta", "timeset_duration", b64(pmap({"t0001": 24.0}, "time"), "map")],
+            ["timeset", "tb", "timeset_duration", b64(pmap({"t0049": 24.0}, "time"), "map")],
+            ["solve", SOLVE, "period_timeset", b64(pmap({"p2020": "ta", "p2025": "tb"}), "map")],
+            ["solve", SOLVE, "realized_periods", b64({"value_type": "str", "data": ["p2020", "p2025"]}, "array")]]
+
+
+def _run(tmp_path_factory, name, values, entities=None):
+    url, scen = make_db(tmp_path_factory, alt=name, values=values, base_chain=PLANT_CHAIN, entities=entities)
+    return list(run(tmp_path_factory, url, scen).values())
+
+
 @pytest.fixture(scope="module")
 def gap_runs(tmp_path_factory):
     out = {}
     for name, blocks in (("gap_two_blocks", [("t0001", 24.0), ("t0049", 24.0)]),
                          ("gap_block_one", [("t0001", 24.0)]),
                          ("gap_block_two", [("t0049", 24.0)])):
-        url, scen = make_db(tmp_path_factory, alt=name, values=_values(blocks), base_chain=PLANT_CHAIN)
-        steps = run(tmp_path_factory, url, scen)
-        assert len(steps) == 1, list(steps)
-        out[name] = list(steps.values())[0]
+        steps = _run(tmp_path_factory, name, _values(blocks))
+        assert len(steps) == 1, steps
+        out[name] = steps[0]
+    out["gap_rolling"] = _run(tmp_path_factory, "gap_rolling",
+                              _values([("t0001", 24.0), ("t0049", 24.0)]) + ROLLING)
     return out
 
 
-def _uc(step, var):
-    return (utf8(step.solution.value(f"{var}_integer")).filter(pl.col("p") == PLANT)
-            .select("d", "t", pl.col("value").round(6)).sort("d", "t"))
+def _uc(step, var, realized=False):
+    v = utf8(step.solution.value(f"{var}_integer")).filter(pl.col("p") == PLANT)
+    if realized:
+        real = utf8(step.flex_data.realized_dispatch.rename({"period": "d", "step": "t"}))
+        v = v.join(real.select("d", "t"), on=["d", "t"], how="semi")
+    value = pl.col("value").round(6)
+    return v.select("d", "t", pl.when(value == 0.0).then(0.0).otherwise(value).alias("value")).sort("d", "t")
+
+
+def _rolled(steps, var):
+    return pl.concat([_uc(s, var, realized=True) for s in steps]).sort("d", "t")
 
 
 @pytest.mark.solver
@@ -147,3 +181,49 @@ def test_a_gap_model_commits_as_its_blocks_solved_alone(gap_runs):
     fd = gap.flex_data
     assert fd.dt_online_wrap.equals(online_stretch_wrap(fd.dt, fd.dt_ramp_link))
     assert fd.dt_online_wrap.rows() == [("p2020", "t0001", "p2020", "t0024"), ("p2020", "t0049", "p2020", "t0072")]
+
+
+@pytest.mark.solver
+def test_a_roll_after_a_gap_takes_no_carry(gap_runs):
+    """The gap model rolled one block per roll (horizon = jump = 24 h): the second roll starts after the gap, so
+    it does not continue the first roll's commitment (no ``dt_online_carry``; before, the carry fell back onto its
+    first step), and the rolled commitment equals the blocks solved alone.  Hand derivation as above: roll 1 ends
+    offline at t0024, but roll 2's first step t0049 wraps to t0072 (online), a shut-down there; the carried
+    offline state would have given no shut-down at t0049."""
+    first, second = gap_runs["gap_rolling"]
+    assert first.flex_data.p_roll_continue_online is None
+    assert second.flex_data.p_roll_continue_online is not None      # the first roll handed its commitment on
+    assert second.flex_data.dt_online_carry is None                 # ... and the gap stops it
+    assert second.flex_data.dt_online_wrap.rows() == [("p2020", "t0049", "p2020", "t0072")]
+    one, two = gap_runs["gap_block_one"], gap_runs["gap_block_two"]
+    for var in ("v_online", "v_startup", "v_shutdown"):
+        assert _rolled([first, second], var).equals(pl.concat([_uc(one, var), _uc(two, var)]).sort("d", "t")), var
+    sd = _rolled([first, second], "v_shutdown").filter(pl.col("value") > 0.5)
+    assert sd.select("t").to_series().to_list() == ["t0013", "t0049"]
+
+
+@pytest.fixture(scope="module")
+def period_runs(tmp_path_factory):
+    # Demand: p2020 (t0001-t0024) high throughout; p2025 (t0049-t0072) high in t0049-t0060, 0 after.
+    demand = {t: -HIGH for t in BLOCK_1 + BLOCK_2[:12]}
+    demand.update({t: 0.0 for t in BLOCK_2[12:]})
+    values = uc(PLANT, 0.4, "binary") + [["unit", PLANT, "startup_cost", b64(50.0, "float")],
+                                         ["node", "west", "inflow", time_map(demand, 0.0)]] + _two_periods()
+    single = _run(tmp_path_factory, "period_single", values, TWO_PERIODS_ENTS)
+    rolled = _run(tmp_path_factory, "period_rolling", values + ROLLING, TWO_PERIODS_ENTS)
+    return single, rolled
+
+
+@pytest.mark.solver
+def test_a_roll_into_a_period_that_does_not_continue_takes_no_carry(period_runs):
+    """Two periods with a gap between them, rolled one period per roll: the roll into p2025 takes no carry, so the
+    rolled commitment equals the single solve.  Hand derivation: p2020 is high throughout (online all along, its
+    first step wraps to its own online end: no start-up); p2025 is high first and 0 at its end t0072, so its first
+    step t0049 wraps to an offline state and starts up — in the single solve and in the roll.  Before, the roll
+    carried p2020's online end into t0049 and charged no start-up there."""
+    (single,), (first, second) = period_runs
+    assert second.flex_data.dt_online_carry is None
+    for var in ("v_online", "v_startup", "v_shutdown"):
+        assert _rolled([first, second], var).equals(_uc(single, var)), var
+    su = _uc(single, "v_startup").filter(pl.col("value") > 0.5)
+    assert su.select("d", "t").rows() == [("p2025", "t0049")]
