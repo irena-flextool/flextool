@@ -74,6 +74,30 @@ def _parse_rename_entry(entry) -> tuple[str, bool]:
     return str(entry), True
 
 
+def _csv_filename(table_name: str, rename_raw: dict, used: dict[str, str]) -> str:
+    """Return the CSV file name of *table_name* and record it in *used*.
+
+    ``used`` maps each lower-cased file name already taken in this CSV
+    folder to the output that took it.  Two outputs that resolve to the
+    same file name (also when they differ only by case, which collides
+    on case-insensitive file systems) would silently overwrite each
+    other, so a repeat raises ``ValueError`` naming both outputs and the
+    ``rename`` entry to change.
+    """
+    display_name, _ = _parse_rename_entry(rename_raw.get(table_name, table_name))
+    csv_filename = display_name + '.csv'
+    key = csv_filename.lower()
+    if key in used:
+        raise ValueError(
+            f"Outputs '{used[key]}' and '{table_name}' are both written to "
+            f"'{csv_filename}'; one would overwrite the other.  Give them "
+            f"distinct display names in the 'rename' section of the output "
+            f"settings."
+        )
+    used[key] = table_name
+    return csv_filename
+
+
 def _frame_axes(df) -> tuple[list, list]:
     """Return ``(index_level_names, measure_columns)`` for a DataFrame or
     Series — the dimension + measure axes the CSV datapackage describes.
@@ -1183,9 +1207,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         if read_parquet_dir:
             # Simplified CSV writing from parquet (no par,s,v,r available)
             rename_raw = settings.get('rename', {})
+            used_csv_names: dict[str, str] = {}
             for table_name, df in results.items():
-                display_name, _ = _parse_rename_entry(rename_raw.get(table_name, table_name))
-                csv_filename = display_name + '.csv'
+                csv_filename = _csv_filename(table_name, rename_raw, used_csv_names)
                 csv_path = os.path.join(csv_dir, csv_filename)
                 dp_resources.append(datapackage_resource(
                     table_name, csv_filename, *_frame_axes(df)))
@@ -1197,6 +1221,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             write_summary_csv(par, s, v, r, csv_dir)
 
             rename_raw = settings.get('rename', {})
+            used_csv_names = {'summary_solve.csv': 'summary_solve'}
             for table_name, df in results.items():
                 if isinstance(df, (pd.MultiIndex, pd.Index)):
                     df = df.to_frame(index=False)
@@ -1245,8 +1270,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                     names.insert(period_pos, 'solve')
                     df.index = df.index.reorder_levels(order=names)
 
-                display_name, _ = _parse_rename_entry(rename_raw.get(table_name, table_name))
-                csv_filename = display_name + '.csv'
+                csv_filename = _csv_filename(table_name, rename_raw, used_csv_names)
                 csv_path = os.path.join(csv_dir, csv_filename)
                 dp_resources.append(datapackage_resource(
                     table_name, csv_filename, *_frame_axes(df)))

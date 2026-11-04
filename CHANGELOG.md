@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Fixed: the per-period discounted costs were not written to CSV** (output file names change). The per-period
+  table of discounted costs is now `costs_discounted__d.csv` (Excel sheet `costs_discounted__d`); before, it and the
+  horizon total shared the name `costs_discounted`, so the CSV writer kept only the horizon total and the Excel
+  sheets were `costs_discounted` (per period) and `costs_discounted_1` (total). `costs_discounted.csv` / the sheet
+  `costs_discounted` is the horizon total by cost category, as before in CSV. The VRE share of a node group is
+  `group_node_VRE_share__d` per period and `group_node_VRE_share__dt` per time step (before, the per-period table
+  carried the `__dt` name and the per-step table none). The CSV writer now stops with an error naming both outputs
+  when two outputs would be written to the same file (also when the names differ only by case).
 - **Fixed: investment costs inside a stochastic fan** (results change for stochastic solves that invest with a
   `construction_lead_time` or with `stochastic_invest_method = recourse`). The investment cost and the fixed cost of
   the new capacity that operates in a fan's branch periods are reported, weighted by each branch's probability
