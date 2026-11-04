@@ -19,6 +19,8 @@ Usage::
         --dirty-with conn_exact_flow
     python tools/lp_snapshot.py snapshot OUT --fixtures base,multi_year \
         --dirty-with self --dirty-sqlite self
+    # axis-Enum mode: snapshot A plain, B --axis-enums, then compare A B
+    python tools/lp_snapshot.py snapshot OUT_ENUM --axis-enums
 
     # Tier A: byte compare (exit 1 on any difference / missing file)
     python tools/lp_snapshot.py compare _audit_reports/lp_baseline OUT
@@ -76,16 +78,22 @@ How it works
       ``tests.sqlite`` dirt only: FIXTURE's DB file (``self`` = the
       target's own DB) is copied to ``work/tests.sqlite`` before the
       captured run (after any ``--dirty-with`` run).
+  ``--axis-enums``
+      The captured run is in axis-Enum mode (``FLEXTOOL_AXIS_ENUMS=1`` is
+      set in the worker before ``run_chain_from_db``; any ``--dirty-with``
+      run before it stays plain).  Axis vocabularies are lexically sorted,
+      so the Enum LP must be byte-identical to the plain one: snapshot both
+      and ``compare`` them (Tier A).
 
   What the dirt can show: same-model CSV dirt (``--dirty-with self``)
   changes no LP even where the loader reads disk, because the dumped
   values equal the live ones; it is a regression guard, not a
   fail-before.  A different model's CSVs can (``conn_online_regular``
-  after ``conn_exact_flow``).  A ``tests.sqlite`` that holds the target's
-  scenario makes the loader build axis Enums from it; that changes the LP
-  of some fixtures (``conn_online_regular`` with ``self``) and leaves
-  others byte-identical; a DB without the scenario is ignored.  A target
-  that fails under dirt is reported as FAILED like any other fixture.
+  after ``conn_exact_flow``).  A ``tests.sqlite`` in the work folder is
+  ignored by the loader (it never switches the run to axis Enums; only
+  ``FLEXTOOL_AXIS_ENUMS=1`` does), so ``--dirty-sqlite`` is a regression
+  guard for that.  A target that fails under dirt is reported as FAILED
+  like any other fixture.
 * ``coverage`` greps every ``add_cstr`` name in COVERAGE_SOURCES (plus
   the hand-resolved dynamic names in DYNAMIC_CSTR_NAMES) and reports
   which fixtures emit rows of each family; UNREACHABLE lists families no
@@ -2261,7 +2269,7 @@ def _dirty_work_folder(dirtier: Fixture, tmp_path: Path, work: Path,
 
 def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
             csv_dump: bool = False, dirty_with: str = "",
-            dirty_sqlite: str = "") -> int:
+            dirty_sqlite: str = "", axis_enums: bool = False) -> int:
     os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
     sys.path.insert(0, str(TESTS_DIR))
     import warnings
@@ -2320,6 +2328,8 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
                 _, sqlite_src = _build_fixture_db(by_name[dirty_sqlite],
                                                   tmp_path, "sqlite_dirt")
             shutil.copy(sqlite_src, work / "tests.sqlite")
+        if axis_enums:
+            os.environ["FLEXTOOL_AXIS_ENUMS"] = "1"
         capture["on"] = True
         steps = run_chain_from_db(
             input_db_url=url,
@@ -2354,11 +2364,13 @@ class WorkMode:
     csv_dump: bool = False
     dirty_with: str = ""    # fixture name, "self" or "" (none)
     dirty_sqlite: str = ""  # fixture name, "self" or "" (none)
+    axis_enums: bool = False  # captured run with FLEXTOOL_AXIS_ENUMS=1
 
     def describe(self) -> str:
         parts = (["csv-dump"] if self.csv_dump else []) + (
             [f"dirty-with={self.dirty_with}"] if self.dirty_with else []) + (
-            [f"dirty-sqlite={self.dirty_sqlite}"] if self.dirty_sqlite else [])
+            [f"dirty-sqlite={self.dirty_sqlite}"] if self.dirty_sqlite else []) + (
+            ["axis-enums"] if self.axis_enums else [])
         return " ".join(parts) or "plain"
 
     def worker_args(self, fx: Fixture) -> list[str]:
@@ -2370,6 +2382,8 @@ class WorkMode:
                     fx.name if self.dirty_with == "self" else self.dirty_with]
         if self.dirty_sqlite:
             out += ["--dirty-sqlite", self.dirty_sqlite]
+        if self.axis_enums:
+            out += ["--axis-enums"]
         return out
 
 
@@ -2413,7 +2427,7 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     else:
         fixtures = list(FIXTURES)
     mode = WorkMode(csv_dump=args.csv_dump, dirty_with=args.dirty_with,
-                    dirty_sqlite=args.dirty_sqlite)
+                    dirty_sqlite=args.dirty_sqlite, axis_enums=args.axis_enums)
     bad = [n for n in (mode.dirty_with, mode.dirty_sqlite)
            if n and n != "self" and n not in by_name]
     if bad:
@@ -2908,6 +2922,8 @@ def main(argv: list[str] | None = None) -> int:
                          "CSVs (no tests.sqlite)")
     sp.add_argument("--dirty-sqlite", default="", metavar="FIXTURE|self",
                     help="copy FIXTURE's DB to work/tests.sqlite (no CSVs)")
+    sp.add_argument("--axis-enums", action="store_true",
+                    help="captured run with FLEXTOOL_AXIS_ENUMS=1 (axis-Enum mode)")
     sp.set_defaults(func=cmd_snapshot)
 
     sp = sub.add_parser("compare", help="compare two snapshots")
@@ -2937,9 +2953,11 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--csv-dump", action="store_true")
     sp.add_argument("--dirty-with", default="")
     sp.add_argument("--dirty-sqlite", default="")
+    sp.add_argument("--axis-enums", action="store_true")
     sp.set_defaults(func=lambda a: _worker(
         a.json, a.scenario, a.patch, Path(a.out), csv_dump=a.csv_dump,
-        dirty_with=a.dirty_with, dirty_sqlite=a.dirty_sqlite))
+        dirty_with=a.dirty_with, dirty_sqlite=a.dirty_sqlite,
+        axis_enums=a.axis_enums))
 
     args = ap.parse_args(argv)
     return int(args.func(args) or 0)
