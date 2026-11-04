@@ -1175,3 +1175,23 @@ same omission.  Outputs only: lp_snapshot identical.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`; the other files of these scenarios, within
 the test tolerance, were put back, and the multi-row header cells kept their previous spelling.
+
+## 2026-11-04 — `coal_wind_ev`, `scale_to_peak_flow`, `test_a_lot`, `test_a_lot_but_not_multi_year` (inflow scaling inputs; #231)
+
+**Context.** Inflow scaling now stops with an error when a scaling `inflow_method` has no `annual_flow` for a period
+(`flextool/engine/preprocess/emit/_inflow_scaling_checks.py`).  Two alternatives of `tests/fixtures/tests.json`
+(and of the example database `templates_examples.json`) hit it; the v3.32.0 goldens carried the silent result, the
+node's inflow 0:
+- `ev`: `ev_battery` had `scale_to_annual_flow` without `annual_flow`, so the EV demand was 0.  It is now
+  `use_original` (the 72-step EV profile as given, up to 50 MW).  lp_snapshot: the only LP change in
+  `coal_wind_ev`, `test_a_lot`, `avail_silent`, `varcost_silent`, `sd_silent`, `profiles` and `coarse_two_groups`
+  is the new `nodeBalance_eq[ev_battery,...]` (`nodeBalanceCoarse_eq` for the coarse fixture) right-hand sides =
+  the EV profile; every other fixture is byte-identical.
+- `scale_to_peak_flow`: `west` had `scale_to_annual_and_peak_flow` and `peak_inflow` -1100 without `annual_flow`,
+  so the demand was 0 (objective 0).  The alternative now carries `annual_flow` 9e6 (as `capacity_margin`): the
+  inflow sums to 9e6 MWh annualised (49 315 MWh over the 48 steps = 9e6 x 48/8760) with peak -1100; the scenario
+  has no units, so all of it is loss of load (summary objective 0 -> 8100 M CUR, all of it slack penalty).
+
+Results: `coal_wind_ev` / `test_a_lot*` dispatch, costs and (multi-year) investments move by the EV charging;
+`scale_to_peak_flow` node balance and summary now show the 9e6 MWh demand.  Regenerated with
+`pytest tests/test_scenarios.py --regenerate <scenario>`; the multi-row header cells kept their previous spelling.

@@ -9134,7 +9134,7 @@
       "ev_battery",
       "inflow_method",
       [
-        "InNjYWxlX3RvX2FubnVhbF9mbG93Ig==",
+        "InVzZV9vcmlnaW5hbCI=",
         "str"
       ],
       "ev"
@@ -9528,6 +9528,16 @@
         "str"
       ],
       "west"
+    ],
+    [
+      "node",
+      "west",
+      "annual_flow",
+      [
+        "OTAwMDAwMC4w",
+        "float"
+      ],
+      "scale_to_peak_flow"
     ],
     [
       "node",

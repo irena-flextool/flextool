@@ -8777,7 +8777,7 @@
       "ev_battery",
       "inflow_method",
       [
-        "\"scale_to_annual_flow\"",
+        "\"use_original\"",
         "str"
       ],
       "ev"
@@ -9171,6 +9171,16 @@
         "str"
       ],
       "west"
+    ],
+    [
+      "node",
+      "west",
+      "annual_flow",
+      [
+        "9000000.0",
+        "float"
+      ],
+      "scale_to_peak_flow"
     ],
     [
       "node",

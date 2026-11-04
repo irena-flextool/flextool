@@ -61,6 +61,7 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
+from flextool.engine.preprocess.emit._inflow_scaling_checks import check_inflow_scaling_inputs
 from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
 _logger = logging.getLogger(__name__)
@@ -1441,6 +1442,7 @@ def emit_node_inflow_scaling_params(
     """
     frames = _compute_inflow_scaling_frames_vectorized(
         input_dir, solve_data_dir, provider=provider)
+    check_inflow_scaling_inputs(input_dir, solve_data_dir, provider=provider, frames=frames)
     for basename, df in frames.items():
         _emit(provider, f"solve_data/{basename}", df)
 

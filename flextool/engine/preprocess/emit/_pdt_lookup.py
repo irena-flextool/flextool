@@ -528,6 +528,12 @@ class PdLookup:
             return self._p[(e, param)]
         return 0.0
 
+    def has(self, e: str, param: str, d: str) -> bool:
+        """Whether :meth:`get` finds a value for period *d* (branches 1-3) rather than falling back to 0."""
+        if (e, param, d) in self._pd or (e, param) in self._p:
+            return True
+        return any((e, param, db) in self._pd for db in self._branches_for_d.get(d, ()))
+
 
 # ---------------------------------------------------------------------------
 # PdtLookup — 7/9-branch period+time fallback.

@@ -1,5 +1,19 @@
 ## Unreleased
 
+- **Fixed: inflow scaling silently dropped demand or turned it into supply** (models that now stop with an error
+  ran with a wrong demand before). `inflow_method` `scale_to_annual_flow`, `scale_in_proportion` and
+  `scale_to_annual_and_peak_flow` now stop with an error naming the node, method and period when the period has no
+  `annual_flow` (or a negative one), when `scale_to_annual_and_peak_flow` has no (or a zero) `peak_inflow`, when
+  the node has no `inflow` profile (or one that sums to 0) to scale, and when `peak_inflow` has the opposite sign of
+  the inflow. Before, the node's inflow silently became 0 in such a period, and `scale_to_annual_and_peak_flow`
+  without an `inflow` profile gave a constant supply of `annual_flow / 8760` (for example +1027 MW for 9 TWh of
+  demand). An explicit `annual_flow` of 0 still gives no inflow in that period. A warning (once per node) says
+  when `annual_flow` is above `|peak_inflow| x 8760`, or when the peak scaling makes the inflow change direction
+  at some time steps (`annual_flow` too small for the peak and the profile). The example database's `ev` and
+  `scale_to_peak_flow` alternatives and the demand how-to's `scale_to_proportion` scenario lacked `annual_flow`:
+  the EV battery now uses its inflow as given (`use_original`; before, its demand was 0), `scale_to_peak_flow` gets
+  `annual_flow` 9 TWh (before, the demand of `west` was 0) and `scale_to_proportion` includes the `scale_to_annual`
+  alternative.
 - **Fixed: reserve provision results in MW** (`process__reserve__upDown__node__dt`, `..._d_average`, SpineDB
   `reservation_t` / `reservation_average`). The reserve a unit or connection holds is now reported in MW in each
   time step. Before, it was in units of the process's unit size (for example 0.02 instead of 20 MW for a 1000 MW

@@ -6392,6 +6392,11 @@
     [
       "scale_to_proportion",
       "timeseries",
+      "scale_to_annual"
+    ],
+    [
+      "scale_to_proportion",
+      "scale_to_annual",
       "scale_to_proportion"
     ],
     [
