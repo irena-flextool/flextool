@@ -25,6 +25,8 @@ Public API
 * :class:`AxisContract` — full parsed contract.
 * :func:`load_axis_contract` — parse the JSON file.
 * :func:`build_axis_enums` — emit ``{axis_name: pl.Enum}``.
+* :func:`build_scenario_axis_enums` — the scenario-filtered vocabulary +
+  contract for a database URL (what ``FLEXTOOL_AXIS_ENUMS=1`` activates).
 * :func:`cast_against_contract` — cast a frame's dim columns; raise
   :class:`FlexDataIntegrityError` on vocabulary miss.
 * :class:`FlexDataIntegrityError` — beginner-friendly cast failure.
@@ -832,6 +834,22 @@ def build_axis_enums(
         )
         out[axis.name] = pl.Enum(vocab)
     return out
+
+
+def build_scenario_axis_enums(db_url: str, scenario: str) -> tuple[dict[str, pl.Enum], AxisContract]:
+    """Return the scenario-filtered axis Enum vocabulary of *db_url* and the contract it was built from.
+
+    The vocabulary covers the entities and parameter keys active in *scenario* (a ``SpineDBBackend`` opened
+    with the scenario filter).  A run in axis-Enum mode sets both on its ``FlexDataProvider``
+    (``provider.axis_enums`` / ``provider.contract``); ``load_flextool`` and the cascade reader then cast
+    every axis column to these Enums.
+    """
+    from flextool.spinedb_backend import SpineDBBackend
+
+    contract = load_axis_contract()
+    with SpineDBBackend(db_url, scenario) as backend:
+        enums = build_axis_enums(backend, contract)
+    return enums, contract
 
 
 # ---------------------------------------------------------------------------

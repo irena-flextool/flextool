@@ -4635,6 +4635,33 @@ def _seed_work_folder_solver_config(
     return dest_dir
 
 
+AXIS_ENUMS_ENV = "FLEXTOOL_AXIS_ENUMS"
+
+AXIS_ENUMS_WARNING = (
+    "axis-Enum mode (FLEXTOOL_AXIS_ENUMS=1) is EXPERIMENTAL: development/test use only; production runs use "
+    "Utf8 axes. Untested in this mode: writing results (process_outputs); region decomposition and the CLI "
+    "region export, the staged input loader and csv_reload build their providers without a vocabulary and "
+    "stay Utf8."
+)
+
+
+def _activate_axis_enums_from_env(
+    provider: "object", db_url: str, scenario_name: str, logger: logging.Logger,
+) -> None:
+    """Turn on axis-Enum mode for the whole run when ``FLEXTOOL_AXIS_ENUMS=1``.
+
+    Sets the scenario's axis Enum vocabulary and contract on the cascade-input *provider*; the cascade reader
+    and every sub-solve provider take them from there.  Any other value, or the variable unset, leaves the
+    provider without a vocabulary (all axes Utf8, the production mode).  Logs :data:`AXIS_ENUMS_WARNING` once.
+    """
+    if os.environ.get(AXIS_ENUMS_ENV) != "1":
+        return
+    from flextool.spinedb_backend._axis_enums import build_scenario_axis_enums
+
+    provider.axis_enums, provider.contract = build_scenario_axis_enums(db_url, scenario_name)
+    logger.warning(AXIS_ENUMS_WARNING)
+
+
 # ---------------------------------------------------------------------------
 # run_chain_from_db — top-level entry point
 # ---------------------------------------------------------------------------
@@ -4844,6 +4871,7 @@ def run_chain_from_db(
     # provider seed time.
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     cascade_input_provider = FlexDataProvider()
+    _activate_axis_enums_from_env(cascade_input_provider, db_url, scenario_name, logger)
 
     write_workdir_inputs(
         db_url,

@@ -1017,6 +1017,10 @@ def native_run_model(state, solver) -> int:
         sub_solve_provider = state._level_providers.get(_level_key)
         if sub_solve_provider is None:
             sub_solve_provider = FlexDataProvider()
+            # Axis-Enum mode (FLEXTOOL_AXIS_ENUMS=1) is run-wide: every sub-solve loads with the cascade
+            # provider's vocabulary (None in production, so the sub-solve stays Utf8).
+            sub_solve_provider.axis_enums = cascade_input_provider.axis_enums
+            sub_solve_provider.contract = cascade_input_provider.contract
             # Seed cascade-wide ``input/*.csv`` frames so per-iter
             # readers find them via ``provider.get``
             # (e.g. ``input/timesets_in_use.csv``).

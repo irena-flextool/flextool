@@ -194,14 +194,10 @@ def run_scenario(
 
 
 def _scenario_axis_enums(db_url: str, scenario: str) -> tuple[dict, object]:
-    """The scenario-filtered axis Enum vocabulary and contract, built as ``load_flextool``'s auto-build does."""
-    from flextool.spinedb_backend import SpineDBBackend
-    from flextool.spinedb_backend._axis_enums import build_axis_enums, load_axis_contract
+    """The scenario-filtered axis Enum vocabulary and contract, built as an axis-Enum run builds them."""
+    from flextool.spinedb_backend._axis_enums import build_scenario_axis_enums
 
-    contract = load_axis_contract()
-    with SpineDBBackend(db_url, scenario) as backend:
-        enums = build_axis_enums(backend, contract)
-    return enums, contract
+    return build_scenario_axis_enums(db_url, scenario)
 
 
 def load_scenario(
