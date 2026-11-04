@@ -63,6 +63,35 @@ With `output_horizon = yes` (a debug option), `output_parquet/<scenario>/horizon
 - `model` entity `cost_discounted_solve` parameter — M[CUR] costs for the solve considering discounting and years represented (NPV currency)
 - `model` entity `cost_discounted_total` parameter — M[CUR] same, totalled over all realised periods
 
+### Costs of a run of several solves
+
+When `model.solves` holds several solves (a chain of investment solves, an investment solve and its dispatch
+solves, a stochastic solve and its realization solve), the reported costs are those of the run as a whole, the same
+as one solve over the same periods with the same decisions would report:
+
+- **One discount base, the start of the run.** Every discounted cost counts its years from the first period of the
+  run, not from the first period of the solve that reports it.
+- **Each realized period is reported once, by the solve that realizes it**: its operating and penalty costs come
+  from that solve's dispatch.
+- **New capacity** is reported in the period where it starts to operate (the decision period without a
+  `construction_lead_time`; during the lead time it is only `in_construction`, at no cost). Its investment cost
+  (the annuity over the years it operates within the run, at the `invest_cost`, `lifetime` and `discount_rate` of
+  that period) and the fixed cost over the same years come once, from the solve that decided it, and are reported
+  only once a solve realizes the period it starts to operate in. Capacity carried from an earlier solve is
+  therefore not charged again as existing capacity.
+- **Retirements** are reported in the retirement period: the salvage annuity and the fixed cost saved over the
+  retirement's lifetime window. The fixed cost of existing capacity (*fixed cost pre-existing*) is that of the
+  capacity given in `existing`, aged over its lifetime, in every period of the run, also in the last solve's
+  look-ahead periods that no solve realizes (the fixed cost of new capacity covers them too).
+- In a stochastic solve with a realization solve, the investments come from the stochastic solve and the
+  operations and the fixed cost of existing capacity from the realization solve. A fan without a realization
+  solve reports no operating or penalty costs; its investments and the fixed costs are reported in the fan's
+  period labels.
+
+The printed objective of each solve and the cumulative CO2 cap price stay discounted from the start of that solve,
+so `cost_discounted_total` is not the sum of the solves' objectives. The CO2 price of a period is its dual divided
+by the discount factor of the solve that realizes the period.
+
 ## Cost by entity
 
 The system [Costs](#costs) above are also broken down **per entity at the period level**, so you can see which unit, connection or node drives each cost category. Six result tables are produced — one for each entity type (`unit`, `connection`, `node`) in each of two flavours:

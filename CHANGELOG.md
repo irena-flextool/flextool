@@ -1,5 +1,18 @@
 ## Unreleased
 
+- **A run of several solves reports its costs from the start of the run, each once** (results change for models
+  with several solves in `model.solves`: chains of investment solves, investment and dispatch solves, stochastic
+  and realization solves). The discounted costs of every solve now count their years from the first period of the
+  run (before: from the first period of the solve, so a later solve's costs were too large by the inflation of
+  the years before it). The investment and fixed cost of new capacity cover the years it operates in the whole
+  run (before: only the deciding solve's periods) and are reported once, in the period the capacity starts to
+  operate, by the solve that realizes that period; capacity carried from an earlier solve and retired capacity are
+  no longer charged again as existing capacity. The fixed cost of existing capacity is also reported in the last
+  solve's look-ahead periods, which the fixed cost of new capacity covers. A single solve reports as before, except
+  that a lump of new capacity with a `construction_lead_time` is now in the period it starts operating and the
+  "Investment discount factor" of the solve summary is now the investment factor (before: the operations
+  factor). The printed objectives and the CO2 prices stay those of each solve. An upgraded database prints a
+  notice listing the solves of such a run.
 - **Units and connections between coarse nodes use the coarse step** (results can change for models with a
   `group` `new_stepduration`). A unit or connection whose balance nodes are all in coarse groups now has one flow
   per coarse step, a rate that stays the same over the step, so the model gets smaller (the three-region hydrogen
