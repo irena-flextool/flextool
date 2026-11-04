@@ -49,17 +49,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            python: "3.12"
+            python: "3.13"
           - os: ubuntu-latest
-            python: "3.13"
-          - os: windows-latest
-            python: "3.12"
+            python: "3.14"
           - os: windows-latest
             python: "3.13"
-          - os: macos-15
-            python: "3.12"
+          - os: windows-latest
+            python: "3.14"
           - os: macos-15
             python: "3.13"
+          - os: macos-15
+            python: "3.14"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
