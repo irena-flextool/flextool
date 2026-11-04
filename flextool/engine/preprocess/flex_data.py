@@ -910,6 +910,22 @@ class FlexData:
     ed_lifetime_fixed_cost_divest: Param | None = None
     ed_entity_annual_discounted: Param | None = None
     ed_entity_annual_divest_discounted: Param | None = None
+    # Reported costs only (no model term reads them; ``_npv`` "Run-level fields of the reported costs"):
+    # discounted from the start of the run over the periods of the whole run.  (d,) factors over the solve's
+    # periods and the other run periods; (e, d) lumps of the invest / divest decisions (the lifetime fixed cost
+    # over every entity of the period history); (e, d) undiscounted annuities, CUR/MW/yr (invest: of the start of
+    # operation); (e, d_invest, d) / (e, d_divest, d) the run periods each vintage operates in / each retirement
+    # applies to.  Equal to the per-solve fields when the run is the solve.
+    p_inflation_op_run: Param | None = None
+    p_inflation_inv_run: Param | None = None
+    ed_entity_annual_discounted_run: Param | None = None
+    ed_entity_annual_divest_discounted_run: Param | None = None
+    ed_lifetime_fixed_cost_run: Param | None = None
+    ed_lifetime_fixed_cost_divest_run: Param | None = None
+    ed_annuity: Param | None = None
+    ed_divest_annuity: Param | None = None
+    edd_operating_window: pl.DataFrame | None = None
+    edd_retire_window: pl.DataFrame | None = None
     e_invest_total: pl.DataFrame | None = None       # (e,)
     e_divest_total: pl.DataFrame | None = None
     e_invest_max_total: Param | None = None          # (e,)
@@ -5483,6 +5499,13 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 getattr(flex_data, "period_block_chain", None))
         _loadflex_prof("apply_db_overrides:pass_synthetic_blocks")
         _timed("c.synth blocks", _wire_blocks_for_synthetic_solve)
+
+        # The run-level fields of the reported costs (outputs only): ``apply_derived_f`` (``apply_npv``) is
+        # skipped, so the sub-solve's own cost fields are its seeds; the run fields discount from the start of
+        # the run over the periods of the whole run.
+        from flextool.engine.preprocess.params._npv import apply_run_fields_of_synthetic_solve
+        _timed("c.synth run costs", apply_run_fields_of_synthetic_solve, flex_data, db_reader, workdir_path,
+               provider=provider)
         return
 
     _loadflex_prof("apply_db_overrides:pass_derived_a")

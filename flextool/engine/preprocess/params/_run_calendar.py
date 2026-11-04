@@ -34,12 +34,14 @@ class RunCalendar:
     ``years`` maps each period to its start (years from the start of the run), in run order.  ``horizon_end`` is
     the end of the last period (``None`` when no period has a length).  ``conflicts`` lists
     ``(period, solve_a, yr_a, solve_b, yr_b)`` where two solves give a period different years.
+    ``years_represented`` maps each period to the years it represents (given by the same solve as its year).
     """
 
     years: dict[str, float]
     horizon_end: float | None
     conflicts: list[tuple[str, str, float, str, float]] = field(default_factory=list)
     last_period: str | None = None
+    years_represented: dict[str, float] = field(default_factory=dict)
 
     def seams(self) -> list[float]:
         """The period starts and the end of the horizon, sorted, each year once."""
@@ -84,6 +86,7 @@ def run_calendar_from_frame(df: pl.DataFrame) -> RunCalendar | None:
     if df is None or df.height == 0:
         return None
     years: dict[str, float] = {}
+    represented: dict[str, float] = {}
     first_solve: dict[str, str] = {}
     conflicts: list[tuple[str, str, float, str, float]] = []
     horizon_end: float | None = None
@@ -92,6 +95,7 @@ def run_calendar_from_frame(df: pl.DataFrame) -> RunCalendar | None:
         period, yr, rep = str(period), float(yr), float(rep or 0.0)
         if period not in years:
             years[period] = yr
+            represented[period] = rep
             first_solve[period] = str(solve)
         elif abs(years[period] - yr) > YEAR_TOL:
             conflicts.append((period, first_solve[period], years[period], str(solve), yr))
@@ -99,7 +103,8 @@ def run_calendar_from_frame(df: pl.DataFrame) -> RunCalendar | None:
         if horizon_end is None or end > horizon_end + YEAR_TOL:
             horizon_end = end
             last_period = period
-    return RunCalendar(years=years, horizon_end=horizon_end, conflicts=conflicts, last_period=last_period)
+    return RunCalendar(years=years, horizon_end=horizon_end, conflicts=conflicts, last_period=last_period,
+                       years_represented=represented)
 
 
 def read_run_calendar(provider) -> RunCalendar | None:
