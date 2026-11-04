@@ -26,6 +26,7 @@ Two callables sit at the heart of the round-trip:
 
 import argparse
 import json
+import os
 from typing import Any
 
 from spinedb_api import DatabaseMapping, export_data
@@ -90,6 +91,11 @@ def export_database(database_path: str, json_path: str) -> None:
     with DatabaseMapping(url, create=False, upgrade=True) as db:
         data = export_data(db, parse_value=keep_serialized_parse)
 
+    dump_canonical_json(data, json_path)
+
+
+def dump_canonical_json(data: dict, json_path: "str | os.PathLike[str]") -> None:
+    """Write exported data in the canonical layout: sorted keys, indent 2, UTF-8, final newline."""
     with open(json_path, "w", encoding="utf-8") as out:
         json.dump(data, out, sort_keys=True, indent=2, ensure_ascii=False)
         out.write("\n")

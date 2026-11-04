@@ -15,33 +15,17 @@ The test suite calls json_to_db() automatically at session start via conftest.py
 """
 from __future__ import annotations
 
-import base64
 import json
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 from spinedb_api import DatabaseMapping, export_data, import_data
 
-
-def _pack_value(raw_bytes: bytes | None, value_type: str | None) -> list[Any]:
-    """Serialize a raw DB value to a JSON-safe [base64_string, type] pair.
-
-    spinedb_api stores values as (bytes, type_str). The bytes are typically
-    UTF-8 JSON but may be binary for some types, so base64 is used for safety.
-    raw_bytes is None for parameter definitions with no default value.
-    """
-    if raw_bytes is None:
-        return [None, value_type]
-    return [base64.b64encode(raw_bytes).decode("ascii"), value_type]
-
-
-def _unpack_value(packed: Any) -> tuple[bytes | None, str | None]:
-    """Reconstruct raw DB value from a [base64_string, type] pair."""
-    b64, value_type = packed
-    if b64 is None:
-        return None, value_type
-    return base64.b64decode(b64), value_type
+# The fixtures' [base64, type] value packing lives with the schema-section
+# generator so that tools in the package need not import from ``tests``.
+from flextool.update_flextool.fixture_schema import pack_value as _pack_value
+from flextool.update_flextool.fixture_schema import unpack_value as _unpack_value
+from flextool.update_flextool.fixture_schema import dump_fixture_json
 
 
 def db_to_json(db_path: Path, json_path: Path) -> None:
@@ -53,9 +37,7 @@ def db_to_json(db_path: Path, json_path: Path) -> None:
     url = f"sqlite:///{db_path.resolve().as_posix()}"
     with DatabaseMapping(url) as db_map:
         data = export_data(db_map, parse_value=_pack_value)
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(json_path, "w") as f:
-        json.dump(data, f, indent=2)
+    dump_fixture_json(data, json_path)
     print(f"Exported {len(data.get('parameter_values', []))} parameter values → {json_path}")
 
 
