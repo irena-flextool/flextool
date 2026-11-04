@@ -98,6 +98,19 @@ def test_pages_freed_before_flextool_is_imported_are_returned():
     assert r["after"] - r["base"] < 0.3 * held, r
 
 
+def test_importing_flextool_does_not_load_the_engine_or_solver_backends():
+    # The RSS test above measures memory around `import flextool`; the import itself must stay light.  The engine
+    # loads polar_high, which loads every installed solver backend.
+    proc = _run("""
+        import flextool
+        print("MODS " + json.dumps(sorted(m for m in ("flextool.engine", "polar_high", "highspy", "cplex", "xpress",
+                                                      "coptpy", "gurobipy") if m in sys.modules)))
+    """)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    loaded = json.loads(next(ln for ln in proc.stdout.splitlines() if ln.startswith("MODS "))[5:])
+    assert loaded == []
+
+
 # ─── guards (in-process; the mallctl call is replaced) ──────────────────────
 
 def _polars_written_conf() -> str:

@@ -63,7 +63,6 @@ from typing import NamedTuple, Sequence, TYPE_CHECKING
 import pandas as pd
 import polars as pl
 
-from flextool.engine.output import _coarse_flows
 from flextool.lean_parquet import write_lean_parquet
 
 if TYPE_CHECKING:
@@ -890,6 +889,10 @@ def extract_variable(
             seen_cols.append(col_vals)
             seen_cols_set.add(col_vals)
         values_by_key[row_key + col_vals] = float(val) * value_scale
+
+    # Imported here: flextool.engine pulls in polar_high and its solver backends, which `import flextool`
+    # must not load.
+    from flextool.engine.output import _coarse_flows
 
     if name in _coarse_flows.COARSE_FLOW_VARS and has_period and has_time:
         steps = coarse_steps if coarse_steps is not None else _coarse_flows.coarse_steps(flex_data)

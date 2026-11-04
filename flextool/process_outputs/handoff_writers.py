@@ -56,7 +56,6 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import polars as pl
 
-from flextool.engine.output import _coarse_flows
 from flextool.process_outputs.read_highs_solution import (
     _load_realized_periods,
     extract_variable,
@@ -661,6 +660,8 @@ def write_fix_storage_usage(
         if writer_state is not None:
             writer_state.mirrors_written.add(name)
         return out_path
+
+    from flextool.engine.output import _coarse_flows  # lazy: flextool.engine loads polar_high
 
     unitsize = _resolve_unitsize(flex_data)
     step_duration = _resolve_step_duration(flex_data)
