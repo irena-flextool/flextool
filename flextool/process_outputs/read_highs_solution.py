@@ -1707,6 +1707,61 @@ def _actual_solve_name(fallback: str, *, provider: "object | None" = None) -> st
 
 
 
+def write_v_invest_fan(
+    h: "highspy.Highs",
+    *,
+    solve_name: str,
+    output_dir: Path | str,
+    flex_data: "FlexData | None",
+    realized_periods_csv: Path | str | None = None,
+    provider: "object | None" = None,
+    col_names_cache: Sequence[str] | None = None,
+    col_value: "object | None" = None,
+) -> "Path | None":
+    """Write ``v_invest_fan__{solve}.parquet``: the investment of a fan's branch periods, weighted to its label.
+
+    # ─── OUTPUT. ─── v_invest_fan ─────────────────────────────────────────────
+    # invest_fan[e,L] = Σ_{b ∈ B(L)} pd_branch_weight[b]·v_invest[e,b]
+    #   L a period label of a stochastic fan the solve realizes the investment of (``realized_invest_periods``),
+    #   B(L) its forecast-branch periods (``period__branch`` rows (L, b), b ≠ L)
+    # Under ``stochastic_invest_method = recourse`` every branch decides its own investment: this is the
+    # probability-weighted investment of the fan, the amount whose cost the LP objective carries.  The reported
+    # costs add it to the label's own (shared) investment, which is 0 under recourse.  Rows: the realized labels;
+    # columns: the entities with a branch investment.
+
+    None (no file) without FlexData, without a fan or without an investment in a branch period.
+    """
+    labels = _fan_labels(flex_data)
+    if not labels:
+        return None
+    pbf = flex_data.period_branch_full
+    branch_of = {str(b): str(d) for d, b in zip(pbf["d"].to_list(), pbf["b"].to_list())
+                 if str(d) in labels and str(b) != str(d)}
+    weights = flex_data.pd_branch_weight
+    if not branch_of or weights is None:
+        return None
+    names = col_names_cache if col_names_cache is not None else h.allVariableNames()
+    values = col_value if col_value is not None else h.getSolution().col_value
+    chosen = _solution_frame(names, values, "v_invest", ("e", "b")).filter(pl.col("b").is_in(list(branch_of)))
+    if chosen.height == 0:
+        return None
+    w = weights.frame.select(pl.col("d").cast(pl.Utf8).alias("b"), pl.col("value").alias("w"))
+    mapping = pl.DataFrame({"b": list(branch_of), "d": list(branch_of.values())})
+    weighted = (chosen.join(w, on="b", how="inner").join(mapping, on="b", how="inner")
+                .group_by("e", "d").agg((pl.col("value") * pl.col("w")).sum().alias("value")))
+    realized = _load_realized_invest_periods_list(realized_periods_csv, provider=provider)
+    rows = [d for d in (realized if realized is not None else sorted(labels)) if d in labels]
+    entities = list(dict.fromkeys(chosen["e"].to_list()))
+    wide = weighted.to_pandas().pivot(index="d", columns="e", values="value").reindex(index=rows, columns=entities)
+    out = pd.DataFrame(wide.to_numpy(dtype=float), columns=pd.Index(entities, name="entity"),
+                       index=pd.MultiIndex.from_tuples([(solve_name, d) for d in rows],
+                                                       names=["solve", "period"])).fillna(0.0)
+    out += 0.0
+    path = Path(output_dir) / f"v_invest_fan__{solve_name}.parquet"
+    write_lean_parquet(out, path)
+    return path
+
+
 def write_all_variables(
     h: "highspy.Highs",
     *,
@@ -1806,6 +1861,14 @@ def write_all_variables(
             h, solve_name=solve_name, output_dir=output_dir,
             flex_data=flex_data,
             realized_dispatch_csv=realized_dispatch_csv,
+            realized_periods_csv=realized_periods_csv,
+            provider=provider,
+            col_names_cache=col_names_cache,
+            col_value=col_value,
+        )),
+        ("v_invest_fan", lambda: write_v_invest_fan(
+            h, solve_name=solve_name, output_dir=output_dir,
+            flex_data=flex_data,
             realized_periods_csv=realized_periods_csv,
             provider=provider,
             col_names_cache=col_names_cache,

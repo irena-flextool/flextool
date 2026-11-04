@@ -10,7 +10,7 @@ _V_DROP = [
     'online_integer', 'startup_integer', 'shutdown_integer',
     'q_state_up', 'q_state_down', 'q_reserve',
     'q_inertia', 'q_non_synchronous', 'q_state_up_group', 'q_capacity_margin',
-    'invest', 'divest',
+    'invest', 'divest', 'invest_fan',
     # trade (v_trade, commodity price ladder, #57): period-only, same
     # rolling treatment as invest/divest — the committing roll's tier
     # purchase for a period wins over an earlier look-ahead roll's.
@@ -323,10 +323,15 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     s.edd_invest.names = ['entity', 'period_invest', 'period']
     s.edd_invest = s.edd_invest.join(s.d_realize_invest, how='inner')
     s.ed_divest = s.ed_divest.droplevel('solve').unique().join(s.d_realize_invest, how='inner')
+    # The period labels of the stochastic fans (the investment costs inside a fan are reported at its labels).
+    s.fan_label_period = s.fan_label_period.droplevel('solve').unique()
     # Lead-time sets are keyed by the realized investment DECISION
     # (period_invest); the period the capacity comes online or is in
-    # construction may be a look-ahead period of the deciding solve.
-    realized_invest = set(s.d_realize_invest)
+    # construction may be a look-ahead period of the deciding solve.  A
+    # recourse fan decides at its branch periods; its branch-weighted
+    # investment is at the label (``v.invest_fan``), so the labels that hold
+    # one are decisions too.
+    realized_invest = set(s.d_realize_invest) | set(v.invest_fan.index)
     # The operating / retirement windows of the annualized costs are keyed by their decision likewise.
     for attr, decision in (('edd_invest_commission', 'period_invest'), ('edd_invest_in_construction', 'period_invest'),
                            ('edd_operating_window', 'period_invest'), ('edd_retire_window', 'period_divest')):

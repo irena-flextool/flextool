@@ -12,13 +12,38 @@ def _agg_period_or_empty(df: pd.DataFrame, realized_periods, period_level: str =
     return df[df.index.get_level_values(period_level).isin(realized_periods)].groupby(period_level).sum()
 
 
+def _reported_start_periods(s) -> pd.Index:
+    """The periods in which the start of operation of new capacity has its investment costs reported: the
+    realized periods, and the period labels of the stochastic fans (inside a fan the investment costs are
+    reported, weighted by the branch weights, also without a solve that realizes the fan's periods)."""
+    return s.d_realized_period.union(s.d_realize_invest).union(s.fan_label_period)
+
+
+def _invest_with_fan(v) -> pd.DataFrame:
+    """The investment of the reported costs (rows: decision period, columns: entity):
+
+    invest_cost[e,d] = v_invest[e,d] + invest_fan[e,d]
+      invest_fan[e,L] = Σ_b pd_branch_weight[b]·v_invest[e,b] over the branch periods b of a fan label L
+      (``v_invest_fan``, recourse); 0 elsewhere.  A shared fan investment is the label's own v_invest (its
+      branch weights sum to 1); under recourse each branch's own investment carries its branch weight."""
+    fan = v.invest_fan
+    if fan.empty or len(fan.columns) == 0:
+        return v.invest
+    index = v.invest.index.union(fan.index, sort=False)
+    out = v.invest.reindex(index=index).add(fan.reindex(index=index, columns=v.invest.columns), fill_value=0.0)
+    out.index.name = v.invest.index.name
+    out.columns.name = v.invest.columns.name
+    return out
+
+
 def _at_start_of_operation(cost: pd.DataFrame, s) -> pd.DataFrame:
     """The cost of new capacity (rows: decision period, columns: entity) moved to the period the capacity starts
     to operate, c(d) (``s.edd_invest_commission``; c(d) = d without a construction lead time), and kept only
-    where c(d) is realized: an investment's cost is reported once, by the solve that realizes the period its
-    capacity starts operating in."""
+    where c(d) is realized or a fan label (:func:`_reported_start_periods`): an investment's cost is reported
+    once, by the solve that realizes the period its capacity starts operating in, or in the fan it starts
+    operating in."""
     commission = s.edd_invest_commission
-    realized = s.d_realized_period.union(s.d_realize_invest)
+    realized = _reported_start_periods(s)
     if cost.empty or (len(commission) == 0 and cost.index.isin(realized).all()):
         return cost
     long = cost.stack(future_stack=True).rename('value').rename_axis(['period_invest', 'entity']).reset_index()
@@ -72,7 +97,7 @@ def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
       the fixed cost of the lifetime fixed-cost lump.  Only the decisions whose lump is reported (c(d) realized,
       :func:`_at_start_of_operation`)."""
     columns = v.invest.columns
-    mw = v.invest.mul(par.entity_unitsize[columns])
+    mw = _invest_with_fan(v).mul(par.entity_unitsize[columns])
     long = _decisions_long(mw, 'period_invest')
     commission = s.edd_invest_commission
     if len(commission) > 0 and not long.empty:
@@ -81,7 +106,7 @@ def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
         long['start'] = long['start'].fillna(long['period_invest'])
     else:
         long = long.assign(start=long['period_invest'])
-    long = long[long['start'].isin(s.d_realized_period.union(s.d_realize_invest))]
+    long = long[long['start'].isin(_reported_start_periods(s))]
     annuity = _decisions_long(par.entity_annuity_yearly, 'period_invest').rename(columns={'value': 'coef'})
     fixed = _decisions_long(par.entity_fixed_cost, 'start').rename(columns={'value': 'coef'})
     invest = long.merge(annuity, on=['period_invest', 'entity'], how='inner')
@@ -395,8 +420,9 @@ def compute_costs(par, s, v, r) -> None:
     # The lumps are discounted from the start of the run over the run's periods; the investment lump and the
     # lifetime fixed cost of new capacity are reported in the period the capacity starts to operate, the
     # retirement lumps in the retirement period.
+    invest = _invest_with_fan(v)
     r.cost_entity_invest_d = _at_start_of_operation(
-        v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted), s)
+        invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted), s)
     r.cost_entity_divest_d = -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_annual_divest_discounted)
     # The fixed cost of existing capacity: the user's existing capacity aged over its lifetime, in every period of
     # the run.  The capacity carried from earlier solves is in the fixed-cost lump of its investment and a
@@ -408,7 +434,7 @@ def compute_costs(par, s, v, r) -> None:
     # solve-keyed (concat-unioned), so they cover every v.invest/v.divest
     # column — direct indexing is safe.
     r.cost_entity_fixed_invested = _at_start_of_operation(
-        v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]), s)
+        invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]), s)
     r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns]))
 
     # The annualized investment, retirement and fixed costs of new / retired capacity: the yearly amounts of
@@ -416,9 +442,10 @@ def compute_costs(par, s, v, r) -> None:
     r.cost_entity_invest_yearly, r.cost_entity_fixed_invested_yearly = _annualized_investment(par, s, v)
     r.cost_entity_divest_yearly, r.cost_entity_fixed_divested_yearly = _annualized_retirement(par, s, v)
 
-    # Under ``recourse`` the LP weights the invest/divest annuity and lifetime-fixed terms by
-    # pd_branch_weight[period]; the realized investment periods of normal outputs have no forecast-branch
-    # investment (a recourse label period reports none), so no branch weight is applied.
+    # Under ``recourse`` the LP weights the invest annuity and lifetime-fixed terms by pd_branch_weight[period]:
+    # the fan's investment is the branch-weighted v_invest_fan at the label (_invest_with_fan), whose lumps are
+    # the label's (a branch period takes its label's years).  Retirements in the branch periods of a recourse fan
+    # are not reported (normal outputs hold no forecast-branch retirement).
 
     # --- Aggregate operational costs (depends on r.costPenalty_* from compute_slacks) ---
     r.costOper_dt = (r.cost_commodity_dt.sum(axis=1) -

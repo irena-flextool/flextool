@@ -1,24 +1,21 @@
-"""Slice D (§11.3 / §15.2 D8), R3 re-grounded — post-hoc invest-cost
-reconciliation under the forecasts-only model.
+"""Reported investment costs of a recourse fan reconcile to the LP objective.
 
 Runs the ``recourse`` scenario of ``stoch_two_period_invest`` through the
 FULL output pipeline (``write_outputs``) and asserts the reported
 investment-cost breakdown against the LP objective.
 
-``stoch_two_period_invest`` is now a genuine 2-forecast fan (``high`` /
-``low``, n_real = 0) revealing FAN-AT-FIRST (p2035).  Under the corrected
-forecasts-only model there is no realized member and no pre-reveal
-here-and-now stage, so the real-named trunk periods p2035/p2040 are
-weight-0 phantoms: the COMMITTED (realized-only) investment is 0, and the
-cost breakdown's "Investment costs for realized periods" is therefore
-0 M CUR — the committed-cost path does NOT fold the per-forecast
-branch investment (which is wait-and-see, surfaced only under
-``output_horizon``) into the realized total.
+``stoch_two_period_invest`` is a 2-forecast fan (``high`` / ``low``, weights
+0.25 / 0.75, no realization solve) revealing at its first period (p2035).
+Under recourse each forecast decides its own investment; the reported
+investment costs inside a fan are each branch's investment weighted by its
+branch weight, at the fan's period labels.  The LP objective (0.196875 M)
+is exactly that probability-weighted investment::
 
-The LP objective (0.196875 M) carries the full probability-weighted
-per-forecast invest expectation
-``0.25·(60·2100 + 30·1050) + 0.75·(80·2100 + 40·1050)`` — all of it on the
-forecast branches, none of it committed to a realized period.
+    0.25·(60·2100 + 30·1050) + 0.75·(80·2100 + 40·1050) = 196 875
+
+(high builds 60 MW in p2035 and 30 more in p2040, low 80 and 40; annuity
+1050 per MW and year, a p2035 decision pays two years), so the
+"Investment costs for realized periods" total equals the objective.
 """
 from __future__ import annotations
 
@@ -100,12 +97,7 @@ def test_recourse_invest_cost_reconciles_to_objective(
     invest_realized = _summary_row(
         csv_dir, "Investment costs for realized periods (M CUR)")
 
-    # Forecasts-only fan-at-first: the committed (realized-only) invest is
-    # 0 (the real-named trunk is a weight-0 phantom — no here-and-now
-    # investment), so the "Investment costs for realized periods" total is
-    # 0 M.  The per-forecast branch investment is wait-and-see and is NOT
-    # folded into the realized cost.
-    assert invest_realized == pytest.approx(0.0, abs=1e-9)
-    # The objective carries the full probability-weighted per-forecast
-    # invest expectation.
+    # The investment inside the fan is reported branch-weighted, so the
+    # reported investment equals the objective (which holds nothing else).
     assert objective == pytest.approx(0.196875, rel=1e-6)
+    assert invest_realized == pytest.approx(objective, rel=1e-6)

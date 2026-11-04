@@ -535,9 +535,10 @@ def _apply_set_realized_filter(
     stage 3 drops it at union time, exactly as it does for params.
     """
     # The solve's forecast-branch periods are the very rows ``drop_levels``
-    # removes from the outputs, so they are persisted whole (only by a solve
-    # that has forecasts: ``write_all_sets_realized_slice``).
-    if attr == "forecast_period":
+    # removes from the outputs, and its fan labels are where the fan's
+    # investment costs are reported, so both are persisted whole (only by a
+    # solve that has forecasts: ``write_all_sets_realized_slice``).
+    if attr in ("forecast_period", "fan_label_period"):
         return idx
 
     # (period, time)-keyed sets (incl. dtt / dtttdt) — filter on the
@@ -614,7 +615,7 @@ def write_all_sets_realized_slice(
 
     written: list[Path] = []
     for attr, obj in vars(s).items():
-        if attr == "forecast_period" and len(obj) == 0:
+        if attr in ("forecast_period", "fan_label_period") and len(obj) == 0:
             continue
         if isinstance(obj, pd.MultiIndex):
             if not _multi_index_has_solve(obj):

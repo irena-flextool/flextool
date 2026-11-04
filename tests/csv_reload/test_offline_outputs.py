@@ -44,7 +44,7 @@ _UNSUPPORTED = "CSV reload is unsupported"
 # Output stems of ``write_all_variables``: one per VARIABLE_SPECS entry plus its custom writers.
 _VARIABLE_WRITER_STEMS = frozenset(spec.output_name or spec.name for spec in VARIABLE_SPECS) | {
     "v_obj", "v_dual_invest_unit", "v_dual_invest_connection", "v_dual_invest_node", "v_dual_node_balance",
-    "v_self_discharge", "v_dual_reserve__upDown__group__period__t",
+    "v_self_discharge", "v_dual_reserve__upDown__group__period__t", "v_invest_fan",
 }
 
 

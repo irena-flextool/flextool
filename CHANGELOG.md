@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Fixed: investment costs inside a stochastic fan** (results change for stochastic solves that invest with a
+  `construction_lead_time` or with `stochastic_invest_method = recourse`). The investment cost and the fixed cost of
+  the new capacity that operates in a fan's branch periods are reported, weighted by each branch's probability
+  weight, in the fan's period where the capacity starts to operate, also without a realization solve. A shared
+  investment is reported at its full amount (its branch weights sum to 1); under `recourse` each forecast's own
+  investment is reported times its branch weight, so the reported investment costs equal the investment part of the
+  objective. Before, an investment whose capacity starts to operate in a later period of a fan without a
+  realization solve (a construction lead time) was reported nowhere, and under `recourse` no investment cost was
+  reported at all.
 - **Fixed: retiring existing capacity before its end of life** (results change for models that retire
   capacity). Only capacity that existed before the model run (`existing`) can be retired, and a retirement now counts
   until that capacity's end of life: for `reinvest_choice` / `no_investment` the first year of the run plus

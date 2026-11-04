@@ -169,6 +169,8 @@ for _spec in (
     _v("vq_capacity_margin", ("group",), has_time=False),
     _v("v_invest",          ("entity",), has_time=False),
     _v("v_divest",          ("entity",), has_time=False),
+    _v("v_invest_fan",      ("entity",), has_time=False,
+       note="branch-weighted investment of a stochastic fan's branch periods at its label; only with recourse."),
     _v("v_trade",           ("commodity", "node", "tier"), has_time=False,
        note="commodity-ladder trade; only emitted when commodity ladder active."),
     _v("v_dual_node_balance", ("node",)),

@@ -1047,6 +1047,19 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     return list(dict.fromkeys(universe))
 
 
+def _with_fan_label_rows(param, flex_data: "FlexData"):
+    """``param`` (dims ``(e, d)``) with the rows of its fan branch periods also at their label, in a solve that
+    decides investments in the branches (recourse: the reported investment costs of a fan are at its label,
+    :mod:`._fan_labels`)."""
+    from flextool.process_outputs._fan_labels import recourse_branch_labels, with_label_rows
+
+    branch_of = recourse_branch_labels(flex_data)
+    if param is None or not branch_of:
+        return param
+    frame = with_label_rows(param.frame, branch_of, ("d",))
+    return param if frame is param.frame else SimpleNamespace(frame=frame)
+
+
 def _run_field(flex_data: "FlexData", name: str):
     """The run-level field ``<name>_run`` of the reported costs, or the solve's own ``<name>`` when the run field
     is not set (a csv-dump reload)."""
@@ -1444,7 +1457,7 @@ def read_parameters(
     # periods, ``_npv`` "Run-level fields of the reported costs"); a csv-dump reload carries only the
     # per-solve lumps.
     p.entity_lifetime_fixed_cost = _pdX_per_entity(
-        _run_field(flex_data, "ed_lifetime_fixed_cost"), solve_name=solve_name,
+        _with_fan_label_rows(_run_field(flex_data, "ed_lifetime_fixed_cost"), flex_data), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
@@ -1510,7 +1523,7 @@ def read_parameters(
         densify_entities=_entity_universe,
     )
     p.entity_annual_discounted = _pdX_per_entity(
-        _run_field(flex_data, "ed_entity_annual_discounted"), solve_name=solve_name,
+        _with_fan_label_rows(_run_field(flex_data, "ed_entity_annual_discounted"), flex_data), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
@@ -1523,7 +1536,7 @@ def read_parameters(
     # The undiscounted yearly annuities (CUR/MW/yr) of the investment decisions (the invest cost at the start of
     # operation) and of the retirements (the salvage value): the annualized investment and retirement costs.
     p.entity_annuity_yearly = _pdX_per_entity(
-        getattr(flex_data, "ed_annuity", None), solve_name=solve_name,
+        _with_fan_label_rows(getattr(flex_data, "ed_annuity", None), flex_data), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
     )
     p.entity_divest_annuity_yearly = _pdX_per_entity(

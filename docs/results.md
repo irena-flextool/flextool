@@ -18,7 +18,7 @@ The CSV / Excel / plot files are **derived** from the parquets, so deleting or r
 
 All annualized numbers are scaled to **a full year of operation** by dividing through by `complete_period_share_of_year`. All values are returned in user units — auto-scaling (see [LP scaling pipeline](dev/scaling.md)) and time-block aggregation under flex-temporal decomposition are unwound before they reach the parquets, so users always read MW / MWh / [CUR] in the original problem space.
 
-For stochastic models the parquets carry only the **realised / committed** results of each solve by default — the investment decisions, the operations of the periods before the reveal and, where a branch is designated realized, the realization dispatch of the fan — not the individual forecast branches. A forecasts-only fan has no realized operation, so its operational results are empty (the period label of the fan has no dispatch) and its costs and CO2 total are zero; its results hold the investment decisions only. The same holds for a rolling solve: only the realized steps of each roll (up to `rolling_solve_jump`) are reported, never its look-ahead. This does not depend on the `model` parameter `output_horizon` — the unrealized rows are only in its separate raw dump, below (see also [How to use stochastics](how_to.md#how-to-use-stochastics-representing-uncertainty)).
+For stochastic models the parquets carry only the **realised / committed** results of each solve by default — the investment decisions, the operations of the periods before the reveal and, where a branch is designated realized, the realization dispatch of the fan — not the individual forecast branches. A forecasts-only fan has no realized operation, so its operational results are empty (the period label of the fan has no dispatch) and its operating costs and CO2 total are zero; its results hold the investment decisions and the investment and fixed costs (see [Costs of a run of several solves](#costs-of-a-run-of-several-solves)). The same holds for a rolling solve: only the realized steps of each roll (up to `rolling_solve_jump`) are reported, never its look-ahead. This does not depend on the `model` parameter `output_horizon` — the unrealized rows are only in its separate raw dump, below (see also [How to use stochastics](how_to.md#how-to-use-stochastics-representing-uncertainty)).
 
 With `output_horizon = yes` (a debug option), `output_parquet/<scenario>/horizon/` holds a **raw LP dump**: one parquet per LP variable and constraint, named as in the model (`v_flow.parquet`, `v_invest_p.parquet`, `nodeBalance_eq.parquet`, …), with every row of every solve — realized and unrealized (forecast branches, rolling look-ahead) alike — appended over the solves and rolls. Columns: the LP index columns (`p`, `n`, `d`, `t`, …), `solve`, `roll`, `realized` (`true` for the rows that also reach the normal results; empty for a variable or constraint without a period index), and `value` + `reduced_cost` for a variable or `dual` for a constraint. The values are raw solver values: primal values per unitsize as in the LP, duals and reduced costs only divided by `scale_the_objective` (HiGHS sign convention, probability and time weights included, empty for a MIP solve) — no unitsize, price or cost conversion. A solve decomposed with Benders is not dumped. The dump keeps every constraint's index until the solve's outputs are written, so it raises peak memory on large models.
 
@@ -92,9 +92,16 @@ as one solve over the same periods with the same decisions would report:
   retirement's lifetime window. The fixed cost of existing capacity (*fixed cost pre-existing*) is that of the
   capacity given in `existing`, aged over its lifetime, in every period of the run, also in the last solve's
   look-ahead periods that no solve realizes (the fixed cost of new capacity covers them too).
+- **Inside a stochastic fan** the investment cost and the fixed cost of the new capacity that operates in the fan's
+  branch periods are reported, weighted by each branch's probability weight, at the fan's period label of the
+  period the capacity starts to operate in (with or without a `construction_lead_time`, and also without a
+  realization solve). A shared investment (`stochastic_invest_method` none) is one decision whose branch weights
+  sum to 1, so it is reported at its full amount; under `recourse` each forecast's own investment is reported
+  times its branch weight (the expected investment, as in the objective). Retirements in the branch periods of a
+  recourse fan are not reported.
 - In a stochastic solve with a realization solve, the investments come from the stochastic solve and the
   operations and the fixed cost of existing capacity from the realization solve. A fan without a realization
-  solve reports no operating or penalty costs; its investments and the fixed costs are reported in the fan's
+  solve reports no operating or penalty costs; the fixed cost of existing capacity is reported in the fan's
   period labels.
 
 The printed objective of each solve and the cumulative CO2 cap price stay discounted from the start of that solve,

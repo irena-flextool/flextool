@@ -348,6 +348,9 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
     v.q_capacity_margin = _read("vq_capacity_margin", ("group",), has_time=False)
     v.invest = _read("v_invest", ("entity",), has_time=False)
     v.divest = _read("v_divest", ("entity",), has_time=False)
+    # The branch-weighted investment of a stochastic fan's branch periods at its label (recourse; empty frame
+    # without the parquet): the reported investment costs inside a fan.
+    v.invest_fan = _read("v_invest_fan", ("entity",), has_time=False)
     # Commodity price ladder (#57): tier purchase, period-only (no time).  Column order matches the
     # VariableSpec's ``col_names + trailing_col_names`` (commodity, node, tier).
     v.trade = _read("v_trade", ("commodity", "node", "tier"), has_time=False)

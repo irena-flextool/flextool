@@ -741,10 +741,17 @@ def read_sets(
     # investment decision starts to operate, and the periods in which it
     # is in construction.  Only a solve with a construction lead time has
     # them; empty otherwise (the decision comes online in its own period).
+    # The fan's investment of a recourse solve is reported at its label (``v_invest_fan``): the start of
+    # operation and the operating window of a branch decision are also read at the labels (``_fan_labels``).
+    from flextool.process_outputs._fan_labels import recourse_branch_labels, with_label_rows
+
+    branch_of = recourse_branch_labels(flex_data)
     for attr in ("edd_invest_commission", "edd_invest_in_construction"):
         frame = getattr(flex_data, attr, None)
         if frame is not None and frame.height > 0:
             frame = frame.select(pl.col(c).cast(pl.Utf8) for c in ("e", "d_invest", "d"))
+            if attr == "edd_invest_commission":
+                frame = with_label_rows(frame, branch_of, ("d_invest", "d"))
         setattr(s, attr, _multi_index_with_solve(
             frame, solve_name=solve_name, dims=("e", "d_invest", "d"),
             names=["entity", "period_invest", "period"],
@@ -759,6 +766,8 @@ def read_sets(
         frame = getattr(flex_data, attr, None)
         if frame is not None and frame.height > 0:
             frame = frame.select(pl.col(c).cast(pl.Utf8) for c in ("e", anchor, "d"))
+            if attr == "edd_operating_window":
+                frame = with_label_rows(frame, branch_of, (anchor, "d"))
         setattr(s, attr, _multi_index_with_solve(
             frame, solve_name=solve_name, dims=("e", anchor, "d"),
             names=["entity", level, "period"],
@@ -1123,6 +1132,14 @@ def read_sets(
             str(b) for d, b in zip(pbf["d"].to_list(), pbf["b"].to_list()) if b != d))
     s.forecast_period = pd.MultiIndex.from_arrays(
         [[solve_name] * len(forecast), forecast], names=["solve", "period"])
+    # fan_label_period — the period labels of the solve's stochastic fans: the investment costs of the capacity
+    # that starts to operate in a fan are reported at its label (calc_costs).  Persisted whole, like
+    # forecast_period.  Empty for a deterministic solve.
+    from flextool.process_outputs._fan_labels import fan_branch_labels
+
+    fan_labels = list(dict.fromkeys(fan_branch_labels(flex_data).values()))
+    s.fan_label_period = pd.MultiIndex.from_arrays(
+        [[solve_name] * len(fan_labels), fan_labels], names=["solve", "period"])
 
     # ─── Group-related sets ───────────────────────────────────────────────
     s.groupInertia = _index_or_empty(flex_data.groupInertia, dim="g", name="group")
