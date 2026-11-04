@@ -5251,7 +5251,7 @@ def p_flow_upper_from_source(source: "InputSource",
     if p_entity_max_units is not None and p_entity_max_units.frame.height > 0:
         cap_per_unit_lf = (p_entity_max_units.frame.lazy()
             .pipe(rename_to_axis, {"e": "p"})
-            .select("p", "d", pl.col("value").alias("cap_per_unit")))
+            .select("p", alias_to_axis("d", "d"), pl.col("value").alias("cap_per_unit")))
     else:
         # Derive from existing / unitsize.  We only need rows that join
         # against pss, so we filter inline.
@@ -5274,7 +5274,7 @@ def p_flow_upper_from_source(source: "InputSource",
                                           & (pl.col("us") != 0.0))
                                     .then(pl.col("cap") / pl.col("us"))
                                     .otherwise(0.0))
-                .select("p", "d", "cap_per_unit")
+                .select("p", alias_to_axis("d", "d"), "cap_per_unit")
         )
 
     # ── 2. Indirect input (fuel) arc limit per unit of capacity ─────
@@ -6895,24 +6895,21 @@ def apply_derived_d(
         unitsize_for_upper = getattr(flex_data, "p_unitsize", None)
         max_units_for_upper = getattr(flex_data, "p_entity_max_units", None)
         existing_for_upper = getattr(flex_data, "p_entity_all_existing", None)
-        try:
-            pfu_db = p_flow_upper_from_source(
-                source,
-                pss_for_upper,
-                dt_for_upper,
-                p_slope=slope_for_upper,
-                p_section=section_for_upper,
-                p_unitsize=unitsize_for_upper,
-                p_entity_max_units=max_units_for_upper,
-                p_entity_all_existing=existing_for_upper,
-            )
-        except Exception:
-            pfu_db = None
+        pfu_db = p_flow_upper_from_source(
+            source,
+            pss_for_upper,
+            dt_for_upper,
+            p_slope=slope_for_upper,
+            p_section=section_for_upper,
+            p_unitsize=unitsize_for_upper,
+            p_entity_max_units=max_units_for_upper,
+            p_entity_all_existing=existing_for_upper,
+        )
         if pfu_db is not None:
             flex_data.p_flow_upper = pfu_db
         # Input-arc limit of indirect units per unit of capacity
-        # (``input_share_max`` × full-load fuel).  Not wrapped: model/core.py
-        # requires it whenever indirect input arcs exist.
+        # (``input_share_max`` × full-load fuel); model/core.py requires it
+        # whenever indirect input arcs exist.
         flex_data.p_indirect_input_cap = p_indirect_input_cap_from_source(
             source, pss_for_upper, dt_for_upper,
             p_slope=slope_for_upper, p_section=section_for_upper)

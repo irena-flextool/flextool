@@ -114,3 +114,48 @@ def test_load_flextool_emits_enum_typed_dim_columns(scenario_run) -> None:
         "Activation produced no Enum dim columns at all — substrate is "
         "wired but no field's dims got cast."
     )
+
+
+
+
+def _utf8_rows(frame: pl.DataFrame) -> list[tuple]:
+    out = frame.with_columns(pl.col(c).cast(pl.Utf8) for c, t in frame.schema.items() if isinstance(t, pl.Enum))
+    return sorted(out.rows(), key=lambda r: tuple(str(v) for v in r))
+
+
+def _load_recording_flow_caps(run, monkeypatch, *, axis_enums: bool) -> list:
+    """Load ``run``'s last step; return what each ``p_flow_upper_from_source`` call of the load gave (or raised)."""
+    from flextool.engine.preprocess.params import _derived
+
+    original = _derived.p_flow_upper_from_source
+    calls: list = []
+
+    def recording(*args, **kwargs):
+        try:
+            out = original(*args, **kwargs)
+        except Exception as exc:
+            calls.append(exc)
+            raise
+        calls.append(out)
+        return out
+
+    with monkeypatch.context() as mp:
+        mp.setattr(_derived, "p_flow_upper_from_source", recording)
+        load_scenario(run, axis_enums=axis_enums)
+    return calls
+
+
+def test_enum_load_derives_the_flow_caps_of_the_utf8_load(scenario_run, monkeypatch) -> None:
+    """The load's ``p_flow_upper`` derivation runs under axis Enums and gives the Utf8 load's caps.
+
+    It joined the capacity-per-unit term's Utf8 period column to the Enum one and raised; the load swallowed the
+    error and kept the provider's frame, so in Enum mode the derivation never ran.
+    """
+    run = scenario_run("lh2_three_region_rp_invest", db_fixture="lh2_rp_invest")
+    utf8_calls = _load_recording_flow_caps(run, monkeypatch, axis_enums=False)
+    enum_calls = _load_recording_flow_caps(run, monkeypatch, axis_enums=True)
+    assert len(utf8_calls) == 1 and utf8_calls[0] is not None and not isinstance(utf8_calls[0], Exception)
+    assert len(enum_calls) == 1 and not isinstance(enum_calls[0], Exception), enum_calls
+    enum_cap, utf8_cap = enum_calls[0], utf8_calls[0]
+    assert isinstance(enum_cap.frame.schema["d"], pl.Enum)
+    assert _utf8_rows(enum_cap.frame) == _utf8_rows(utf8_cap.frame)

@@ -26,6 +26,7 @@ import polars as pl
 
 from flextool.engine.input._axis_enums import (
     alias_to_axis,
+    join_aligned,
     lit_axis,
     rename_to_axis,
     schema_dtype,
@@ -339,8 +340,9 @@ def compute_co2_rolling_accumulator(
     # actually counted and loosen the next roll's carried budget.  Only the source-side (emission)
     # branch has a section term -- the removal branch has none in the LP either.  Restricted to eff
     # arcs via ``pss``'s own branch tag, same as the slope term.
+    # attr_node is an arc endpoint (source / sink) in every producer: the entity-union axis.
     minload = pl.DataFrame(schema={
-        "attr_node": schema_dtype(None, "n"), "period": schema_dtype(None, "d"),
+        "attr_node": schema_dtype(None, "e"), "period": schema_dtype(None, "d"),
         "contribution": pl.Float64,
     })
     if pmle.height > 0 and getattr(flex_data, "p_section", None) is not None:
@@ -389,8 +391,7 @@ def compute_co2_rolling_accumulator(
 
     # Attribute to groups.
     if gn.height > 0:
-        attributed = (contrib
-            .join(gn, left_on="attr_node", right_on="n", how="inner")
+        attributed = (join_aligned(contrib, gn, left_on="attr_node", right_on="n")
             .group_by(["g", "period"])
             .agg(pl.col("contribution").sum().alias("value"))
             .pipe(rename_to_axis, {"g": "group"}))

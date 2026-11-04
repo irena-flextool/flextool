@@ -41,6 +41,7 @@ from flextool.engine.input._axis_enums import (  # substrate retained for Path B
     cast_dim,
     cast_flexdata_axes,
     get_global_axis_enums,
+    join_aligned,
     rename_to_axis,
     set_global_axis_enums,
 )
@@ -1952,14 +1953,13 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     flow_eff = None
     flow_noEff = None
     if pss_eff is not None and pss_eff.height > 0:
-        eff = (pss_eff.select("p", "source", "sink")
-            .join(gcn, left_on="source", right_on="n", how="inner")
+        # source is the entity-union axis, gcn.n the node axis.
+        eff = (join_aligned(pss_eff.select("p", "source", "sink"), gcn, left_on="source", right_on="n")
             .select("p", "source", "sink", "c", "g"))
         if eff.height > 0:
             flow_eff = eff
     if pss_noEff is not None and pss_noEff.height > 0:
-        noeff = (pss_noEff.select("p", "source", "sink")
-            .join(gcn, left_on="source", right_on="n", how="inner")
+        noeff = (join_aligned(pss_noEff.select("p", "source", "sink"), gcn, left_on="source", right_on="n")
             .select("p", "source", "sink", "c", "g"))
         if noeff.height > 0:
             flow_noEff = noeff
@@ -1969,8 +1969,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     # below is left as-is.
     flow_to_co2_capped_total = None
     if pss is not None and pss.height > 0:
-        rem = (pss.select("p", "source", "sink")
-            .join(gcn, left_on="sink", right_on="n", how="inner")
+        rem = (join_aligned(pss.select("p", "source", "sink"), gcn, left_on="sink", right_on="n")
             .select("p", "source", "sink", "c", "g"))
         if rem.height > 0:
             flow_to_co2_capped_total = rem
@@ -4515,8 +4514,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
     # 4.6 fix-up commit (canonical self-references + ``time``/``d_h``
     # synonyms); the cross-Enum value comparisons that the activation
     # would otherwise expose were fixed in this dispatch's Step 2.
-    if axis_enums is not None:
-        set_global_axis_enums(axis_enums)
+    # Set unconditionally: a Utf8 load (``axis_enums is None``) must not run
+    # under the vocabulary an earlier axis-Enum load in this process left live.
+    set_global_axis_enums(axis_enums)
 
     _branch_tok = None
     _stoch_tok = None
@@ -6976,7 +6976,7 @@ def build_handoff_from_solution(
                     us_rows = [(n, unitsize.get(n, 1.0))
                                  for n in sorted(fq_nodes)]
                     us_df = pl.DataFrame(
-                        us_rows, schema=["n", "us"], orient="row")
+                        us_rows, schema={"n": v_state.schema["n"], "us": pl.Float64}, orient="row")
                     fq_rows = (fq_rows
                         .join(us_df, on="n", how="inner")
                         .with_columns(

@@ -2478,24 +2478,31 @@ def _drive_cascade(
     # pss/invest sets — so ``read_parameters`` no longer KeyErrors on
     # such entities.  ``_cip`` is the same Provider object forwarded onto
     # ``runner.state.cascade_input_provider`` above and read back by the
-    # cascade as ``cascade_input_provider``.
+    # cascade as ``cascade_input_provider``.  In axis-Enum mode the
+    # cascade vocabulary is made live for the call, so the per-class
+    # entity frames land on the one entity-union ``e`` Enum (the per-solve
+    # loads set it themselves, this call runs before any of them).
     if _cip is not None:
+        from flextool.engine.input._axis_enums import (
+            reset_global_axis_enums,
+            set_global_axis_enums,
+        )
+        from flextool.engine.preprocess.params._derived import (
+            _entity_unitsize_lf,
+        )
+        _us_enums_token = (set_global_axis_enums(_cascade_axis_enums)
+                           if _cascade_axis_enums is not None else None)
         try:
-            from flextool.engine.preprocess.params._derived import (
-                _entity_unitsize_lf,
-            )
             _all_us_df = (
                 _entity_unitsize_lf(cascade_db_reader)
                 .rename({"us": "value"})
                 .collect()
             )
-            if _all_us_df.height > 0:
-                _cip.put("input/p_all_entity_unitsize", _all_us_df)
-        except Exception:  # noqa: BLE001
-            # Non-fatal: the per-solve ``apply_derived_b`` fallback
-            # recomputes ``p_all_entity_unitsize`` from ``source`` and
-            # the output reader falls back to its reconstruction path.
-            pass
+        finally:
+            if _us_enums_token is not None:
+                reset_global_axis_enums(_us_enums_token)
+        if _all_us_df.height > 0:
+            _cip.put("input/p_all_entity_unitsize", _all_us_df)
 
     # W4b — register the engine-automatic realized-dispatch sibling for
     # every eligible ``separate_dispatch`` top-level solve, BEFORE
@@ -4872,94 +4879,101 @@ def run_chain_from_db(
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     cascade_input_provider = FlexDataProvider()
     _activate_axis_enums_from_env(cascade_input_provider, db_url, scenario_name, logger)
-
-    write_workdir_inputs(
-        db_url,
-        scenario_name,
-        work_folder,
-        logger=logger,
-        provider=cascade_input_provider,
-        memory_recorder=_memrec,
-    )
-    # input_derivation allocates and frees a lot of polars scratch
-    # state; glibc's heap retains the freed pages.  Release them
-    # before the polars-heavy ``load_flextool`` starts so the heap
-    # watermark doesn't compound.
-    _try_malloc_trim()
-    _memrec.checkpoint("write_workdir_inputs_end", logger,
-                       user_label="Input data prepared (after malloc_trim)")
-
-    # Construct the underlying FlexToolRunner — still needed to carry
-    # the cross-cutting ``RunnerState`` (timeline, solve config, handoff
-    # dict) into ``native_run_model``, which drives the per-solve
-    # preprocessing chain (``preprocessing_solve_time``,
-    # ``solve_writers``, ``handoff_writers``).  No write_input call.
-    def _runner_factory() -> "FlexToolRunner":
-        runner = FlexToolRunner(
-            input_db_url=db_url,
-            scenario_name=scenario_name,
-            flextool_dir=flextool_dir_resolved,
-            solver_config_dir=solver_config_dir_resolved,
-            work_folder=work_folder,
+    # The run's axis vocabulary (None: Utf8, production) is the live one from here to the end of the run, also
+    # for the steps before the first load_flextool; restored on exit, so an earlier axis-Enum run in this
+    # process (load_flextool leaves its vocabulary live for the model build) does not type this run's frames.
+    from flextool.engine.input._axis_enums import reset_global_axis_enums, set_global_axis_enums
+    _axis_enums_token = set_global_axis_enums(cascade_input_provider.axis_enums)
+    try:
+        write_workdir_inputs(
+            db_url,
+            scenario_name,
+            work_folder,
+            logger=logger,
+            provider=cascade_input_provider,
+            memory_recorder=_memrec,
         )
-        runner.state.logger.setLevel(logging.ERROR)
-        return runner
+        # input_derivation allocates and frees a lot of polars scratch
+        # state; glibc's heap retains the freed pages.  Release them
+        # before the polars-heavy ``load_flextool`` starts so the heap
+        # watermark doesn't compound.
+        _try_malloc_trim()
+        _memrec.checkpoint("write_workdir_inputs_end", logger,
+                           user_label="Input data prepared (after malloc_trim)")
 
-    # Build a minimal native RunnerState so callers can introspect
-    # state.handoffs after the run.  The real per-solve mutation happens
-    # on the underlying flextool runner's state (driven inside
-    # _drive_cascade); we mirror the handoffs dict back.
-    from flextool.engine.input._solve_config import SolveConfig
-    from flextool.engine.input._timeline import TimelineConfig
+        # Construct the underlying FlexToolRunner — still needed to carry
+        # the cross-cutting ``RunnerState`` (timeline, solve config, handoff
+        # dict) into ``native_run_model``, which drives the per-solve
+        # preprocessing chain (``preprocessing_solve_time``,
+        # ``solve_writers``, ``handoff_writers``).  No write_input call.
+        def _runner_factory() -> "FlexToolRunner":
+            runner = FlexToolRunner(
+                input_db_url=db_url,
+                scenario_name=scenario_name,
+                flextool_dir=flextool_dir_resolved,
+                solver_config_dir=solver_config_dir_resolved,
+                work_folder=work_folder,
+            )
+            runner.state.logger.setLevel(logging.ERROR)
+            return runner
 
-    sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
-    _memrec.checkpoint("solve_config_loaded", logger,
-                       user_label="SolveConfig loaded (from DB)")
-    tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)
-    tc.create_assumptive_parts(sc)
-    tc.create_timeline_from_timestep_duration(sc)
-    _memrec.checkpoint("timeline_constructed", logger,
-                       user_label="TimelineConfig constructed (from DB)")
+        # Build a minimal native RunnerState so callers can introspect
+        # state.handoffs after the run.  The real per-solve mutation happens
+        # on the underlying flextool runner's state (driven inside
+        # _drive_cascade); we mirror the handoffs dict back.
+        from flextool.engine.input._solve_config import SolveConfig
+        from flextool.engine.input._timeline import TimelineConfig
 
-    state = RunnerState(
-        # ``solver_config_dir`` MUST be carried here: this is the state the
-        # per-solve loop reads when it resolves ``<dir>/highs.opt`` for the
-        # in-process HiGHS options (``_highs_opt_path`` in the solve loop).
-        # Omitting it leaves ``solver_config_dir`` None, so the ``highs.opt``
-        # floor is silently dropped on the in-process path even though the
-        # factory runner below got the dir.  It points at the work-folder
-        # copy seeded above.
-        paths=PathConfig(
-            work_folder=work_folder,
-            solver_config_dir=solver_config_dir_resolved,
-        ),
-        solve=sc,
-        logger=logger,
-        timeline=tc,
-        handoffs={},
-    )
-    # Stash the memory recorder so ``run_orchestration`` →
-    # ``_PolarHighCascadeSolver`` can fire the remaining first-iter
-    # checkpoints (load / build / solve) without having to plumb it
-    # through additional keyword arguments.
-    state._memory_recorder = _memrec  # type: ignore[attr-defined]
-    # Step 2.5 — seed the cascade-input Provider onto the state so
-    # ``_drive_cascade`` can forward it onto ``runner.state`` (which the
-    # per-sub-solve Provider hook in
-    # :mod:`flextool.engine.solve._run_model` consults).
-    state.cascade_input_provider = cascade_input_provider  # type: ignore[attr-defined]
-    # Phase 5c — attach the optional external override provider onto
-    # the cascade ``RunnerState``.  ``_drive_cascade`` forwards it onto
-    # the underlying ``runner.state``; the per-sub-solve hook in
-    # :mod:`flextool.engine.solve._run_model` (Phase 5b) invokes
-    # it after the parent-handoff translator at every iteration.
-    state.override_provider = override_provider
+        sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
+        _memrec.checkpoint("solve_config_loaded", logger,
+                           user_label="SolveConfig loaded (from DB)")
+        tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)
+        tc.create_assumptive_parts(sc)
+        tc.create_timeline_from_timestep_duration(sc)
+        _memrec.checkpoint("timeline_constructed", logger,
+                           user_label="TimelineConfig constructed (from DB)")
 
-    return run_orchestration(
-        state, work_folder, runner_factory=_runner_factory,
-        db_url=db_url, scenario_name=scenario_name, warm=warm,
-        keep_solutions=keep_solutions, csv_dump=csv_dump,
-    )
+        state = RunnerState(
+            # ``solver_config_dir`` MUST be carried here: this is the state the
+            # per-solve loop reads when it resolves ``<dir>/highs.opt`` for the
+            # in-process HiGHS options (``_highs_opt_path`` in the solve loop).
+            # Omitting it leaves ``solver_config_dir`` None, so the ``highs.opt``
+            # floor is silently dropped on the in-process path even though the
+            # factory runner below got the dir.  It points at the work-folder
+            # copy seeded above.
+            paths=PathConfig(
+                work_folder=work_folder,
+                solver_config_dir=solver_config_dir_resolved,
+            ),
+            solve=sc,
+            logger=logger,
+            timeline=tc,
+            handoffs={},
+        )
+        # Stash the memory recorder so ``run_orchestration`` →
+        # ``_PolarHighCascadeSolver`` can fire the remaining first-iter
+        # checkpoints (load / build / solve) without having to plumb it
+        # through additional keyword arguments.
+        state._memory_recorder = _memrec  # type: ignore[attr-defined]
+        # Step 2.5 — seed the cascade-input Provider onto the state so
+        # ``_drive_cascade`` can forward it onto ``runner.state`` (which the
+        # per-sub-solve Provider hook in
+        # :mod:`flextool.engine.solve._run_model` consults).
+        state.cascade_input_provider = cascade_input_provider  # type: ignore[attr-defined]
+        # Phase 5c — attach the optional external override provider onto
+        # the cascade ``RunnerState``.  ``_drive_cascade`` forwards it onto
+        # the underlying ``runner.state``; the per-sub-solve hook in
+        # :mod:`flextool.engine.solve._run_model` (Phase 5b) invokes
+        # it after the parent-handoff translator at every iteration.
+        state.override_provider = override_provider
+
+        return run_orchestration(
+            state, work_folder, runner_factory=_runner_factory,
+            db_url=db_url, scenario_name=scenario_name, warm=warm,
+            keep_solutions=keep_solutions, csv_dump=csv_dump,
+        )
+    finally:
+        reset_global_axis_enums(_axis_enums_token)
 
 
 __all__ = [
