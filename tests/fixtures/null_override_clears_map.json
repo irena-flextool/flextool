@@ -285,6 +285,32 @@
       null
     ]
   ],
+  "entity_alternatives": [
+    [
+      "node",
+      [
+        "node_cleared"
+      ],
+      "map_cleared",
+      true
+    ],
+    [
+      "node",
+      [
+        "node_keep"
+      ],
+      "map_keep",
+      true
+    ],
+    [
+      "node",
+      [
+        "node_partial"
+      ],
+      "map_partial",
+      true
+    ]
+  ],
   "parameter_value_lists": [
     [
       "capacity_margin_methods",
