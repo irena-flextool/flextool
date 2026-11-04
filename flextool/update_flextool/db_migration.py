@@ -4599,8 +4599,11 @@ def _v77_texts() -> dict[tuple[str, str], str]:
     t[("group", "new_stepduration")] = (
         "[hours] Balances the energy of the group's nodes once per step of this length instead of every time step, "
         "e.g. daily hydrogen next to hourly electricity. Within the step, energy can move freely between time "
-        "steps, and a storage node has one state per step. Flows, online status, reserves and profiles keep the "
-        "solve's time step; the model is not made smaller. Listing units or connections has no effect. Must be a "
+        "steps, and a storage node has one state per step. A unit or connection whose nodes are all in such "
+        "groups also uses the longer step: it has one flow per step, so the model gets smaller. Its limits apply "
+        "to their average over the step, and ramp limits apply between steps. Units and connections with a node "
+        "outside these groups keep the solve's time step, and so do those with online variables, reserves or a "
+        "few other features (an info line names them). Listing units or connections has no effect. Must be a "
         "multiple of the solve's step.")
     t[("timeset", "timeset_weights")] = (
         "Weight of each time step (map, index time). Weights how much each step counts in costs, energy and demand "

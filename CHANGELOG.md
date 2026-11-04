@@ -1,5 +1,22 @@
 ## Unreleased
 
+- **Units and connections between coarse nodes use the coarse step** (results can change for models with a
+  `group` `new_stepduration`). A unit or connection whose balance nodes are all in coarse groups now has one flow
+  per coarse step, a rate that stays the same over the step, so the model gets smaller (the three-region hydrogen
+  test model: 7 instead of 168 flow variables per liquefier and pipe arc in a week). Its capacity, availability,
+  profile, efficiency and input-share limits apply to their average over the coarse step, and ramp limits apply
+  between coarse steps. The result is the same as with flows at the solve's step when each flow has at most one
+  limit that varies within the step and its cost, efficiency and prices do not vary within the step; otherwise
+  the result can differ (hourly flows could use the cheapest or most efficient hours, and several varying limits
+  are looser when averaged). Units and connections with a node outside the coarse groups keep the solve's step,
+  and so do those with online variables or a minimum load, reserves, a delay, DC power flow, an `exact`
+  connection, a flow in a user constraint, a flow group instant limit or a node in a capacity-margin, inertia or
+  non-synchronous group; also flows that cross Benders regions or live in the Benders master, and, in a
+  stochastic solve, those at a stochastic node whose coarse step is only partly tied between the forecasts. An
+  info line lists the units and connections that use a coarse step and those kept at the solve's step with the
+  reason. Their flows are written at every time step of the solve, the same value through each coarse step. An
+  upgraded database prints a notice naming each such unit or connection whose results can change, and why.
+  Requires polar-high 3.12.1.
 - **The shipped how-to and example databases now carry the documented parameter defaults and value lists** (for
   example `lifetime_method`, `startup_method` and `storage_binding_method` defaults, and the `none` members of the
   profile and ramp method lists), the same as a new database. Their data and results are unchanged.
