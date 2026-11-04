@@ -909,7 +909,12 @@ def _filter_val(frame: pl.DataFrame, col: str, value: str) -> pl.DataFrame:
 @pytest.fixture(scope="module")
 def mb_builds(mb_data):
     """(reduced master FlexData, master Problem, monolith Problem) over
-    the build-through fixture under MASTER_BIG."""
+    the build-through fixture under MASTER_BIG.  The master keeps every
+    flow at the solve's step, so the monolith it is compared with is
+    built with flows at the solve's step too (its coarse processes,
+    liquefier_B and pipe_AB between daily nodes, made fine)."""
+    import copy
+
     md = master_network_data(
         mb_data,
         REGIONS,
@@ -918,8 +923,11 @@ def mb_builds(mb_data):
     )
     pb = Problem()
     build_flextool(pb, md)
+    fine = copy.copy(mb_data)
+    fine.processCoarse = None
+    fine.process_coarse_step = None
     mono = Problem()
-    build_flextool(mono, mb_data)
+    build_flextool(mono, fine)
     return md, pb, mono
 
 
