@@ -4,7 +4,8 @@ Owner decision 2026-11-03 ("Coarse new_stepduration groups"): a process between 
 coarse step (a rate constant over the step); a process with a fine balance node keeps the solve's step, and so
 does a process with a feature whose rows are per fine step (online variables, reserves, a delay, DC power flow,
 an exact connection, minimum load, a user-constraint flow term, a flow-group instant limit, a capacity-margin /
-inertia / non-synchronous group).
+inertia / non-synchronous group), or, in a stochastic solve, a forecast tie that covers only part of one of its
+coarse steps.
 
 Fixture: ``tests/fixtures/lh2_three_region.json`` (h2_* / lh2_* in the 24-h ``daily_group``, elec_* hourly; the
 liquefiers h2 -> lh2 and the pipes lh2 <-> lh2 are between daily nodes, the electrolysers elec -> h2 are not),
@@ -638,3 +639,132 @@ def test_behaviour_notice(tmp_path_factory, capsys, marker) -> None:
     assert "hpipe (its variable cost varies within a coarse step)" in lines[0]
     assert "src (its efficiency varies within a coarse step)" in lines[0]
     assert "src2" not in lines[0]
+
+
+# ---------------------------------------------------------------------------
+# Stochastic and Benders solves
+
+STOCH = FIX / "stochastics.json"
+# stochastics.json with a second reservoir 'upper' feeding hydro_reservoir through 'upper_turbine'; both in the
+# coarse group 'daily', so the turbine is a coarse process.  hydro_reservoir is in the stochastic group
+# add_stochastics: its net flow (the turbine's included) is tied between the forecasts over the committed steps.
+_STOCH_ENTITIES = [["group", "daily", None], ["group__node", ["daily", "hydro_reservoir"], None],
+                   ["node", "upper", None], ["group__node", ["daily", "upper"], None],
+                   ["unit", "upper_turbine", None], ["unit__inputNode", ["upper_turbine", "upper"], None],
+                   ["unit__outputNode", ["upper_turbine", "hydro_reservoir"], None]]
+
+
+def _stoch_values(step: float) -> list:
+    return [["group", "daily", "new_stepduration", _f(step)],
+            ["node", "upper", "node_type", _s("storage")], ["node", "upper", "existing", _f(3000.0)],
+            ["node", "upper", "inflow", _f(200.0)], ["node", "upper", "storage_start_end_method", _s("fix_start")],
+            ["node", "upper", "storage_state_start", _f(0.5)],
+            ["node", "upper", "penalty_up", _f(5000.0)], ["node", "upper", "penalty_down", _f(5000.0)],
+            ["unit", "upper_turbine", "efficiency", _f(1.0)], ["unit", "upper_turbine", "existing", _f(300.0)]]
+
+
+def _stoch(tmp_path_factory, alt: str, scenario: str, step: float) -> dict:
+    url, scen = make_db(tmp_path_factory, alt=alt, values=_stoch_values(step), base_chain=_chain(STOCH, scenario),
+                        entities=_STOCH_ENTITIES, fixture_json=STOCH)
+    return run(tmp_path_factory, url, scen)
+
+
+def _forecasts(fd) -> dict[str, list[str]]:
+    from flextool.engine.model._non_anticipativity import reference_forecasts
+
+    return {a: f for a, f in reference_forecasts(fd) if len(f) >= 2}
+
+
+def test_stochastic_coarse_arcs_in_every_forecast(tmp_path_factory, monkeypatch) -> None:
+    """2-day stochastic dispatch (four forecasts, every step tied): upper_turbine has two daily columns in each
+    forecast and none on the other hours, and the solve has the objective of the model with hourly flows (the
+    turbine's parameters are constant)."""
+    coarse = _stoch(tmp_path_factory, "cf_sto", "2_day_stochastic_dispatch", 24.0)
+    step = last_stochastic(coarse)
+    fd = step.flex_data
+    forecasts = sorted({f for fs in _forecasts(fd).values() for f in fs})
+    assert len(forecasts) == 4 and _coarse_procs(fd) == {"upper_turbine"}
+    cols = _flow_cols(build(fd), "v_flow[upper_turbine,")
+    assert sorted((_keys(c)[-2], _keys(c)[-1]) for c in cols) == [(d, t) for d in forecasts for t in ("t0001", "t0025")]
+    _fine_flows(monkeypatch)
+    fine = _stoch(tmp_path_factory, "cf_sto_fine", "2_day_stochastic_dispatch", 24.0)
+    assert not _coarse_procs(last_stochastic(fine).flex_data)
+    assert _total_objective(coarse) == pytest.approx(_total_objective(fine), rel=1e-9)
+
+
+def _tie_reach(fd) -> list[tuple[str, str, str]]:
+    """``(column, d, t)``: each flow column of a non_anticipativity_storage_use row with a fine step it holds
+    that is not tied (a coarse column holds every fine step of its coarse step)."""
+    tie = utf8(fd.dt_non_anticipativity)
+    tied = {(f, t) for a, fs in _forecasts(fd).items() for f in fs
+            for t in tie.filter(pl.col("d") == a)["t"].to_list()}
+    held: dict[tuple[str, str, str], list[str]] = {}
+    if fd.process_coarse_step is not None:
+        for p, d, b, t in utf8(fd.process_coarse_step).select("p", "d", "b_first", "t").iter_rows():
+            held.setdefault((p, d, b), []).append(t)
+    out = []
+    for terms in row_terms(build(fd), "non_anticipativity_storage_use").values():
+        for col in terms:
+            if not col.startswith("v_flow"):
+                continue
+            keys = _keys(col)
+            p, d, t = keys[0], keys[-2], keys[-1]
+            out += [(col, d, s) for s in held.get((p, d, t), [t]) if (d, s) not in tied]
+    return out
+
+
+@pytest.mark.parametrize("step", [24.0, 48.0])
+def test_stochastic_tie_stays_within_the_committed_steps(tmp_path_factory, step) -> None:
+    """Rolling stochastic dispatch (96-h horizon, 24-h jump): each roll ties the forecasts over its 24 committed
+    hours only.  With 24-h coarse steps a committed day is one coarse step: upper_turbine is coarse and its tied
+    columns hold only committed hours.  With 48-h steps the first coarse step of a roll holds 24 committed and 24
+    uncommitted hours, and one flow per coarse step would tie the uncommitted ones too: upper_turbine keeps the
+    solve's step in those rolls, so no tie row holds an uncommitted hour."""
+    steps = without_realization(_stoch(tmp_path_factory, f"cf_sto_roll{int(step)}", "1_week_rolling_wind", step))
+    rolls = [s.flex_data for s in steps.values() if _forecasts(s.flex_data)]
+    assert len(rolls) >= 5
+    for fd in rolls:
+        assert row_terms(build(fd), "non_anticipativity_storage_use")
+        assert _tie_reach(fd) == []
+    coarse_in = ["upper_turbine" in _coarse_procs(fd) for fd in rolls]
+    if step == 24.0:
+        assert all(coarse_in)
+    else:
+        assert not coarse_in[0] and not all(coarse_in)
+
+
+def test_benders_regions_keep_cross_region_flows_fine(tmp_path_factory, monkeypatch) -> None:
+    """lh2_three_region_invest, Benders invest solve over region_A/B/C: in each region the liquefier (h2 -> lh2,
+    both daily nodes of the region) is coarse, 7 columns per week; the pipes cross regions, so their half-flows
+    keep 168 hourly columns (they are pinned to the master per hour); the master keeps every flow hourly.  The
+    split runs as the Benders solve runs it (_benders._solve_benders_inner).  The liquefiers' parameters are
+    constant within a day, so the Benders objective is that of hourly flows (within the gap tolerance)."""
+    from flextool.engine.solve import _region_filter as rf
+
+    url, scen = make_db(tmp_path_factory, alt="cf_benders", values=[], fixture_json=LH2,
+                        base_chain=_chain(LH2, "lh2_three_region_invest"))
+    steps = run(tmp_path_factory, url, scen)
+    invest = next(s for k, s in steps.items() if "lh2_invest" in k)
+    assert invest.is_benders
+    fd = invest.flex_data
+    regions = ["region_A", "region_B", "region_C"]
+    membership = rf.load_region_membership(fd, regions)
+    hosted = frozenset(rf.compute_master_hosted_nodes(fd, membership))
+    splits = rf.split(fd, regions=regions, region_membership=membership, benders_uncap_cross_region=True,
+                      master_hosted_nodes=hosted)
+    for sp in splits:
+        r = sp.region[-1]
+        assert _coarse_procs(sp.data) == {f"liquefier_{r}"}
+        cols = _flow_cols(build(sp.data), "v_flow[")
+        assert len([c for c in cols if c.startswith(f"v_flow[liquefier_{r},")]) == 7
+        assert sp.half_flows
+        for hf in sp.half_flows:
+            assert hf.original_p.startswith("pipe_")
+            assert len([c for c in cols if c.startswith(f"v_flow[{hf.virtual_p},")]) == 168
+    master = rf.master_network_data(fd, regions, region_membership=membership, master_hosted_nodes=hosted)
+    assert master.processCoarse is None and master.process_coarse_step is None
+    _fine_flows(monkeypatch)
+    url, scen = make_db(tmp_path_factory, alt="cf_benders_fine", values=[], fixture_json=LH2,
+                        base_chain=_chain(LH2, "lh2_three_region_invest"))
+    fine = next(s for k, s in run(tmp_path_factory, url, scen).items() if "lh2_invest" in k)
+    assert float(invest.obj) == pytest.approx(float(fine.obj), rel=1e-6)

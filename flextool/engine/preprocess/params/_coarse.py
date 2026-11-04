@@ -11,7 +11,9 @@ with a fine balance node, or with no balance node, keeps the solve's step, and s
 feature whose rows are per fine step and couple the flow to other per-step terms (online variables, reserves,
 a delay, DC power flow, an exact connection, minimum load, a user constraint flow term, a flow group instant
 limit, a capacity-margin / inertia / non-synchronous group): those rows would not hold for a flow that cannot
-change within the coarse step.
+change within the coarse step.  In a stochastic solve, a process at a node whose net flow is tied between the
+forecasts also keeps the solve's step when a coarse step holds both tied (committed) and untied steps
+(``flex_data.coarse_tie_straddles``): its one flow would tie the untied steps too.
 
 :func:`coarse_node_frames` cuts the solve's steps into coarse steps.  It is the only source of the coarse
 steps; the per-block timelines of the block layout (``solve_data/block_step_duration`` etc.) do not feed the

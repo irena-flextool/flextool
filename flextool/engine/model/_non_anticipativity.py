@@ -157,7 +157,9 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # terms of nodeBalance_eq, built by the same helper (_balance_terms.balance_flow_terms).  It ties the flows,
     # not v_state, and leaves out the balance slacks: they could otherwise absorb a flow difference.  The
     # section input counts because efficiency and min_load may differ between forecasts.  A node of the group
-    # without an energy balance (e.g. a commodity node) has no balance flow terms to tie.
+    # without an energy balance (e.g. a commodity node) has no balance flow terms to tie.  A coarse process has
+    # one flow column per coarse step, so a tie at one of its steps holds the whole step; it is coarse only where
+    # each of its coarse steps is wholly tied or wholly untied (flex_data.coarse_tie_straddles).
     tie_nodes = _balance_nodes(d, stoch_nodes)
     if b.v_flow is not None and tie_nodes is not None and d.p_unitsize is not None \
             and d.p_step_duration is not None:

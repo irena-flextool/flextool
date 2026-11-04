@@ -530,6 +530,45 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
     return out
 
 
+def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]:
+    """The coarse processes of ``steps`` ``(p, d, b_first, t)`` with a coarse step that the forecast tie
+    (``non_anticipativity_storage_use``) covers only in part.
+
+    The tie holds the net flow into each balance node of a ``groupStochastic`` group equal in every forecast of
+    an anchor period over the tied steps ``dt_non_anticipativity`` (the committed steps) only.  A coarse
+    process has one flow per coarse step, so a tie on one fine step of a coarse step holds its flow over the
+    whole step: where a coarse step reaches past the end of the tied steps the forecasts could no longer differ
+    after it, although nothing is committed there.  Such a process keeps the solve's step."""
+    from flextool.engine.model._non_anticipativity import reference_forecasts
+
+    d = flex_data
+    gn, gs, pss = d.group_node, d.groupStochastic, d.process_source_sink
+    tie = d.dt_non_anticipativity
+    if any(f is None or f.height == 0 for f in (gn, gs, pss, tie, d.nodeBalance, steps)):
+        return set()
+    forecasts = [(a, f) for a, f in reference_forecasts(d) if len(f) >= 2]
+    if not forecasts:
+        return set()
+    nodes = (_frame_values(gn.join(gs.select("g").unique(), on="g", how="semi"), "n")
+             & _frame_values(d.nodeBalance, "n"))
+    arcs = pss.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")))
+    procs = set(arcs.filter(pl.col("source").is_in(sorted(nodes)) | pl.col("sink").is_in(sorted(nodes)))
+                ["p"].to_list())
+    tied_by_anchor = tie.select(pl.col("d").cast(pl.Utf8).alias("anchor"), pl.col("t").cast(pl.Utf8)).unique()
+    tied = (pl.DataFrame([(a, f) for a, fs in forecasts for f in fs], schema={"anchor": pl.Utf8, "d": pl.Utf8},
+                         orient="row")
+            .join(tied_by_anchor, on="anchor", how="inner")
+            .select("d", "t", __tied=pl.lit(True)))
+    forecast_periods = sorted({f for _, fs in forecasts for f in fs})
+    st = (steps.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "b_first", "t")))
+          .filter(pl.col("p").is_in(sorted(procs)) & pl.col("d").is_in(forecast_periods))
+          .join(tied, on=["d", "t"], how="left"))
+    part = (st.group_by("p", "d", "b_first")
+            .agg(pl.col("__tied").is_not_null().any().alias("__any"), pl.col("__tied").is_not_null().all().alias("__all"))
+            .filter(pl.col("__any") & ~pl.col("__all")))
+    return set(part["p"].to_list())
+
+
 def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
     """Set ``processCoarse`` / ``process_coarse_step`` (``params._coarse.coarse_process_frames``) from the
     coarse node frames, and print the info lines of the coarse processes."""
@@ -550,10 +589,21 @@ def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
     for p, s, k in arcs.iter_rows():
         process_nodes.setdefault(p, set()).update(n for n in (s, k) if n != p)
     psd = flex_data.p_step_duration
-    frames = coarse_process_frames(
-        process_nodes=process_nodes, balance_nodes=_frame_values(flex_data.nodeBalance, "n"),
-        node_step=node_step, node_coarse_step=ncs, step_duration=None if psd is None else psd.frame,
-        excluded=coarse_process_exclusions(flex_data), solve_step=solve_step)
+    excluded = coarse_process_exclusions(flex_data)
+
+    def frames_for(excluded: dict[str, str]):
+        return coarse_process_frames(
+            process_nodes=process_nodes, balance_nodes=_frame_values(flex_data.nodeBalance, "n"),
+            node_step=node_step, node_coarse_step=ncs, step_duration=None if psd is None else psd.frame,
+            excluded=excluded, solve_step=solve_step)
+
+    frames = frames_for(excluded)
+    if frames is not None and frames.processCoarse.height > 0:
+        straddle = coarse_tie_straddles(flex_data, frames.process_coarse_step)
+        if straddle:
+            why = ("the forecasts are tied (non-anticipativity) over only part of one of its coarse steps, and "
+                   "one flow per coarse step would tie the whole step")
+            frames = frames_for({**excluded, **{p: why for p in straddle}})
     coarse_process_messages(frames)
     if frames is None or frames.processCoarse.height == 0:
         return
