@@ -971,6 +971,7 @@ def _build_region_data(
                "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down"):
         setattr(new, _f, _filter_arc_by_proc(getattr(src, _f)))
     new.p_roll_continue_flow = _filter_param_arc(src.p_roll_continue_flow)
+    new.p_roll_continue_flow_duration = _filter_param_arc(getattr(src, "p_roll_continue_flow_duration", None))
 
     # ---- Profiles (filter by p) ----
     new.process_profile_upper = _filter_frame(src.process_profile_upper, "p", keep_procs)
@@ -1899,6 +1900,7 @@ def master_network_data(
                "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down"):
         setattr(new, _f, _keep_cross_triple(getattr(data, _f)))
     new.p_roll_continue_flow = _keep_cross_triple_param(data.p_roll_continue_flow)
+    new.p_roll_continue_flow_duration = _keep_cross_triple_param(getattr(data, "p_roll_continue_flow_duration", None))
     new.pd_neg_cap = _keep_proc_param(data.pd_neg_cap)
 
     # ---- Profiles (process-keyed) ----

@@ -2,9 +2,11 @@
 
 The fixture exercises a coarse ``new_stepduration`` group: the h2_* and
 lh2_* nodes are in the 24-h ``daily_group``, the electricity nodes are
-hourly.  Every flow lives on the hourly steps; a daily node is balanced
-once per day by summing its hourly flows (``nodeBalanceCoarse_eq``) and a
-daily storage node keeps one state per day.
+hourly.  A daily node is balanced once per day by summing its hourly
+flows (``nodeBalanceCoarse_eq``) and a daily storage node keeps one state
+per day.  The liquefiers and pipes (between daily nodes only) have one
+flow per day, written at every hour; the electrolysers (hourly ->
+daily) have hourly flows.
 
 The fixture is built fresh per pytest session from
 ``tests/fixtures/lh2_three_region.json`` (no .sqlite is checked into the
@@ -172,7 +174,7 @@ class TestLh2ThreeRegion:
     ) -> None:
         """Electrolyser elec source-side flow is at hourly resolution.
 
-        Every flow lives on the hourly steps.  Even though the LP may
+        The electrolyser connects an hourly node, so its flows are hourly.  Even though the LP may
         legitimately bunch all consumption into a single hour per day, the
         fact that *any* hour-to-hour variation is permitted (i.e. flows are
         NOT pinned constant within a day) is what we want to exercise here.
@@ -256,8 +258,9 @@ class TestLh2ThreeRegion:
     def test_output_row_counts_match_fine_timeline(
         self, lh2_solve: Path
     ) -> None:
-        """Every time-indexed output has 168 rows (the fine timeline): every
-        variable, of hourly and of daily nodes, lives on the hourly steps.
+        """Every time-indexed output has 168 rows (the fine timeline): the
+        flows of processes between daily nodes (one per day in the LP) are
+        written at every hour, like every other variable.
         """
         for fname in ("v_flow", "v_state", "vq_state_up", "vq_state_down"):
             path = lh2_solve / "output_raw" / f"{fname}__lh2_week.parquet"

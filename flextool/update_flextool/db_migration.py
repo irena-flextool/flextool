@@ -4694,7 +4694,8 @@ _V77_GROUP_INVEST_METHODS = (
 # default).
 BEHAVIOUR_CHANGE_MARKER_PREFIX = "flextool_behaviour_change:"
 _V77_UNCONDITIONAL_MARKERS = ("user_constraint_prebuilt_nets_retirements", "dc_power_flow_lines_beside_dc_links",
-                              "price_ladder_periods_from_solve_periods", "construction_lead_time_commissioning")
+                              "price_ladder_periods_from_solve_periods", "construction_lead_time_commissioning",
+                              "coarse_process_flows")
 
 # Definitions the schema no longer has but old databases may still carry.
 _V77_STALE_DEFINITIONS = (

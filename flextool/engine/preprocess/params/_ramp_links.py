@@ -150,7 +150,8 @@ def ramp_roll_carry(dt: "pl.DataFrame | None",
     1-h step that ends at hour 24); a hole or an overlap between the two gives no carry.  Without the end
     position columns only the name match applies.  Returns ``(dt_ramp_carry, flows_out)``:
     ``dt_ramp_carry`` = ``(d, t, d_previous, t_previous, duration_previous)`` (also used by the ramp output) and
-    ``flows_out`` = ``(p, source, sink, d, t, value)`` (``None`` without ``flows``), all keys Utf8;
+    ``flows_out`` = ``(p, source, sink, d, t, value, duration)`` (``None`` without ``flows``; ``duration`` the
+    arc's own carried step length: a coarse process carries its last realized coarse step), all keys Utf8;
     ``(None, None)`` when no step takes the carry (first roll, a single solve, a carried step that is not
     adjacent, e.g. before a gap in the timeline).
     """
@@ -199,11 +200,14 @@ def ramp_roll_carry(dt: "pl.DataFrame | None",
     if f_steps.rows() != [(c_d, c_t)]:
         raise ValueError(
             f"ramp_roll_carry: the carried flows are of step(s) {f_steps.rows()}, the carried step is {(c_d, c_t)}")
+    duration = (pl.col("duration").cast(pl.Utf8).cast(pl.Float64, strict=False) if "duration" in flows.columns
+                else pl.lit(c_dur, dtype=pl.Float64))
     flows_out = (flows.select(pl.col("process").cast(pl.Utf8).alias("p"), pl.col("source").cast(pl.Utf8),
                               pl.col("sink").cast(pl.Utf8),
-                              pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
+                              pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0),
+                              duration.fill_null(c_dur).alias("duration"))
                  .join(hit, how="cross")
-                 .select("p", "source", "sink", "d", "t", "value"))
+                 .select("p", "source", "sink", "d", "t", "value", "duration"))
     return link_out, flows_out
 
 

@@ -345,13 +345,15 @@ def coarse_process_messages(frames: "CoarseProcessFrames | None") -> None:
                    f"{why}.")
 
 
-def varies_within_coarse_steps(frame: "pl.DataFrame | None", steps: pl.DataFrame,
-                               keys: tuple[str, ...] = ()) -> set[str]:
-    """The processes p of ``steps`` ``(p, d, b_first, t)`` for which ``frame`` (``keys…, [d], [t], value``; it
-    carries ``p`` or is joined to ``steps`` on ``d`` / ``t`` only) takes more than one value within some coarse
-    step.  A frame without ``t`` is constant within every step."""
+def varying_within_coarse_steps(frame: "pl.DataFrame | None", steps: pl.DataFrame,
+                                keys: tuple[str, ...] = ()) -> pl.DataFrame:
+    """The distinct ``(p, keys…)`` (Utf8) of ``frame`` (``keys…, [d], [t], value``; it carries ``p`` or is joined to
+    ``steps`` ``(p, d, b_first, t)`` on ``d`` / ``t`` only) that take more than one value within some coarse step
+    of p.  A frame without ``t`` is constant within every step."""
+    out_keys = list(dict.fromkeys(["p", *keys]))
+    empty = pl.DataFrame(schema={k: pl.Utf8 for k in out_keys})
     if frame is None or frame.height == 0 or "t" not in frame.columns or "value" not in frame.columns:
-        return set()
+        return empty
     on = [c for c in ("p", "d", "t") if c in frame.columns]
     group = ["p", "d", "b_first", *[k for k in keys if k != "p"]]
     sel = list(dict.fromkeys([*on, *keys]))
@@ -362,4 +364,10 @@ def varies_within_coarse_steps(frame: "pl.DataFrame | None", steps: pl.DataFrame
               .agg((pl.col("value").max() - pl.col("value").min()).alias("__spread"),
                    pl.col("value").abs().max().alias("__size")))
     hit = spread.filter(pl.col("__spread") > 1e-9 * pl.max_horizontal(pl.lit(1.0), pl.col("__size")))
-    return set(hit["p"].to_list())
+    return hit.select(out_keys).unique().sort(out_keys)
+
+
+def varies_within_coarse_steps(frame: "pl.DataFrame | None", steps: pl.DataFrame,
+                               keys: tuple[str, ...] = ()) -> set[str]:
+    """The processes of :func:`varying_within_coarse_steps`."""
+    return set(varying_within_coarse_steps(frame, steps, keys)["p"].to_list())

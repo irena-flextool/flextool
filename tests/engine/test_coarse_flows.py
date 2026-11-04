@@ -21,7 +21,8 @@ import polars as pl
 import pytest
 
 from flextool.engine.preprocess.params import _coarse
-from tests.engine._unit_db import FLEXTOOL_ROOT, b64, last_stochastic, make_db, run, utf8
+from tests.engine._lp_rows import row_bounds, row_terms
+from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, last_stochastic, make_db, run, utf8, without_realization
 
 pytestmark = pytest.mark.solver
 
@@ -219,3 +220,421 @@ def test_flow_readers_expand_coarse_flows() -> None:
             if _FLOW_READS.search(line):
                 hits.append(f"{rel}:{i}: {line.strip()}")
     assert not hits, "raw v_flow reads (use flextool.engine.output._coarse_flows):\n" + "\n".join(hits)
+
+
+# ---------------------------------------------------------------------------
+# The model: one flow per coarse step
+
+
+def _fine_flows(monkeypatch) -> None:
+    """Make every process keep the solve's step (the model before coarse processes)."""
+    monkeypatch.setattr(_coarse, "coarse_process_frames", lambda **kw: None)
+
+
+def _total_objective(steps: dict) -> float:
+    return sum(float(s.obj) for s in without_realization(steps).values())
+
+
+def _flow_cols(pb, prefix: str) -> list[str]:
+    return [c for c in pb.canonicalise().col_names if c.startswith(prefix)]
+
+
+LH2_RP = FIX / "lh2_three_region_rp_invest.json"
+_ROLLING = [["solve", "lh2_week", "solve_mode", _s("rolling_window")],
+            ["solve", "lh2_week", "rolling_solve_horizon", _f(72.0)],
+            ["solve", "lh2_week", "rolling_solve_jump", _f(48.0)]]
+
+
+def _case(tmp_path_factory, case: str, alt: str) -> dict:
+    if case == "rp":
+        url, scen = make_db(tmp_path_factory, alt=alt, values=[], fixture_json=LH2_RP,
+                            base_chain=_chain(LH2_RP, "lh2_three_region_rp_invest"))
+        return run(tmp_path_factory, url, scen)
+    return _lh2(tmp_path_factory, alt, _ROLLING if case == "rolling" else [])
+
+
+@pytest.mark.parametrize("case", ["single", "rolling", "rp"])
+def test_lh2_same_optimum_as_fine_flows(tmp_path_factory, monkeypatch, case) -> None:
+    """lh2 (every per-step parameter of the liquefiers and pipes is constant within a day): the model with one
+    flow per day has the objective of the model with hourly flows, in a single solve, a rolling solve (72 h /
+    48 h) and a representative-period invest solve, with fewer columns.  Only the objective is compared: with
+    storage at every lh2 node and pipes in both directions the daily energy of each arc is not unique."""
+    coarse = _case(tmp_path_factory, case, f"cf_same_{case}")
+    _fine_flows(monkeypatch)
+    fine = _case(tmp_path_factory, case, f"cf_same_{case}_fine")
+    assert len(coarse) == len(fine)
+    assert _total_objective(coarse) == pytest.approx(_total_objective(fine), rel=1e-9)
+    c_step, f_step = last_stochastic(coarse), last_stochastic(fine)
+    assert _coarse_procs(c_step.flex_data) and not _coarse_procs(f_step.flex_data)
+    assert len(_flow_cols(build(c_step.flex_data), "v_flow[")) < len(_flow_cols(build(f_step.flex_data), "v_flow["))
+
+
+def test_lh2_coarse_columns_and_rows(tmp_path_factory) -> None:
+    """One week of 24-h coarse steps: 7 v_flow columns per coarse arc (none on the other 161 hours), 7
+    maxFlow_coarse rows and no hourly maxFlow row per arc; the electrolyser (elec hourly -> h2 daily) keeps 168
+    columns; the daily balance of lh2_A holds liquefier_A's column of the day with 24 × unitsize."""
+    fd = last_stochastic(_lh2(tmp_path_factory, "cf_cols")).flex_data
+    pb = build(fd)
+    cols = pb.canonicalise().col_names
+    for arc in ("liquefier_A,h2_A,lh2_A", "pipe_AB,lh2_A,lh2_B", "pipe_AB,lh2_B,lh2_A"):
+        mine = [c for c in cols if c.startswith(f"v_flow[{arc},")]
+        assert [c.rstrip("]").split(",")[-1] for c in mine] == [f"t{24 * k + 1:04d}" for k in range(7)]
+        assert len(row_terms(pb, "maxFlow_coarse", f"{arc},")) == 7
+        assert not row_terms(pb, "maxFlow", f"{arc},")
+    assert len([c for c in cols if c.startswith("v_flow[electrolyser_A,elec_A,h2_A,")]) == 168
+    us = float(utf8(fd.p_unitsize.frame).filter(pl.col("p") == "liquefier_A")["value"][0])
+    day = row_terms(pb, "nodeBalanceCoarse_eq", "lh2_A,y2030,t0025")["nodeBalanceCoarse_eq[lh2_A,y2030,t0025]"]
+    assert day["v_flow[liquefier_A,h2_A,lh2_A,y2030,t0025]"] == pytest.approx(24.0 * us)
+    assert not any(c.startswith("v_flow[liquefier_A,") and not c.endswith("t0025]") for c in day)
+
+
+def test_registry_has_explicit_coarse_families() -> None:
+    """Every <family>_coarse resolves to its own registry entry (a prefix match would silently take the fine
+    family's)."""
+    from flextool.engine.autoscale._layer2_types import CONSTRAINT_FAMILIES, lookup_cstr
+
+    for name in ("maxFlow", "maxFlow_negCap", "maxFlow_back", "maxOutputSum", "maxOutputSum_negCap",
+                 "conversion_indirect", "minInputShare", "profile_flow_upper_limit", "profile_flow_lower_limit",
+                 "profile_flow_fixed"):
+        assert lookup_cstr(f"{name}_coarse") is CONSTRAINT_FAMILIES[f"{name}_coarse"]
+        assert CONSTRAINT_FAMILIES[f"{name}_coarse"] == CONSTRAINT_FAMILIES[name]
+
+
+def _tmap_lh2(fn) -> list:
+    """A ``time`` map over lh2's 168 hourly steps, value ``fn(h)`` for hour h = 0 … 167."""
+    return b64({"index_type": "str", "index_name": "time", "data": [[f"t{h + 1:04d}", fn(h)] for h in range(168)]},
+               "map")
+
+
+# Every arc-local family on coarse processes: liquefier_A with a second output (indirect: conversion_indirect,
+# maxOutputSum) and an hourly availability, efficiency and output profile; liquefier_B with a second input and
+# an input_share_min (minInputShare); pipe_BC without losses (one variable: v_flow_back, maxFlow_back).
+_FEATURES_VALUES = [
+    ["unit__outputNode", ["liquefier_A", "lh2_B"], "capacity_max_coeff", _f(0.5)],
+    ["unit__outputNode", ["liquefier_A", "lh2_A"], "capacity_max_coeff", _f(0.5)],
+    ["unit", "liquefier_A", "availability", _tmap_lh2(lambda h: 0.5 + 0.5 * ((h // 3) % 2))],
+    ["unit", "liquefier_A", "efficiency", _tmap_lh2(lambda h: 0.8 + 0.1 * ((h // 6) % 2))],
+    ["profile", "liq_prof", "profile", _tmap_lh2(lambda h: 0.2 + 0.05 * (h % 4))],
+    ["unit__node__profile", ["liquefier_A", "lh2_A", "liq_prof"], "profile_method", _s("upper_limit")],
+    ["unit__inputNode", ["liquefier_B", "h2_B"], "input_share_min", _f(0.3)],
+    ["connection", "pipe_BC", "transfer_method", _s("no_losses_no_variable_cost")],
+]
+_FEATURES_ENTITIES = [["unit__outputNode", ["liquefier_A", "lh2_B"], None],
+                      ["unit__inputNode", ["liquefier_B", "h2_C"], None],
+                      ["profile", "liq_prof", None],
+                      ["unit__node__profile", ["liquefier_A", "lh2_A", "liq_prof"], None]]
+_TWINS = ("maxFlow", "maxFlow_back", "maxOutputSum", "conversion_indirect", "minInputShare",
+          "profile_flow_upper_limit")
+
+
+def _keys(name: str) -> list[str]:
+    return name[name.index("[") + 1:-1].split(",")
+
+
+def test_averaged_rows_are_step_means_of_fine_rows(tmp_path_factory, monkeypatch) -> None:
+    """EQ. <family>_coarse: each coarse row is Σ_{t∈b} w_t · (fine row at t), w_t = Δt/Δ_b — checked against the
+    rows the same data gives with hourly flows: every coefficient on the coarse step's column (the fine
+    coefficients of its 24 columns, weighted), every other coefficient and the bound.  Covers maxFlow,
+    maxFlow_back, maxOutputSum, conversion_indirect (an hourly efficiency), minInputShare and
+    profile_flow_upper_limit (an hourly profile and availability)."""
+    coarse = last_stochastic(_lh2(tmp_path_factory, "cf_avg", _FEATURES_VALUES, _FEATURES_ENTITIES)).flex_data
+    _fine_flows(monkeypatch)
+    fine = last_stochastic(_lh2(tmp_path_factory, "cf_avg_fine", _FEATURES_VALUES, _FEATURES_ENTITIES)).flex_data
+    steps = utf8(coarse.process_coarse_step.drop("w")).with_columns(w=coarse.process_coarse_step["w"])
+    step_of = {(p, d, t): b for p, d, b, t, _w in steps.iter_rows()}
+    members: dict[tuple[str, str, str], list[tuple[str, float]]] = {}
+    for p, d, b, t, w in steps.iter_rows():
+        members.setdefault((p, d, b), []).append((t, w))
+    pc, pf = build(coarse), build(fine)
+
+    def to_coarse(col: str) -> str:
+        if not col.startswith(("v_flow[", "v_flow_back[")):
+            return col
+        k = _keys(col)
+        b = step_of.get((k[0], k[-2], k[-1]))
+        return col if b is None else col[:col.index("[") + 1] + ",".join([*k[:-1], b]) + "]"
+
+    fm = pf.canonicalise()
+    col_ub = dict(zip(fm.col_names, fm.col_ub))
+    seen = set()
+    for fam in _TWINS:
+        c_rows, c_bounds = row_terms(pc, f"{fam}_coarse"), row_bounds(pc, f"{fam}_coarse")
+        f_rows, f_bounds = row_terms(pf, fam), row_bounds(pf, fam)
+        for name, terms in c_rows.items():
+            k = _keys(name)
+            expect: dict[str, float] = {}
+            lo = hi = 0.0
+            for t, w in members[(k[0], k[-2], k[-1])]:
+                fname = f"{fam}[{','.join([*k[:-1], t])}]"
+                if fname not in f_rows and fam == "maxFlow":
+                    # An input arc of an indirect unit without investment: the hourly model bounds the variable
+                    # instead of writing a row (v_flow ≤ upper); the coarse model caps the coarse column by a row.
+                    col = f"v_flow[{','.join([*k[:-1], t])}]"
+                    f_rows[fname], f_bounds[fname] = {col: 1.0}, (-float("inf"), float(col_ub[col]))
+                for col, v in f_rows[fname].items():
+                    expect[to_coarse(col)] = expect.get(to_coarse(col), 0.0) + w * v
+                lo += w * f_bounds[fname][0]
+                hi += w * f_bounds[fname][1]
+            expect = {c: v for c, v in expect.items() if abs(v) > 1e-12}
+            assert terms.keys() == expect.keys(), (name, terms, expect)
+            for col, v in expect.items():
+                assert terms[col] == pytest.approx(v, rel=1e-9, abs=1e-12), (name, col)
+            assert c_bounds[name] == pytest.approx((lo, hi), rel=1e-9, abs=1e-9), name
+            seen.add(fam)
+        # The fine family keeps no row of a coarse process.
+        assert not [r for r in row_terms(pc, fam) if _keys(r)[0] in LH2_COARSE]
+    assert seen == set(_TWINS)
+
+
+def test_one_varying_limit_same_optimum(tmp_path_factory, monkeypatch) -> None:
+    """pipe_AB with an hourly availability (one time-varying limit per arc): the step-averaged limit lets the
+    pipe move the energy the hourly limits allow over the day, so the optimum is the same."""
+    vals = [["connection", "pipe_AB", "availability", _tmap_lh2(lambda h: 0.05 + 0.3 * (h % 2))]]
+    coarse = _lh2(tmp_path_factory, "cf_avail", vals)
+    _fine_flows(monkeypatch)
+    fine = _lh2(tmp_path_factory, "cf_avail_fine", vals)
+    assert "pipe_AB" in _coarse_procs(last_stochastic(coarse).flex_data)
+    assert _total_objective(coarse) == pytest.approx(_total_objective(fine), rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Hand-built model (tests.json, 2 days of 1-h steps): fuel -> src -> ha =hpipe=> hb <- src2 (fixed profile)
+#
+# ha, hb: balance nodes in a 24-h group; src (coal_market -> ha, efficiency η) and src2 (coal_market -> hb,
+# 100 MW, fixed profile f) take fuel from the commodity node coal_market (no balance: neutral), so src, src2 and
+# hpipe (ha -> hb, efficiency 0.9, regular) are coarse.  hb's demand D: day 1 10 MW for 12 h then 30 MW
+# (480 MWh), day 2 15 MW (360 MWh); f: 0.01 for 12 h then 0.03 in each day (mean 0.02).
+# Hand derivation (one flow per day):
+#   src2 = mean(f) · 100 MW = 2 MW every hour (profile_flow_fixed_coarse), 48 MWh a day;
+#   hpipe delivers the rest (a connection's flow is what reaches its sink; its source gives flow / efficiency):
+#   F_k · 24 h = D_k − 48  ->  F_1 = 432 / 24 = 18 MW, F_2 = 312 / 24 = 13 MW;
+#   src = F_k / 0.9 (ha's daily balance) = 20 MW and 14.4444 MW; the reverse pipe flow is 0.
+# A pipe cost c_t (1 for 12 h, then 5) costs the coarse flow its daily mean (3); an efficiency η_t (0.5 for 12 h,
+# then 1) costs it the mean fuel per MWh, mean(1/η) = 1.5, i.e. η = 2/3.
+
+_HAND_CHAIN = ["init", "west", "coal"]
+_HOURS = [f"t{h:04d}" for h in range(1, 49)]
+
+
+def _hmap(fn) -> list:
+    return b64({"index_type": "str", "index_name": "time", "data": [[t, fn(h)] for h, t in enumerate(_HOURS)]}, "map")
+
+
+def _half(first: float, second: float) -> list:
+    return _hmap(lambda h: first if h % 24 < 12 else second)
+
+
+_HAND_ENTITIES = [
+    ["node", "ha", None], ["node", "hb", None], ["unit", "src", None], ["unit", "src2", None],
+    ["connection", "hpipe", None], ["group", "daily", None], ["profile", "pf", None],
+    ["unit__inputNode", ["src", "coal_market"], None], ["unit__outputNode", ["src", "ha"], None],
+    ["unit__inputNode", ["src2", "coal_market"], None], ["unit__outputNode", ["src2", "hb"], None],
+    ["connection__node__node", ["hpipe", "ha", "hb"], None],
+    ["group__node", ["daily", "ha"], None], ["group__node", ["daily", "hb"], None],
+    ["unit__node__profile", ["src2", "hb", "pf"], None],
+]
+
+
+def _hand_values(cost, efficiency) -> list:
+    out = [["group", "daily", "new_stepduration", _f(24.0)]]
+    for n in ("ha", "hb"):
+        out += [["node", n, "node_type", _s("balance")], ["node", n, "penalty_up", _f(10000.0)],
+                ["node", n, "penalty_down", _f(10000.0)]]
+    out += [["node", "hb", "inflow", _hmap(lambda h: -(10.0 if h < 12 else 30.0) if h < 24 else -15.0)],
+            ["unit", "src", "conversion_method", _s("constant_efficiency")], ["unit", "src", "efficiency", efficiency],
+            ["unit", "src", "existing", _f(1000.0)],
+            ["unit", "src2", "conversion_method", _s("constant_efficiency")], ["unit", "src2", "efficiency", _f(1.0)],
+            ["unit", "src2", "existing", _f(100.0)],
+            ["profile", "pf", "profile", _half(0.01, 0.03)],
+            ["unit__node__profile", ["src2", "hb", "pf"], "profile_method", _s("fixed")],
+            ["connection", "hpipe", "efficiency", _f(0.9)], ["connection", "hpipe", "existing", _f(1000.0)],
+            ["connection", "hpipe", "transfer_method", _s("regular")],
+            ["connection", "hpipe", "other_operational_cost", cost]]
+    return out
+
+
+def _hand(tmp_path_factory, alt: str, cost=None, efficiency=None):
+    vals = _hand_values(_f(3.0) if cost is None else cost, _f(2.0 / 3.0) if efficiency is None else efficiency)
+    url, scen = make_db(tmp_path_factory, alt=alt, values=vals, base_chain=_HAND_CHAIN, entities=_HAND_ENTITIES)
+    return last_stochastic(run(tmp_path_factory, url, scen))
+
+
+def _mw(step, p: str, source: str, sink: str) -> list[float]:
+    from flextool.engine.output._coarse_flows import flow_values
+
+    us = float(utf8(step.flex_data.p_unitsize.frame).filter(pl.col("p") == p)["value"][0])
+    f = utf8(flow_values(step.solution, step.flex_data).drop("value")).with_columns(
+        value=flow_values(step.solution, step.flex_data)["value"])
+    rows = f.filter((pl.col("p") == p) & (pl.col("source") == source) & (pl.col("sink") == sink)).sort("t")
+    assert rows["t"].to_list() == _HOURS
+    return [v * us for v in rows["value"].to_list()]
+
+
+def test_hand_built_coarse_flows(tmp_path_factory) -> None:
+    """The flows of the hand-built model (derivation above): src2 2 MW, hpipe 18 / 13 MW, src 20 / 14.4444 MW,
+    constant through each day; no reverse flow."""
+    step = _hand(tmp_path_factory, "cf_hand")
+    assert _coarse_procs(step.flex_data) == {"src", "src2", "hpipe"}
+    assert _mw(step, "src2", "coal_market", "hb") == pytest.approx([2.0] * 48, rel=1e-9)
+    assert _mw(step, "hpipe", "ha", "hb") == pytest.approx([18.0] * 24 + [13.0] * 24, rel=1e-9)
+    assert _mw(step, "src", "coal_market", "ha") == pytest.approx([20.0] * 24 + [13.0 / 0.9] * 24, rel=1e-9)
+    assert _mw(step, "hpipe", "hb", "ha") == pytest.approx([0.0] * 48, abs=1e-9)
+
+
+def test_hand_built_cost_and_efficiency_are_step_means(tmp_path_factory, monkeypatch) -> None:
+    """A pipe cost that varies within the day costs the coarse flow its daily mean, and an efficiency that varies
+    costs the mean fuel per MWh: the objective equals that of the constant mean values.  With hourly flows the
+    model picks the cheap and efficient hours, so it is cheaper (the results change, and the notice says why)."""
+    varying = _hand(tmp_path_factory, "cf_hand_var", cost=_half(1.0, 5.0), efficiency=_half(0.5, 1.0))
+    mean = _hand(tmp_path_factory, "cf_hand_mean")
+    assert float(varying.obj) == pytest.approx(float(mean.obj), rel=1e-9)
+    from flextool.engine.preprocess.flex_data import coarse_process_reasons
+
+    why = coarse_process_reasons(varying.flex_data, varying.flex_data.process_coarse_step)
+    assert any("variable cost varies" in r for r in why["hpipe"])
+    assert any("efficiency varies" in r for r in why["src"])
+    assert "src2" not in why
+    assert coarse_process_reasons(mean.flex_data, mean.flex_data.process_coarse_step) == {}
+    _fine_flows(monkeypatch)
+    fine = _hand(tmp_path_factory, "cf_hand_var_fine", cost=_half(1.0, 5.0), efficiency=_half(0.5, 1.0))
+    assert float(fine.obj) < float(varying.obj) * (1 - 1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Ramps between coarse steps
+
+_LIQ = "liquefier_A,h2_A,lh2_A"
+
+
+def _liq_ramp(speed: float) -> list:
+    rel = ["liquefier_A", "lh2_A"]
+    return [["unit__outputNode", rel, "ramp_method", _s("ramp_limit")],
+            ["unit__outputNode", rel, "ramp_speed_up", _f(speed)],
+            ["unit__outputNode", rel, "ramp_speed_down", _f(speed)]]
+
+
+def _count(fd, p: str) -> float:
+    return float(utf8(fd.p_process_existing_count.frame).filter(pl.col("p") == p)["value"][0])
+
+
+def test_coarse_ramp_between_coarse_steps(tmp_path_factory) -> None:
+    """liquefier_A (24-h steps) with ramp speed 2e-4 per minute: one ramp row per day after the first, from the
+    previous day's column, with room ρ̄ = 2e-4 · 60 · (24 + 24) / 2 = 0.288 of the capacity; no row inside a day.
+    With a speed of 1e-3 the room is 1.44 ≥ 1: no row can bind within the period and none is built."""
+    fd = last_stochastic(_lh2(tmp_path_factory, "cf_ramp", _liq_ramp(2e-4))).flex_data
+    pb = build(fd)
+    rows = row_terms(pb, "ramp_sink_up_constraint", f"{_LIQ},")
+    days = [f"t{24 * k + 1:04d}" for k in range(1, 7)]
+    assert sorted(rows) == [f"ramp_sink_up_constraint[{_LIQ},y2030,{t}]" for t in days]
+    bounds = row_bounds(pb, "ramp_sink_up_constraint", f"{_LIQ},")
+    for k, t in enumerate(days):
+        name = f"ramp_sink_up_constraint[{_LIQ},y2030,{t}]"
+        prev = f"t{24 * k + 1:04d}"
+        assert rows[name] == pytest.approx({f"v_flow[{_LIQ},y2030,{t}]": 1.0, f"v_flow[{_LIQ},y2030,{prev}]": -1.0})
+        assert bounds[name][1] == pytest.approx(0.288 * _count(fd, "liquefier_A"), rel=1e-9)
+    down = row_bounds(pb, "ramp_sink_down_constraint", f"{_LIQ},")
+    assert len(down) == 6 and all(lo == pytest.approx(-0.288 * _count(fd, "liquefier_A"), rel=1e-9)
+                                  for lo, _hi in down.values())
+    fast = last_stochastic(_lh2(tmp_path_factory, "cf_ramp_fast", _liq_ramp(1e-3))).flex_data
+    assert not row_terms(build(fast), "ramp_sink_up_constraint", f"{_LIQ},")
+
+
+def test_coarse_ramp_roll_carry(tmp_path_factory) -> None:
+    """Rolling 72 h / 36 h: roll 1 realizes t0001–t0036, so liquefier_A's last realized coarse step is the
+    12-h step t0025–t0036.  Roll 2 starts at t0037 (its first coarse step t0037–t0060, 24 h) and ramps from the
+    flow roll 1 has there, over the carried 12 h: room ρ̄ = 2e-4 · 60 · (12 + 24) / 2 = 0.216 of the capacity, so
+    the up row reads v_flow[t0037] ≤ f̂ + 0.216 · capacity."""
+    vals = _liq_ramp(2e-4) + [["solve", "lh2_week", "solve_mode", _s("rolling_window")],
+                              ["solve", "lh2_week", "rolling_solve_horizon", _f(72.0)],
+                              ["solve", "lh2_week", "rolling_solve_jump", _f(36.0)]]
+    steps = list(without_realization(_lh2(tmp_path_factory, "cf_ramp_roll", vals)).values())
+    first, second = steps[0], steps[1]
+    f_hat = float(utf8(first.solution.value("v_flow")).filter(
+        (pl.col("p") == "liquefier_A") & (pl.col("sink") == "lh2_A") & (pl.col("t") == "t0025"))["value"][0])
+    fd = second.flex_data
+    carried = utf8(fd.p_roll_continue_flow_duration.frame).filter(pl.col("p") == "liquefier_A")
+    assert carried["value"].to_list() == [12.0]
+    pb = build(fd)
+    name = f"ramp_sink_up_constraint[{_LIQ},y2030,t0037]"
+    assert row_terms(pb, "ramp_sink_up_constraint", f"{_LIQ},y2030,t0037")[name] == pytest.approx(
+        {f"v_flow[{_LIQ},y2030,t0037]": 1.0})
+    hi = row_bounds(pb, "ramp_sink_up_constraint", f"{_LIQ},y2030,t0037")[name][1]
+    assert hi == pytest.approx(f_hat + 0.216 * _count(fd, "liquefier_A"), rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# CO2 roll accumulator and the behaviour notice
+
+
+def test_co2_accumulator_counts_every_step_of_a_coarse_flow(tmp_path) -> None:
+    """compute_co2_rolling_accumulator reads a coarse flow (one LP column for the 3 steps of its coarse step) at
+    every step: the realized tonnes equal those of the same flow written per step, 100 t/MWh · 10 · unitsize 5 ·
+    Δt 2 h · 3 steps = 30000 t (the LP column alone would count one step, 10000 t)."""
+    from types import SimpleNamespace
+
+    from polar_high import Param
+
+    from flextool.engine.preprocess.emit._co2_accumulators import compute_co2_rolling_accumulator
+    from tests.engine.test_co2_accumulator_entity_axis import _Provider, _Sol
+
+    steps = ["t1", "t2", "t3"]
+    fd = SimpleNamespace(
+        realized_dispatch=pl.DataFrame({"period": ["p1"] * 3, "step": steps}),
+        p_step_duration=Param(("d", "t"), pl.DataFrame({"d": ["p1"] * 3, "t": steps, "value": [2.0] * 3})),
+        p_timestep_weight=Param(("d", "t"), pl.DataFrame({"d": ["p1"] * 3, "t": steps, "value": [1.0] * 3})),
+        process_source_sink_noEff=pl.DataFrame({"p": ["u1"], "source": ["coal_node"], "sink": ["elec"]}),
+        process_source_sink_eff=None, process_unit=pl.DataFrame({"p": ["u1"]}), process_min_load_eff=None,
+        p_co2_content=Param(("c",), pl.DataFrame({"c": ["coal"], "value": [100.0]})), p_slope=None,
+        p_process_source_conversion_flow_coeff=None, p_process_sink_conversion_flow_coeff=None,
+        group_node=pl.DataFrame({"g": ["cap_grp"], "n": ["coal_node"]}),
+        p_period_share=Param(("d",), pl.DataFrame({"d": ["p1"], "value": [1.0]})),
+        p_years_represented_d=Param(("d",), pl.DataFrame({"d": ["p1"], "value": [1.0]})),
+        p_all_entity_unitsize=None, p_unitsize=Param(("p",), pl.DataFrame({"p": ["u1"], "value": [5.0]})),
+        process_coarse_step=pl.DataFrame({"p": ["u1"] * 3, "d": ["p1"] * 3, "b_first": ["t1"] * 3, "t": steps,
+                                          "w": [1.0 / 3.0] * 3}))
+    provider = _Provider({
+        "input/group__co2_method": pl.DataFrame({"group": ["cap_grp"], "co2_method": ["total"]}),
+        "solve_data/commodity_node_co2": pl.DataFrame({"commodity": ["coal"], "node": ["coal_node"]})})
+
+    def flows(ts):
+        return pl.DataFrame({"p": ["u1"] * len(ts), "source": ["coal_node"] * len(ts), "sink": ["elec"] * len(ts),
+                             "d": ["p1"] * len(ts), "t": ts, "value": [10.0] * len(ts)})
+
+    tonnes = {}
+    for kind, ts in (("coarse", ["t1"]), ("fine", steps)):
+        out = compute_co2_rolling_accumulator(fd, _Sol(flows(ts)), work_folder=tmp_path, prior_cumulative_co2=None,
+                                              provider=provider)
+        tonnes[kind] = out["p_co2_cum_realized_tonnes"][0]
+    assert tonnes["coarse"] == pytest.approx(30000.0, rel=1e-12)
+    assert tonnes["fine"] == pytest.approx(tonnes["coarse"], rel=1e-12)
+
+
+_MARKER = "flextool_behaviour_change:coarse_process_flows"
+
+
+@pytest.mark.parametrize("marker", [True, False], ids=["marker", "no_marker"])
+def test_behaviour_notice(tmp_path_factory, capsys, marker) -> None:
+    """An upgraded database (marker present) prints one notice naming each coarse process whose results can
+    change and why (here hpipe's varying cost and src's varying efficiency; src2 is exact and not named).
+    Without the marker, nothing."""
+    from spinedb_api import DatabaseMapping
+
+    from flextool.engine import run_chain_from_db
+
+    alt = f"cf_notice_{marker}"
+    url, scen = make_db(tmp_path_factory, alt=alt, values=_hand_values(_half(1.0, 5.0), _half(0.5, 1.0)),
+                        base_chain=_HAND_CHAIN, entities=_HAND_ENTITIES)
+    if marker:
+        with DatabaseMapping(url) as db:
+            db.add_item("metadata", name=_MARKER, value="77")
+            db.commit_session("behaviour-change marker")
+    capsys.readouterr()
+    run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "one flow per coarse step" in ln]
+    if not marker:
+        assert not lines
+        return
+    assert len(lines) == 1 and _MARKER in lines[0]
+    assert "hpipe (its variable cost varies within a coarse step)" in lines[0]
+    assert "src (its efficiency varies within a coarse step)" in lines[0]
+    assert "src2" not in lines[0]

@@ -94,6 +94,15 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "price_ladder_periods_from_solve_periods"),
         ),
         BehaviourChange(
+            id="coarse_process_flows",
+            summary=("A unit or connection whose balance nodes are all in coarse new_stepduration groups now has "
+                     "one flow per coarse step of its nodes (before: one per time step of the solve), with its "
+                     "availability, profiles and efficiency averaged over the coarse step and its ramp limits "
+                     "between coarse steps (results change where, within a coarse step, a cost, price or "
+                     "efficiency varies, two or more limits vary, or ramp limits apply)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "coarse_process_flows"),
+        ),
+        BehaviourChange(
             id="construction_lead_time_commissioning",
             summary=("With a construction lead time, 'invested' and the per-period investment limits count "
                      "capacity coming online in the period; annuity and fixed cost are paid only while it "

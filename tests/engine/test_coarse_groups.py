@@ -1,10 +1,11 @@
 """Coarse ``new_stepduration`` groups (Q1: #11, #12, #33, #36, #8 and the c15b found defects).
 
-Owner decision Q1: every flow stays on the solve's step; a node of a group whose ``new_stepduration`` is longer
-than the solve's step is balanced once per coarse step by summing its fine balance terms (``nodeBalanceCoarse_eq``),
-and a coarse storage node keeps one state per coarse step (``stateConstantCoarse_eq``).  Online status, reserves
-and angles stay on the solve's step too; listing a unit or connection in a coarse group has no effect on time
-resolution (Q-c15-A default, warned where it would have mattered).
+Owner decision Q1: a node of a group whose ``new_stepduration`` is longer than the solve's step is balanced once
+per coarse step by summing its fine balance terms (``nodeBalanceCoarse_eq``), and a coarse storage node keeps one
+state per coarse step (``stateConstantCoarse_eq``).  A unit or connection whose balance nodes are all coarse has
+one flow per coarse step (owner decision 2026-11-03, ``tests/engine/test_coarse_flows.py``); every other flow, and
+online status, reserves and angles, stay on the solve's step; listing a unit or connection in a coarse group has no
+effect on time resolution (Q-c15-A default, warned where it would have mattered).
 
 Fixtures: ``tests/fixtures/lh2_three_region.json`` (h2_* / lh2_* in the 24-h ``daily_group``, elec_* hourly),
 ``tests.json`` (battery in an added 24-h group), ``case14_dc_power_flow.json`` (bus_14 in an added 2-h group),
@@ -123,17 +124,24 @@ def test_mixed_arc_conserves_energy(tmp_path_factory) -> None:
     assert not any("t0025" in c for c in day if c.startswith("v_flow"))
 
 
-def test_both_coarse_arc_every_step(tmp_path_factory) -> None:
-    """liquefier_A (h2_A daily -> lh2_A daily) and pipe_AB (lh2_A <-> lh2_B daily): every fine flow column is in
-    both nodes' daily rows.  Before (#11 a): only the coarse step's column entered, ×24; the other 23 hours were
-    free columns that costs and outputs still read."""
-    pb = build(_last(_lh2(tmp_path_factory, "c_both")).flex_data)
+def test_both_coarse_arc_one_column_per_step(tmp_path_factory) -> None:
+    """liquefier_A (h2_A daily -> lh2_A daily, efficiency 0.85) and pipe_AB (lh2_A <-> lh2_B daily): a process
+    between coarse nodes has one flow column per day (the coarse step's first hour), in both nodes' daily rows
+    with the day's 24 h: +24·unitsize at the sink, −24·unitsize/0.85 at the liquefier's source.  The other 23
+    hours have no column, so no cost or output can read a free one (#11 a: they were free columns that costs and
+    outputs still read)."""
+    fd = _last(_lh2(tmp_path_factory, "c_both")).flex_data
+    pb = build(fd)
+    us = float(utf8(fd.p_unitsize.frame).filter(pl.col("p") == "liquefier_A")["value"][0])
     h2 = row_terms(pb, "nodeBalanceCoarse_eq", "h2_A,y2030,t0025")["nodeBalanceCoarse_eq[h2_A,y2030,t0025]"]
     lh2 = row_terms(pb, "nodeBalanceCoarse_eq", "lh2_A,y2030,t0025")["nodeBalanceCoarse_eq[lh2_A,y2030,t0025]"]
-    for h in range(25, 49):
-        liq = f"v_flow[liquefier_A,h2_A,lh2_A,y2030,t{h:04d}]"
-        assert h2[liq] < 0 and lh2[liq] > 0
-        assert f"v_flow[pipe_AB,lh2_A,lh2_B,y2030,t{h:04d}]" in lh2
+    liq = "v_flow[liquefier_A,h2_A,lh2_A,y2030,t0025]"
+    assert lh2[liq] == pytest.approx(24.0 * us) and h2[liq] == pytest.approx(-24.0 * us / 0.85)
+    assert "v_flow[pipe_AB,lh2_A,lh2_B,y2030,t0025]" in lh2 and "v_flow[pipe_AB,lh2_B,lh2_A,y2030,t0025]" in lh2
+    cols = pb.canonicalise().col_names
+    for h in range(26, 49):
+        assert f"v_flow[liquefier_A,h2_A,lh2_A,y2030,t{h:04d}]" not in cols
+        assert f"v_flow[pipe_AB,lh2_A,lh2_B,y2030,t{h:04d}]" not in cols
 
 
 def test_block_row_own_arcs(tmp_path_factory) -> None:
@@ -194,19 +202,21 @@ def test_coarse_unit_online_every_step(tmp_path_factory) -> None:
     assert "v_online_linear[liquefier_A,y2030,t0024]" in terms
 
 
-def test_coarse_outputs_not_expanded(tmp_path_factory) -> None:
-    """The written v_flow of liquefier_A and pipe_AB (daily nodes) equals the LP's hourly values; the coarse storage
-    state is constant within each day.  Before: the coarse step's value was copied to every hour (output
-    expansion)."""
+def test_coarse_outputs_expanded(tmp_path_factory) -> None:
+    """The written v_flow of liquefier_A and pipe_AB (one flow per day) holds the day's LP value at every hour, so
+    the hourly output energy Σ flow·Δt equals the LP's daily energy; the coarse storage state is constant within
+    each day.  Before (one flow per hour) the output was the LP's hourly values."""
     steps, wf = _run_wf(tmp_path_factory, "c_out", [], _chain(LH2, "lh2_three_region"), None, LH2)
     step = _last(steps)
     out = pl.read_parquet(next((wf / "output_raw").glob("v_flow__*.parquet")))
     flows = utf8(step.solution.value("v_flow"))
     for p, src, snk in (("liquefier_A", "h2_A", "lh2_A"), ("pipe_AB", "lh2_A", "lh2_B")):
         lp = flows.filter((pl.col("p") == p) & (pl.col("source") == src) & (pl.col("sink") == snk)).sort("t")
+        assert lp.height == 7
         col = next(c for c in out.columns if p in c and src in c and snk in c)
-        assert out.height == lp.height
-        assert out[col].to_list() == pytest.approx(lp["value"].to_list(), abs=1e-9)
+        assert out.height == 168
+        assert out[col].to_list() == pytest.approx([v for v in lp["value"].to_list() for _ in range(24)], abs=1e-9)
+        assert sum(out[col].to_list()) == pytest.approx(24.0 * sum(lp["value"].to_list()), abs=1e-6)
     state = utf8(step.solution.value("v_state")).filter(pl.col("n") == "lh2_A").sort("t")["value"].to_list()
     for day in range(7):
         assert max(state[24 * day:24 * day + 24]) - min(state[24 * day:24 * day + 24]) < 1e-7

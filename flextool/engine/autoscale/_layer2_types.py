@@ -258,6 +258,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # Reverse-flow capacity cap on v_flow_back for method_2way_1var_off
     # arcs (DC + non-DC).  flextool/engine/model/core.py (maxFlow_back).
     "maxFlow_back": CstrFamily(QuantityType.DIMENSIONLESS),
+    # Coarse processes: the arc-local rows averaged over each coarse step (Σ_t w·row_t, Σ_t w = 1) keep their
+    # fine family's type.  flextool/engine/model/_coarse_flows.py add_cstr (f"{name}_coarse").  Explicit: the
+    # fine-family prefixes would otherwise resolve them silently.
+    "maxFlow_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
+    "maxFlow_negCap_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
+    "maxFlow_back_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     # Direction switch of exact connections, flextool/engine/model/_exact.py.  Explicit: the "maxFlow" prefix
     # would otherwise resolve them silently.
     "maxFlow_exact_forward": CstrFamily(QuantityType.DIMENSIONLESS),
@@ -266,6 +272,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ``≥`` twin).  flextool/engine/model/core.py (_eq_max_output_sum).
     "maxOutputSum": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxOutputSum_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
+    "maxOutputSum_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
+    "maxOutputSum_negCap_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     # Legacy name for the DC-only back-flow cap; the cap is now emitted as
     # ``maxFlow_back`` over the full arc set.  Retained for back-compat.
     "maxToSink_back": CstrFamily(QuantityType.DIMENSIONLESS),
@@ -432,6 +440,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Conversion (efficiency-balanced flow row).
     # flextool/engine/model/core.py _eq_conversion
     "conversion_indirect": CstrFamily(QuantityType.ENERGY),
+    # Coarse processes, averaged over each coarse step — flextool/engine/model/_coarse_flows.py add_cstr.
+    "conversion_indirect_coarse": CstrFamily(QuantityType.ENERGY),
 
     # ── CO2 caps — EMISSION_MASS.
     # flextool/engine/model/core.py _eq_co2_max_period
@@ -497,6 +507,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # model/core.py _eq_min_input_share: homogeneous input-mixing row
     # (input_share_min) in unit-count flow units
     "minInputShare": CstrFamily(QuantityType.DIMENSIONLESS),
+    # Coarse processes, averaged over each coarse step — flextool/engine/model/_coarse_flows.py add_cstr.
+    "minInputShare_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/_online.py add_constraints (minimum_uptime_<sfx>)
     "minimum_uptime": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/_online.py add_constraints (minimum_downtime_<sfx>)
@@ -594,6 +606,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "profile_flow_upper_limit": CstrFamily(QuantityType.POWER),
     "profile_flow_lower_limit": CstrFamily(QuantityType.POWER),
     "profile_flow_fixed": CstrFamily(QuantityType.POWER),
+    # Coarse processes, averaged over each coarse step — flextool/engine/model/_coarse_flows.py add_cstr.
+    "profile_flow_upper_limit_coarse": CstrFamily(QuantityType.POWER),
+    "profile_flow_lower_limit_coarse": CstrFamily(QuantityType.POWER),
+    "profile_flow_fixed_coarse": CstrFamily(QuantityType.POWER),
 
     # ── Benders (Option C) hand-built master constraints.  The hand master
     # is built AUTOSCALE-OFF, so Layer 2 never scales these rows; registering

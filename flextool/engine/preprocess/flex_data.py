@@ -469,6 +469,67 @@ def coarse_process_exclusions(flex_data: "FlexData") -> dict[str, str]:
     return out
 
 
+def _param_frame(param: "Param | None") -> "pl.DataFrame | None":
+    return None if param is None else param.frame
+
+
+def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[str, list[str]]:
+    """Coarse process -> why its results can differ from flows at the solve's step (the behaviour notice).
+
+    Exact otherwise: with every per-step parameter constant within each coarse step (or one time-varying limit
+    per arc), averaging a fine-feasible flow over each coarse step keeps every row and the cost.  Reasons: a
+    variable cost or a price that varies within a coarse step (the fine flows could pick the cheapest steps),
+    an efficiency that varies (the most efficient steps), two or more limits that vary (the averaged rows are
+    their relaxation), ramp limits (ramps between coarse steps)."""
+    from flextool.engine.preprocess.params._coarse import varies_within_coarse_steps as varies
+    from flextool.engine.preprocess.params._coarse import varying_within_coarse_steps as varying
+
+    d = flex_data
+    out: dict[str, list[str]] = {}
+
+    def add(procs: set[str], why: str) -> None:
+        for p in sorted(procs):
+            out.setdefault(p, []).append(why)
+
+    cost: set[str] = set()
+    for param, keys in ((d.p_pssdt_varCost, ("p", "source", "sink")), (d.p_pdt_varCost_source, ("p", "source")),
+                        (d.p_pdt_varCost_sink, ("p", "sink")), (d.p_pdt_varCost_process, ("p",))):
+        cost |= varies(_param_frame(param), steps, keys)
+    add(cost, "its variable cost varies within a coarse step")
+    price: set[str] = set()
+    for pairs, param, key in ((d.flow_from_commodity_eff, d.p_commodity_price, "c"),
+                              (d.flow_from_commodity_noEff, d.p_commodity_price, "c"),
+                              (d.flow_to_commodity, d.p_commodity_price, "c"),
+                              (d.flow_from_co2_priced, d.p_co2_price, "g"),
+                              (getattr(d, "flow_to_co2_priced", None), d.p_co2_price, "g")):
+        frame = _param_frame(param)
+        if pairs is None or pairs.height == 0 or frame is None or key not in pairs.columns:
+            continue
+        by_p = (pairs.select(pl.col("p").cast(pl.Utf8), pl.col(key).cast(pl.Utf8)).unique()
+                .join(frame.with_columns(pl.col(key).cast(pl.Utf8)), on=key, how="inner"))
+        price |= varies(by_p, steps, ("p", key))
+    add(price, "the price of a commodity or CO2 it buys or sells varies within a coarse step")
+    add(varies(_param_frame(d.p_slope), steps, ("p",)), "its efficiency varies within a coarse step")
+    limits: dict[str, int] = {p: 1 for p in varies(_param_frame(d.p_process_availability), steps, ("p",))}
+    profile = _param_frame(d.p_profile_value)
+    for idx in (d.process_profile_upper, d.process_profile_lower, d.process_profile_fixed):
+        if idx is None or idx.height == 0 or profile is None:
+            continue
+        f_col = "f" if "f" in idx.columns else "profile"
+        arcs = idx.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")),
+                          pl.col(f_col).cast(pl.Utf8).alias("f")).unique()
+        by_arc = arcs.join(profile.with_columns(pl.col("f").cast(pl.Utf8)), on="f", how="inner")
+        for p in varying(by_arc, steps, ("p", "source", "sink", "f"))["p"].to_list():
+            limits[p] = limits.get(p, 0) + 1
+    add({p for p, n in limits.items() if n >= 2}, "two or more of its limits (availability, profiles) vary "
+        "within a coarse step")
+    ramp: set[str] = set()
+    for k in ("sink_up", "sink_down", "source_up", "source_down"):
+        ramp |= _frame_values(getattr(d, f"process_source_sink_ramp_limit_{k}", None), "p")
+    add(ramp & _frame_values(steps, "p"), "it has ramp limits (they apply between coarse steps)")
+    return out
+
+
 def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
     """Set ``processCoarse`` / ``process_coarse_step`` (``params._coarse.coarse_process_frames``) from the
     coarse node frames, and print the info lines of the coarse processes."""
@@ -498,6 +559,13 @@ def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
         return
     flex_data.processCoarse = frames.processCoarse
     flex_data.process_coarse_step = frames.process_coarse_step
+    reasons = coarse_process_reasons(flex_data, frames.process_coarse_step)
+    if reasons:
+        from flextool.engine import _behaviour_changes
+
+        _behaviour_changes.notice(
+            "coarse_process_flows", "units and connections",
+            [f"{p} ({'; '.join(why)})" for p, why in sorted(reasons.items())])
 
 
 def _within_period_lag(dtttdt: pl.DataFrame) -> "pl.DataFrame | None":
@@ -845,6 +913,9 @@ class FlexData:
     # previous roll's realized flow at (d_previous, t_previous); p_roll_continue_flow holds that flow.
     dt_ramp_carry: pl.DataFrame | None = None
     p_roll_continue_flow: Param | None = None  # (p, source, sink, d, t) Utf8 keys, units of unitsize
+    # (p, source, sink, d, t): the length (h) of the carried step of each arc of p_roll_continue_flow — the
+    # previous roll's last realized step, or for a coarse process its last realized coarse step.
+    p_roll_continue_flow_duration: Param | None = None
 
     # ─── Online / min_load (unit commitment) ──────────────────────────────
     process_online: pl.DataFrame | None = None              # set: (p,)
@@ -2510,8 +2581,10 @@ def _read_rp_block_first_utf8(sd: Path, *, provider: "object | None" = None) -> 
 
 
 def _load_ramp_carry(sd: Path, dt: "pl.DataFrame | None", *,
-                     provider: "object | None" = None) -> "tuple[pl.DataFrame | None, Param | None]":
-    """``(dt_ramp_carry, p_roll_continue_flow)`` of a continuation roll (``params._ramp_links.ramp_roll_carry``)
+                     provider: "object | None" = None
+                     ) -> "tuple[pl.DataFrame | None, Param | None, Param | None]":
+    """``(dt_ramp_carry, p_roll_continue_flow, p_roll_continue_flow_duration)`` of a continuation roll
+    (``params._ramp_links.ramp_roll_carry``; the duration Param is each arc's carried step length)
     from the previous roll's ``handoff/roll_end_step`` and ``handoff/roll_end_flow``, the complete solve's
     ``solve_data/roll_first_step_link``, ``solve_data/period__branch`` and ``solve_data/rp_block_first``;
     ``(None, None)`` otherwise.  ``dt_ramp_carry`` exists also without ramp limits (the ramp output measures a
@@ -2522,10 +2595,10 @@ def _load_ramp_carry(sd: Path, dt: "pl.DataFrame | None", *,
 
     step = read_handoff_frame(provider, K.HANDOFF_ROLL_END_STEP)
     if step is None or step.height == 0:
-        return None, None
+        return None, None, None
     link_path = sd / "roll_first_step_link.csv"
     if not _provider_has(provider, K.SOLVE_DATA_ROLL_FIRST_STEP_LINK, link_path):
-        return None, None
+        return None, None, None
     link = _provider_read(provider, K.SOLVE_DATA_ROLL_FIRST_STEP_LINK, link_path)
     pb = None
     pb_path = sd / "period__branch.csv"
@@ -2535,11 +2608,13 @@ def _load_ramp_carry(sd: Path, dt: "pl.DataFrame | None", *,
     rows, flows_out = ramp_roll_carry(dt, step, link, pb, flows=flows,
                                       rp_block_first=_read_rp_block_first_utf8(sd, provider=provider))
     if rows is None:
-        return None, None
+        return None, None, None
     if flows_out is None:
-        return rows, None
+        return rows, None, None
     flows_out = flows_out.pipe(rename_to_axis, {"p": "p", "source": "source", "sink": "sink", "d": "d", "t": "t"})
-    return rows, Param(("p", "source", "sink", "d", "t"), flows_out)
+    keys = ("p", "source", "sink", "d", "t")
+    return (rows, Param(keys, flows_out.select(*keys, "value")),
+            Param(keys, flows_out.select(*keys, pl.col("duration").alias("value"))))
 
 
 def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
@@ -2564,10 +2639,11 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         **ramp_link_fields(dt, _read_ramp_link(sd, provider=provider)),
         dt_ramp_carry=None,
         p_roll_continue_flow=None,
+        p_roll_continue_flow_duration=None,
     )
     # One read of the carry (pure on the Provider): dt_ramp_carry is needed also without ramp limits (the ramp
     # output), p_roll_continue_flow only with them.
-    dt_ramp_carry, p_roll_continue_flow = _load_ramp_carry(sd, dt, provider=provider)
+    dt_ramp_carry, p_roll_continue_flow, p_roll_continue_flow_duration = _load_ramp_carry(sd, dt, provider=provider)
     blank["dt_ramp_carry"] = dt_ramp_carry
     if pss is None:
         return blank
@@ -2604,6 +2680,7 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         dt_online_wrap = blank["dt_online_wrap"],
         dt_ramp_carry = dt_ramp_carry,
         p_roll_continue_flow = p_roll_continue_flow,
+        p_roll_continue_flow_duration = p_roll_continue_flow_duration,
     )
 
 
@@ -6058,9 +6135,23 @@ def _roll_end_flow(sol, flex_data: "FlexData | None", last: "tuple[str, str] | N
     if rows.height == 0:
         return None
     dur = _step_duration_at(flex_data, last)
+    rows = rows.with_columns(pl.lit(dur, dtype=pl.Float64).alias("duration"))
+    steps = getattr(flex_data, "process_coarse_step", None)
+    if steps is not None and steps.height > 0:
+        # A coarse process's flow is the rate of its last realized coarse step (the run of coarse steps is cut at
+        # the realized end, so the step ends at ``last``); the next roll ramps from it over that step's length.
+        psd = flex_data.p_step_duration.frame.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                                                     pl.col("value").cast(pl.Float64).alias("__dt"))
+        st = steps.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "b_first", "t")))
+        first = st.filter((pl.col("d") == last[0]) & (pl.col("t") == last[1])).select("p", "d", "b_first")
+        coarse_dur = (st.join(first, on=["p", "d", "b_first"], how="inner")
+                      .join(psd, on=["d", "t"], how="left")
+                      .group_by("p").agg(pl.col("__dt").fill_null(dur).sum().alias("__coarse_dur")))
+        rows = (rows.join(coarse_dur, on="p", how="left")
+                .with_columns(pl.coalesce(pl.col("__coarse_dur"), pl.col("duration")).alias("duration"))
+                .drop("__coarse_dur"))
     return rows.select(pl.col("p").alias("process"), "source", "sink",
-                       pl.lit(last[0]).alias("period"), pl.lit(last[1]).alias("step"),
-                       pl.lit(dur, dtype=pl.Float64).alias("duration"), "value")
+                       pl.lit(last[0]).alias("period"), pl.lit(last[1]).alias("step"), "duration", "value")
 
 
 def build_handoff_from_solution(

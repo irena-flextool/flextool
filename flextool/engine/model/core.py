@@ -12,7 +12,8 @@ grep ``EQ. ─── <name>`` to find an equation.
 
 Variables, in declaration (column) order.  p process, n node, d period, t step, b base period, g group,
 r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW / MWh.
-  v_flow[p,source,sink,d,t]            flow on a process arc; × unitsize = MW
+  v_flow[p,source,sink,d,t]            flow on a process arc; × unitsize = MW (a coarse process: one column per
+                                       coarse step, read on every step through _coarse_flows.flow_alias)
   vq_state_up / _down[n,d,t]           balance slack (shortfall / surplus), MW
   v_state[n,d,t]                       storage state; × state_unitsize = MWh
   v_state_inter[n,d,b]                 representative-period storage state at base-period boundaries of d
@@ -38,6 +39,9 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       stateConstantWithinBlock_eq, nodeBalanceBlock_eq (bind_intraperiod_blocks)
   Flows & capacity    maxFlow, maxFlow_negCap, maxFlow_back; maxOutputSum(_negCap);
                       dc_reference_angle_eq, dc_flow_eq [_dc_power_flow]
+                      (the arc-local families of coarse processes — maxFlow, maxOutputSum, conversion_indirect,
+                      minInputShare and profile_flow_* — are written once per coarse step as <family>_coarse
+                      [_coarse_flows])
   Units               max{Online,Startup,Shutdown}, online_change, maxFlow_online[_shutdown[_branch]],
                       maxFlow_back_online, maxOutputSum_online, maxInputFlow_online[_shutdown[_branch]],
                       minimum_{uptime,downtime}, online_fix_eq [_online];
@@ -71,6 +75,7 @@ from polar_high import Sum, Where, Lag, Param
 from polar_high.engine import Expr, Var
 
 from flextool.engine.model import _balance_terms
+from flextool.engine.model import _coarse_flows
 from flextool.engine.model import _commodity_ladder
 from flextool.engine.model import _cumulative_invest
 from flextool.engine.model import _dc_power_flow
@@ -272,6 +277,7 @@ class _Build:
     has_rp: bool = False                 # representative-period (blended-weights) storage
     has_nsb: bool = False                # nodeStateBlock: bind_intraperiod_blocks storage, balanced per timeset block
     has_coarse: bool = False             # nodeCoarse: nodes of coarse new_stepduration groups
+    has_coarse_proc: bool = False        # processCoarse: processes with one flow per coarse step (_coarse_flows)
     has_online_lin: bool = False
     has_online_int: bool = False
     has_online: bool = False
@@ -305,6 +311,9 @@ class _Build:
     flow_cap_mult: pl.DataFrame | None = None
     flow_var_upper: Param | None = None
     flow_bound_arcs: pl.DataFrame | None = None
+    # Coarse processes (_coarse_flows.prepare): their coarse steps (p, d, b_first, t, w) and w as a Param.
+    coarse_steps: pl.DataFrame | None = None
+    coarse_w: Param | None = None
 
     # ── variables ──
     v_flow: Var | None = None
@@ -586,6 +595,16 @@ def _prepare(b: _Build) -> None:
         b.invest_procs = pl.concat(procs).unique() if procs else None
         (b.flow_upper_rhs, b.flow_cap_mult,
          b.flow_var_upper, b.flow_bound_arcs) = _max_flow_rhs(d, b.invest_procs)
+        _coarse_flows.prepare(b)
+        if b.has_coarse_proc and b.flow_bound_arcs is not None:
+            # A coarse arc is capped per coarse step by maxFlow_coarse, never by a per-step variable bound.
+            fine = ~pl.col("p").cast(pl.Utf8).is_in(_coarse_flows.coarse_procs(b)["p"].cast(pl.Utf8).implode())
+            bound = b.flow_bound_arcs.filter(fine)
+            if bound.height < b.flow_bound_arcs.height:
+                upper = b.flow_var_upper.frame.filter(fine)
+                b.flow_bound_arcs = bound if bound.height > 0 else None
+                b.flow_var_upper = (Param(b.flow_var_upper.dims, upper, name=b.flow_var_upper.name)
+                                    if upper.height > 0 else None)
 
 
 def _node_list(nodes: list) -> str:
@@ -762,9 +781,16 @@ def _declare_variables(b: _Build) -> None:
     # Input arcs of indirect units without invest/divest variables carry a
     # per-element upper bound (their capacity is a constant); maxFlow caps
     # every other arc.
+    # ─── VAR. ─── v_flow (coarse processes) ──────────────────────────────────
+    # v_flow[p,s,k,d,b] ≥ 0   ∀ p ∈ processCoarse, (p,s,k) arcs, (d,b) the coarse steps of p (b = first fine step)
+    # The flow of a coarse process: one rate per coarse step, the same on its fine steps.  b.v_flow is indexed
+    # on every fine step (_coarse_flows.flow_alias): a fine row of a coarse process reads its step's column.
     if b.has_proc:
         upper = b.flow_var_upper if b.flow_var_upper is not None else float("inf")
-        b.v_flow = m.add_var("v_flow", ("p", "source", "sink", "d", "t"), b.pss_dt, lower=0.0, upper=upper)
+        b.v_flow = _coarse_flows.flow_alias(
+            b, m.add_var("v_flow", ("p", "source", "sink", "d", "t"), _coarse_flows.domain(b, b.pss_dt),
+                         lower=0.0, upper=upper),
+            b.pss_dt)
 
     # ─── VAR. ─── vq_state_up / vq_state_down ────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -828,11 +854,14 @@ def _declare_variables(b: _Build) -> None:
     # v_flow_back[p,source,sink,d,t] ≥ 0   ∀ (p,source,sink) ∈ twoway1var_arcs, (d,t) ∈ dt
     # Reverse flow (sink → source) of method_2way_1var_off and DC power-flow
     # arcs, in units of unitsize; the signed flow is v_flow − v_flow_back.
-    # One variable serves both the balance and dc_flow_eq.
+    # One variable serves both the balance and dc_flow_eq.  A coarse process has one per coarse step, as v_flow.
     if _has_rows(b.twoway1var_arcs):
         back_idx = b.twoway1var_arcs.join(d.dt, how="cross").select("p", "source", "sink", "d", "t")
         if back_idx.height > 0:
-            b.v_flow_back = m.add_var("v_flow_back", ("p", "source", "sink", "d", "t"), back_idx, lower=0.0)
+            b.v_flow_back = _coarse_flows.flow_alias(
+                b, m.add_var("v_flow_back", ("p", "source", "sink", "d", "t"), _coarse_flows.domain(b, back_idx),
+                             lower=0.0),
+                back_idx)
 
     # Direction switch of exact connections (v_exact_forward), DC power-flow angles (v_angle) and
     # commodity-ladder trades (v_trade): declared by their feature modules.
@@ -1328,6 +1357,8 @@ def _eq_node_balance_coarse(b: _Build) -> None:
     #   = − Σ_{t ∈ b} inflow[n,d,t]
     #   ∀ n ∈ nodeCoarse, (n,d,b) ∈ node_coarse_step;   t ∈ b: (n,d,b,t) ∈ node_coarse_step;   Δt = step_duration[d,t]
     #   t⁻, start and roll terms per storage_binding_method exactly as in nodeBalance_eq
+    #   a coarse process (processCoarse) has one v_flow per coarse step of its nodes: its fine terms read the same
+    #   column, so its leg is v_flow[p,·,·,d,b]·unitsize·Σ_{t∈b} Δt (·slope_t on an efficiency source)
     #   α, β, S⁻ as in nodeBalance_eq with h_b = Σ_{t∈b} Δt·ln(1 + loss[n,d,t]), Δ_b = Σ_{t∈b} Δt: α spread over
     #   the fine steps by Δt/Δ_b, β at the first fine step only (the decay of the coarse step's own state over the
     #   coarse step; the flow weighting assumes the loss constant within the coarse step)
@@ -1863,7 +1894,7 @@ def _eq_max_flow(b: _Build) -> None:
     """Capacity limits on process flows."""
     if not b.has_proc:
         return
-    m, d = b.m, b.d
+    d = b.d
     pss_dt = b.pss_dt
     invest_mult = (_invest_capacity_multiplier(pss_dt, b.flow_cap_mult, b.invest_procs)
                    if b.invest_procs is not None else None)
@@ -1907,8 +1938,8 @@ def _eq_max_flow(b: _Build) -> None:
         if bound_with_reserve.height > 0:
             over = pl.concat([over, _arcs_semi(pss_dt, bound_with_reserve)])
     if over.height > 0:
-        m.add_cstr(
-            "maxFlow",
+        _coarse_flows.add_cstr(
+            b, "maxFlow",
             over      = over,
             sense     = "<=",
             lhs_terms = lhs,
@@ -1926,8 +1957,8 @@ def _eq_max_flow(b: _Build) -> None:
     if _has_rows(pd_neg_cap):
         neg_over = pss_dt.join(pd_neg_cap, on=("p", "d"), how="inner")
         if neg_over.height > 0:
-            m.add_cstr(
-                "maxFlow_negCap",
+            _coarse_flows.add_cstr(
+                b, "maxFlow_negCap",
                 over      = neg_over,
                 sense     = ">=",
                 lhs_terms = lhs,
@@ -1946,8 +1977,8 @@ def _eq_max_flow(b: _Build) -> None:
         if back_over.height > 0:
             back_lhs: dict = {"flow_back": b.v_flow_back}
             back_lhs.update({k: lhs[k] for k in ("invest_neg", "divest") if k in lhs})
-            m.add_cstr(
-                "maxFlow_back",
+            _coarse_flows.add_cstr(
+                b, "maxFlow_back",
                 over      = back_over,
                 sense     = "<=",
                 lhs_terms = back_lhs,
@@ -1959,7 +1990,7 @@ def _eq_max_output_sum(b: _Build) -> None:
     """Output-sum capacity limit of indirect (multi-flow) units."""
     if not b.has_proc or b.pss_dt.height == 0:
         return
-    m, d = b.m, b.d
+    d = b.d
     flow_upper_existing = getattr(d, "p_flow_upper_existing", None)
     if flow_upper_existing is None:
         return
@@ -2026,16 +2057,16 @@ def _eq_max_output_sum(b: _Build) -> None:
         neg_over = over.head(0)
         pos_over = over
     if pos_over.height > 0:
-        m.add_cstr(
-            "maxOutputSum",
+        _coarse_flows.add_cstr(
+            b, "maxOutputSum",
             over      = pos_over,
             sense     = "<=",
             lhs_terms = lhs,
             rhs_terms = {"upper": rhs},
         )
     if neg_over.height > 0:
-        m.add_cstr(
-            "maxOutputSum_negCap",
+        _coarse_flows.add_cstr(
+            b, "maxOutputSum_negCap",
             over      = neg_over,
             sense     = ">=",
             lhs_terms = lhs,
@@ -2079,6 +2110,11 @@ def _eq_ramp(b: _Build) -> None:
     #   [d′,t′] → its carried duration; for units with online variables F[d′,t′] → 0 (no shutdown term on the
     #   up row) and SD′ → max(1, f̂[p,s,k,d,t] / (c[p,s,k,d,t] · ĉ[p])) (1 where the carried online count
     #   ĉ = p_roll_continue_online is 0 — no stoppers then; exact and always feasible, unlike a fixed κ/c).
+    # A coarse process (processCoarse, _coarse_flows.ramp_rows) ramps between its coarse steps: t = b (named by its
+    #   first fine step), (d′,t′) = b⁻, the coarse step that holds the fine predecessor of b's first step, and
+    #   step_duration → Δ_b = Σ_{t∈b} Δt, so ρ̄ = speed · 60 · (Δ_b⁻ + Δ_b)/2 (no row inside a coarse step; with
+    #   24-h steps an in-period row exists only for a speed below 1/1440 per minute); a time-varying source factor
+    #   c is its coarse-step mean; the carried step is the arc's last realized coarse step (its length carried).
     # Steps without a predecessor, on arcs that hold reserve in that direction there (prundt):
     #   R↑ ≤ ρ·c·cap (up),  −R↓ ≥ −ρ·c·cap (down),  ρ = ramp_speed · 60 · step_duration[d,t] < 1;
     #   cap = v_online[p,d,t] for units with online variables, built units otherwise.
@@ -2122,7 +2158,19 @@ def _eq_ramp(b: _Build) -> None:
             continue
         up = dir_ == "up"
         sign = 1.0 if up else -1.0
-        rows = _ramp_rows(d, idx_set, ramp_speed, side, dir_, link, carry)
+        if b.has_coarse_proc:
+            # A coarse process ramps between its coarse steps (_coarse_flows.ramp_rows).
+            fine_arcs, coarse_arcs = _coarse_flows.split_arcs(b, idx_set)
+            parts = []
+            if fine_arcs.height > 0:
+                parts.append(_ramp_rows(d, fine_arcs, ramp_speed, side, dir_, link, carry))
+            if coarse_arcs.height > 0:
+                parts.append(_coarse_flows.ramp_rows(b, coarse_arcs, ramp_speed, side, link, carry))
+            if not parts:
+                continue
+            rows = pl.concat(parts)
+        else:
+            rows = _ramp_rows(d, idx_set, ramp_speed, side, dir_, link, carry)
         if rows.height == 0:
             continue
         over = rows.select(*keys, "d", "t")
@@ -2170,7 +2218,7 @@ def _eq_ramp(b: _Build) -> None:
 
         rhs: dict = {}
         if built_rows.height > 0:
-            rate_built = _ramp_rate(d, idx_set, side, built_rows, keys)
+            rate_built = _ramp_rate(d, idx_set, side, built_rows, keys, b=b)
             rhs["limit"] = (rate_built * d.p_process_existing_count) * sign
             if b.has_invest_p:
                 rhs["invest"] = (b.invest_in_dispatch_p * rate_built) * sign
@@ -2319,16 +2367,20 @@ def _source_ramp_factor(d, idx_set: "pl.DataFrame") -> "Param | None":
     return Param(("p", "source", "sink", "d", "t"), frame)
 
 
-def _ramp_rate(d, idx_set: "pl.DataFrame", side: str, rows_subset: "pl.DataFrame", keys: list) -> Param:
+def _ramp_rate(d, idx_set: "pl.DataFrame", side: str, rows_subset: "pl.DataFrame", keys: list,
+               b: "_Build | None" = None) -> Param:
     """``c · ρ̄`` (or ``c · ρ`` on reserve-only rows) over ``rows_subset`` (:func:`_ramp_rows` output, any
     ``__kind``): the per-row ramp room already scaled by the arc's capacity factor ``c`` (c14c design §3,
-    EQ. header of :func:`_eq_ramp`)."""
+    EQ. header of :func:`_eq_ramp`).  A coarse process's time-varying source factor is its coarse step's mean
+    (``b`` given: :func:`_coarse_flows.at_first_steps`)."""
     rate = Param(("p", "source", "sink", "d", "t"), rows_subset.select(*keys, "d", "t", value=pl.col("__room")))
     if side == "sink":
         if d.p_process_sink_max_capacity_coef is not None:
             rate = rate * _coef_factor(idx_set, d.p_process_sink_max_capacity_coef, ["p", "sink"])
     else:
         src_factor = _source_ramp_factor(d, idx_set)
+        if b is not None and b.has_coarse_proc:
+            src_factor = _coarse_flows.at_first_steps(b, src_factor)
         if src_factor is not None:
             rate = rate * src_factor
     return rate
@@ -2705,7 +2757,7 @@ def _eq_conversion(b: _Build) -> None:
     """Conversion of indirect (multi-flow) units."""
     if not b.has_indirect:
         return
-    m, d = b.m, b.d
+    d = b.d
     v_flow = b.v_flow
 
     # ─── EQ. ─── conversion_indirect ─────────────────────────────────────────
@@ -2751,8 +2803,8 @@ def _eq_conversion(b: _Build) -> None:
                 rhs["section_lin"] = Where(b.v_online_linear, ind_mle) * d.p_section * d.p_unitsize
             if b.has_online_int:
                 rhs["section_int"] = Where(b.v_online_integer, ind_mle) * d.p_section * d.p_unitsize
-    m.add_cstr(
-        "conversion_indirect",
+    _coarse_flows.add_cstr(
+        b, "conversion_indirect",
         over      = b.process_indirect_dt,
         sense     = "==",
         lhs_terms = lhs,
@@ -2764,7 +2816,7 @@ def _eq_min_input_share(b: _Build) -> None:
     """Minimum share of each input in the input of an indirect unit."""
     if not b.has_indirect:
         return
-    m, d = b.m, b.d
+    d = b.d
     share = getattr(d, "p_process_source_input_share_min", None)
     pif = getattr(d, "process_input_flows", None)
     pss = getattr(d, "process_source_sink", None)
@@ -2818,8 +2870,8 @@ def _eq_min_input_share(b: _Build) -> None:
     if over.height == 0:
         return
     share_p = Param(("p", "source"), rows.select("p", "source", "value"))
-    m.add_cstr(
-        "minInputShare",
+    _coarse_flows.add_cstr(
+        b, "minInputShare",
         over      = over,
         sense     = ">=",
         lhs_terms = {"own":   Where(expr, rows.select(keys))},
@@ -3852,7 +3904,7 @@ def _eq_profiles(b: _Build) -> None:
     """Profile limits of process flows."""
     if not b.has_profile:
         return
-    m, d = b.m, b.d
+    d = b.d
 
     # ─── EQ. ─── profile_flow_{upper_limit,lower_limit,fixed} ────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -3916,8 +3968,8 @@ def _eq_profiles(b: _Build) -> None:
         if reserve is not None:
             lhs[reserve_label] = reserve
         lhs.update(source_terms.get(name, {}))
-        m.add_cstr(
-            name,
+        _coarse_flows.add_cstr(
+            b, name,
             over      = over,
             sense     = sense,
             lhs_terms = lhs,
