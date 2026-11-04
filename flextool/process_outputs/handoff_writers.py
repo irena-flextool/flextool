@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import polars as pl
 
+from flextool.engine.output import _coarse_flows
 from flextool.process_outputs.read_highs_solution import (
     _load_realized_periods,
     extract_variable,
@@ -665,6 +666,7 @@ def write_fix_storage_usage(
     step_duration = _resolve_step_duration(flex_data)
     flow_df = extract_variable(
         h, "v_flow", ("process", "source", "sink"), solve_name=solve_name,
+        coarse_steps=_coarse_flows.coarse_steps(flex_data),
     )
 
     rows: list[tuple[str, str, str, float]] = []

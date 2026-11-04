@@ -63,6 +63,7 @@ from typing import NamedTuple, Sequence, TYPE_CHECKING
 import pandas as pd
 import polars as pl
 
+from flextool.engine.output import _coarse_flows
 from flextool.lean_parquet import write_lean_parquet
 
 if TYPE_CHECKING:
@@ -266,8 +267,9 @@ def _invest_dual(
 
 VARIABLE_SPECS: list[VariableSpec] = [
     # -- Time-indexed decision variables ------------------------------------
-    # Every variable lives on the solve's steps (a coarse node's state is constant within its coarse step by
-    # stateConstantCoarse_eq), so no value is copied between steps.
+    # The flows of coarse processes live on their coarse steps; extract_variable copies them to every step.
+    # Every other variable lives on the solve's steps (a coarse node's state is constant within its coarse step
+    # by stateConstantCoarse_eq).
     VariableSpec("v_flow",             ("process", "source", "sink")),
     # Reverse-flow auxiliary for method_2way_1var_off arcs.  The signed
     # net flow on such an arc is ``v_flow - v_flow_back``; the output layer
@@ -712,6 +714,7 @@ def extract_variable(
     col_dual: "object | None" = None,
     row_dual: "object | None" = None,
     period_source: str = "dispatch",
+    coarse_steps: "object | None" = None,
 ) -> pd.DataFrame:
     """Extract one quantity from a solved HiGHS instance as a wide DataFrame.
 
@@ -729,6 +732,12 @@ def extract_variable(
     period-only quantities.  ``has_period=False`` means the quantity
     has no period index at all — row index collapses to just
     ``(solve,)`` (used for ``co2_max_total[g]``).
+
+    The flows of coarse processes (``v_flow`` / ``v_flow_back``) have one
+    LP column per coarse step; their value is copied to every fine step
+    of the step (:mod:`flextool.engine.output._coarse_flows`).  The coarse
+    steps come from ``coarse_steps`` (``(p, d, b_first, t)``) or else from
+    ``flex_data``.
 
     Returns
     -------
@@ -881,6 +890,10 @@ def extract_variable(
             seen_cols.append(col_vals)
             seen_cols_set.add(col_vals)
         values_by_key[row_key + col_vals] = float(val) * value_scale
+
+    if name in _coarse_flows.COARSE_FLOW_VARS and has_period and has_time:
+        steps = coarse_steps if coarse_steps is not None else _coarse_flows.coarse_steps(flex_data)
+        _coarse_flows.expand_value_keys(values_by_key, steps)
 
     # No variable values matched — produce the same N_rows × 0-cols
     # frame phase-3 CSV writers would have produced (with the canonical

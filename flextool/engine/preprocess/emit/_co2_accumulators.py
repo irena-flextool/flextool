@@ -178,9 +178,10 @@ def compute_co2_rolling_accumulator(
     if cn_co2.height == 0:
         return pl.DataFrame(schema=_SCHEMA_OUT)
 
-    if sol is None or "v_flow" not in getattr(sol, "_vars", {}):
-        return _passthrough_prior(prior_cumulative_co2, co2_groups)
-    v_flow = sol.value("v_flow")
+    from flextool.engine.output._coarse_flows import flow_values
+
+    # Every fine step, also of coarse processes (one LP column per coarse step).
+    v_flow = flow_values(sol, flex_data)
     if v_flow is None or v_flow.height == 0:
         return _passthrough_prior(prior_cumulative_co2, co2_groups)
 

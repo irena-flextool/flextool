@@ -6045,13 +6045,15 @@ def _roll_end_flow(sol, flex_data: "FlexData | None", last: "tuple[str, str] | N
     if not sets or last is None:
         return None
     arcs = pl.concat(sets).unique()
-    v = sol._vars["v_flow"]
-    frame = v.frame.filter((pl.col("d").cast(pl.Utf8) == last[0]) & (pl.col("t").cast(pl.Utf8) == last[1]))
+    from flextool.engine.output._coarse_flows import flow_values
+
+    # Every fine step, also of coarse processes (one LP column per coarse step).
+    flows = flow_values(sol, flex_data)
+    frame = flows.filter((pl.col("d").cast(pl.Utf8) == last[0]) & (pl.col("t").cast(pl.Utf8) == last[1]))
     if frame.height == 0:
         return None
-    vals = sol.col_value[frame["col_id"].to_numpy()]
-    rows = (frame.select(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink"))
-            .with_columns(value=pl.Series(vals, dtype=pl.Float64))
+    rows = (frame.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")),
+                         pl.col("value").cast(pl.Float64))
             .join(arcs, on=["p", "source", "sink"], how="semi"))
     if rows.height == 0:
         return None
@@ -7027,7 +7029,9 @@ def build_handoff_from_solution(
             and sol is not None
             and flex_data is not None
             and "v_flow" in getattr(sol, "_vars", {})):
-        v_flow_long = sol.value("v_flow")
+        from flextool.engine.output._coarse_flows import flow_values
+
+        v_flow_long = flow_values(sol, flex_data)
         if v_flow_long is not None and v_flow_long.height > 0:
             fs_steps_fu = (fs_steps_df
                 .select(alias_to_axis("period", "d"),

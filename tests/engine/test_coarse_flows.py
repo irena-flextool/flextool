@@ -13,6 +13,7 @@ with override alternatives built from JSON under the pytest tmp dir.
 from __future__ import annotations
 
 import json
+import re
 import logging
 from pathlib import Path
 
@@ -151,3 +152,70 @@ def test_lh2_user_constraint_flow_stays_fine(tmp_path_factory) -> None:
          b64({"index_type": "str", "index_name": "constraint", "data": [["cap_ab", 1.0]]}, "map")]],
         [["constraint", "cap_ab", None], ["connection__node", ["pipe_AB", "lh2_B"], None]])).flex_data
     assert _coarse_procs(fd) == LH2_COARSE - {"pipe_AB"}
+
+
+# ---------------------------------------------------------------------------
+# Output expansion (flextool.engine.output._coarse_flows)
+
+
+class _Steps:
+    """A FlexData stand-in carrying only ``process_coarse_step``: pipe has 3-h coarse steps on 6 hourly steps."""
+
+    process_coarse_step = pl.DataFrame({"p": ["pipe"] * 6, "d": ["d1"] * 6,
+                                        "b_first": ["t1", "t1", "t1", "t4", "t4", "t4"],
+                                        "t": [f"t{h}" for h in range(1, 7)], "w": [1.0 / 3.0] * 6})
+
+
+def test_expand_coarse_flows_copies_to_missing_steps() -> None:
+    """A coarse flow (one LP row per coarse step) is copied to the other fine steps of its step, right after its
+    own row; a fine process is unchanged; a step that has its own LP row keeps it (an LP whose flows are fine
+    comes back unchanged)."""
+    from flextool.engine.output._coarse_flows import expand_coarse_flows
+
+    lp = pl.DataFrame({"p": ["elz", "elz", "pipe", "pipe"], "source": ["a", "a", "x", "x"],
+                       "sink": ["b", "b", "y", "y"], "d": ["d1"] * 4, "t": ["t1", "t2", "t1", "t4"],
+                       "value": [5.0, 6.0, 2.0, 3.0]})
+    out = expand_coarse_flows(lp, _Steps())
+    assert out.columns == lp.columns and out.schema == lp.schema
+    assert out.filter(pl.col("p") == "elz").equals(lp.filter(pl.col("p") == "elz"))
+    pipe = out.filter(pl.col("p") == "pipe")
+    assert pipe["t"].to_list() == [f"t{h}" for h in range(1, 7)]
+    assert pipe["value"].to_list() == [2.0, 2.0, 2.0, 3.0, 3.0, 3.0]
+    fine_lp = pl.DataFrame({"p": ["pipe"] * 6, "source": ["x"] * 6, "sink": ["y"] * 6, "d": ["d1"] * 6,
+                            "t": [f"t{h}" for h in range(1, 7)], "value": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]})
+    assert expand_coarse_flows(fine_lp, _Steps()).equals(fine_lp)
+    assert expand_coarse_flows(lp, None).equals(lp)
+
+
+def test_expand_value_keys_copies_to_missing_steps() -> None:
+    """The HiGHS-name reader's keys ``(d, t, p, source, sink)``: the same rule as expand_coarse_flows."""
+    from flextool.engine.output._coarse_flows import coarse_steps, expand_value_keys
+
+    keys = {("d1", "t1", "pipe", "x", "y"): 2.0, ("d1", "t4", "pipe", "x", "y"): 3.0,
+            ("d1", "t2", "elz", "a", "b"): 6.0, ("d1", "t5", "pipe", "x", "y"): 9.0}
+    expand_value_keys(keys, coarse_steps(_Steps()))
+    pipe = {k[1]: v for k, v in keys.items() if k[2] == "pipe"}
+    assert pipe == {"t1": 2.0, "t2": 2.0, "t3": 2.0, "t4": 3.0, "t5": 9.0, "t6": 3.0}
+    assert keys[("d1", "t2", "elz", "a", "b")] == 6.0
+
+
+_FLOW_READS = re.compile(r"""\.value\(\s*["']v_flow(_back)?["']|_vars\[\s*["']v_flow(_back)?["']\s*\]"""
+                         r"""|col_id_of_var\(\s*["']v_flow|fix_cols\(\s*["']v_flow""")
+# Files that may read the LP's flow columns as they are: the expansion helper itself, and Benders, which reads only
+# the half-flows of cross-region arcs (a cross-region process is never coarse).
+_RAW_FLOW_READERS = {"flextool/engine/output/_coarse_flows.py", "flextool/engine/solve/_benders.py"}
+
+
+def test_flow_readers_expand_coarse_flows() -> None:
+    """Every reader of v_flow / v_flow_back values outside the expansion helper goes through it: a raw read
+    would see a coarse flow only at its coarse step's first fine step (outputs lose the other steps, the CO2
+    carry under-counts)."""
+    hits = []
+    for path in sorted((FLEXTOOL_ROOT / "flextool").rglob("*.py")):
+        rel = path.relative_to(FLEXTOOL_ROOT).as_posix()
+        if rel in _RAW_FLOW_READERS:
+            continue
+        for i, line in enumerate(path.read_text().splitlines(), 1):
+            if _FLOW_READS.search(line):
+                hits.append(f"{rel}:{i}: {line.strip()}")
+    assert not hits, "raw v_flow reads (use flextool.engine.output._coarse_flows):\n" + "\n".join(hits)
