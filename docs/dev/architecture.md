@@ -688,7 +688,8 @@ dialogs/                         Add / project / plot / file-picker dialogs.
 | `db_migration.py` (`migrate_database`) | Walk the version chain to the current `FLEXTOOL_DB_VERSION`. |
 | `initialize_database.py` (`initialize_database`) | Create new DB from JSON template. |
 | `ensure_settings_db.py` | Idempotent settings-DB creation. |
-| `test_fixtures.py` | Migrate `tests/fixtures/*.json` to current schema. |
+| `test_fixtures.py` | Migrate `tests/fixtures/*.json` to current schema and sync their schema sections. |
+| `fixture_schema.py` | Schema sections of fixture / canonical JSONs generated from `spinedb_schema.json`; sync rules and drift listing. |
 | `canonical_databases.py` | Materialise / migrate canonical example DBs from JSON. |
 | `generate_canonical.py` | Project authoritative fixtures into derived canonical DBs. |
 | `extend_tests_fixture.py` | Agent-friendly YAML-delta workflow for append-only fixture additions. |

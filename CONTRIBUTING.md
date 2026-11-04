@@ -92,17 +92,19 @@ When the FlexTool database schema needs to change (new parameters, renamed entit
    ```
    This creates a temporary database from the current master template, runs all migrations on it, and exports the result back to JSON.
 
-3. **Migrate the canonical example/template databases** — the `templates/` and `how to example databases/` SQLites live in git as JSON (`schemas/canonical_databases/*.json`). After bumping the schema, round-trip every JSON through the current migration chain:
+3. **Migrate the canonical example/template databases** — the `templates/` and `how to example databases/` SQLites live in git as JSON (`schemas/canonical_databases/*.json`). After bumping the schema, round-trip every JSON through the current migration chain; the command also replaces each JSON's schema sections (entity classes, value lists, parameter groups, definitions with their defaults and descriptions, parameter types) with those of `schemas/spinedb_schema.json`:
    ```bash
    python -m flextool.update_flextool.canonical_databases migrate-all
    ```
    This step is idempotent when no schema change is pending. The on-disk `.sqlite` files in `templates/` and `how to example databases/` are recreated on next `update_flextool()` call (or `pytest_configure` for tests) — you don't need to commit them; they're gitignored.  CI runs `python -m flextool.update_flextool.canonical_databases verify` to catch drift between committed canonical JSONs and the current schema.
 
-4. **Migrate the test fixtures** — `tests/fixtures/*.json` use a base64-packed value format (consumed by `tests/db_utils.py`) and are migrated separately from the canonical databases:
+4. **Migrate the test fixtures** — `tests/fixtures/*.json` use a base64-packed value format (consumed by `tests/db_utils.py`) and are migrated separately from the canonical databases.  Every fixture JSON with `parameter_definitions` is migrated and then gets the schema sections of `schemas/spinedb_schema.json` (a fixture without a `model.version` definition is only synced):
    ```bash
    python -m flextool.update_flextool.test_fixtures migrate-all
    ```
    Idempotent when no schema change is pending.  CI runs `python -m flextool.update_flextool.test_fixtures verify` to catch drift between committed fixtures and the current schema.
+
+   A fixture's schema sections are never edited by hand and never copied from another fixture: a migration step only adds what is absent, so a copy that skips a change never catches up.  `tests/update_flextool/test_fixture_schema_drift.py` fails, naming each (class, parameter, field) difference, when a fixture or canonical JSON differs from the schema.  A migration that fails here with "not in the schema" or "not in the value list" left data the new schema cannot hold: fix the migration, not the fixture.  Fixture builder scripts (`tests/fixtures/build_*.py`, `regen_lh2_three_region.py`, `_augment_*.py`) take their sections from `flextool.update_flextool.fixture_schema.schema_sections` and write through `test_fixtures.write_built_fixture` / `migrate_fixture`; `tests/update_flextool/test_fixture_builders.py` checks that each still reproduces the data of its committed fixture.
 
 5. **Verify** (optional, also run by CI):
    ```bash

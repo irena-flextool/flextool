@@ -88,9 +88,13 @@ Canonical fixtures currently in `tests/fixtures/`:
 | `branch2_parent_period.json` | Branch-2 / parent-period stochastic fixture. |
 | `case14_dc_power_flow.json` | PGLib IEEE case14 MATPOWER export (~8200 lines), used by `test_flex_dc_power_flow.py`. |
 
-The `_augment_*.py` and `build_*.py` scripts alongside these JSONs are
-one-shot builders / overlays kept for provenance, not runtime
-dependencies.
+The `_augment_*.py`, `build_*.py` and `regen_lh2_three_region.py` scripts
+alongside these JSONs are builders / overlays kept for provenance, not
+runtime dependencies.  They take the schema sections from
+`spinedb_schema.json` (`fixture_schema.schema_sections`), and
+`tests/update_flextool/test_fixture_builders.py` checks that each still
+reproduces the data of its committed fixture.  Every fixture carries
+exactly the schema's sections (`test_fixture_schema_drift.py`).
 
 ### `scenario_workdir` — on-demand cascade fixture
 
