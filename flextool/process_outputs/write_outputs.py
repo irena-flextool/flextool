@@ -571,17 +571,23 @@ def write_summary_csv(par, s, v, r, csv_dir):
         # flextool.mod:2107-2126; omitting them here would under-report
         # the objective for any scenario with non-zero existing capacity
         # or a non-zero lifetime_fixed_cost on invest/divest entities.
-        total_cost_full = (
+        total_cost_d = (
             r.costOper_and_penalty_d
                 .add(r.costInvest_d, fill_value=0.0)
                 .add(r.costDivest_d, fill_value=0.0)
                 .add(r.costFixedPreExisting_d, fill_value=0.0)
                 .add(r.costFixedInvested_d, fill_value=0.0)
                 .add(r.costFixedDivested_d, fill_value=0.0)
-        ).sum(axis=0) / 1000000
+        )
+        total_cost_full = total_cost_d.sum(axis=0) / 1000000
+        # Realized periods: the rows of the periods some solve realizes (dispatch or investment), each once and
+        # from the start of the run (union_realized_slice / drop_levels).  The full horizon adds the rows no solve
+        # realizes: the fixed cost of existing capacity in the last solve's look-ahead periods.
+        realized_periods = s.d_realized_period.union(s.d_realize_invest)
+        total_cost_realized = total_cost_d[total_cost_d.index.isin(realized_periods)].sum(axis=0) / 1000000
 
         f.write(f'"Total cost (calculated) full horizon (M CUR)",{total_cost_full:.12g},"Annualized operational, penalty and investment costs"\n')
-        f.write(f'"Total cost (calculated) realized periods (M CUR)",{total_cost_full:.12g}\n')
+        f.write(f'"Total cost (calculated) realized periods (M CUR)",{total_cost_realized:.12g}\n')
 
         # Operational costs for realized periods (M CUR)
         operational_costs = r.costOper_d.sum(axis=0) / 1000000

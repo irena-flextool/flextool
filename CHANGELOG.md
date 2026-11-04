@@ -1,5 +1,9 @@
 ## Unreleased
 
+- **Fixed: the summary's total cost for realized periods** (`summary_solve.csv`). The line "Total cost
+  (calculated) realized periods" now sums only the periods a solve realizes (each once, discounted from the start
+  of the run); before, it repeated the full-horizon total, which also holds the fixed cost of existing capacity in
+  the look-ahead periods of the last solve.
 - **Fixed: the per-period discounted costs were not written to CSV** (output file names change). The per-period
   table of discounted costs is now `costs_discounted__d.csv` (Excel sheet `costs_discounted__d`); before, it and the
   horizon total shared the name `costs_discounted`, so the CSV writer kept only the horizon total and the Excel

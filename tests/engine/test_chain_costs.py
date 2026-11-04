@@ -225,6 +225,13 @@ def _no_battery_invest(chain: list[str]) -> list[str]:
 def _results(tmp_path_factory, alt: str, values: list, chain: list[str], *, entities: list | None = None,
              fixture_json=None) -> dict[str, pd.DataFrame]:
     """Run the scenario and write its CSV results: ``{csv stem: frame}`` of the cost results present."""
+    out = _write_csv(tmp_path_factory, alt, values, chain, entities=entities, fixture_json=fixture_json)
+    return {stem: pd.read_csv(out / f"{stem}.csv") for stem in COST_STEMS if (out / f"{stem}.csv").exists()}
+
+
+def _write_csv(tmp_path_factory, alt: str, values: list, chain: list[str], *, entities: list | None = None,
+               fixture_json=None) -> Path:
+    """Run the scenario and write its CSV results; return the CSV folder."""
     from flextool.engine import run_chain_from_db
     from flextool.process_outputs.write_outputs import write_outputs
 
@@ -238,8 +245,7 @@ def _results(tmp_path_factory, alt: str, values: list, chain: list[str], *, enti
                   flex_data=last.flex_data, solution=last.solution, solve_name=last.solve_name,
                   flex_data_provider=getattr(last, "flex_data_provider", None),
                   raw_output_dir=str(work / "output_raw"))
-    out = work / "output_csv" / scen
-    return {stem: pd.read_csv(out / f"{stem}.csv") for stem in COST_STEMS if (out / f"{stem}.csv").exists()}
+    return work / "output_csv" / scen
 
 
 def _without_solve(frame: pd.DataFrame) -> pd.DataFrame:
@@ -409,6 +415,34 @@ def test_unrealized_look_ahead_of_the_last_solve(tmp_path_factory) -> None:
         500.0 * FIXED * F_OPS["p2035"], rel=1e-7)
     assert _row(discounted, "p2030")["fixed cost invested"] * MEGA == pytest.approx(
         50.0 * FIXED * (F_OPS["p2030"] + F_OPS["p2035"]), rel=1e-7)
+
+
+def _summary_totals(csv_dir: Path) -> dict[str, float]:
+    """``{"full": …, "realized": …}``: the calculated totals (M CUR) of ``summary_solve.csv``."""
+    out: dict[str, float] = {}
+    for line in (csv_dir / "summary_solve.csv").read_text().splitlines():
+        if line.startswith('"Total cost (calculated) full horizon'):
+            out["full"] = float(line.split(",")[1])
+        elif line.startswith('"Total cost (calculated) realized periods'):
+            out["realized"] = float(line.split(",")[1])
+    return out
+
+
+@pytest.mark.solver
+def test_summary_realized_total_leaves_out_the_unrealized_look_ahead(tmp_path_factory) -> None:
+    """The chain of the previous test: the summary's realized-periods total is the full-horizon total without the
+    rows of p2035, which no solve realizes.  The only cost there is the fixed cost of the existing coal_plant
+    (500 MW · 1e5 CUR/MW/yr · F_ops(p2035); coal_plant is the only entity with a fixed cost, and no capacity
+    starts to operate in p2035), so full − realized = 500 · 1e5 · F_ops(p2035) / 1e6 M CUR.  Before, the summary
+    printed the full-horizon total on both lines."""
+    out = _write_csv(tmp_path_factory, "summary_lookahead_chain",
+                     _probe_values(0.0) + _solves(["y2020_5week", "y2025_5week", "y2030_5week"]),
+                     _no_battery_invest(CHAIN), entities=ENTITIES)
+    totals = _summary_totals(out)
+    assert totals["full"] - totals["realized"] == pytest.approx(500.0 * FIXED * F_OPS["p2035"] / MEGA, rel=1e-7)
+    per_period = pd.read_csv(out / "costs_discounted__d.csv")
+    realized = per_period[per_period["period"].isin(PERIODS[:3])].drop(columns=["solve", "period"])
+    assert totals["realized"] == pytest.approx(realized.to_numpy().sum(), rel=1e-7)
 
 
 @pytest.mark.solver
