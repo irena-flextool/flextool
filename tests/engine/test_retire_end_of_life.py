@@ -422,3 +422,61 @@ def test_fan_retirement_ends_with_the_existing_capacity(tmp_path_factory, chain)
     for name in p2040:
         assert _divest_columns(terms[name], "wind") == [] and bounds[name][1] == pytest.approx(0.0, abs=1e-9)
     assert all(_divest_columns(terms[n], "wind") for n in terms if ",p2035_" in n)
+
+
+# ---------------------------------------------------------------------------
+# Costs of a retirement over its window
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.solver
+def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
+    """reinvest_choice, lifetime 15 (EOL year 15), 100 MW retired in p2025: the window is p2025 and p2030.  By hand
+    (``test_chain_costs`` factors, r = 0.04 / offsets 0.5 and 0)::
+
+        fixed cost reduction (p2025) = −100 · 1e5 · (F_ops(p2025) + F_ops(p2030))
+        R = 5 + 5 = 10 years,  A = 200 · 1000 · 0.05 / (1 − 1.05^−10) = 25 900.9 CUR/MW/yr
+        retirement (p2025)           = −100 · A · (F_inv(p2025) + F_inv(p2030))
+        fixed cost pre-existing (d)  = 500 · 1e5 · F_ops(d) in p2020 … p2030, 0 in p2035
+
+    Annualized: −100 · A and −100 · 1e5 per year in p2025 and p2030, nothing in p2035.  The chain reports what the
+    single solve reports."""
+    from tests.engine.test_chain_costs import F_INV
+    values = _lifetime("reinvest_choice", 15.0) + _retire()
+    single = _results(tmp_path_factory, "ret_cost_single", values, _no_battery_invest(SINGLE))
+    chain = _results(tmp_path_factory, "ret_cost_chain", values, _no_battery_invest(CHAIN))
+    _assert_same_results(chain, single)
+    window = ["p2025", "p2030"]
+    annuity = SALVAGE * 1000.0 * 0.05 / (1.0 - 1.05 ** -10.0)
+    discounted = single["cost_unit_discounted__d"]
+    rows = discounted[(discounted["period"] == "p2025") & (discounted["unit"] == PLANT)]
+    assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
+        -100.0 * FIXED * sum(F_OPS[d] for d in window), rel=1e-7)
+    assert rows["retirement"].sum() * MEGA == pytest.approx(-100.0 * annuity * sum(F_INV[d] for d in window),
+                                                           rel=1e-7)
+    for d in PERIODS:
+        rows = discounted[(discounted["period"] == d) & (discounted["unit"] == PLANT)]
+        want = 0.0 if d == "p2035" else 500.0 * FIXED * F_OPS[d]
+        assert rows["fixed cost pre-existing"].sum() * MEGA == pytest.approx(want, rel=1e-7, abs=1e-6), d
+    for annualized in (chain["cost_unit_annualized__d"], single["cost_unit_annualized__d"]):
+        for d in PERIODS:
+            rows = annualized[(annualized["period"] == d) & (annualized["unit"] == PLANT)]
+            mw = 100.0 if d in window else 0.0
+            assert rows["retirement"].sum() * MEGA == pytest.approx(-mw * annuity, rel=1e-7, abs=1e-6), d
+            assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
+                -mw * FIXED, rel=1e-7, abs=1e-6), d
+
+
+@pytest.mark.solver
+def test_retirement_saves_exactly_the_fixed_cost_of_existing_capacity(tmp_path_factory) -> None:
+    """Retiring all 500 MW in p2020 (reinvest_automatic): the fixed cost of the existing capacity
+    (500 · 1e5 · F_ops(d) over p2020 … p2035) and the retirement's saving cancel exactly, so the reported total of
+    the two is 0 (before: the saving used the investment factor, F_inv = 1.04^0.5 · F_ops, a leftover of 2 %)."""
+    values = _retire(500.0, "p2020")
+    single = _results(tmp_path_factory, "ret_all", values, _no_battery_invest(SINGLE))
+    discounted = single["cost_unit_discounted__d"]
+    unit = discounted[discounted["unit"] == PLANT]
+    existing = unit["fixed cost pre-existing"].sum()
+    assert existing * MEGA == pytest.approx(500.0 * FIXED * sum(F_OPS[d] for d in PERIODS), rel=1e-7)
+    # The CSV rounds each figure (M CUR); the two cancel up to that rounding.
+    assert (existing + unit["fixed cost reduction of divestments"].sum()) == pytest.approx(0.0, abs=1e-6 * existing)

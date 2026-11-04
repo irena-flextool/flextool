@@ -447,32 +447,32 @@ def _retire_values(lifetime: float) -> list:
 @pytest.mark.solver
 @pytest.mark.parametrize("lifetime", [30.0, 10.0], ids=["long", "short"])
 def test_retirement_costs(tmp_path_factory, lifetime) -> None:
-    """100 MW of the existing 500 MW (reinvest_automatic: the existing capacity does not end) retire in p2025.
-    The chain reports what the single solve reports.  The saving of fixed cost is that of the retired capacity
-    over the retirement's window, [Y(p2025), Y(p2025) + lifetime) (discounted with the investment factor, as
-    in the objective): lifetime 30: p2025 … p2035; lifetime 10: p2025 and p2030; the salvage value's annuity
-    200 · 1000 · 0.05 / (1 − 1.05^−lifetime) over the same window.  The fixed cost of the existing capacity stays
-    that of the user's 500 MW (the retirement is in its own lump, not charged again)."""
+    """100 MW of the existing 500 MW (reinvest_automatic: the existing capacity does not end, so the retirement
+    counts until the end of the run) retire in p2025.  The chain reports what the single solve reports.  The
+    retirement's window is p2025 … p2035 for both lifetimes (the lifetime no longer cuts it): the saving of fixed
+    cost is the fixed cost the 100 MW no longer pay there, 100 · 1e5 · Σ F_ops(d) (the operations factor, as the
+    fixed cost of existing capacity is charged); the salvage value is spread over the R = 15 years of the window,
+    A = 200 · 1000 · 0.05 / (1 − 1.05^−15), retirement = −100 · A · Σ F_inv(d).  The fixed cost of the existing
+    capacity stays that of the user's 500 MW (the retirement is in its own lump, not charged again)."""
     values = _retire_values(lifetime)
     tag = f"retire_{int(lifetime)}"
     chain = _results(tmp_path_factory, f"{tag}_chain", values, _no_battery_invest(CHAIN))
     single = _results(tmp_path_factory, f"{tag}_single", values, _no_battery_invest(SINGLE))
     _assert_same_results(chain, single)
-    window = [d for d in _later("p2025") if YEARS[d] < YEARS["p2025"] + lifetime]
+    window = _later("p2025")
     discounted = chain["cost_unit_discounted__d"]
     retired = _row(discounted, "p2025")
     assert retired["fixed cost reduction of divestments"] * MEGA == pytest.approx(
-        -100.0 * FIXED * sum(F_INV[d] for d in window), rel=1e-7)
-    salvage_annuity = SALVAGE * 1000.0 * 0.05 / (1.0 - 1.05 ** -lifetime)
+        -100.0 * FIXED * sum(F_OPS[d] for d in window), rel=1e-7)
+    salvage_annuity = SALVAGE * 1000.0 * 0.05 / (1.0 - 1.05 ** -15.0)
     assert retired["retirement"] * MEGA == pytest.approx(
         -100.0 * salvage_annuity * sum(F_INV[d] for d in window), rel=1e-7)
     for d in PERIODS:
         assert _row(discounted, d)["fixed cost pre-existing"] * MEGA == pytest.approx(
             500.0 * FIXED * F_OPS[d], rel=1e-7), d
-    # Annualized: in every period of the retirement's window, the yearly salvage annuity and the yearly fixed
-    # cost of the retired 100 MW, A(200, 0.05, L) = 200 · 1000 · 0.05 / (1 − 1.05^−L) CUR/MW/yr: lifetime 30
-    # (A = 13 010.3): −1.30103 and −10 M/yr in p2025 … p2035; lifetime 10 (A = 25 900.9): −2.59009 and −10 M/yr
-    # in p2025 and p2030; nothing outside the window.
+    # Annualized: in every period of the window, the yearly salvage annuity and the yearly fixed cost of the
+    # retired 100 MW, A(200, 0.05, 15) = 19 268.46 CUR/MW/yr: −1.926846 and −10 M/yr in p2025 … p2035; nothing in
+    # p2020.
     for annualized in (chain["cost_unit_annualized__d"], single["cost_unit_annualized__d"]):
         for d in PERIODS:
             rows = annualized[(annualized["period"] == d) & (annualized["unit"] == PLANT)]

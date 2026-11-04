@@ -97,19 +97,34 @@ def _annualized_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
     """``(retirement, fixed cost reduction of divestments)`` per year, rows: period, columns: entity (CUR/yr).
 
     ANN. retire_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_retire_window} v_divest[e,d]·unitsize[e]·ed_divest_annuity[e,d]
-         fixed_divested_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_retire_window} v_divest[e,d]·unitsize[e]·fc[e,d]
-      The yearly amounts of every retirement that applies in d'; fc[e,d] is the fixed cost of the retirement's
-      lifetime fixed-cost lump."""
+         fixed_divested_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_retire_window} v_divest[e,d]·unitsize[e]·fc[e,d']
+      The yearly amounts of every retirement that applies in d' (from its period until the end of life of the
+      existing capacity): the salvage annuity, and the fixed cost of d' the retired capacity no longer pays
+      (fc[e,d] of the retirement period where the solve does not hold d')."""
     columns = v.divest.columns
     long = _decisions_long(-v.divest.mul(par.entity_unitsize[columns]), 'period_divest')
     annuity = _decisions_long(par.entity_divest_annuity_yearly, 'period_divest').rename(columns={'value': 'coef'})
-    fixed = _decisions_long(par.entity_fixed_cost, 'period_divest').rename(columns={'value': 'coef'})
-    out = []
-    for coef in (annuity, fixed):
-        joined = long.merge(coef, on=['period_divest', 'entity'], how='inner')
-        joined = joined.assign(value=joined['value'] * joined['coef'])[['period_divest', 'entity', 'value']]
-        out.append(_per_year_in_window(joined, s.edd_retire_window, 'period_divest', columns))
-    return out[0], out[1]
+    joined = long.merge(annuity, on=['period_divest', 'entity'], how='inner')
+    joined = joined.assign(value=joined['value'] * joined['coef'])[['period_divest', 'entity', 'value']]
+    retirement = _per_year_in_window(joined, s.edd_retire_window, 'period_divest', columns)
+    window = s.edd_retire_window
+    if long.empty or len(window) == 0:
+        return retirement, _per_year_in_window(long.iloc[0:0], window, 'period_divest', columns)
+    fc = _decisions_long(par.entity_fixed_cost, 'period').astype({'entity': str, 'period': str})
+    win = window.to_frame(index=False).astype({'entity': str, 'period_divest': str, 'period': str})
+    per = long.astype({'entity': str, 'period_divest': str}).merge(win, on=['entity', 'period_divest'], how='inner')
+    per = per.merge(fc.rename(columns={'value': 'fc'}), on=['period', 'entity'], how='left')
+    per = per.merge(fc.rename(columns={'period': 'period_divest', 'value': 'fc_r'}), on=['period_divest', 'entity'],
+                    how='left')
+    per = per.assign(value=per['value'] * per['fc'].fillna(per['fc_r']))
+    if per.empty:
+        return retirement, _per_year_in_window(long.iloc[0:0], window, 'period_divest', columns)
+    fixed = per.groupby(['period', 'entity'], sort=False)['value'].sum().unstack('entity')
+    order = list(dict.fromkeys(win['period']))
+    fixed = fixed.reindex(index=[d for d in order if d in fixed.index], columns=columns)
+    fixed.index.name = 'period'
+    fixed.columns.name = columns.name
+    return retirement, fixed
 
 
 def compute_costs(par, s, v, r) -> None:
