@@ -93,8 +93,11 @@ def cost_summaries(par, s, v, r, debug):
     # ``d_realize_invest ∪ d_realized_period`` discarded p2025's row on
     # assignment to ``investment_costs``, leaving the per-category sum 1000
     # M-CUR below summary's full-horizon total).
+    # The fixed cost of existing capacity is reported in every period of the run (also one no solve realizes,
+    # the last solve's look-ahead, which the fixed-cost lumps of new capacity cover too).
     period_in_use = par.complete_period_share_of_year.index
-    investment_index = s.d_realize_invest.union(s.d_realized_period).union(period_in_use)
+    investment_index = (s.d_realize_invest.union(s.d_realized_period).union(period_in_use)
+                        .union(r.costFixedPreExisting_d.index))
     investment_costs = pd.DataFrame(index=investment_index, dtype=float)
     investment_costs.columns.name = 'category'
     # Invest + divest are independent per-period series: a scenario may

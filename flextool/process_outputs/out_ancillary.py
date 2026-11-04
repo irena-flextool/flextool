@@ -343,8 +343,10 @@ def co2_duals(par, s, v, r, debug):
     it; the polars port does not, so applying ÷1000 here would under-report
     the price 1000× — see the CO2-units investigation.)  The dual is in NPV
     currency because the objective discounts operational costs; for the
-    per-period cap we divide by inflation_factor_operations_yearly[d] to
-    recover nominal Currency/tCO2 at period d (mirroring
+    per-period cap we divide by inflation_factor_operations_solve[d] (the
+    factor of the solve that realizes d, which its objective and duals carry;
+    not the run-level factor of the reported costs) to recover nominal
+    Currency/tCO2 at period d (mirroring
     v_dual_node_balance).  Sign is always flipped so binding caps show as
     positive costs — negatives should ring alarm bells.
 
@@ -363,7 +365,7 @@ def co2_duals(par, s, v, r, debug):
     if not v.dual_co2_max_period.empty:
         co2_period_price = (-v.dual_co2_max_period).astype(float)
         co2_period_price = co2_period_price.div(
-            par.inflation_factor_operations_yearly, axis=0
+            par.inflation_factor_operations_solve.reindex(co2_period_price.index), axis=0
         )
         # The raw dual of a forecast-branch period carries that branch's probability; normal outputs hold
         # realized periods only, whose branch weight is 1, so the dual needs no un-weighting.

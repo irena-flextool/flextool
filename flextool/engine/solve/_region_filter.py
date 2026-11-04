@@ -1945,7 +1945,7 @@ def master_network_data(
         data.ed_entity_annual_divest_discounted)
     for name in ("ed_entity_annual_discounted_run", "ed_entity_annual_divest_discounted_run",
                  "ed_lifetime_fixed_cost_run", "ed_lifetime_fixed_cost_divest_run", "ed_annuity",
-                 "ed_divest_annuity"):
+                 "ed_divest_annuity", "p_entity_pre_existing"):
         setattr(new, name, _keep_entity_param(getattr(data, name, None)))
     new.edd_operating_window = _keep_entity_frame(getattr(data, "edd_operating_window", None))
     new.edd_retire_window = _keep_entity_frame(getattr(data, "edd_retire_window", None))

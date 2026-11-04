@@ -1470,6 +1470,10 @@ def run_years(source: "InputSource",
     if calendar is None or history is None:
         return None
     in_use = [str(d) for d in period_in_use]
+    # A period of the history that is neither in use nor a period of the run calendar is no period of the run:
+    # the branch copy of a realized designation (``<period>_<branch>``), whose operations the realization solve
+    # owns, holds no years of its own.
+    history = {d: y for d, y in history.items() if d in in_use or d in calendar.years}
     outside = [d for d in calendar.years if d not in history and d not in in_use]
     starts = [history[d] for d in in_use if d in history]
     if (not outside and set(history) <= set(in_use) and starts
@@ -1721,6 +1725,26 @@ def apply_run_factors(flex_data: object,
     flex_data.p_inflation_inv_run = Param(("d",), factors.select("d", value=pl.col("inv_factor")))
 
 
+def apply_pre_existing_of_reported_costs(flex_data: object, provider: "object | None") -> None:
+    """Set ``p_entity_pre_existing`` (e, d): the existing capacity given by the user, aged over its lifetime
+    (``solve_data/p_entity_pre_existing``), without the capacity carried from earlier solves and without their
+    retirements.  The reported fixed cost of existing capacity is charged on it: the carried capacity's fixed
+    cost is in the lump of the solve that invested in it, a retirement's saving in the lump of the retirement."""
+    from flextool.engine.preprocess.params._derived import _provider_has_key, _provider_read
+    path = "solve_data/p_entity_pre_existing.csv"
+    if not _provider_has_key(provider, path):
+        return
+    df = _provider_read(provider, path)
+    if df is None or df.height == 0 or not {"entity", "period", "value"} <= set(df.columns):
+        return
+    frame = (df.lazy()
+               .select(alias_to_axis(pl.col("entity").cast(pl.Utf8), "e"),
+                       alias_to_axis(pl.col("period").cast(pl.Utf8), "d"),
+                       pl.col("value").cast(pl.Utf8).cast(pl.Float64, strict=False).fill_null(0.0))
+               .sort("e", "d").collect())
+    flex_data.p_entity_pre_existing = Param(("e", "d"), frame) if frame.height > 0 else None
+
+
 def apply_run_fields_of_synthetic_solve(flex_data: object,
                                         source: "InputSource",
                                         workdir: Path,
@@ -1739,6 +1763,7 @@ def apply_run_fields_of_synthetic_solve(flex_data: object,
         _read_period_with_history,
     )
     active_solve = _read_active_solve(workdir, provider=provider)
+    apply_pre_existing_of_reported_costs(flex_data, provider)
     period_in_use = list(_period_in_use_set(source, active_solve, workdir, provider=provider))
     years = run_years(source, active_solve, period_in_use, workdir, provider=provider)
     seed_inv = None
@@ -1843,6 +1868,8 @@ def apply_npv(flex_data: object,
                       None if run_yrs is not None else p_inflation_op_from_source(
                           source, active_solve, period_in_use, period_universe, provider=provider,
                           factor="inv_factor"))
+
+    apply_pre_existing_of_reported_costs(flex_data, provider)
 
     # 2. p_ed_fixed_cost — None == no period_with_history (single-solve
     #    fixtures with no historical periods); legitimate "no data" outcome.

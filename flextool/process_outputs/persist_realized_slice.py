@@ -36,10 +36,14 @@ is a clean disjoint concat):
   in the roll's realized dispatch set (``flex_data.realized_dispatch``).
 * ``(period)``-keyed attrs → keep rows whose ``period`` is in the roll's
   realized-invest set.
-* Three attr-specific hacks are preserved verbatim
-  (``entity_lifetime_fixed_cost[_divest]``, ``entity_all_existing``,
-  and the ``entity_annual_discounted`` emptiness gate) — see
-  :func:`_apply_realized_filter`.
+* Attr-specific rules (see :func:`_apply_realized_filter`): the invest /
+  divest lumps (``entity_annual_[divest_]discounted``,
+  ``entity_lifetime_fixed_cost[_divest]``) come from the solve that
+  realizes the decision period; ``entity_all_existing`` keeps its
+  realized ∪ invest-period filter; the run-level attrs of the reported
+  costs (discount factors, user existing capacity, fixed cost) are kept
+  over the solve's own periods; the solve's own operations factor over
+  its realized dispatch periods.
 
 The 6 output-dead solve-keyed params (``flow_min``, ``flow_max``,
 ``years_from_start_d``, ``entity_max_units``, ``node_annual_flow``,
@@ -84,6 +88,17 @@ _LIFETIME_ATTRS: frozenset[str] = frozenset(
     {"entity_lifetime_fixed_cost", "entity_lifetime_fixed_cost_divest"}
 )
 _EXISTING_ATTRS: frozenset[str] = frozenset({"entity_all_existing"})
+# Run-level attrs of the reported costs: equal in every solve that holds the period (the run-level discount
+# factors, the user's existing capacity and the fixed cost), kept over the solve's own periods, so that the union
+# covers every period of the run, also one no solve realizes (the last solve's look-ahead, which the lumps of
+# its investments cover).
+_RUN_PERIOD_ATTRS: frozenset[str] = frozenset(
+    {"inflation_factor_operations_yearly", "inflation_factor_investment_yearly", "entity_user_existing",
+     "entity_fixed_cost"}
+)
+# The solve's own operations factor: kept over its realized dispatch periods (the CO2 price of a period is its
+# dual ÷ the factor of the solve that realizes it).
+_SOLVE_FACTOR_ATTRS: frozenset[str] = frozenset({"inflation_factor_operations_solve"})
 # Emptiness-gate attrs and the FlexData carrier that decides each.
 _ANNUAL_SRC_FIELD: dict[str, str] = {
     "entity_annual_discounted": "ed_entity_annual_discounted",
@@ -191,6 +206,14 @@ def _realized_dispatch_periods(flex_data: "FlexData") -> set[str]:
     )
 
 
+def _solve_periods(flex_data: "FlexData") -> set[str]:
+    """``{period, …}`` the roll holds (its ``dt``, look-ahead included)."""
+    dt = getattr(flex_data, "dt", None)
+    if dt is None or getattr(dt, "height", 0) == 0:
+        return set()
+    return set(dt.select(pl.col("d").cast(pl.Utf8)).unique().to_series().to_list())
+
+
 def _existing_filter_periods(flex_data: "FlexData") -> set[str]:
     """``entity_all_existing`` hack periods: realized-dispatch periods ∪
     the ``"d"`` values of ``ed_invest_set`` / ``ed_divest_set``.
@@ -267,19 +290,28 @@ def _apply_realized_filter(
     general realized intersection for every other solve-keyed attr.
     The frame's ``solve`` index level is left intact (stage 3 drops it).
     """
-    # Hack 3 — emptiness gate (NOT a period filter): a dispatch-only
-    # step's densified-zero annual frame is cleared so it can't compete
-    # with the parent invest step's real values at union time.
+    # Hack 3 — emptiness gate: a dispatch-only step's densified-zero
+    # annual frame is cleared so it can't compete with the parent invest
+    # step's real values at union time.  The lumps of the invest / divest
+    # decisions come from the solve that realizes the decision period.
     if attr in _ANNUAL_SRC_FIELD:
         if _annual_carrier_empty(flex_data, _ANNUAL_SRC_FIELD[attr]):
             return obj.iloc[0:0]
-        return obj
+        return _filter_by_period(obj, realized_invest_periods)
 
-    # Hack 1 — entity_lifetime_fixed_cost[_divest]: filter by the roll's
-    # realized-DISPATCH periods (not realized-invest), so the committing
-    # step's active per-period value is the sole contributor.
+    # Hack 1 — entity_lifetime_fixed_cost[_divest]: the lifetime fixed-cost
+    # lump of a decision comes from the solve that realizes the decision
+    # period (a nested invest solve realizes no dispatch).
     if attr in _LIFETIME_ATTRS:
-        return _filter_by_period(obj, _realized_dispatch_periods(flex_data))
+        return _filter_by_period(obj, realized_invest_periods)
+
+    if attr in _RUN_PERIOD_ATTRS:
+        return _filter_by_period(obj, _solve_periods(flex_data))
+
+    if attr in _SOLVE_FACTOR_ATTRS:
+        if realized_dispatch_periods is None:
+            realized_dispatch_periods = _realized_dispatch_periods(flex_data)
+        return _filter_by_period(obj, realized_dispatch_periods)
 
     # Hack 2 — entity_all_existing: realized-dispatch periods ∪ the "d"s
     # of ed_invest_set / ed_divest_set.

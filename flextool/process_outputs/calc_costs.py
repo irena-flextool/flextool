@@ -12,6 +12,31 @@ def _agg_period_or_empty(df: pd.DataFrame, realized_periods, period_level: str =
     return df[df.index.get_level_values(period_level).isin(realized_periods)].groupby(period_level).sum()
 
 
+def _at_start_of_operation(cost: pd.DataFrame, s) -> pd.DataFrame:
+    """The cost of new capacity (rows: decision period, columns: entity) moved to the period the capacity starts
+    to operate, c(d) (``s.edd_invest_commission``; c(d) = d without a construction lead time), and kept only
+    where c(d) is realized: an investment's cost is reported once, by the solve that realizes the period its
+    capacity starts operating in."""
+    commission = s.edd_invest_commission
+    realized = s.d_realized_period.union(s.d_realize_invest)
+    if cost.empty or (len(commission) == 0 and cost.index.isin(realized).all()):
+        return cost
+    long = cost.stack(future_stack=True).rename('value').rename_axis(['period_invest', 'entity']).reset_index()
+    if len(commission) > 0:
+        start = commission.to_frame(index=False).rename(columns={'period': 'start'})
+        long = long.merge(start[['entity', 'period_invest', 'start']], on=['entity', 'period_invest'], how='left')
+        long['start'] = long['start'].fillna(long['period_invest'])
+    else:
+        long['start'] = long['period_invest']
+    long = long[long['start'].isin(realized)]
+    moved = long.groupby(['start', 'entity'], sort=False)['value'].sum(min_count=1).unstack('entity')
+    order = [d for d in dict.fromkeys(list(cost.index) + list(realized)) if d in moved.index]
+    moved = moved.reindex(index=order, columns=cost.columns)
+    moved.index.name = cost.index.name
+    moved.columns.name = cost.columns.name
+    return moved
+
+
 def compute_costs(par, s, v, r) -> None:
     """Compute all cost quantities (depends on r.costPenalty_* from compute_slacks).
 
@@ -277,18 +302,23 @@ def compute_costs(par, s, v, r) -> None:
         r.cost_startup_dt[valid_processes] = cost.mul(period_costs).mul(par.timestep_weight, axis=0)
 
     # --- Investment costs ---
-    r.cost_entity_invest_d = v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted)
+    # The lumps are discounted from the start of the run over the run's periods; the investment lump and the
+    # lifetime fixed cost of new capacity are reported in the period the capacity starts to operate, the
+    # retirement lumps in the retirement period.
+    r.cost_entity_invest_d = _at_start_of_operation(
+        v.invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted), s)
     r.cost_entity_divest_d = -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_annual_divest_discounted)
-    # Use p_entity_all_existing (= pre_existing + carry-forward from earlier
-    # solves − divested) to match the mod objective term at
-    # flextool.mod:2395-2398.  Differs from par.entity_pre_existing only for
-    # rolling / nested solves where prior-solve v_invest has aged into
-    # current-solve existing capacity.
-    r.cost_entity_fixed_pre_existing = (par.entity_all_existing * par.entity_fixed_cost).mul(par.inflation_factor_operations_yearly, axis=0)
+    # The fixed cost of existing capacity: the user's existing capacity aged over its lifetime, in every period of
+    # the run.  The capacity carried from earlier solves is in the fixed-cost lump of its investment and a
+    # retirement in the lump of the retirement, so neither is charged here (a single solve: the same as
+    # p_entity_all_existing, the mod objective term at flextool.mod:2395-2398).
+    r.cost_entity_fixed_pre_existing = (par.entity_user_existing * par.entity_fixed_cost).mul(
+        par.inflation_factor_operations_yearly, axis=0)
     # entity_lifetime_fixed_cost* are densified over _entity_universe and
     # solve-keyed (concat-unioned), so they cover every v.invest/v.divest
     # column — direct indexing is safe.
-    r.cost_entity_fixed_invested = (v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]))
+    r.cost_entity_fixed_invested = _at_start_of_operation(
+        v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]), s)
     r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns]))
 
     # Under ``recourse`` the LP weights the invest/divest annuity and lifetime-fixed terms by

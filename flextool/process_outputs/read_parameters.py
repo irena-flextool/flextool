@@ -1047,6 +1047,13 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     return list(dict.fromkeys(universe))
 
 
+def _run_field(flex_data: "FlexData", name: str):
+    """The run-level field ``<name>_run`` of the reported costs, or the solve's own ``<name>`` when the run field
+    is not set (a csv-dump reload)."""
+    run = getattr(flex_data, f"{name}_run", None)
+    return run if run is not None else getattr(flex_data, name, None)
+
+
 def read_parameters(
     flex_data: "FlexData",
     solution: "Solution",
@@ -1400,6 +1407,19 @@ def read_parameters(
             densify_entities=_entity_universe,
         )
 
+    # entity_user_existing — the reported fixed cost of existing capacity is charged on the user's existing
+    # capacity aged over its lifetime (``p_entity_pre_existing``, set for the reported costs): the capacity
+    # carried from earlier solves is charged in the lump of the solve that invested in it, a retirement's saving
+    # in the lump of the retirement.  A csv-dump reload does not carry it: there it is ``entity_pre_existing``.
+    if getattr(flex_data, "p_entity_pre_existing", None) is not None:
+        p.entity_user_existing = _pdX_per_entity(
+            flex_data.p_entity_pre_existing, solve_name=solve_name,
+            entity_dim="e", col_name="entity", flex_data=flex_data,
+            densify_entities=_entity_universe,
+        )
+    else:
+        p.entity_user_existing = p.entity_pre_existing
+
     # entity_all_capacity — post-solve derived.
     p.entity_all_capacity = _entity_all_capacity(
         flex_data, solution, solve_name=solve_name,
@@ -1420,13 +1440,16 @@ def read_parameters(
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
+    # The reported costs read the run-level lumps (discounted from the start of the run over the run's
+    # periods, ``_npv`` "Run-level fields of the reported costs"); a csv-dump reload carries only the
+    # per-solve lumps.
     p.entity_lifetime_fixed_cost = _pdX_per_entity(
-        flex_data.ed_lifetime_fixed_cost, solve_name=solve_name,
+        _run_field(flex_data, "ed_lifetime_fixed_cost"), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
     p.entity_lifetime_fixed_cost_divest = _pdX_per_entity(
-        flex_data.ed_lifetime_fixed_cost_divest, solve_name=solve_name,
+        _run_field(flex_data, "ed_lifetime_fixed_cost_divest"), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
@@ -1487,24 +1510,28 @@ def read_parameters(
         densify_entities=_entity_universe,
     )
     p.entity_annual_discounted = _pdX_per_entity(
-        flex_data.ed_entity_annual_discounted, solve_name=solve_name,
+        _run_field(flex_data, "ed_entity_annual_discounted"), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
     p.entity_annual_divest_discounted = _pdX_per_entity(
-        flex_data.ed_entity_annual_divest_discounted, solve_name=solve_name,
+        _run_field(flex_data, "ed_entity_annual_divest_discounted"), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
 
-    # inflation factors — Series((solve, period)).
+    # inflation factors — Series((solve, period)).  The reported costs discount from the start of the run
+    # (``p_inflation_*_run``); ``inflation_factor_operations_solve`` is the solve's own factor, the one its
+    # objective and duals carry (the CO2 price of a period is its dual ÷ this factor of the realizing solve).
+    # A csv-dump reload carries only the solve's own operations factor.
     p.inflation_factor_operations_yearly = _pd_series_solve_period(
-        flex_data.p_inflation_op, solve_name=solve_name,
+        _run_field(flex_data, "p_inflation_op"), solve_name=solve_name,
     )
-    # No FlexData equivalent for "investment yearly"; reuse operations
-    # (the rate differs only when discount_rate ≠ 0; for fixtures
-    # without explicit rates they're identical).
     p.inflation_factor_investment_yearly = _pd_series_solve_period(
+        flex_data.p_inflation_inv_run if getattr(flex_data, "p_inflation_inv_run", None) is not None
+        else flex_data.p_inflation_op, solve_name=solve_name,
+    )
+    p.inflation_factor_operations_solve = _pd_series_solve_period(
         flex_data.p_inflation_op, solve_name=solve_name,
     )
 

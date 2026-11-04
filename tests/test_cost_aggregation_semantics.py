@@ -996,36 +996,23 @@ class TestMinLoadEfficiencySectionTerm:
         )
 
 
-def test_pre_existing_fixed_uses_all_existing() -> None:
-    """Regression guard for the commit that switched
-    ``calc_costs.cost_entity_fixed_pre_existing`` from
-    ``par.entity_pre_existing`` to ``par.entity_all_existing``.
+def test_pre_existing_fixed_uses_user_existing() -> None:
+    """``calc_costs.cost_entity_fixed_pre_existing`` charges the fixed cost of existing capacity on the user's
+    existing capacity aged over its lifetime (``par.entity_user_existing``), not on ``entity_all_existing``.
 
-    The mod objective at flextool.mod:2395-2398 uses
-    ``p_entity_all_existing × ed_fixed_cost × inflation ×
-    pd_branch_weight``.  For single-solve runs
-    ``p_entity_all_existing == p_entity_pre_existing`` (mod:1933), so
-    the behavior is numerically identical on existing fixtures.  For
-    rolling / nested solves with ``solveFirst == 0``,
-    ``p_entity_all_existing`` additionally includes capacity invested in
-    earlier solve rolls — without this fix, Python would under-count
-    the fixed cost on those carried-forward assets.
-
-    The existing golden tests (``base``, ``base_weighted``, etc.)
-    implicitly verify the single-solve equivalence.  A numeric test of
-    the multi-solve divergence would require a fixture that rolls
-    through multiple solves with realized investment between rolls; no
-    such fixture exists in the suite today.
+    For a single solve the two are equal (``p_entity_all_existing == p_entity_pre_existing``, mod:1933), so the
+    reported cost matches the objective term at flextool.mod:2395-2398.  Over several solves
+    ``p_entity_all_existing`` also holds the capacity invested in earlier solves (and subtracts their
+    retirements), whose fixed cost is already in the fixed-cost lump of the investment (the retirement's saving
+    in its own lump), so charging it again double counts (owner decision "Chained costs", 2026-11-04).  The
+    numeric guards are ``tests/engine/test_chain_costs.py`` (chain, nested and retirement runs equal to the
+    single solve).
     """
     import inspect
     import flextool.process_outputs.calc_costs as cc
     src = inspect.getsource(cc.compute_costs)
-    assert "entity_all_existing * par.entity_fixed_cost" in src or \
-           "entity_all_existing*par.entity_fixed_cost" in src, (
-        "calc_costs.cost_entity_fixed_pre_existing must use "
-        "par.entity_all_existing — mod objective line 2396 uses "
-        "p_entity_all_existing, not p_entity_pre_existing."
-    )
+    assert "par.entity_user_existing * par.entity_fixed_cost" in src
+    assert "entity_all_existing * par.entity_fixed_cost" not in src
 
 
 def test_storage_state_reference_price_credit() -> None:

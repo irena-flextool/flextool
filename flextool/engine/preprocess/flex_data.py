@@ -926,6 +926,9 @@ class FlexData:
     ed_divest_annuity: Param | None = None
     edd_operating_window: pl.DataFrame | None = None
     edd_retire_window: pl.DataFrame | None = None
+    # (e, d) existing capacity given by the user, aged over its lifetime (no capacity carried from earlier solves,
+    # no retirements): the reported fixed cost of existing capacity.
+    p_entity_pre_existing: Param | None = None
     e_invest_total: pl.DataFrame | None = None       # (e,)
     e_divest_total: pl.DataFrame | None = None
     e_invest_max_total: Param | None = None          # (e,)

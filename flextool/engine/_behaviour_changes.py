@@ -111,6 +111,17 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "offered (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "construction_lead_time_commissioning"),
         ),
+        BehaviourChange(
+            id="chained_solve_costs_from_run_start",
+            summary=("In a run of several solves the reported costs are now discounted from the start of the "
+                     "run (before: from the start of each solve); the investment and fixed cost of new capacity "
+                     "cover its operating years in the whole run and are reported once, in the period it starts "
+                     "operating, by the solve that realizes that period (before: in the decision period, over "
+                     "the deciding solve's periods); the fixed cost of capacity carried from an earlier solve or "
+                     "retired is no longer charged again as existing capacity.  The printed objectives stay "
+                     "discounted from each solve's start (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "chained_solve_costs_from_run_start"),
+        ),
     )
 }
 

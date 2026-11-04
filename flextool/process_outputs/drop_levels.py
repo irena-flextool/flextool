@@ -63,18 +63,18 @@ _PAR_DROP = [
     'ladder_price_ann',
     'reserve_upDown_group_reservation',
     'reserve_upDown_group_shortfall_scale', 'profile',
+    # The invest / divest lumps come from the solve that realizes the
+    # decision period only (persist_realized_slice); keep='last' ties the
+    # rolls of one solve.
     'entity_annual_discounted', 'entity_annual_divest_discounted',
+    # The reported costs' discount factors count from the start of the run,
+    # so every solve holding a period gives it the same value.
     'inflation_factor_investment_yearly',
-    # inflation_factor_operations_yearly evolves across rolls: each step
-    # carries period-d's "active" factor (4.54 ≈ Σ(1+r)^y × p_years[d,y])
-    # in its FIRST row and a forward-looking discount (3.73) in its
-    # SECOND row.  ``keep='last'`` therefore picks the value from the
-    # step that COMMITS period d (where d is the realized invest/dispatch
-    # period), matching what the LP objective uses.  ``keep='first'``
-    # would lock in the earlier step's forward-looking discount for every
-    # period after the first, leaving costs_discounted off by the
-    # active/forward ratio (~1.18 for the multi_year fixture).
     'inflation_factor_operations_yearly',
+    # The solve's own operations factor (CO2 price): only the solves that
+    # realize the period's dispatch persist it, so the realizing solve's
+    # value is the one kept (its rolls carry the same factor).
+    'inflation_factor_operations_solve',
     'group_penalty_capacity_margin', 'group_capacity_margin',
     # entity_all_existing carries the cumulative existing-capacity
     # chain (existing + Σ prior invest − Σ prior divest).  The last roll
@@ -88,6 +88,9 @@ _PAR_DROP = [
     # moved here for symmetry with entity_all_existing per the
     # 2026-05-14 investigation into the unit_capacity__d.csv lag.
     'entity_pre_existing',
+    # entity_user_existing — the user's existing capacity aged over its
+    # lifetime, the same in every solve (the fixed cost of existing capacity).
+    'entity_user_existing',
     # NOTE: complete_period_share_of_year is intentionally NOT in this
     # bucket — it needs an order-INDEPENDENT max-per-period reduction,
     # done explicitly in drop_levels() below.  See the comment there.

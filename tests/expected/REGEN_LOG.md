@@ -1101,3 +1101,36 @@ the period (with no lead time it comes online in its decision period). The 21 `u
 updated by inserting the empty column into the header and every row; no value, row or other column changed (the
 `connection_capacity__d` / `node_capacity__d` files are not goldens). The 21 scenarios of `tests/test_scenarios.py`
 that pin a `unit_capacity__d.csv` pass against the updated files.
+
+## 2026-11-04 — 16 cost / summary goldens of 11 scenarios (reported costs of a run from the run start, each once)
+
+**Context.** Owner decisions "Chained costs" (2026-11-04): the reported costs read the
+run-level fields (discounted from the start of the run over the run's periods); the invest / fixed-cost lumps of a
+decision come from the solve realizing the decision period and sit where the capacity starts operating; the fixed
+cost of existing capacity is charged on the user's existing capacity only; the investment columns use the
+investment discount factor (before: the operations factor).  lp_snapshot vs the parent: 666/666 files identical
+(no LP change).  Only the files below differ beyond the comparison tolerance; the other CSVs of these scenarios
+were left as they were.
+
+- `multi_year/{cost_unit_discounted__d,cost_unit_annualized__d,costs_discounted}.csv` (chain y2020 … y2035,
+  r = 0.04): the discount base was each solve's start (p2025 commodity 589.08 = 484.18 · 1.04^5, now 484.18); the
+  fixed cost of existing capacity was charged on 500 MW + the carried investments (p2030 56.78 M/yr, p2035 82.33),
+  now on the 500 MW (50 M/yr); the p2025 lumps covered the solve's two periods from its start, now p2025 … p2035
+  from the run start (fixed cost invested 56.11 → 63.22, investment 14.89 → 16.78).  Totals: investment 70.97 →
+  54.66, fixed pre-existing 1085.58 → 692.97, fixed invested 267.43 → 205.98, commodity 2811.57 → 1978.01.
+- `multi_fullYear_battery_nested_multi_invest/{cost_unit_discounted__d,cost_unit_annualized__d,
+  costs_discounted}.csv` (an investment solve per period, each with the next period as look-ahead): the wind
+  investment lumps covered the deciding solve's periods from its own start; now the run's later periods from the
+  run start.  Each decision moves by Σ_{run window} F_inv / Σ_{solve} F_inv_solve: p2020 14.14 / 8.44 = 1.676
+  (206.95 → 346.75), p2025 9.51 / 8.44 = 1.127, p2030 5.70 / 8.44 = 0.676, p2035 2.57 / 4.63 = 0.555.  Investment
+  total 382.04 → 469.65.
+- `cost_unit_annualized__d.csv` of `multi_year_one_solve`, `multi_year_one_solve_battery`,
+  `multi_year_one_solve_co2_limit`, `multi_fullYear_battery`, `multi_fullYear_battery_nested_24h_invest_one_solve`,
+  `multi_fullYear_battery_nested_sample_invest_one_solve`, and `test_a_lot/{cost_unit,cost_node}_annualized__d.csv`
+  (single investment solves, discounted columns unchanged): the annualized investment is the lump ÷ the investment
+  factor (before ÷ the operations factor), so it is 1.04^0.5 = 1.0198 times smaller (e.g. 78.8685 → 77.3369).
+- `summary_solve.csv` of `multi_year_wind_no_investment`, `multi_year_wind_growth_cap`: the "Investment discount
+  factor" row is the investment factor (4.62990, 3.80544, 3.12779, 2.57082; before the operations factor 4.53999 …).
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` per scenario; only the files that differ
+beyond the test tolerance were kept.

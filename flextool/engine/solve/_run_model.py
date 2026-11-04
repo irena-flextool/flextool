@@ -602,6 +602,10 @@ def native_run_model(state, solver) -> int:
     # The run calendar: the year of every period of the run (the start of operation of an investment with a
     # construction lead time is rounded on it).  The same frame goes to every sub-solve.
     run_calendar = build_run_calendar(solve_period_history, state.solve.real_solves)
+    # The reported costs of a run of several solves count from the start of the run, each once.
+    if len(state.solve.real_solves) > 1:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice("chained_solve_costs_from_run_start", "solves", state.solve.real_solves)
 
     # ------------------------------------------------------------------
     # 3. Stochastic branching expansion.
