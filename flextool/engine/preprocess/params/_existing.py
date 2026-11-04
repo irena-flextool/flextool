@@ -1331,6 +1331,8 @@ def p_entity_all_existing_from_handoff(
         p_entity_divested: "Param | None" = None,
         solve_first: bool = True,
         edd_history: "pl.DataFrame | None" = None,
+        workdir: Path | None = None,
+        provider: "object | None" = None,
         ) -> "Param | None":
     """Lazy port of flextool's
     ``write_p_entity_existing_chain`` algorithm
@@ -1396,7 +1398,7 @@ def p_entity_all_existing_from_handoff(
     grid_lf = all_e_lf.join(piu_lf, how="cross")
 
     pre_existing_lf = p_entity_pre_existing_lf(
-        source, active_solve, period_in_use)
+        source, active_solve, period_in_use, workdir=workdir, provider=provider)
 
     # entityDivest set + p_entity_divested scalar.  Shared by both
     # branches; the divest subtraction is gated on solve_first below.
@@ -1535,6 +1537,9 @@ def p_entity_all_existing_from_handoff(
 def p_entity_pre_existing_lf(source: "InputSource",
                                   active_solve: str | None,
                                   period_in_use: list[str],
+                                  *,
+                                  workdir: Path | None = None,
+                                  provider: "object | None" = None,
                                   ) -> pl.LazyFrame:
     """Lazy ``[e, d, value]`` for ``p_entity_pre_existing`` —
     lifetime-gated ``entity.existing × virtual_unitsize`` cascade.
@@ -1603,7 +1608,8 @@ def p_entity_pre_existing_lf(source: "InputSource",
 
     # Lifetime gate: zero out existing past life_sum expiry for bounded.
     expired_lf = _lifetime_expired_pairs_lf(
-        source, active_solve, period_in_use, methods=_LIFETIME_BOUNDED_METHODS)
+        source, active_solve, period_in_use, methods=_LIFETIME_BOUNDED_METHODS,
+        workdir=workdir, provider=provider)
     expired_marked = expired_lf.with_columns(_expired=pl.lit(True))
 
     # Compose: value = ex × vu (or ex if vu=0) if alive; 0 else.
@@ -1635,94 +1641,23 @@ def _lifetime_expired_pairs_lf(source: "InputSource",
                                     period_in_use: list[str],
                                     *,
                                     methods: frozenset[str],
+                                    workdir: Path | None = None,
+                                    provider: "object | None" = None,
                                     ) -> pl.LazyFrame:
-    """Lazy ``[e, d]`` of pairs whose pre-existing capacity has expired.
-
-    For each entity whose ``lifetime_method ∈ methods``, return periods
-    d where ``pdy[d] >= life_sum(e)`` with::
-
-        life_sum(e) = Σ_{d_first ∈ period_first}
-                          (pdy[d_first] + lifetime[e, d_first])
-
-    Mirror of :func:`._derived._lifetime_expired_pairs` in lazy form.
-    Uses :func:`._derived._read_period_first` /
-    :func:`._derived._p_years_d_lf` for the workdir-aware reads.
+    """Lazy ``[e, d]`` of pairs whose pre-existing capacity has expired: the
+    periods ``d`` of ``period_in_use`` with ``p_years_d[d] >= life_sum(e)``
+    for the entities whose ``lifetime_method ∈ methods``, ``life_sum`` one
+    end of life per entity counted from the start of the run
+    (:func:`._derived._lifetime_expired_pairs`, the same gate).
     """
-    from flextool.engine.preprocess.params._derived import _read_period_first, _p_years_d_lf
-    period_first = _read_period_first(source, active_solve, None)
-    if not period_first:
-        return pl.LazyFrame(schema={
-            "e": schema_dtype(_enums, "e"),
-            "d": schema_dtype(_enums, "d"),
-        })
-    all_e_lf = _all_entities_lf(source)
-    elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
-    in_methods = (elm_lf
-                     .filter(pl.col("method").is_in(list(methods)))
-                     .select("e").unique())
-
-    # Class gate: connection without is_DC / non-process → no lifetime.
-    cls_lf = _entity_class_lf(source).group_by("e").agg(
-        pl.col("ec").alias("ecs"))
-    is_proc_or_node = (pl.col("ecs").list.contains("unit")
-                        | pl.col("ecs").list.contains("connection")
-                        | pl.col("ecs").list.contains("node"))
-    in_class = cls_lf.with_columns(
-        in_class=is_proc_or_node).select("e", "in_class")
-
-    pyd_lf = _p_years_d_lf(source, active_solve)
-    if pyd_lf is None:
-        return pl.LazyFrame(schema={
-            "e": schema_dtype(_enums, "e"),
-            "d": schema_dtype(_enums, "d"),
-        })
-
-    # life_sum: per-entity scalar.  Compute per d_first then sum:
-    # life_sum(e) = Σ_{d_first} (pdy[d_first] + lifetime[e, d_first]).
-    # Phase 4.6: ``d_first`` is a column holding period tokens; cast the
-    # literal-list LazyFrame to the ``d`` (period) Enum so downstream
-    # joins against Enum-typed ``pyd_first`` don't SchemaError.
-    pf_lf = (pl.LazyFrame({"d_first": period_first})
-                .with_columns(pl.col("d_first")
-                                .cast(schema_dtype(_enums, "d_first"),
-                                       strict=False)))
-    pyd_first = pyd_lf.rename({"d": "d_first", "yr": "yr_first"})
-    (in_methods.join(pf_lf, how="cross")
-                          .pipe(rename_to_axis, {"d_first": "d"})
-                          .pipe(lambda lf: lf))  # placeholder for symmetry
-    # Resolve lifetime[e, d_first] via cascade.
-    life_per = _per_entity_param_lf(source, "lifetime")
-    life_resolved = (_resolve_per_period_lf(
-        life_per,
-        in_methods.join(pf_lf, how="cross").pipe(rename_to_axis, {"d_first": "d"}),
-        fill=0.0))
-    life_at_first = life_resolved.rename({"d": "d_first", "value": "life"})
-    summed_lf = (life_at_first
-                    .join(pyd_first, on="d_first", how="left")
-                    .with_columns(yr_first=pl.col("yr_first").fill_null(0.0))
-                    .group_by("e")
-                    .agg((pl.col("yr_first") + pl.col("life")).sum()
-                            .alias("life_sum")))
-    # Apply class gate.
-    summed_lf = (summed_lf
-                    .join(in_class, on="e", how="left")
-                    .with_columns(in_class=pl.col("in_class").fill_null(False))
-                    .with_columns(
-                        life_sum=pl.when(pl.col("in_class"))
-                                       .then(pl.col("life_sum"))
-                                       .otherwise(0.0))
-                    .select("e", "life_sum"))
-
-    piu_lf = (pl.LazyFrame({"d": period_in_use})
-                .with_columns(pl.col("d").cast(schema_dtype(_enums, "d"),
-                                                  strict=False)))
-    pyd_at_d = pyd_lf
-    return (summed_lf
-              .join(piu_lf, how="cross")
-              .join(pyd_at_d, on="d", how="left")
-              .with_columns(yr=pl.col("yr").fill_null(0.0))
-              .filter(pl.col("yr") >= pl.col("life_sum"))
-              .select("e", "d"))
+    from flextool.engine.preprocess.params._derived import _lifetime_expired_pairs
+    pairs = sorted(_lifetime_expired_pairs(
+        source, active_solve, workdir, tuple(sorted(methods)),
+        provider=provider, periods=[str(d) for d in period_in_use]))
+    return (pl.LazyFrame({"e": [e for e, _ in pairs], "d": [d for _, d in pairs]},
+                         schema={"e": pl.Utf8, "d": pl.Utf8})
+              .with_columns(pl.col("e").cast(schema_dtype(_enums, "e"), strict=False),
+                            pl.col("d").cast(schema_dtype(_enums, "d"), strict=False)))
 
 
 # ---------------------------------------------------------------------------
@@ -1839,7 +1774,8 @@ def apply_existing_chain(flex_data: object,
         p_entity_previously_invested_capacity=ppic,
         p_entity_divested=ped,
         solve_first=solve_first,
-        edd_history=edd_hist_df)
+        edd_history=edd_hist_df,
+        workdir=workdir, provider=provider)
 
     # Investments that earlier solves realized with a construction lead time: the capacity coming online and in
     # construction in this solve's periods (constants of the per-period invest limits and user constraints).

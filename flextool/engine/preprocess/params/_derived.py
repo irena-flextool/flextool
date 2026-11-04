@@ -1485,7 +1485,7 @@ def p_process_existing_count_from_source(
     # entities past expiry, zero out the row.
     expired = _lifetime_expired_pairs(
         source, active_solve, workdir,
-        methods=("reinvest_choice", "no_investment"))
+        methods=("reinvest_choice", "no_investment"), provider=provider)
     if expired:
         # Phase 4: build the (p, d) expired index with axis-aware Enum
         # dtypes so the join against the cascade-typed ``out`` composes
@@ -2564,7 +2564,7 @@ def p_flow_upper_existing_from_source(source: "InputSource",
     # (p, d) is past the ``reinvest_choice`` / ``no_investment`` expiry.
     expired = _lifetime_expired_pairs(
         source, active_solve, workdir,
-        methods=("reinvest_choice", "no_investment"))
+        methods=("reinvest_choice", "no_investment"), provider=provider)
     if expired:
         expired_lf = axis_lazyframe({
             "p": [e for (e, _d) in expired],
@@ -3701,41 +3701,64 @@ def _read_period_first(source: "InputSource",
     return [seq[0]] if seq else []
 
 
+def run_start_period(years: "dict[str, float]") -> str | None:
+    """The period the model run starts in, among a solve's period years ``years`` (``p_years_d``: the period
+    history first, each period's years from the start of the run, a branch period with its label's year): the
+    first period with the smallest year.  ``None`` without periods.
+
+    The end of life of pre-existing capacity counts from this period in every solve of the run (a later solve of
+    a chain holds the earlier periods as its history), so a chain and a single solve age it alike, and a fan of
+    the first period gives it one start, not one per branch."""
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+    start: str | None = None
+    for d, y in years.items():
+        if start is None or y < years[start] - YEAR_TOL:
+            start = d
+    return start
+
+
+def _lifetime_years(source: "InputSource",
+                    active_solve: str | None,
+                    workdir: Path | None,
+                    *,
+                    provider: "object | None" = None,
+                    ) -> dict[str, float]:
+    """``{period: year}`` the lifetime gate compares: :func:`_p_years_d_lf` (with the Provider, the solve's
+    ``p_years_d``: years from the start of the run over its period history; without it, the solve's own
+    ``years_represented``, the solve being the run)."""
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
+    if pyd_lf is None:
+        return {}
+    pyd_df = pyd_lf.collect()
+    out: dict[str, float] = {}
+    for d, y in zip(pyd_df["d"].cast(pl.Utf8).to_list(), pyd_df["yr"].to_list()):
+        out.setdefault(str(d), float(y if y is not None else 0.0))
+    return out
+
+
 def _lifetime_gate_sums(source: "InputSource",
                             active_solve: str | None,
                             workdir: Path | None,
                             *,
                             provider: "object | None" = None,
+                            years: "dict[str, float] | None" = None,
                             ) -> dict[str, float]:
-    """Per-entity ``life_sum`` for the ``reinvest_choice`` /
-    ``no_investment`` lifetime gate (Γ.6.D).
+    """Per-entity end of life ``life_sum`` (a year of :func:`_lifetime_years`) of the pre-existing capacity of
+    the ``reinvest_choice`` / ``no_investment`` entities::
 
-    Algorithm (mirror
-    ``preprocessing/entity_period_calc_params.py:315-319`` &
-    ``invest_divest_sets.py:343-347``)::
+        life_sum(e) = p_years_d[d0] + lifetime[e, d0],   d0 = run_start_period(p_years_d)
 
-        life_sum(e) = sum_{d_first in period_first}
-                       (p_years_d[d_first] + edEntity_lifetime[e, d_first])
-
-    Only entities whose ``lifetime_method`` is ``reinvest_choice`` or
-    ``no_investment`` are returned; other methods don't trigger the
-    expiry gate so callers can safely treat ``e ∉ map`` as "no gate".
+    One value per entity, counted from the start of the run (not from the solve's own first period, and not
+    once per branch of a fan in the first period).  Other methods are not returned (no expiry gate); a
+    connection without lifetime (not a process / node) gets 0.
     """
-    period_first = _read_period_first(source, active_solve, workdir, provider=provider)
-    if not period_first:
+    pyd = years if years is not None else _lifetime_years(source, active_solve, workdir, provider=provider)
+    start = run_start_period(pyd)
+    if start is None:
         return {}
-    # p_years_d for those periods.
-    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
-    pyd: dict[str, float] = {}
-    if pyd_lf is not None:
-        pyd_df = pyd_lf.collect()
-        for r in pyd_df.iter_rows(named=True):
-            pyd[str(r["d"])] = float(r["yr"])
-    # edEntity_lifetime: per-(e, d) lifetime, broadcast scalar over periods.
     per_p = _per_entity_period_value(source, "lifetime") or {}
     scalar = _per_entity_scalar(source, "lifetime")
     process_set, node_set, _ = _entity_classes_lookup(source)
-    # Lifetime-method classification.
     all_e = _all_entities(source)
     elm = _entity_lifetime_methods(source, all_e)
 
@@ -3748,11 +3771,7 @@ def _lifetime_gate_sums(source: "InputSource",
             # Connection without is_DC / non-process — no lifetime.
             out[e] = 0.0
             continue
-        s = 0.0
-        for d_first in period_first:
-            life = _resolve_pdX(per_p, scalar, e, d_first)
-            s += pyd.get(d_first, 0.0) + life
-        out[e] = s
+        out[e] = pyd[start] + _resolve_pdX(per_p, scalar, e, start)
     return out
 
 
@@ -3763,13 +3782,13 @@ def _lifetime_expired_pairs(source: "InputSource",
                                     "reinvest_choice", "no_investment"),
                                 *,
                                 provider: "object | None" = None,
+                                periods: "list[str] | None" = None,
                                 ) -> set[tuple[str, str]]:
-    """Set of (e, d) pairs whose pre-existing capacity has expired
-    (Γ.6.D).
+    """Set of (e, d) pairs whose pre-existing capacity has expired.
 
-    For each entity whose ``lifetime_method`` is in ``methods``, return
-    the periods d in ``period_in_use`` where ``p_years_d[d] >= life_sum(e)``.
-    These are the rows where:
+    For each entity whose ``lifetime_method`` is in ``methods``, the periods d of ``periods`` (default the
+    solve's ``period_in_use``) with ``p_years_d[d] >= life_sum(e)`` (:func:`_lifetime_gate_sums`, one end of
+    life per entity from the start of the run).  These are the rows where:
 
       * ``p_entity_pre_existing[e, d]`` should evaluate to 0.
       * ``ed_invest_forbidden_no_investment`` adds (e, d) to the
@@ -3780,7 +3799,8 @@ def _lifetime_expired_pairs(source: "InputSource",
     Only ``no_investment`` entries actually pin ``v_invest = 0`` —
     callers filtering ``ed_invest_set`` should pass ``methods=("no_investment",)``.
     """
-    sums = _lifetime_gate_sums(source, active_solve, workdir)
+    pyd = _lifetime_years(source, active_solve, workdir, provider=provider)
+    sums = _lifetime_gate_sums(source, active_solve, workdir, provider=provider, years=pyd)
     if not sums:
         return set()
     # Restrict to entities whose method is in the requested filter.
@@ -3790,21 +3810,15 @@ def _lifetime_expired_pairs(source: "InputSource",
     sums = {e: v for e, v in sums.items() if e in keep_e}
     if not sums:
         return set()
-
-    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
-    if pyd_lf is None:
-        return set()
-    pyd_df = pyd_lf.collect()
-    pyd: dict[str, float] = {str(r["d"]): float(r["yr"])
-                                for r in pyd_df.iter_rows(named=True)}
-    piu = _period_in_use_set(source, active_solve, workdir, provider=provider)
+    piu = (list(periods) if periods is not None
+           else _period_in_use_set(source, active_solve, workdir, provider=provider))
     if not piu:
         return set()
     out: set[tuple[str, str]] = set()
     for e, s in sums.items():
         for d in piu:
-            if pyd.get(d, 0.0) >= s:
-                out.add((e, d))
+            if pyd.get(str(d), 0.0) >= s:
+                out.add((e, str(d)))
     return out
 
 
@@ -3842,7 +3856,7 @@ def ed_invest_forbidden_no_investment_from_source(
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
     forbidden = _lifetime_expired_pairs(
-        source, active_solve, workdir, methods=("no_investment",))
+        source, active_solve, workdir, methods=("no_investment",), provider=provider)
     if not forbidden:
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
@@ -3912,7 +3926,7 @@ def ed_invest_set_from_source(source: "InputSource",
               .collect())
     # Γ.6.D: drop pairs forbidden by the no_investment lifetime gate.
     forbidden = _lifetime_expired_pairs(
-        source, active_solve, workdir, methods=("no_investment",))
+        source, active_solve, workdir, methods=("no_investment",), provider=provider)
     if forbidden and out.height > 0:
         keep = [(e, d) for (e, d) in out.iter_rows()
                   if (e, d) not in forbidden]
@@ -6561,7 +6575,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
     # no_investment}, zero out existing past ``life_sum(e)`` expiry.
     expired = _lifetime_expired_pairs(
         source, active_solve, workdir,
-        methods=("reinvest_choice", "no_investment"))
+        methods=("reinvest_choice", "no_investment"), provider=provider)
     # Also need to zero out entities whose lifetime_method is none of
     # the three allowed values (default fallback handles this since
     # _entity_lifetime_methods returns "reinvest_automatic" by default,

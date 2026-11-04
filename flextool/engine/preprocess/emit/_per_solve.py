@@ -28,7 +28,7 @@ import polars as pl
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._branch import fan_period_labels
-from flextool.engine.preprocess.params._derived import _expand_invest_branch_periods
+from flextool.engine.preprocess.params._derived import _expand_invest_branch_periods, run_start_period
 
 
 # ---------------------------------------------------------------------------
@@ -852,14 +852,11 @@ def emit_ed_invest_forbidden_no_investment(
             continue
 
     ed_lifetime = _read_pdv(solve_data_dir / "edEntity_lifetime.csv", provider=provider)
-    period_first = _read_singles(solve_data_dir / "period_first.csv", provider=provider)
+    # The end of life counts from the start of the run (``p_years_d`` covers the period history).
+    d0 = run_start_period(p_years_d)
 
     def _life_sum(e: str) -> float:
-        return sum(
-            p_years_d.get(d_first, 0.0)
-            + ed_lifetime.get((e, d_first), 0.0)
-            for d_first in period_first
-        )
+        return 0.0 if d0 is None else p_years_d.get(d0, 0.0) + ed_lifetime.get((e, d0), 0.0)
 
     cached_sum: dict[str, float] = {}
     rows: list[tuple[str, str]] = []

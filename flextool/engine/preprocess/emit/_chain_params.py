@@ -34,6 +34,7 @@ from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_translators import read_handoff_frame
 from flextool.engine.preprocess.params._derived import (
     INVEST_METHODS_INVEST_NO_LIMIT,
+    run_start_period,
 )
 
 if TYPE_CHECKING:
@@ -260,10 +261,8 @@ def derive_p_entity_pre_existing(
                      else 0
         if method not in {reinvest_automatic, reinvest_choice, no_investment}: 0
         elif method ∈ {reinvest_choice, no_investment}
-             and not (p_years_d[d] <
-                      Σ_{d_first ∈ period_first} (p_years_d[d_first]
-                          + edEntity_lifetime[e, d_first])):
-            0
+             and not (p_years_d[d] < p_years_d[d0] + edEntity_lifetime[e, d0]):
+            0      (d0 = run_start_period(p_years_d): the end of life counts from the start of the run)
         else: v_existing * v_unit  if v_unit  else  v_existing
 
     Output domain: ``entity × period_in_use``.  Reads pdProcess /
@@ -277,8 +276,6 @@ def derive_p_entity_pre_existing(
     entities = _read_singles(input_dir / "entity.csv", provider=provider)
     period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
                                    provider=provider)
-    period_first = _read_singles(solve_data_dir / "period_first.csv",
-                                  provider=provider)
 
     lifetime_method: dict[str, str] = {
         e_: m for e_, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv",
@@ -325,14 +322,12 @@ def derive_p_entity_pre_existing(
         provider=provider,
     )
 
-    # Per-entity lifetime gate sum:
-    #   Σ_{d_first ∈ period_first} (p_years_d[d_first]
-    #       + edEntity_lifetime[e, d_first])
+    # Per-entity end of life, counted from the start of the run (``p_years_d`` covers the period history):
+    #   p_years_d[d0] + edEntity_lifetime[e, d0],  d0 = run_start_period(p_years_d)
+    d0 = run_start_period(p_years_d)
+
     def _life_sum(e: str) -> float:
-        return sum(
-            p_years_d.get(d_first, 0.0) + ed_lifetime.get((e, d_first), 0.0)
-            for d_first in period_first
-        )
+        return 0.0 if d0 is None else p_years_d.get(d0, 0.0) + ed_lifetime.get((e, d0), 0.0)
 
     rows: list[tuple[str, str, float]] = []
     for e in entities:
