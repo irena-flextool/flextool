@@ -294,7 +294,8 @@ A release is a version tag pushed to GitHub; `publish.yml` builds it and uploads
    never reaches PyPI.
 4. **Tag** — an annotated tag `vX.Y.Z` on the release commit, pushed.
 5. **polar-high** — the `polar-high>=` pin in `pyproject.toml` must name a version on PyPI; release polar-high
-   first when the pin moved past its last release.
+   first when the pin moved past its last release.  The pin is now `>=3.12.1` (coarse-process flows need it):
+   release polar-high 3.12.1 before FlexTool is pushed, or CI installs fail.
 
 A change that alters what an existing model does gets a registry entry (summary, how to silence it) and a marker
 (`metadata` named `flextool_behaviour_change:<id>`) written by the database migration on upgraded databases only;
