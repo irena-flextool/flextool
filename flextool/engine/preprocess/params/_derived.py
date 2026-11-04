@@ -6006,6 +6006,9 @@ def _offer_invest_set(flex_data: object,
         source, active_solve, ed_inv.lazy().select("e", "d"), period_in_use, workdir, provider=provider)
     if commission_lf is None:
         return ed_inv, None
+    from flextool.engine import _behaviour_changes
+    lagged = commission_lf.select(pl.col("e").cast(pl.Utf8)).unique().sort("e").collect()["e"].to_list()
+    _behaviour_changes.notice("construction_lead_time_commissioning", "entities", lagged)
     offered, late = _offered(ed_inv, commission_lf)
     _warn(source, active_solve, late, list(period_in_use), read_run_calendar(provider))
     kept = (commission_lf.filter(pl.col("yr_c").is_finite())

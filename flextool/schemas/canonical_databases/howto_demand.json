@@ -446,7 +446,7 @@
       "constraint_capacity_coeff",
       null,
       null,
-      "Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW.",
+      "Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -454,7 +454,7 @@
       "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
-      "Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retirements). Investments with a construction lead time count when they enter service. Coefficient per MW.",
+      "Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -470,7 +470,7 @@
       "constraint_invested_capacity_coeff",
       null,
       null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Coefficient per MW.",
+      "Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -486,7 +486,7 @@
       "construction_lead_time",
       null,
       null,
-      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "[years] Time from the investment decision until the capacity starts to operate. The start is rounded to the start of a period (see construction_lead_time_method). Investments whose rounded start is after the end of the solve or the model horizon are not offered, with a warning. Constant or period. Default 0.",
       "investment"
     ],
     [
@@ -494,7 +494,7 @@
       "construction_lead_time_method",
       null,
       "construction_lead_time_methods",
-      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "How the start of operation (decision year plus construction_lead_time) is rounded to the start of a period. immediate: no lead time, the capacity operates from the decision period. closest_seam: the nearest period start; a tie goes to the later one. previous_seam: the period start before. next_seam: the period start after. Without a value: immediate when there is no lead time, else closest_seam.",
       "investment"
     ],
     [
@@ -556,7 +556,7 @@
       "fixed_cost",
       null,
       null,
-      "[CUR/kW] Annual fixed cost. Constant or period.",
+      "[CUR/kW] Annual fixed cost. New capacity pays it only while it operates. Constant or period.",
       "investment"
     ],
     [
@@ -564,7 +564,7 @@
       "invest_cost",
       null,
       null,
-      "[CUR/kW] Investment cost for new 'virtual' capacity. Constant or period.",
+      "[CUR/kW] Overnight investment cost of new capacity. It is paid as an annuity over the years the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -572,7 +572,7 @@
       "invest_max_period",
       null,
       null,
-      "[MW] Largest allowed investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
+      "[MW] Largest allowed capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
       "investment"
     ],
     [
@@ -580,7 +580,7 @@
       "invest_max_total",
       null,
       null,
-      "[MW] Largest allowed total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
+      "[MW] Largest allowed total investment over all solves. Every investment decision counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -596,7 +596,7 @@
       "invest_min_period",
       null,
       null,
-      "[MW] Smallest required investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
+      "[MW] Smallest required capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
       "investment"
     ],
     [
@@ -604,7 +604,7 @@
       "invest_min_total",
       null,
       null,
-      "[MW] Smallest required total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
+      "[MW] Smallest required total investment over all solves. Every investment decision counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -623,7 +623,7 @@
       "lifetime",
       null,
       null,
-      "[years] Used to calculate annuity together with interest rate. Constant or period.",
+      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
       "investment"
     ],
     [
@@ -951,7 +951,7 @@
       "invest_max_period",
       null,
       null,
-      "[MW or MWh] Largest allowed investment in each period, summed over the group's units and connections (MW) and storage nodes (MWh). Constant or period.",
+      "[MW or MWh] Largest allowed capacity coming online in each period, summed over the group's units and connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided earlier. Constant or period.",
       "investment"
     ],
     [
@@ -959,7 +959,7 @@
       "invest_max_total",
       null,
       null,
-      "[MW or MWh] Largest allowed total investment of the group over all solves. Every investment counts; retirements do not reduce it. Constant.",
+      "[MW or MWh] Largest allowed total investment of the group over all solves. Every investment decision counts; retirements do not reduce it. Constant.",
       "investment"
     ],
     [
@@ -978,7 +978,7 @@
       "invest_min_period",
       null,
       null,
-      "[MW or MWh] Smallest required investment in each period, summed over the group's units and connections (MW) and storage nodes (MWh). Constant or period.",
+      "[MW or MWh] Smallest required capacity coming online in each period, summed over the group's units and connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided earlier. Constant or period.",
       "investment"
     ],
     [
@@ -986,7 +986,7 @@
       "invest_min_total",
       null,
       null,
-      "[MW or MWh] Smallest required total investment of the group over all solves. Every investment counts; retirements do not reduce it. Constant.",
+      "[MW or MWh] Smallest required total investment of the group over all solves. Every investment decision counts; retirements do not reduce it. Constant.",
       "investment"
     ],
     [
@@ -1235,7 +1235,7 @@
       "constraint_capacity_coeff",
       null,
       null,
-      "Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MWh.",
+      "Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MWh. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -1243,7 +1243,7 @@
       "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
-      "Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retirements). Investments with a construction lead time count when they enter service. Coefficient per MWh.",
+      "Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -1259,7 +1259,7 @@
       "constraint_invested_capacity_coeff",
       null,
       null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Coefficient per MWh.",
+      "Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -1283,7 +1283,7 @@
       "construction_lead_time",
       null,
       null,
-      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "[years] Time from the investment decision until the storage capacity starts to operate. The start is rounded to the start of a period (see construction_lead_time_method). Investments whose rounded start is after the end of the solve or the model horizon are not offered, with a warning. Constant or period. Default 0.",
       "investment"
     ],
     [
@@ -1291,7 +1291,7 @@
       "construction_lead_time_method",
       null,
       "construction_lead_time_methods",
-      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "How the start of operation (decision year plus construction_lead_time) is rounded to the start of a period. immediate: no lead time, the storage capacity operates from the decision period. closest_seam: the nearest period start; a tie goes to the later one. previous_seam: the period start before. next_seam: the period start after. Without a value: immediate when there is no lead time, else closest_seam.",
       "investment"
     ],
     [
@@ -1367,7 +1367,7 @@
       "fixed_cost",
       null,
       null,
-      "[CUR/kWh] Annual fixed cost for storage. Constant or period.",
+      "[CUR/kWh] Annual fixed cost for storage. New storage capacity pays it only while it operates. Constant or period.",
       "investment"
     ],
     [
@@ -1394,7 +1394,7 @@
       "invest_cost",
       null,
       null,
-      "[CUR/kWh] Investment cost for new storage capacity. Constant or period.",
+      "[CUR/kWh] Overnight investment cost of new storage capacity. It is paid as an annuity over the years the storage capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the storage capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -1402,7 +1402,7 @@
       "invest_forced",
       null,
       null,
-      "[MWh] Forces the model to invest exactly this amount of new storage capacity, overriding the investment optimisation (equivalent to setting invest_min and invest_max equal). Constant or period.",
+      "[MWh] Forces exactly this much new storage capacity to come online in the period, overriding the investment optimisation (as setting invest_min and invest_max equal). Constant or period.",
       "investment"
     ],
     [
@@ -1410,7 +1410,7 @@
       "invest_max_period",
       null,
       null,
-      "[MWh] Largest allowed storage investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
+      "[MWh] Largest allowed storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
       "investment"
     ],
     [
@@ -1418,7 +1418,7 @@
       "invest_max_total",
       null,
       null,
-      "[MWh] Largest allowed total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
+      "[MWh] Largest allowed total investment over all solves. Every investment decision counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -1434,7 +1434,7 @@
       "invest_min_period",
       null,
       null,
-      "[MWh] Smallest required storage investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
+      "[MWh] Smallest required storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
       "investment"
     ],
     [
@@ -1442,7 +1442,7 @@
       "invest_min_total",
       null,
       null,
-      "[MWh] Smallest required total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
+      "[MWh] Smallest required total investment over all solves. Every investment decision counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -1450,7 +1450,7 @@
       "lifetime",
       null,
       null,
-      "[years] Used to calculate annuity together with interest rate. Constant or period.",
+      "[years] Operating lifetime. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
       "investment"
     ],
     [
@@ -1863,7 +1863,7 @@
       "invest_periods",
       null,
       null,
-      "Array of periods where investments are allowed.",
+      "Array of periods in which investments can be decided. With a construction lead time, the capacity comes online later.",
       "solve_basics"
     ],
     [
@@ -2086,7 +2086,7 @@
       "constraint_capacity_coeff",
       null,
       null,
-      "Puts the unit's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW.",
+      "Puts the unit's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -2094,7 +2094,7 @@
       "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
-      "Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retirements). Investments with a construction lead time count when they enter service. Coefficient per MW.",
+      "Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2110,7 +2110,7 @@
       "constraint_invested_capacity_coeff",
       null,
       null,
-      "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] — new-build capacity decided in the current period — on the left side of the user-defined constraint. Coefficient per MW.",
+      "Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2126,7 +2126,7 @@
       "construction_lead_time",
       null,
       null,
-      "[years] Construction lead time: capacity ordered in a period becomes available this many years later, snapped to a period boundary per construction_lead_time_method (defaults to closest_seam when set; use immediate to keep capacity available from the decision period). Constant or period. Default 0 (instantaneous, as before).",
+      "[years] Time from the investment decision until the capacity starts to operate. The start is rounded to the start of a period (see construction_lead_time_method). Investments whose rounded start is after the end of the solve or the model horizon are not offered, with a warning. Constant or period. Default 0.",
       "investment"
     ],
     [
@@ -2134,7 +2134,7 @@
       "construction_lead_time_method",
       null,
       "construction_lead_time_methods",
-      "How yr(order)+construction_lead_time snaps to a period boundary: immediate (no lag; capacity from the decision period; byte-identical to prior behaviour), closest_seam (nearest boundary, exact tie rounds up; the effective default when a lead time is set), previous_seam (round down), next_seam (round up). Unset resolves to immediate when no lead time, else closest_seam.",
+      "How the start of operation (decision year plus construction_lead_time) is rounded to the start of a period. immediate: no lead time, the capacity operates from the decision period. closest_seam: the nearest period start; a tie goes to the later one. previous_seam: the period start before. next_seam: the period start after. Without a value: immediate when there is no lead time, else closest_seam.",
       "investment"
     ],
     [
@@ -2212,7 +2212,7 @@
       "fixed_cost",
       null,
       null,
-      "[CUR/kW] Annual fixed cost. Constant or period.",
+      "[CUR/kW] Annual fixed cost. New capacity pays it only while it operates. Constant or period.",
       "investment"
     ],
     [
@@ -2220,7 +2220,7 @@
       "invest_cost",
       null,
       null,
-      "[CUR/kW] Investment cost of the unit. Constant or period.",
+      "[CUR/kW] Overnight investment cost of new capacity. It is paid as an annuity over the years the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -2228,7 +2228,7 @@
       "invest_max_period",
       null,
       null,
-      "[MW] Largest allowed investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
+      "[MW] Largest allowed capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
       "investment"
     ],
     [
@@ -2236,7 +2236,7 @@
       "invest_max_total",
       null,
       null,
-      "[MW] Largest allowed total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
+      "[MW] Largest allowed total investment over all solves. Every investment decision counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -2252,7 +2252,7 @@
       "invest_min_period",
       null,
       null,
-      "[MW] Smallest required investment in each period. Counts only what is built in that period; existing capacity and retirements do not change it. Constant or period.",
+      "[MW] Smallest required capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
       "investment"
     ],
     [
@@ -2260,7 +2260,7 @@
       "invest_min_total",
       null,
       null,
-      "[MW] Smallest required total investment over all solves. Every investment counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
+      "[MW] Smallest required total investment over all solves. Every investment decision counts, also reinvestments and investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.",
       "investment"
     ],
     [
@@ -2268,7 +2268,7 @@
       "lifetime",
       null,
       null,
-      "[years] Used to calculate annuity together with interest rate. Constant or period.",
+      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
       "investment"
     ],
     [

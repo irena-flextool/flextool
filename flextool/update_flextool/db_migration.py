@@ -4350,11 +4350,11 @@ def _v77_texts() -> dict[tuple[str, str], str]:
     t: dict[tuple[str, str], str] = {}
     for cls in ("unit", "connection"):
         t[(cls, "invest_max_period")] = (
-            "[MW] Largest allowed investment in each period. Counts only what is built in that period; existing "
-            "capacity and retirements do not change it. Constant or period.")
+            "[MW] Largest allowed capacity coming online in each period. Existing capacity and retirements do not "
+            "change it. With a construction lead time, the investment is decided earlier. Constant or period.")
         t[(cls, "invest_min_period")] = (
-            "[MW] Smallest required investment in each period. Counts only what is built in that period; existing "
-            "capacity and retirements do not change it. Constant or period.")
+            "[MW] Smallest required capacity coming online in each period. Existing capacity and retirements do not "
+            "change it. With a construction lead time, the investment is decided earlier. Constant or period.")
         t[(cls, "retire_max_period")] = (
             "[MW] Largest allowed retirement in each period. Counts only what is retired in that period; existing "
             "capacity and investments do not change it. Constant or period.")
@@ -4362,17 +4362,18 @@ def _v77_texts() -> dict[tuple[str, str], str]:
             "[MW] Smallest required retirement in each period. Counts only what is retired in that period; existing "
             "capacity and investments do not change it. Constant or period.")
         t[(cls, "invest_max_total")] = (
-            "[MW] Largest allowed total investment over all solves. Every investment counts, also reinvestments and "
-            "investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit "
-            "the capacity in service, use cumulative_max_capacity. Constant.")
+            "[MW] Largest allowed total investment over all solves. Every investment decision counts, also "
+            "reinvestments and investments that are no longer in service. Retirements and existing capacity do not "
+            "reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.")
         t[(cls, "invest_min_total")] = (
-            "[MW] Smallest required total investment over all solves. Every investment counts, also reinvestments "
-            "and investments that are no longer in service. Retirements and existing capacity do not reduce it. To "
-            "limit the capacity in service, use cumulative_max_capacity. Constant.")
+            "[MW] Smallest required total investment over all solves. Every investment decision counts, also "
+            "reinvestments and investments that are no longer in service. Retirements and existing capacity do not "
+            "reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.")
         t[(cls, "startup_cost")] = "[CUR/MW] Cost of starting up one MW of capacity. Constant or period."
         t[(cls, "constraint_capacity_coeff")] = (
             f"Puts the {cls}'s capacity in service in each period on the left side of the user constraint (existing "
-            "plus investments still in service minus retirements). Coefficient per MW.")
+            "plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is "
+            "not included.")
         t[(cls, "constraint_retired_capacity_coeff")] = (
             "Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.")
         t[(cls, "constraint_in_construction_capacity_coeff")] = (
@@ -4380,11 +4381,11 @@ def _v77_texts() -> dict[tuple[str, str], str]:
             "in construction from the period of the investment decision until it comes online. It is zero without "
             "a construction lead time. Coefficient per MW.")
     t[("node", "invest_max_period")] = (
-        "[MWh] Largest allowed storage investment in each period. Counts only what is built in that period; existing "
-        "capacity and retirements do not change it. Constant or period.")
+        "[MWh] Largest allowed storage capacity coming online in each period. Existing capacity and retirements do "
+        "not change it. With a construction lead time, the investment is decided earlier. Constant or period.")
     t[("node", "invest_min_period")] = (
-        "[MWh] Smallest required storage investment in each period. Counts only what is built in that period; "
-        "existing capacity and retirements do not change it. Constant or period.")
+        "[MWh] Smallest required storage capacity coming online in each period. Existing capacity and retirements "
+        "do not change it. With a construction lead time, the investment is decided earlier. Constant or period.")
     t[("node", "retire_max_period")] = (
         "[MWh] Largest allowed retirement of storage capacity in each period. Counts only what is retired in that "
         "period; existing capacity and investments do not change it. Constant or period.")
@@ -4392,13 +4393,13 @@ def _v77_texts() -> dict[tuple[str, str], str]:
         "[MWh] Smallest required retirement of storage capacity in each period. Counts only what is retired in that "
         "period; existing capacity and investments do not change it. Constant or period.")
     t[("node", "invest_max_total")] = (
-        "[MWh] Largest allowed total investment over all solves. Every investment counts, also reinvestments and "
-        "investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit "
-        "the capacity in service, use cumulative_max_capacity. Constant.")
+        "[MWh] Largest allowed total investment over all solves. Every investment decision counts, also "
+        "reinvestments and investments that are no longer in service. Retirements and existing capacity do not "
+        "reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.")
     t[("node", "invest_min_total")] = (
-        "[MWh] Smallest required total investment over all solves. Every investment counts, also reinvestments and "
-        "investments that are no longer in service. Retirements and existing capacity do not reduce it. To limit "
-        "the capacity in service, use cumulative_max_capacity. Constant.")
+        "[MWh] Smallest required total investment over all solves. Every investment decision counts, also "
+        "reinvestments and investments that are no longer in service. Retirements and existing capacity do not "
+        "reduce it. To limit the capacity in service, use cumulative_max_capacity. Constant.")
     for cls, unit in (("unit", "[MW]"), ("connection", "[MW]"), ("node", "[MWh]")):
         t[(cls, "retire_max_total")] = (
             f"{unit} Largest allowed total retirement over all solves. Investments and existing capacity do not "
@@ -4407,16 +4408,18 @@ def _v77_texts() -> dict[tuple[str, str], str]:
             f"{unit} Smallest required total retirement over all solves. Investments and existing capacity do not "
             "change it. Constant.")
         t[(cls, "constraint_cumulative_pre_built_capacity_coeff")] = (
-            "Puts the capacity in service at the start of each period on the left side of the user constraint "
-            "(before that period's investments and retirements). Investments with a construction lead time count "
-            f"when they enter service. Coefficient per {unit[1:-1]}.")
+            "Puts the capacity in service at the start of each period on the left side of the user constraint. "
+            "This is existing capacity plus capacity that came online in earlier periods, minus earlier "
+            "retirements. Capacity coming online in the period itself is in the invested term. Coefficient per "
+            f"{unit[1:-1]}.")
         t[(cls, "constraint_invested_capacity_coeff")] = (
-            "A map of coefficients (index: constraint name, value: coefficient) that places v_invest[e, d] \u2014 "
-            "new-build capacity decided in the current period \u2014 on the left side of the user-defined "
-            f"constraint. Coefficient per {unit[1:-1]}.")
+            "Puts the capacity that comes online in each period on the left side of the user constraint. Without "
+            "a construction lead time, this is the capacity invested in that period. Coefficient per "
+            f"{unit[1:-1]}.")
     t[("node", "constraint_capacity_coeff")] = (
         "Puts the node's storage capacity in service in each period on the left side of the user constraint "
-        "(existing plus investments still in service minus retirements). Coefficient per MWh.")
+        "(existing plus investments still in service minus retirements). Coefficient per MWh. Capacity in "
+        "construction is not included.")
     t[("node", "constraint_retired_capacity_coeff")] = (
         "Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per "
         "MWh.")
@@ -4425,17 +4428,19 @@ def _v77_texts() -> dict[tuple[str, str], str]:
         "is in construction from the period of the investment decision until it comes online. It is zero without a "
         "construction lead time. Coefficient per MWh.")
     t[("group", "invest_max_period")] = (
-        "[MW or MWh] Largest allowed investment in each period, summed over the group's units and connections (MW) "
-        "and storage nodes (MWh). Constant or period.")
+        "[MW or MWh] Largest allowed capacity coming online in each period, summed over the group's units and "
+        "connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided "
+        "earlier. Constant or period.")
     t[("group", "invest_min_period")] = (
-        "[MW or MWh] Smallest required investment in each period, summed over the group's units and connections "
-        "(MW) and storage nodes (MWh). Constant or period.")
+        "[MW or MWh] Smallest required capacity coming online in each period, summed over the group's units and "
+        "connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided "
+        "earlier. Constant or period.")
     t[("group", "invest_max_total")] = (
-        "[MW or MWh] Largest allowed total investment of the group over all solves. Every investment counts; "
-        "retirements do not reduce it. Constant.")
+        "[MW or MWh] Largest allowed total investment of the group over all solves. Every investment decision "
+        "counts; retirements do not reduce it. Constant.")
     t[("group", "invest_min_total")] = (
-        "[MW or MWh] Smallest required total investment of the group over all solves. Every investment counts; "
-        "retirements do not reduce it. Constant.")
+        "[MW or MWh] Smallest required total investment of the group over all solves. Every investment decision "
+        "counts; retirements do not reduce it. Constant.")
     t[("group", "retire_max_period")] = (
         "[MW or MWh] Largest allowed retirement in each period, summed over the group's members. Needs a retire "
         "…_period option in the group's invest_method. Constant or period.")
@@ -4506,6 +4511,39 @@ def _v77_texts() -> dict[tuple[str, str], str]:
             "[factor, default 1] Fuel-equivalent energy per unit of this flow. It enters the unit's conversion "
             "equation, not the node balance. Applies to simple units too. 0 takes the flow out of the capacity, ramp "
             "and minimum load limits.")
+    for cls, unit, cost_unit, what in (("unit", "[MW]", "[CUR/kW]", "capacity"),
+                                       ("connection", "[MW]", "[CUR/kW]", "capacity"),
+                                       ("node", "[MWh]", "[CUR/kWh]", "storage capacity")):
+        t[(cls, "construction_lead_time")] = (
+            f"[years] Time from the investment decision until the {what} starts to operate. The start is rounded "
+            "to the start of a period (see construction_lead_time_method). Investments whose rounded start is "
+            "after the end of the solve or the model horizon are not offered, with a warning. Constant or period. "
+            "Default 0.")
+        t[(cls, "construction_lead_time_method")] = (
+            "How the start of operation (decision year plus construction_lead_time) is rounded to the start of a "
+            f"period. immediate: no lead time, the {what} operates from the decision period. closest_seam: the "
+            "nearest period start; a tie goes to the later one. previous_seam: the period start before. "
+            "next_seam: the period start after. Without a value: immediate when there is no lead time, else "
+            "closest_seam.")
+        t[(cls, "invest_cost")] = (
+            f"{cost_unit} Overnight investment cost of new {what}. It is paid as an annuity over the years the "
+            f"{what} operates. Construction time costs with their interest must be included here. Constant or "
+            f"period: the value of the period when the {what} is built (comes online) is used.")
+        t[(cls, "fixed_cost")] = (
+            f"{cost_unit} Annual fixed cost{' for storage' if cls == 'node' else ''}. New {what} pays it only "
+            "while it operates. Constant or period.")
+        t[(cls, "lifetime")] = (
+            f"[years] Operating lifetime. It starts when the {what} starts to operate: with a construction lead "
+            "time, after the construction. Used with the interest rate to calculate the annuity. What happens at "
+            "the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the "
+            f"{what} to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. "
+            "Constant or period.")
+    t[("node", "invest_forced")] = (
+        "[MWh] Forces exactly this much new storage capacity to come online in the period, overriding the "
+        "investment optimisation (as setting invest_min and invest_max equal). Constant or period.")
+    t[("solve", "invest_periods")] = (
+        "Array of periods in which investments can be decided. With a construction lead time, the capacity comes "
+        "online later.")
     for cls, unit in (("unit", "[MW]"), ("connection", "[MW]"), ("node", "[MWh]")):
         t[(cls, "virtual_unitsize")] = (
             f"{unit} Size of one unit. Investments, retirements and binary startups move whole units of this size. "
@@ -4656,7 +4694,7 @@ _V77_GROUP_INVEST_METHODS = (
 # default).
 BEHAVIOUR_CHANGE_MARKER_PREFIX = "flextool_behaviour_change:"
 _V77_UNCONDITIONAL_MARKERS = ("user_constraint_prebuilt_nets_retirements", "dc_power_flow_lines_beside_dc_links",
-                              "price_ladder_periods_from_solve_periods")
+                              "price_ladder_periods_from_solve_periods", "construction_lead_time_commissioning")
 
 # Definitions the schema no longer has but old databases may still carry.
 _V77_STALE_DEFINITIONS = (

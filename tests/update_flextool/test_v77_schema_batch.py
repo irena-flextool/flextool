@@ -225,3 +225,8 @@ def test_repository_jsons_carry_no_behaviour_markers(path: Path) -> None:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     assert not any(str(row[0]).startswith("flextool_behaviour_change:") for row in data.get("metadata", []))
+
+
+def test_construction_lead_time_marker_written(migrated) -> None:
+    """A database upgraded from below v77 carries the construction lead time behaviour-change marker."""
+    assert ("flextool_behaviour_change:construction_lead_time_commissioning", "77") in migrated["after"]["markers"]

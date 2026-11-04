@@ -1,5 +1,23 @@
 ## Unreleased
 
+- **Construction lead time: "invested" is the capacity that comes online** (results change for models with a
+  `construction_lead_time`). The capacity results (`unit_capacity__d`, `connection_capacity__d`,
+  `node_capacity__d`) report as `invested` the capacity that comes online in the period, and a new column
+  `in_construction` the capacity decided but not yet operating; the column is always written and is empty without a
+  lead time, and capacity plots give it its own bar colour. Over combined solves each realized investment is
+  counted once, in the period it comes online. The per-period investment limits (`invest_max_period` /
+  `invest_min_period`, also of groups) and `constraint_invested_capacity_coeff` count capacity
+  coming online in the period; the new `constraint_in_construction_capacity_coeff` puts the capacity in
+  construction in a user constraint, and capacity in service = pre-built + invested − retired now holds with a lead
+  time too. The annuity and fixed cost of new capacity are paid only while it operates, at the `invest_cost` (an
+  overnight cost), lifetime and interest rate of the period it comes online; the lifetime starts then. The start of
+  operation is rounded on the periods of the whole model, so a chain of solves and a single solve agree.
+  Investments that would start to operate after the end of the solve or of the model horizon are not offered, with
+  a warning naming the entity, the lead time and the solve; a chain whose solves are not longer than the lead time
+  therefore does not invest in that technology (use a longer solve horizon or `construction_lead_time_method`
+  `immediate`). A minimum per-period limit that nothing can meet (nothing can come online in the period) is an
+  error naming the entity, the period and the lead time. An upgraded database with a lead time prints a notice
+  naming the entities. Without a lead time, results are unchanged apart from the new empty column.
 - **Dispatch and other time-series plots again leave a gap at timeline breaks**: after a gap in the timeline, at
   the start of every representative period (also between two adjacent representative periods) and at the first
   step of a period that does not continue the previous one (also a later year that reuses the same timeset).
@@ -93,9 +111,8 @@
   retirements decided earlier in the same solve were ignored while those of earlier solves of a chain were
   subtracted, so one solve and a chain of solves of the same problem gave different results. Results change only
   for models that retire capacity of an entity with this coefficient; upgraded databases print a notice naming the
-  constraints. Without a construction lead time, capacity in service = pre-built + invested − retired; with one,
-  an investment counts as invested in the period it is decided and in pre-built and capacity from the period it
-  enters service.
+  constraints. Capacity in service = pre-built + invested − retired, also with a construction lead time (see the
+  construction lead time entry above).
 - **User constraints with only capacity terms are written once per period** instead of once per time step (the
   rows were identical). In the `output_horizon` raw dump these rows are
   `process_constraint_{equal,less_than,greater_than}_period` with dimensions (constraint, period).

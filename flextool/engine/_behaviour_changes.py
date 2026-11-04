@@ -93,6 +93,15 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "periods_available either, the ladder was skipped with a warning (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "price_ladder_periods_from_solve_periods"),
         ),
+        BehaviourChange(
+            id="construction_lead_time_commissioning",
+            summary=("With a construction lead time, 'invested' and the per-period investment limits count "
+                     "capacity coming online in the period; annuity and fixed cost are paid only while it "
+                     "operates, at the invest_cost of the period it comes online; the start of operation uses "
+                     "the whole model's periods; investments starting after the solve or model horizon are not "
+                     "offered (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "construction_lead_time_commissioning"),
+        ),
     )
 }
 
