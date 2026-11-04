@@ -2404,10 +2404,13 @@ def split(
             # the region subproblem's column / row order depend on the
             # process' PYTHONHASHSEED — a different simplex path, last-bit
             # different cut coefficients and, on a marginal master, a
-            # kUnknown in one process but not the next (#153).
-            _add = sorted(t for t in _new_toks if t not in _existing_set)
+            # kUnknown in one process but not the next (#153).  The widened
+            # vocabulary is re-sorted as a whole (axis vocabularies are
+            # lexically sorted, so the virtual tokens sort in with the rest
+            # exactly as the Utf8 labels would).
+            _add = [t for t in _new_toks if t not in _existing_set]
             if _add:
-                _ext[_axis_name] = pl.Enum(_existing_cats + _add)
+                _ext[_axis_name] = pl.Enum(sorted(_existing_set | set(_add)))
         _enums_token = set_global_axis_enums(_ext)
 
     try:

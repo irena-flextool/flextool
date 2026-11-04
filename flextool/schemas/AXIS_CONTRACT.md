@@ -13,6 +13,18 @@ The contract is consumed by `flextool/spinedb_backend/_axis_enums.py`
 (landing in Phase 1) at runtime to build the per-axis `pl.Enum` dtypes
 that the Backend and the cascade cast against.
 
+## Vocabulary rules
+
+* Every vocabulary is de-duplicated and **lexically sorted** (Python `sorted`, i.e. code-point =
+  UTF-8 byte order = the polars Utf8 sort). polars sorts an Enum column by category order, so the
+  sorted vocabularies make an Enum run sort periods, timesteps and entities — and lay out the LP —
+  exactly as the production Utf8 run does.
+* `g` covers both group classes, `group` and `flowGroup`.
+* `d_anchor` (anchor period of a `period__branch` row) is the `d` vocabulary.
+* `branch` covers every `d` token as well as the stochastic branch labels: `period__branch.b`
+  holds period labels (trunk self-rows `(d, d)` in every run, `"{period}_{branch}"` sibling
+  periods in stochastic runs).
+
 ## Coupling with `spinedb_schema.json`
 
 The contract migrates **hand-in-hand** with `spinedb_schema.json`.

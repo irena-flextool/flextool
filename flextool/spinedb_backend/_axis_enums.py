@@ -692,8 +692,7 @@ def build_axis_enums(
 
     For each axis in the contract:
       * ``entity_class`` — vocabulary = ``find_entities(class)`` names.
-      * ``entity_class_union`` — union across the listed classes
-        (first-occurrence order preserved).
+      * ``entity_class_union`` — union across the listed classes.
       * ``parameter_keys`` — vocabulary depends on the specific axis:
         - ``t``: keys of ``timeline.timestep_duration`` map.
         - ``d``: union of period keys/values across the four solve
@@ -701,14 +700,20 @@ def build_axis_enums(
         - ``i``: integers ``"1"..."N"`` where N is the max map depth
           across ``commodity.price_ladder_*`` parameters.
         - ``block``: keys of ``group.new_stepduration`` maps.
-        - ``d_anchor``: empty here — populated per-solve at Phase 3
-          handoff.
+        - ``d_anchor``: the ``d`` vocabulary (anchors are periods).
       * ``parameter_value_list`` — scalar values of the named parameter
-        (e.g. ``solve.stochastic_branches`` for ``branch``).
+        (e.g. ``solve.stochastic_branches`` for ``branch``; ``branch``
+        also covers every ``d`` token, since ``period__branch.b`` holds
+        period labels).
       * ``synthetic`` — use ``spec.tokens`` verbatim.
 
     Synthetic-allowlist tokens (e.g. ``eff``/``noEff`` for ``branch``,
-    ``default`` for ``block``) are appended to every axis's vocabulary.
+    ``default`` for ``block``) are added to every axis's vocabulary.
+
+    Every vocabulary is de-duplicated and lexically sorted (Python
+    ``sorted``: code-point = UTF-8 byte order, the polars Utf8 sort
+    order), so an Enum run orders periods, timesteps and entities —
+    and so the LP — exactly as the production Utf8 run does.
 
     Returns
     -------
@@ -717,7 +722,7 @@ def build_axis_enums(
         result; axes with empty vocabulary get an empty enum (still a
         valid Enum dtype, just with zero categories).
     """
-    out: dict[str, pl.Enum] = {}
+    out: dict[str, list[str]] = {}
     for axis in contract.axes:
         vocab: list[str] = []
         st = axis.source_type
@@ -753,7 +758,7 @@ def build_axis_enums(
             elif axis.name == "block":
                 vocab = _build_block_vocab(backend, spec_src)
             elif axis.name == "d_anchor":
-                # Per-solve carrier; built at Phase 3 handoff time.
+                # The ``d`` vocabulary, added after the loop.
                 vocab = []
             else:
                 # Generic fallback: union over listed parameters.
@@ -777,48 +782,6 @@ def build_axis_enums(
                 vocab = _collect_parameter_scalar_values(backend, ec, pn)
             else:
                 vocab = []
-            # Branch axis: the cascade column ``b`` (renamed from
-            # ``branch`` in _branch.py:150) carries the
-            # ``"{period}_{branch}"`` sibling-period tokens emitted by
-            # _stochastic.py:492 (``solve_branch = period + "_" + branch``)
-            # plus the base period token itself.  These flow through
-            # ``period__branch.csv`` / ``solve_branch_weight.csv`` and
-            # downstream joins; without them in the branch enum
-            # vocabulary, non-strict casts silently null the ``b``
-            # column on stochastic fixtures and break the LP joins.
-            if axis.name == "branch":
-                # Only widen for stochastic fixtures: if no
-                # ``solve.stochastic_branches`` entries exist, the
-                # period__branch overlay is not constructed and no
-                # base-period tokens flow into the ``b`` column.
-                # Polluting the branch vocab with base periods on
-                # deterministic fixtures changes the branch Enum and
-                # cascades through downstream joins that key on ``b``.
-                stoch_tokens = (
-                    _collect_stochastic_branch_period_tokens(backend))
-                if stoch_tokens:
-                    vocab = list(vocab)
-                    vocab.extend(stoch_tokens)
-                    # Base period tokens — ``period__branch.csv``
-                    # includes ``(period, period)`` rows where the
-                    # ``b`` value is the bare period name (see
-                    # _stochastic.py:463).
-                    base_periods: list[str] = []
-                    for solve_param in ["years_represented",
-                                           "invest_periods",
-                                           "realized_invest_periods"]:
-                        base_periods.extend(
-                            _collect_parameter_map_keys(
-                                backend, "solve", solve_param
-                            )
-                        )
-                    base_periods.extend(
-                        _collect_parameter_array_values(
-                            backend, "solve", "realized_periods"
-                        )
-                    )
-                    vocab.extend(base_periods)
-                    vocab = _dedup_keep_order(vocab)
         elif st == "synthetic":
             vocab = list(axis.tokens or [])
         else:
@@ -827,13 +790,24 @@ def build_axis_enums(
             # practice; we degrade gracefully here.
             vocab = []
 
-        # Merge synthetic-allowlist tokens (always last; dedup keeps
-        # original tokens' priority).
-        vocab = _dedup_keep_order(
-            list(vocab) + _allowlist_tokens_for(contract, axis.name)
-        )
-        out[axis.name] = pl.Enum(vocab)
-    return out
+        # Merge synthetic-allowlist tokens.
+        out[axis.name] = list(vocab) + _allowlist_tokens_for(contract, axis.name)
+    # Period labels on the derived axes.  ``d_anchor`` holds the anchor period of a
+    # ``period__branch`` row, so its vocabulary is the ``d`` vocabulary.  The cascade column
+    # ``b`` (``branch`` axis) holds period labels too: the trunk self-rows ``(d, d)`` of
+    # ``period__branch`` in every run, and the ``"{period}_{branch}"`` sibling periods of a
+    # stochastic run (already in ``d``, see :func:`_build_period_vocab`), so ``branch``
+    # covers every ``d`` token.
+    if "d" in out:
+        if "d_anchor" in out:
+            out["d_anchor"] = out["d_anchor"] + out["d"]
+        if "branch" in out:
+            out["branch"] = out["branch"] + out["d"]
+    # Lexical category order: polars sorts an Enum column by category order, the production
+    # (Utf8) run sorts the same labels lexically.  Python ``sorted`` on str is code-point order
+    # = UTF-8 byte order = the polars Utf8 sort, so every sort, "first" / "previous" pick and
+    # LP column / row order of an Enum run matches the Utf8 run.
+    return {name: pl.Enum(sorted(set(vocab))) for name, vocab in out.items()}
 
 
 def build_scenario_axis_enums(db_url: str, scenario: str) -> tuple[dict[str, pl.Enum], AxisContract]:

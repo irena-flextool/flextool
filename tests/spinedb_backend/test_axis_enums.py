@@ -217,9 +217,47 @@ def test_build_axis_enums_parameter_keys_i_runtime_depth(
 
 def test_build_axis_enums_synthetic(axis_enums: dict[str, pl.Enum]) -> None:
     """Synthetic axes use the contract's ``tokens`` field verbatim."""
-    assert axis_enums["side"].categories.to_list() == ["source", "sink"]
-    assert axis_enums["ud"].categories.to_list() == ["up", "down"]
-    assert axis_enums["klass"].categories.to_list() == ["unit", "connection"]
+    assert axis_enums["side"].categories.to_list() == ["sink", "source"]
+    assert axis_enums["ud"].categories.to_list() == ["down", "up"]
+    assert axis_enums["klass"].categories.to_list() == ["connection", "unit"]
+
+
+def test_every_vocabulary_is_lexically_sorted(axis_enums: dict[str, pl.Enum]) -> None:
+    """Category order = the polars Utf8 sort order, so an Enum run sorts axis labels as the Utf8 run does."""
+    for name, enum in axis_enums.items():
+        cats = enum.categories.to_list()
+        assert cats == sorted(cats), name
+        assert cats == pl.Series(cats, dtype=pl.Utf8).sort().to_list(), name
+
+
+@pytest.fixture(scope="module")
+def base_scenario_enums(test_db_url: str) -> dict[str, pl.Enum]:
+    """The scenario-filtered vocabulary of the deterministic ``base`` scenario (what a run builds)."""
+    from flextool.spinedb_backend._axis_enums import build_scenario_axis_enums
+
+    return build_scenario_axis_enums(test_db_url, "base")[0]
+
+
+def test_group_axis_covers_flowgroup(test_db_url: str, base_scenario_enums: dict[str, pl.Enum]) -> None:
+    """``g`` keys the flow-group families too, so it holds the flowGroup class names (v58 carve-out)."""
+    from spinedb_api import DatabaseMapping
+
+    with DatabaseMapping(test_db_url) as db:
+        flow_groups = {e["name"] for e in db.find_entities(entity_class_name="flowGroup")}
+        groups = {e["name"] for e in db.find_entities(entity_class_name="group")}
+    assert flow_groups
+    g = set(base_scenario_enums["g"].categories.to_list())
+    assert flow_groups <= g
+    assert groups <= g
+
+
+def test_anchor_and_branch_axes_cover_periods(base_scenario_enums: dict[str, pl.Enum]) -> None:
+    """``d_anchor`` (anchor periods) is the ``d`` vocabulary; ``branch`` covers every period, since the
+    ``period__branch`` trunk self-rows put period labels in ``b`` also in a deterministic run."""
+    d = base_scenario_enums["d"].categories.to_list()
+    assert d
+    assert base_scenario_enums["d_anchor"].categories.to_list() == d
+    assert set(d) <= set(base_scenario_enums["branch"].categories.to_list())
 
 
 def test_synthetic_allowlist_merged_into_branch(

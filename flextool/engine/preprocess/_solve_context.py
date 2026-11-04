@@ -636,7 +636,18 @@ def _load_period_branch(path: Path,
     cols = [c for c in ("d_anchor", "b") if c in df.columns]
     df = df.select(cols).unique(maintain_order=True) if cols else empty
     if _live is not None:
-        df = cast_frame_axes(df, _live)
+        cast = cast_frame_axes(df, _live)
+        for col in cols:
+            lost = cast[col].is_null() & df[col].is_not_null()
+            if lost.any():
+                from flextool.spinedb_backend._axis_enums import FlexDataIntegrityError
+                bad = sorted({str(v) for v in df.filter(lost)[col].to_list()})
+                raise FlexDataIntegrityError(
+                    f"period__branch column {col!r} holds labels outside the {col!r} axis vocabulary: {bad}. "
+                    "Axis-Enum mode builds 'd_anchor' from the period ('d') vocabulary and 'b' (branch) to cover "
+                    "every period, so every label here should be a period of the scenario."
+                )
+        df = cast
     return df
 
 

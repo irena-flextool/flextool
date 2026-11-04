@@ -160,19 +160,10 @@ def period_branch_pairs_lf(
               "b": schema_dtype(_enums, "b")}
     if ctx is not None:
         pb_df = getattr(ctx, "period_branch", None)
-        # Trust ``ctx.period_branch`` ONLY when its ``d_anchor`` column is
-        # null-free — under enum activation the ctx frame's anchor column is
-        # null-poisoned (the ``d_anchor`` axis vocabulary is empty by
-        # contract), which would drop every trunk self-row ``(d, d)`` and
-        # silently defeat the forecasts-only ``fan_period_labels`` detection
-        # (phantom weights collapse to a naive 1/Σw instead of 0).  This
-        # mirrors the guard in :func:`_collect_lineage_inputs`; on a
-        # null-poisoned ctx we fall through to the raw ``period__branch.csv``
-        # which carries the correct anchors.
+        # ``ctx.period_branch`` is null-free: under axis Enums its loader
+        # raises on a label outside the ``d_anchor`` / ``branch`` vocabulary.
         if (pb_df is not None and pb_df.height > 0
-                and "d_anchor" in pb_df.columns
-                and pb_df["d_anchor"].null_count() == 0
-                and pb_df["b"].null_count() == 0):
+                and "d_anchor" in pb_df.columns):
             return (pb_df.lazy()
                           .select(alias_to_axis("d_anchor", "d"),
                                   cast_dim(pl.col("b"), _enums, "b"))
@@ -991,13 +982,10 @@ def _lineage_inputs(
     :func:`pd_non_anticipativity_lf` (design §3.1.1):
 
     * ``pb_rows`` — ``period__branch`` (anchor d, member b) pairs in
-      CSV row order (period order).  Guarded-ctx acquisition per the
-      ``dtttdt_from_source`` precedent (``_derived.py:
-      6578-6605``): ``ctx.period_branch`` is trusted only when BOTH
-      columns are null-free — the ``d_anchor`` axis vocabulary is
-      empty by contract, so under enum activation the ctx frame's
-      anchor column is null-poisoned.  Fallback reads the raw
-      provider/workdir CSV directly (NOT via
+      CSV row order (period order).  ``ctx.period_branch`` first (its
+      loader raises under axis Enums on a label outside the vocabulary,
+      so it is null-free); without a ctx frame the raw
+      provider/workdir CSV is read directly (NOT via
       :func:`period_branch_pairs_lf`, which de-duplicates the rows —
       ``pos`` below is derived from the (d, d) self-row order, which
       must stay the period order).
@@ -1017,9 +1005,7 @@ def _lineage_inputs(
     got_pb = False
     if ctx is not None:
         pb_ctx = getattr(ctx, "period_branch", None)
-        if (pb_ctx is not None and pb_ctx.height > 0
-                and pb_ctx["d_anchor"].null_count() == 0
-                and pb_ctx["b"].null_count() == 0):
+        if pb_ctx is not None and pb_ctx.height > 0:
             pb_rows = [(str(a), str(b)) for a, b in
                        zip(pb_ctx["d_anchor"].to_list(),
                            pb_ctx["b"].to_list())]

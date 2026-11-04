@@ -78,6 +78,33 @@ def test_period_branch_round_trip(tmp_path):
     assert out["b"].to_list() == ["b0", "b1"]
 
 
+def test_period_branch_under_axis_enums_keeps_labels_or_raises(tmp_path):
+    """Under axis Enums the loader casts ``d_anchor`` / ``b``; a label outside the vocabulary raises
+    instead of turning into a null anchor (which consumers would silently mis-classify)."""
+    from flextool.engine.input._axis_enums import reset_global_axis_enums, set_global_axis_enums
+    from flextool.spinedb_backend._axis_enums import FlexDataIntegrityError
+
+    provider = FlexDataProvider()
+    _seed(provider, "period__branch",
+          pl.DataFrame({"period": ["d2025", "d2025"], "branch": ["d2025", "d2025_b1"]}))
+    path = tmp_path / "solve_data" / "period__branch.csv"
+    periods = ["d2025", "d2025_b1"]
+    tok = set_global_axis_enums({"d_anchor": pl.Enum(periods), "branch": pl.Enum(periods)})
+    try:
+        out = _load_period_branch(path, provider=provider)
+        assert out.schema["d_anchor"] == pl.Enum(periods)
+        assert out["d_anchor"].cast(pl.Utf8).to_list() == ["d2025", "d2025"]
+        assert out["b"].cast(pl.Utf8).to_list() == ["d2025", "d2025_b1"]
+    finally:
+        reset_global_axis_enums(tok)
+    tok = set_global_axis_enums({"d_anchor": pl.Enum([]), "branch": pl.Enum(periods)})
+    try:
+        with pytest.raises(FlexDataIntegrityError, match="d_anchor"):
+            _load_period_branch(path, provider=provider)
+    finally:
+        reset_global_axis_enums(tok)
+
+
 def test_edd_history_round_trip(tmp_path):
     provider = FlexDataProvider()
     frame = pl.DataFrame(

@@ -39,10 +39,11 @@
     {
       "name": "g",
       "label": "group",
-      "source_type": "entity_class",
-      "source": "group",
+      "source_type": "entity_class_union",
+      "source": ["group", "flowGroup"],
       "filter": "scenario_filter",
-      "column_synonyms": ["group"]
+      "column_synonyms": ["group"],
+      "note": "Groups of both classes: nodeGroup / generic 'group' entities and the flowGroup class carved out of 'group' (v58). Model families keyed on 'g' (cumulative flow, flow-group minimum load, ...) carry flowGroup names."
     },
     {
       "name": "f",
@@ -114,7 +115,7 @@
       },
       "filter": "gated by solve.include_stochastics",
       "column_synonyms": ["b"],
-      "note": "Stochastic branch labels. The cascade column is 'b' (renamed from 'branch' in _branch.py:150). WARNING: 'b' is overloaded — _block.py / _block_layout.py also use 'b' for the BLOCK axis (see 'block' axis below). The two never appear in the same frame, but Phase 1 must decide on a disambiguation (e.g. rename block→bk in block helpers, or rename branch→br). See review_notes.b_collision. Empty enum is valid (deterministic runs)."
+      "note": "Stochastic branch labels. The cascade column is 'b' (renamed from 'branch' in _branch.py:150). WARNING: 'b' is overloaded — _block.py / _block_layout.py also use 'b' for the BLOCK axis (see 'block' axis below). The two never appear in the same frame, but Phase 1 must decide on a disambiguation (e.g. rename block→bk in block helpers, or rename branch→br). See review_notes.b_collision. Vocabulary = the stochastic branch labels + the allowlist tokens + every 'd' token: the period__branch carrier holds period labels in 'b' (the trunk self-rows (d, d) in every run, the '{period}_{branch}' sibling periods in stochastic runs)."
     },
     {
       "name": "block",
@@ -165,8 +166,8 @@
         "carrier": "period__branch",
         "column": "d_anchor"
       },
-      "filter": "subset of 'd' when stochastic",
-      "note": "Only populated when stochastic. Vocabulary = distinct anchor periods in the per-solve period__branch carrier. Derived; not a schema axis."
+      "filter": "subset of 'd'",
+      "note": "Anchor period of a period__branch row (the period a forecast branch hangs off; the period itself for a trunk self-row). Vocabulary = the 'd' vocabulary (every anchor is a period). Derived; not a schema axis."
     },
     {
       "name": "side",
