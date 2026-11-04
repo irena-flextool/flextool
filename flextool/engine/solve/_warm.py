@@ -134,6 +134,8 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "period_block_time", "dtttdt_block_interior", "dtttdt_block_lag", "period_block_chain",
     # Coarse new_stepduration group nodes.
     "nodeCoarse", "node_coarse_step", "node_coarse_interior",
+    # Coarse processes (one flow per coarse step).
+    "processCoarse", "process_coarse_step",
     # RP-blended-weights (bind_within_solve_blended_weights) sets / params —
     # per-solve constants that don't change across iterations within a
     # level; same carry-over kind as the intraperiod-block family above.

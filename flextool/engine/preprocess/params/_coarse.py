@@ -1,9 +1,17 @@
-"""Coarse time steps of the nodes in a ``new_stepduration`` group.
+"""Coarse time steps of the nodes in a ``new_stepduration`` group, and of the processes between them.
 
 A group whose ``new_stepduration`` is longer than the solve's time step makes its balance and storage nodes
-*coarse*: every flow, online status, reserve and angle stays on the solve's steps, and each coarse node is
-balanced once per coarse step by summing its fine balance terms over the step (``nodeBalanceCoarse_eq``); a
-coarse storage node keeps one state per coarse step (``stateConstantCoarse_eq``).
+*coarse*: each coarse node is balanced once per coarse step by summing its fine balance terms over the step
+(``nodeBalanceCoarse_eq``); a coarse storage node keeps one state per coarse step (``stateConstantCoarse_eq``).
+Online status, reserves and angles stay on the solve's steps.
+
+A unit or connection whose every balance node is coarse is a *coarse process* (:func:`coarse_process_frames`):
+its flows have one value per coarse step of its nodes (a rate that stays the same over the step).  A process
+with a fine balance node, or with no balance node, keeps the solve's step, and so does a process with a
+feature whose rows are per fine step and couple the flow to other per-step terms (online variables, reserves,
+a delay, DC power flow, an exact connection, minimum load, a user constraint flow term, a flow group instant
+limit, a capacity-margin / inertia / non-synchronous group): those rows would not hold for a flow that cannot
+change within the coarse step.
 
 :func:`coarse_node_frames` cuts the solve's steps into coarse steps.  It is the only source of the coarse
 steps; the per-block timelines of the block layout (``solve_data/block_step_duration`` etc.) do not feed the
@@ -236,3 +244,122 @@ def coarse_membership_warnings(process_group: list[tuple[str, str]], process_nod
                 "effect on time resolution: its flows and online status stay at the solve's time step, and each "
                 "coarse node sums the flows over its coarse step.")
     return out
+
+
+def _info_once(msg: str) -> None:
+    if msg not in _WARNED:
+        _WARNED.add(msg)
+        _LOG.info(msg)
+
+
+@dataclass(frozen=True)
+class CoarseProcessFrames:
+    """``processCoarse`` ``(p)``: the coarse processes; ``process_coarse_step`` ``(p, d, b_first, t, w)``: fine step
+    t of period d lies in the coarse step b_first (its first fine step) of process p, ``w = Δt / Δ_b`` its share
+    of the coarse step's duration Δ_b = Σ_{t ∈ b} Δt.  ``step_hours`` p -> the process's coarse step (h);
+    ``kept_fine`` p -> why a process whose every balance node is coarse keeps the solve's step.  Utf8 keys."""
+
+    processCoarse: pl.DataFrame
+    process_coarse_step: pl.DataFrame
+    step_hours: dict[str, float]
+    kept_fine: dict[str, str]
+
+
+def coarse_process_frames(*, process_nodes: dict[str, set[str]], balance_nodes: set[str],
+                          node_step: dict[str, float], node_coarse_step: "pl.DataFrame | None",
+                          step_duration: "pl.DataFrame | None", excluded: dict[str, str],
+                          solve_step: float) -> "CoarseProcessFrames | None":
+    """The coarse processes and their coarse steps (module docstring).
+
+    ``process_nodes`` p -> every node of p (each source and sink, both directions of a connection);
+    ``balance_nodes`` the nodes with a per-step balance (``nodeBalance``) — the other nodes (commodity / price
+    nodes, ``balance_within_period`` nodes) are neutral; ``node_step`` coarse node -> its group's step (h);
+    ``node_coarse_step`` ``(n, d, b_first, t)`` (:func:`coarse_node_frames`); ``step_duration`` ``(d, t,
+    value)``; ``excluded`` p -> the feature that keeps p at the solve's step; ``solve_step`` (h), the duration
+    of a step missing from ``step_duration``.
+
+    A process is coarse when it has a balance node, every balance node is coarse and the shortest coarse step s
+    of its nodes divides every other one; it then takes the coarse steps of a node with step s (the coarse
+    steps of all groups are chunked from the same run starts, so they nest).  Returns ``None`` when no process
+    is coarse and none is kept fine."""
+    ncs = _utf8(node_coarse_step, ("n", "d", "b_first", "t"))
+    if ncs is None or not node_step:
+        return None
+    coarse: dict[str, tuple[float, str]] = {}
+    kept_fine: dict[str, str] = {}
+    for p in sorted(process_nodes):
+        bal = sorted(n for n in process_nodes[p] if n in balance_nodes)
+        if not bal or any(n not in node_step for n in bal):
+            continue
+        steps = {n: float(node_step[n]) for n in bal}
+        s = min(steps.values())
+        ratios = [v / s for v in steps.values()]
+        if any(abs(r - round(r)) > 1e-6 for r in ratios):
+            kept_fine[p] = ("the coarse steps of its nodes ("
+                            + ", ".join(f"{v:g} h" for v in sorted(set(steps.values())))
+                            + ") do not divide each other")
+            continue
+        if p in excluded:
+            kept_fine[p] = excluded[p]
+            continue
+        coarse[p] = (s, next(n for n in bal if abs(steps[n] - s) <= _EPS))
+    if not coarse and not kept_fine:
+        return None
+    schema = {"p": pl.Utf8, "d": pl.Utf8, "b_first": pl.Utf8, "t": pl.Utf8, "w": pl.Float64}
+    if not coarse:
+        return CoarseProcessFrames(processCoarse=pl.DataFrame(schema={"p": pl.Utf8}),
+                                   process_coarse_step=pl.DataFrame(schema=schema), step_hours={},
+                                   kept_fine=kept_fine)
+    pick = pl.DataFrame({"p": list(coarse), "n": [coarse[p][1] for p in coarse]},
+                        schema={"p": pl.Utf8, "n": pl.Utf8})
+    sd = _utf8(step_duration, ("d", "t"))
+    if sd is not None and step_duration is not None and "value" in step_duration.columns:
+        dur = sd.with_columns(__dt=step_duration["value"].cast(pl.Float64))
+    else:
+        dur = pl.DataFrame(schema={"d": pl.Utf8, "t": pl.Utf8, "__dt": pl.Float64})
+    steps = (pick.join(ncs.with_row_index("__i"), on="n", how="inner")
+             .join(dur, on=["d", "t"], how="left")
+             .with_columns(pl.col("__dt").fill_null(float(solve_step)))
+             .with_columns((pl.col("__dt") / pl.col("__dt").sum().over("p", "d", "b_first")).alias("w"))
+             .sort("p", "__i")
+             .select("p", "d", "b_first", "t", "w"))
+    return CoarseProcessFrames(processCoarse=pl.DataFrame({"p": list(coarse)}, schema={"p": pl.Utf8}),
+                               process_coarse_step=steps,
+                               step_hours={p: coarse[p][0] for p in coarse}, kept_fine=kept_fine)
+
+
+def coarse_process_messages(frames: "CoarseProcessFrames | None") -> None:
+    """Info lines (once per run): the coarse processes per step length, and each process whose nodes are all
+    coarse but that keeps the solve's step, with the reason."""
+    if frames is None:
+        return
+    by_step: dict[float, list[str]] = {}
+    for p, s in sorted(frames.step_hours.items()):
+        by_step.setdefault(s, []).append(p)
+    for s, procs in sorted(by_step.items()):
+        _info_once(f"The flows of {', '.join(repr(p) for p in procs)} use the {s:g} h time step of their nodes "
+                   "(new_stepduration): one flow per coarse step, with availability, profiles and efficiency "
+                   "averaged over the step.")
+    for p, why in sorted(frames.kept_fine.items()):
+        _info_once(f"{p!r} connects only nodes of coarse new_stepduration groups but keeps the solve's time step: "
+                   f"{why}.")
+
+
+def varies_within_coarse_steps(frame: "pl.DataFrame | None", steps: pl.DataFrame,
+                               keys: tuple[str, ...] = ()) -> set[str]:
+    """The processes p of ``steps`` ``(p, d, b_first, t)`` for which ``frame`` (``keys…, [d], [t], value``; it
+    carries ``p`` or is joined to ``steps`` on ``d`` / ``t`` only) takes more than one value within some coarse
+    step.  A frame without ``t`` is constant within every step."""
+    if frame is None or frame.height == 0 or "t" not in frame.columns or "value" not in frame.columns:
+        return set()
+    on = [c for c in ("p", "d", "t") if c in frame.columns]
+    group = ["p", "d", "b_first", *[k for k in keys if k != "p"]]
+    sel = list(dict.fromkeys([*on, *keys]))
+    f = frame.select(*(pl.col(c).cast(pl.Utf8) for c in sel), pl.col("value").cast(pl.Float64))
+    st = steps.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "b_first", "t")))
+    spread = (st.join(f, on=on, how="inner")
+              .group_by(group)
+              .agg((pl.col("value").max() - pl.col("value").min()).alias("__spread"),
+                   pl.col("value").abs().max().alias("__size")))
+    hit = spread.filter(pl.col("__spread") > 1e-9 * pl.max_horizontal(pl.lit(1.0), pl.col("__size")))
+    return set(hit["p"].to_list())

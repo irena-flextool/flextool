@@ -421,6 +421,85 @@ def _apply_coarse_frames(flex_data: "FlexData", sd: Path, *, provider: "object |
     flex_data.node_coarse_interior = frames.node_coarse_interior
 
 
+def _frame_values(frame: "pl.DataFrame | None", col: str) -> set[str]:
+    if frame is None or frame.height == 0 or col not in frame.columns:
+        return set()
+    return set(frame[col].cast(pl.Utf8).to_list())
+
+
+def coarse_process_exclusions(flex_data: "FlexData") -> dict[str, str]:
+    """Process -> the feature that keeps it at the solve's step (``params._coarse`` module docstring): rows of
+    these features are per fine step and couple the flow with other per-step terms."""
+    d = flex_data
+    out: dict[str, str] = {}
+
+    def add(procs: set[str], why: str) -> None:
+        for p in sorted(procs):
+            out.setdefault(p, why)
+
+    add(_frame_values(d.process_online, "p"), "it has online variables (startups, minimum up / down time)")
+    add(_frame_values(getattr(d, "process_minload", None), "p"), "it has a minimum load")
+    add(_frame_values(getattr(d, "prundt", None), "p"), "it provides reserves")
+    add(_frame_values(getattr(d, "process_delayed", None), "p"), "it has a delay")
+    add(_frame_values(getattr(d, "connection_dc_power_flow", None), "p"), "it is a DC power-flow line")
+    add(_frame_values(getattr(d, "process_exact", None), "p"), "it is an exact connection")
+    add(_frame_values(getattr(d, "flow_constraint_idx", None), "p"), "a user constraint has a flow term on it")
+    gpn = getattr(d, "group_process_node", None)
+    instant = set()
+    for cap in (getattr(d, "pdt_max_instant_flow", None), getattr(d, "pdt_min_instant_flow", None)):
+        if cap is not None:
+            instant |= _frame_values(cap.frame, "g")
+    if instant and gpn is not None and gpn.height > 0:
+        add(_frame_values(gpn.filter(pl.col("g").cast(pl.Utf8).is_in(sorted(instant))), "p"),
+            "its flow is in a flow group with an instant flow limit")
+    gn = getattr(d, "group_node", None)
+    pss = d.process_source_sink
+    if gn is not None and gn.height > 0 and pss is not None and pss.height > 0:
+        for groups, what in ((getattr(d, "groupCapacityMargin", None), "capacity-margin"),
+                             (getattr(d, "groupInertia", None), "inertia"),
+                             (getattr(d, "groupNonSync", None), "non-synchronous")):
+            gs = _frame_values(groups, "g")
+            if not gs:
+                continue
+            nodes = _frame_values(gn.filter(pl.col("g").cast(pl.Utf8).is_in(sorted(gs))), "n")
+            arcs = pss.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")))
+            add(set(arcs.filter(pl.col("source").is_in(sorted(nodes)) | pl.col("sink").is_in(sorted(nodes)))
+                    ["p"].to_list()),
+                f"it is connected to a node of a {what} group")
+    return out
+
+
+def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
+    """Set ``processCoarse`` / ``process_coarse_step`` (``params._coarse.coarse_process_frames``) from the
+    coarse node frames, and print the info lines of the coarse processes."""
+    from flextool.engine.preprocess.params._coarse import (
+        coarse_groups, coarse_process_frames, coarse_process_messages)
+
+    layout = flex_data.block_layout
+    ncs = flex_data.node_coarse_step
+    pss = flex_data.process_source_sink
+    if layout is None or ncs is None or ncs.height == 0 or pss is None or pss.height == 0:
+        return
+    solve_step = float(layout.block_step_duration["default"])
+    groups = coarse_groups(layout.node_block, layout.block_step_duration, solve_step)
+    coarse_nodes = _frame_values(flex_data.nodeCoarse, "n")
+    node_step = {n: groups[g] for n, g in layout.node_block.items() if n in coarse_nodes and g in groups}
+    arcs = pss.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink"))).unique()
+    process_nodes: dict[str, set[str]] = {}
+    for p, s, k in arcs.iter_rows():
+        process_nodes.setdefault(p, set()).update(n for n in (s, k) if n != p)
+    psd = flex_data.p_step_duration
+    frames = coarse_process_frames(
+        process_nodes=process_nodes, balance_nodes=_frame_values(flex_data.nodeBalance, "n"),
+        node_step=node_step, node_coarse_step=ncs, step_duration=None if psd is None else psd.frame,
+        excluded=coarse_process_exclusions(flex_data), solve_step=solve_step)
+    coarse_process_messages(frames)
+    if frames is None or frames.processCoarse.height == 0:
+        return
+    flex_data.processCoarse = frames.processCoarse
+    flex_data.process_coarse_step = frames.process_coarse_step
+
+
 def _within_period_lag(dtttdt: pl.DataFrame) -> "pl.DataFrame | None":
     """``(d, t, t_previous_within_period)``: the bind_within_period predecessor of every step of ``dtttdt``.
 
@@ -891,6 +970,10 @@ class FlexData:
     nodeCoarse: pl.DataFrame | None = None                 # set: (n,)
     node_coarse_step: pl.DataFrame | None = None           # set: (n, d, b_first, t) — fine t in coarse step b_first
     node_coarse_interior: pl.DataFrame | None = None       # set: (n, d, t, t_previous) — steps of one coarse step
+    # Units / connections whose every balance node is coarse (params._coarse.coarse_process_frames): one flow per
+    # coarse step of their nodes.
+    processCoarse: pl.DataFrame | None = None              # set: (p,)
+    process_coarse_step: pl.DataFrame | None = None        # (p, d, b_first, t, w) — fine t in coarse step b_first, w = Δt/Δ_b
     # ─── RP-blended-weights storage (bind_within_solve_blended_weights) ─────────
     # Eight per-solve sets / params that drive the intra-period state-change
     # branch for ``nodeState_rp`` plus the three ``rp_inter_period_*``
@@ -4830,6 +4913,10 @@ def load_flextool(source: "Path | str | FlexInputSource",
         if db_reader is not None:
             from flextool.engine.preprocess.params._derived import process_minload_from_p_min_load
             flex_data.process_minload = process_minload_from_p_min_load(flex_data.p_min_load)
+
+        # Units / connections whose every balance node is coarse: their coarse steps.  After every set the
+        # rule reads (process_minload above included).
+        _apply_coarse_process_frames(flex_data)
 
         # Phase 4.6 — end-of-load FlexData → Enum sweep.  With the global
         # flipped on above, the cascade emits Enum-typed dim columns

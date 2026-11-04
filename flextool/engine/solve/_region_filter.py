@@ -1031,6 +1031,11 @@ def _build_region_data(
     new.nodeCoarse = _filter_frame(getattr(src, "nodeCoarse", None), "n", keep_nodes)
     new.node_coarse_step = _filter_frame(getattr(src, "node_coarse_step", None), "n", keep_nodes)
     new.node_coarse_interior = _filter_frame(getattr(src, "node_coarse_interior", None), "n", keep_nodes)
+    # Coarse processes of the region; a cross-region arc keeps the solve's step (its half-flows are pinned to the
+    # master per fine step), and so does every other arc of its process.
+    coarse_keep = set(keep_procs) - {t[0] for t in cross_arcs_by_pss}
+    new.processCoarse = _filter_frame(getattr(src, "processCoarse", None), "p", coarse_keep)
+    new.process_coarse_step = _filter_frame(getattr(src, "process_coarse_step", None), "p", coarse_keep)
 
     # ---- Drop group_entity / group_node rows referencing dropped entities ----
     if src.group_entity is not None and "e" in src.group_entity.columns:
@@ -2103,6 +2108,9 @@ def master_network_data(
                                      set(master_hosted_nodes))
     new.p_penalty_up = _drop_terminal_param(data.p_penalty_up)
     new.p_penalty_down = _drop_terminal_param(data.p_penalty_down)
+    # Every master flow keeps the solve's step: the regions pin the master's half-flows per fine step.
+    new.processCoarse = None
+    new.process_coarse_step = None
 
     return new
 
