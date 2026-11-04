@@ -32,12 +32,14 @@ def compute_slacks(par, s, v, r) -> None:
     # step_duration × timestep_weight.  Combined once for readability.
     step_x_rp = par.step_duration.mul(par.timestep_weight, axis=0)
 
-    r.reserves_dt = v.reserve.mul(par.step_duration, axis=0)
+    # Reserve held at each step, MW: v_reserve counts in units of the process's unit size, like v_flow
+    # (model/_reserve.py: MW = v_reserve · unitsize[p]).  A capacity held, not an energy: no step_duration.
+    r.reserves_dt = v.reserve.mul(par.entity_unitsize, axis=1, level='process')
     # Average MW held over the period: Σ(MW × step_duration) / total period hours.
     # Reserves are MW capacity held per hour (not consumed energy), so the
     # meaningful per-period figure is the average MW held across the period.
     period_hours = par.complete_period_share_of_year * 8760
-    r.reserves_d = r.reserves_dt.groupby('period').sum().div(period_hours, axis=0)
+    r.reserves_d = r.reserves_dt.mul(par.step_duration, axis=0).groupby('period').sum().div(period_hours, axis=0)
 
     # upward_node_slack_dt is already MWh per step (q_state_up × capacity × step_duration),
     # so the period aggregate is a plain groupby-sum; no extra step_duration.

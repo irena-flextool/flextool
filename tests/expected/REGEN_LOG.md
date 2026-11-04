@@ -1158,3 +1158,20 @@ cost, of `cost_unit_annualized__d.csv`).  No golden scenario retires capacity.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` per scenario; the files of these
 scenarios that stayed within the test tolerance were put back.
+
+## 2026-11-04 — `process__reserve__upDown__node__dt.csv` of the 3 reserve scenarios (reservation in MW; FA-15)
+
+**Context.** The reported reservation was `v_reserve × step_duration`, labelled MW.  `v_reserve` counts in units of
+the process's unit size (`model/_reserve.py`: MW = v_reserve · unitsize), so the output was off by the unit size and,
+for steps other than one hour, by the step length.  It is now `v_reserve × unitsize` (MW per step); the period
+average `process__reserve__upDown__node__d_average` is Σ MW·Δt / period hours of that.  These fixtures have 1-h
+steps, so only the unit size (wind_plant 1000 MW, its `existing`) moves the values; the v3.32.0 goldens carried the
+same omission.  Outputs only: lp_snapshot identical.
+
+- `network_coal_wind_reserve`, `network_coal_wind_reserve_co2_capacity_margin`: wind_plant primary-up 0.02 → 20 MW
+  in every step (reservation 10 MW / reliability 0.5).
+- `network_coal_wind_reserve_n_1`: wind_plant n_1-up 0.083333 → 83.333 MW (coal_plant 500 MW × large_failure_ratio
+  0.1 = 50 MW / reliability 0.6); coal_plant 0 stays 0.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`; the other files of these scenarios, within
+the test tolerance, were put back, and the multi-row header cells kept their previous spelling.

@@ -1,5 +1,10 @@
 ## Unreleased
 
+- **Fixed: reserve provision results in MW** (`process__reserve__upDown__node__dt`, `..._d_average`, SpineDB
+  `reservation_t` / `reservation_average`). The reserve a unit or connection holds is now reported in MW in each
+  time step. Before, it was in units of the process's unit size (for example 0.02 instead of 20 MW for a 1000 MW
+  unit) and, per time step, also multiplied by the step duration, so it was wrong for any unit size other than
+  1 MW and for steps other than one hour.
 - **Fixed: the summary's total cost for realized periods** (`summary_solve.csv`). The line "Total cost
   (calculated) realized periods" now sums only the periods a solve realizes (each once, discounted from the start
   of the run); before, it repeated the full-horizon total, which also holds the fixed cost of existing capacity in
