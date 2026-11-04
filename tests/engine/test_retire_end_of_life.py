@@ -136,6 +136,8 @@ def _divest_mw(step, entity: str = PLANT, var: str = "v_divest_p", col: str = "p
         size = float(sizes.filter(pl.col(sizes.columns[0]) == entity)["value"][0])
     else:
         size = unitsize(step, entity)
+    if var not in step.solution._vars:
+        return {}
     frame = utf8(step.solution.value(var)).filter(pl.col(col) == entity)
     return {d: v * size for d, v in zip(frame["d"].to_list(), frame["value"].to_list())}
 
@@ -480,3 +482,89 @@ def test_retirement_saves_exactly_the_fixed_cost_of_existing_capacity(tmp_path_f
     assert existing * MEGA == pytest.approx(500.0 * FIXED * sum(F_OPS[d] for d in PERIODS), rel=1e-7)
     # The CSV rounds each figure (M CUR); the two cancel up to that rounding.
     assert (existing + unit["fixed cost reduction of divestments"].sum()) == pytest.approx(0.0, abs=1e-6 * existing)
+
+
+# ---------------------------------------------------------------------------
+# lifetime as a constant or as a period map; the behaviour-change notice
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("kind", ["single", "chain"])
+def test_lifetime_constant_equals_map(tmp_path_factory, kind) -> None:
+    """lifetime 15 as a constant and as the period map {p2020 … p2035: 15}: the same solves (objective and
+    retirement in every solve; the end of life counts from the run's first period in both)."""
+    from tests.engine.test_chain_costs import _period_map
+    chain = _no_battery_invest(SINGLE if kind == "single" else CHAIN)
+    outcomes = []
+    for shape, life in (("const", b64(15.0, "float")), ("map", _period_map(dict.fromkeys(PERIODS, 15.0)))):
+        values = ([["unit", PLANT, "lifetime", life], ["unit", PLANT, "lifetime_method", b64("reinvest_choice", "str")]]
+                  + _retire())
+        url, scen = make_db(tmp_path_factory, alt=f"life_{shape}_{kind}", values=values, base_chain=chain)
+        steps = run(tmp_path_factory, url, scen)
+        outcomes.append({name: (step.solution.obj, _divest_mw(step)) for name, step in steps.items()})
+    const, mapped = outcomes
+    assert sorted(const) == sorted(mapped)
+    for name in const:
+        assert mapped[name][0] == pytest.approx(const[name][0], rel=1e-12), name
+        assert mapped[name][1] == pytest.approx(const[name][1], abs=1e-9), name
+
+
+NOTICE_ID = "retirement_of_existing_capacity_only"
+NOTICE_MARKER = f"flextool_behaviour_change:{NOTICE_ID}"
+
+
+def _notice_lines(tmp_path_factory, capsys, alt: str, values: list, chain: list[str], marker: bool) -> list[str]:
+    from spinedb_api import DatabaseMapping
+
+    from flextool.engine import run_chain_from_db
+    from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES
+
+    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=chain)
+    if marker:
+        with DatabaseMapping(url) as db:
+            db.add_item("metadata", name=NOTICE_MARKER, value="77")
+            db.commit_session("behaviour-change marker")
+    capsys.readouterr()
+    run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
+    summary = BEHAVIOUR_CHANGES[NOTICE_ID].summary
+    return [ln for ln in capsys.readouterr().out.splitlines() if summary in ln]
+
+
+@pytest.mark.solver
+def test_notice_names_the_retiring_entities_once(tmp_path_factory, capsys) -> None:
+    """The chain y2020 … y2035 with a retiring coal_plant: one notice line naming it."""
+    lines = _notice_lines(tmp_path_factory, capsys, "ret_notice", _lifetime("reinvest_choice", 15.0) + _retire(),
+                          _no_battery_invest(CHAIN), marker=True)
+    assert len(lines) == 1
+    assert f"Affected entities: {PLANT}." in lines[0] and NOTICE_MARKER in lines[0]
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("chain", ["chain", "single"])
+def test_notice_names_the_end_of_life_entities_of_a_chain(tmp_path_factory, capsys, chain) -> None:
+    """reinvest_choice existing capacity without retirement: a chain names coal_plant once (its end of life now
+    counts from the run's start in the later solves); a single solve prints nothing."""
+    values = _lifetime("reinvest_choice", 15.0) + NO_INVEST
+    lines = _notice_lines(tmp_path_factory, capsys, f"eol_notice_{chain}", values,
+                          _no_battery_invest(CHAIN if chain == "chain" else SINGLE), marker=True)
+    if chain == "chain":
+        assert len(lines) == 1 and f"Affected entities: {PLANT}." in lines[0]
+    else:
+        assert lines == []
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("retiring, marker", [(True, False), (False, True)], ids=["no_marker", "no_retirement"])
+def test_no_retirement_notice(tmp_path_factory, capsys, retiring, marker) -> None:
+    values = _retire() if retiring else NO_INVEST
+    alt = f"ret_no_notice_{retiring}_{marker}"
+    assert _notice_lines(tmp_path_factory, capsys, alt, values, _no_battery_invest(SINGLE), marker) == []
+
+
+def test_notice_is_registered_and_written_by_the_upgrade() -> None:
+    from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES
+    from flextool.update_flextool import db_migration
+
+    assert NOTICE_ID in BEHAVIOUR_CHANGES
+    assert NOTICE_ID in db_migration._V77_UNCONDITIONAL_MARKERS

@@ -292,7 +292,7 @@ Additional parameters:
   - `next_seam` — the period start after.
 
   **Construction lead time and stochastics compose automatically.** Under recourse (`stochastic_invest_method = recourse`) with an invest non-anticipativity window (`shared_invest_periods`, see the stochastics how-to), a long-lead technology that must be online *after* the branch reveal has to be *ordered* before it — in a pre-reveal, tied period — so its investment is a single shared here-and-now decision, while a short-lead technology can be ordered at/after the reveal and react per scenario. This staging is emergent (no extra parameter): set the window to the pre-reveal periods and the lead time stages the technologies for you. Note the two knobs stay orthogonal — the window is the *information* boundary (which order periods are shared), the lead time is the *physics* (how early you must order); you need both, set consistently, for staging.
-- `salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]
+- `salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]. Only capacity that existed before the model run (`existing`) can be retired, until its end of life; the retirement saves its fixed cost and earns the salvage value over the periods it counts in (see [retirements](reference.md#retirements)).
 - `fixed_cost`: Annual cost for capacity [CUR/kW]
 
 In many cases some of the investment decisions are tied to each other. Here the battery capacity and the connection capacity of the *battery_inverter* will be tied as they are simultaneously limited by the choice of the battery technology to be invested in.

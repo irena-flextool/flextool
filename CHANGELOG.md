@@ -1,5 +1,24 @@
 ## Unreleased
 
+- **Fixed: retiring existing capacity before its end of life** (results change for models that retire
+  capacity). Only capacity that existed before the model run (`existing`) can be retired, and a retirement now counts
+  until that capacity's end of life: for `reinvest_choice` / `no_investment` the first year of the run plus
+  `lifetime`, for `reinvest_automatic` the end of the model horizon. Before, a retirement counted in every later
+  period, so past the end of life the retired capacity was subtracted a second time: the capacity went negative and
+  a required retirement made the model infeasible (an optional one never happened); later solves of a chain
+  subtracted earlier retirements from every period, and could be infeasible too. The capacity retired cannot exceed
+  the existing capacity of any period it counts in. The retirement saves exactly the fixed cost the retired
+  capacity would have paid in those periods (each period's fixed cost, discounted as the fixed cost of existing
+  capacity; before, the retirement period's fixed cost with the investment discount, and over the lifetime from the
+  retirement) and earns its salvage value over the years it counts. An entity with a retire option but no existing
+  capacity has no retirement variable (a warning names it); a required retirement (`retire_min_period`,
+  `retire_min_total`) that the existing capacity cannot supply is an error naming the entity and the period. An
+  upgraded database prints a notice naming the affected entities.
+- **Fixed: the end of life of existing capacity in a chain of solves and with stochastic branches in the first
+  period** (results change for `reinvest_choice` / `no_investment` existing capacity). It is the first year of the
+  model run plus `lifetime` in every solve. Before, a later solve of a chain counted the lifetime from its own first
+  period, so the existing capacity lived longer there and its reported fixed cost continued, and stochastic branches
+  in the first period multiplied the lifetime by the number of branches (covered by the same notice).
 - **Fixed: in a stochastic solve without recourse, capacity invested in a later period reaches the stochastic
   branches of that period** (results change for stochastic solves whose `stochastic_invest_method` is not
   `recourse` and that invest or have a `reinvest_choice` / `no_investment` lifetime). The branch periods of the

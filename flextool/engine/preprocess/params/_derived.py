@@ -6198,6 +6198,40 @@ def _check_retirement_minimums(flex_data: object,
         eol=_lifetime_gate_sums(source, active_solve, workdir, provider=provider, years=years))
 
 
+def _end_of_life_notice(source: "InputSource",
+                        active_solve: str | None,
+                        workdir: Path | None,
+                        *,
+                        provider: "object | None" = None) -> None:
+    """Behaviour-change notice ``retirement_of_existing_capacity_only`` for the end of life of existing capacity:
+    names the reinvest_choice / no_investment entities of a solve whose end of life changed, a later solve of a
+    chain (its period history starts before its own first period) or a solve whose first period branches."""
+    from flextool.engine import _behaviour_changes
+    if not _behaviour_changes.has_marker("retirement_of_existing_capacity_only"):
+        return
+    first = _read_period_first(source, active_solve, workdir, provider=provider)
+    years = _lifetime_years(source, active_solve, workdir, provider=provider)
+    start = run_start_period(years)
+    later_in_chain = bool(first) and start is not None and years.get(first[0], 0.0) > years.get(start, 0.0)
+    if not (later_in_chain or len(first) > 1):
+        return
+    names = sorted(e for e, life_sum in _lifetime_gate_sums(source, active_solve, workdir, provider=provider,
+                                                            years=years).items() if life_sum > 0.0)
+    if names:
+        _behaviour_changes.notice("retirement_of_existing_capacity_only", "entities", names)
+
+
+def _retirement_notice(offered: pl.DataFrame, kept: pl.DataFrame) -> None:
+    """Behaviour-change notice ``retirement_of_existing_capacity_only``: names the entities with a retirement
+    option (and, in the detail, those left without one for lack of existing capacity)."""
+    from flextool.engine import _behaviour_changes
+    names = sorted(set(offered["e"].cast(pl.Utf8).to_list()))
+    lost = sorted(set(names) - set(kept["e"].cast(pl.Utf8).to_list()))
+    detail = ("Without existing capacity in the retirement periods (no retirement variable): "
+              + ", ".join(lost) + ".") if lost else ""
+    _behaviour_changes.notice("retirement_of_existing_capacity_only", "entities", names, detail)
+
+
 def apply_derived_c(
     flex_data: object,
     source: "InputSource",
@@ -6345,6 +6379,7 @@ def apply_derived_c(
         # Only pre-existing capacity can be retired: the retirement options of periods without it are dropped.
         ed_div_db = retirable_existing_pairs(offered_div, source, active_solve, workdir, provider=provider)
         _retirement_without_existing_warning(offered_div, ed_div_db)
+        _retirement_notice(offered_div, ed_div_db)
         flex_data.ed_divest_set = ed_div_db if ed_div_db.height > 0 else None
         if ed_div_db.height == 0:
             # The seeds of the retirement partitions describe the options before the filter.
@@ -6413,6 +6448,7 @@ def apply_derived_c(
             forbidden_db if forbidden_db.height > 0 else None)
 
     _fan_branch_years_notice(source, flex_data, ed_inv_for_partition, ed_div_for_partition)
+    _end_of_life_notice(source, active_solve, workdir, provider=provider)
 
     # Dispatch-only gate: when neither ed_invest nor ed_divest carries
     # any (e, d) row, mirror ``flex_data.py::_load_invest`` blank-out by

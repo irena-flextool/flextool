@@ -131,6 +131,21 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "that period, and lifetimes ended late in the branches (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "stochastic_branch_period_years"),
         ),
+        BehaviourChange(
+            id="retirement_of_existing_capacity_only",
+            summary=("Only capacity that existed before the run can be retired, and a retirement counts until that "
+                     "capacity's end of life (reinvest_choice / no_investment: the run's first year plus lifetime, "
+                     "in every solve of a chain and once with stochastic branches in the first period; before, "
+                     "a later solve counted it from its own first period and branches multiplied it; "
+                     "reinvest_automatic: the end of the run). It saves each "
+                     "period's fixed cost of the existing capacity in that window, with the factor that fixed cost "
+                     "is charged with, and earns its salvage value over the years of the window. Periods without "
+                     "existing capacity have no retirement option. Before, a retirement counted in every later "
+                     "period (past the end of life the capacity went negative: an infeasible or zero retirement), "
+                     "chained solves subtracted it from every period, and its saving and salvage value were "
+                     "counted over the lifetime from the retirement (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "retirement_of_existing_capacity_only"),
+        ),
     )
 }
 
