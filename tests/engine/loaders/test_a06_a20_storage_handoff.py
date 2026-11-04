@@ -238,6 +238,7 @@ def _stub_a20_passes(monkeypatch, calls: list, *,
     from flextool.engine.preprocess.params import _projection as _pp
     from flextool.engine.preprocess.params import _derived as _drv
     from flextool.engine.preprocess.params import _existing as _ex
+    from flextool.engine.preprocess.params import _npv
     def _record(label):
         return lambda *a, **kw: calls.append(label)
 
@@ -254,6 +255,8 @@ def _stub_a20_passes(monkeypatch, calls: list, *,
     monkeypatch.setattr(_drv, "apply_synthetic_invest_sets",
                         _record("synth_invest"))
     monkeypatch.setattr(_drv, "apply_delay_params", _record("synth_delay"))
+    monkeypatch.setattr(_npv, "apply_run_fields_of_synthetic_solve",
+                        _record("synth_run_costs"))
     monkeypatch.setattr(_ex, "apply_existing_chain",
                         _record("10_existing"))
     monkeypatch.setattr(_drv, "_read_active_solve",
@@ -375,6 +378,9 @@ def test_synthetic_solve_skips_per_solve_overrides(tmp_path: Path, monkeypatch):
     # path too (rolling sub-solves with a delayed unit need the same td
     # labels across the three delay frames).
     assert "synth_delay" in calls
+    # The run-level reported-cost fields stand in for the skipped
+    # ``apply_derived_f`` (``apply_npv``) on the synthetic path.
+    assert "synth_run_costs" in calls
     # The skip is what we're really testing:
     for pass_label in ("3a", "4b", "5c", "6d", "7e", "8f", "9g", "10_existing"):
         assert pass_label not in calls, (
