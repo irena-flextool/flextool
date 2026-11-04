@@ -275,6 +275,31 @@ def _probe_values(lead: float) -> list:
     return _values(lead, ONLINE)
 
 
+def _assert_annualized_investment(results: dict[str, pd.DataFrame]) -> None:
+    """The annualized investment and fixed cost invested of coal_plant: in every period, the yearly amounts of
+    every vintage operating in it (reinvest_automatic, lifetime 30: from its start of operation to the end of the
+    run).  100 MW operate from p2025, 50 MW more from p2030::
+
+        investment[d]          = MW_operating[d] · A,  A = 400 · 1000 · 0.05 / (1 − 1.05^−30) = 26 020.57 CUR/MW/yr
+        fixed cost invested[d] = MW_operating[d] · 100 · 1000
+        MW_operating = {p2020: 0, p2025: 100, p2030: 150, p2035: 150}
+
+    so 0, 2.60206, 3.90309, 3.90309 M/yr and 0, 10, 15, 15 M/yr; the system columns (only coal_plant invests)
+    are the same.  Before: the lump in the period it is reported, divided by that period's factor (p2025 only)."""
+    operating = {"p2020": 0.0, "p2025": 100.0, "p2030": 150.0, "p2035": 150.0}
+    unit = results["cost_unit_annualized__d"]
+    system = results["annualized_costs__d"].set_index("period")
+    for d, mw in operating.items():
+        rows = unit[(unit["period"] == d) & (unit["unit"] == PLANT)]
+        invest = rows["investment"].sum() if len(rows) else 0.0
+        fixed = rows["fixed cost invested"].sum() if len(rows) else 0.0
+        assert invest * MEGA == pytest.approx(mw * ANNUITY, rel=1e-7, abs=1e-6), d
+        assert fixed * MEGA == pytest.approx(mw * FIXED, rel=1e-7, abs=1e-6), d
+        assert system.loc[d, "unit investment & retirement"] * MEGA == pytest.approx(mw * ANNUITY, rel=1e-7,
+                                                                                     abs=1e-6), d
+        assert system.loc[d, "fixed cost invested"] * MEGA == pytest.approx(mw * FIXED, rel=1e-7, abs=1e-6), d
+
+
 @pytest.mark.solver
 def test_chain_reports_the_costs_of_the_single_solve(tmp_path_factory) -> None:
     """No lead time, with a CO2 cap per period: every cost result of the chain equals the single solve's, and
@@ -297,6 +322,8 @@ def test_chain_reports_the_costs_of_the_single_solve(tmp_path_factory) -> None:
         500.0 * FIXED * F_OPS["p2030"], rel=1e-7)
     assert _row(chain["cost_unit_annualized__d"], "p2030")["fixed cost pre-existing"] * MEGA == pytest.approx(
         500.0 * FIXED, rel=1e-7)
+    _assert_annualized_investment(chain)
+    _assert_annualized_investment(single)
     price = chain["group_CO2_price_period__d"].set_index("period")["co2_limit"]
     assert (price > 0).any()
 
@@ -322,6 +349,8 @@ def test_lead_time_costs_in_the_period_capacity_starts_operating(tmp_path_factor
     assert start["solve"] == "y2025_5week"
     assert start["investment"] * MEGA == pytest.approx(100.0 * ANNUITY * sum(F_INV[d] for d in _later("p2025")),
                                                        rel=1e-7)
+    # The annualized columns follow the capacity's operation: from p2025 (the p2020 decision) and p2030.
+    _assert_annualized_investment(chain)
 
 
 def _array(values: list[str]) -> list:
@@ -440,6 +469,17 @@ def test_retirement_costs(tmp_path_factory, lifetime) -> None:
     for d in PERIODS:
         assert _row(discounted, d)["fixed cost pre-existing"] * MEGA == pytest.approx(
             500.0 * FIXED * F_OPS[d], rel=1e-7), d
+    # Annualized: in every period of the retirement's window, the yearly salvage annuity and the yearly fixed
+    # cost of the retired 100 MW, A(200, 0.05, L) = 200 · 1000 · 0.05 / (1 − 1.05^−L) CUR/MW/yr: lifetime 30
+    # (A = 13 010.3): −1.30103 and −10 M/yr in p2025 … p2035; lifetime 10 (A = 25 900.9): −2.59009 and −10 M/yr
+    # in p2025 and p2030; nothing outside the window.
+    for annualized in (chain["cost_unit_annualized__d"], single["cost_unit_annualized__d"]):
+        for d in PERIODS:
+            rows = annualized[(annualized["period"] == d) & (annualized["unit"] == PLANT)]
+            mw = 100.0 if d in window else 0.0
+            assert rows["retirement"].sum() * MEGA == pytest.approx(-mw * salvage_annuity, rel=1e-7, abs=1e-6), d
+            assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
+                -mw * FIXED, rel=1e-7, abs=1e-6), d
 
 
 # ---------------------------------------------------------------------------

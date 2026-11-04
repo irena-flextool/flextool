@@ -1134,3 +1134,27 @@ were left as they were.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` per scenario; only the files that differ
 beyond the test tolerance were kept.
+
+## 2026-11-04 — `cost_unit_annualized__d.csv` of 10 investing scenarios (annualized investment / fixed cost invested per operating year)
+
+**Context.** Owner decision "Chained costs" option (a): the annualized *investment*, *retirement*, *fixed cost
+invested* and *fixed cost reduction of divestments* columns are the yearly amounts of every vintage (retirement) in
+effect in the period — the annuity at the start of operation and the yearly fixed cost, in every period of the
+vintage's operating window (`edd_operating_window`; retirement: `edd_retire_window`).  Before, they were the
+discounted lifetime lump divided by the factor of the one period it is reported in.  This is the annualized-column
+bug fix only: lp_snapshot 666/666 files identical vs 5ce7d083; no discounted column, no other CSV moved beyond the
+comparison tolerance (only the *investment* column, and *fixed cost invested* where an investing unit has a fixed
+cost, of `cost_unit_annualized__d.csv`).  No golden scenario retires capacity.
+
+- `multi_year` (chain): coal_plant investment p2025 4.4087 → 1.7653, p2030 12.1116 → 8.4129, p2035 0 → 8.4129
+  (the p2025 and p2030 vintages keep operating); fixed cost invested 16.94 / 46.55 / 0 → 6.78 / 32.33 / 32.33.
+- `y2020_2029_2x5y`: investment and fixed cost invested of the p2020 vintages now in p2020 and p2025 (coal 4.19 →
+  2.09 + 2.09, wind 40.10 → 20.05 + 20.05; coal fixed cost invested 16.10 → 8.05 + 8.05).
+- `multi_year_one_solve`, `multi_year_one_solve_battery`, `multi_year_one_solve_co2_limit`, `multi_fullYear_battery`,
+  `multi_fullYear_battery_nested_24h_invest_one_solve`, `multi_fullYear_battery_nested_sample_invest_one_solve`,
+  `multi_fullYear_battery_nested_multi_invest`, `test_a_lot`: the wind investment is the sum of the operating
+  vintages' annuities (wind 64 011.96 CUR/MW/yr; e.g. `multi_fullYear_battery` 24.53, 37.30, 50.06, 62.82 M/yr
+  over p2020 … p2035, before 74.89, 31.88, 23.25, 12.76).
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` per scenario; the files of these
+scenarios that stayed within the test tolerance were put back.

@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **Fixed: the annualized investment, retirement and fixed costs of new and retired capacity are yearly amounts in
+  every period the capacity operates** (`cost_annualized` of the model, units, connections and nodes; results
+  change for models that invest or retire). The annualized *investment & retirement*, *fixed cost invested* and
+  *fixed cost reduction of divestments* of a period are now the yearly annuity and fixed cost of every vintage
+  operating in the period (and of every retirement that applies in it). Before, they were the discounted cost of
+  the whole lifetime divided by the discount factor of the period where it was reported, so they appeared in that
+  one period only and were many times too large there.
 - **A run of several solves reports its costs from the start of the run, each once** (results change for models
   with several solves in `model.solves`: chains of investment solves, investment and dispatch solves, stochastic
   and realization solves). The discounted costs of every solve now count their years from the first period of the

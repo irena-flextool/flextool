@@ -750,6 +750,20 @@ def read_sets(
             names=["entity", "period_invest", "period"],
         ))
 
+    # edd_operating_window (entity, period_invest, period) — the run periods in which the capacity of an
+    # investment decision operates; edd_retire_window (entity, period_divest, period) — the run periods a
+    # retirement applies to (``_npv`` "Run-level fields of the reported costs").  The annualized investment and
+    # retirement costs are the yearly amounts in every period of these windows.
+    for attr, anchor, level in (("edd_operating_window", "d_invest", "period_invest"),
+                                ("edd_retire_window", "d_divest", "period_divest")):
+        frame = getattr(flex_data, attr, None)
+        if frame is not None and frame.height > 0:
+            frame = frame.select(pl.col(c).cast(pl.Utf8) for c in ("e", anchor, "d"))
+        setattr(s, attr, _multi_index_with_solve(
+            frame, solve_name=solve_name, dims=("e", anchor, "d"),
+            names=["entity", level, "period"],
+        ))
+
     # process__node__profile__profile_method — DataFrame from FlexData
     # process_profile_upper / lower / fixed.
     pieces: list[pd.DataFrame] = []

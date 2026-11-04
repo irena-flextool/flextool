@@ -59,6 +59,15 @@ With `output_horizon = yes` (a debug option), `output_parquet/<scenario>/horizon
     - *non-synchronous slack penalty* — M[CUR] cost of not meeting the non-synchronous constraint
     - *capacity margin penalty* — M[CUR] cost of not meeting the capacity margin constraint
     - *upward / downward reserve slack penalty* — M[CUR] cost of not meeting the reserve constraint
+
+    The annualized investment & retirement, *fixed cost invested* and *fixed cost reduction of divestments* are
+    the yearly amounts of every vintage and retirement in effect in the period: an investment adds its annuity (the
+    `invest_cost` annuity of the period the capacity starts to operate) and its yearly fixed cost in every period it
+    operates within the run (within its `lifetime`, or every later period with `reinvest_automatic`); a retirement
+    subtracts its salvage annuity and the yearly fixed cost of the retired capacity in every period of its lifetime
+    window. They are reported only for capacity whose investment cost is reported (see the next section). For these
+    columns the annualized value is therefore not the discounted value divided by the period's discount factor,
+    which holds for the other columns.
 - `model` entity `cost_t` parameter — [CUR] (currency, not millions) same categories as above but per timestep: the cost incurred during the step, with the step duration and timestep weight applied but not scaled to a full year (no investment / fixed terms). The CSV / parquet output `costs__dt` has the same values and unit.
 - `model` entity `cost_discounted_solve` parameter — M[CUR] costs for the solve considering discounting and years represented (NPV currency)
 - `model` entity `cost_discounted_total` parameter — M[CUR] same, totalled over all realised periods
@@ -113,6 +122,7 @@ The categories mirror the system [Costs](#costs) decomposition, restricted to th
 - *starts* — M[CUR] start-up costs (units)
 - *investment* / *retirement* — M[CUR] cost of investing in unit / connection capacity or salvage from retiring it (named *storage investment* / *storage retirement* in the `node` table, where the capacity is node-state storage energy)
 - *fixed cost pre-existing* / *fixed cost invested* / *fixed cost reduction of divestments* — M[CUR] fixed O&M for pre-existing, newly invested and divested capacity
+- in the *annualized* tables, *investment*, *retirement*, *fixed cost invested* and *fixed cost reduction of divestments* are the yearly amounts in every period the capacity operates or the retirement applies, as in the system [Costs](#costs)
 - *upward slack penalty* / *downward slack penalty* (`node` table only) — M[CUR] cost of involuntary demand reduction / increase at the node
 
 Attribution rules (matching the LP objective):

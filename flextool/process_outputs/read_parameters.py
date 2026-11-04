@@ -1520,6 +1520,17 @@ def read_parameters(
         densify_entities=_entity_universe,
     )
 
+    # The undiscounted yearly annuities (CUR/MW/yr) of the investment decisions (the invest cost at the start of
+    # operation) and of the retirements (the salvage value): the annualized investment and retirement costs.
+    p.entity_annuity_yearly = _pdX_per_entity(
+        getattr(flex_data, "ed_annuity", None), solve_name=solve_name,
+        entity_dim="e", col_name="entity", flex_data=flex_data,
+    )
+    p.entity_divest_annuity_yearly = _pdX_per_entity(
+        getattr(flex_data, "ed_divest_annuity", None), solve_name=solve_name,
+        entity_dim="e", col_name="entity", flex_data=flex_data,
+    )
+
     # inflation factors — Series((solve, period)).  The reported costs discount from the start of the run
     # (``p_inflation_*_run``); ``inflation_factor_operations_solve`` is the solve's own factor, the one its
     # objective and duals carry (the CO2 price of a period is its dual ÷ this factor of the realizing solve).
@@ -1830,14 +1841,19 @@ def read_parameters_multi(
     # (``flex_data.ed_entity_annual_discounted`` empty/None) and clear
     # the densified-zero per-step frame so it doesn't compete with the
     # parent invest step's real values.
+    # The yearly annuities of the decisions likewise (a step without them has a row per period and no columns).
     _annual_attrs = ("entity_annual_discounted",
                      "entity_annual_divest_discounted",
-                     "entity_annuity")
+                     "entity_annuity",
+                     "entity_annuity_yearly",
+                     "entity_divest_annuity_yearly")
     _src_field = {
         "entity_annual_discounted": "ed_entity_annual_discounted",
         "entity_annuity": "ed_entity_annual_discounted",
         "entity_annual_divest_discounted":
             "ed_entity_annual_divest_discounted",
+        "entity_annuity_yearly": "ed_annuity",
+        "entity_divest_annuity_yearly": "ed_divest_annuity",
     }
     for (sn, ns), step in zip(per_step, steps):
         flex_data = step[1]

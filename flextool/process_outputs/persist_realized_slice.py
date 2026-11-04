@@ -104,6 +104,9 @@ _ANNUAL_SRC_FIELD: dict[str, str] = {
     "entity_annual_discounted": "ed_entity_annual_discounted",
     "entity_annuity": "ed_entity_annual_discounted",
     "entity_annual_divest_discounted": "ed_entity_annual_divest_discounted",
+    # The yearly annuities of the decisions (the annualized investment and retirement costs).
+    "entity_annuity_yearly": "ed_annuity",
+    "entity_divest_annuity_yearly": "ed_divest_annuity",
 }
 
 
@@ -471,9 +474,13 @@ _INVEST_SETS: frozenset[str] = frozenset(
 # the realized-invest DECISION period (mirrors ``drop_levels``); the
 # period the capacity comes online or is in construction may be a
 # look-ahead period of the deciding solve.
-_DECISION_SETS: frozenset[str] = frozenset(
-    {"edd_invest_commission", "edd_invest_in_construction"}
-)
+# The operating / retirement windows of the reported annualized costs are keyed by their decision too.
+_DECISION_SETS: dict[str, str] = {
+    "edd_invest_commission": "period_invest",
+    "edd_invest_in_construction": "period_invest",
+    "edd_operating_window": "period_invest",
+    "edd_retire_window": "period_divest",
+}
 
 # dtt / dtttdt — the storage-adjacency sets whose current ``(period,
 # time)`` is the only thing filtered; adjacency columns stay verbatim.
@@ -540,7 +547,7 @@ def _apply_set_realized_filter(
 
     # Lead-time sets — filter on the realized-invest decision period.
     if attr in _DECISION_SETS:
-        decided = idx.get_level_values("period_invest").astype(str)
+        decided = idx.get_level_values(_DECISION_SETS[attr]).astype(str)
         return idx[decided.isin(realized_invest_periods)]
 
     # Invest-keyed sets — filter on realized-invest periods.

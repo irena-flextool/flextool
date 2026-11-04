@@ -37,6 +37,81 @@ def _at_start_of_operation(cost: pd.DataFrame, s) -> pd.DataFrame:
     return moved
 
 
+def _decisions_long(amount: pd.DataFrame, decision: str) -> pd.DataFrame:
+    """``[<decision>, entity, value]`` of a (decision period × entity) frame, without empty cells."""
+    long = amount.stack(future_stack=True).rename('value').rename_axis([decision, 'entity']).reset_index()
+    return long[long['value'].notna()]
+
+
+def _per_year_in_window(long: pd.DataFrame, window: pd.MultiIndex, decision: str, columns: pd.Index) -> pd.DataFrame:
+    """Rows ``[<decision>, entity, value]`` (a yearly amount of a decision) summed per (period, entity) over the
+    periods of each decision's window (``window``: (entity, <decision>, period)): the yearly amounts of every
+    decision in effect in a period.  Rows: period, columns: ``columns``."""
+    if long.empty or len(window) == 0:
+        out = pd.DataFrame(index=pd.Index([], name='period'), columns=columns, dtype=float)
+        out.columns.name = columns.name
+        return out
+    win = window.to_frame(index=False)
+    win = win.astype({'entity': str, decision: str, 'period': str})
+    long = long.astype({'entity': str, decision: str})
+    joined = long.merge(win, on=['entity', decision], how='inner')
+    out = joined.groupby(['period', 'entity'], sort=False)['value'].sum().unstack('entity')
+    order = list(dict.fromkeys(win['period']))
+    out = out.reindex(index=[d for d in order if d in out.index], columns=columns)
+    out.index.name = 'period'
+    out.columns.name = columns.name
+    return out
+
+
+def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """``(investment, fixed cost invested)`` per year, rows: period, columns: entity (CUR/yr).
+
+    ANN. invest_yr[e,d'] = Σ_{(e,d,d') ∈ edd_operating_window} v_invest[e,d]·unitsize[e]·ed_annuity[e,d]
+         fixed_invested_yr[e,d'] = Σ_{(e,d,d') ∈ edd_operating_window} v_invest[e,d]·unitsize[e]·fc[e,c(d)]
+      The yearly amounts of every vintage that operates in d'; ed_annuity[e,d] is the annuity at c(d), fc[e,c(d)]
+      the fixed cost of the lifetime fixed-cost lump.  Only the decisions whose lump is reported (c(d) realized,
+      :func:`_at_start_of_operation`)."""
+    columns = v.invest.columns
+    mw = v.invest.mul(par.entity_unitsize[columns])
+    long = _decisions_long(mw, 'period_invest')
+    commission = s.edd_invest_commission
+    if len(commission) > 0 and not long.empty:
+        start = commission.to_frame(index=False).rename(columns={'period': 'start'})
+        long = long.merge(start[['entity', 'period_invest', 'start']], on=['entity', 'period_invest'], how='left')
+        long['start'] = long['start'].fillna(long['period_invest'])
+    else:
+        long = long.assign(start=long['period_invest'])
+    long = long[long['start'].isin(s.d_realized_period.union(s.d_realize_invest))]
+    annuity = _decisions_long(par.entity_annuity_yearly, 'period_invest').rename(columns={'value': 'coef'})
+    fixed = _decisions_long(par.entity_fixed_cost, 'start').rename(columns={'value': 'coef'})
+    invest = long.merge(annuity, on=['period_invest', 'entity'], how='inner')
+    invest = invest.assign(value=invest['value'] * invest['coef'])[['period_invest', 'entity', 'value']]
+    fixed = long.merge(fixed, on=['start', 'entity'], how='inner')
+    fixed = fixed.assign(value=fixed['value'] * fixed['coef'])[['period_invest', 'entity', 'value']]
+    window = s.edd_operating_window
+    return (_per_year_in_window(invest, window, 'period_invest', columns),
+            _per_year_in_window(fixed, window, 'period_invest', columns))
+
+
+def _annualized_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """``(retirement, fixed cost reduction of divestments)`` per year, rows: period, columns: entity (CUR/yr).
+
+    ANN. retire_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_retire_window} v_divest[e,d]·unitsize[e]·ed_divest_annuity[e,d]
+         fixed_divested_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_retire_window} v_divest[e,d]·unitsize[e]·fc[e,d]
+      The yearly amounts of every retirement that applies in d'; fc[e,d] is the fixed cost of the retirement's
+      lifetime fixed-cost lump."""
+    columns = v.divest.columns
+    long = _decisions_long(-v.divest.mul(par.entity_unitsize[columns]), 'period_divest')
+    annuity = _decisions_long(par.entity_divest_annuity_yearly, 'period_divest').rename(columns={'value': 'coef'})
+    fixed = _decisions_long(par.entity_fixed_cost, 'period_divest').rename(columns={'value': 'coef'})
+    out = []
+    for coef in (annuity, fixed):
+        joined = long.merge(coef, on=['period_divest', 'entity'], how='inner')
+        joined = joined.assign(value=joined['value'] * joined['coef'])[['period_divest', 'entity', 'value']]
+        out.append(_per_year_in_window(joined, s.edd_retire_window, 'period_divest', columns))
+    return out[0], out[1]
+
+
 def compute_costs(par, s, v, r) -> None:
     """Compute all cost quantities (depends on r.costPenalty_* from compute_slacks).
 
@@ -321,6 +396,11 @@ def compute_costs(par, s, v, r) -> None:
         v.invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]), s)
     r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns]))
 
+    # The annualized investment, retirement and fixed costs of new / retired capacity: the yearly amounts of
+    # every vintage and retirement in effect in a period (not the lumps divided by a period's factor).
+    r.cost_entity_invest_yearly, r.cost_entity_fixed_invested_yearly = _annualized_investment(par, s, v)
+    r.cost_entity_divest_yearly, r.cost_entity_fixed_divested_yearly = _annualized_retirement(par, s, v)
+
     # Under ``recourse`` the LP weights the invest/divest annuity and lifetime-fixed terms by
     # pd_branch_weight[period]; the realized investment periods of normal outputs have no forecast-branch
     # investment (a recourse label period reports none), so no branch weight is applied.
@@ -366,3 +446,12 @@ def compute_costs(par, s, v, r) -> None:
     r.costFixedPreExisting_d = r.cost_entity_fixed_pre_existing.sum(axis=1)
     r.costFixedInvested_d = r.cost_entity_fixed_invested.sum(axis=1)
     r.costFixedDivested_d = r.cost_entity_fixed_divested.sum(axis=1)
+
+    def _class_sum(frame: pd.DataFrame, entities) -> pd.Series:
+        return frame[[e for e in entities if e in frame.columns]].sum(axis=1)
+
+    for kind, entities in (('Unit', s.process_unit), ('Connection', s.process_connection), ('State', s.node_state)):
+        setattr(r, f'costInvest{kind}_yearly', _class_sum(r.cost_entity_invest_yearly, entities))
+        setattr(r, f'costDivest{kind}_yearly', _class_sum(r.cost_entity_divest_yearly, entities))
+    r.costFixedInvested_yearly = r.cost_entity_fixed_invested_yearly.sum(axis=1)
+    r.costFixedDivested_yearly = r.cost_entity_fixed_divested_yearly.sum(axis=1)
