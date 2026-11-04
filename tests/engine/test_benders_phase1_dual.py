@@ -83,6 +83,7 @@ from flextool.engine.input._axis_enums import (
     reset_global_axis_enums,
     set_global_axis_enums,
 )
+from tests._support.benders import benders_reference_data
 from tests._support.load import load_scenario
 
 # Raw HiGHS duals are in objective-scaled units; the user-facing price is
@@ -119,9 +120,11 @@ def ti_data(ti_run):
 @pytest.fixture(scope="module")
 def monolith(ti_data):
     """Solve the whole undecomposed fixture once; expose the solution and
-    the parsed boundary block-node duals + forward flows."""
+    the parsed boundary block-node duals + forward flows.
+    The reference is the LP the decomposition solves: the cross-region pipes keep the
+    solve's step there, so the monolith keeps them fine too (``benders_reference_data``)."""
     pb = Problem()
-    build_flextool(pb, ti_data)
+    build_flextool(pb, benders_reference_data(ti_data, ["region_A", "region_B", "region_C"]))
     sol = pb.solve()
     assert sol.optimal, "monolith solve not optimal"
     return sol

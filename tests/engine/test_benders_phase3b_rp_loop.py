@@ -71,6 +71,7 @@ from flextool.engine.solve._benders import (
     _reverse_cols,
     solve_benders,
 )
+from tests._support.benders import benders_reference_data
 from tests._support.load import load_scenario
 
 _REGIONS = ["region_A", "region_B", "region_C"]
@@ -108,9 +109,11 @@ def rp_data(scenario_run):
 @pytest.fixture(scope="module")
 def monolith(rp_data):
     """Solve the whole RP fixture once (the non-unit ``p_timestep_weight``
-    that the RP-weight fix repairs reaches the objective)."""
+    that the RP-weight fix repairs reaches the objective).
+    The reference is the LP the decomposition solves: the cross-region pipes keep the
+    solve's step there, so the monolith keeps them fine too (``benders_reference_data``)."""
     pb = Problem()
-    build_flextool(pb, rp_data)
+    build_flextool(pb, benders_reference_data(rp_data, _REGIONS))
     sol = pb.solve()
     assert sol.optimal, "RP monolith solve not optimal"
     return sol

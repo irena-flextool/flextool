@@ -39,6 +39,7 @@ from polar_high import Problem
 from flextool.engine import build_flextool
 from flextool.engine.solve import _region_filter
 from flextool.engine.solve._benders import solve_benders
+from tests._support.benders import benders_reference_data
 from tests._support.load import load_scenario
 
 _REGIONS = ["region_A", "region_B", "region_C"]
@@ -61,8 +62,10 @@ def ti_data(ti_run):
 
 @pytest.fixture(scope="module")
 def monolith(ti_data):
+    """The reference is the LP the decomposition solves: the cross-region pipes keep the
+    solve's step there, so the monolith keeps them fine too (``benders_reference_data``)."""
     pb = Problem()
-    build_flextool(pb, ti_data)
+    build_flextool(pb, benders_reference_data(ti_data, _REGIONS))
     sol = pb.solve()
     assert sol.optimal, "monolith solve not optimal"
     return sol
