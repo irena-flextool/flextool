@@ -27,7 +27,7 @@ from flextool._resources import package_data_path
 from flextool.engine.output._parquet_bundle import REGISTRY
 from flextool.process_outputs.write_outputs import _csv_filename, _parse_rename_entry
 
-from test_cost_aggregation_semantics import _run_scenario
+from tests.test_cost_aggregation_semantics import _run_scenario
 
 
 def _rename_map() -> dict:
