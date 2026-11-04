@@ -10158,11 +10158,14 @@ def apply_synthetic_invest_sets(flex_data: object,
     if ed_inv is not None and ed_inv.height > 0 and _lag_configured(source):
         lagged = _lead_time_decisions(source, ed_inv.lazy().select("e", "d"))
         if lagged.height > 0:
-            entities = ", ".join(sorted({str(e) for e in lagged["e"].to_list()}))
+            longest = lagged.group_by("e").agg(pl.col("L").max()).sort("e")
+            entities = ", ".join(f"{e} ({lead:g} years)" for e, lead in longest.iter_rows())
             raise FlexToolConfigError(
-                f"construction_lead_time is not supported in the per-period sub-solves of solve '{base}' "
-                f"(invest_periods given as a map, sub-solve '{active_solve}'); entities: {entities}.  Give each "
-                "investment step its own solve in the model's solves, or remove the lead time.")
+                f"Solve '{base}' gives invest_periods as a map, so it runs one investment sub-solve per period "
+                f"(here '{active_solve}'). Each sub-solve covers only one investment period. Capacity with a "
+                f"construction lead time could never come online inside it. Entities with a lead time: "
+                f"{entities}. Use one investment solve over several periods instead (invest_periods as a list), "
+                "or remove the lead time.")
     if workdir is not None:
         ed_inv, synth_commission_lf = _offer_invest_set(
             flex_data, source, active_solve,

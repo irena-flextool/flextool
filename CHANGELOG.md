@@ -41,6 +41,9 @@
   `immediate`). A minimum per-period limit that nothing can meet (nothing can come online in the period) is an
   error naming the entity, the period and the lead time. An upgraded database with a lead time prints a notice
   naming the entities. Without a lead time, results are unchanged apart from the new empty column.
+  A lead time in a solve whose `invest_periods` is a map (one investment sub-solve per period) stops with an
+  error that explains why (capacity with a lead time could never come online inside a one-period sub-solve) and
+  names the solve, the entities and their lead times; use one investment solve over several periods instead.
 - **Dispatch and other time-series plots again leave a gap at timeline breaks**: after a gap in the timeline, at
   the start of every representative period (also between two adjacent representative periods) and at the first
   step of a period that does not continue the previous one (also a later year that reuses the same timeset).

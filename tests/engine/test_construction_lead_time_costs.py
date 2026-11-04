@@ -157,7 +157,8 @@ def test_benders_with_lead_time_matches_monolith(tmp_path_factory) -> None:
 def test_per_period_sub_solves_refuse_lead_time(tmp_path_factory) -> None:
     """A solve whose invest_periods is a map of per-period sub-solves (invest_5weeks_p2020 …) counts one year per
     period on its own calendar and takes its costs from the emitted seeds, so a construction lead time cannot be
-    placed there: a configuration error naming the solve and the entity."""
+    placed there: a configuration error naming the solve, the entity and its lead time, saying why and how to fix
+    it."""
     from flextool.engine.input._solve_state import FlexToolConfigError
 
     chain = ["init", "west", "wind", "coal", "coal_invest", "battery", "battery_invest", "5weeks",
@@ -171,4 +172,8 @@ def test_per_period_sub_solves_refuse_lead_time(tmp_path_factory) -> None:
         found.append(found[-1].__cause__ or found[-1].__context__)
     config = [e for e in found if isinstance(e, FlexToolConfigError)]
     assert config, found
-    assert "invest_5weeks" in str(config[0]) and PLANT in str(config[0])
+    message = str(config[0])
+    assert "invest_5weeks" in message and f"{PLANT} (5 years)" in message
+    assert "one investment sub-solve per period" in message
+    assert "could never come online inside it" in message
+    assert "Use one investment solve over several periods instead" in message
