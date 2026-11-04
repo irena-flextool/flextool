@@ -736,6 +736,20 @@ def read_sets(
             ["solve", "entity", "period_invest", "period"]
         )
 
+    # edd_invest_commission / edd_invest_in_construction — (entity,
+    # period_invest, period): the period in which the capacity of an
+    # investment decision starts to operate, and the periods in which it
+    # is in construction.  Only a solve with a construction lead time has
+    # them; empty otherwise (the decision comes online in its own period).
+    for attr in ("edd_invest_commission", "edd_invest_in_construction"):
+        frame = getattr(flex_data, attr, None)
+        if frame is not None and frame.height > 0:
+            frame = frame.select(pl.col(c).cast(pl.Utf8) for c in ("e", "d_invest", "d"))
+        setattr(s, attr, _multi_index_with_solve(
+            frame, solve_name=solve_name, dims=("e", "d_invest", "d"),
+            names=["entity", "period_invest", "period"],
+        ))
+
     # process__node__profile__profile_method — DataFrame from FlexData
     # process_profile_upper / lower / fixed.
     pieces: list[pd.DataFrame] = []

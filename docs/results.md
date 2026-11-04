@@ -191,9 +191,12 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 
 - `unit`, `connection`, `node` entities `capacity` parameter — [MW or MWh] decomposed into:
     - *existing* — capacity assumed at the start of the period
-    - *invested* — capacity the model decided to invest in for the period
+    - *invested* — capacity that comes online in the period (without a construction lead time, the capacity invested in that period)
+    - *in_construction* — capacity decided but not yet operating in the period; always present, empty without a construction lead time
     - *divested* — capacity the model decided to retire at the start of the period
-    - *total* — `existing + invested − divested`
+    - *total* — capacity in service: `existing + invested − divested`, cumulated over the periods; capacity in construction is not included
+
+    In combined solves (e.g. a chain of solves, or invest then dispatch), each realized investment is counted once, in the period it comes online.
 
     Period axis covers every period in which an investment **or** a divestment decision occurs (both the invest-eligible and divest-eligible periods feed into `d_realize_invest`), so divest-only periods are visible even when no new capacity is added.
 - `unit`, `connection`, `node` entities `invest_marginal` parameter — [CUR/MW or MWh] effective dual of the investment decision: zero means the model is at the unconstrained optimum; positive means an active upper bound (per-entity, per-group, period, total or cumulative caps are summed automatically); negative means the entity is not built and is unprofitable to build (the v_invest column's own reduced cost) — this is the ordinary reading for an unbuilt entity, not an artefact; a numerical artefact instead looks like a non-zero value on a *built* (or at-bound) entity, or an inconsistent sign across these regimes, and is worth investigating

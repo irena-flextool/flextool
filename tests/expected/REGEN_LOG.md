@@ -1091,3 +1091,13 @@ The dispatch therefore runs coal more (`unit__outputNode__dt`, `unit_online__dt`
 164813.932 → 174931.579.
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate coal_unit_size_MIP_wind`.
+
+## 2026-11-04 — `*/unit_capacity__d.csv` (21 goldens: new empty `in_construction` column)
+
+**Context.** The capacity results gain the column `in_construction` (capacity decided but not yet operating, with a
+construction lead time), written between `invested` and `divested` and always present. No golden scenario has a
+construction lead time, so the column is empty in every one of them, and `invested` stays the capacity invested in
+the period (with no lead time it comes online in its decision period). The 21 `unit_capacity__d.csv` goldens were
+updated by inserting the empty column into the header and every row; no value, row or other column changed (the
+`connection_capacity__d` / `node_capacity__d` files are not goldens). The 21 scenarios of `tests/test_scenarios.py`
+that pin a `unit_capacity__d.csv` pass against the updated files.

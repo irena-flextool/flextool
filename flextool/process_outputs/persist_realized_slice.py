@@ -435,6 +435,14 @@ _INVEST_SETS: frozenset[str] = frozenset(
     {"ed_invest", "ed_divest", "edd_invest"}
 )
 
+# Lead-time sets ((entity, period_invest, period)) — realized filter is on
+# the realized-invest DECISION period (mirrors ``drop_levels``); the
+# period the capacity comes online or is in construction may be a
+# look-ahead period of the deciding solve.
+_DECISION_SETS: frozenset[str] = frozenset(
+    {"edd_invest_commission", "edd_invest_in_construction"}
+)
+
 # dtt / dtttdt — the storage-adjacency sets whose current ``(period,
 # time)`` is the only thing filtered; adjacency columns stay verbatim.
 _ADJACENCY_SETS: frozenset[str] = frozenset({"dtt", "dtttdt"})
@@ -497,6 +505,11 @@ def _apply_set_realized_filter(
     # current (period, time); adjacency columns ride along verbatim.
     if _multiindex_has_level(idx, "time"):
         return _filter_index_by_dt(idx, realized_dt)
+
+    # Lead-time sets — filter on the realized-invest decision period.
+    if attr in _DECISION_SETS:
+        decided = idx.get_level_values("period_invest").astype(str)
+        return idx[decided.isin(realized_invest_periods)]
 
     # Invest-keyed sets — filter on realized-invest periods.
     if attr in _INVEST_SETS:

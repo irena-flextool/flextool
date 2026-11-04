@@ -1212,7 +1212,9 @@ plots:
     node_capacity_ed_p:
       default:
         variant: p
-        map_dimensions_for_plots: [ed_p, bg_u]
+        # Bars per entity, a panel per period, the capacity components (existing, invested,
+        # in_construction, divested, total) side by side, coloured by categories.capacity.
+        map_dimensions_for_plots: [ed_p, bu_g]
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1220,6 +1222,7 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
+        color_category: capacity
         comparison_overrides:
           map_dimensions_for_plots: [ed_sp, eb_gu]
           max_subplots_per_file: 2
@@ -1231,7 +1234,9 @@ plots:
     unit_capacity_ed_p:
       default:
         variant: p
-        map_dimensions_for_plots: [ed_p, bg_u]
+        # Bars per entity, a panel per period, the capacity components (existing, invested,
+        # in_construction, divested, total) side by side, coloured by categories.capacity.
+        map_dimensions_for_plots: [ed_p, bu_g]
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1239,11 +1244,13 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
+        color_category: capacity
         # In the comparison view, the unioned plan parquet has 'scenario'
         # prepended as the outermost column level. 'g' renders each scenario
         # as a separate colour group on the bars (side-by-side per unit).
         scenario_rule: g
         comparison_overrides:
+          map_dimensions_for_plots: [ed_sp, bg_gu]
           max_subplots_per_file: 2
           base_length: 4
           legend: shared
@@ -1253,7 +1260,9 @@ plots:
     connection_capacity_ed_p:
       default:
         variant: p
-        map_dimensions_for_plots: [ed_p, bg_u]
+        # Bars per entity, a panel per period, the capacity components (existing, invested,
+        # in_construction, divested, total) side by side, coloured by categories.capacity.
+        map_dimensions_for_plots: [ed_p, bu_g]
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1261,6 +1270,7 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
+        color_category: capacity
         comparison_overrides:
           map_dimensions_for_plots: [ed_sp, eb_gu]
           legend: shared

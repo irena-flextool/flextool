@@ -112,7 +112,7 @@
       "capacity",
       null,
       null,
-      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - Capacity that comes online in the period. 'in_construction' - Capacity decided but not yet operating in the period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
       null
     ],
     [
@@ -416,7 +416,7 @@
       "capacity",
       null,
       null,
-      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - Capacity that comes online in the period. 'in_construction' - Capacity decided but not yet operating in the period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
       null
     ],
     [
@@ -480,7 +480,7 @@
       "capacity",
       null,
       null,
-      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - Capacity that comes online in the period. 'in_construction' - Capacity decided but not yet operating in the period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
       null
     ],
     [

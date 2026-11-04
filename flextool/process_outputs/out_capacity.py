@@ -1,6 +1,42 @@
 import pandas as pd
 
 
+def _invest_columns(par, s, v, entities) -> tuple[pd.Series, pd.Series]:
+    """``(invested, in_construction)`` in MW (MWh for storage) by ``(entity, period)`` for ``entities``.
+
+    ``invested`` is the capacity that comes online in the period, ``in_construction`` the capacity decided but
+    not yet operating.  Both are sums of the realized investment decisions ``v_invest[e, period_invest]`` ×
+    unit size over the solve's lead-time sets ``edd_invest_commission`` / ``edd_invest_in_construction``
+    (``(entity, period_invest, period)``).  Without a construction lead time those sets are empty: a decision
+    comes online in its own period and nothing is in construction.  Over combined solves the decisions are the
+    unioned realized ``v_invest``, each counted once.  A cell without a decision is empty.
+    """
+    empty = pd.Series(dtype=float)
+    if v.invest.empty or len(v.invest.columns) == 0:
+        return empty, empty
+    ed = s.ed_invest[s.ed_invest.get_level_values('entity').isin(entities)]
+    # Restrict to (entity, period) pairs that have a v_invest value in the
+    # solve: s.ed_invest is the full possible-pairs union, so a never-
+    # realized pair (e.g. (e, p2025) when only p2020 is realized in the
+    # current solve) would raise a KeyError.
+    unstacked = v.invest.unstack()
+    ed = ed.intersection(unstacked.index)
+    decision = unstacked[ed] * par.entity_unitsize[ed.get_level_values('entity').unique()]
+    commission = s.edd_invest_commission
+    if len(commission) == 0:
+        return decision, empty
+    decided = decision.rename('value').rename_axis(['entity', 'period_invest']).reset_index()
+
+    def _by_period(sets: pd.MultiIndex) -> pd.Series:
+        rows = sets[sets.get_level_values('entity').isin(entities)].to_frame(index=False)
+        if rows.empty:
+            return empty
+        joined = rows.merge(decided, on=['entity', 'period_invest'], how='inner')
+        return joined.groupby(['entity', 'period'], sort=False)['value'].sum(min_count=1)
+
+    return _by_period(commission), _by_period(s.edd_invest_in_construction)
+
+
 def unit_capacity(par, s, v, r, debug):
     """Unit capacity by period"""
 
@@ -39,19 +75,8 @@ def unit_capacity(par, s, v, r, debug):
     existing = par.entity_pre_existing[processes].unstack()
     results['existing'] = existing
 
-    # Invested capacity - default to None, overwrite if data exists
-    results['invested'] = pd.Series(dtype=float)
-    if not v.invest.empty and len(v.invest.columns) > 0:
-        ed_unit_invest = s.ed_invest[s.ed_invest.get_level_values('entity').isin(s.process_unit)]
-        # Filter to (entity, period) pairs that actually have a v_invest value
-        # in this solve.  Without the per-solve solve__ed_invest filter that
-        # v3.32.0 used, s.ed_invest is the full possible-pairs union; restrict
-        # here to avoid KeyErrors on never-realized pairs (e.g. (e, p2025)
-        # when only p2020 is realized in the current solve).
-        unstacked_invest = v.invest.unstack()
-        ed_unit_invest = ed_unit_invest.intersection(unstacked_invest.index)
-        unit_invest = ed_unit_invest.get_level_values('entity').unique()
-        results['invested'] = unstacked_invest[ed_unit_invest] * par.entity_unitsize[unit_invest]
+    # Capacity coming online (invested) and in construction
+    results['invested'], results['in_construction'] = _invest_columns(par, s, v, s.process_unit)
 
     # Divested capacity - default to None, overwrite if data exists
     results['divested'] = pd.Series(dtype=float)
@@ -65,7 +90,7 @@ def unit_capacity(par, s, v, r, debug):
     # Total capacity - filter to process_unit only
     total = r.entity_all_capacity[processes].unstack()
     results['total'] = total
-    results = results[['existing', 'invested', 'divested', 'total']]
+    results = results[['existing', 'invested', 'in_construction', 'divested', 'total']]
     return results, 'unit_capacity_ed_p'
 
 
@@ -94,15 +119,8 @@ def connection_capacity(par, s, v, r, debug):
     existing = par.entity_pre_existing[connections].unstack()
     results['existing'] = existing
 
-    # Invested capacity - default to empty, overwrite if data exists
-    results['invested'] = pd.Series(dtype=float)
-    if not v.invest.empty and len(v.invest.columns) > 0:
-        ed_conn_invest = s.ed_invest[s.ed_invest.get_level_values('entity').isin(s.process_connection)]
-        # See unit_capacity above for why we intersect with v.invest's columns.
-        unstacked_invest = v.invest.unstack()
-        ed_conn_invest = ed_conn_invest.intersection(unstacked_invest.index)
-        conn_invest = ed_conn_invest.get_level_values('entity').unique()
-        results['invested'] = unstacked_invest[ed_conn_invest] * par.entity_unitsize[conn_invest]
+    # Capacity coming online (invested) and in construction
+    results['invested'], results['in_construction'] = _invest_columns(par, s, v, s.process_connection)
 
     # Divested capacity - default to empty, overwrite if data exists
     results['divested'] = pd.Series(dtype=float)
@@ -117,7 +135,7 @@ def connection_capacity(par, s, v, r, debug):
     results['total'] = r.entity_all_capacity[connections].unstack()
 
     # Reorder columns
-    results = results[['existing', 'invested', 'divested', 'total']]
+    results = results[['existing', 'invested', 'in_construction', 'divested', 'total']]
 
     return results, 'connection_capacity_ed_p'
 
@@ -150,15 +168,8 @@ def node_capacity(par, s, v, r, debug):
     else:
         results['existing'] = pd.Series(dtype=float)
 
-    # Invested capacity - default to empty, overwrite if data exists
-    results['invested'] = pd.Series(dtype=float)
-    if not v.invest.empty and len(v.invest.columns) > 0:
-        ed_node_invest = s.ed_invest[s.ed_invest.get_level_values('entity').isin(s.node)]
-        # See unit_capacity above for why we intersect with v.invest's columns.
-        unstacked_invest = v.invest.unstack()
-        ed_node_invest = ed_node_invest.intersection(unstacked_invest.index)
-        node_invest = ed_node_invest.get_level_values('entity').unique()
-        results['invested'] = unstacked_invest[ed_node_invest] * par.entity_unitsize[node_invest]
+    # Capacity coming online (invested) and in construction
+    results['invested'], results['in_construction'] = _invest_columns(par, s, v, s.node)
 
     # Divested capacity - default to empty, overwrite if data exists
     results['divested'] = pd.Series(dtype=float)
@@ -175,5 +186,5 @@ def node_capacity(par, s, v, r, debug):
     else:
         results['total'] = pd.Series(dtype=float)
 
-    results = results[['existing', 'invested', 'divested', 'total']]
+    results = results[['existing', 'invested', 'in_construction', 'divested', 'total']]
     return results, 'node_capacity_ed_p'

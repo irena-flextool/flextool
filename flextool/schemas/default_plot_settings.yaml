@@ -77,6 +77,17 @@ categories:
     upward reserve slack penalty:          '#c1272d'   # dark red
     downward reserve slack penalty:        '#ff9896'   # salmon
     capacity margin penalty:               '#7b0828'   # deep wine red
+  # Capacity components produced by
+  # flextool/process_outputs/out_capacity.py (unit / connection / node
+  # capacity by period).  ``invested`` is the capacity that comes online in
+  # the period; ``in_construction`` (decided, not yet operating — only with a
+  # construction lead time) is a lighter hue of the invested blue.
+  capacity:
+    existing:          '#a6a6a6'   # light gray — capacity at the start
+    invested:          '#1f77b4'   # strong blue — comes online in the period
+    in_construction:   '#9ecae1'   # light blue — decided, not yet operating
+    divested:          '#d62728'   # red — retired
+    total:             '#4d4d4d'   # dark gray — capacity in service
   # Node balance components produced by
   # flextool/process_outputs/out_node.py::node_summary().  The plot shows
   # stacked contributions to a node's energy balance: supply-side labels

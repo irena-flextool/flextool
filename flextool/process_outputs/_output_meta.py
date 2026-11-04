@@ -165,12 +165,18 @@ RAMP = Transform(
 CAPACITY_MW = Transform(
     "MW", Semantics.LEVEL,
     "Installed/usable capacity (a stock that holds over the period, not a flow).",
-    algebra="existing + invested − divested",
+    description="Capacity by period: existing, invested (capacity that comes online in the period), "
+                "in_construction (capacity decided but not yet operating; empty without a construction lead "
+                "time), divested and total (capacity in service). Capacity in construction is not in the total.",
+    algebra="total = existing + invested − divested (cumulative; in_construction excluded)",
 )
 CAPACITY_MWH = Transform(
     "MWh", Semantics.LEVEL,
     "Storage energy capacity (a stock).",
-    algebra="existing + invested − divested",
+    description="Storage capacity by period: existing, invested (capacity that comes online in the period), "
+                "in_construction (capacity decided but not yet operating; empty without a construction lead "
+                "time), divested and total (capacity in service). Capacity in construction is not in the total.",
+    algebra="total = existing + invested − divested (cumulative; in_construction excluded)",
 )
 STORAGE_STATE = Transform(
     "MWh", Semantics.LEVEL,

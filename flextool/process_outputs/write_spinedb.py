@@ -23,8 +23,9 @@ Key correctness facts (verified against the engine code, 2026-06-03):
   ``node``, ``connection``, ``group``, ``reserve``, ``upDown``, plus the
   literal ``model``-class entities ``"cost"`` and ``"model"``) in addition
   to the relationship entities.
-* Capacity Map keys stay ``existing``/``invested``/``divested``/``total``
-  (no ``retired`` rename).
+* Capacity Map keys stay ``existing``/``invested``/``in_construction``/
+  ``divested``/``total`` (no ``retired`` rename); ``in_construction`` is
+  empty without a construction lead time, so it emits nothing then.
 * Discount-factor params (#33/#34) derive from
   ``par.inflation_factor_investment_yearly`` /
   ``par.inflation_factor_operations_yearly``.  ``par`` is threaded in as an

@@ -319,5 +319,12 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     s.edd_invest.names = ['entity', 'period_invest', 'period']
     s.edd_invest = s.edd_invest.join(s.d_realize_invest, how='inner')
     s.ed_divest = s.ed_divest.droplevel('solve').unique().join(s.d_realize_invest, how='inner')
+    # Lead-time sets are keyed by the realized investment DECISION
+    # (period_invest); the period the capacity comes online or is in
+    # construction may be a look-ahead period of the deciding solve.
+    realized_invest = set(s.d_realize_invest)
+    for attr in ('edd_invest_commission', 'edd_invest_in_construction'):
+        idx = getattr(s, attr).droplevel('solve').unique()
+        setattr(s, attr, idx[idx.get_level_values('period_invest').isin(realized_invest)])
 
     return par, s, v
