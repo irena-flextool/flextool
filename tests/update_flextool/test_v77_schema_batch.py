@@ -1,6 +1,8 @@
 """Database migration to version 77 (schema batch).
 
-Seed: ``stoch_two_period.json`` (below 77) migrated to 76, then extended with
+Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
+``tests/fixtures/stoch_two_period.json``; the fixtures themselves are kept at
+the current version) migrated to 76, then extended with
 the pre-77 content v77 must handle: group ``invest_method`` values
 (``not_allowed`` and another method), a collided ``unit__inputNode``
 ``capacity_max_coeff`` / ``input_share_max`` pair, stale definitions with
@@ -24,6 +26,7 @@ from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
 MARKER = "flextool_behaviour_change:user_constraint_prebuilt_nets_retirements"
 ABSENT = ("node", "energy_margin_adder")  # deleted from the seed: the migration must not re-create it
 
@@ -58,7 +61,7 @@ def _snapshot(db) -> dict:
 @pytest.fixture(scope="module")
 def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
     tmp = tmp_path_factory.mktemp("v77")
-    url = json_to_db(FIXTURES / "stoch_two_period.json", tmp / "seed.sqlite")
+    url = json_to_db(SEED, tmp / "seed.sqlite")
     migrate_database(url, up_to=76)
     with DatabaseMapping(url) as db:
         alt = db.get_items("alternative")[0]["name"]
@@ -200,7 +203,7 @@ def test_rerun_is_idempotent(migrated) -> None:
 
 
 def test_stale_values_are_listed(tmp_path: Path, capsys) -> None:
-    url = json_to_db(FIXTURES / "stoch_two_period.json", tmp_path / "seed.sqlite")
+    url = json_to_db(SEED, tmp_path / "seed.sqlite")
     migrate_database(url, up_to=76)
     with DatabaseMapping(url) as db:
         solve = db.get_items("entity", entity_class_name="solve")[0]["name"]

@@ -57,7 +57,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from spinedb_api import DatabaseMapping, import_data, to_database
+from spinedb_api import DatabaseMapping, import_data
 from spinedb_api.exception import SpineDBAPIError
 
 # Allow running this script standalone from any cwd.
@@ -69,6 +69,8 @@ if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
 from db_utils import db_to_json, json_to_db  # noqa: E402
+
+from flextool.update_flextool.test_fixtures import migrate_fixture  # noqa: E402
 
 # Reuse constants from the public module so tests and this script
 # stay in lockstep.
@@ -106,6 +108,11 @@ INVEST_SCENARIO: str = "lh2_three_region_invest"
 RP_INVEST_ALT: str = "lh2_three_region_rp_invest"
 RP_INVEST_SCENARIO: str = "lh2_three_region_rp_invest"
 RP_INVEST_OUT = HERE / "lh2_three_region_rp_invest.json"
+
+# tests.json alternatives added after the LH2 fixtures were built (the
+# demand-response holding-loss tie-breaker); removed from the baseline so a
+# rebuild reproduces the committed fixtures.
+BASELINE_ALTERNATIVES_NOT_CARRIED: tuple[str, ...] = ("dr_shift_holding_loss",)
 
 
 # --- Time series synthesis --------------------------------------------------
@@ -1026,52 +1033,15 @@ def _build_sqlite(
     # entity_class, parameter_definition and value list FlexTool needs.
     json_to_db(HERE / "tests.json", db_path)
 
-    # Step 2: apply just the v51 schema additions inline.  The full
-    # migrate_database loop is not used here because the JSON snapshot
-    # has stale ``model.version`` (38) but the schema is at v50, so
-    # the loop would re-run already-applied migrations that mutate
-    # value_lists no longer present.  The v51 step is purely additive.
+    # Step 2: drop the baseline alternatives added to tests.json after the
+    # LH2 fixtures were built, so the build reproduces the committed JSONs.
     url = f"sqlite:///{db_path.resolve()}"
     with DatabaseMapping(url) as db:
-        decomp_payload = {
-            "parameter_value_lists": [
-                ("decomposition_methods", "none"),
-                ("decomposition_methods", "benders_regional"),
-            ],
-        }
-        _, _ = import_data(db, **decomp_payload)
-        default_val_none, default_type_none = to_database(None)
-        default_val_str, default_type_str = to_database("none")
-        db.add_update_item(
-            "parameter_definition",
-            entity_class_name="group",
-            name="new_stepduration",
-            default_value=default_val_none,
-            default_type=default_type_none,
-            parameter_type_list=("float",),
-            description=(
-                "Hours. Members of this group operate at this step "
-                "duration. Overrides the solve-level new_stepduration "
-                "for these entities."
-            ),
-        )
-        db.add_update_item(
-            "parameter_definition",
-            entity_class_name="group",
-            name="decomposition_method",
-            default_value=default_val_str,
-            default_type=default_type_str,
-            parameter_value_list_name="decomposition_methods",
-            parameter_type_list=("str",),
-            description=(
-                "Decomposition strategy to apply to this group. Currently "
-                "supported: 'none' (no decomposition — default), "
-                "'benders_regional' (group is solved as an independent region "
-                "in the Benders master/subproblem decomposition, with "
-                "shared-commodity trade coupling handled by the master)."
-            ),
-        )
-        db.commit_session("Applied v51 group-block schema additions")
+        for name in BASELINE_ALTERNATIVES_NOT_CARRIED:
+            alt = db.get_item("alternative", name=name)
+            if alt:
+                db.remove_item("alternative", alt["id"])
+        db.commit_session("Dropped baseline alternatives the LH2 fixtures do not carry")
 
     # Step 3: layer the LH2 fixture on top.
     payload = _build_payload(hz=hz, extra_overlay=extra_overlay)
@@ -1210,6 +1180,8 @@ def regenerate_json(
         db_path = Path(td) / "lh2_three_region.sqlite"
         _build_sqlite(db_path, hz=hz, extra_overlay=extra_overlay)
         db_to_json(db_path, out_path)
+    # Migrated and synced with the schema like every committed fixture.
+    migrate_fixture(out_path)
     return out_path.stat().st_size
 
 

@@ -279,3 +279,27 @@ def sync_schema_sections(data: dict, fmt: Format) -> dict:
         out.setdefault(key, sections[key])
     return out
 
+
+
+def _hashable(value: Any) -> Any:
+    if isinstance(value, list):
+        return tuple(_hashable(item) for item in value)
+    return value
+
+
+def normalise_data(data: dict, fmt: Format) -> dict[str, set]:
+    """Order-free view of every non-schema section of ``data``, values decoded.
+
+    A database round trip may reorder rows, so two fixtures hold the same data
+    when these sets are equal.
+    """
+    out = {}
+    for key, rows in data.items():
+        if key in SCHEMA_SECTIONS:
+            continue
+        if key == "parameter_values":
+            out[key] = {(r[0], _hashable(r[1]), r[2], json.dumps(_decode(r[3], fmt), sort_keys=True),
+                         r[3][1] if r[3] else None, *map(_hashable, r[4:])) for r in rows}
+        else:
+            out[key] = {_hashable(row) for row in rows}
+    return out

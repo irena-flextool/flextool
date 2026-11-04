@@ -55,6 +55,9 @@ import base64
 import json
 from pathlib import Path
 
+from flextool.update_flextool.fixture_schema import schema_sections
+from flextool.update_flextool.test_fixtures import write_built_fixture
+
 FIXTURES = Path(__file__).resolve().parent
 
 STEPS = [f"t{i:04d}" for i in range(1, 7)]
@@ -79,37 +82,7 @@ def _nested(pairs: list[tuple[str, object]]) -> dict:
 
 
 def build() -> dict:
-    src = json.loads((FIXTURES / "stochastics.json").read_text())
-
-    spec: dict = {
-        key: src[key]
-        for key in (
-            "entity_classes",
-            "parameter_value_lists",
-            "parameter_groups",
-            "parameter_definitions",
-            "parameter_types",
-        )
-    }
-
-    # ``stochastics.json`` still carries the pre-v70 schema, so inject the
-    # ``solve.stochastic_invest_method`` opt-in (Slice C, v70) before
-    # import (json_to_db validates against the embedded schema BEFORE the
-    # idempotent v70 migration reconciles it).
-    if not any(vl[0] == "stochastic_invest_methods"
-               for vl in spec["parameter_value_lists"]):
-        spec["parameter_value_lists"] += [
-            ["stochastic_invest_methods", _pack("none", "str")],
-            ["stochastic_invest_methods", _pack("recourse", "str")],
-        ]
-    if not any(pd[0] == "solve" and pd[1] == "stochastic_invest_method"
-               for pd in spec["parameter_definitions"]):
-        spec["parameter_definitions"].append([
-            "solve", "stochastic_invest_method",
-            _pack("none", "str"), "stochastic_invest_methods",
-            "How stochastic branches participate in investment "
-            "(none/recourse).", "solve_advanced",
-        ])
+    spec: dict = schema_sections("packed")
 
     spec["alternatives"] = [
         ["init", "Model, solve and time structure"],
@@ -255,7 +228,7 @@ def build() -> dict:
 def main() -> None:
     spec = build()
     out = FIXTURES / "stoch_two_period_midhorizon_nreal0.json"
-    out.write_text(json.dumps(spec, indent=2) + "\n")
+    write_built_fixture(spec, out)
     print(f"Wrote {out} "
           f"({len(spec['parameter_values'])} parameter values)")
 

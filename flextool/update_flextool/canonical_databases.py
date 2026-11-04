@@ -16,7 +16,8 @@ The user-facing workflow is one of:
 
 ``python -m flextool.update_flextool.canonical_databases migrate-all``
     Round-trip every canonical JSON through
-    ``initialize_database -> migrate_database -> export_database``.
+    ``initialize_database -> migrate_database -> export_database`` and
+    replace its schema sections with those of ``spinedb_schema.json``.
     Run from a source checkout (editable install) whenever
     ``FLEXTOOL_DB_VERSION`` is bumped; commit the resulting JSON diffs
     alongside the migration step.  See ``CONTRIBUTING.md``.
@@ -39,7 +40,8 @@ from pathlib import Path
 
 from flextool._resources import package_data_path
 from flextool.update_flextool.db_migration import migrate_repository_database
-from flextool.update_flextool.export_database import export_database
+from flextool.update_flextool.export_database import dump_canonical_json, export_database
+from flextool.update_flextool.fixture_schema import sync_schema_sections
 from flextool.update_flextool.initialize_database import initialize_database
 
 
@@ -98,16 +100,36 @@ def materialize(overwrite: bool = False) -> None:
         initialize_database(str(json_abs), str(sqlite_abs))
 
 
+def migrate_canonical(json_abs: Path, out_path: Path | None = None) -> None:
+    """Migrate one canonical JSON and replace its schema sections with the schema's.
+
+    ``initialize_database -> migrate (markers dropped) -> export_database``,
+    then :func:`~flextool.update_flextool.fixture_schema.sync_schema_sections`
+    in the decoded format.  Writes to ``out_path`` (default: over
+    ``json_abs``).
+    """
+    out_path = out_path if out_path is not None else json_abs
+    with tempfile.TemporaryDirectory() as tmp:
+        staging = os.path.join(tmp, "staging.sqlite")
+        exported = Path(tmp) / "exported.json"
+        initialize_database(str(json_abs), staging)
+        migrate_repository_database(staging)
+        export_database(staging, str(exported))
+        with open(exported, encoding="utf-8") as f:
+            data = json.load(f)
+    dump_canonical_json(sync_schema_sections(data, "decoded"), out_path)
+
+
 def migrate_all() -> None:
-    """Round-trip every canonical JSON through the current schema.
+    """Migrate every canonical JSON and sync its schema sections with the schema.
 
     For each entry:
 
     1. Materialise the bundled JSON into a throwaway ``.sqlite``.
     2. Run :func:`migrate_database` against it — walks
        ``model.version`` up to :data:`FLEXTOOL_DB_VERSION`.
-    3. Re-export the migrated ``.sqlite`` back over the bundled JSON
-       file in place.
+    3. Re-export the migrated ``.sqlite``, replace its schema sections
+       with the schema's, and write it over the bundled JSON file.
 
     Requires an editable install: the JSON files are written back to the
     on-disk package source, which only exists for ``pip install -e .``
@@ -120,11 +142,7 @@ def migrate_all() -> None:
         if not json_abs.is_file():
             print(f"!! canonical JSON missing in package: {db.json_name}")
             continue
-        with tempfile.TemporaryDirectory() as tmp:
-            staging = os.path.join(tmp, "staging.sqlite")
-            initialize_database(str(json_abs), staging)
-            migrate_repository_database(staging)
-            export_database(staging, str(json_abs))
+        migrate_canonical(json_abs)
         print(f"migrated canonical JSON: {db.json_name}")
 
 
@@ -152,17 +170,66 @@ def _summarise_diff(committed: Path, regenerated: Path) -> str:
     return "\n".join(lines) if lines else "  (no top-level section differs — check value-level)"
 
 
+def _compare(json_abs: Path, regenerated: Path, name: str) -> bool:
+    with open(json_abs) as f:
+        committed_text = f.read()
+    with open(regenerated) as f:
+        regenerated_text = f.read()
+    if committed_text == regenerated_text:
+        print(f"ok: {name}")
+        return True
+    print(f"DRIFT: {name}")
+    print(_summarise_diff(json_abs, regenerated))
+    return False
+
+
+def _report(mismatches: int) -> int:
+    if mismatches:
+        print(
+            f"\n{mismatches} canonical JSON(s) out of sync with current schema. "
+            "Run `python -m flextool.update_flextool.canonical_databases migrate-all`."
+        )
+    return mismatches
+
+
 def verify_all() -> int:
-    """Verify that every committed canonical JSON matches its migrated form.
+    """Verify that every committed canonical JSON is byte-stable through migrate + schema sync.
+
+    Runs :func:`migrate_canonical` into a temp file for each
+    ``CANONICAL_DATABASES`` entry and compares it to the committed source.
+    Returns 0 when every file is stable, or the number of drifted files (a
+    JSON whose data does not fit the schema counts as drifted).
+
+    Mirrors :func:`flextool.update_flextool.test_fixtures.verify_all`.
+    """
+    mismatches = 0
+    for db in CANONICAL_DATABASES:
+        json_abs = _json_source(db)
+        if not json_abs.is_file():
+            print(f"!! canonical JSON missing in package: {db.json_name}")
+            mismatches += 1
+            continue
+        with tempfile.TemporaryDirectory() as tmp:
+            regenerated = Path(tmp) / db.json_name
+            try:
+                migrate_canonical(json_abs, regenerated)
+            except ValueError as exc:
+                mismatches += 1
+                print(f"DRIFT: {db.json_name}\n  {exc}")
+                continue
+            if not _compare(json_abs, regenerated, db.json_name):
+                mismatches += 1
+    return _report(mismatches)
+
+
+def verify_round_trip() -> int:
+    """Verify that every committed canonical JSON is byte-stable through the migration alone.
 
     Round-trips each ``CANONICAL_DATABASES`` entry through
     ``initialize_database -> migrate_database -> export_database`` into a
     temp file and compares to the committed source.  Returns 0 when every
     file is byte-stable, or a positive count of mismatched files
-    otherwise.  Intended for CI use via
-    ``python -m flextool.update_flextool.canonical_databases verify``.
-
-    Mirrors :func:`flextool.update_flextool.test_fixtures.verify_all`.
+    otherwise.
     """
     mismatches = 0
     for db in CANONICAL_DATABASES:
@@ -177,22 +244,9 @@ def verify_all() -> int:
             initialize_database(str(json_abs), staging)
             migrate_repository_database(staging)
             export_database(staging, str(regenerated))
-            with open(json_abs) as f:
-                committed_text = f.read()
-            with open(regenerated) as f:
-                regenerated_text = f.read()
-            if committed_text == regenerated_text:
-                print(f"ok: {db.json_name}")
-            else:
+            if not _compare(json_abs, regenerated, db.json_name):
                 mismatches += 1
-                print(f"DRIFT: {db.json_name}")
-                print(_summarise_diff(json_abs, regenerated))
-    if mismatches:
-        print(
-            f"\n{mismatches} canonical JSON(s) out of sync with current schema. "
-            "Run `python -m flextool.update_flextool.canonical_databases migrate-all`."
-        )
-    return mismatches
+    return _report(mismatches)
 
 
 def _seed_from_cwd_sqlites() -> None:
@@ -241,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "migrate-all":
         migrate_all()
     elif args.cmd == "verify":
-        return verify_all()
+        return verify_round_trip()
     elif args.cmd == "seed":
         _seed_from_cwd_sqlites()
     return 0
