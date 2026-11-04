@@ -1950,6 +1950,7 @@ def master_network_data(
         setattr(new, name, _keep_entity_param(getattr(data, name, None)))
     new.edd_operating_window = _keep_entity_frame(getattr(data, "edd_operating_window", None))
     new.edd_retire_window = _keep_entity_frame(getattr(data, "edd_retire_window", None))
+    new.edd_salvage_window = _keep_entity_frame(getattr(data, "edd_salvage_window", None))
     new.e_invest_total = _keep_entity_frame(data.e_invest_total)
     new.e_divest_total = _keep_entity_frame(data.e_divest_total)
     new.e_invest_max_total = _keep_entity_frame(data.e_invest_max_total)

@@ -139,11 +139,11 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "a later solve counted it from its own first period and branches multiplied it; "
                      "reinvest_automatic: the end of the run). It saves each "
                      "period's fixed cost of the existing capacity in that window, with the factor that fixed cost "
-                     "is charged with, and earns its salvage value over the years of the window. Periods without "
+                     "is charged with (its salvage value is unchanged: an annuity over lifetime). Periods without "
                      "existing capacity have no retirement option. Before, a retirement counted in every later "
                      "period (past the end of life the capacity went negative: an infeasible or zero retirement), "
-                     "chained solves subtracted it from every period, and its saving and salvage value were "
-                     "counted over the lifetime from the retirement (results change)."),
+                     "chained solves subtracted it from every period, and its fixed-cost saving was counted over "
+                     "the lifetime from the retirement (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "retirement_of_existing_capacity_only"),
         ),
     )
@@ -193,6 +193,17 @@ def warn_once(key, text: str) -> bool:
         return False
     _warned.add(key)
     print(text, flush=True)
+    return True
+
+
+def warn_once_each(kind: str, names: list[str], text_of) -> bool:
+    """Print ``text_of(fresh)`` for the ``names`` not named in a ``kind`` message earlier in this run (each name
+    once per run, however the solves group them).  Returns True when it printed."""
+    fresh = [n for n in names if (kind, n) not in _warned]
+    if not fresh:
+        return False
+    _warned.update((kind, n) for n in fresh)
+    print(text_of(fresh), flush=True)
     return True
 
 

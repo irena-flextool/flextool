@@ -64,8 +64,9 @@ With `output_horizon = yes` (a debug option), `output_parquet/<scenario>/horizon
     the yearly amounts of every vintage and retirement in effect in the period: an investment adds its annuity (the
     `invest_cost` annuity of the period the capacity starts to operate) and its yearly fixed cost in every period it
     operates within the run (within its `lifetime`, or every later period with `reinvest_automatic`); a retirement
-    subtracts its salvage annuity and the yearly fixed cost of the retired capacity in every period of its lifetime
-    window. They are reported only for capacity whose investment cost is reported (see the next section). For these
+    subtracts its salvage annuity in every period from the retirement until `lifetime` later, and the yearly fixed
+    cost of the retired capacity in every period the retirement counts in (until the end of life of the existing
+    capacity). They are reported only for capacity whose investment cost is reported (see the next section). For these
     columns the annualized value is therefore not the discounted value divided by the period's discount factor,
     which holds for the other columns.
 - `model` entity `cost_t` parameter — [CUR] (currency, not millions) same categories as above but per timestep: the cost incurred during the step, with the step duration and timestep weight applied but not scaled to a full year (no investment / fixed terms). The CSV / parquet output `costs__dt` has the same values and unit.
@@ -88,8 +89,8 @@ as one solve over the same periods with the same decisions would report:
   that period) and the fixed cost over the same years come once, from the solve that decided it, and are reported
   only once a solve realizes the period it starts to operate in. Capacity carried from an earlier solve is
   therefore not charged again as existing capacity.
-- **Retirements** are reported in the retirement period: the salvage annuity and the fixed cost saved over the
-  retirement's lifetime window. The fixed cost of existing capacity (*fixed cost pre-existing*) is that of the
+- **Retirements** are reported in the retirement period: the salvage annuity over the years from the retirement
+  until `lifetime` later, and the fixed cost saved in the periods the retirement counts in. The fixed cost of existing capacity (*fixed cost pre-existing*) is that of the
   capacity given in `existing`, aged over its lifetime, in every period of the run, also in the last solve's
   look-ahead periods that no solve realizes (the fixed cost of new capacity covers them too).
 - **Inside a stochastic fan** the investment cost and the fixed cost of the new capacity that operates in the fan's

@@ -25,8 +25,8 @@ The cluster covers six FlexData fields:
 and, for the reported costs only (no model term reads them), their run-level
 twins ``*_run`` discounted from the start of the run over the periods of the
 whole run, the undiscounted annuities ``ed_annuity`` / ``ed_divest_annuity``
-and the operating / retirement windows ``edd_operating_window`` /
-``edd_retire_window`` (section "Run-level fields of the reported costs").
+and the operating / retirement / salvage windows ``edd_operating_window`` /
+``edd_retire_window`` / ``edd_salvage_window`` (section "Run-level fields of the reported costs").
 
 Architecture
 ------------
@@ -705,8 +705,6 @@ def _per_method_annuity_lf(
         ed_lf: pl.LazyFrame,
         cost_param_name: str,
         disallowed_methods: frozenset[str],
-        *,
-        life_lf: pl.LazyFrame | None = None,
         ) -> pl.LazyFrame:
     """Lazy ``(e, d, ann)`` frame computing the per-method annuity sum.
 
@@ -723,9 +721,6 @@ def _per_method_annuity_lf(
     ``ann[e, d] = method_count[e] × annuity[e, d]`` where
     ``method_count[e] = |{m : (e, m) ∈ entity__invest_method,
                                 m ∉ disallowed}|``.
-
-    ``life_lf`` ``[e, d, life]`` replaces ``lifetime[e, d]`` as the annuity's number of years (the salvage value
-    of a retirement is spread over the years the retirement counts, :func:`_retirement_years_lf`).
     """
     # Per-entity allowed-method count.
     methods_lf = _entity_method_lf(source, "invest_method")
@@ -750,15 +745,8 @@ def _per_method_annuity_lf(
                        .rename({"value": "cost"}))
     ed_with_disc = (_resolve_per_period_lf(disc_per, ed_with_cost, fill=0.0)
                        .rename({"value": "disc"}))
-    if life_lf is None:
-        ed_with_life = (_resolve_per_period_lf(life_per, ed_with_disc, fill=0.0)
-                           .rename({"value": "life"}))
-    else:
-        schema = ed_with_disc.collect_schema()
-        ed_with_life = ed_with_disc.join(
-            life_lf.select(pl.col("e").cast(pl.Utf8).cast(schema["e"], strict=False),
-                           pl.col("d").cast(pl.Utf8).cast(schema["d"], strict=False), "life"),
-            on=["e", "d"], how="left").with_columns(life=pl.col("life").fill_null(0.0))
+    ed_with_life = (_resolve_per_period_lf(life_per, ed_with_disc, fill=0.0)
+                       .rename({"value": "life"}))
 
     # Annuity formula: invest_value × 1000 × r / (1 - (1/(1+r))^n)
     # with r ≤ 0 → 0.05, n ≤ 0 → 20.
@@ -964,49 +952,6 @@ def _retire_window_lf(source: "InputSource",
     return walk.join(expired.lazy(), on=["e", "d_all"], how="anti")
 
 
-def _retirement_years_lf(source: "InputSource",
-                         active_solve: str | None,
-                         anchors: pl.DataFrame,
-                         period_in_use: list[str],
-                         workdir: Path | None,
-                         provider: "object | None",
-                         ) -> pl.LazyFrame:
-    """``[e, d, life]`` (Utf8 keys): R[e, d], the years a retirement decided in d counts — the years represented
-    by the periods of the RUN from d until the end of life of the entity's pre-existing capacity
-    (reinvest_choice / no_investment) or until the end of the run (reinvest_automatic); each calendar period once
-    (the branch periods of a fan share their label's years).  The salvage value is spread over these years, so a
-    chained solve with a short look-ahead gets the same R as the single solve."""
-    from flextool.engine.preprocess.params._derived import _lifetime_gate_sums, _years_for_period_from_source
-    from flextool.engine.preprocess.params._existing import _solve_walk_years
-    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
-    in_use = [str(d) for d in period_in_use]
-    years = run_years(source, active_solve, in_use, workdir, provider=provider)
-    if years is None:
-        walk_yr = _solve_walk_years(source, active_solve, workdir, provider) or {}
-        yr = {d: walk_yr[d] for d in in_use if d in walk_yr}
-        own = _years_for_period_from_source(source, active_solve, in_use, provider=provider)
-        widths = {d: [float(w) for _, w in own.get(d, [])] for d in yr}
-    else:
-        yr, widths = years
-    # One width per calendar year: the first period (in order) with that start.
-    span: list[tuple[float, float]] = []
-    for d, y in sorted(yr.items(), key=lambda kv: kv[1]):
-        if span and abs(span[-1][0] - y) <= YEAR_TOL:
-            continue
-        span.append((float(y), float(sum(widths.get(d, [])))))
-    eol = _lifetime_gate_sums(source, active_solve, workdir, provider=provider)
-    rows: list[tuple[str, str, float]] = []
-    for e, d in anchors.select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).iter_rows():
-        start = yr.get(d)
-        if start is None:
-            rows.append((e, d, 0.0))
-            continue
-        end = eol.get(e)
-        rows.append((e, d, sum(w for y, w in span if y >= start - YEAR_TOL
-                               and (end is None or y < end - YEAR_TOL))))
-    return pl.LazyFrame(rows, schema={"e": pl.Utf8, "d": pl.Utf8, "life": pl.Float64}, orient="row")
-
-
 def _factor_frame(source: "InputSource",
                   active_solve: str | None,
                   period_in_use: list[str],
@@ -1031,18 +976,16 @@ def npv_divest_discounted_lf(
         period_universe: list[str],
         *,
         lineage: pl.DataFrame | None = None,
-        workdir: Path | None = None,
-        provider: "object | None" = None,
         ) -> pl.LazyFrame:
     """Variant 2: ``ed_entity_annual_divest_discounted`` (divest-side NPV).
 
     Per (e ∈ entityDivest, d ∈ period_invest)::
 
-        ann(salvage_value[e, d], discount_rate[e, d], R[e, d]) × Σ_{d_all ∈ window(e, d)} inv_factor[d_all]
+        ann[e, d] × Σ_{d_all : pdy ∈ [pdy_d, pdy_d + life)} inv_factor[d_all]
 
-    window(e, d) = the solve's periods with yr[d] ≤ yr[d_all] < EOL[e] (:func:`_retire_window_lf`, the window of
-    ``edd_divest_active``); R[e, d] the years of the run's periods in the same window (:func:`_retirement_years_lf`),
-    so the whole salvage value is earned while the retirement counts.  Gated to e ∈ node ∪ process.
+    where ``life`` is the **raw** ``lifetime`` value (not edEntity_lifetime),
+    and the gate is restricted to e ∈ node ∪ process (mirrors
+    L266-285 — no fallback for unclassified entities).
 
     ``lineage`` — see :func:`._walks.period_walk_iterator`; the
     :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
@@ -1059,19 +1002,27 @@ def npv_divest_discounted_lf(
     pi_lf = pl.LazyFrame({"d": period_invest}).with_columns(
         alias_to_axis("d", "d"))
     ed_anchor_lf = entity_divest_set.join(pi_lf, how="cross")
-    years_lf = _retirement_years_lf(source, active_solve, ed_anchor_lf.collect(), period_in_use, workdir, provider)
-    ann_lf = (_per_method_annuity_lf(source, ed_anchor_lf, "salvage_value", _DIVEST_NOT_ALLOWED, life_lf=years_lf)
-              .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "ann"))
-    factor = (_retire_window_lf(source, active_solve, ed_anchor_lf, period_in_use, period_universe,
-                                lineage=lineage, workdir=workdir, provider=provider)
-              .join(_factor_frame(source, active_solve, period_in_use, period_universe, provider, "inv_factor"),
-                    on="d_all", how="left")
-              .group_by("e", "d").agg(pl.col("factor").fill_null(0.0).sum()))
-    keys = ed_anchor_lf.select("e", "d", _e=pl.col("e").cast(pl.Utf8), _d=pl.col("d").cast(pl.Utf8))
-    return (keys
-              .join(ann_lf.rename({"e": "_e", "d": "_d"}), on=["_e", "_d"], how="left")
-              .join(factor.rename({"e": "_e", "d": "_d"}), on=["_e", "_d"], how="left")
-              .with_columns(value=pl.col("ann").fill_null(0.0) * pl.col("factor").fill_null(0.0))
+
+    ann_lf = _per_method_annuity_lf(
+        source, ed_anchor_lf, "salvage_value", _DIVEST_NOT_ALLOWED)
+
+    # Use raw lifetime (per L271-284), not edEntity_lifetime.
+    life_lf = _raw_lifetime_on_lf(source, ed_anchor_lf)
+
+    walk = period_walk_iterator(
+        source, active_solve, ed_anchor_lf,
+        period_in_use, period_universe,
+        bounded=True, life_lf=life_lf, factor_side="inv",
+        lineage=lineage)
+
+    return (ed_anchor_lf
+              .join(ann_lf, on=["e", "d"], how="left")
+              .join(walk, on=["e", "d"], how="left")
+              .with_columns(
+                  ann=pl.col("ann").fill_null(0.0),
+                  factor=pl.col("factor").fill_null(0.0),
+                  value=pl.col("ann") * pl.col("factor"),
+              )
               .select("e", "d", "value"))
 
 
@@ -1391,8 +1342,6 @@ def ed_entity_annual_divest_discounted_from_source(
         period_universe: list[str],
         *,
         lineage: pl.DataFrame | None = None,
-        workdir: Path | None = None,
-        provider: "object | None" = None,
         ) -> "Param | None":
     """Public entry: ``ed_entity_annual_divest_discounted[e, d]``.
 
@@ -1407,7 +1356,7 @@ def ed_entity_annual_divest_discounted_from_source(
     out = (npv_divest_discounted_lf(
               source, active_solve,
               period_invest, period_in_use, period_universe,
-              lineage=lineage, workdir=workdir, provider=provider)
+              lineage=lineage)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
@@ -1500,17 +1449,20 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   reinvest_choice / no_investment (unbounded for reinvest_automatic); c(d) is the start of operation (d without
 #   a construction lead time).  edd_retire_window[e,d_divest,d]: yr_run[d_divest] ≤ yr_run[d] < EOL[e] (the end
 #   of life of the pre-existing capacity, from the start of the run; the end of the run for reinvest_automatic),
-#   the window of edd_divest_active.  In a stochastic fan only the pairs of the walk lineage (each calendar period
-#   once).
-# OUT. ed_annuity[e,d] = annuity (CUR/MW/yr, undiscounted) of invest_cost at c(d); ed_divest_annuity[e,d] the
-#   annuity of salvage_value at d over R[e,d] years, the years of the run periods of edd_retire_window(e,d) (the
-#   salvage value is earned while the retirement counts).
+#   the window of edd_divest_active.  edd_salvage_window[e,d_divest,d]: yr_run[d] ∈ [yr_run[d_divest],
+#   yr_run[d_divest] + lifetime[e, d_divest]) (raw lifetime), the window the salvage value is spread over.  In a
+#   stochastic fan only the pairs of the walk lineage (each calendar period once).
+# OUT. ed_annuity[e,d] = annuity (CUR/MW/yr, undiscounted) of invest_cost at c(d); ed_divest_annuity[e,d] the same
+#   of salvage_value at d.
 # OUT. ed_entity_annual_discounted_run[e,d] = ed_annuity[e,d]·Σ_{(e,d,d') ∈ edd_operating_window} p_inflation_inv_run[d']
 #      ed_lifetime_fixed_cost_run[e,d] = Σ_{(e,d,d') ∈ edd_operating_window} fc[e,c(d)]·p_inflation_op_run[d']
-#      ed_entity_annual_divest_discounted_run[e,d] = ed_divest_annuity[e,d]·Σ_{edd_retire_window} p_inflation_inv_run[d']
+#      ed_entity_annual_divest_discounted_run[e,d] = ed_divest_annuity[e,d]·Σ_{edd_salvage_window} p_inflation_inv_run[d']
 #      ed_lifetime_fixed_cost_divest_run[e,d] = Σ_{(e,d,d') ∈ edd_retire_window} fc[e,d']·p_inflation_op_run[d']
 #   The divest lifetime fixed cost is the fixed cost of existing capacity it saves: each window period's fixed
 #   cost with the operations factor (as the fixed cost of existing capacity is charged), as its per-solve twin.
+#   The salvage value keeps the annuity over lifetime and the window of the investment annuity (its per-solve
+#   twin ed_entity_annual_divest_discounted likewise), so retiring existing capacity and building identical new
+#   capacity earns nothing.
 # Notes: when the run is the solve itself (no run calendar, or every run period is in use and the solve starts
 #   the run) the factors and lumps ARE the per-solve fields (byte-identical); only the windows and annuities are
 #   built.  An entity with both a bounded and an unbounded lifetime method adds both sums, as the per-solve lumps
@@ -1792,14 +1744,23 @@ def apply_run_cost_fields(flex_data: object,
         walk = _run_window(anchors, yr, lineage, period_in_use)
         eol = _lifetime_gate_sums(source, active_solve, workdir, provider=provider)
         if eol:
-            expired = pl.DataFrame(
-                [(e, d) for e, end in eol.items() for d, y in yr.items() if y >= end - YEAR_TOL],
-                schema={"e": pl.Utf8, "d_all": pl.Utf8}, orient="row")
+            ends = pl.DataFrame({"e": list(eol), "end": [float(v) for v in eol.values()]},
+                                schema={"e": pl.Utf8, "end": pl.Float64})
+            periods = pl.DataFrame({"d_all": list(yr), "y": [float(v) for v in yr.values()]},
+                                   schema={"d_all": pl.Utf8, "y": pl.Float64})
+            expired = (ends.join(periods, how="cross")
+                           .filter(pl.col("y") >= pl.col("end") - YEAR_TOL).select("e", "d_all"))
             walk = walk.join(expired, on=["e", "d_all"], how="anti")
         flex_data.edd_retire_window = _window_frame(walk, "d_divest")
-        years_lf = _retirement_years_lf(source, active_solve, div, period_in_use, workdir, provider)
-        ann = _utf8_ed(_per_method_annuity_lf(source, div_lf, "salvage_value", _DIVEST_NOT_ALLOWED,
-                                              life_lf=years_lf)).rename({"ann": "coef"})
+        # The salvage value: its annuity over lifetime, over the window [yr, yr + lifetime) (raw lifetime).
+        life = _utf8_ed(_raw_lifetime_on_lf(source, div_lf))
+        salvage_walk = _run_window(year_of_start(div, False)
+                                   .join(life, on=["e", "d"], how="left")
+                                   .with_columns(life=pl.col("life").fill_null(0.0), kind=pl.lit("bounded")),
+                                   yr, lineage, period_in_use)
+        flex_data.edd_salvage_window = _window_frame(salvage_walk, "d_divest")
+        ann = _utf8_ed(_per_method_annuity_lf(source, div_lf, "salvage_value", _DIVEST_NOT_ALLOWED)
+                       ).rename({"ann": "coef"})
         flex_data.ed_divest_annuity = _ed_param(div.join(ann, on=["e", "d"], how="left")
                                                    .select("e", "d", value=pl.col("coef").fill_null(0.0)))
         if years is not None:
@@ -1809,7 +1770,7 @@ def apply_run_cost_fields(flex_data: object,
                          .join(factor_ops, on="d_all", how="left")
                          .group_by("e", "d")
                          .agg((pl.col("fc").fill_null(0.0) * pl.col("factor").fill_null(0.0)).sum().alias("value")))
-            flex_data.ed_entity_annual_divest_discounted_run = _ed_param(_lump(walk, ann, factor_inv, div))
+            flex_data.ed_entity_annual_divest_discounted_run = _ed_param(_lump(salvage_walk, ann, factor_inv, div))
             flex_data.ed_lifetime_fixed_cost_divest_run = _ed_param(
                 div.join(saved, on=["e", "d"], how="left").select("e", "d", value=pl.col("value").fill_null(0.0)))
 
@@ -2031,7 +1992,7 @@ def apply_npv(flex_data: object,
             ed_entity_annual_divest_discounted_from_source(
                 source, active_solve,
                 period_invest, period_in_use, period_universe,
-                lineage=_npv_lineage, workdir=workdir, provider=provider))
+                lineage=_npv_lineage))
 
     _set_if("ed_lifetime_fixed_cost",
             ed_lifetime_fixed_cost_from_source(

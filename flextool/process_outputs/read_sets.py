@@ -759,10 +759,12 @@ def read_sets(
 
     # edd_operating_window (entity, period_invest, period) — the run periods in which the capacity of an
     # investment decision operates; edd_retire_window (entity, period_divest, period) — the run periods a
-    # retirement applies to (``_npv`` "Run-level fields of the reported costs").  The annualized investment and
+    # retirement applies to; edd_salvage_window likewise the run periods its salvage value is spread over
+    # (``_npv`` "Run-level fields of the reported costs").  The annualized investment and
     # retirement costs are the yearly amounts in every period of these windows.
     for attr, anchor, level in (("edd_operating_window", "d_invest", "period_invest"),
-                                ("edd_retire_window", "d_divest", "period_divest")):
+                                ("edd_retire_window", "d_divest", "period_divest"),
+                                ("edd_salvage_window", "d_divest", "period_divest")):
         frame = getattr(flex_data, attr, None)
         if frame is not None and frame.height > 0:
             frame = frame.select(pl.col(c).cast(pl.Utf8) for c in ("e", anchor, "d"))

@@ -23,10 +23,11 @@
   the existing capacity of any period it counts in. The retirement saves exactly the fixed cost the retired
   capacity would have paid in those periods (each period's fixed cost, discounted as the fixed cost of existing
   capacity; before, the retirement period's fixed cost with the investment discount, and over the lifetime from the
-  retirement) and earns its salvage value over the years it counts. An entity with a retire option but no existing
-  capacity has no retirement variable (a warning names it); a required retirement (`retire_min_period`,
-  `retire_min_total`) that the existing capacity cannot supply is an error naming the entity and the period. An
-  upgraded database prints a notice naming the affected entities.
+  retirement). Its salvage value is unchanged: an annuity over `lifetime` from the retirement period, counted inside
+  the horizon as an investment's annuity. An entity with a retire option but no existing capacity has no retirement
+  variable (a warning names it, once per run); a required retirement (`retire_min_period`, `retire_min_total`) that
+  the existing capacity cannot supply is an error naming the entity and the period. An upgraded database prints a
+  notice naming the affected entities.
 - **Fixed: the end of life of existing capacity in a chain of solves and with stochastic branches in the first
   period** (results change for `reinvest_choice` / `no_investment` existing capacity). It is the first year of the
   model run plus `lifetime` in every solve. Before, a later solve of a chain counted the lifetime from its own first

@@ -285,8 +285,8 @@ def test_minimum_total_retirement_above_what_the_window_allows_is_an_error(tmp_p
 
 @pytest.mark.solver
 def test_group_minimum_retirement_above_the_members_existing_capacity_is_an_error(tmp_path_factory) -> None:
-    """A group retirement minimum (off-schema ``retire_min_total`` of a group) of 600 MW over coal_plant's 500 MW
-    existing capacity: building the LP raises an error naming the group."""
+    """A group retirement minimum (the group's ``retire_min_total``, set directly on the solve's data) of 600 MW
+    over coal_plant's 500 MW existing capacity: building the LP raises an error naming the group."""
     from polar_high import Param
 
     from flextool.engine.input._solve_state import FlexToolConfigError
@@ -433,29 +433,32 @@ def test_fan_retirement_ends_with_the_existing_capacity(tmp_path_factory, chain)
 
 @pytest.mark.solver
 def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
-    """reinvest_choice, lifetime 15 (EOL year 15), 100 MW retired in p2025: the window is p2025 and p2030.  By hand
+    """reinvest_choice, lifetime 15 (EOL year 15), 100 MW retired in p2025: the window of the retirement (and of its
+    fixed-cost saving) is p2025 and p2030.  The salvage value is the annuity over lifetime, over the window
+    [Y(p2025), Y(p2025) + lifetime) = [5, 20) as an investment's annuity: p2025, p2030 and p2035.  By hand
     (``test_chain_costs`` factors, r = 0.04 / offsets 0.5 and 0)::
 
         fixed cost reduction (p2025) = −100 · 1e5 · (F_ops(p2025) + F_ops(p2030))
-        R = 5 + 5 = 10 years,  A = 200 · 1000 · 0.05 / (1 − 1.05^−10) = 25 900.9 CUR/MW/yr
-        retirement (p2025)           = −100 · A · (F_inv(p2025) + F_inv(p2030))
+        A = 200 · 1000 · 0.05 / (1 − 1.05^−15) = 19 268.46 CUR/MW/yr
+        retirement (p2025)           = −100 · A · (F_inv(p2025) + F_inv(p2030) + F_inv(p2035))
         fixed cost pre-existing (d)  = 500 · 1e5 · F_ops(d) in p2020 … p2030, 0 in p2035
 
-    Annualized: −100 · A and −100 · 1e5 per year in p2025 and p2030, nothing in p2035.  The chain reports what the
-    single solve reports."""
+    Annualized: −100 · A per year in p2025 … p2035, −100 · 1e5 per year in p2025 and p2030.  The chain reports what
+    the single solve reports."""
     from tests.engine.test_chain_costs import F_INV
     values = _lifetime("reinvest_choice", 15.0) + _retire()
     single = _results(tmp_path_factory, "ret_cost_single", values, _no_battery_invest(SINGLE))
     chain = _results(tmp_path_factory, "ret_cost_chain", values, _no_battery_invest(CHAIN))
     _assert_same_results(chain, single)
     window = ["p2025", "p2030"]
-    annuity = SALVAGE * 1000.0 * 0.05 / (1.0 - 1.05 ** -10.0)
+    salvage_window = ["p2025", "p2030", "p2035"]
+    annuity = SALVAGE * 1000.0 * 0.05 / (1.0 - 1.05 ** -15.0)
     discounted = single["cost_unit_discounted__d"]
     rows = discounted[(discounted["period"] == "p2025") & (discounted["unit"] == PLANT)]
     assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
         -100.0 * FIXED * sum(F_OPS[d] for d in window), rel=1e-7)
-    assert rows["retirement"].sum() * MEGA == pytest.approx(-100.0 * annuity * sum(F_INV[d] for d in window),
-                                                           rel=1e-7)
+    assert rows["retirement"].sum() * MEGA == pytest.approx(
+        -100.0 * annuity * sum(F_INV[d] for d in salvage_window), rel=1e-7)
     for d in PERIODS:
         rows = discounted[(discounted["period"] == d) & (discounted["unit"] == PLANT)]
         want = 0.0 if d == "p2035" else 500.0 * FIXED * F_OPS[d]
@@ -463,8 +466,9 @@ def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
     for annualized in (chain["cost_unit_annualized__d"], single["cost_unit_annualized__d"]):
         for d in PERIODS:
             rows = annualized[(annualized["period"] == d) & (annualized["unit"] == PLANT)]
-            mw = 100.0 if d in window else 0.0
+            mw = 100.0 if d in salvage_window else 0.0
             assert rows["retirement"].sum() * MEGA == pytest.approx(-mw * annuity, rel=1e-7, abs=1e-6), d
+            mw = 100.0 if d in window else 0.0
             assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
                 -mw * FIXED, rel=1e-7, abs=1e-6), d
 
@@ -482,6 +486,99 @@ def test_retirement_saves_exactly_the_fixed_cost_of_existing_capacity(tmp_path_f
     assert existing * MEGA == pytest.approx(500.0 * FIXED * sum(F_OPS[d] for d in PERIODS), rel=1e-7)
     # The CSV rounds each figure (M CUR); the two cancel up to that rounding.
     assert (existing + unit["fixed cost reduction of divestments"].sum()) == pytest.approx(0.0, abs=1e-6 * existing)
+
+
+@pytest.mark.solver
+def test_fixed_cost_map_saving_of_a_chain_equals_the_single_solve(tmp_path_factory) -> None:
+    """fixed_cost as the period map 100 / 100 / 100 / 200 CUR/kW/yr (reinvest_automatic), 100 MW retired in p2025:
+    the saving is each window period's own fixed cost, the same in the chain and the single solve.  By hand::
+
+        fixed cost reduction (p2025) = −(100 · 1e5 · (F_ops(p2025) + F_ops(p2030)) + 100 · 2e5 · F_ops(p2035))
+        annualized: −10, −10, −20 M/yr in p2025, p2030, p2035
+
+    (each chain solve holds only its own period and the next, so the window periods it lacks would take the
+    retirement period's fixed cost; those rows are never reported)."""
+    from tests.engine.test_chain_costs import _period_map
+    fixed = {"p2020": 100.0, "p2025": 100.0, "p2030": 100.0, "p2035": 200.0}
+    values = _retire() + [["unit", PLANT, "fixed_cost", _period_map(fixed)]]
+    single = _results(tmp_path_factory, "ret_fcmap_single", values, _no_battery_invest(SINGLE))
+    chain = _results(tmp_path_factory, "ret_fcmap_chain", values, _no_battery_invest(CHAIN))
+    _assert_same_results(chain, single)
+    for results in (chain, single):
+        discounted = results["cost_unit_discounted__d"]
+        rows = discounted[(discounted["period"] == "p2025") & (discounted["unit"] == PLANT)]
+        assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
+            -100.0 * sum(fixed[d] * 1000.0 * F_OPS[d] for d in ("p2025", "p2030", "p2035")), rel=1e-7)
+        annualized = results["cost_unit_annualized__d"]
+        for d in PERIODS:
+            rows = annualized[(annualized["period"] == d) & (annualized["unit"] == PLANT)]
+            want = 0.0 if d == "p2020" else -100.0 * fixed[d] * 1000.0
+            assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
+                want, rel=1e-7, abs=1e-6), d
+
+
+def _swap_values(no_retirement_in: str | None = None) -> list:
+    from tests.engine.test_chain_costs import _period_map
+    retire_max = _period_map({d: (0.0 if d == no_retirement_in else 500.0) for d in PERIODS})
+    return [["unit", PLANT, "invest_method", b64("invest_retire_period", "str")],
+            ["unit", PLANT, "invest_max_period", b64(500.0, "float")],
+            ["unit", PLANT, "retire_max_period", retire_max],
+            ["unit", PLANT, "salvage_value", b64(SALVAGE, "float")]]
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("kind", ["single", "chain"])
+def test_retiring_and_rebuilding_identical_capacity_earns_nothing(tmp_path_factory, kind) -> None:
+    """coal_plant may invest and retire up to 500 MW in every period (invest_retire_period; invest_cost 400 CUR/kW,
+    lifetime 30, reinvest_automatic; salvage_value 200).  A new MW costs its annuity A(400, 30) over the window
+    [yr, yr + 30), inside the horizon; a retired MW earns A(200, 30) over the same window, and both save / pay the
+    same fixed cost.  Retiring existing capacity and building identical new capacity in p2035 so loses
+    (A(400, 30) − A(200, 30)) · F_inv(p2035) per MW: no retirement in p2035, and the solves equal the twin
+    without the p2035 retirement option (objective, and the p2035 build, 137.0 MW as before the retirement windows
+    of existing capacity).  Before: the salvage value was spread over the years to the end of the run only, so
+    the solve retired 363 MW and built 500 MW in p2035."""
+    chain = _no_battery_invest(SINGLE if kind == "single" else CHAIN)
+    outcomes = []
+    for tag, values in (("case", _swap_values()), ("twin", _swap_values("p2035"))):
+        url, scen = make_db(tmp_path_factory, alt=f"swap_{tag}_{kind}", values=values, base_chain=chain)
+        outcomes.append(run(tmp_path_factory, url, scen))
+    case, twin = outcomes
+    assert sorted(case) == sorted(twin)
+    for name, step in case.items():
+        assert step.optimal and twin[name].optimal, name
+        assert step.solution.obj == pytest.approx(twin[name].solution.obj, rel=1e-9), name
+        if "p2035" in _divest_mw(step):
+            assert _divest_mw(step)["p2035"] == pytest.approx(0.0, abs=1e-6), name
+            built = _divest_mw(step, var="v_invest_p")["p2035"]
+            assert built == pytest.approx(_divest_mw(twin[name], var="v_invest_p")["p2035"], abs=1e-6), name
+            assert built == pytest.approx(137.0, abs=0.01), name
+
+
+@pytest.mark.solver
+def test_no_warning_for_retirement_periods_past_the_end_of_life(tmp_path_factory, capsys) -> None:
+    """reinvest_choice, lifetime 15, retirement options in every period, solved as the chain y2020 … y2035: the
+    solve y2035 has no existing capacity left (past its end of life), a valid model, so no solve warns about a
+    retirement option without existing capacity (before: y2035 warned)."""
+    values = _lifetime("reinvest_choice", 15.0) + _retire(pinned=False)
+    url, scen = make_db(tmp_path_factory, alt="ret_warn_eol", values=values, base_chain=_no_battery_invest(CHAIN))
+    capsys.readouterr()
+    steps = run(tmp_path_factory, url, scen)
+    assert len(steps) == 4 and all(step.optimal for step in steps.values())
+    assert "has a retirement option" not in capsys.readouterr().out
+
+
+@pytest.mark.solver
+def test_retirement_option_without_existing_capacity_warns_once_per_run(tmp_path_factory, capsys) -> None:
+    """coal_plant with existing 0 and invest_retire_no_limit, solved as the chain y2020 … y2035: the warning names
+    it once in the run, not once per solve."""
+    values = [["unit", PLANT, "existing", b64(0.0, "float")],
+              ["unit", PLANT, "invest_method", b64("invest_retire_no_limit", "str")],
+              ["unit", PLANT, "salvage_value", b64(SALVAGE, "float")]]
+    url, scen = make_db(tmp_path_factory, alt="ret_warn_once", values=values, base_chain=_no_battery_invest(CHAIN))
+    capsys.readouterr()
+    steps = run(tmp_path_factory, url, scen)
+    assert len(steps) == 4
+    assert capsys.readouterr().out.count(f"{PLANT} has a retirement option") == 1
 
 
 # ---------------------------------------------------------------------------

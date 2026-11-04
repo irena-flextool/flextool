@@ -121,17 +121,19 @@ def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
 def _annualized_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
     """``(retirement, fixed cost reduction of divestments)`` per year, rows: period, columns: entity (CUR/yr).
 
-    ANN. retire_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_retire_window} v_divest[e,d]·unitsize[e]·ed_divest_annuity[e,d]
+    ANN. retire_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_salvage_window} v_divest[e,d]·unitsize[e]·ed_divest_annuity[e,d]
          fixed_divested_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_retire_window} v_divest[e,d]·unitsize[e]·fc[e,d']
-      The yearly amounts of every retirement that applies in d' (from its period until the end of life of the
-      existing capacity): the salvage annuity, and the fixed cost of d' the retired capacity no longer pays
-      (fc[e,d] of the retirement period where the solve does not hold d')."""
+      The yearly amounts of every retirement in d': the salvage annuity over the window it is spread over (the
+      retirement period until lifetime later), and the fixed cost of d' the retired capacity no longer pays (from
+      the retirement period until the end of life of the existing capacity).  fc[e,d'] falls back to fc[e,d] of
+      the retirement period for a window period the solve does not hold; such rows are never reported (the chain
+      union keeps each period from the solve that realizes it, which holds its fixed cost)."""
     columns = v.divest.columns
     long = _decisions_long(-v.divest.mul(par.entity_unitsize[columns]), 'period_divest')
     annuity = _decisions_long(par.entity_divest_annuity_yearly, 'period_divest').rename(columns={'value': 'coef'})
     joined = long.merge(annuity, on=['period_divest', 'entity'], how='inner')
     joined = joined.assign(value=joined['value'] * joined['coef'])[['period_divest', 'entity', 'value']]
-    retirement = _per_year_in_window(joined, s.edd_retire_window, 'period_divest', columns)
+    retirement = _per_year_in_window(joined, s.edd_salvage_window, 'period_divest', columns)
     window = s.edd_retire_window
     if long.empty or len(window) == 0:
         return retirement, _per_year_in_window(long.iloc[0:0], window, 'period_divest', columns)

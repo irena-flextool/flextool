@@ -57,15 +57,13 @@ def _e_values(param) -> dict[str, float]:
 def active_windows(frames: Iterable["pl.DataFrame | None"]) -> dict[tuple[str, str], list[str]]:
     """``{(e, d′): [d, …]}`` of ``edd_divest_active`` / ``ndd_divest_active`` frames (entity column ``p`` / ``n``,
     then ``d_divest``, ``d``): the periods a retirement decided in d′ counts in."""
-    out: dict[tuple[str, str], list[str]] = {}
-    for frame in frames:
-        if frame is None or frame.height == 0:
-            continue
-        ent = frame.columns[0]
-        for e, d_r, d in frame.select(pl.col(ent).cast(pl.Utf8), pl.col("d_divest").cast(pl.Utf8),
-                                      pl.col("d").cast(pl.Utf8)).iter_rows():
-            out.setdefault((e, d_r), []).append(d)
-    return out
+    parts = [frame.select(pl.col(frame.columns[0]).cast(pl.Utf8).alias("e"), pl.col("d_divest").cast(pl.Utf8),
+                          pl.col("d").cast(pl.Utf8))
+             for frame in frames if frame is not None and frame.height > 0]
+    if not parts:
+        return {}
+    grouped = pl.concat(parts).group_by("e", "d_divest", maintain_order=True).agg("d")
+    return {(e, d_r): list(ds) for e, d_r, ds in grouped.iter_rows()}
 
 
 def max_retirable(entity: str,
@@ -82,9 +80,9 @@ def max_retirable(entity: str,
     for (e, d_r), window in windows.items():
         if e != entity or not window:
             continue
-        cap = min(pre.get((e, d), 0.0) - carried.get((e, d), 0.0) for d in window)
+        cap = max(min(pre.get((e, d), 0.0) - carried.get((e, d), 0.0) for d in window), 0.0)
         if best_d is None or cap > best:
-            best, best_d = max(cap, 0.0), d_r
+            best, best_d = cap, d_r
     return best, best_d
 
 
@@ -125,9 +123,10 @@ def check_retirement_minimums(*,
                           f"existing capacity there (only capacity that existed before the run can be retired)"
                           + _eol_phrase(e, eol))
     needed: dict[tuple[str, str], float] = {}
+    period_method = set(_pairs(period_method_pairs))
     for (e, d_r), window in windows.items():
         m = mins.get((e, d_r), 0.0)
-        if m <= _TOL or (e, d_r) not in set(_pairs(period_method_pairs)):
+        if m <= _TOL or (e, d_r) not in period_method:
             continue
         for d in window:
             needed[(e, d)] = needed.get((e, d), 0.0) + m
@@ -201,8 +200,6 @@ def ed_values(param) -> dict[tuple[str, str], float]:
     return _ed_values(param)
 
 
-
-
 def retired_carried(rows: Iterable[tuple[str, str, float]],
                     years: Mapping[str, float],
                     periods: Iterable[str],
@@ -213,19 +210,25 @@ def retired_carried(rows: Iterable[tuple[str, str, float]],
     life of e's pre-existing capacity} retired[e, d′] (``expired``: the (e, d) pairs past it).  A decision period
     without a year in ``years`` lies before the solve (its history), so it counts."""
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
-    out: dict[tuple[str, str], float] = {}
+    retired = (pl.DataFrame([(str(e), str(d_r), float(v or 0.0)) for e, d_r, v in rows],
+                            schema={"e": pl.Utf8, "d_r": pl.Utf8, "v": pl.Float64}, orient="row")
+                 .with_row_index("_row").filter(pl.col("v") != 0.0))
     periods = [str(d) for d in periods]
-    for e, d_r, v in rows:
-        if not v:
-            continue
-        y_r = years.get(str(d_r))
-        for d in periods:
-            if (str(e), d) in expired:
-                continue
-            if y_r is not None and y_r > years.get(d, 0.0) + YEAR_TOL:
-                continue
-            out[(str(e), d)] = out.get((str(e), d), 0.0) + float(v)
-    return out
+    if retired.height == 0 or not periods:
+        return {}
+    decided = pl.DataFrame({"d_r": [str(d) for d in years], "y_r": [float(y) for y in years.values()]},
+                           schema={"d_r": pl.Utf8, "y_r": pl.Float64})
+    counted = pl.DataFrame({"d": periods, "y": [float(years.get(d, 0.0)) for d in periods]},
+                           schema={"d": pl.Utf8, "y": pl.Float64}).with_row_index("_col")
+    past = pl.DataFrame(sorted((str(e), str(d)) for e, d in expired), schema={"e": pl.Utf8, "d": pl.Utf8},
+                        orient="row")
+    out = (retired.join(decided, on="d_r", how="left")
+                  .join(counted, how="cross")
+                  .filter(pl.col("y_r").is_null() | (pl.col("y_r") <= pl.col("y") + YEAR_TOL))
+                  .join(past, on=["e", "d"], how="anti")
+                  .sort("_row", "_col")  # the rows' order, then the periods' (the sums add in that order)
+                  .group_by("e", "d", maintain_order=True).agg(pl.col("v").sum()))
+    return {(e, d): v for e, d, v in out.iter_rows()}
 
 
 __all__ = ["active_windows", "check_group_retirement_minimums", "check_retirement_minimums", "ed_values",

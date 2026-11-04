@@ -918,7 +918,8 @@ class FlexData:
     # periods and the other run periods; (e, d) lumps of the invest / divest decisions (the lifetime fixed cost
     # over every entity of the period history); (e, d) undiscounted annuities, CUR/MW/yr (invest: of the start of
     # operation); (e, d_invest, d) / (e, d_divest, d) the run periods each vintage operates in / each retirement
-    # applies to.  Equal to the per-solve fields when the run is the solve.
+    # applies to / the salvage value of each retirement is spread over.  Equal to the per-solve fields when the
+    # run is the solve.
     p_inflation_op_run: Param | None = None
     p_inflation_inv_run: Param | None = None
     ed_entity_annual_discounted_run: Param | None = None
@@ -929,6 +930,7 @@ class FlexData:
     ed_divest_annuity: Param | None = None
     edd_operating_window: pl.DataFrame | None = None
     edd_retire_window: pl.DataFrame | None = None
+    edd_salvage_window: pl.DataFrame | None = None
     # (e, d) existing capacity given by the user, aged over its lifetime (no capacity carried from earlier solves,
     # no retirements): the reported fixed cost of existing capacity.
     p_entity_pre_existing: Param | None = None

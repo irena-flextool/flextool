@@ -480,6 +480,7 @@ _DECISION_SETS: dict[str, str] = {
     "edd_invest_in_construction": "period_invest",
     "edd_operating_window": "period_invest",
     "edd_retire_window": "period_divest",
+    "edd_salvage_window": "period_divest",
 }
 
 # dtt / dtttdt — the storage-adjacency sets whose current ``(period,

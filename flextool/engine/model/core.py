@@ -4412,14 +4412,15 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · lifetime_fixed_cost_divest[p,d] · bw[d]
     #   − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · annual_divest_discounted[p,d] · bw[d]
     #   lifetime_fixed_cost_divest[p,d] = Σ_{d′ ∈ W(p,d)} fixed_cost[p,d′]·1000·inflation_op[d′]
-    #   annual_divest_discounted[p,d] = ann(salvage_value[p,d], discount_rate[p,d], R[p,d])
-    #                                   · Σ_{d′ ∈ W(p,d)} inflation_inv[d′]
+    #   annual_divest_discounted[p,d] = ann(salvage_value[p,d], discount_rate[p,d], lifetime[p,d])
+    #                                   · Σ_{d′ ∈ S(p,d)} inflation_inv[d′]
     #   W(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < EOL[p] (the window of edd_divest_active: until the
-    #     end of life of p's pre-existing capacity, the end of the horizon for reinvest_automatic); R[p,d] = the
-    #     years of the run's periods in that window
+    #     end of life of p's pre-existing capacity, the end of the horizon for reinvest_automatic)
+    #   S(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < yr[d] + lifetime[p,d] (raw lifetime)
     # Saving from process capacity retired in period d, currency/MW: the fixed cost of the existing capacity it no
-    # longer pays (each period's, with the factor the existing fixed cost has), and the salvage value spread over
-    # the years the retirement counts.
+    # longer pays (each period's, with the factor the existing fixed cost has), and the salvage-value annuity over
+    # the discounted years of lifetime inside the horizon, the basis of an investment's annuity (so retiring
+    # existing capacity and building identical new capacity gains nothing).
     if b.has_divest_p:
         lfd = _cost(d.ed_lifetime_fixed_cost_divest, "p")
         annd = _cost(d.ed_entity_annual_divest_discounted, "p")
@@ -4446,7 +4447,7 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # ─────────────────────────────────────────────────────────────────────────
     # − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · lifetime_fixed_cost_divest[n,d] · bw[d]
     #   − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · annual_divest_discounted[n,d] · bw[d]
-    # As divest_cost_p for storage capacity (W and R over ndd_divest_active's window).
+    # As divest_cost_p for storage capacity (W over ndd_divest_active's window).
     if b.has_divest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         lfd_n = _cost(d.ed_lifetime_fixed_cost_divest, "n")
