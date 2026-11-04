@@ -104,9 +104,12 @@ as one solve over the same periods with the same decisions would report:
   solve reports no operating or penalty costs; the fixed cost of existing capacity is reported in the fan's
   period labels.
 
-The printed objective of each solve and the cumulative CO2 cap price stay discounted from the start of that solve,
-so `cost_discounted_total` is not the sum of the solves' objectives. The CO2 price of a period is its dual divided
-by the discount factor of the solve that realizes the period.
+The printed objective of each solve, the cumulative CO2 cap price and the investment duals (`invest_marginal`,
+the value of one more MW of capacity) stay discounted from the start of that solve, so `cost_discounted_total` is
+not the sum of the solves' objectives and the investment duals of later solves of a chain are on a later discount
+base. The CO2 price of a period is its dual divided by the discount factor of the solve that realizes the period.
+A CSV-dump reload has no run-level cost data: its reported costs are discounted from the start of each solve and
+its annualized investment, retirement and fixed costs of new and retired capacity are 0 (a warning is printed).
 
 ## Cost by entity
 

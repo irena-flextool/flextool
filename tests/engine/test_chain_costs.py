@@ -728,3 +728,32 @@ def test_notice_is_registered_and_written_by_the_upgrade() -> None:
     assert NOTICE_ID in BEHAVIOUR_CHANGES
     assert NOTICE_ID in db_migration._V77_UNCONDITIONAL_MARKERS
 
+
+# ---------------------------------------------------------------------------
+# Reported costs without the run-level fields (a CSV-dump reload)
+# ---------------------------------------------------------------------------
+
+def test_reload_without_run_fields_warns_once(capsys) -> None:
+    """A FlexData with the solve's own factors but no run-level fields (what a CSV-dump reload rebuilds) makes
+    the output write print one warning, however many solves; one with the run fields prints none."""
+    from types import SimpleNamespace
+
+    from flextool.process_outputs.read_parameters import RUN_FIELDS_MISSING_WARNING, warn_if_run_fields_missing
+
+    reload = SimpleNamespace(p_inflation_op=object(), p_inflation_op_run=None)
+    run = SimpleNamespace(p_inflation_op=object(), p_inflation_op_run=object())
+    capsys.readouterr()
+    assert warn_if_run_fields_missing([reload, reload, run]) is True
+    assert capsys.readouterr().out.count(RUN_FIELDS_MISSING_WARNING) == 1
+    assert warn_if_run_fields_missing([run, None]) is False
+    assert RUN_FIELDS_MISSING_WARNING not in capsys.readouterr().out
+
+
+@pytest.mark.solver
+def test_solved_chain_has_the_run_fields(tmp_path_factory) -> None:
+    """Every solve of a solved chain carries the run-level fields, so its output write does not warn."""
+    from flextool.process_outputs.read_parameters import warn_if_run_fields_missing
+
+    steps = _steps(tmp_path_factory, "cc_run_fields", [], _no_battery_invest(CHAIN))
+    assert len(steps) == 4 and all(s.flex_data is not None for s in steps.values())
+    assert warn_if_run_fields_missing([s.flex_data for s in steps.values()]) is False

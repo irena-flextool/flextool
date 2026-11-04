@@ -1060,6 +1060,24 @@ def _with_fan_label_rows(param, flex_data: "FlexData"):
     return param if frame is param.frame else SimpleNamespace(frame=frame)
 
 
+RUN_FIELDS_MISSING_WARNING = (
+    "Warning: the reported costs are built from solve data without the run-level cost fields (a CSV-dump "
+    "reload): investment, retirement and fixed costs are discounted from the start of each solve, not from the "
+    "start of the run, and the annualized investment, retirement and fixed costs of new and retired capacity "
+    "are 0.")
+
+
+def warn_if_run_fields_missing(flex_datas) -> bool:
+    """Print :data:`RUN_FIELDS_MISSING_WARNING` (once) when a solve's FlexData has no run-level fields of the
+    reported costs (``p_inflation_op_run`` unset while the solve's own ``p_inflation_op`` is: a CSV-dump reload,
+    whose reported costs fall back to the per-solve lumps, :func:`_run_field`).  Returns whether it printed."""
+    missing = any(getattr(fd, "p_inflation_op_run", None) is None and getattr(fd, "p_inflation_op", None) is not None
+                  for fd in flex_datas if fd is not None)
+    if missing:
+        print(RUN_FIELDS_MISSING_WARNING, flush=True)
+    return missing
+
+
 def _run_field(flex_data: "FlexData", name: str):
     """The run-level field ``<name>_run`` of the reported costs, or the solve's own ``<name>`` when the run field
     is not set (a csv-dump reload)."""
@@ -1746,146 +1764,36 @@ def read_parameters_multi(
     if len(per_step) == 1:
         return last_ns
 
-    # Pre-filter per-step ``entity_lifetime_fixed_cost`` /
-    # ``entity_lifetime_fixed_cost_divest`` to only the step's REALIZED
-    # periods (``flex_data.realized_dispatch`` — same source as
-    # ``read_sets.d_realized_period``).  In a rolling/nested cascade
-    # each step holds a period-d "active" lifetime value in the row
-    # where d is the step's realized period, plus forward-discounted
-    # lookahead values for lookahead periods (e.g. y2020 step has
-    # p2020=827152 active + p2025=373153 lookahead).  ``v_invest[(solve,
-    # d)]`` is non-zero only for the committing step's realized period,
-    # so the cost in ``calc_costs.compute_costs`` (line 165, ``v.invest
-    # × unitsize × entity_lifetime_fixed_cost``) must use the value
-    # from that same committing step.  Filtering each piece pre-concat
-    # means ``drop_levels`` sees one row per period (no dedup
-    # ambiguity).  Without this, ``_PAR_DEDUP keep='first'`` picks the
-    # earliest step's lookahead value for every period after the first
-    # (e.g. p2025 → y2020 lookahead 373153 instead of y2025 active
-    # 827152), giving ``costs_discounted.csv:fixed cost invested``
-    # 120.6 instead of the LP-true 267.4.  ``ed_invest_set`` /
-    # ``ed_divest_set`` cover both realized + lookahead invest
-    # candidates, so we use ``realized_dispatch`` instead.
-    _lifetime_attrs = ("entity_lifetime_fixed_cost",
-                       "entity_lifetime_fixed_cost_divest")
-    for (sn, ns), step in zip(per_step, steps):
-        flex_data = step[1]
-        rd = getattr(flex_data, "realized_dispatch", None)
-        if rd is None or getattr(rd, "height", 0) == 0:
-            continue
-        realized_periods = set(
-            rd.select("period").unique().to_pandas()["period"].tolist()
-        )
-        if not realized_periods:
-            continue
-        for attr in _lifetime_attrs:
-            obj = getattr(ns, attr, None)
-            if obj is None or not _has_solve_level(obj):
-                continue
-            periods = obj.index.get_level_values("period")
-            mask = periods.isin(realized_periods)
-            setattr(ns, attr, obj[mask])
+    # Each step's realized slice of its solve-keyed attributes, by the very rules of the persisted per-roll
+    # slices the production path unions (``persist_realized_slice._apply_realized_filter``: the invest / divest
+    # lumps from the solve that realizes the decision period, the run-level factors over the solve's own
+    # periods, the solve's operations factor over its realized dispatch, ``entity_all_existing`` over its
+    # realized dispatch and investment periods, every other attribute over its realized (d, t) / periods).  So
+    # this in-memory union and the persisted union cannot drift apart.  The realized investment periods are the
+    # ones the output writer reads (``solve_data/realized_invest_periods_of_current_solve``, carried as
+    # ``flex_data.realized_invest_periods``; without them the realized dispatch periods).  The output-dead
+    # parameters the writer does not persist are left as they are.
+    from flextool.process_outputs.persist_realized_slice import (
+        _DEAD_PARAMS,
+        _apply_realized_filter,
+        _realized_dispatch_periods,
+        _realized_dt_set,
+    )
 
-    # Per-step ``entity_all_existing`` carries the period-d existing-
-    # capacity chain (pre_existing on solve_first, later_existing
-    # otherwise).  In a NESTED cascade the parent invest step and
-    # every child dispatch step both densify the (period, entity)
-    # grid: invest_24h@(wind_plant, p2020) = 1000 (pre_existing,
-    # solve_first=True) but dispatch_..._roll_17@(wind_plant, p2020)
-    # = 1288.83 (later_existing folding the parent's v_invest back
-    # in).  drop_levels' ``keep='last'`` dedup picks the dispatch
-    # row, blowing up the ``existing`` column in unit_capacity__d.csv
-    # to the cumulative-with-current-invest value (HEAD shows 1288.83
-    # for the same cell v3.32.0 emits as 1000).  v3.32.0's mod-side
-    # writer only emits rows from the FIRST solve that owns each
-    # period via ``period_capacity`` deduplication (flextool.mod
-    # L5993-6002): in nested that's the parent invest step.
-    #
-    # Fix: filter each step's ``entity_all_existing`` to ONLY the
-    # periods that step realizes (``flex_data.realized_dispatch`` ∪
-    # ``ed_invest_set/ed_divest_set`` "d"s).  Dispatch-only children
-    # in a nested cascade drop their lookahead rows; the parent
-    # invest step's per-period values are the sole contributor and
-    # win regardless of dedup direction.  In 4-solve / multi_year
-    # invest cascades each step realizes a disjoint period so no
-    # collision arises either way — the filter is a no-op there.
+    # The persisted union falls back to the last step's unfiltered value where every slice is empty.
+    last_unfiltered = dict(vars(last_ns))
     for (sn, ns), step in zip(per_step, steps):
         flex_data = step[1]
-        step_periods: set[str] = set()
-        rd = getattr(flex_data, "realized_dispatch", None)
-        if rd is not None and getattr(rd, "height", 0) > 0:
-            step_periods.update(
-                rd.select("period").unique().to_pandas()["period"].tolist()
-            )
-        for src_attr in ("ed_invest_set", "ed_divest_set"):
-            src = getattr(flex_data, src_attr, None)
-            if src is not None and getattr(src, "height", 0) > 0 and "d" in src.columns:
-                step_periods.update(
-                    src.select("d").unique().to_pandas()["d"].tolist()
-                )
-        if not step_periods:
-            # Step realizes nothing — leave as-is.  This is the legacy
-            # behaviour for fixtures that don't populate realized_*.
-            continue
-        for attr in ("entity_all_existing",):
-            obj = getattr(ns, attr, None)
-            if obj is None or not _has_solve_level(obj):
+        realized_dt = _realized_dt_set(flex_data)
+        dispatch_periods = _realized_dispatch_periods(flex_data)
+        invest = getattr(flex_data, "realized_invest_periods", None)
+        invest_periods = set(dispatch_periods) if invest is None else {str(d) for d in invest}
+        for attr, obj in list(vars(ns).items()):
+            if attr in _DEAD_PARAMS or not _has_solve_level(obj):
                 continue
-            periods = obj.index.get_level_values("period")
-            mask = periods.isin(step_periods)
-            setattr(ns, attr, obj[mask])
-
-    # Per-step ``entity_annual_discounted`` /
-    # ``entity_annual_divest_discounted`` carry the invest-side NPV
-    # coefficients used by ``calc_costs.compute_costs`` to derive
-    # ``cost_entity_invest_d = v_invest × unitsize × annual_discounted``.
-    # The polars derivation builds these from ``period_invest``: a
-    # nested-dispatch child solve has empty ``period_invest`` and the
-    # frame is therefore empty, but ``_pdX_per_entity(densify_entities=
-    # _entity_universe)`` zero-fills it to the full entity × period
-    # grid.  In a nested cascade, the parent ``invest`` step holds the
-    # real coefficients (e.g. 4.18 for ``wind_plant @ p2020``) while
-    # every child dispatch step densifies the same (period, entity)
-    # cell to 0.  Without intervention, ``drop_levels`` dedup with
-    # ``keep='last'`` picks the last child step's zero, zeroing out
-    # ``r.cost_entity_invest_d`` and dropping ``unit investment &
-    # retirement`` from ``costs_discounted.csv`` (HEAD shows 0,
-    # v3.32.0 shows 471.28).  Fix: detect a "dispatch-only" step
-    # (``flex_data.ed_entity_annual_discounted`` empty/None) and clear
-    # the densified-zero per-step frame so it doesn't compete with the
-    # parent invest step's real values.
-    # The yearly annuities of the decisions likewise (a step without them has a row per period and no columns).
-    _annual_attrs = ("entity_annual_discounted",
-                     "entity_annual_divest_discounted",
-                     "entity_annuity",
-                     "entity_annuity_yearly",
-                     "entity_divest_annuity_yearly")
-    _src_field = {
-        "entity_annual_discounted": "ed_entity_annual_discounted",
-        "entity_annuity": "ed_entity_annual_discounted",
-        "entity_annual_divest_discounted":
-            "ed_entity_annual_divest_discounted",
-        "entity_annuity_yearly": "ed_annuity",
-        "entity_divest_annuity_yearly": "ed_divest_annuity",
-    }
-    for (sn, ns), step in zip(per_step, steps):
-        flex_data = step[1]
-        for attr in _annual_attrs:
-            src_attr = _src_field[attr]
-            src_param = getattr(flex_data, src_attr, None)
-            src_empty = (
-                src_param is None
-                or getattr(src_param, "frame", None) is None
-                or getattr(src_param.frame, "height", 0) == 0
-            )
-            if not src_empty:
-                continue
-            obj = getattr(ns, attr, None)
-            if obj is None or not _has_solve_level(obj):
-                continue
-            # Empty out this step's rows (preserve the index/columns
-            # frame for the concat path; head(0) keeps the schema).
-            setattr(ns, attr, obj.iloc[0:0])
+            setattr(ns, attr, _apply_realized_filter(
+                attr, obj, flex_data, realized_dt=realized_dt, realized_invest_periods=invest_periods,
+                realized_dispatch_periods=dispatch_periods))
 
     out = SimpleNamespace()
     attr_names = [a for a in vars(last_ns).keys()]
@@ -1896,15 +1804,15 @@ def read_parameters_multi(
         if any(_has_solve_level(p) for p in pieces):
             non_empty = [p for p in pieces if len(p) > 0]
             if not non_empty:
-                setattr(out, attr, pieces[-1])
+                setattr(out, attr, last_unfiltered[attr])
                 continue
             # ``pd.concat`` preserves dtypes and row order.  Each piece
             # carries a distinct ``solve`` value so no de-duplication
             # is needed.
             merged = pd.concat(non_empty, axis=0)
             # Preserve column dtype/name (concat keeps it; defensive).
-            if hasattr(pieces[-1], "columns") and hasattr(merged, "columns"):
-                merged.columns.name = pieces[-1].columns.name
+            if hasattr(last_unfiltered[attr], "columns") and hasattr(merged, "columns"):
+                merged.columns.name = last_unfiltered[attr].columns.name
             setattr(out, attr, merged)
         else:
             # Static / per-entity / not-solve-keyed: invariant across

@@ -9,6 +9,10 @@
   objective. Before, an investment whose capacity starts to operate in a later period of a fan without a
   realization solve (a construction lead time) was reported nowhere, and under `recourse` no investment cost was
   reported at all.
+- **A warning when reported costs are rebuilt without the run-level cost data** (a CSV-dump reload): such costs
+  are discounted from the start of each solve, not from the start of the run, and the annualized investment,
+  retirement and fixed costs of new and retired capacity are 0. The documentation now also says that the
+  investment duals (`invest_marginal`) stay discounted from the start of each solve, like the objective.
 - **Fixed: retiring existing capacity before its end of life** (results change for models that retire
   capacity). Only capacity that existed before the model run (`existing`) can be retired, and a retirement now counts
   until that capacity's end of life: for `reinvest_choice` / `no_investment` the first year of the run plus

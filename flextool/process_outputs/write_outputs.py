@@ -48,6 +48,7 @@ from flextool.process_outputs.process_results import post_process_results
 from flextool.process_outputs.read_parameters import (
     read_parameters,
     read_parameters_multi,
+    warn_if_run_fields_missing,
 )
 from flextool.process_outputs.read_sets import (
     read_sets,
@@ -396,6 +397,8 @@ def _read_outputs(
     # it replaces the broken single-flex_data last-roll fallback.  The
     # last step's ``flex_data`` / ``solution`` supply the static
     # (solve-invariant) attrs + the per-attr shape template.
+    # A CSV-dump reload carries no run-level fields of the reported costs: say so (once per output write).
+    warn_if_run_fields_missing([st[1] for st in solve_steps] if solve_steps is not None else [flex_data])
     if (
         solve_steps is None
         and flex_data is not None
