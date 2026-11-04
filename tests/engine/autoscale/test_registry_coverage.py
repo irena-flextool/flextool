@@ -253,6 +253,9 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     # passes the constraint name from a loop table.
     "maxInvest_entity_period_p", "maxInvest_entity_period_n",
     "maxDivest_entity_period_p", "maxDivest_entity_period_n",
+    # Retired capacity within the pre-existing capacity — model/core.py ``_eq_retired_existing`` builds the name
+    # as f"maxRetired_existing_{axis}".
+    "maxRetired_existing_p", "maxRetired_existing_n",
     # Non-anticipativity — _non_anticipativity.py passes the online family
     # as f"non_anticipativity_online_{kind}" and the invest/divest families
     # as a variable from a loop table, so the literal grep above cannot see

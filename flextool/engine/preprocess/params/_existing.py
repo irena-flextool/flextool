@@ -41,7 +41,8 @@ Cluster B fields (per
 * ``edd_invest_lookback_set`` — strict-lookback variant
   (``yr[d_invest] < yr[d]``) used by the prebuilt-capacity LHS.
 * ``edd_divest_active`` / ``ndd_divest_active`` — ``pd_divest`` /
-  ``nd_divest_set`` × period grid filtered to ``yr[d_divest] <= yr[d]``
+  ``nd_divest_set`` × period grid filtered to ``yr[d_divest] <= yr[d] < EOL[e]``
+  (EOL the end of life of the pre-existing capacity)
   (process and storage-node capacity history: storage state limits,
   cumulative capacity limits, and the cap-margin user constraint).
 * ``p_entity_all_existing`` — per-(e, d) lifetime-cumulative existing

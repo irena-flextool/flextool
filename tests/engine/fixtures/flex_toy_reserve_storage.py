@@ -292,5 +292,8 @@ def data(*, direction: str = "up", duration: float | None = 0.5,
         # optimum — the term is still built.
         kwargs["ndd_divest_active"] = pl.DataFrame(
             {"n": ["bat"], "d_divest": ["p2020"], "d": ["p2020"]})
+        # A retirement removes pre-existing storage only (maxRetired_existing_n): bat's existing capacity.
+        kwargs["p_entity_pre_existing"] = Param(("e", "d"),
+            pl.DataFrame({"e": ["bat"], "d": ["p2020"], "value": [cap * _US_BAT]}))
 
     return FlexData(**kwargs)

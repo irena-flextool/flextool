@@ -179,6 +179,10 @@ def run(
     # ── L1 batch 18: LP-scaling row scalers ───────────────────────────
     _lp_scaling.emit_lp_scaling_params(input_dir, solve_data_dir, provider=provider)
     _ck("lp_scaling_params")
+    # ── L2 batch 26: p_entity_pre_existing (the retirement options of batch 19 read it) ──
+    from flextool.engine.preprocess.emit import _chain_params as _chain
+    _chain.emit_p_entity_pre_existing(input_dir, solve_data_dir, provider=provider)
+    _ck("p_entity_pre_existing")
     # ── L2 batch 19: invest/divest + edd_history ──────────────────────
     _per_solve.emit_invest_divest_sets(input_dir, solve_data_dir, provider=provider)
     _ck("invest_divest_sets")
@@ -191,10 +195,6 @@ def run(
     # ── L2 batch 22 ───────────────────────────────────────────────────
     _arc.emit_node_time_param_in_use(input_dir, solve_data_dir, provider=provider)
     _ck("node_time_param_in_use")
-    # ── L2 batch 26: p_entity_pre_existing ────────────────────────────
-    from flextool.engine.preprocess.emit import _chain_params as _chain
-    _chain.emit_p_entity_pre_existing(input_dir, solve_data_dir, provider=provider)
-    _ck("p_entity_pre_existing")
     # ── L3 batch 27: ed_invest_forbidden_no_investment ────────────────
     _per_solve.emit_ed_invest_forbidden_no_investment(input_dir, solve_data_dir, provider=provider)
     _ck("ed_invest_forbidden_no_investment")

@@ -101,3 +101,225 @@ def test_fan_in_the_first_period_counts_the_end_of_life_once(tmp_path_factory, c
     flow = utf8(step.solution.value("v_flow")).filter(pl.col("p") == "wind")
     assert flow.filter(pl.col("d").str.starts_with("p2040"))["value"].abs().max() == pytest.approx(0.0, abs=1e-9)
     assert flow.filter(pl.col("d").str.starts_with("p2035"))["value"].max() > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Retiring existing capacity before its end of life
+# ---------------------------------------------------------------------------
+#
+# coal_plant retires exactly 100 MW (retire_min_period = retire_max_period = 100 in p2025, 0 elsewhere,
+# invest_method retire_period, salvage_value 200 so that it has a retirement option).  The retirement removes
+# the 100 MW from p2025 until the end of life of the existing capacity; there the whole 500 MW are gone.
+
+SALVAGE = 200.0
+
+
+def _pins(period: str, mw: float) -> list:
+    from tests.engine.test_chain_costs import _period_map
+    return _period_map({d: (mw if d == period else 0.0) for d in PERIODS})
+
+
+def _retire(mw: float = 100.0, period: str = "p2025", *, pinned: bool = True, entity: str = PLANT,
+            cls: str = "unit", salvage: float = SALVAGE) -> list:
+    from tests.engine.test_chain_costs import _period_map
+    low = _pins(period, mw) if pinned else _period_map(dict.fromkeys(PERIODS, 0.0))
+    return [[cls, entity, "invest_method", b64("retire_period", "str")],
+            [cls, entity, "retire_min_period", low],
+            [cls, entity, "retire_max_period", _pins(period, mw)],
+            [cls, entity, "salvage_value", b64(salvage, "float")]]
+
+
+def _divest_mw(step, entity: str = PLANT, var: str = "v_divest_p", col: str = "p") -> dict[str, float]:
+    from tests.engine._unit_db import unitsize
+    if col == "n":
+        sizes = utf8(step.flex_data.p_state_unitsize.frame)
+        size = float(sizes.filter(pl.col(sizes.columns[0]) == entity)["value"][0])
+    else:
+        size = unitsize(step, entity)
+    frame = utf8(step.solution.value(var)).filter(pl.col(col) == entity)
+    return {d: v * size for d, v in zip(frame["d"].to_list(), frame["value"].to_list())}
+
+
+def _divest_columns(terms: dict[str, float], entity: str = PLANT, var: str = "v_divest_p") -> list[str]:
+    return sorted(c for c in terms if c.startswith(f"{var}[{entity},"))
+
+
+def _rows_by_period(pb, family: str, entity: str = PLANT) -> dict[str, list[tuple[dict, tuple]]]:
+    from tests.engine._lp_rows import row_bounds, row_terms
+    terms, bounds = row_terms(pb, family, entity), row_bounds(pb, family, entity)
+    out: dict[str, list] = {}
+    for name, t in terms.items():
+        period = next(d for d in PERIODS if f",{d}," in name or name.endswith(f",{d}]"))
+        out.setdefault(period, []).append((t, bounds[name]))
+    return out
+
+
+def _single(tmp_path_factory, alt: str, values: list):
+    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=_no_battery_invest(SINGLE))
+    return list(run(tmp_path_factory, url, scen).values())[-1]
+
+
+@pytest.mark.solver
+def test_retirement_counts_until_the_end_of_life(tmp_path_factory) -> None:
+    """reinvest_choice, lifetime 15 (EOL year 15 = p2035), 100 MW retired in p2025, with linear unit commitment.
+    The capacity in service is 500 / 400 / 400 / 0 MW in p2020 … p2035 (before: −100 MW in p2035, infeasible):
+    the retirement options are p2020, p2025 and p2030 (p2035 has no existing capacity left); every maxFlow and
+    maxOnline row of p2030 carries the p2025 retirement, no row of p2035 carries one, and p2035's capacity is 0;
+    maxRetired_existing_p caps the retired capacity at the 500 MW in p2025 and p2030 (and p2020)."""
+    from tests.engine._unit_db import build, uc, unitsize
+    values = _lifetime("reinvest_choice", 15.0) + _retire() + uc(PLANT, 0.3)
+    step = _single(tmp_path_factory, "ret_eol", values)
+    assert step.optimal
+    retired = _divest_mw(step)
+    assert sorted(retired) == ["p2020", "p2025", "p2030"]
+    assert retired["p2025"] == pytest.approx(100.0, abs=1e-6)
+    assert retired["p2020"] == pytest.approx(0.0, abs=1e-6) and retired["p2030"] == pytest.approx(0.0, abs=1e-6)
+    pb = build(step.flex_data)
+    size = unitsize(step, PLANT)
+    for family in ("maxFlow", "maxOnline_linear"):
+        rows = _rows_by_period(pb, family)
+        assert rows["p2030"] and rows["p2035"], family
+        for terms, _ in rows["p2030"]:
+            assert _divest_columns(terms) == [f"v_divest_p[{PLANT},p2020]", f"v_divest_p[{PLANT},p2025]",
+                                              f"v_divest_p[{PLANT},p2030]"], family
+        for terms, (_, upper) in rows["p2035"]:
+            assert _divest_columns(terms) == [], family
+            assert upper == pytest.approx(0.0, abs=1e-9), family
+    capped = _rows_by_period(pb, "maxRetired_existing_p")
+    assert sorted(capped) == ["p2020", "p2025", "p2030"]
+    for period, ((terms, (_, upper)),) in capped.items():
+        assert upper == pytest.approx(500.0, rel=1e-12), period
+        assert all(v == pytest.approx(size, rel=1e-12) for v in terms.values()), period
+
+
+@pytest.mark.solver
+def test_no_investment_lifetime_ends_the_retirement(tmp_path_factory) -> None:
+    """no_investment, lifetime 10 (EOL year 10 = p2030): 100 MW retired in p2025 leave 400 MW in p2025 and nothing
+    from p2030 on; (coal, p2030) and (coal, p2035) are no retirement options (before: infeasible)."""
+    from tests.engine._unit_db import build
+    step = _single(tmp_path_factory, "ret_noinv", _lifetime("no_investment", 10.0) + _retire())
+    assert step.optimal
+    retired = _divest_mw(step)
+    assert sorted(retired) == ["p2020", "p2025"]
+    assert retired["p2025"] == pytest.approx(100.0, abs=1e-6)
+    rows = _rows_by_period(build(step.flex_data), "maxFlow")
+    for period in ("p2030", "p2035"):
+        for terms, (_, upper) in rows[period]:
+            assert _divest_columns(terms) == [] and upper == pytest.approx(0.0, abs=1e-9), period
+    assert all(_divest_columns(t) == [f"v_divest_p[{PLANT},p2020]", f"v_divest_p[{PLANT},p2025]"]
+               for t, _ in rows["p2025"])
+
+
+@pytest.mark.solver
+def test_retired_capacity_stays_within_the_existing_capacity(tmp_path_factory) -> None:
+    """reinvest_automatic, ``existing`` 500 / 500 / 200 / 200 MW, up to 400 MW retirable in p2025, availability
+    0 (the plant never runs, so retiring it only earns the salvage value and saves fixed cost: the solve retires
+    as much as it may).  The retirement counts in p2025 … p2035, so maxRetired_existing_p caps it at the smallest
+    existing capacity there, 200 MW (the p2030 and p2035 rows bind); the solve retires exactly 200 MW (before:
+    no such row, and with availability 0 no capacity row held the retirement back)."""
+    from tests.engine._unit_db import build
+    from tests.engine.test_chain_costs import _period_map
+    existing = {"p2020": 500.0, "p2025": 500.0, "p2030": 200.0, "p2035": 200.0}
+    values = _retire(400.0, pinned=False) + [["unit", PLANT, "existing", _period_map(existing)],
+                                             ["unit", PLANT, "availability", b64(0.0, "float")]]
+    step = _single(tmp_path_factory, "ret_limit", values)
+    assert step.optimal
+    assert _divest_mw(step)["p2025"] == pytest.approx(200.0, rel=1e-9)
+    capped = _rows_by_period(build(step.flex_data), "maxRetired_existing_p")
+    assert {d: rows[0][1][1] for d, rows in capped.items()} == pytest.approx(existing, rel=1e-12)
+
+
+@pytest.mark.solver
+def test_entity_without_existing_capacity_has_no_retirement(tmp_path_factory, capsys) -> None:
+    """coal_plant with existing 0 that may invest and retire (invest_retire_no_limit): only existing capacity can
+    be retired, so it has investment variables but no retirement variable, and a warning names it."""
+    values = [["unit", PLANT, "existing", b64(0.0, "float")],
+              ["unit", PLANT, "invest_method", b64("invest_retire_no_limit", "str")],
+              ["unit", PLANT, "salvage_value", b64(SALVAGE, "float")]]
+    step = _single(tmp_path_factory, "ret_none", values)
+    assert step.optimal
+    assert utf8(step.solution.value("v_invest_p")).filter(pl.col("p") == PLANT).height == len(PERIODS)
+    fd = step.flex_data
+    assert fd.pd_divest_set is None or utf8(fd.pd_divest_set).filter(pl.col("p") == PLANT).height == 0
+    assert fd.edd_divest_active is None or utf8(fd.edd_divest_active).filter(pl.col("p") == PLANT).height == 0
+    out = capsys.readouterr().out
+    assert f"{PLANT} has a retirement option" in out and "Only existing capacity can be retired" in out
+
+
+def _config_error(tmp_path_factory, alt: str, values: list) -> str:
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    with pytest.raises(FlexToolConfigError) as err:
+        _single(tmp_path_factory, alt, values)
+    return str(err.value)
+
+
+def test_minimum_retirement_after_the_end_of_life_is_an_error(tmp_path_factory) -> None:
+    """reinvest_choice, lifetime 15: retiring 100 MW in p2035 is required, but the existing capacity has ended
+    there (year 15) — an error naming the entity and the period (before: an infeasible LP)."""
+    msg = _config_error(tmp_path_factory, "ret_err_eol", _lifetime("reinvest_choice", 15.0) + _retire(period="p2035"))
+    assert PLANT in msg and "p2035" in msg and "retire_min_period" in msg and "year 15" in msg
+
+
+def test_minimum_retirement_above_the_existing_capacity_is_an_error(tmp_path_factory) -> None:
+    """600 MW required in p2025 of the existing 500 MW: an error naming the entity, the period and the 500 MW."""
+    msg = _config_error(tmp_path_factory, "ret_err_600", _retire(600.0))
+    assert PLANT in msg and "p2025" in msg and "600" in msg and "500" in msg
+
+
+def test_minimum_total_retirement_above_what_the_window_allows_is_an_error(tmp_path_factory) -> None:
+    """reinvest_automatic, ``existing`` 500 / 500 / 200 / 200 MW, retire_total with retire_min_total 300 MW: a
+    retirement in any period counts until the end of the horizon, so at most min(…, 200, 200) = 200 MW can be
+    retired (the largest existing capacity, 500 MW, is not the limit) — an error naming the entity."""
+    from tests.engine.test_chain_costs import _period_map
+    existing = {"p2020": 500.0, "p2025": 500.0, "p2030": 200.0, "p2035": 200.0}
+    values = [["unit", PLANT, "existing", _period_map(existing)],
+              ["unit", PLANT, "invest_method", b64("retire_total", "str")],
+              ["unit", PLANT, "retire_min_total", b64(300.0, "float")],
+              ["unit", PLANT, "retire_max_total", b64(1000.0, "float")],
+              ["unit", PLANT, "salvage_value", b64(SALVAGE, "float")]]
+    msg = _config_error(tmp_path_factory, "ret_err_total", values)
+    assert PLANT in msg and "retire_min_total" in msg and "at most 200" in msg
+
+
+@pytest.mark.solver
+def test_group_minimum_retirement_above_the_members_existing_capacity_is_an_error(tmp_path_factory) -> None:
+    """A group retirement minimum (off-schema ``retire_min_total`` of a group) of 600 MW over coal_plant's 500 MW
+    existing capacity: building the LP raises an error naming the group."""
+    from polar_high import Param
+
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    from tests.engine._unit_db import build
+    step = _single(tmp_path_factory, "ret_err_group", _retire(100.0, pinned=False))
+    fd = step.flex_data
+    e_dtype = fd.p_entity_pre_existing.frame.schema["e"]
+    fd.group_entity = pl.DataFrame({"g": ["retire_grp"], "e": [PLANT]}).with_columns(pl.col("e").cast(e_dtype))
+    fd.p_group_retire_min_total = Param(("g",), pl.DataFrame({"g": ["retire_grp"], "value": [600.0]}))
+    with pytest.raises(FlexToolConfigError) as err:
+        build(fd)
+    assert "group retire_grp" in str(err.value) and "500" in str(err.value)
+
+
+@pytest.mark.solver
+def test_storage_retirement_counts_until_the_end_of_life(tmp_path_factory) -> None:
+    """The battery node (existing 50 MWh) with reinvest_choice, lifetime 15, retires 10 MWh in p2025: feasible;
+    the state capacity rows of p2030 carry the p2025 retirement, those of p2035 none (capacity 0 there, the
+    existing storage has ended), and maxRetired_existing_n caps the retired storage at 50 MWh."""
+    from tests.engine._unit_db import build
+    values = _lifetime("reinvest_choice", 15.0, "battery") + _retire(10.0, entity="battery", cls="node")
+    values = [[("node" if v[1] == "battery" else v[0]), *v[1:]] for v in values]
+    step = _single(tmp_path_factory, "ret_storage", values)
+    assert step.optimal
+    retired = _divest_mw(step, "battery", "v_divest_n", "n")
+    assert sorted(retired) == ["p2020", "p2025", "p2030"]
+    assert retired["p2025"] == pytest.approx(10.0, abs=1e-6)
+    pb = build(step.flex_data)
+    rows = _rows_by_period(pb, "maxState", "battery")
+    assert rows["p2030"] and rows["p2035"]
+    for terms, _ in rows["p2030"]:
+        assert _divest_columns(terms, "battery", "v_divest_n") == [
+            "v_divest_n[battery,p2020]", "v_divest_n[battery,p2025]", "v_divest_n[battery,p2030]"]
+    for terms, (_, upper) in rows["p2035"]:
+        assert _divest_columns(terms, "battery", "v_divest_n") == [] and upper == pytest.approx(0.0, abs=1e-9)
+    capped = _rows_by_period(pb, "maxRetired_existing_n", "battery")
+    assert sorted(capped) == ["p2020", "p2025", "p2030"]
+    assert all(rows[0][1][1] == pytest.approx(50.0, rel=1e-12) for rows in capped.values())

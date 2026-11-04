@@ -307,7 +307,7 @@ def add_invest_constraints(b: "_Build") -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_invest[e,d] − v_invest[e,b] = 0,   v_divest[e,d] − v_divest[e,b] = 0
     #   ∀ (d,b) ∈ pd_non_anticipativity, (e,d) and (e,b) ∈ {pd,nd}_{invest,divest}_set,
-    #     e = process (p) or node (n)
+    #     e = process (p) or node (n); the divest sets hold the periods with pre-existing capacity only
     # Investment and divestment inside the window are the same in every
     # branch.  Divestment must be tied too: under recourse it has a column
     # per branch like investment, and a free divestment would let the net

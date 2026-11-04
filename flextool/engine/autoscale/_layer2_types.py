@@ -306,6 +306,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxDivest_entity_total": CstrFamily(QuantityType.POWER),
     # flextool/engine/model/core.py _eq_invest_total_caps
     "maxDivest_entity_total_n": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_retired_existing
+    "maxRetired_existing_p": CstrFamily(QuantityType.POWER),
+    # flextool/engine/model/core.py _eq_retired_existing
+    "maxRetired_existing_n": CstrFamily(QuantityType.ENERGY),
 
     # Slice D per-path total caps (design §7.2/§14) — one cap row per
     # (entity, scenario-leaf).  Emitted by

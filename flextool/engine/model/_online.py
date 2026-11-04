@@ -118,6 +118,8 @@ def add_constraints(b: "_Build") -> None:
         # v_online[p,d,t] − Σ v_invest_p[p,d′] + Σ v_divest_p[p,d′]  ≤ existing_count[p,d]
         #   ∀ (p,d,t) ∈ p_idx
         # Units online cannot exceed the units built.
+        # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
+        #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
         m.add_cstr(f"maxOnline{sfx}",   over=p_idx, sense="<=",
                    lhs_terms=_lhs_with_invdiv(v_online, "online"),
                    rhs_terms={"max_units": d.p_process_existing_count})
@@ -211,6 +213,8 @@ def add_constraints(b: "_Build") -> None:
         # previous period / roll must still be able to "shut down" even if this step's capacity is lower);
         # sd ≤ v_online_prev follows there from online_change + maxStartup instead (su ≤ on_t ⇒
         # sd = su − on_t + on_prev ≤ on_prev).
+        # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
+        #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
         exclude_shutdown = None
         if link_native is not None:
             cross_period_link = link_native.filter(pl.col("d") != pl.col("d_previous")).select("p", "d", "t")
@@ -445,6 +449,8 @@ def add_constraints(b: "_Build") -> None:
         # unit with existing = 0 could never be online).
         # downtime_lookback: as uptime_lookback with min_downtime[p].
         # carry_dn: as carry_up with shutdown[p,h] and min_downtime[p] (d.downtime_carry, 0-filled).
+        # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
+        #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
         if (d.pdt_downtime_set is not None and d.pdt_downtime_set.height > 0
                 and d.downtime_lookback is not None and d.downtime_lookback.height > 0):
             dn_idx = d.pdt_downtime_set.join(online_set, on="p", how="inner")

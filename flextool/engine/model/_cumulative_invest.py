@@ -167,6 +167,7 @@ def add_constraints(b: _Build) -> None:
     _eq_min_invest_total(b)
     _eq_min_divest_total(b)
     _eq_cumulative_capacity(b)
+    _check_group_retire_minimums(b)
     _eq_group_entity_period(b)
     _eq_group_invest_total(b)
     _eq_group_divest_total(b)
@@ -174,6 +175,29 @@ def add_constraints(b: _Build) -> None:
     _eq_cumulative_flow_solve(b)
     _eq_cumulative_flow_period(b)
     _eq_instant_flow(b)
+
+
+def _check_group_retire_minimums(b: _Build) -> None:
+    """A group's minimum retirement (``retire_min_total`` / ``retire_min_period``) must fit in the pre-existing
+    capacity of its members: only that capacity can be retired (``maxRetired_existing_{p,n}``), so a larger
+    minimum is a configuration error, not an infeasible LP."""
+    d = b.d
+    if (getattr(d, "p_group_retire_min_total", None) is None
+            and getattr(d, "p_group_retire_min_period", None) is None):
+        return
+    from flextool.engine.preprocess.params._retire_existing import (
+        active_windows,
+        check_group_retirement_minimums,
+        ed_values,
+    )
+    check_group_retirement_minimums(
+        group_entity=d.group_entity,
+        min_total=d.p_group_retire_min_total,
+        min_period=d.p_group_retire_min_period,
+        windows=active_windows([getattr(d, "edd_divest_active", None), getattr(d, "ndd_divest_active", None)]),
+        pre=ed_values(getattr(d, "p_entity_pre_existing", None)),
+        prior=chain_prior(d, "divest"),
+        carried=None)
 
 
 def _eq_fix_no_investment(b: _Build) -> None:
@@ -357,6 +381,8 @@ def _eq_cumulative_capacity(b: _Build) -> None:
     # Keeps the capacity of an entity in a period (existing + invested and still alive − every
     # retirement up to and including d, #29, processes and storage nodes) within its cumulative
     # limits, MW (MWh for storage nodes).  Existing capacity is a constant on the right-hand side.
+    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
+    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
     for name, sense, cap, var, divest, axis, param_name in (
         ("maxCumulative_capacity_p", "<=", d.ed_cumulative_max_capacity, b.v_invest_p, b.v_divest_p, "p",
          "cumulative_max_capacity"),
@@ -684,6 +710,8 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
     # periods an explicit value is given for (a missing min is simply "no floor", not an
     # error).  Capacity invested by earlier solves of a chain is not counted (pre-existing,
     # separate item).
+    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
+    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
     for name, sense, cap, param_name in (
         ("maxInvestGroup_entity_cumulative", "<=", d.pd_group_cumulative_max_capacity,
          "cumulative_max_capacity"),

@@ -92,6 +92,8 @@ def test_max_divest_var_bound(toy_invest_3d):
         ed_divest_set=ed_divest_set,
         edd_divest_active=edd_divest_active,
         ed_lifetime_fixed_cost_divest=ed_lifetime_fixed_cost_divest,
+        # A retirement removes pre-existing capacity only (maxRetired_existing_p): 3 MW (unitsize 1).
+        p_entity_pre_existing=Param(("e", "d"), pl.DataFrame({"e": ["u"]*3, "d": periods, "value": [3.0]*3})),
     )
     pb, sol = _solve(data)
     assert sol.optimal
@@ -152,6 +154,8 @@ def test_max_invest_and_divest_entity_period(toy_invest_3d):
         ed_divest_period_set=ed_divest_period_set,
         ed_divest_max_period=ed_divest_max_period,
         ed_lifetime_fixed_cost_divest=ed_lifetime_fixed_cost_divest,
+        # A retirement removes pre-existing capacity only (maxRetired_existing_p): 5 MW (unitsize 1).
+        p_entity_pre_existing=Param(("e", "d"), pl.DataFrame({"e": ["u"]*3, "d": periods, "value": [5.0]*3})),
     )
     pb, sol = _solve(data)
     assert sol.optimal
@@ -658,6 +662,8 @@ def test_cumulative_min_counts_earlier_divest(toy_invest_3d):
         ed_divest_set=ed_divest_set,
         edd_divest_active=edd_divest_active,
         ed_lifetime_fixed_cost_divest=ed_lifetime_fixed_cost_divest,
+        # A retirement removes pre-existing capacity only (maxRetired_existing_p): 3 MW (unitsize 1).
+        p_entity_pre_existing=Param(("e", "d"), pl.DataFrame({"e": ["u"]*3, "d": periods, "value": [3.0]*3})),
         ed_entity_annual_discounted=ed_entity_annual_discounted,
         ed_invest_cumulative=ed_invest_cumulative,
         ed_cumulative_min_capacity=ed_cumulative_min_capacity,

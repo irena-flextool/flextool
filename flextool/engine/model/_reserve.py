@@ -858,6 +858,8 @@ def add_constraints(b: "_Build") -> None:
     # retired, also for units with online variables).  At an input node the
     # capacity is the input's (_input_capacity_factor).  max_share not
     # authored → no reserve (RHS 0).
+    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
+    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
     max_share = getattr(d, "p_process_reserve_upDown_node_max_share", None)
     existing = getattr(d, "p_process_existing_count", None)
     if max_share is not None and d.prundt.height > 0 and existing is not None:
@@ -1076,6 +1078,8 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
     # maxFlow_online carry the upward reserve of units only (b.reserve_up_to_sink_units); the profile cap
     # profile_flow_upper_limit keeps the connection's in-arc term (conservative: it does not count stopping the
     # out-flow).
+    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
+    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
     for ud in ("up", "down"):
         sel = d.prundt.filter(pl.col("ud") == ud)
         sel = (sel.with_columns(pl.col("p").cast(pl.Utf8).alias("__p"))
@@ -1418,6 +1422,8 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
     # Downward reserve into storage needs free storage capacity (MWh) for the
     # reserve duration; 1/slope = η converts input to energy stored.  The
     # capacity terms are those of maxState, in MWh.  Same notes as the floor.
+    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
+    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
     join_dn = _providers("down", balance_side="source", storage_side="sink")
     if join_dn is not None:
         back_dn = None

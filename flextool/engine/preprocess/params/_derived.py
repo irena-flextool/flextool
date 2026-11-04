@@ -3950,13 +3950,19 @@ def ed_divest_set_from_source(source: "InputSource",
                                 *,
                                 ctx: "SolveContext | None" = None,
                                 provider: "object | None" = None,
+                                existing_only: bool = True,
                                 ) -> pl.DataFrame | None:
     """Mirror of ``ed_invest_set`` for divest.  Algorithm
-    (``invest_divest_sets.py:185-193``):
+    (``invest_divest_sets.py:185-193``)::
 
         ed_divest = { (e, d) :
                        e ∈ entityDivest, d ∈ period_invest_of_solve,
-                       (eead[e, d] != 0  OR  e has capacity constraint) }
+                       (eead[e, d] != 0  OR  e has capacity constraint),
+                       pre_existing[e, d] > 0 }
+
+    Only capacity that existed before the run can be retired: a period where the entity has no pre-existing
+    capacity (none given, or past its end of life) has no retirement (:func:`retirable_existing_pairs`).
+    ``existing_only=False`` gives the retirement options before that filter.
     """
     period_invest = _expand_invest_branch_periods(
         _solve_periods(source, active_solve, "invest_periods"),
@@ -3977,7 +3983,29 @@ def ed_divest_set_from_source(source: "InputSource",
               .unique()
               .sort("e", "d")
               .collect())
-    return out
+    return retirable_existing_pairs(out, source, active_solve, workdir, provider=provider) if existing_only else out
+
+
+def retirable_existing_pairs(pairs: pl.DataFrame,
+                             source: "InputSource",
+                             active_solve: str | None,
+                             workdir: Path | None,
+                             *,
+                             provider: "object | None" = None,
+                             ) -> pl.DataFrame:
+    """The ``[e, d]`` rows of ``pairs`` where the entity has pre-existing capacity (``p_entity_pre_existing`` > 0:
+    the user's ``existing`` before the run, until its end of life), the only capacity a retirement can remove."""
+    from flextool.engine.preprocess.params._existing import p_entity_pre_existing_lf
+    if pairs.height == 0:
+        return pairs
+    periods = pairs["d"].cast(pl.Utf8).unique().sort().to_list()
+    retirable = (p_entity_pre_existing_lf(source, active_solve, periods, workdir=workdir, provider=provider)
+                   .filter(pl.col("value") > 0.0)
+                   .select("e", "d")
+                   .unique()
+                   .collect())
+    pairs, retirable = align_join_dtypes(pairs, retirable, ["e", "d"])
+    return pairs.join(retirable, on=["e", "d"], how="semi").sort("e", "d")
 
 
 # ---------------------------------------------------------------------------
@@ -4199,14 +4227,19 @@ def edd_divest_active_from_source(source: "InputSource",
                                       ) -> pl.DataFrame | None:
     """Build the active-divest (entity_col, d_divest, d) tuples — see audit §3.7.3.
 
-    With *workdir* (or *ctx*) the period domain is the solve's ``period_in_use_set``, which also holds the
-    forecast branch periods of a stochastic fan; a branch period has the years of its anchor period.  A divest
-    at a period then reduces the capacity of the branch periods it reaches (a here-and-now divest every branch,
-    a recourse branch divest its own branch through the lineage filter) — the branch periods have the dispatch,
-    the period label of a fan has none.
+    edd_divest_active = {(e, d_divest, d) : (e, d_divest) ∈ pd_divest, yr[d_divest] ≤ yr[d] < EOL[e]}
 
-    pd_divest ⊆ ed_divest with ``entity_col ∈ {process, node}``; the active
-    set further filters d_divest ≤ d using year ordering. ``entity_col``
+    EOL[e] is the end of life of the entity's pre-existing capacity (:func:`_lifetime_gate_sums`, counted from
+    the start of the run; none for ``reinvest_automatic``, whose existing capacity is renewed): a retirement
+    removes pre-existing capacity only while that capacity would exist.
+
+    With *workdir* (or *ctx*) the period domain is the solve's ``period_in_use_set``, which also holds the
+    forecast branch periods of a stochastic fan; the years are the solve's ``p_years_d``, where a branch period
+    has the year of its period label.  A divest at a period then reduces the capacity of the branch periods it
+    reaches (a here-and-now divest every branch, a recourse branch divest its own branch through the lineage
+    filter) — the branch periods have the dispatch, the period label of a fan has none.
+
+    pd_divest ⊆ ed_divest with ``entity_col ∈ {process, node}``. ``entity_col``
     selects which entity vocabulary the incoming/outgoing frame uses — the
     process set calls with ``entity_col="p"``, the node set with
     ``entity_col="n"`` — so the two never cross-contaminate each other's
@@ -4233,24 +4266,10 @@ def edd_divest_active_from_source(source: "InputSource",
     _live = get_global_axis_enums()
     if _live is not None:
         pd_divest = cast_frame_axes(pd_divest, _live)
-    pyd_lf = _p_years_d_lf(source, active_solve, provider=provider)
+    pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         return None
     periods = _period_in_use_set(source, active_solve, workdir, provider=provider, ctx=ctx)
-    if workdir is not None or ctx is not None:
-        pb = period_branch_pairs_lf(workdir, ctx=ctx, provider=provider).collect()
-        pairs = [(str(a), str(b)) for a, b in zip(pb["d"].to_list(), pb["b"].to_list()) if str(a) != str(b)]
-        if pairs:
-            pyd = pyd_lf.collect()
-            yr_of = {str(dd): y for dd, y in zip(pyd["d"].to_list(), pyd["yr"].to_list())}
-            extra = [(b, yr_of[a]) for a, b in pairs if a in yr_of and b not in yr_of]
-            if extra:
-                branch_yr = pl.DataFrame({"d": [b for b, _ in extra], "yr": [y for _, y in extra]},
-                                         schema={"d": pl.Utf8, "yr": pyd.schema["yr"]})
-                merged = pl.concat([pyd.with_columns(pl.col("d").cast(pl.Utf8)), branch_yr])
-                if _live is not None:
-                    merged = cast_frame_axes(merged, _live)
-                pyd_lf = merged.lazy()
     if not periods:
         return pl.DataFrame(schema={
             entity_col: schema_dtype(_enums, entity_col),
@@ -4266,6 +4285,15 @@ def edd_divest_active_from_source(source: "InputSource",
                .join(yr_div, on="d_divest", how="inner")
                .join(yr_d, on="d", how="inner")
                .filter(pl.col("yr_divest") <= pl.col("yr")))
+    # A retirement removes pre-existing capacity until that capacity's end of life (d < EOL[e]): from then on
+    # the existing capacity is gone anyway, so the retirement no longer counts.
+    expired = _lifetime_expired_pairs(source, active_solve, workdir, provider=provider, periods=periods)
+    if expired:
+        expired_lf = (pl.LazyFrame({entity_col: [e for e, _ in expired], "d": [d for _, d in expired]},
+                                   schema={entity_col: pl.Utf8, "d": pl.Utf8})
+                        .with_columns(pl.col(entity_col).cast(chain.collect_schema()[entity_col], strict=False),
+                                      pl.col("d").cast(chain.collect_schema()["d"], strict=False)))
+        chain = chain.join(expired_lf, on=[entity_col, "d"], how="anti")
     if lineage is not None:
         from flextool.engine.preprocess.params._walks import (
             _apply_lineage_filter,
@@ -6112,6 +6140,58 @@ def _fan_branch_years_notice(source: "InputSource",
         _behaviour_changes.notice("stochastic_branch_period_years", "entities", sorted(names))
 
 
+def _retirement_without_existing_warning(offered: pl.DataFrame, kept: pl.DataFrame) -> None:
+    """Warn (once per run) about the entities that have a retirement option but no pre-existing capacity in any
+    of the solve's retirement periods: only capacity that existed before the run can be retired, so they get no
+    retirement variable, and their retired-capacity terms (user constraints, group retirement limits) are 0."""
+    lost = sorted(set(offered["e"].cast(pl.Utf8).to_list()) - set(kept["e"].cast(pl.Utf8).to_list()))
+    if not lost:
+        return
+    from flextool.engine import _behaviour_changes
+    _behaviour_changes.warn_once(
+        ("retirement_without_existing", tuple(lost)),
+        "Warning: " + ", ".join(lost) + (" have" if len(lost) > 1 else " has")
+        + " a retirement option (invest_method) but no existing capacity before the run in the retirement "
+        "periods (none given, or past its end of life). Only existing capacity can be retired, so there is no "
+        "retirement variable; retired-capacity terms of user constraints and group retirement limits are 0.")
+
+
+def _check_retirement_minimums(flex_data: object,
+                               source: "InputSource",
+                               active_solve: str | None,
+                               workdir: Path | None,
+                               offered: "pl.DataFrame | None",
+                               kept: "pl.DataFrame | None",
+                               active_frames: "list[pl.DataFrame | None]",
+                               period_in_use: list[str],
+                               *,
+                               provider: "object | None" = None) -> None:
+    """:func:`._retire_existing.check_retirement_minimums` on the solve's retirement options."""
+    if offered is None or offered.height == 0:
+        return
+    from flextool.engine.preprocess.params._existing import (
+        e_divest_total_lf,
+        ed_divest_period_set_lf,
+        p_entity_pre_existing_lf,
+    )
+    from flextool.engine.preprocess.params._retire_existing import active_windows, check_retirement_minimums
+    pre_df = (p_entity_pre_existing_lf(source, active_solve, [str(d) for d in period_in_use],
+                                       workdir=workdir, provider=provider)
+                .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "value").collect())
+    pre = {(e, d): float(v) for e, d, v in pre_df.iter_rows()}
+    years = _lifetime_years(source, active_solve, workdir, provider=provider)
+    check_retirement_minimums(
+        offered=offered, kept=kept,
+        period_method_pairs=ed_divest_period_set_lf(source, offered.lazy()).collect(),
+        total_method_entities=e_divest_total_lf(source).collect()["e"].cast(pl.Utf8).to_list(),
+        windows=active_windows(active_frames), pre=pre,
+        min_period=getattr(flex_data, "ed_divest_min_period", None),
+        min_total=getattr(flex_data, "e_divest_min_total", None),
+        prior=p_entity_divested_from_handoff(provider=provider),
+        carried=None,
+        eol=_lifetime_gate_sums(source, active_solve, workdir, provider=provider, years=years))
+
+
 def apply_derived_c(
     flex_data: object,
     source: "InputSource",
@@ -6252,10 +6332,17 @@ def apply_derived_c(
     if ed_inv_db is not None and ed_inv_db.height > 0:
         flex_data.ed_invest_set = ed_inv_db
 
-    ed_div_db = ed_divest_set_from_source(
-        source, active_solve, workdir, ctx=ctx, provider=provider)
-    if ed_div_db is not None and ed_div_db.height > 0:
-        flex_data.ed_divest_set = ed_div_db
+    offered_div = ed_divest_set_from_source(
+        source, active_solve, workdir, ctx=ctx, provider=provider, existing_only=False)
+    ed_div_db = offered_div
+    if offered_div is not None and offered_div.height > 0:
+        # Only pre-existing capacity can be retired: the retirement options of periods without it are dropped.
+        ed_div_db = retirable_existing_pairs(offered_div, source, active_solve, workdir, provider=provider)
+        _retirement_without_existing_warning(offered_div, ed_div_db)
+        flex_data.ed_divest_set = ed_div_db if ed_div_db.height > 0 else None
+        if ed_div_db.height == 0:
+            # The seeds of the retirement partitions describe the options before the filter.
+            flex_data.pd_divest_set = flex_data.nd_divest_set = flex_data.ed_divest_period_set = None
 
     # Δ.17c Gap D — pd/nd_invest_set, pd/nd_divest_set, edd_invest_set:
     # partition the (e, d) frames to (process, d) / (node, d) by
@@ -6334,6 +6421,8 @@ def apply_derived_c(
     inv_empty = ed_inv_for_partition is None or ed_inv_for_partition.height == 0
     div_empty = ed_div_for_partition is None or ed_div_for_partition.height == 0
     if inv_empty and div_empty:
+        _check_retirement_minimums(flex_data, source, active_solve, workdir, offered_div, ed_div_db, [],
+                                   _c_period_in_use, provider=provider)
         for blank_field in (
             "e_invest_total", "e_divest_total",
             "e_invest_max_total", "e_divest_max_total",
@@ -6397,6 +6486,8 @@ def apply_derived_c(
         entity_col="n", provider=provider, lineage=_c_lineage, workdir=workdir, ctx=ctx)
     if ndda_db is not None and ndda_db.height > 0:
         flex_data.ndd_divest_active = ndda_db
+    _check_retirement_minimums(flex_data, source, active_solve, workdir, offered_div, ed_div_db,
+                               [edda_db, ndda_db], _c_period_in_use, provider=provider)
 
     # p_entity_max_units uses ed_invest plus the per-period-in-use grid
     # and the unitsize cascade.

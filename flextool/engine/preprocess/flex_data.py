@@ -903,8 +903,8 @@ class FlexData:
     # operate in d / are in construction in d (apply_existing_chain, from the handoff realized_commission).
     p_entity_carried_commission: Param | None = None
     p_entity_carried_in_construction: Param | None = None
-    edd_divest_active: pl.DataFrame | None = None    # (p, d_divest, d) where d_divest ≤ d
-    ndd_divest_active: pl.DataFrame | None = None    # (n, d_divest, d) where d_divest ≤ d — node analogue
+    edd_divest_active: pl.DataFrame | None = None    # (p, d_divest, d) where d_divest ≤ d < EOL[p]
+    ndd_divest_active: pl.DataFrame | None = None    # (n, d_divest, d) where d_divest ≤ d < EOL[n] — node analogue
     p_entity_max_units: Param | None = None          # (e, d)
     ed_lifetime_fixed_cost: Param | None = None      # (e, d)
     ed_lifetime_fixed_cost_divest: Param | None = None

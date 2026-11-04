@@ -680,11 +680,16 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
                  ("entity", "period"), ed_invest_pairs)
     ed_invest_set = frozenset(ed_invest_pairs)
 
+    # Only capacity that existed before the run can be retired: a period without pre-existing capacity (none
+    # given, or past its end of life) has no retirement option.
+    pre_existing = {(str(e), str(d)) for e, d, v in _read_csv(solve_data_dir / "p_entity_pre_existing.csv",
+                                                     ["entity", "period", "value"], provider=provider).iter_rows()
+                    if v not in (None, "") and float(v) > 0.0}
     ed_divest_pairs: list[tuple[str, str]] = []
     for e in entityDivest:
         has_cap = e in has_retire_constraint
         for d in period_invest:
-            if eead.get((e, d), 0.0) != 0.0 or has_cap:
+            if (eead.get((e, d), 0.0) != 0.0 or has_cap) and (e, d) in pre_existing:
                 ed_divest_pairs.append((e, d))
     _emit_tuples(provider, "solve_data/ed_divest.csv",
                  ("entity", "period"), ed_divest_pairs)

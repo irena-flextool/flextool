@@ -336,6 +336,8 @@ def _eq_capacity_margin(b: _Build) -> None:
     # row is scaled by icap, which makes the slack a fraction of
     # group_capacity_for_scaling.  Without group_node only the margin and the
     # slack remain.
+    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
+    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
     lhs: dict = {"slack": b.vq_capacity_margin}
     rhs: dict = {}
 

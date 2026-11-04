@@ -83,6 +83,8 @@ def _enable_divest(data: FlexData, *, lfd: float, annd: float) -> FlexData:
         ed_entity_annual_divest_discounted=annd_param,
         p_flow_upper=p_flow_upper,
         p_flow_upper_existing=p_flow_upper_existing,
+        # A retirement removes pre-existing capacity only (maxRetired_existing_p): 5 MW (unitsize 1).
+        p_entity_pre_existing=Param(("e", "d"), pl.DataFrame({"e": ["u"] * 3, "d": periods, "value": [5.0] * 3})),
     )
 
 
