@@ -162,27 +162,28 @@ def _recourse_invest_active(
 # before any producer runs, and producers run nowhere else.
 _RECOURSE_ANCHOR_PAIRS: "pl.DataFrame | None" = None
 
-# Slice D α-1 — boundary-scoped Provider (+ its workdir, which the
-# canonical readers need to key the Provider path) for the walker's year/
-# factor arms.  Set (under recourse, else ``None``) at each Layer-4
-# boundary alongside the anchor pairs, so ``period_walk_iterator`` revives
-# the canonical ``p_years_d.csv`` / ``p_years_represented.csv`` arms
-# (correct branch-period years) WITHOUT threading ``provider``/``workdir``
-# through the ~12 NPV/edd walker-caller signatures.  ``None`` (flag-off /
-# deterministic) → arms dead → today's fill_null(0.0) walker behaviour →
-# the W6 pin.
-_RECOURSE_WALK_PROVIDER: "object | None" = None
-_RECOURSE_WALK_WORKDIR: "Path | None" = None
+# Boundary-scoped Provider (+ its workdir, which the canonical readers need
+# to key the Provider path) for the period walks' year / factor arms.  Set at
+# each Layer-4 boundary alongside the anchor pairs whenever the solve has a
+# stochastic fan (branch periods), under every ``stochastic_invest_method``,
+# so ``period_walk_iterator`` and ``_existing._solve_walk_years`` read the
+# canonical ``p_years_d.csv`` / ``p_years_represented.csv`` arms, which give
+# each branch period the years of its period label, WITHOUT threading
+# ``provider``/``workdir`` through the NPV/edd walker-caller signatures.
+# ``None`` (a solve without branch periods) → the walks read the solve's own
+# ``years_represented`` (its periods are all labels, so the years agree).
+_FAN_WALK_PROVIDER: "object | None" = None
+_FAN_WALK_WORKDIR: "Path | None" = None
 
 
-def _recourse_walk_provider() -> "object | None":
-    """The active boundary's recourse walker Provider (α-1), or ``None``."""
-    return _RECOURSE_WALK_PROVIDER
+def _fan_walk_provider() -> "object | None":
+    """The active boundary's walker Provider of a solve with branch periods, or ``None``."""
+    return _FAN_WALK_PROVIDER
 
 
-def _recourse_walk_workdir() -> "Path | None":
-    """The active boundary's recourse walker workdir (α-1), or ``None``."""
-    return _RECOURSE_WALK_WORKDIR
+def _fan_walk_workdir() -> "Path | None":
+    """The active boundary's walker workdir of a solve with branch periods, or ``None``."""
+    return _FAN_WALK_WORKDIR
 
 
 def _recourse_branch_axis_present() -> bool:
@@ -201,14 +202,28 @@ def _build_recourse_anchor_pairs(
 ) -> "pl.DataFrame | None":
     """(anchor, br) pairs for in-use synthetic branches under recourse.
 
-    Returns ``None`` when the recourse flag is off (byte-parity default).
+    Returns ``None`` when the recourse flag is off (byte-parity default);
+    the pairs themselves are :func:`_fan_branch_pairs`.
+    """
+    if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
+        return None
+    return _fan_branch_pairs(workdir, ctx=ctx, provider=provider)
+
+
+def _fan_branch_pairs(
+    workdir: Path | None,
+    *,
+    ctx: "object | None" = None,
+    provider: "object | None" = None,
+) -> "pl.DataFrame | None":
+    """(anchor, br) pairs of the solve's in-use synthetic branch periods,
+    under every ``stochastic_invest_method``; ``None`` without any.
+
     Mirrors :func:`_expand_branch_periods`' acquisition (ctx-first, then
     provider/workdir ``period__branch`` + ``period_in_use``); keeps only
     synthetic (``anchor != br``) branches that carry LP variables (``br``
     in ``period_in_use``).
     """
-    if not _recourse_invest_active(workdir, ctx=ctx, provider=provider):
-        return None
     pb_df: "pl.DataFrame | None" = None
     in_use: set[str] = set()
     if ctx is not None:
@@ -244,6 +259,14 @@ def _build_recourse_anchor_pairs(
     return out if out.height > 0 else None
 
 
+def _fan_walk_scope_provider(workdir: Path | None, *, provider: "object | None" = None) -> "object | None":
+    """``provider`` when the solve has branch periods or is under recourse (the walker Provider
+    :func:`_enter_recourse_anchor_scope` arms), else ``None``: for a reader outside a Layer-4 boundary."""
+    if _recourse_invest_active(workdir, provider=provider) or _fan_branch_pairs(workdir, provider=provider) is not None:
+        return provider
+    return None
+
+
 def _reset_recourse_scope() -> None:
     """Clear all three recourse process-globals to ``None``.
 
@@ -257,11 +280,10 @@ def _reset_recourse_scope() -> None:
     the invariant it guards is "no producer sees a global from a
     different solve".
     """
-    global _RECOURSE_ANCHOR_PAIRS, _RECOURSE_WALK_PROVIDER, \
-        _RECOURSE_WALK_WORKDIR
+    global _RECOURSE_ANCHOR_PAIRS, _FAN_WALK_PROVIDER, _FAN_WALK_WORKDIR
     _RECOURSE_ANCHOR_PAIRS = None
-    _RECOURSE_WALK_PROVIDER = None
-    _RECOURSE_WALK_WORKDIR = None
+    _FAN_WALK_PROVIDER = None
+    _FAN_WALK_WORKDIR = None
 
 
 def _enter_recourse_anchor_scope(
@@ -275,17 +297,19 @@ def _enter_recourse_anchor_scope(
     Called at the top of each Layer-4 apply boundary BEFORE any explicit-
     per-period producer OR walker runs.  Overwrites unconditionally (to
     ``None`` when flag-off) so no stale value from a prior solve can leak.
-    Also arms the boundary-scoped walker Provider (α-1).
+    Also arms the boundary-scoped walker Provider whenever the solve has
+    branch periods (any ``stochastic_invest_method``) or is under recourse,
+    so every period walk gives a branch period its label's years; the
+    anchor pairs stay recourse-only.
     """
-    global _RECOURSE_ANCHOR_PAIRS, _RECOURSE_WALK_PROVIDER, \
-        _RECOURSE_WALK_WORKDIR
+    global _RECOURSE_ANCHOR_PAIRS, _FAN_WALK_PROVIDER, _FAN_WALK_WORKDIR
     active = _recourse_invest_active(workdir, ctx=ctx, provider=provider)
-    _RECOURSE_WALK_PROVIDER = provider if active else None
-    _RECOURSE_WALK_WORKDIR = (
-        Path(workdir) if active and workdir is not None else None)
-    _RECOURSE_ANCHOR_PAIRS = (
-        _build_recourse_anchor_pairs(workdir, ctx=ctx, provider=provider)
-        if active else None)
+    pairs = _fan_branch_pairs(workdir, ctx=ctx, provider=provider)
+    walk = active or pairs is not None
+    _FAN_WALK_PROVIDER = provider if walk else None
+    _FAN_WALK_WORKDIR = (
+        Path(workdir) if walk and workdir is not None else None)
+    _RECOURSE_ANCHOR_PAIRS = pairs if active else None
 
 
 def _anchor_expand_explicit(explicit_lf: pl.LazyFrame) -> pl.LazyFrame:
@@ -6052,6 +6076,28 @@ def _apply_lead_time_sets(flex_data: object,
     flex_data.e_construction_lead_time = lagged if lagged.height > 0 else None
 
 
+def _fan_branch_years_notice(source: "InputSource",
+                             flex_data: object,
+                             ed_inv: "pl.DataFrame | None",
+                             ed_div: "pl.DataFrame | None") -> None:
+    """Behaviour-change notice of a solve with a stochastic fan without recourse: its branch periods now have the
+    years of their period labels in the investment, retirement and lifetime windows.  Names the entities with
+    investment or retirement options and those with a ``reinvest_choice`` / ``no_investment`` lifetime."""
+    if _fan_walk_provider() is None or getattr(flex_data, "recourse_invest", False):
+        return
+    names: dict[str, None] = {}
+    for frame in (ed_inv, ed_div):
+        if frame is not None and frame.height > 0:
+            for e in frame["e"].cast(pl.Utf8).unique().sort().to_list():
+                names.setdefault(str(e), None)
+    for e, methods in _entity_lifetime_methods(source, _all_entities(source)).items():
+        if "reinvest_choice" in methods or "no_investment" in methods:
+            names.setdefault(e, None)
+    if names:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice("stochastic_branch_period_years", "entities", sorted(names))
+
+
 def apply_derived_c(
     flex_data: object,
     source: "InputSource",
@@ -6258,6 +6304,8 @@ def apply_derived_c(
     if forbidden_db is not None:
         flex_data.ed_invest_forbidden_no_investment = (
             forbidden_db if forbidden_db.height > 0 else None)
+
+    _fan_branch_years_notice(source, flex_data, ed_inv_for_partition, ed_div_for_partition)
 
     # Dispatch-only gate: when neither ed_invest nor ed_divest carries
     # any (e, d) row, mirror ``flex_data.py::_load_invest`` blank-out by

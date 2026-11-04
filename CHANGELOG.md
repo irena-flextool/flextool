@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **Fixed: in a stochastic solve without recourse, capacity invested in a later period reaches the stochastic
+  branches of that period** (results change for stochastic solves whose `stochastic_invest_method` is not
+  `recourse` and that invest or have a `reinvest_choice` / `no_investment` lifetime). The branch periods of the
+  stochastic branches now count from the year of their period. Before, every branch period counted as the first
+  year of the solve, so an investment decided in a later period, or one that starts to operate in a later period
+  after a `construction_lead_time`, was not available in that period's branches (the model ran on penalties
+  instead), and lifetimes ended late in the branches. An upgraded database prints a notice naming the entities.
 - **Fixed: the annualized investment, retirement and fixed costs of new and retired capacity are yearly amounts in
   every period the capacity operates** (`cost_annualized` of the model, units, connections and nodes; results
   change for models that invest or retire). The annualized *investment & retirement*, *fixed cost invested* and

@@ -1,11 +1,11 @@
 """Slice D — Phase D3: α-1 year/factor provider threading.
 
 Design: ``specs/sliceD_recourse_invest_design.md`` §5 / §18 D3.
-Under recourse the walker forwards ``provider`` so the canonical
-``p_years_d.csv`` / ``p_years_represented.csv`` arms — which byte-copy the
-fan-member year rows — go live, giving branch periods their anchor's
-year-from-start.  ``provider=None`` (flag-off) → arms dead → today's
-behaviour (the W6 today-bug pin).  These are the two canonical-arm reads,
+In a solve with branch periods (any ``stochastic_invest_method``) the walker
+forwards ``provider`` so the canonical ``p_years_d.csv`` /
+``p_years_represented.csv`` arms — which byte-copy the fan-member year rows —
+go live, giving branch periods their anchor's year-from-start.
+``provider=None`` (no branch periods) → the source arms.  These are the two canonical-arm reads,
 unit-tested; the full edd cross-leaf / objective effect lands at D4/D5.
 """
 from __future__ import annotations

@@ -40,6 +40,7 @@ from flextool.engine.preprocess.params._existing import (
     edd_invest_set_lf,
 )
 from flextool.engine.preprocess.params._derived import (
+    _enter_recourse_anchor_scope,
     _p_years_d_lf,
     _period_in_use_set,
     _periodAll_from_source,
@@ -431,30 +432,29 @@ def _period_lists(wf: Path, reader, provider):
     return active, piu, pwh, universe
 
 
-# --- W6 — the (e, p_k, p_j_b) structural pin AND §6.4 today-bug witness -
+# --- W6 — the (e, p_k, p_j_b) structural pin: branch periods take their label's year ---
 
 
-def test_w6_edd_invest_set_today_bug_witness(stoch_wf) -> None:
+def test_w6_edd_invest_set_branch_periods_take_label_years(stoch_wf) -> None:
     """W6 (§9.2): call ``edd_invest_set_lf`` with hand ed_invest
     anchors ``[(wind, p2035), (wind, p2040)]`` on the real stoch
-    cascade inputs.  wind's ``lifetime_method`` defaults to
-    ``reinvest_automatic`` → UNBOUNDED_FORWARD; walker years via the
-    §6.4 source fallback (``{p2035: 0.0, p2040: 1.0}``, synthetic
-    members → 0.0).
+    cascade inputs (no recourse), inside the boundary scope the cascade
+    arms for a solve with branch periods.  wind's ``lifetime_method``
+    defaults to ``reinvest_automatic`` → UNBOUNDED_FORWARD: a decision is
+    available in every in-use period whose year is at or after its own.
 
-    Predicted 5 rows AND ``(wind, p2040, p2040_low)`` ABSENT — the
-    latter asserted as the TODAY-BUG WITNESS (erratum E1): under
-    correct (byte-copied) years that pair would be present, and
-    today's walker overwrite of the CSV seed drops it, so the absence
-    IS the live first-stage-visibility break for continuation anchors.
-    Slice D's year threading makes the pair appear — re-point the pin
-    then."""
+    Years by hand: ``years_represented`` 1 each → p2035 = 0, p2040 = 1, and
+    each branch period has its label's year (p2035_high/low = 0,
+    p2040_high/low = 1).  So the p2035 decision reaches all six periods and
+    the p2040 decision reaches p2040 and both p2040 branches, not the year-0
+    p2035 periods."""
     wf = stoch_wf
     reader = _reader(wf)
     provider = _provider(wf)
     _, piu, pwh, _ = _period_lists(wf, reader, provider)
     ed_invest_lf = pl.LazyFrame({
         "e": [WIND, WIND], "d": ["p2035", "p2040"]})
+    _enter_recourse_anchor_scope(wf, provider=provider)
     out = (edd_invest_set_lf(reader, STOCH_SOLVE, ed_invest_lf,
                              pwh, piu, wf)
            .collect())
@@ -462,20 +462,16 @@ def test_w6_edd_invest_set_today_bug_witness(stoch_wf) -> None:
            out.select(["e", "d_invest", "d"]).rows()}
     expected = {
         (WIND, "p2035", "p2035"),
-        (WIND, "p2035", "p2035_high"),  # genuine {high, low} fan (R3)
-        (WIND, "p2035", "p2035_low"),  # the surviving year-0 channel
+        (WIND, "p2035", "p2035_high"),
+        (WIND, "p2035", "p2035_low"),
         (WIND, "p2035", "p2040"),
-        (WIND, "p2035", "p2040_high"),  # passes at fill-year 0 (§6.4)
-        (WIND, "p2035", "p2040_low"),  # passes at fill-year 0 (§6.4)
+        (WIND, "p2035", "p2040_high"),
+        (WIND, "p2035", "p2040_low"),
         (WIND, "p2040", "p2040"),
+        (WIND, "p2040", "p2040_high"),
+        (WIND, "p2040", "p2040_low"),
     }
     assert got == expected
-    # Erratum E1 today-bug witness: under correct byte-copied years
-    # this pair WOULD be present; today's walker overwrite drops it.
-    # Slice D's year-threading prerequisite resolves it — re-point here.
-    # (Both forecast continuation channels are dropped symmetrically.)
-    assert (WIND, "p2040", "p2040_low") not in got
-    assert (WIND, "p2040", "p2040_high") not in got
 
 
 # --- W7 — non-vacuity + repeat-determinism pins ------------------------

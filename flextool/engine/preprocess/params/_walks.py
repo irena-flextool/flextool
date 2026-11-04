@@ -275,19 +275,19 @@ def period_walk_iterator(
       triple).
     """
     from flextool.engine.input._axis_enums import empty_like
-    # Slice D α-1: fall back to the boundary-scoped recourse Provider (and
-    # its workdir — the canonical year readers key the Provider path off
-    # it) so the year/factor arms revive under the flag without threading
-    # ``provider``/``workdir`` through every NPV/edd walker caller.
-    # Off-flag both are ``None`` → arms dead → byte-parity.
+    # Fall back to the boundary-scoped Provider of a solve with branch
+    # periods (and its workdir — the canonical year readers key the Provider
+    # path off it) so the year/factor arms give branch periods their label's
+    # years without threading ``provider``/``workdir`` through every NPV/edd
+    # walker caller.  Without branch periods both are ``None``.
     if provider is None:
         from flextool.engine.preprocess.params._derived import (
-            _recourse_walk_provider,
-            _recourse_walk_workdir,
+            _fan_walk_provider,
+            _fan_walk_workdir,
         )
-        provider = _recourse_walk_provider()
+        provider = _fan_walk_provider()
         if provider is not None and workdir is None:
-            workdir = _recourse_walk_workdir()
+            workdir = _fan_walk_workdir()
     if not period_in_use:
         if factor_side is None:
             return empty_like(ed_lf, ["e", "d"],
@@ -298,11 +298,11 @@ def period_walk_iterator(
             factor=pl.lit(0.0, dtype=pl.Float64))
     # Lazy import to avoid circular dependency at module-load time.
     from flextool.engine.preprocess.params._derived import _p_years_d_lf
-    # Slice D α-1 (§5.1): under recourse the caller forwards ``provider`` so
-    # the canonical ``p_years_d.csv`` arm — which byte-copies fan-member year
-    # rows — goes live, giving branch periods their anchor's year-from-start
-    # (correct annuity windows).  ``provider is None`` → arm dead → today's
-    # fill_null(0.0) behaviour → flag-off byte-parity (the W6 today-bug pin).
+    # With branch periods (any stochastic_invest_method) ``provider`` is set,
+    # so the canonical ``p_years_d.csv`` arm — which copies each label's year
+    # onto its fan members — gives every branch period its label's
+    # year-from-start (availability, lifetime and annuity windows).  Without
+    # branch periods the solve's own ``years_represented`` gives the years.
     pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         # Without years offsets, the integral collapses to 0 / no rows.

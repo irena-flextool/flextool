@@ -24,10 +24,10 @@ from flextool.engine.preprocess.emit._solve_writers import (
 def _reset_anchor_scope():
     """Never leak the module-global recourse holders to another test."""
     dp._RECOURSE_ANCHOR_PAIRS = None
-    dp._RECOURSE_WALK_PROVIDER = None
+    dp._FAN_WALK_PROVIDER = None
     yield
     dp._RECOURSE_ANCHOR_PAIRS = None
-    dp._RECOURSE_WALK_PROVIDER = None
+    dp._FAN_WALK_PROVIDER = None
 
 
 def _emit(prov, key, cols, rows):

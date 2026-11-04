@@ -431,12 +431,12 @@ def _solve_walk_years(source: "InputSource",
     ``None`` when the solve has no period years."""
     if provider is None:
         from flextool.engine.preprocess.params._derived import (
-            _recourse_walk_provider,
-            _recourse_walk_workdir,
+            _fan_walk_provider,
+            _fan_walk_workdir,
         )
-        provider = _recourse_walk_provider()
+        provider = _fan_walk_provider()
         if provider is not None and workdir is None:
-            workdir = _recourse_walk_workdir()
+            workdir = _fan_walk_workdir()
     from flextool.engine.preprocess.params._derived import _p_years_d_lf
     pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
@@ -657,6 +657,8 @@ def lead_time_sets(source: "InputSource",
       lineage-filtered like the availability walk.
 
     ``commission_lf`` is the frame of :func:`commissioning_year_lf` (offered decisions keep a finite ``yr_c``).
+    The period years are those of the in-construction walk (the boundary's walker Provider), so a branch period has
+    the year of its period label under every ``stochastic_invest_method``.
     """
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
 
@@ -707,6 +709,7 @@ def carried_lead_time_capacity(source: "InputSource",
                                   period_in_use: list[str],
                                   workdir: Path | None = None,
                                   run_calendar: "object | None" = None,
+                                  provider: "object | None" = None,
                                   ) -> tuple["Param | None", "Param | None"]:
     """``(carried_commission, carried_in_construction)`` Params ``[e, d]`` (MW, MWh for storage) of a solve of a
     chain: the investments that earlier solves realized with a construction lead time, by the period of this solve
@@ -714,14 +717,16 @@ def carried_lead_time_capacity(source: "InputSource",
     (``yr(decision) <= yr(d) < yr(start)``).
 
     ``realized_commission`` is the handoff carrier ``[entity, period, commission_period, value]``; the years are
-    those of the run calendar (the solve's own years shifted onto it).  ``(None, None)`` without carried
-    investments in this solve's periods.
+    those of the run calendar (the solve's own years shifted onto it; a branch period has the year of its period
+    label).  ``(None, None)`` without carried investments in this solve's periods.
     """
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
 
     if realized_commission is None or realized_commission.height == 0 or not period_in_use:
         return None, None
-    walk_yr = _solve_walk_years(source, active_solve, workdir) or {}
+    from flextool.engine.preprocess.params._derived import _fan_walk_scope_provider
+    walk_yr = _solve_walk_years(source, active_solve, workdir,
+                                _fan_walk_scope_provider(workdir, provider=provider)) or {}
     rc_years = dict(getattr(run_calendar, "years", None) or {})
     offset = 0.0
     if rc_years:
@@ -1848,7 +1853,7 @@ def apply_existing_chain(flex_data: object,
     from flextool.engine.preprocess.params._run_calendar import read_run_calendar
     carried_commission, carried_in_construction = carried_lead_time_capacity(
         source, active_solve, realized_commission, period_in_use, workdir,
-        run_calendar=read_run_calendar(provider))
+        run_calendar=read_run_calendar(provider), provider=provider)
     flex_data.p_entity_carried_commission = carried_commission
     flex_data.p_entity_carried_in_construction = carried_in_construction
 

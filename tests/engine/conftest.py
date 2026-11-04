@@ -69,8 +69,9 @@ def _reset_recourse_walk_scope():
 
     :func:`._derived._enter_recourse_anchor_scope` arms three
     module-globals for the active solve — the recourse anchor-pairs holder
-    and the boundary-scoped walker Provider + workdir (Slice D α-1).  A real
-    recourse solve leaves them ARMED when it finishes; in production the next
+    and the boundary-scoped walker Provider + workdir of a solve with branch
+    periods.  A real
+    stochastic solve leaves them ARMED when it finishes; in production the next
     solve's cascade clears them (``flex_data._apply_db_overrides`` calls
     :func:`._derived._reset_recourse_scope` first — the F1 guarantee).
 

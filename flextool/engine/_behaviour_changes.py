@@ -122,6 +122,15 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "discounted from each solve's start (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "chained_solve_costs_from_run_start"),
         ),
+        BehaviourChange(
+            id="stochastic_branch_period_years",
+            summary=("In a stochastic solve whose stochastic_invest_method is not recourse, the branch periods of "
+                     "the stochastic branches now count from the year of their period. Before, every branch period "
+                     "counted as the first year of the solve: capacity invested in a later period, or starting to "
+                     "operate in a later period after a construction lead time, was missing from the branches of "
+                     "that period, and lifetimes ended late in the branches (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "stochastic_branch_period_years"),
+        ),
     )
 }
 

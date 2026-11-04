@@ -532,30 +532,20 @@ def test_stochastic_realization_reports_the_deterministic_twin(tmp_path_factory)
 FAN_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_invest.json"
 
 
-@pytest.mark.solver
-def test_fan_without_realization_reports_investment_and_existing_fixed_cost(tmp_path_factory) -> None:
-    """``stoch_two_period_invest.json`` with a shared investment (no recourse): a fan of forecasts high / low
-    revealed at p2035 (one year each, p2035 and p2040) and no realization solve.  No operating or penalty cost
-    is reported (there are no realized operations); the investment and the fixed cost of the new peaker are
-    reported in p2035, where it starts operating (the fan's label period), over the run's p2035 and p2040; the
-    fixed cost of the existing 100 MW wind is reported in both periods.  With r = 0.04, offsets ops 0.5 / inv 0:
-    F_inv = {p2035: 1, p2040: 1.04^-1}, F_ops = {p2035: 1.04^-0.5, p2040: 1.04^-1.5}; peaker annuity
-    1 · 1000 · 0.05 / (1 − 1.05^-1) = 1050 CUR/MW/yr, fixed cost 20 · 1000, wind fixed cost 10 · 1000."""
-    values = [["model", "flextool", "inflation_rate", b64(0.04, "float")],
+FAN_VALUES = [["model", "flextool", "inflation_rate", b64(0.04, "float")],
               ["unit", "wind", "fixed_cost", b64(10.0, "float")],
               ["unit", "peaker", "fixed_cost", b64(20.0, "float")]]
-    fan = _results(tmp_path_factory, "stoch_fan_costs", values, ["init", "base", "stoch"], fixture_json=FAN_JSON)
-    f_inv = {"p2035": 1.0, "p2040": 1.04 ** -1}
-    f_ops = {"p2035": 1.04 ** -0.5, "p2040": 1.04 ** -1.5}
+FAN_F_INV = {"p2035": 1.0, "p2040": 1.04 ** -1}
+FAN_F_OPS = {"p2035": 1.04 ** -0.5, "p2040": 1.04 ** -1.5}
+FAN_ANNUITY = 1.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -1)  # 1050 CUR/MW/yr
+FAN_FIXED = 20.0 * 1000.0
+
+
+def _assert_fan_reports_no_operations(fan: dict[str, pd.DataFrame]) -> None:
     discounted = fan["cost_unit_discounted__d"]
-    peaker = _row(discounted, "p2035", "peaker")
-    built = peaker["investment"] * MEGA / (1050.0 * sum(f_inv.values()))
-    assert built > 0.0
-    assert peaker["fixed cost invested"] * MEGA == pytest.approx(built * 20.0e3 * sum(f_ops.values()), rel=1e-7)
-    assert _row(discounted, "p2040", "peaker")["investment"] == 0.0
     for d in ("p2035", "p2040"):
         assert _row(discounted, d, "wind")["fixed cost pre-existing"] * MEGA == pytest.approx(
-            100.0 * 10.0e3 * f_ops[d], rel=1e-7), d
+            100.0 * 10.0e3 * FAN_F_OPS[d], rel=1e-7), d
     operations = [c for c in discounted.columns
                   if c not in ("solve", "period", "unit", "investment", "retirement", "fixed cost pre-existing",
                                "fixed cost invested")]
@@ -563,6 +553,34 @@ def test_fan_without_realization_reports_investment_and_existing_fixed_cost(tmp_
     total = fan["costs_discounted"].set_index("category").iloc[:, 0]
     assert total.filter(like="penalty").abs().sum() == 0.0
     assert total[["commodity_cost", "other operational", "starts", "co2"]].abs().sum() == 0.0
+
+
+@pytest.mark.solver
+def test_fan_without_realization_reports_investment_and_existing_fixed_cost(tmp_path_factory) -> None:
+    """``stoch_two_period_invest.json`` with a shared investment (no recourse): a fan of forecasts high / low
+    revealed at p2035 (one year each, p2035 and p2040) and no realization solve.  No operating or penalty cost
+    is reported (there are no realized operations); the investment and the fixed cost of new peaker capacity are
+    reported in the period it starts operating, over the run's periods it operates in; the fixed cost of the
+    existing 100 MW wind is reported in both periods.  With r = 0.04, offsets ops 0.5 / inv 0:
+    F_inv = {p2035: 1, p2040: 1.04^-1}, F_ops = {p2035: 1.04^-0.5, p2040: 1.04^-1.5}; peaker annuity
+    1 · 1000 · 0.05 / (1 − 1.05^-1) = 1050 CUR/MW/yr, fixed cost 20 · 1000, wind fixed cost 10 · 1000.
+
+    The builds by hand: the deficit (demand − wind) is 60 / 80 MW (high / low) in p2035 and 90 / 120 MW in
+    p2040, penalty 1e4.  A decision of p2040 operates in the p2040 branches, so p2035 builds 80 MW (its larger
+    deficit) and p2040 adds the 40 MW that are cheaper there (no p2035 annuity or fixed cost):
+    p2035 investment 80 · 1050 · (F_inv(p2035) + F_inv(p2040)) (reinvest_automatic: it keeps operating in p2040),
+    p2040 investment 40 · 1050 · F_inv(p2040)."""
+    fan = _results(tmp_path_factory, "stoch_fan_costs", FAN_VALUES, ["init", "base", "stoch"],
+                   fixture_json=FAN_JSON)
+    discounted = fan["cost_unit_discounted__d"]
+    first = _row(discounted, "p2035", "peaker")
+    assert first["investment"] * MEGA == pytest.approx(80.0 * FAN_ANNUITY * sum(FAN_F_INV.values()), rel=1e-7)
+    assert first["fixed cost invested"] * MEGA == pytest.approx(80.0 * FAN_FIXED * sum(FAN_F_OPS.values()),
+                                                                rel=1e-7)
+    second = _row(discounted, "p2040", "peaker")
+    assert second["investment"] * MEGA == pytest.approx(40.0 * FAN_ANNUITY * FAN_F_INV["p2040"], rel=1e-7)
+    assert second["fixed cost invested"] * MEGA == pytest.approx(40.0 * FAN_FIXED * FAN_F_OPS["p2040"], rel=1e-7)
+    _assert_fan_reports_no_operations(fan)
 
 
 # ---------------------------------------------------------------------------
