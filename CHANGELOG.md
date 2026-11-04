@@ -17,6 +17,9 @@
   reason. Their flows are written at every time step of the solve, the same value through each coarse step. An
   upgraded database prints a notice naming each such unit or connection whose results can change, and why.
   Requires polar-high 3.12.1.
+- **A Benders master that HiGHS left with an undetermined status after its cold retry is solved once more from
+  its reloaded LP** (polar-high 3.12.1), instead of stopping with "Benders master problem did not solve to
+  optimality". This happened on badly scaled masters (an unscaled objective with cut slopes near 1e9).
 - **The shipped how-to and example databases now carry the documented parameter defaults and value lists** (for
   example `lifetime_method`, `startup_method` and `storage_binding_method` defaults, and the `none` members of the
   profile and ramp method lists), the same as a new database. Their data and results are unchanged.
