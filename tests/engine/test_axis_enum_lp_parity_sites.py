@@ -13,33 +13,27 @@ Each fixture crashed in Enum mode before its site was fixed:
 * ``test_a_lot`` — the rolling CO2 accumulator's attribution of arc endpoints to groups;
 * ``nested_fix_quantity`` — the fix-quantity handoff's unitsize frame (Utf8 literal vs node Enum).
 
-The full 163-fixture comparison is the opt-in parity run; this subset gates every family in the normal suite.
+The wider comparison is the opt-in parity run (``tests/engine/axis_enums/``, ``pytest -m axis_enums``); this
+subset gates every family in the normal suite.
 """
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
+from tests._support.lp_parity import snapshot
+
 pytestmark = pytest.mark.solver
 
-REPO = Path(__file__).resolve().parents[2]
 FIXTURES = (
     "howto_non_sync_curtailment", "invest_limits", "stoch_t0_commit", "ramp_roll_span",
     "co2_period_total", "coal_co2_limit", "test_a_lot", "nested_fix_quantity",
 )
 
 
-def _snapshot(out_dir: Path, *, axis_enums: bool) -> subprocess.CompletedProcess:
-    cmd = [sys.executable, str(REPO / "tools" / "lp_snapshot.py"), "snapshot", "-j", "4",
-           "--fixtures", ",".join(FIXTURES), str(out_dir)]
-    if axis_enums:
-        cmd.insert(-1, "--axis-enums")
-    env = {k: v for k, v in os.environ.items() if k != "FLEXTOOL_AXIS_ENUMS"}
-    return subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, text=True, timeout=1200)
+def _snapshot(out_dir: Path, *, axis_enums: bool):
+    return snapshot(out_dir, FIXTURES, axis_enums=axis_enums, jobs=4, timeout=1200)
 
 
 def _files(root: Path) -> dict[str, bytes]:

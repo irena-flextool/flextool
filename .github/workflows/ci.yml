@@ -105,3 +105,31 @@ jobs:
 
       - name: Run slow tests
         run: pytest tests/ -v --tb=short -m slow
+
+  enum-mode:
+    name: Axis-Enum mode LP parity (nightly, non-gating)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Axis-Enum mode (FLEXTOOL_AXIS_ENUMS=1) is experimental and off in
+    # production: this opt-in run (tests/engine/axis_enums/) checks that it still
+    # builds the Utf8 LP. Non-gating, like the Windows / macOS policy.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
+
+      - name: Set solver binary permissions
+        run: |
+          if [ -f bin/highs ]; then chmod +x bin/highs; fi
+
+      - name: Run axis-Enum mode LP parity
+        run: pytest -m axis_enums tests/engine/axis_enums -v --tb=short

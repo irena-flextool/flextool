@@ -193,13 +193,17 @@ pythonpath = ["."]
 # (``tests/csv_reload/``; run them with ``pytest -m csv_reload tests/csv_reload/``).
 # A command-line ``-m`` replaces this one, so ``tests/csv_reload/conftest.py``
 # also skips them unless the ``-m`` expression names ``csv_reload``.
-addopts = "--import-mode=importlib -n auto --dist loadfile -m 'not csv_reload'"
+# ``not axis_enums`` likewise deselects the opt-in axis-Enum mode LP parity run
+# (``tests/engine/axis_enums/``; ``pytest -m axis_enums tests/engine/axis_enums -n 8``),
+# skipped by ``tests/engine/axis_enums/conftest.py`` unless ``-m`` names ``axis_enums``.
+addopts = "--import-mode=importlib -n auto --dist loadfile -m 'not csv_reload and not axis_enums'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "solver: marks tests that invoke a real solver (5-60s each); deselect with '-m \"not solver\"'",
     "smoke: fast Layer-1 scenarios for the per-commit gate",
     "gui: opens a real interactive Tk window; opt-in via --run-gui (deselected by default)",
     "csv_reload: CSV reload contract tests in tests/csv_reload/; opt-in via -m csv_reload (deselected by default)",
+    "axis_enums: axis-Enum mode LP parity run (tests/engine/axis_enums/); opt-in via -m axis_enums",
 ]
 testpaths = ["tests"]
 # Hard per-test wallclock cap.  Used by ``pytest-timeout`` (installed

@@ -11,7 +11,7 @@ seeds of the loader) and are kept apart from the production-path suite
 (c24 stage 1, S1-8).
 
 Every test collected under this folder gets the ``csv_reload`` marker.
-The default ``addopts`` (``-m "not csv_reload"``) deselects them.  A
+The default ``addopts`` (``-m "not csv_reload and ..."``) deselects them.  A
 command-line ``-m`` replaces the addopts one (CI's ``-m smoke`` /
 ``-m slow``), so they are also skipped unless the ``-m`` expression names
 ``csv_reload``.
