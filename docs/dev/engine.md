@@ -469,13 +469,46 @@ override-driven cascades.
 
 ## Enum-dtype axis convention
 
-Identity columns in `FlexData` (entity, source, sink, period, time,
-group, commodity, …) carry the `pl.Enum` dtype rather than `pl.Utf8`.
-The Enum vocabulary is built at the `SpineDBBackend` and
-`SpineDbReader` emit boundaries and propagated through the cascade by
-`_axis_enums.cast_flexdata_axes` / `cast_value_axes`.
+**Axis-Enum mode is EXPERIMENTAL and off in production**: production
+runs keep every axis column `pl.Utf8`. `FLEXTOOL_AXIS_ENUMS=1` (exactly
+`"1"`) turns it on for a whole `run_chain_from_db` run and logs a
+warning once; tests switch it on per load with
+`load_scenario(axis_enums=True)`. In this mode identity columns in
+`FlexData` (entity, source, sink, period, time, group, commodity, …)
+carry the `pl.Enum` dtype rather than `pl.Utf8`. The vocabulary is
+built by `spinedb_backend._axis_enums.build_scenario_axis_enums`
+(lexically sorted categories, so an Enum run builds the byte-identical
+LP of the Utf8 run; rules in `flextool/schemas/AXIS_CONTRACT.md`), attached at
+the `SpineDBBackend` and `SpineDbReader` emit boundaries, inherited by
+every sub-solve provider, and propagated through the cascade by
+`_axis_enums.cast_flexdata_axes` / `cast_value_axes`. The guard is the
+LP parity of the two modes: `tests/engine/test_axis_enum_lp_parity_sites.py`
+(normal suite, one fixture per site family), the opt-in
+`pytest -m axis_enums tests/engine/axis_enums -n 8` (nightly, non-gating
+CI job `enum-mode`), and by hand `tools/lp_snapshot.py snapshot A`,
+`snapshot B --axis-enums`, `compare A B`.
 
-Three column-axis helpers in `_axis_enums.py` make the Enum
+Known gaps (not exercised, or not Enum, in this mode):
+
+- Writing results (`process_outputs`) has never run with Enum axes; no
+  test compares its outputs with the Utf8 run's.
+- Providers built without a vocabulary stay Utf8 even with the switch
+  on: region decomposition (`decomposition/region_decomposition.py`)
+  and the CLI region export (`decomposition/region_filter.py`), the staged input
+  loader (`engine/input/_db_loader.py`), the CSV reload
+  (`engine/_csv_reload/load.py`), and the sub-solve provider that
+  `_run_model.py` builds when the run state carries none.
+- Engine Benders inherits the vocabulary through `FlexData`
+  (`_region_filter.py` widens it per region), but no lp_snapshot
+  fixture runs it; only the Benders / master-hosted region tests that
+  load with `axis_enums=True` cover it.
+- Intended narrowing casts null labels outside the scenario's
+  vocabulary: `d` casts of periods outside the solve (`_npv.py`,
+  `_derived.py`) and the `constraint` cast in `_spinedb_reader.py`. No
+  LP effect in the fixtures; a site that needs such a label must not
+  read it through the cast.
+
+The column-axis helpers in `engine/input/_axis_enums.py` make the Enum
 preservation mechanical at the call sites where polars would otherwise
 drop back to `Utf8`:
 
@@ -491,6 +524,9 @@ drop back to `Utf8`:
 - `lit_axis(value, axis)` — `pl.lit(value)` that emits the canonical
   axis Enum dtype, so literal tokens injected into axis-aware columns
   don't `SchemaError` against neighbouring Enum frames.
+- `join_aligned(left, right, ...)` / `filter_isin(frame, col, values)` —
+  join and membership across axis columns of different vocabularies
+  (see "Entity-union axis" below).
 
 For empty-frame fallbacks the same module exports
 `schema_dtype(enums, axis)`, which returns the Enum dtype if a live
@@ -528,6 +564,9 @@ left row and dtype; an Enum against a Utf8 key raises `TypeError` (type
 the Utf8 side where it is built — a Utf8 cast "bridge" is not a fix);
 `how="full"` / `"cross"` raise. Utf8 keys (production) are the plain
 join / `is_in`.
+The rule: never `.join`, `.is_in` or `pl.concat` axis columns that may
+hold different vocabularies without `join_aligned` / `filter_isin` or
+first casting both to one target dtype.
 
 Cross-link: every parameter known to the engine has its expected
 shape declared in `_param_shapes.py`, and the axis vocabulary the

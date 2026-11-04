@@ -40,6 +40,14 @@ for interactive debugging.
 Tests of the unsupported CSV reload are deselected by default; run them with
 `pytest -m csv_reload tests/csv_reload/`.
 
+Axis-Enum mode (`pl.Enum` axis columns instead of `pl.Utf8`) is experimental and
+off in production; `FLEXTOOL_AXIS_ENUMS=1` turns it on for a whole run (see
+`docs/dev/engine.md` "Enum-dtype axis convention" for its known gaps). Its LP
+parity run (Enum LP byte-identical to the Utf8 LP, fixture by fixture) is
+deselected by default; run it with
+`pytest -m axis_enums tests/engine/axis_enums -n 8` (it also runs nightly in
+the non-gating CI job `enum-mode`).
+
 Run a specific test file:
 ```bash
 pytest tests/test_scenarios.py -v
@@ -308,7 +316,7 @@ FlexTool uses the HiGHS solver, called via the `highspy` Python package (install
 ## CI Workflows
 
 - **`tests.yml`** — runs pytest on all three platforms and verifies the master template is up to date. Triggered on push/PR to `main`.
-- **`ci.yml`** — smoke gate on every push/PR; full suite on push to `main` and nightly; slow tests nightly.
+- **`ci.yml`** — smoke gate on every push/PR; full suite on push to `main` and nightly; slow tests nightly; the axis-Enum mode LP parity run (`enum-mode`) nightly, non-gating.
 - **`canary.yml`** — weekly dependency canary (see below).
 
 ## Dependency caps and the canary

@@ -1,33 +1,18 @@
-"""Phase 4 activation sanity check — substrate threading.
+"""Axis-Enum activation: a load with a vocabulary types every FlexData dim column as ``pl.Enum``.
 
-After Phase 4.4 the activation substrate is in place:
+Axis-Enum mode is experimental and off in production (every axis column ``pl.Utf8``).  It is switched on for a
+whole run by ``FLEXTOOL_AXIS_ENUMS=1`` (``run_chain_from_db``; tested in ``test_axis_enums_env_switch.py``) and, in
+tests, per load by ``load_scenario(axis_enums=True)``, which sets the scenario's vocabulary
+(``build_scenario_axis_enums``) on a provider clone and on the reader; ``load_flextool`` then sets it as the
+global axis vocabulary for the load (``set_global_axis_enums``).  The loader never builds a vocabulary itself:
+a DB file in the work folder does not switch a run to Enum dtypes.
 
-* ``provider.axis_enums`` (+ ``provider.contract``) set on the provider
-  activates the Enum dtypes in ``load_flextool``; the loader never builds
-  them itself (production leaves them None; ``load_scenario(axis_enums=True)``
-  sets them in tests).
-* ``_AXIS_SYNONYMS`` is extended with the cluster-discovered short
-  forms (``b`` → branch, ``b_first`` / ``b_next`` → t, ``b_f`` →
-  block, ``anchor`` → d, plus the entity-class element columns
-  ``unit`` / ``connection`` / ``node_1`` / ``node_2``).
-* ``SpineDbReader._maybe_cast_frame`` handles 0-dim ``name`` columns
-  and n-dim element columns via ``_axis_for_entity_class``.
-* ``cast_frame_axes`` is synonym-aware.
+* ``test_load_flextool_emits_enum_typed_dim_columns`` — no dim column of the loaded FlexData stays Utf8.
+* ``test_enum_load_derives_the_flow_caps_of_the_utf8_load`` — the in-load ``p_flow_upper`` derivation runs under
+  axis Enums and gives the Utf8 load's caps.
 
-The cascade-wide ``set_global_axis_enums`` flip is INTENTIONALLY left
-disabled (see ``flex_data.py`` BLOCKER comment near the call site).  The
-remaining cross-axis alias surface in ``_derived.py`` /
-``_projection.py`` / ``model/core.py`` requires a systematic audit
-that exceeds the scope of one dispatch.  This test verifies the
-substrate is wired so the follow-up dispatch can flip the global on
-without touching the surrounding plumbing.
-
-After the follow-up lands, strengthen this test per the dispatch
-template (assert ``utf8_count == 0`` on every FlexData dim column).
-
-The loader's former ``tests.sqlite`` auto-build of the vocabulary (and its
-test) was removed in c24 S3-4: a DB file in the work folder no longer
-switches the run to Enum dtypes.
+The LP built in Enum mode is checked against the Utf8 LP by ``test_axis_enum_lp_parity_sites.py`` and the opt-in
+``tests/engine/axis_enums/`` run.
 """
 from __future__ import annotations
 
@@ -74,15 +59,12 @@ def _all_dim_dtypes(flex_data) -> list[tuple[str, str, pl.DataType]]:
 
 
 def test_load_flextool_emits_enum_typed_dim_columns(scenario_run) -> None:
-    """Phase 4.6 activation contract: every FlexData dim column is Enum.
+    """Activation contract: every FlexData dim column is Enum.
 
-    With ``set_global_axis_enums`` flipped on in ``load_flextool`` and
-    the cascade-wide alias / scratch-frame sweep complete, every
-    Param / DataFrame / LazyFrame field on the returned FlexData should
-    expose its dim columns as ``pl.Enum``.  Any remaining ``pl.Utf8``
-    dim column is a missed cast site — surface it loudly so the next
-    sweep can target it directly instead of letting the contract
-    silently regress.
+    With the vocabulary set by ``load_flextool``, every Param / DataFrame
+    / LazyFrame field on the returned FlexData exposes its dim columns as
+    ``pl.Enum``.  A remaining ``pl.Utf8`` dim column is a missed cast
+    site; the failure names every one.
 
     Production loads without axis Enums; this test activates them
     (``axis_enums=True``: the scenario's vocabulary on a provider clone
@@ -104,7 +86,7 @@ def test_load_flextool_emits_enum_typed_dim_columns(scenario_run) -> None:
 
     utf8_count = len(utf8_columns)
     assert utf8_count == 0, (
-        f"Phase 4 activation incomplete: {utf8_count} dim columns are "
+        f"Enum activation incomplete: {utf8_count} dim columns are "
         f"still Utf8.\n"
         f"First Utf8 site: "
         f"{utf8_columns[0] if utf8_columns else '<none>'}\n"
