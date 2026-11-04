@@ -51,7 +51,6 @@ def _fix_command(fmt: Format) -> str:
     return f"python -m flextool.update_flextool.{module} migrate-all"
 
 
-@pytest.mark.xfail(strict=True, reason="the committed JSONs are not yet synced with the schema")
 @pytest.mark.parametrize(("path", "fmt"), CASES, ids=lambda c: c.name if isinstance(c, Path) else c)
 def test_json_carries_the_schema_sections(path: Path, fmt: Format) -> None:
     with open(path, encoding="utf-8") as f:

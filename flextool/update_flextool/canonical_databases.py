@@ -222,33 +222,6 @@ def verify_all() -> int:
     return _report(mismatches)
 
 
-def verify_round_trip() -> int:
-    """Verify that every committed canonical JSON is byte-stable through the migration alone.
-
-    Round-trips each ``CANONICAL_DATABASES`` entry through
-    ``initialize_database -> migrate_database -> export_database`` into a
-    temp file and compares to the committed source.  Returns 0 when every
-    file is byte-stable, or a positive count of mismatched files
-    otherwise.
-    """
-    mismatches = 0
-    for db in CANONICAL_DATABASES:
-        json_abs = _json_source(db)
-        if not json_abs.is_file():
-            print(f"!! canonical JSON missing in package: {db.json_name}")
-            mismatches += 1
-            continue
-        with tempfile.TemporaryDirectory() as tmp:
-            staging = os.path.join(tmp, "staging.sqlite")
-            regenerated = Path(tmp) / db.json_name
-            initialize_database(str(json_abs), staging)
-            migrate_repository_database(staging)
-            export_database(staging, str(regenerated))
-            if not _compare(json_abs, regenerated, db.json_name):
-                mismatches += 1
-    return _report(mismatches)
-
-
 def _seed_from_cwd_sqlites() -> None:
     """One-time: populate JSONs from the SQLites currently in the tree.
 
@@ -295,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "migrate-all":
         migrate_all()
     elif args.cmd == "verify":
-        return verify_round_trip()
+        return verify_all()
     elif args.cmd == "seed":
         _seed_from_cwd_sqlites()
     return 0

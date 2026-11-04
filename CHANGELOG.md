@@ -1,5 +1,8 @@
 ## Unreleased
 
+- **The shipped how-to and example databases now carry the documented parameter defaults and value lists** (for
+  example `lifetime_method`, `startup_method` and `storage_binding_method` defaults, and the `none` members of the
+  profile and ramp method lists), the same as a new database. Their data and results are unchanged.
 - **Construction lead time: "invested" is the capacity that comes online** (results change for models with a
   `construction_lead_time`). The capacity results (`unit_capacity__d`, `connection_capacity__d`,
   `node_capacity__d`) report as `invested` the capacity that comes online in the period, and a new column

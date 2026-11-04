@@ -44,19 +44,6 @@ from flextool.update_flextool.fixture_schema import (
 )
 
 
-# The fixtures ``verify`` checks with the migrate-only round trip.
-# ``verify_all`` checks every fixture, schema sections included.
-ROUND_TRIP_VERIFIED: tuple[str, ...] = (
-    "tests.json",
-    "stochastics.json",
-    "lh2_three_region.json",
-    "h2_trade_parity.json",
-    "stochastics_pbt_inflow.json",
-    "branch2_parent_period.json",
-    "case14_dc_power_flow.json",
-)
-
-
 def _repo_root() -> Path:
     # .../flextool-engine/flextool/update_flextool/test_fixtures.py
     return Path(__file__).resolve().parent.parent.parent
@@ -217,32 +204,6 @@ def verify_all(fixtures_dir: Path | None = None) -> int:
     return mismatches
 
 
-def verify_round_trip(fixtures_dir: Path | None = None) -> int:
-    """Verify that every :data:`ROUND_TRIP_VERIFIED` fixture is byte-stable through the migration alone.
-
-    Returns 0 when every file is stable, or the number of drifted files.
-    """
-    fixtures = fixtures_dir if fixtures_dir is not None else _fixtures_dir()
-    mismatches = 0
-    for name in ROUND_TRIP_VERIFIED:
-        src = fixtures / name
-        if not src.is_file():
-            print(f"!! test fixture missing: {src}")
-            mismatches += 1
-            continue
-        with tempfile.TemporaryDirectory() as tmp:
-            regenerated = Path(tmp) / name
-            _round_trip(src, regenerated)
-            if not _compare(src, regenerated):
-                mismatches += 1
-    if mismatches:
-        print(
-            f"\n{mismatches} test fixture(s) out of sync with current schema. "
-            "Run `python -m flextool.update_flextool.test_fixtures migrate-all`."
-        )
-    return mismatches
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -260,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         migrate_all()
         return 0
     elif args.cmd == "verify":
-        return verify_round_trip()
+        return verify_all()
     return 0
 
 

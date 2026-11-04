@@ -639,7 +639,7 @@
         "float"
       ],
       null,
-      "[e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant or time.",
+      "[e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant, period, time or period+time.",
       "basics"
     ],
     [
@@ -787,7 +787,10 @@
     [
       "connection",
       "invest_method",
-      null,
+      [
+        "\"not_allowed\"",
+        "str"
+      ],
       "invest_methods",
       "Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total.",
       "investment"
@@ -811,7 +814,10 @@
     [
       "connection",
       "is_DC",
-      null,
+      [
+        "\"no\"",
+        "str"
+      ],
       "yes_no",
       "Whether the connection is DC. Its flow into a group with a non-synchronous limit counts as non-synchronous, in both directions. Default no.",
       "network"
@@ -827,7 +833,10 @@
     [
       "connection",
       "lifetime_method",
-      null,
+      [
+        "\"reinvest_automatic\"",
+        "str"
+      ],
       "lifetime_methods",
       "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
       "investment"
@@ -837,7 +846,7 @@
       "other_operational_cost",
       null,
       null,
-      "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time.",
+      "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period, time or period+time.",
       "basics"
     ],
     [
@@ -899,7 +908,10 @@
     [
       "connection",
       "startup_method",
-      null,
+      [
+        "\"no_startup\"",
+        "str"
+      ],
       "startup_methods",
       "Gives the connection online capacity in both directions. Flows and reserves are limited by the online capacity, and startup_cost is paid per MW brought online. No minimum load or minimum up/down time. Not allowed for dc_power_flow_with_angles lines.",
       "tech_advanced"
@@ -907,7 +919,10 @@
     [
       "connection",
       "transfer_method",
-      null,
+      [
+        "\"regular\"",
+        "str"
+      ],
       "transfer_methods",
       "Choice of transfer method. Options: regular (default), no_losses_no_variable_cost, variable_cost_only, exact, unidirectional. 'unidirectional' restricts flow to source → sink only (single non-negative variable); 'regular'/'exact'/'variable_cost_only' are bidirectional two-variable variants; 'no_losses_no_variable_cost' is a single signed variable with no losses and no VOM.",
       "basics"
@@ -931,7 +946,10 @@
     [
       "connection__profile",
       "profile_method",
-      null,
+      [
+        "\"none\"",
+        "str"
+      ],
       "profile_methods",
       "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n",
       "basics"
@@ -940,7 +958,7 @@
       "constraint",
       "constant",
       [
-        "0",
+        "0.0",
         "float"
       ],
       null,
@@ -1066,7 +1084,10 @@
     [
       "group",
       "co2_method",
-      null,
+      [
+        "\"none\"",
+        "str"
+      ],
       "co2_methods",
       "Choice of the CO2 method: none, price, period, total, price_period, price_total, period_total, price_period_total",
       "emission"
@@ -1076,7 +1097,7 @@
       "co2_price",
       null,
       null,
-      "[CUR/ton] CO2 price for a group of nodes. Constant, period or time.",
+      "[CUR/ton] CO2 price for a group of nodes. Constant, period, time or period+time.",
       "emission"
     ],
     [
@@ -1109,7 +1130,10 @@
     [
       "group",
       "has_inertia",
-      null,
+      [
+        "\"no\"",
+        "str"
+      ],
       "yes_no",
       "Whether the group has an inertia constraint. Without yes, inertia_limit is ignored.",
       "network"
@@ -1117,7 +1141,10 @@
     [
       "group",
       "has_non_synchronous",
-      null,
+      [
+        "\"no\"",
+        "str"
+      ],
       "yes_no",
       "Whether the group has a non-synchronous share limit. Without yes, non_synchronous_limit is ignored.",
       "network"
@@ -1125,10 +1152,13 @@
     [
       "group",
       "include_stochastics",
-      null,
+      [
+        "\"no\"",
+        "str"
+      ],
       "yes_no",
       "Includes the stochastic branches to be used for the nodes/units/connections in this group",
-      "solve_advanced"
+      "model"
     ],
     [
       "group",
@@ -1187,7 +1217,7 @@
       null,
       null,
       "[hours] Balances the energy of the group's nodes once per step of this length instead of every time step, e.g. daily hydrogen next to hourly electricity. Within the step, energy can move freely between time steps, and a storage node has one state per step. Flows, online status, reserves and profiles keep the solve's time step; the model is not made smaller. Listing units or connections has no effect. Must be a multiple of the solve's step.",
-      "solve_advanced"
+      "timeline"
     ],
     [
       "group",
@@ -1201,7 +1231,7 @@
       "group",
       "penalty_capacity_margin",
       [
-        "5000",
+        "5000.0",
         "float"
       ],
       null,
@@ -1212,7 +1242,7 @@
       "group",
       "penalty_inertia",
       [
-        "5000",
+        "5000.0",
         "float"
       ],
       null,
@@ -1223,7 +1253,7 @@
       "group",
       "penalty_non_synchronous",
       [
-        "5000",
+        "5000.0",
         "float"
       ],
       null,
@@ -1289,7 +1319,10 @@
     [
       "group",
       "share_loss_of_load",
-      null,
+      [
+        "\"no\"",
+        "str"
+      ],
       "load_share_type",
       "Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted",
       "flow_limit"
@@ -1360,7 +1393,10 @@
     [
       "model",
       "output_horizon",
-      null,
+      [
+        "\"no\"",
+        "str"
+      ],
       "yes_no",
       "Debug flag. yes writes one raw parquet file per LP variable and constraint, with every row of every solve and a realized column. Normal outputs do not change.",
       "output"
@@ -1396,7 +1432,7 @@
       "model",
       "version",
       [
-        "77",
+        "77.0",
         "float"
       ],
       null,
@@ -1419,7 +1455,7 @@
         "float"
       ],
       null,
-      "[e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant or time.",
+      "[e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -1567,7 +1603,7 @@
       "inflow",
       null,
       null,
-      "[MWh] Inflow into the node (negative is outflow). Constant or time.",
+      "[MWh] Inflow into the node (negative is outflow). Constant, time or stochastic time.",
       "basics"
     ],
     [
@@ -1616,7 +1652,10 @@
     [
       "node",
       "invest_method",
-      null,
+      [
+        "\"not_allowed\"",
+        "str"
+      ],
       "invest_methods",
       "Choice of investment method: either not_allowed or then a combination of 1) investment or retirement and 2) investment limits per period, all periods (total) or no_limits.",
       "investment"
@@ -1648,7 +1687,10 @@
     [
       "node",
       "lifetime_method",
-      null,
+      [
+        "\"reinvest_automatic\"",
+        "str"
+      ],
       "lifetime_methods",
       "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
       "investment"
@@ -1676,11 +1718,11 @@
       "node",
       "penalty_down",
       [
-        "10000",
+        "10000.0",
         "float"
       ],
       null,
-      "[CUR/MWh] Penalty cost for increasing consumption in the node (excess energy). Constant, Period or Time.",
+      "[CUR/MWh] Penalty cost for increasing consumption in the node (excess energy). Constant, period, time, period+time, or stochastic time.",
       "basics"
     ],
     [
@@ -1698,11 +1740,11 @@
       "node",
       "penalty_up",
       [
-        "10000",
+        "10000.0",
         "float"
       ],
       null,
-      "[CUR/MWh] Penalty cost for decreasing consumption in the node (energy not served). Constant, Period or Time.",
+      "[CUR/MWh] Penalty cost for decreasing consumption in the node (energy not served). Constant, period, time, period+time, or stochastic time.",
       "basics"
     ],
     [
@@ -1756,7 +1798,10 @@
     [
       "node",
       "storage_binding_method",
-      null,
+      [
+        "\"bind_forward_only\"",
+        "str"
+      ],
       "storage_binding_methods",
       "Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind_within_timeblock' cycles state within each timeblock (cycle closes at block boundaries); 'bind_within_period' cycles within each FlexTool period and chains blocks inside the period; 'bind_within_solve' cycles across the whole solve horizon; 'bind_forward_only' (default) chains state forward across the solve with no end-to-start closure; 'bind_within_solve_blended_weights' is the representative-period variant of bind_within_solve (RP weighting + solve-level cycle closure); 'bind_within_period_blended_weights' is the RP variant of bind_within_period (per-period RP weighting, each period closes independently); 'bind_forward_only_blended_weights' is the RP variant of bind_forward_only (RP weighting, no cycle closure). One additional value, 'bind_intraperiod_blocks', is structurally an aggregation method rather than a cycle-scope method: state is held constant within each block and the block-total flow is balanced at the boundary. Silent-degrade behaviour: any '*_blended_weights' method on a node in a solve whose active timeset has no representative_period_weights is automatically downgraded to the corresponding non-RP variant for that solve, so the same storage entity can drive an RP investment solve and a chronological dispatch solve back-to-back. Separate parameters (e.g. 'storage_state_start') can force additional bindings. By default, storage start state is bound to 0. The blended_weights methods do not work with stochastic branches.",
       "storage"
@@ -1765,7 +1810,7 @@
       "node",
       "storage_nested_fix_method",
       [
-        "\"fix_usage\"",
+        "\"fix_nothing\"",
         "str"
       ],
       "storage_nested_fix_method",
@@ -1775,7 +1820,10 @@
     [
       "node",
       "storage_solve_horizon_method",
-      null,
+      [
+        "\"free\"",
+        "str"
+      ],
       "storage_solve_horizon_methods",
       "Choice how to treat storage state at the end of time horizon of each solve. 'free' lets the model choose the end state. 'use_reference_value' forces the end state to the specific value set in 'storage_state_reference_value'. 'use_reference_price' gives the storage state a price in the objective function based on the 'storage_state_reference_price'. ",
       "storage"
@@ -1783,7 +1831,10 @@
     [
       "node",
       "storage_start_end_method",
-      null,
+      [
+        "\"fix_nothing\"",
+        "str"
+      ],
       "storage_start_end_methods",
       "Whether the storage state is fixed at the start and/or end of the whole model. fix_nothing (default): not fixed. fix_start, fix_end and fix_start_end use storage_state_start and storage_state_end, which must then have a value.",
       "storage"
@@ -1809,7 +1860,7 @@
       "storage_state_reference_value",
       null,
       null,
-      "[0-1] Relative state of storage at then end of each solve (can be overwritten in the next solve).  Requires 'use_reference_value' in 'storage_solve_horizon_method'. Constant.",
+      "[0-1] Relative state of storage at then end of each solve (can be overwritten in the next solve).  Requires 'use_reference_value' in 'storage_solve_horizon_method'. Constant, period, time or period+time.",
       "storage"
     ],
     [
@@ -1831,7 +1882,10 @@
     [
       "node__profile",
       "profile_method",
-      null,
+      [
+        "\"none\"",
+        "str"
+      ],
       "profile_methods",
       "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n",
       "basics"
@@ -1883,7 +1937,7 @@
       "reserve__upDown__connection__node",
       "reliability",
       [
-        "1",
+        "1.0",
         "float"
       ],
       null,
@@ -1914,7 +1968,7 @@
       "reservation",
       null,
       null,
-      "[MW] Amount of reserve to be reserved. Constant or time.",
+      "[MW] Amount of reserve to be reserved. Constant, period, time, period+time or stochastic time.",
       "reserve"
     ],
     [
@@ -1975,7 +2029,7 @@
       "reserve__upDown__unit__node",
       "reliability",
       [
-        "1",
+        "1.0",
         "float"
       ],
       null,
@@ -2147,7 +2201,10 @@
     [
       "solve",
       "solve_mode",
-      null,
+      [
+        "\"single_solve\"",
+        "str"
+      ],
       "solve_mode",
       "A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence.",
       "solve_basics"
@@ -2263,7 +2320,7 @@
       null,
       null,
       "Weight of each time step (map, index time). Weights how much each step counts in costs, energy and demand scaling. Normalised per period. Forecast branches use the weights of their period. Other shapes are an error. Cannot be set on a timeset that also has representative_period_weights (error).",
-      "solve_advanced"
+      "timeline"
     ],
     [
       "unit",
@@ -2273,7 +2330,7 @@
         "float"
       ],
       null,
-      "[e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant or time.",
+      "[e.g. 0.9 means 90%] Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -2335,7 +2392,10 @@
     [
       "unit",
       "conversion_method",
-      null,
+      [
+        "\"constant_efficiency\"",
+        "str"
+      ],
       "conversion_methods",
       "Choice of conversion method.",
       "basics"
@@ -2437,7 +2497,10 @@
     [
       "unit",
       "invest_method",
-      null,
+      [
+        "\"not_allowed\"",
+        "str"
+      ],
       "invest_methods",
       "Choice of investment method: not_allowed, invest and retire indicate availability of investment and retirement. no_limit removes all limits even if there are limiting values set. period uses values set in invest/retire_max/min_period. total uses values set in invest/retire_max/min_total.",
       "investment"
@@ -2469,7 +2532,10 @@
     [
       "unit",
       "lifetime_method",
-      null,
+      [
+        "\"reinvest_automatic\"",
+        "str"
+      ],
       "lifetime_methods",
       "Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
       "investment"
@@ -2557,7 +2623,10 @@
     [
       "unit",
       "startup_method",
-      null,
+      [
+        "\"no_startup\"",
+        "str"
+      ],
       "startup_methods",
       "Whether the unit has online variables. linear: any share of the capacity can be online. binary: whole units only (slower to solve). Online status links to the previous time step; that link stops at a gap in the timeline.",
       "tech_advanced"
@@ -2582,7 +2651,7 @@
       "unit__inputNode",
       "conversion_flow_coeff",
       [
-        "1",
+        "1.0",
         "float"
       ],
       null,
@@ -2622,8 +2691,11 @@
     [
       "unit__inputNode",
       "is_non_synchronous",
-      null,
-      null,
+      [
+        "\"no\"",
+        "str"
+      ],
+      "yes_no",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
     ],
@@ -2632,7 +2704,7 @@
       "other_operational_cost",
       null,
       null,
-      "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.",
+      "[CUR/MWh] Other operational variable cost for energy flows. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -2646,7 +2718,10 @@
     [
       "unit__inputNode",
       "ramp_method",
-      null,
+      [
+        "\"none\"",
+        "str"
+      ],
       "ramp_methods",
       "Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.",
       "tech_advanced"
@@ -2670,7 +2745,10 @@
     [
       "unit__node__profile",
       "profile_method",
-      null,
+      [
+        "\"upper_limit\"",
+        "str"
+      ],
       "profile_methods",
       "Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.\n",
       "basics"
@@ -2709,7 +2787,7 @@
       "unit__outputNode",
       "conversion_flow_coeff",
       [
-        "1",
+        "1.0",
         "float"
       ],
       null,
@@ -2727,8 +2805,11 @@
     [
       "unit__outputNode",
       "is_non_synchronous",
-      null,
-      null,
+      [
+        "\"no\"",
+        "str"
+      ],
+      "yes_no",
       "Chooses whether the unit is synchronously connected to this node.",
       "network"
     ],
@@ -2737,7 +2818,7 @@
       "other_operational_cost",
       null,
       null,
-      "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.",
+      "[CUR/MWh] Other operational variable cost for energy flows. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -2751,7 +2832,10 @@
     [
       "unit__outputNode",
       "ramp_method",
-      null,
+      [
+        "\"none\"",
+        "str"
+      ],
       "ramp_methods",
       "Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.",
       "tech_advanced"
@@ -2913,7 +2997,19 @@
     ],
     [
       "connection",
+      "availability",
+      "map",
+      2
+    ],
+    [
+      "connection",
       "constraint_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "constraint_cumulative_pre_built_capacity_coeff",
       "map",
       1
     ],
@@ -3132,6 +3228,12 @@
       "other_operational_cost",
       "map",
       1
+    ],
+    [
+      "connection",
+      "other_operational_cost",
+      "map",
+      2
     ],
     [
       "connection",
@@ -3387,6 +3489,12 @@
     ],
     [
       "group",
+      "co2_price",
+      "map",
+      2
+    ],
+    [
+      "group",
       "cumulative_max_capacity",
       "float",
       0
@@ -3608,6 +3716,12 @@
       0
     ],
     [
+      "group",
+      "use_for_representative_periods",
+      "str",
+      0
+    ],
+    [
       "model",
       "inflation_offset_investment",
       "float",
@@ -3689,11 +3803,23 @@
       "node",
       "availability",
       "map",
+      2
+    ],
+    [
+      "node",
+      "availability",
+      "map",
       3
     ],
     [
       "node",
       "constraint_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "constraint_cumulative_pre_built_capacity_coeff",
       "map",
       1
     ],
@@ -3969,6 +4095,18 @@
     ],
     [
       "node",
+      "penalty_down",
+      "map",
+      2
+    ],
+    [
+      "node",
+      "penalty_down",
+      "map",
+      3
+    ],
+    [
+      "node",
       "penalty_method",
       "str",
       0
@@ -3984,6 +4122,18 @@
       "penalty_up",
       "map",
       1
+    ],
+    [
+      "node",
+      "penalty_up",
+      "map",
+      2
+    ],
+    [
+      "node",
+      "penalty_up",
+      "map",
+      3
     ],
     [
       "node",
@@ -4107,6 +4257,12 @@
     ],
     [
       "node",
+      "storage_state_reference_value",
+      "map",
+      2
+    ],
+    [
+      "node",
       "storage_state_start",
       "float",
       0
@@ -4205,7 +4361,19 @@
       "reserve__upDown__group",
       "reservation",
       "map",
+      2
+    ],
+    [
+      "reserve__upDown__group",
+      "reservation",
+      "map",
       3
+    ],
+    [
+      "reserve__upDown__group",
+      "reserve_duration",
+      "float",
+      0
     ],
     [
       "reserve__upDown__group",
@@ -4460,6 +4628,12 @@
       1
     ],
     [
+      "timeset",
+      "timeset_weights",
+      "map",
+      1
+    ],
+    [
       "unit",
       "availability",
       "float",
@@ -4475,11 +4649,23 @@
       "unit",
       "availability",
       "map",
+      2
+    ],
+    [
+      "unit",
+      "availability",
+      "map",
       3
     ],
     [
       "unit",
       "constraint_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "constraint_cumulative_pre_built_capacity_coeff",
       "map",
       1
     ],
@@ -4845,6 +5031,18 @@
     ],
     [
       "unit__inputNode",
+      "input_share_max",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "input_share_min",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
       "is_non_synchronous",
       "str",
       0
@@ -4860,6 +5058,12 @@
       "other_operational_cost",
       "map",
       1
+    ],
+    [
+      "unit__inputNode",
+      "other_operational_cost",
+      "map",
+      2
     ],
     [
       "unit__inputNode",
@@ -4899,6 +5103,18 @@
     ],
     [
       "unit__outputNode",
+      "capacity_max_coeff",
+      "float",
+      0
+    ],
+    [
+      "unit__outputNode",
+      "capacity_min_coeff",
+      "float",
+      0
+    ],
+    [
+      "unit__outputNode",
       "constraint_flow_coeff",
       "map",
       1
@@ -4932,6 +5148,12 @@
       "other_operational_cost",
       "map",
       1
+    ],
+    [
+      "unit__outputNode",
+      "other_operational_cost",
+      "map",
+      2
     ],
     [
       "unit__outputNode",
@@ -4989,6 +5211,13 @@
     [
       "co2_methods",
       [
+        "\"price\"",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
         "\"period\"",
         "str"
       ]
@@ -4996,14 +5225,7 @@
     [
       "co2_methods",
       [
-        "\"period_total\"",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
-        "\"price\"",
+        "\"total\"",
         "str"
       ]
     ],
@@ -5017,13 +5239,6 @@
     [
       "co2_methods",
       [
-        "\"price_period_total\"",
-        "str"
-      ]
-    ],
-    [
-      "co2_methods",
-      [
         "\"price_total\"",
         "str"
       ]
@@ -5031,7 +5246,14 @@
     [
       "co2_methods",
       [
-        "\"total\"",
+        "\"period_total\"",
+        "str"
+      ]
+    ],
+    [
+      "co2_methods",
+      [
+        "\"price_period_total\"",
         "str"
       ]
     ],
@@ -5066,6 +5288,13 @@
     [
       "conversion_methods",
       [
+        "\"constant_efficiency\"",
+        "str"
+      ]
+    ],
+    [
+      "conversion_methods",
+      [
         "\"min_load_efficiency\"",
         "str"
       ]
@@ -5074,13 +5303,6 @@
       "conversion_methods",
       [
         "\"none\"",
-        "str"
-      ]
-    ],
-    [
-      "conversion_methods",
-      [
-        "\"constant_efficiency\"",
         "str"
       ]
     ],
@@ -5297,14 +5519,14 @@
     [
       "inflow_methods",
       [
-        "\"scale_in_proportion\"",
+        "\"use_original\"",
         "str"
       ]
     ],
     [
       "inflow_methods",
       [
-        "\"scale_to_annual_and_peak_flow\"",
+        "\"scale_in_proportion\"",
         "str"
       ]
     ],
@@ -5318,7 +5540,7 @@
     [
       "inflow_methods",
       [
-        "\"use_original\"",
+        "\"scale_to_annual_and_peak_flow\"",
         "str"
       ]
     ],
@@ -5326,20 +5548,6 @@
       "invest_methods",
       [
         "\"not_allowed\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"cumulative_limits\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"invest_total\"",
         "str"
       ]
     ],
@@ -5360,42 +5568,14 @@
     [
       "invest_methods",
       [
+        "\"invest_total\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
         "\"invest_period_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"invest_retire_no_limit\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"invest_retire_period\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"invest_retire_period_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"invest_retire_total\"",
-        "str"
-      ]
-    ],
-    [
-      "invest_methods",
-      [
-        "\"retire_total\"",
         "str"
       ]
     ],
@@ -5416,14 +5596,49 @@
     [
       "invest_methods",
       [
+        "\"retire_total\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
         "\"retire_period_total\"",
         "str"
       ]
     ],
     [
-      "lifetime_methods",
+      "invest_methods",
       [
-        "\"no_investment\"",
+        "\"invest_retire_no_limit\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"invest_retire_period\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"invest_retire_total\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"invest_retire_period_total\"",
+        "str"
+      ]
+    ],
+    [
+      "invest_methods",
+      [
+        "\"cumulative_limits\"",
         "str"
       ]
     ],
@@ -5442,9 +5657,9 @@
       ]
     ],
     [
-      "load_share_type",
+      "lifetime_methods",
       [
-        "\"no\"",
+        "\"no_investment\"",
         "str"
       ]
     ],
@@ -5459,6 +5674,13 @@
       "load_share_type",
       [
         "\"inflow_weighted\"",
+        "str"
+      ]
+    ],
+    [
+      "load_share_type",
+      [
+        "\"no\"",
         "str"
       ]
     ],
@@ -5479,21 +5701,14 @@
     [
       "minimum_time_methods",
       [
-        "\"none\"",
+        "\"both\"",
         "str"
       ]
     ],
     [
       "minimum_time_methods",
       [
-        "\"both\"",
-        "str"
-      ]
-    ],
-    [
-      "node_type",
-      [
-        "\"balance\"",
+        "\"none\"",
         "str"
       ]
     ],
@@ -5514,6 +5729,13 @@
     [
       "node_type",
       [
+        "\"balance\"",
+        "str"
+      ]
+    ],
+    [
+      "node_type",
+      [
         "\"storage\"",
         "str"
       ]
@@ -5521,14 +5743,14 @@
     [
       "optional_output",
       [
-        "\"no\"",
+        "\"yes\"",
         "str"
       ]
     ],
     [
       "optional_output",
       [
-        "\"yes\"",
+        "\"no\"",
         "str"
       ]
     ],
@@ -5570,7 +5792,7 @@
     [
       "profile_methods",
       [
-        "\"fixed\"",
+        "\"upper_limit\"",
         "str"
       ]
     ],
@@ -5584,14 +5806,21 @@
     [
       "profile_methods",
       [
-        "\"upper_limit\"",
+        "\"fixed\"",
+        "str"
+      ]
+    ],
+    [
+      "profile_methods",
+      [
+        "\"none\"",
         "str"
       ]
     ],
     [
       "ramp_methods",
       [
-        "\"both\"",
+        "\"ramp_limit\"",
         "str"
       ]
     ],
@@ -5605,7 +5834,14 @@
     [
       "ramp_methods",
       [
-        "\"ramp_limit\"",
+        "\"both\"",
+        "str"
+      ]
+    ],
+    [
+      "ramp_methods",
+      [
+        "\"none\"",
         "str"
       ]
     ],
@@ -5619,14 +5855,7 @@
     [
       "reserve_methods",
       [
-        "\"all\"",
-        "str"
-      ]
-    ],
-    [
-      "reserve_methods",
-      [
-        "\"dynamic_and_large_failure\"",
+        "\"timeseries_only\"",
         "str"
       ]
     ],
@@ -5661,21 +5890,21 @@
     [
       "reserve_methods",
       [
-        "\"timeseries_only\"",
+        "\"dynamic_and_large_failure\"",
+        "str"
+      ]
+    ],
+    [
+      "reserve_methods",
+      [
+        "\"all\"",
         "str"
       ]
     ],
     [
       "results",
       [
-        "\"full_period\"",
-        "str"
-      ]
-    ],
-    [
-      "results",
-      [
-        "\"full_period_time\"",
+        "\"summary_only\"",
         "str"
       ]
     ],
@@ -5696,7 +5925,14 @@
     [
       "results",
       [
-        "\"summary_only\"",
+        "\"full_period\"",
+        "str"
+      ]
+    ],
+    [
+      "results",
+      [
+        "\"full_period_time\"",
         "str"
       ]
     ],
@@ -5731,13 +5967,6 @@
     [
       "senses",
       [
-        "\"equal\"",
-        "str"
-      ]
-    ],
-    [
-      "senses",
-      [
         "\"greater_than\"",
         "str"
       ]
@@ -5750,9 +5979,9 @@
       ]
     ],
     [
-      "solve_mode",
+      "senses",
       [
-        "\"rolling_window\"",
+        "\"equal\"",
         "str"
       ]
     ],
@@ -5764,23 +5993,30 @@
       ]
     ],
     [
-      "solvers",
+      "solve_mode",
       [
-        "\"copt\"",
+        "\"rolling_window\"",
         "str"
       ]
     ],
     [
-      "solvers",
+      "solver",
+      [
+        "\"glpsol\"",
+        "str"
+      ]
+    ],
+    [
+      "solver",
+      [
+        "\"highs\"",
+        "str"
+      ]
+    ],
+    [
+      "solver",
       [
         "\"cplex\"",
-        "str"
-      ]
-    ],
-    [
-      "solvers",
-      [
-        "\"gurobi\"",
         "str"
       ]
     ],
@@ -5794,7 +6030,28 @@
     [
       "solvers",
       [
+        "\"gurobi\"",
+        "str"
+      ]
+    ],
+    [
+      "solvers",
+      [
+        "\"cplex\"",
+        "str"
+      ]
+    ],
+    [
+      "solvers",
+      [
         "\"xpress\"",
+        "str"
+      ]
+    ],
+    [
+      "solvers",
+      [
+        "\"copt\"",
         "str"
       ]
     ],
@@ -5808,14 +6065,14 @@
     [
       "startup_methods",
       [
-        "\"binary\"",
+        "\"linear\"",
         "str"
       ]
     ],
     [
       "startup_methods",
       [
-        "\"linear\"",
+        "\"binary\"",
         "str"
       ]
     ],
@@ -5836,35 +6093,7 @@
     [
       "storage_binding_methods",
       [
-        "\"bind_forward_only\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "\"bind_forward_only_blended_weights\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "\"bind_intraperiod_blocks\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
         "\"bind_within_period\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_binding_methods",
-      [
-        "\"bind_within_period_blended_weights\"",
         "str"
       ]
     ],
@@ -5878,7 +6107,14 @@
     [
       "storage_binding_methods",
       [
-        "\"bind_within_solve_blended_weights\"",
+        "\"bind_forward_only\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_intraperiod_blocks\"",
         "str"
       ]
     ],
@@ -5890,9 +6126,37 @@
       ]
     ],
     [
+      "storage_binding_methods",
+      [
+        "\"bind_within_solve_blended_weights\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_within_period_blended_weights\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_binding_methods",
+      [
+        "\"bind_forward_only_blended_weights\"",
+        "str"
+      ]
+    ],
+    [
       "storage_nested_fix_method",
       [
-        "\"fix_usage\"",
+        "\"fix_nothing\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_nested_fix_method",
+      [
+        "\"fix_quantity\"",
         "str"
       ]
     ],
@@ -5906,7 +6170,7 @@
     [
       "storage_nested_fix_method",
       [
-        "\"fix_quantity\"",
+        "\"fix_usage\"",
         "str"
       ]
     ],
@@ -5920,28 +6184,14 @@
     [
       "storage_solve_horizon_methods",
       [
-        "\"use_reference_price\"",
+        "\"use_reference_value\"",
         "str"
       ]
     ],
     [
       "storage_solve_horizon_methods",
       [
-        "\"use_reference_value\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_start_end_methods",
-      [
-        "\"fix_end\"",
-        "str"
-      ]
-    ],
-    [
-      "storage_start_end_methods",
-      [
-        "\"fix_nothing\"",
+        "\"use_reference_price\"",
         "str"
       ]
     ],
@@ -5955,7 +6205,21 @@
     [
       "storage_start_end_methods",
       [
+        "\"fix_end\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_start_end_methods",
+      [
         "\"fix_start_end\"",
+        "str"
+      ]
+    ],
+    [
+      "storage_start_end_methods",
+      [
+        "\"fix_nothing\"",
         "str"
       ]
     ],
@@ -5969,13 +6233,6 @@
     [
       "transfer_methods",
       [
-        "\"exact\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods",
-      [
         "\"regular\"",
         "str"
       ]
@@ -5983,7 +6240,7 @@
     [
       "transfer_methods",
       [
-        "\"unidirectional\"",
+        "\"exact\"",
         "str"
       ]
     ],
@@ -5995,35 +6252,7 @@
       ]
     ],
     [
-      "transfer_methods_group",
-      [
-        "\"no_losses_no_variable_cost\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "\"dc_power_flow_with_angles\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "\"exact\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
-      [
-        "\"regular\"",
-        "str"
-      ]
-    ],
-    [
-      "transfer_methods_group",
+      "transfer_methods",
       [
         "\"unidirectional\"",
         "str"
@@ -6039,14 +6268,42 @@
     [
       "transfer_methods_group",
       [
+        "\"no_losses_no_variable_cost\"",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "\"regular\"",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "\"exact\"",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
         "\"variable_cost_only\"",
         "str"
       ]
     ],
     [
-      "yes_no",
+      "transfer_methods_group",
       [
-        "\"no\"",
+        "\"dc_power_flow_with_angles\"",
+        "str"
+      ]
+    ],
+    [
+      "transfer_methods_group",
+      [
+        "\"unidirectional\"",
         "str"
       ]
     ],
@@ -6054,6 +6311,13 @@
       "yes_no",
       [
         "\"yes\"",
+        "str"
+      ]
+    ],
+    [
+      "yes_no",
+      [
+        "\"no\"",
         "str"
       ]
     ]
