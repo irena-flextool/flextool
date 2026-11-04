@@ -329,6 +329,93 @@ def align_join_dtypes(left: "pl.LazyFrame | pl.DataFrame",
     return left, right
 
 
+def _schema_of(frame: "pl.LazyFrame | pl.DataFrame") -> "pl.Schema":
+    return frame.collect_schema() if isinstance(frame, pl.LazyFrame) else frame.schema
+
+
+def _enum_key_target(left_col: str, left_dtype: "pl.DataType",
+                     right_col: str, right_dtype: "pl.DataType") -> "pl.Enum | None":
+    """The Enum the right key is cast to, or None when the pair is left to polars.
+
+    Two different Enums: the left one.  An Enum against a non-Enum: ``TypeError`` (an axis column is never
+    compared against a Utf8 one; the Utf8 side has an upstream typing gap).  Neither an Enum, or equal
+    dtypes: None.
+    """
+    if left_dtype == right_dtype:
+        return None
+    left_enum, right_enum = isinstance(left_dtype, pl.Enum), isinstance(right_dtype, pl.Enum)
+    if left_enum and right_enum:
+        return left_dtype
+    if left_enum or right_enum:
+        raise TypeError(
+            f"cannot match axis column {left_col!r} ({left_dtype}) against {right_col!r} ({right_dtype}): "
+            "an Enum key is compared only against another Enum; type the other side on its axis where it "
+            "is built")
+    return None
+
+
+def join_aligned(left: "pl.LazyFrame | pl.DataFrame",
+                 right: "pl.LazyFrame | pl.DataFrame",
+                 *,
+                 on: "str | list[str] | tuple[str, ...] | None" = None,
+                 left_on: "str | list[str] | tuple[str, ...] | None" = None,
+                 right_on: "str | list[str] | tuple[str, ...] | None" = None,
+                 how: str = "inner") -> "pl.LazyFrame | pl.DataFrame":
+    """``left.join(right, ...)`` where key columns may carry different axis Enums.
+
+    For a role column holding entity-union labels (``source`` / ``sink`` / ``attr_node``) joined to an axis
+    column (``n``, ``p``) of a narrower vocabulary.  Only ``pl.Enum`` keys are touched:
+
+    * two different Enums: the right key is cast to the left key's Enum (``strict=False``).  A right label
+      outside the left vocabulary becomes null and matches nothing, which it could not match anyway, so
+      ``inner`` / ``left`` / ``semi`` / ``anti`` return the rows of the Utf8 join and the left key keeps
+      its dtype;
+    * an Enum against a non-Enum key: ``TypeError`` naming both columns;
+    * any other pair (equal dtypes, Utf8 in production, numeric mismatches): the plain join, unchanged.
+
+    ``how="full"`` / ``"cross"`` raise ``ValueError``: a full join would have to coalesce keys of two
+    vocabularies, and a cross join has no keys.
+    """
+    if how in ("full", "outer", "cross"):
+        raise ValueError(f"join_aligned does not support how={how!r}")
+    if on is not None:
+        if left_on is not None or right_on is not None:
+            raise ValueError("join_aligned takes either on or left_on/right_on")
+        lkeys = rkeys = [on] if isinstance(on, str) else list(on)
+    else:
+        if left_on is None or right_on is None:
+            raise ValueError("join_aligned needs on or both left_on and right_on")
+        lkeys = [left_on] if isinstance(left_on, str) else list(left_on)
+        rkeys = [right_on] if isinstance(right_on, str) else list(right_on)
+        if len(lkeys) != len(rkeys):
+            raise ValueError("left_on and right_on must have the same length")
+    lschema, rschema = _schema_of(left), _schema_of(right)
+    casts = []
+    for lk, rk in zip(lkeys, rkeys):
+        target = _enum_key_target(lk, lschema[lk], rk, rschema[rk])
+        if target is not None:
+            casts.append(pl.col(rk).cast(target, strict=False))
+    if casts:
+        right = right.with_columns(casts)
+    if on is not None:
+        return left.join(right, on=on, how=how)
+    return left.join(right, left_on=left_on, right_on=right_on, how=how)
+
+
+def filter_isin(frame: "pl.LazyFrame | pl.DataFrame", col: str,
+                values: "pl.Series") -> "pl.LazyFrame | pl.DataFrame":
+    """Rows of ``frame`` whose ``col`` is in ``values``, where the two may carry different axis Enums.
+
+    Same rule as :func:`join_aligned`: values of a different Enum are cast to ``frame[col]``'s Enum
+    (``strict=False``; a value outside that vocabulary is dropped, it could not match); an Enum against a
+    non-Enum raises ``TypeError``; any other pair is the plain ``is_in``.
+    """
+    target = _enum_key_target(col, _schema_of(frame)[col], f"values ({values.name!r})", values.dtype)
+    if target is not None:
+        values = values.cast(target, strict=False).drop_nulls()
+    return frame.filter(pl.col(col).is_in(values.implode()))
+
+
 def empty_like(frame: "pl.DataFrame | pl.LazyFrame",
                  columns: list[str] | tuple[str, ...],
                  extra: dict[str, "pl.DataType"] | None = None,

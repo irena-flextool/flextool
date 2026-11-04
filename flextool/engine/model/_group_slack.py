@@ -17,7 +17,7 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Expr
 
-from flextool.engine.input._axis_enums import align_join_dtypes
+from flextool.engine.input._axis_enums import align_join_dtypes, join_aligned
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.model._common import _has_rows, _var_view
 
@@ -265,10 +265,10 @@ def add_constraints(b: _Build) -> None:
 def _arcs_at_group(arcs: pl.DataFrame, side: str, group_nodes: pl.DataFrame) -> pl.DataFrame:
     """``arcs`` (p, source, sink, …) whose ``side`` node is in ``group_nodes`` (g, n), with g added.
 
-    ``side`` carries the entity-union Enum and ``n`` the node Enum; the join widens both to one dtype.
+    ``side`` carries the entity-union Enum and ``n`` the node Enum; the node key is cast to the arcs' entity-union
+    Enum, so ``side`` keeps its dtype.
     """
-    arcs_n, gn = align_join_dtypes(arcs.rename({side: "n"}), group_nodes, ("n",))
-    return arcs_n.join(gn, on="n", how="inner").rename({"n": side})
+    return join_aligned(arcs.rename({side: "n"}), group_nodes, on="n", how="inner").rename({"n": side})
 
 
 def _invest_change(b: _Build, procs: pl.DataFrame, tag: str) -> tuple[Expr | None, Expr | None]:
@@ -550,21 +550,14 @@ def _eq_non_sync(b: _Build) -> None:
     # sink/source coefficient ratio of multi-arc processes.
     lhs: dict = {"slack_neg": -(b.vq_non_synchronous * d.p_step_duration)}
     if sink_ns is not None and sink_ns.height > 0 and b.v_flow is not None:
-        pss_in_g = (pss.join(sink_ns, on=["p", "sink"], how="inner")
-                    .rename({"sink": "n"})
-                    .join(gn_in_gns, on="n", how="inner")
-                    .rename({"n": "sink"}))
-        pss_in_g = _not_inside(pss_in_g)
+        pss_in_g = _not_inside(_arcs_at_group(pss.join(sink_ns, on=["p", "sink"], how="inner"), "sink", gn_in_gns))
         if pss_in_g.height > 0:
             lhs["incoming_nonSync"] = Sum(Where(b.v_flow, pss_in_g) * p_us * d.p_step_duration * invc,
                                           over=("p", "source", "sink"))
     back = b.twoway1var_arcs if (b.v_flow_back is not None and _has_rows(b.twoway1var_arcs)) else None
     if back is not None and sink_ns is not None and sink_ns.height > 0:
-        back_in = (back.join(sink_ns.rename({"sink": "source"}), on=["p", "source"], how="inner")
-                   .rename({"source": "n"})
-                   .join(gn_in_gns, on="n", how="inner")
-                   .rename({"n": "source"}))
-        back_in = _not_inside(back_in)
+        back_in = _not_inside(_arcs_at_group(back.join(sink_ns.rename({"sink": "source"}), on=["p", "source"],
+                                                       how="inner"), "source", gn_in_gns))
         if back_in.height > 0:
             lhs["incoming_nonSync_back"] = Sum(Where(b.v_flow_back, back_in) * p_us * d.p_step_duration * invc,
                                                over=("p", "source", "sink"))
@@ -595,14 +588,12 @@ def _eq_non_sync(b: _Build) -> None:
         return us * d.p_step_duration * pgns * invc
     pss_noEff = d.process_source_sink_noEff
     if has_out_factor and pss_noEff is not None and pss_noEff.height > 0 and b.v_flow is not None:
-        out_noEff = _not_inside(pss_noEff.rename({"source": "n"}).join(gn_in_gns, on="n", how="inner")
-                                .rename({"n": "source"}))
+        out_noEff = _not_inside(_arcs_at_group(pss_noEff, "source", gn_in_gns))
         if out_noEff.height > 0:
             rhs["out_noEff"] = Sum(Where(b.v_flow, out_noEff) * out_factor(out_noEff), over=("p", "source", "sink"))
     pss_eff = d.process_source_sink_eff
     if has_out_factor and pss_eff is not None and pss_eff.height > 0 and b.v_flow is not None:
-        out_eff = _not_inside(pss_eff.rename({"source": "n"}).join(gn_in_gns, on="n", how="inner")
-                              .rename({"n": "source"}))
+        out_eff = _not_inside(_arcs_at_group(pss_eff, "source", gn_in_gns))
         if out_eff.height > 0:
             if d.p_slope is not None:
                 term = Where(b.v_flow, out_eff) * d.p_slope * out_factor(out_eff)
@@ -622,8 +613,7 @@ def _eq_non_sync(b: _Build) -> None:
                             Where(b.v_online_integer, out_mle) * d.p_section * out_factor(out_mle),
                             over=("p", "source", "sink"))
     if has_out_factor and back is not None:
-        back_out = _not_inside(back.rename({"sink": "n"}).join(gn_in_gns, on="n", how="inner")
-                               .rename({"n": "sink"}))
+        back_out = _not_inside(_arcs_at_group(back, "sink", gn_in_gns))
         if back_out.height > 0:
             rhs["out_back"] = Sum(Where(b.v_flow_back, back_out) * out_factor(back_out), over=("p", "source", "sink"))
     p_neg = d.p_negative_inflow

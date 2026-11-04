@@ -512,6 +512,23 @@ out the mismatched side silently. The `_axis_enums.align_join_dtypes`
 helper normalises both sides before the join in cases where the call
 site cannot use one of the rename helpers.
 
+A column named for an axis (`"p"`, `"n"`, `"d"`, …) carries that
+axis's Enum: narrow an entity-union frame onto the axis by renaming
+and casting it to the axis dtype (`rename_to_axis`, or
+`_cumulative_invest._on_var_axis` against a variable's own column).
+Period labels carry the `d` Enum wherever they are joined to a
+period-keyed frame, also in a column named `b` (the forecast star of
+`_non_anticipativity`). Only an entity-union **role** column
+(`source` / `sink` / `attr_node`) is matched against a narrower axis
+column, through `join_aligned(left, right, on=… | left_on=…,
+right_on=…)` or, for membership, `filter_isin(frame, col, values)`.
+Both act only on `pl.Enum` keys: the right key (the values) is cast to
+the left key's Enum, so `inner` / `left` / `semi` / `anti` keep every
+left row and dtype; an Enum against a Utf8 key raises `TypeError` (type
+the Utf8 side where it is built — a Utf8 cast "bridge" is not a fix);
+`how="full"` / `"cross"` raise. Utf8 keys (production) are the plain
+join / `is_in`.
+
 Cross-link: every parameter known to the engine has its expected
 shape declared in `_param_shapes.py`, and the axis vocabulary the
 parameter's dim columns must satisfy is implicit in the `dims=` tuple

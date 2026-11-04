@@ -260,10 +260,10 @@ def _eq_min_entity_period(b: _Build) -> None:
         if not _has_rows(period_set) or cap is None or var is None or unitsize is None:
             continue
         if kind == "invest" and _lead_time.active(d):
-            entities = period_set.rename({"e": axis}).join(var.frame.select(axis, "d"), on=[axis, "d"], how="semi")
+            entities = _on_var_axis(period_set, axis, var).join(var.frame.select(axis, "d"), on=[axis, "d"], how="semi")
             _lead_time.period_limit(b, name, axis, var, unitsize, entities, cap, ">=", "invest_min_period")
             continue
-        over = period_set.rename({"e": axis}).join(var.frame.select(axis, "d"), on=[axis, "d"], how="inner")
+        over = _on_var_axis(period_set, axis, var).join(var.frame.select(axis, "d"), on=[axis, "d"], how="inner")
         if over.height == 0:
             continue
         b.m.add_cstr(
@@ -486,7 +486,7 @@ def _eq_group_entity_period(b: _Build) -> None:
             unitsize = _unitsize(d, axis)
             if var is None or unitsize is None:
                 continue
-            members = group_entity.rename({"e": axis}).filter(pl.col(axis).is_in(var.frame[axis].unique()))
+            members = _on_var_axis(group_entity, axis, var)
             if members.height == 0:
                 continue
             # #82-adjacent: row domain is TERMS' (g, d), not the full gd_idx -- gd_idx may list a

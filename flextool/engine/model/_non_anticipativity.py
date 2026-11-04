@@ -87,7 +87,9 @@ def _forecast_star(d) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
     to tie.  The tie is between forecasts only, never to the period label, so it holds with no realized branch at all.
     A single global ``d_ref`` would be wrong: it would couple different anchor periods at mismatched steps.
     dt_non_anticipativity is re-keyed the same way (anchor ``d`` → that anchor's ``d_ref``, same ``t``),
-    because every family joins the star and the tied steps on ``d``.  ``tie_dt`` is None when
+    because every family joins the star and the tied steps on ``d``.  Both ``d`` and ``b`` hold period labels
+    and are typed on the period axis: every family joins ``b`` to a period-keyed frame renamed to ``b``
+    (``_var_view(..., {"d": "b"})``).  ``tie_dt`` is None when
     dt_non_anticipativity has no rows.  ``star`` is None when there is nothing to tie.
     """
     anchors = reference_forecasts(d)
@@ -105,7 +107,7 @@ def _forecast_star(d) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
             if len(forecasts) >= 2:
                 ties.append(tie_u.filter(pl.col("d") == d_anchor).with_columns(pl.lit(forecasts[0]).alias("d")))
     star = (pl.DataFrame({"d": [a for a, _ in pairs], "b": [b for _, b in pairs]}, schema={"d": pl.Utf8, "b": pl.Utf8})
-            .with_columns(cast_dim(pl.col("d"), None, "d"), cast_dim(pl.col("b"), None, "b")))
+            .with_columns(cast_dim(pl.col("d"), None, "d"), cast_dim(pl.col("b"), None, "d")))
     tie_dt = pl.concat(ties).with_columns(cast_dim(pl.col("d"), None, "d")) if ties else None
     return star, tie_dt
 
@@ -212,14 +214,10 @@ def add_dispatch_constraints(b: "_Build") -> None:
                     .join(first_per_d, on="d", how="inner")
                     .join(star, on="d", how="inner")
                     .select("n", "d", "b", "t").unique())
-            # Keep only cells with a v_state column on both sides.  over.b is on the branch axis and the
-            # state's d on the period axis: join the b side as Utf8.
-            over = over.join(vstate_dt, on=["n", "d", "t"], how="inner")
-            vbt = vstate_dt.rename({"d": "b"}).with_columns(pl.col("b").cast(pl.Utf8))
+            # Keep only cells with a v_state column on both sides (the star's b is on the period axis).
             over = (over
-                    .with_columns(pl.col("b").cast(pl.Utf8))
-                    .join(vbt, on=["n", "b", "t"], how="inner")
-                    .with_columns(cast_dim(pl.col("b"), None, "b"))
+                    .join(vstate_dt, on=["n", "d", "t"], how="inner")
+                    .join(vstate_dt.rename({"d": "b"}), on=["n", "b", "t"], how="inner")
                     .select("n", "d", "b", "t").unique())
             if over.height > 0:
                 m.add_cstr(
@@ -291,6 +289,7 @@ def add_invest_constraints(b: "_Build") -> None:
     window = d.pd_non_anticipativity                       # (d, b)
     if not _has_rows(window):
         return
+    window = window.with_columns(cast_dim(pl.col("b"), None, "d"))
     if not getattr(d, "recourse_invest", False):
         # Without recourse investment there is one investment per period for all branches: nothing to tie.
         _LOG.info(
@@ -312,9 +311,10 @@ def add_invest_constraints(b: "_Build") -> None:
     # branch.  Divestment must be tied too: under recourse it has a column
     # per branch like investment, and a free divestment would let the net
     # capacity existing + invest − divest differ across branches.
-    # pd_non_anticipativity.b is on the branch axis and the invest sets' d on
-    # the period axis: the (e,b) check joins b as Utf8.  It drops every pair
-    # when the branches have no invest column of their own.
+    # pd_non_anticipativity.b holds period labels typed on the branch axis;
+    # it is re-typed on the period axis, the axis of the invest sets' d and of
+    # the variable view's b.  The (e,b) check drops every pair when the
+    # branches have no invest column of their own.
     for name, v, inv_set, ent in (
         ("non_anticipativity_invest_p", b.v_invest_p, d.pd_invest_set, "p"),
         ("non_anticipativity_invest_n", b.v_invest_n, d.nd_invest_set, "n"),
@@ -327,11 +327,8 @@ def add_invest_constraints(b: "_Build") -> None:
         over = cells.join(window, on="d", how="inner")
         if over.height == 0:
             continue
-        cells_at_b = cells.rename({"d": "b"}).with_columns(pl.col("b").cast(pl.Utf8))
         over = (over
-                .with_columns(pl.col("b").cast(pl.Utf8))
-                .join(cells_at_b, on=[ent, "b"], how="inner")
-                .with_columns(cast_dim(pl.col("d"), None, "d"), cast_dim(pl.col("b"), None, "b"))
+                .join(cells.rename({"d": "b"}), on=[ent, "b"], how="inner")
                 .select(ent, "d", "b").unique())
         if over.height == 0:
             continue

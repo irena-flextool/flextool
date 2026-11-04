@@ -9,7 +9,7 @@ import polars as pl
 from polar_high import Param
 from polar_high.engine import Var
 
-from flextool.engine.input._axis_enums import rename_to_axis
+from flextool.engine.input._axis_enums import filter_isin, rename_to_axis
 from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.preprocess.params._branch import inherit_anchor_period
 
@@ -65,7 +65,7 @@ def _entities_of_kind(d, e_set: pl.DataFrame, axis: str) -> pl.DataFrame:
     members, col = (d.process_source_sink, "p") if axis == "p" else (d.nodeState, "n")
     if not _has_rows(members):
         return e_set.head(0)
-    return e_set.filter(pl.col("e").is_in(members[col].unique()))
+    return filter_isin(e_set, "e", members[col].unique())
 
 
 def chain_prior(d, kind: str) -> "pl.DataFrame | None":

@@ -160,8 +160,7 @@ def add_constraints(b: "_Build") -> None:
         if d.dt_online_wrap is not None and d.dt_online_wrap.height > 0:
             wrap = d.dt_online_wrap
             if carry_rows is not None:
-                carried_dt = carry_rows.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique()
-                wrap = wrap.join(carried_dt, on=["d", "t"], how="anti")
+                wrap = wrap.join(carry_rows.select("d", "t").unique(), on=["d", "t"], how="anti")
             prev_links.append(wrap)
         link_native = None
         if prev_links:
