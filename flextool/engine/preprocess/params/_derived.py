@@ -6173,8 +6173,13 @@ def _check_retirement_minimums(flex_data: object,
         e_divest_total_lf,
         ed_divest_period_set_lf,
         p_entity_pre_existing_lf,
+        p_entity_retired_carried_from_handoff,
     )
-    from flextool.engine.preprocess.params._retire_existing import active_windows, check_retirement_minimums
+    from flextool.engine.preprocess.params._retire_existing import (
+        active_windows,
+        check_retirement_minimums,
+        ed_values,
+    )
     pre_df = (p_entity_pre_existing_lf(source, active_solve, [str(d) for d in period_in_use],
                                        workdir=workdir, provider=provider)
                 .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "value").collect())
@@ -6188,7 +6193,8 @@ def _check_retirement_minimums(flex_data: object,
         min_period=getattr(flex_data, "ed_divest_min_period", None),
         min_total=getattr(flex_data, "e_divest_min_total", None),
         prior=p_entity_divested_from_handoff(provider=provider),
-        carried=None,
+        carried=ed_values(p_entity_retired_carried_from_handoff(source, active_solve, list(period_in_use), workdir,
+                                                                provider=provider)),
         eol=_lifetime_gate_sums(source, active_solve, workdir, provider=provider, years=years))
 
 

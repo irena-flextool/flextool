@@ -2776,18 +2776,25 @@ def _eq_retired_existing(b: _Build) -> None:
 
     # ─── EQ. ─── maxRetired_existing_{p,n} ───────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′] · unitsize[p]  ≤  pre_existing[p,d]
+    # Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′] · unitsize[p]  ≤  pre_existing[p,d] − retired_carried[p,d]
     #   ∀ (p,d) with some (p,d′,d) ∈ edd_divest_active, p ∈ process_source_sink
-    # Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′] · state_unitsize[n]  ≤  pre_existing[n,d]
+    # Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′] · state_unitsize[n]  ≤  pre_existing[n,d] − retired_carried[n,d]
     #   ∀ (n,d) with some (n,d′,d) ∈ ndd_divest_active, n ∈ nodeState
     #   edd_divest_active = {(e,d′,d) : (e,d′) ∈ ed_divest_set, yr[d′] ≤ yr[d] < EOL[e]}, EOL[e] the end of
     #     life of the entity's pre-existing capacity (from the start of the run; none for reinvest_automatic)
     #   pre_existing = p_entity_pre_existing (the user's existing × unitsize, lifetime-gated: MW, MWh)
+    #   retired_carried = p_entity_retired_carried (retirements of earlier solves of a chain still counting in d)
     # Only capacity that existed before the run can be retired: the capacity retired so far and still counting in
     # d stays within the pre-existing capacity of d (a declining existing map, or an entity that also invests,
     # cannot retire more than was there).  A retirement option exists only where pre_existing > 0.
     pre = getattr(d, "p_entity_pre_existing", None)
     pre_frame = pre.frame if pre is not None else None
+    carried = getattr(d, "p_entity_retired_carried", None)
+    if pre_frame is not None and carried is not None and carried.frame.height > 0:
+        pre_frame, carried_frame = align_join_dtypes(pre_frame, carried.frame.rename({"value": "carried"}), ["e", "d"])
+        pre_frame = (pre_frame.join(carried_frame, on=["e", "d"], how="left")
+                     .with_columns(value=pl.col("value") - pl.col("carried").fill_null(0.0))
+                     .drop("carried"))
     for axis, active_set, var, members in (
             ("p", getattr(d, "edd_divest_active", None), b.v_divest_p if b.has_divest_p else None,
              d.process_source_sink),

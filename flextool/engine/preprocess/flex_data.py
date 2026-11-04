@@ -903,6 +903,9 @@ class FlexData:
     # operate in d / are in construction in d (apply_existing_chain, from the handoff realized_commission).
     p_entity_carried_commission: Param | None = None
     p_entity_carried_in_construction: Param | None = None
+    # (e, d) MW (MWh): capacity earlier solves of a chain retired that still counts in d (until the end of life of
+    # the pre-existing capacity; apply_existing_chain, from the handoff realized_divest).
+    p_entity_retired_carried: Param | None = None
     edd_divest_active: pl.DataFrame | None = None    # (p, d_divest, d) where d_divest ≤ d < EOL[p]
     ndd_divest_active: pl.DataFrame | None = None    # (n, d_divest, d) where d_divest ≤ d < EOL[n] — node analogue
     p_entity_max_units: Param | None = None          # (e, d)
@@ -6251,6 +6254,7 @@ def build_handoff_from_solution(
     * ``realized_invest`` — per-(entity, period) chain-cumulative invest.
     * ``realized_existing`` — per-(entity, period) chain-cumulative existing.
     * ``divest_cumulative`` — per-entity chain-cumulative divest.
+    * ``realized_divest`` — per-(entity, decision period) chain-cumulative divest (realized periods only).
     * ``roll_end_state`` — last-step v_state per nodeState node.
     * ``fix_storage`` — wide [node, period, time, quantity, price, usage]
       with NULL columns for inactive metrics.  ``quantity`` is populated
@@ -6305,8 +6309,13 @@ def build_handoff_from_solution(
     prior_existing: dict[tuple[str, str], float] = {}
     prior_invested: dict[tuple[str, str], float] = {}
     prior_divested: dict[str, float] = {}
+    prior_divest_period: dict[tuple[str, str], float] = {}
     prior_commission: list[tuple[str, str, str, float]] = []
     if prior_handoff is not None:
+        if getattr(prior_handoff, "realized_divest", None) is not None:
+            for r in prior_handoff.realized_divest.iter_rows(named=True):
+                key = (str(r["entity"]), str(r["period"]))
+                prior_divest_period[key] = prior_divest_period.get(key, 0.0) + float(r["value"])
         if getattr(prior_handoff, "realized_commission", None) is not None:
             for r in prior_handoff.realized_commission.iter_rows(named=True):
                 prior_commission.append((str(r["entity"]), str(r["period"]), str(r["commission_period"]),
@@ -6391,9 +6400,11 @@ def build_handoff_from_solution(
     # rows in non-realized look-ahead periods or alternative recourse branches
     # must not inflate the chain-cumulative divest prior.
     divest_by_e: dict[str, float] = {}
+    realized_divest_by_ed: dict[tuple[str, str], float] = {}
     for (_e, _d), _v in divest_by_ed.items():
         if _d in realize_invest:
             divest_by_e[_e] = divest_by_e.get(_e, 0.0) + _v
+            realized_divest_by_ed[(_e, _d)] = _v
     if first_solve:
         realized_periods = _read_realized_dispatch_periods(
             sd / "realized_dispatch.csv", provider=provider)
@@ -6513,6 +6524,12 @@ def build_handoff_from_solution(
     for e in sorted(entity_divest):
         cum = prior_divested.get(e, 0.0) + divest_by_e.get(e, 0.0) * unitsize.get(e, 1.0)
         div_rows.append((e, cum))
+    # ---- realized_divest: prior rows + this solve's realized retirements, per decision period ----
+    divest_period = dict(prior_divest_period)
+    for (e, d), v in realized_divest_by_ed.items():
+        if e in entity_divest and v != 0.0:
+            divest_period[(e, d)] = divest_period.get((e, d), 0.0) + v * unitsize.get(e, 1.0)
+    divest_period_rows = [(e, d, v) for (e, d), v in sorted(divest_period.items()) if v != 0.0]
 
     # ---- roll_end_state: v_state[n, last_t] * unitsize per nodeState node ----
     # Mirrors flextool's ``write_p_roll_continue_state``: takes v_state at
@@ -7440,6 +7457,9 @@ def build_handoff_from_solution(
         divest_cumulative=pl.DataFrame(
             div_rows, schema=["entity", "value"], orient="row",
         ) if div_rows else None,
+        realized_divest=pl.DataFrame(
+            divest_period_rows, schema=["entity", "period", "value"], orient="row",
+        ) if divest_period_rows else None,
         roll_end_state=roll_end_state_df,
         upward_roll_end_state=upward_roll_end_state_df,
         roll_end_online=roll_end_online_df,

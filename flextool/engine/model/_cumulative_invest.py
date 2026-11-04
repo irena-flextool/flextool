@@ -197,7 +197,7 @@ def _check_group_retire_minimums(b: _Build) -> None:
         windows=active_windows([getattr(d, "edd_divest_active", None), getattr(d, "ndd_divest_active", None)]),
         pre=ed_values(getattr(d, "p_entity_pre_existing", None)),
         prior=chain_prior(d, "divest"),
-        carried=None)
+        carried=ed_values(getattr(d, "p_entity_retired_carried", None)))
 
 
 def _eq_fix_no_investment(b: _Build) -> None:

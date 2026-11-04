@@ -18,6 +18,7 @@ import polars as pl
 from flextool.engine.output._writer import OutputWriterState
 from flextool.process_outputs.handoff_writers import (
     write_p_entity_divested,
+    write_p_entity_divested_period,
     write_p_entity_period_existing_capacity,
     write_p_roll_continue_state,
     write_fix_storage_quantity,
@@ -121,6 +122,28 @@ def test_p_entity_divested_first_solve(tmp_path: Path) -> None:
     assert len(rows) == 2
     by_entity = {r["entity"]: float(r["p_entity_divested"]) for r in rows}
     assert by_entity == {"unit_a": 200.0, "unit_b": 0.0}
+
+
+def test_p_entity_divested_period_keeps_the_realized_decision_periods(tmp_path: Path) -> None:
+    """The per-period mirror of ``realized_divest``: the prior rows (writer_state, a first-solve stand-in) plus
+    this solve's retirements in its realized invest periods only, × unitsize.  u=100: prior (unit_a, p2020) = 50;
+    v_divest[unit_a, p2025] = 2 (realized) → 200; v_divest[unit_a, p2030] = 1 is look-ahead, not realized."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    work = tmp_path
+    (work / "solve_data").mkdir()
+    fd = _flex_data_stub(unitsize={"unit_a": 100.0}, entity_divest=["unit_a"])
+    provider = FlexDataProvider()
+    provider.put("solve_data/realized_invest_periods_of_current_solve", pl.DataFrame({"period": ["p2025"]}))
+    writer_state = OutputWriterState()
+    writer_state.divested_period = {("unit_a", "p2020"): 50.0}
+    h = _fake_highs(variable_names=["v_divest[unit_a,p2025]", "v_divest[unit_a,p2030]"], col_values=[2.0, 1.0])
+    write_p_entity_divested_period(
+        h, solve_name="s2", work_folder=work, flex_data=fd, is_first_solve=False,
+        writer_state=writer_state, provider=provider, csv_dump=True,
+    )
+    rows = list(csv.DictReader(open(work / "solve_data" / "p_entity_divested_period.csv")))
+    assert {(r["entity"], r["period"]): float(r["p_entity_divested_period"]) for r in rows} == {
+        ("unit_a", "p2020"): 50.0, ("unit_a", "p2025"): 200.0}
 
 
 def test_p_entity_divested_csv_dump_false_writes_nothing(tmp_path: Path) -> None:

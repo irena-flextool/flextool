@@ -36,6 +36,7 @@ from flextool.engine.preprocess.params._derived import (
     INVEST_METHODS_INVEST_NO_LIMIT,
     run_start_period,
 )
+from flextool.engine.preprocess.params._retire_existing import retired_carried
 
 if TYPE_CHECKING:
     from flextool.engine.solve._handoff import SolveHandoff  # noqa: F401 — retained for legacy callers
@@ -242,6 +243,32 @@ def _read_solve_first_flag(solve_data_dir: Path,
 # ---------------------------------------------------------------------------
 
 
+def _end_of_life(solve_data_dir: Path, *, provider) -> tuple[dict[str, str], dict[str, float], dict[str, float]]:
+    """``(lifetime_method, p_years_d, end_of_life)``: ``end_of_life[e]`` the year (of ``p_years_d``, which covers
+    the period history: years from the start of the run) at which the pre-existing capacity of a reinvest_choice /
+    no_investment entity ends, counted from the start of the run::
+
+        p_years_d[d0] + edEntity_lifetime[e, d0],   d0 = run_start_period(p_years_d)
+    """
+    lifetime_method: dict[str, str] = {
+        e_: m for e_, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv",
+                                         provider=provider)
+    }
+    p_years_d = _load_e_value_csv(solve_data_dir / "p_years_d.csv",
+                                    provider=provider)
+    ed_lifetime: dict[tuple[str, str], float] = {}
+    for e_, d_, v_ in _read_triples(solve_data_dir / "edEntity_lifetime.csv",
+                                      provider=provider):
+        try:
+            ed_lifetime[(e_, d_)] = float(v_)
+        except ValueError:
+            continue
+    d0 = run_start_period(p_years_d)
+    end_of_life = {e: (0.0 if d0 is None else p_years_d.get(d0, 0.0) + ed_lifetime.get((e, d0), 0.0))
+                   for e, m in lifetime_method.items() if m in ("reinvest_choice", "no_investment")}
+    return lifetime_method, p_years_d, end_of_life
+
+
 def derive_p_entity_pre_existing(
     input_dir: Path, solve_data_dir: Path,
     *, provider: "object | None" = None,
@@ -277,20 +304,7 @@ def derive_p_entity_pre_existing(
     period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
                                    provider=provider)
 
-    lifetime_method: dict[str, str] = {
-        e_: m for e_, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv",
-                                         provider=provider)
-    }
-    p_years_d = _load_e_value_csv(solve_data_dir / "p_years_d.csv",
-                                    provider=provider)
-
-    ed_lifetime: dict[tuple[str, str], float] = {}
-    for e_, d_, v_ in _read_triples(solve_data_dir / "edEntity_lifetime.csv",
-                                      provider=provider):
-        try:
-            ed_lifetime[(e_, d_)] = float(v_)
-        except ValueError:
-            continue
+    lifetime_method, p_years_d, end_of_life = _end_of_life(solve_data_dir, provider=provider)
 
     # pdProcess.csv / pdNode.csv: [entity, param, period, value]; filter to
     # rows where param == 'existing'.
@@ -322,13 +336,6 @@ def derive_p_entity_pre_existing(
         provider=provider,
     )
 
-    # Per-entity end of life, counted from the start of the run (``p_years_d`` covers the period history):
-    #   p_years_d[d0] + edEntity_lifetime[e, d0],  d0 = run_start_period(p_years_d)
-    d0 = run_start_period(p_years_d)
-
-    def _life_sum(e: str) -> float:
-        return 0.0 if d0 is None else p_years_d.get(d0, 0.0) + ed_lifetime.get((e, d0), 0.0)
-
     rows: list[tuple[str, str, float]] = []
     for e in entities:
         method = lifetime_method.get(e, "")
@@ -340,11 +347,7 @@ def derive_p_entity_pre_existing(
             v_unit = p_node_vu.get((e,), 0.0)
         else:
             v_unit = 0.0
-        gate_sum = (
-            _life_sum(e)
-            if method in ("reinvest_choice", "no_investment")
-            else None
-        )
+        gate_sum = end_of_life.get(e)
         for d in period_in_use:
             v: float = 0.0
             if method in ("reinvest_automatic", "reinvest_choice", "no_investment"):
@@ -455,11 +458,15 @@ def _compute_p_entity_existing_chain(
     entity_divest = frozenset(_read_singles(
         solve_data_dir / "entityDivest.csv", provider=provider,
     ))
-    p_divested: dict[str, float] = {}
-    divest_cumulative = read_handoff_frame(provider, K.HANDOFF_DIVEST_CUMULATIVE)
-    if divest_cumulative is not None:
-        for r in divest_cumulative.iter_rows(named=True):
-            p_divested[str(r["entity"])] = float(r["value"])
+    # The capacity earlier solves retired that still counts in each period: from its decision period until the
+    # end of life of the entity's pre-existing capacity (``realized_divest``, per decision period).
+    _methods, p_years_d, end_of_life = _end_of_life(solve_data_dir, provider=provider)
+    expired = {(e, d) for e, eol in end_of_life.items() for d in periods_in_use if p_years_d.get(d, 0.0) >= eol}
+    realized_divest = read_handoff_frame(provider, K.HANDOFF_REALIZED_DIVEST)
+    retired = retired_carried(
+        [] if realized_divest is None else
+        [(str(r["entity"]), str(r["period"]), float(r["value"])) for r in realized_divest.iter_rows(named=True)],
+        p_years_d, periods_in_use, expired)
 
     # Entities that appear in the realized-capacity handoff at all.  An
     # entity ABSENT from this set carried NO realized_existing forward (the
@@ -504,11 +511,11 @@ def _compute_p_entity_existing_chain(
                 # case; byte-parity for invest models, see note above).
                 v_all = pre_existing.get((e, d), 0.0)
                 if e in entity_divest:
-                    v_all -= p_divested.get(e, 0.0)
+                    v_all -= retired.get((e, d), 0.0)
             else:
                 v_all = later_existing.get((e, d), 0.0)
                 if e in entity_divest:
-                    v_all -= p_divested.get(e, 0.0)
+                    v_all -= retired.get((e, d), 0.0)
             all_rows.append((e, d, v_all))
             cnt = v_all / us if us else 0.0
             count_rows.append((e, d, cnt))

@@ -79,7 +79,9 @@ class OutputWriterState:
     cascade, stashed here.
 
     * ``divested`` — :func:`handoff_writers.write_p_entity_divested`'s
-      ``{entity: cumulative_divested}`` from its last call.
+      ``{entity: cumulative_divested}`` from its last call;
+      ``divested_period`` — :func:`handoff_writers.write_p_entity_divested_period`'s
+      ``{(entity, period): retired}``.
     * ``existing`` / ``invested`` — :func:`handoff_writers.
       write_p_entity_period_existing_capacity`'s ``{(entity, period):
       value}`` pair from its last call.
@@ -95,6 +97,7 @@ class OutputWriterState:
     periods_already_emitted: set[str] = field(default_factory=set)
     # Item 163 — handoff-mirror writer scratch (see the class docstring).
     divested: dict[str, float] = field(default_factory=dict)
+    divested_period: dict[tuple[str, str], float] = field(default_factory=dict)
     existing: dict[tuple[str, str], float] = field(default_factory=dict)
     invested: dict[tuple[str, str], float] = field(default_factory=dict)
     mirrors_written: set[str] = field(default_factory=set)

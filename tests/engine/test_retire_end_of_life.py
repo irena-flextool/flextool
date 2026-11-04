@@ -323,3 +323,102 @@ def test_storage_retirement_counts_until_the_end_of_life(tmp_path_factory) -> No
     capped = _rows_by_period(pb, "maxRetired_existing_n", "battery")
     assert sorted(capped) == ["p2020", "p2025", "p2030"]
     assert all(rows[0][1][1] == pytest.approx(50.0, rel=1e-12) for rows in capped.values())
+
+
+# ---------------------------------------------------------------------------
+# Chains of solves carry the retirements per decision period
+# ---------------------------------------------------------------------------
+
+
+def _in_service(step, entity: str = PLANT) -> dict[str, float]:
+    """Capacity in service per period of ``step``: its existing capacity (with the retirements of earlier solves
+    still counting) minus its own retirements still counting (edd_divest_active)."""
+    fd = step.flex_data
+    capacity = dict(_ed(fd.p_entity_all_existing, entity))
+    if fd.edd_divest_active is not None:
+        retired = _divest_mw(step, entity)
+        for d_r, d in utf8(fd.edd_divest_active).filter(pl.col("p") == entity).select("d_divest", "d").iter_rows():
+            capacity[d] = capacity.get(d, 0.0) - retired.get(d_r, 0.0)
+    return capacity
+
+
+@pytest.mark.solver
+def test_chain_carries_the_retirement_until_the_end_of_life(tmp_path_factory) -> None:
+    """reinvest_choice, lifetime 15, 100 MW retired in p2025, solved as one solve and as the chain y2020 … y2035.
+    Capacity in service 500 / 400 / 400 / 0 MW in p2020 … p2035 in every solve that holds the period (before: the
+    chain subtracted the 100 MW from every period of the later solves, so y2030 had −100 MW in p2035 and was
+    infeasible); y2030 carries the retirement into p2030 (500 − 100) but not into p2035 (the existing capacity has
+    ended).  The reported costs of the chain equal the single solve's."""
+    values = _lifetime("reinvest_choice", 15.0) + _retire()
+    want = {"p2020": 500.0, "p2025": 400.0, "p2030": 400.0, "p2035": 0.0}
+    for kind, chain in (("single", SINGLE), ("chain", CHAIN)):
+        url, scen = make_db(tmp_path_factory, alt=f"ret_chain_{kind}", values=values,
+                            base_chain=_no_battery_invest(chain))
+        steps = run(tmp_path_factory, url, scen)
+        for name, step in steps.items():
+            assert step.optimal, (kind, name)
+            got = _in_service(step)
+            assert got == pytest.approx({d: want[d] for d in got}, abs=1e-6), (kind, name)
+        if kind == "chain":
+            y2030 = steps["y2030_5week"].flex_data
+            assert _ed(y2030.p_entity_retired_carried) == pytest.approx({"p2030": 100.0})
+            assert _ed(y2030.p_entity_all_existing) == pytest.approx({"p2030": 400.0, "p2035": 0.0})
+    single = _results(tmp_path_factory, "ret_chain_costs_single", values, _no_battery_invest(SINGLE))
+    chained = _results(tmp_path_factory, "ret_chain_costs_chain", values, _no_battery_invest(CHAIN))
+    _assert_same_results(chained, single)
+
+
+@pytest.mark.solver
+def test_nested_dispatch_solve_carries_the_retirement(tmp_path_factory) -> None:
+    """An investment solve decides the retirement for p2020 … p2035 (realized, no dispatch) and a dispatch solve
+    runs on the capacity it hands over: 500 / 400 / 400 / 0 MW (before: the dispatch solve subtracted the 100 MW in
+    p2035 too, −100 MW, infeasible); the reported costs equal the single solve's."""
+    from tests.engine.test_chain_costs import _solve, _solves
+    values = _lifetime("reinvest_choice", 15.0) + _retire()
+    nested_values = (values + _solves(["cc_invest", "cc_dispatch"])
+                     + _solve("cc_invest", PERIODS, invest_periods=PERIODS, realized_invest_periods=PERIODS)
+                     + _solve("cc_dispatch", PERIODS, realized_periods=PERIODS))
+    entities = [["solve", "cc_invest", None], ["solve", "cc_dispatch", None]]
+    url, scen = make_db(tmp_path_factory, alt="ret_nested", values=nested_values,
+                        base_chain=_no_battery_invest(CHAIN), entities=entities)
+    steps = run(tmp_path_factory, url, scen)
+    dispatch = steps["cc_dispatch"]
+    assert dispatch.optimal
+    assert _ed(dispatch.flex_data.p_entity_all_existing) == pytest.approx(
+        {"p2020": 500.0, "p2025": 400.0, "p2030": 400.0, "p2035": 0.0})
+    nested = _results(tmp_path_factory, "ret_nested_costs", nested_values, _no_battery_invest(CHAIN),
+                      entities=entities)
+    single = _results(tmp_path_factory, "ret_nested_single", values, _no_battery_invest(SINGLE))
+    _assert_same_results(nested, single)
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("chain", [["init", "base", "stoch"], ["init", "base", "stoch", "recourse"]],
+                         ids=["none", "recourse"])
+def test_fan_retirement_ends_with_the_existing_capacity(tmp_path_factory, chain) -> None:
+    """``stoch_two_period_invest``: wind (existing 100 MW, reinvest_choice, lifetime 1: it ends at year 1 = p2040)
+    retires exactly 50 MW in p2035.  The retirement counts in the p2035 branch periods only: no maxFlow row of a
+    p2040 branch carries a retirement and their capacity is 0 (before: the end of life was year 2, so the
+    retirement and 50 MW stayed in p2040)."""
+    from tests.engine._unit_db import build
+    from tests.engine.test_chain_costs import _period_map
+    pins = _period_map({"p2035": 50.0, "p2040": 0.0})
+    values = (_lifetime("reinvest_choice", 1.0, "wind")
+              + [["unit", "wind", "invest_method", b64("retire_period", "str")],
+                 ["unit", "wind", "retire_min_period", pins], ["unit", "wind", "retire_max_period", pins],
+                 ["unit", "wind", "salvage_value", b64(SALVAGE, "float")]])
+    url, scen = make_db(tmp_path_factory, alt=f"ret_fan_{len(chain)}", values=values, base_chain=chain,
+                        fixture_json=FAN)
+    step = list(without_realization(run(tmp_path_factory, url, scen)).values())[-1]
+    assert step.optimal
+    active = utf8(step.flex_data.edd_divest_active).filter(pl.col("p") == "wind")
+    assert {"p2035_high", "p2035_low"} <= set(active["d"].to_list())
+    assert not [d for d in active["d"].to_list() if d.startswith("p2040")]
+    pb = build(step.flex_data)
+    from tests.engine._lp_rows import row_bounds, row_terms
+    terms, bounds = row_terms(pb, "maxFlow", "wind"), row_bounds(pb, "maxFlow", "wind")
+    p2040 = [n for n in terms if ",p2040_" in n]
+    assert p2040
+    for name in p2040:
+        assert _divest_columns(terms[name], "wind") == [] and bounds[name][1] == pytest.approx(0.0, abs=1e-9)
+    assert all(_divest_columns(terms[n], "wind") for n in terms if ",p2035_" in n)

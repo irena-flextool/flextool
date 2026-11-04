@@ -1936,6 +1936,7 @@ def master_network_data(
     new.p_entity_carried_commission = _keep_entity_param(getattr(data, "p_entity_carried_commission", None))
     new.p_entity_carried_in_construction = _keep_entity_param(
         getattr(data, "p_entity_carried_in_construction", None))
+    new.p_entity_retired_carried = _keep_entity_param(getattr(data, "p_entity_retired_carried", None))
     new.edd_divest_active = _keep_entity_frame(data.edd_divest_active)
     new.p_entity_max_units = _keep_entity_param(data.p_entity_max_units)
     new.ed_lifetime_fixed_cost = _keep_entity_param(data.ed_lifetime_fixed_cost)

@@ -26,6 +26,7 @@ carriers, named metric columns for multi-value):
     realized_existing      [entity, period, value]
     realized_commission    [entity, period, commission_period, value]
     divest_cumulative      [entity, value]
+    realized_divest        [entity, period, value]
     roll_end_state         [node, value]
     roll_end_online        [process, value]
     roll_end_flow          [process, source, sink, period, step, duration, value]
@@ -104,6 +105,13 @@ class SolveHandoff:
     # Carries pre-existing decay forward across solves.
     # File equivalent: solve_data/p_entity_divested.csv.
     divest_cumulative: pl.DataFrame | None = None
+
+    # Capacity retired (post-unitsize) per realized, non-branch decision period, chain-cumulative.  A later solve
+    # subtracts a retirement from the periods it still counts in (from its decision period until the end of life
+    # of the entity's pre-existing capacity), not from every period.  Producer: ``build_handoff_from_solution``.
+    # Consumers: ``apply_existing_chain`` (``p_entity_retired_carried``) and the emitted
+    # ``p_entity_all_existing``.
+    realized_divest: pl.DataFrame | None = None
 
     # End-of-roll storage state for ``bind_forward_only`` carry-over.
     # Producer: prior roll's v_state at its last (d, t).
@@ -222,7 +230,7 @@ class SolveHandoff:
     cum_sim_hours: pl.DataFrame | None = None
 
     _FIELDS = (
-        "realized_invest", "realized_existing", "realized_commission", "divest_cumulative",
+        "realized_invest", "realized_existing", "realized_commission", "divest_cumulative", "realized_divest",
         "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
         "roll_end_step", "online_history", "fix_online", "fix_reserve",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",

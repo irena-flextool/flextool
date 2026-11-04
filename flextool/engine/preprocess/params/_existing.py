@@ -1321,6 +1321,41 @@ def edd_invest_lookback_set_lf(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
+def p_entity_retired_carried_from_handoff(source: "InputSource",
+                                          active_solve: str | None,
+                                          period_in_use: list[str],
+                                          workdir: Path | None,
+                                          *,
+                                          provider: "object | None" = None,
+                                          ) -> "Param | None":
+    """``p_entity_retired_carried`` Param ``[e, d]`` (MW, MWh for storage): the capacity earlier solves of a chain
+    retired (handoff ``realized_divest``, per decision period) that still counts in the solve's periods, from the
+    decision period until the end of life of the entity's pre-existing capacity
+    (:func:`._retire_existing.retired_carried`).  ``None`` without carried retirements in these periods."""
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
+    from flextool.engine.preprocess.params._derived import _lifetime_expired_pairs, _lifetime_years
+    from flextool.engine.preprocess.params._retire_existing import retired_carried
+    frame = read_handoff_frame(provider, K.HANDOFF_REALIZED_DIVEST) if provider is not None else None
+    if frame is None or frame.height == 0 or not period_in_use:
+        return None
+    rows = [(str(e), str(d), float(v)) for e, d, v in frame.select(
+        pl.col("entity").cast(pl.Utf8), pl.col("period").cast(pl.Utf8),
+        pl.col("value").cast(pl.Utf8).cast(pl.Float64, strict=False).fill_null(0.0)).iter_rows()]
+    periods = [str(d) for d in period_in_use]
+    carried = retired_carried(
+        rows, _lifetime_years(source, active_solve, workdir, provider=provider), periods,
+        _lifetime_expired_pairs(source, active_solve, workdir, provider=provider, periods=periods))
+    if not carried:
+        return None
+    out = (pl.DataFrame({"e": [e for e, _ in carried], "d": [d for _, d in carried],
+                         "value": list(carried.values())},
+                        schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
+             .lazy().select(alias_to_axis("e", "e"), alias_to_axis("d", "d"), "value")
+             .sort("e", "d").collect())
+    return Param(("e", "d"), out)
+
+
 def p_entity_all_existing_from_handoff(
         source: "InputSource",
         active_solve: str | None,
@@ -1329,7 +1364,7 @@ def p_entity_all_existing_from_handoff(
         *,
         p_entity_period_existing_capacity: "Param | None" = None,
         p_entity_previously_invested_capacity: "Param | None" = None,
-        p_entity_divested: "Param | None" = None,
+        p_entity_retired_carried: "Param | None" = None,
         solve_first: bool = True,
         edd_history: "pl.DataFrame | None" = None,
         workdir: Path | None = None,
@@ -1345,7 +1380,11 @@ def p_entity_all_existing_from_handoff(
             ``all_existing[e, d] = pre_existing[e, d]``  (no divest applied)
       * later solves →
             ``all_existing[e, d] = later_existing[e, d]``
-            ``                    − p_entity_divested[e]   (if e ∈ entityDivest)``
+            ``                    − retired_carried[e, d]   (if e ∈ entityDivest)``
+
+    where ``retired_carried[e, d]`` (:func:`p_entity_retired_carried_from_handoff`) is the capacity earlier
+    solves retired that still counts in d: a retirement removes pre-existing capacity until its end of life,
+    after which the aged ``later_existing`` has dropped it already.
 
     where ``later_existing[e, d]`` for the chain-runner case is the
     chain-summed prior-solve existing per current period — already
@@ -1372,8 +1411,8 @@ def p_entity_all_existing_from_handoff(
         invest at d.  Used only when ``p_entity_period_existing_capacity``
         is None (the simple-baseline branch); the chain-summation
         branch derives both terms from ``ppec``.
-    p_entity_divested
-        Handoff Param ``[e, value]`` cumulative prior divest.
+    p_entity_retired_carried
+        Param ``[e, d, value]`` — prior solves' retirements still counting in d.
     solve_first
         Δ.11 — flextool's ``solveFirst`` flag.  When True, divest is
         NOT subtracted (mirrors the writer's solve-first branch); when
@@ -1405,13 +1444,14 @@ def p_entity_all_existing_from_handoff(
     # branches; the divest subtraction is gated on solve_first below.
     div_set_lf = entity_divest_set_lf(source).with_columns(
         is_divest=pl.lit(True))
-    if (p_entity_divested is not None
-            and p_entity_divested.frame.height > 0):
-        ped_lf = (p_entity_divested.frame.lazy()
-                     .select("e", pl.col("value").alias("divested")))
+    if (p_entity_retired_carried is not None
+            and p_entity_retired_carried.frame.height > 0):
+        ped_lf = (p_entity_retired_carried.frame.lazy()
+                     .select("e", "d", pl.col("value").alias("divested")))
     else:
         ped_lf = pl.LazyFrame(schema={
             "e": schema_dtype(_enums, "e"),
+            "d": schema_dtype(_enums, "d"),
             "divested": pl.Float64,
         })
 
@@ -1447,11 +1487,11 @@ def p_entity_all_existing_from_handoff(
                        .agg(pl.col("ppec").sum().alias("later")))
         grid_lf, later_lf = align_join_dtypes(grid_lf, later_lf, ["e", "d"])
         grid_lf, div_set_lf = align_join_dtypes(grid_lf, div_set_lf, ["e"])
-        grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e"])
+        grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e", "d"])
         out = (grid_lf
                   .join(later_lf, on=["e", "d"], how="left")
                   .join(div_set_lf, on="e", how="left")
-                  .join(ped_lf, on="e", how="left")
+                  .join(ped_lf, on=["e", "d"], how="left")
                   .with_columns(
                       later=pl.col("later").fill_null(0.0),
                       is_divest=pl.col("is_divest").fill_null(False),
@@ -1474,7 +1514,7 @@ def p_entity_all_existing_from_handoff(
     # Simple-baseline branch (single-solve / non-renew chains):
     #   pae[e, d] = pre_existing[e, d]
     #             + p_entity_previously_invested_capacity[e, d]
-    #             − p_entity_divested[e]   (if e ∈ entityDivest, later solves)
+    #             − retired_carried[e, d]   (if e ∈ entityDivest, later solves)
     # ---------------------------------------------------------------
 
     # Previously-invested overlay (in-memory handoff carrier).
@@ -1496,13 +1536,13 @@ def p_entity_all_existing_from_handoff(
     from flextool.engine.input._axis_enums import align_join_dtypes
     pre_renamed = pre_existing_lf.rename({"value": "pre"})
     grid_lf, ppic_lf = align_join_dtypes(grid_lf, ppic_lf, ["e", "d"])
-    grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e"])
+    grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e", "d"])
     grid_lf, pre_renamed = align_join_dtypes(grid_lf, pre_renamed, ["e", "d"])
     grid_lf, div_set_lf = align_join_dtypes(grid_lf, div_set_lf, ["e"])
     # Second pass: now grid_lf carries the widest dtype on each axis,
     # pull every input up.
     grid_lf, ppic_lf = align_join_dtypes(grid_lf, ppic_lf, ["e", "d"])
-    grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e"])
+    grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e", "d"])
     grid_lf, pre_renamed = align_join_dtypes(grid_lf, pre_renamed, ["e", "d"])
     grid_lf, div_set_lf = align_join_dtypes(grid_lf, div_set_lf, ["e"])
     out = (grid_lf
@@ -1510,7 +1550,7 @@ def p_entity_all_existing_from_handoff(
                       on=["e", "d"], how="left")
               .join(ppic_lf, on=["e", "d"], how="left")
               .join(div_set_lf, on="e", how="left")
-              .join(ped_lf, on="e", how="left")
+              .join(ped_lf, on=["e", "d"], how="left")
               .with_columns(
                   pre=pl.col("pre").fill_null(0.0),
                   ppic=pl.col("ppic").fill_null(0.0),
@@ -1731,7 +1771,10 @@ def apply_existing_chain(flex_data: object,
                               or list(period_in_use))
 
     ppic = getattr(flex_data, "p_entity_previously_invested_capacity", None)
-    ped = getattr(flex_data, "p_entity_divested", None)
+    # The capacity earlier solves retired that still counts in this solve's periods (until the end of life).
+    retired = p_entity_retired_carried_from_handoff(source, active_solve, period_in_use, workdir,
+                                                    provider=provider)
+    flex_data.p_entity_retired_carried = retired
 
     # Δ.11 / Phase 4.2-1e — chain-summation inputs.  The in-memory
     # handoff ``realized_existing`` carrier is the sole source for the
@@ -1773,7 +1816,7 @@ def apply_existing_chain(flex_data: object,
         period_with_history, period_in_use,
         p_entity_period_existing_capacity=ppec_param,
         p_entity_previously_invested_capacity=ppic,
-        p_entity_divested=ped,
+        p_entity_retired_carried=retired,
         solve_first=solve_first,
         edd_history=edd_hist_df,
         workdir=workdir, provider=provider)

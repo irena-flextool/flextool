@@ -37,6 +37,7 @@ _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
     K.HANDOFF_REALIZED_EXISTING:  ("entity", "period", "value"),
     K.HANDOFF_REALIZED_COMMISSION: ("entity", "period", "commission_period", "value"),
     K.HANDOFF_DIVEST_CUMULATIVE:  ("entity", "value"),
+    K.HANDOFF_REALIZED_DIVEST:    ("entity", "period", "value"),
     K.HANDOFF_ROLL_END_STATE:     ("node", "value"),
     K.HANDOFF_UPWARD_ROLL_END_STATE: ("node", "value"),
     K.HANDOFF_ROLL_END_ONLINE:    ("process", "value"),
@@ -77,7 +78,7 @@ ROLL_FORWARD_FIELDS: frozenset = frozenset((
     "cum_sim_hours",
 ))
 PIN_FIELDS: frozenset = frozenset((
-    "realized_invest", "realized_existing", "realized_commission", "divest_cumulative",
+    "realized_invest", "realized_existing", "realized_commission", "divest_cumulative", "realized_divest",
     "fix_online", "fix_reserve", "fix_storage_quantity", "fix_storage_price",
     "fix_storage_usage",
 ))
@@ -89,6 +90,7 @@ _FIELD_TO_KEY: tuple[tuple[str, str], ...] = (
     ("realized_existing",   K.HANDOFF_REALIZED_EXISTING),
     ("realized_commission", K.HANDOFF_REALIZED_COMMISSION),
     ("divest_cumulative",   K.HANDOFF_DIVEST_CUMULATIVE),
+    ("realized_divest",     K.HANDOFF_REALIZED_DIVEST),
     ("roll_end_state",      K.HANDOFF_ROLL_END_STATE),
     ("upward_roll_end_state", K.HANDOFF_UPWARD_ROLL_END_STATE),
     ("roll_end_online",     K.HANDOFF_ROLL_END_ONLINE),
@@ -165,6 +167,7 @@ _HANDOFF_TO_OVERRIDE: dict[str, str] = {
     K.HANDOFF_REALIZED_INVEST:      K.OVERRIDE_REALIZED_INVEST,
     K.HANDOFF_REALIZED_EXISTING:    K.OVERRIDE_REALIZED_EXISTING,
     K.HANDOFF_DIVEST_CUMULATIVE:    K.OVERRIDE_DIVEST_CUMULATIVE,
+    K.HANDOFF_REALIZED_DIVEST:      K.OVERRIDE_REALIZED_DIVEST,
     K.HANDOFF_ROLL_END_STATE:       K.OVERRIDE_ROLL_END_STATE,
     K.HANDOFF_UPWARD_ROLL_END_STATE: K.OVERRIDE_UPWARD_ROLL_END_STATE,
     K.HANDOFF_ROLL_END_ONLINE:      K.OVERRIDE_ROLL_END_ONLINE,

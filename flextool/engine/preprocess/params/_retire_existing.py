@@ -201,5 +201,32 @@ def ed_values(param) -> dict[tuple[str, str], float]:
     return _ed_values(param)
 
 
+
+
+def retired_carried(rows: Iterable[tuple[str, str, float]],
+                    years: Mapping[str, float],
+                    periods: Iterable[str],
+                    expired: "set[tuple[str, str]]",
+                    ) -> dict[tuple[str, str], float]:
+    """``{(e, d): MW}`` of the retirements earlier solves of a chain realized (``rows``: entity, decision period
+    d′, capacity) that still count in the solve's periods: Σ_{d′ : yr[d′] ≤ yr[d], (e, d) not past the end of
+    life of e's pre-existing capacity} retired[e, d′] (``expired``: the (e, d) pairs past it).  A decision period
+    without a year in ``years`` lies before the solve (its history), so it counts."""
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+    out: dict[tuple[str, str], float] = {}
+    periods = [str(d) for d in periods]
+    for e, d_r, v in rows:
+        if not v:
+            continue
+        y_r = years.get(str(d_r))
+        for d in periods:
+            if (str(e), d) in expired:
+                continue
+            if y_r is not None and y_r > years.get(d, 0.0) + YEAR_TOL:
+                continue
+            out[(str(e), d)] = out.get((str(e), d), 0.0) + float(v)
+    return out
+
+
 __all__ = ["active_windows", "check_group_retirement_minimums", "check_retirement_minimums", "ed_values",
-           "max_retirable"]
+           "max_retirable", "retired_carried"]

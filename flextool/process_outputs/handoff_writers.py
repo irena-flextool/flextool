@@ -13,7 +13,7 @@ The five handoff files (per ``ARCHITECTURE.md`` "Solve-to-solve
 handoff"):
 
     1. solve_data/p_entity_period_existing_capacity.csv
-    2. solve_data/p_entity_divested.csv
+    2. solve_data/p_entity_divested.csv (and p_entity_divested_period.csv, per decision period)
     3. solve_data/fix_storage_quantity.csv
     4. solve_data/fix_storage_usage.csv
     5. solve_data/p_roll_continue_state.csv
@@ -76,6 +76,7 @@ _logger = logging.getLogger(__name__)
 MIRROR_FILES: tuple[str, ...] = (
     "p_entity_period_existing_capacity.csv",
     "p_entity_divested.csv",
+    "p_entity_divested_period.csv",
     "fix_storage_quantity.csv",
     "fix_storage_usage.csv",
     "p_roll_continue_state.csv",
@@ -390,6 +391,56 @@ def write_p_entity_divested(
         writer_state.divested = cumulative_by_entity
 
     out = pd.DataFrame(rows, columns=["entity", "p_entity_divested"])
+    out.to_csv(out_path, index=False, float_format="%.8g")
+    _logger.info("wrote %s (%d rows)", out_path, len(out))
+    return out_path
+
+
+def write_p_entity_divested_period(
+    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
+    prior_handoff: "SolveHandoff | None" = None,
+    flex_data: "FlexData | None" = None,
+    is_first_solve: bool | None = None,
+    writer_state: "OutputWriterState | None" = None,
+    provider: "object | None" = None,
+    csv_dump: bool = False,
+) -> Path:
+    """Write ``solve_data/p_entity_divested_period.csv`` [entity, period, p_entity_divested_period] (debug mirror of
+    the ``realized_divest`` handoff carrier; only under ``csv_dump=True``).
+
+    ``retired[e, d] = prior[e, d] + v_divest[e, d] * unitsize[e]`` for the realized invest periods d of this solve
+    (``realized_invest_periods_of_current_solve``): the capacity retired per decision period, which a later solve
+    subtracts until the end of life of the pre-existing capacity.  ``prior`` is ``prior_handoff.realized_divest``
+    when populated, else ``writer_state.divested_period`` (this writer's previous call in the cascade)."""
+    out_path = work_folder / "solve_data" / "p_entity_divested_period.csv"
+    if not csv_dump:
+        return out_path
+    entities = set(_resolve_entity_divest(flex_data))
+    unitsize = _resolve_unitsize(flex_data)
+    prior: dict[tuple[str, str], float] = {}
+    if not is_first_solve:
+        if prior_handoff is not None and getattr(prior_handoff, "realized_divest", None) is not None:
+            for r in prior_handoff.realized_divest.iter_rows(named=True):
+                key = (str(r["entity"]), str(r["period"]))
+                prior[key] = prior.get(key, 0.0) + float(r["value"])
+        elif writer_state is not None:
+            prior = dict(writer_state.divested_period)
+    realized = _load_realized_periods(
+        work_folder / "solve_data" / "realized_invest_periods_of_current_solve.csv", provider=provider) or set()
+    divest_df = extract_variable(h, "v_divest", ("entity",), solve_name=solve_name, has_time=False)
+    retired = dict(prior)
+    if not divest_df.empty:
+        for (_solve, period), row in divest_df.iterrows():
+            if str(period) not in realized:
+                continue
+            for e, v in row.items():
+                if str(e) in entities and v:
+                    key = (str(e), str(period))
+                    retired[key] = retired.get(key, 0.0) + float(v) * unitsize.get(str(e), 1.0)
+    if writer_state is not None:
+        writer_state.divested_period = retired
+    out = pd.DataFrame([(e, d, v) for (e, d), v in sorted(retired.items()) if v],
+                       columns=["entity", "period", "p_entity_divested_period"])
     out.to_csv(out_path, index=False, float_format="%.8g")
     _logger.info("wrote %s (%d rows)", out_path, len(out))
     return out_path
@@ -810,6 +861,8 @@ def write_all_handoffs(
     dispatch: list[tuple[object, dict]] = [
         (write_p_entity_divested,
          {**fd_kwargs, "prior_handoff": prior_handoff}),
+        (write_p_entity_divested_period,
+         {**fd_kwargs, "prior_handoff": prior_handoff, "provider": provider}),
         (write_fix_storage_quantity, fd_kwargs),
         (write_p_roll_continue_state,
          {"flex_data": flex_data, "writer_state": writer_state, "csv_dump": csv_dump}),
