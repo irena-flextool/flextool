@@ -233,3 +233,48 @@ def test_repository_jsons_carry_no_behaviour_markers(path: Path) -> None:
 def test_construction_lead_time_marker_written(migrated) -> None:
     """A database upgraded from below v77 carries the construction lead time behaviour-change marker."""
     assert ("flextool_behaviour_change:construction_lead_time_commissioning", "77") in migrated["after"]["markers"]
+
+
+_OLD_EXISTING = ("[MW] Capacity that already exists. With virtual_unitsize, the number of units is existing / "
+                 "virtual_unitsize. Constant or period.")
+_OLD_NODE_UNITSIZE = ("[MWh] Size of a single storage unit - used for integer investments (lumped investments). If "
+                      "not given, assumed from the existing storage capacity.")
+_NEW_EXISTING = ("[MW or count] Existing capacity or number of units. If virtual_unitsize is given, then existing is "
+                 "the number of units (capacity = existing × virtual_unitsize). Otherwise existing is the existing "
+                 "capacity of a single unit (typically in MW). Constant or period.")
+_NEW_NODE_UNITSIZE = ("[MWh] Size of one unit. With it, existing is the number of units. Investments and retirements "
+                      "are continuous; their limits are in MWh. No value: the existing capacity, or 1000 MWh without "
+                      "it.")
+_CUSTOM = "[MW] My own note on connection capacity."
+
+
+def _set_description(db, cls: str, name: str, text: str) -> None:
+    pdef = db.item(db.mapped_table("parameter_definition"), entity_class_name=cls, name=name)
+    db.update_parameter_definition(id=pdef["id"], description=text)
+
+
+def _descriptions(url: str) -> tuple[dict, int]:
+    with DatabaseMapping(url) as db:
+        defs = {(d["entity_class_name"], d["name"]): d["description"] for d in db.get_items("parameter_definition")}
+        commits = db.query(db.commit_sq).count()
+    return defs, commits
+
+
+def test_current_version_database_gets_unit_count_texts(tmp_path: Path) -> None:
+    """A database already at the current version, carrying superseded existing / virtual_unitsize
+    descriptions, gets the unit-count texts; an edited description is kept; a rerun commits nothing."""
+    url = json_to_db(FIXTURES / "stoch_two_period.json", tmp_path / "current.sqlite")
+    with DatabaseMapping(url) as db:
+        _set_description(db, "unit", "existing", _OLD_EXISTING)
+        _set_description(db, "node", "virtual_unitsize", _OLD_NODE_UNITSIZE)
+        _set_description(db, "connection", "existing", _CUSTOM)
+        db.commit_session("superseded and custom descriptions")
+    migrate_database(url)
+    first, commits_first = _descriptions(url)
+    assert first[("unit", "existing")] == _NEW_EXISTING
+    assert first[("node", "virtual_unitsize")] == _NEW_NODE_UNITSIZE
+    assert first[("connection", "existing")] == _CUSTOM
+    migrate_database(url)
+    second, commits_second = _descriptions(url)
+    assert second == first
+    assert commits_second == commits_first

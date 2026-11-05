@@ -1980,7 +1980,7 @@
         null
       ],
       null,
-      "[MW] Capacity that already exists. With virtual_unitsize, the number of units is existing / virtual_unitsize. Constant or period.",
+      "[MW or count] Existing capacity or number of units. If virtual_unitsize is given, then existing is the number of units (capacity = existing \u00d7 virtual_unitsize). Otherwise existing is the existing capacity of a single unit (typically in MW). Constant or period.",
       "basics"
     ],
     [
@@ -2211,7 +2211,7 @@
         null
       ],
       null,
-      "[MW] Size of one unit. Investments, retirements and binary startups move whole units of this size. No value: the existing capacity, or 1000 MW without it.",
+      "[MW] Size of one unit. With it, existing is the number of units. Binary startups commit whole units of this size. Investments and retirements are continuous; their limits are in MW. No value: the existing capacity, or 1000 MW without it.",
       "basics"
     ],
     [
@@ -2992,7 +2992,7 @@
         null
       ],
       null,
-      "[MWh] Storage capacity that already exists. With virtual_unitsize, the number of units is existing / virtual_unitsize. Constant or period.",
+      "[MWh or count] Existing storage capacity or number of storage units. If virtual_unitsize is given, then existing is the number of units (capacity = existing \u00d7 virtual_unitsize). Otherwise existing is the existing capacity of a single unit (typically in MWh). Constant or period.",
       "basics"
     ],
     [
@@ -3344,7 +3344,7 @@
         null
       ],
       null,
-      "[MWh] Size of one unit. Investments, retirements and binary startups move whole units of this size. No value: the existing capacity, or 1000 MWh without it.",
+      "[MWh] Size of one unit. With it, existing is the number of units. Investments and retirements are continuous; their limits are in MWh. No value: the existing capacity, or 1000 MWh without it.",
       "basics"
     ],
     [
@@ -4059,7 +4059,7 @@
         null
       ],
       null,
-      "[MW] Capacity that already exists. With virtual_unitsize, the number of units is existing / virtual_unitsize. Constant or period.",
+      "[MW or count] Existing capacity or number of units. If virtual_unitsize is given, then existing is the number of units (capacity = existing \u00d7 virtual_unitsize). Otherwise existing is the existing capacity of a single unit (typically in MW). Constant or period.",
       "basics"
     ],
     [
@@ -4290,7 +4290,7 @@
         null
       ],
       null,
-      "[MW] Size of one unit. Investments, retirements and binary startups move whole units of this size. No value: the existing capacity, or 1000 MW without it.",
+      "[MW] Size of one unit. With it, existing is the number of units. Binary startups commit whole units of this size. Investments and retirements are continuous; their limits are in MW. No value: the existing capacity, or 1000 MW without it.",
       "basics"
     ],
     [

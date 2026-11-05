@@ -1812,6 +1812,9 @@ def migrate_database(
             print(database_path+ " updated to version "+ str(new_version))
             _commit_step(db,"Updated Flextool data structure to version " + str(new_version))
         else:
+            if int(version) == FLEXTOOL_DB_VERSION:
+                _refresh_unit_count_texts(db)
+                _commit_step(db, "Refreshed existing / virtual_unitsize descriptions")
             print(database_path+ " already up-to-date at version "+ str(version))
 
 def _rename_or_drop_parameter_definition(db, entity_class_name, old_name, new_name, description=None):
@@ -4345,6 +4348,82 @@ _V77_TYPE_TARGETS: dict[tuple[str, str], tuple[str, ...]] = {
 }
 
 
+def _unit_count_existing_text(cls: str) -> str:
+    """Description of ``existing``: with virtual_unitsize it is the number of units."""
+    if cls == "node":
+        head, typical = "[MWh or count] Existing storage capacity or number of storage units.", "MWh"
+    else:
+        head, typical = "[MW or count] Existing capacity or number of units.", "MW"
+    return (
+        f"{head} If virtual_unitsize is given, then existing is the number of units (capacity = existing × "
+        f"virtual_unitsize). Otherwise existing is the existing capacity of a single unit (typically in "
+        f"{typical}). Constant or period.")
+
+
+def _unit_count_vu_text(cls: str) -> str:
+    """Description of ``virtual_unitsize``; nodes are in MWh and have no startups."""
+    unit = "MWh" if cls == "node" else "MW"
+    startups = "" if cls == "node" else "Binary startups commit whole units of this size. "
+    return (
+        f"[{unit}] Size of one unit. With it, existing is the number of units. {startups}Investments and "
+        f"retirements are continuous; their limits are in {unit}. No value: the existing capacity, or 1000 {unit} "
+        "without it.")
+
+
+# Descriptions FlexTool has shipped for ``existing`` / ``virtual_unitsize`` before the
+# unit-count texts (FlexTool 4.0 - 4.1 schema and the earlier v77 texts).  A database
+# already at v77 has one of these unless the user edited it.
+_SUPERSEDED_UNIT_COUNT_TEXTS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("unit", "existing"): (
+        "[MW] Existing capacity. Constant or Period",
+        "[MW] Existing capacity. Constant or period.",
+        "[MW] Capacity that already exists. With virtual_unitsize, the number of units is existing / "
+        "virtual_unitsize. Constant or period.",
+    ),
+    ("connection", "existing"): (
+        "[MW] Existing capacity. Constant or Period",
+        "[MW] Existing capacity. Constant or period.",
+        "[MW] Capacity that already exists. With virtual_unitsize, the number of units is existing / "
+        "virtual_unitsize. Constant or period.",
+    ),
+    ("node", "existing"): (
+        "[MWh] Existing storage capacity. Constant or Period",
+        "[MWh] Existing storage capacity. Constant or period.",
+        "[MWh] Storage capacity that already exists. With virtual_unitsize, the number of units is existing / "
+        "virtual_unitsize. Constant or period.",
+    ),
+    ("unit", "virtual_unitsize"): (
+        "[MW] Size of a single unit - used for integer investments (lumped investments), minimum loads and "
+        "start-up costs. If not given, assumed from the existing unit capacity.",
+        "[MW] Size of one unit. Investments, retirements and binary startups move whole units of this size. "
+        "No value: the existing capacity, or 1000 MW without it.",
+    ),
+    ("connection", "virtual_unitsize"): (
+        "[MW] Size of single connection - used for integer (lumped) investments.",
+        "[MW] Size of one unit. Investments, retirements and binary startups move whole units of this size. "
+        "No value: the existing capacity, or 1000 MW without it.",
+    ),
+    ("node", "virtual_unitsize"): (
+        "[MWh] Size of a single storage unit - used for integer investments (lumped investments). If not "
+        "given, assumed from the existing storage capacity.",
+        "[MWh] Size of one unit. Investments, retirements and binary startups move whole units of this size. "
+        "No value: the existing capacity, or 1000 MWh without it.",
+    ),
+}
+
+
+def _refresh_unit_count_texts(db) -> None:
+    """Rewrite superseded ``existing`` / ``virtual_unitsize`` descriptions of a database
+    already at the current version.  Only a description equal to one FlexTool shipped
+    (:data:`_SUPERSEDED_UNIT_COUNT_TEXTS`) is replaced; an edited one is kept.  Idempotent."""
+    for (cls, name), old_texts in _SUPERSEDED_UNIT_COUNT_TEXTS.items():
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None or pdef["description"] not in old_texts:
+            continue
+        text = _unit_count_existing_text(cls) if name == "existing" else _unit_count_vu_text(cls)
+        db.update_parameter_definition(id=pdef["id"], description=text)
+
+
 def _v77_texts() -> dict[tuple[str, str], str]:
     """Descriptions written by v77 (owner-reviewed texts, 2026-11-03)."""
     t: dict[tuple[str, str], str] = {}
@@ -4545,12 +4624,8 @@ def _v77_texts() -> dict[tuple[str, str], str]:
         "Array of periods in which investments can be decided. With a construction lead time, the capacity comes "
         "online later.")
     for cls, unit in (("unit", "[MW]"), ("connection", "[MW]"), ("node", "[MWh]")):
-        t[(cls, "virtual_unitsize")] = (
-            f"{unit} Size of one unit. Investments, retirements and binary startups move whole units of this size. "
-            f"No value: the existing capacity, or 1000 {unit[1:-1]} without it.")
-        t[(cls, "existing")] = (
-            f"{unit} {'Storage capacity' if cls == 'node' else 'Capacity'} that already exists. With "
-            f"virtual_unitsize, the number of units is existing / virtual_unitsize. Constant or period.")
+        t[(cls, "virtual_unitsize")] = _unit_count_vu_text(cls)
+        t[(cls, "existing")] = _unit_count_existing_text(cls)
     t[("connection", "is_DC")] = (
         "Whether the connection is DC. Its flow into a group with a non-synchronous limit counts as "
         "non-synchronous, in both directions. Default no.")
