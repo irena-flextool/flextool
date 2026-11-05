@@ -93,6 +93,11 @@
   "Investment discount factor" of the solve summary is now the investment factor (before: the operations
   factor). The printed objectives and the CO2 prices stay those of each solve. An upgraded database prints a
   notice listing the solves of such a run.
+- **Fixed: the ramp of a unit with online variables at a stochastic branch point** (results change for
+  stochastic solves with mid-horizon branches and units with online variables and a downward ramp limit). Each
+  branch's first step now reads the shut-down share of the trunk's last step once; before, it was multiplied by
+  the number of branches squared (1.04 instead of 0.26 with two branches), which let units shut down at the branch
+  point drop their flow faster than the ramp limit allows.
 - **Units and connections between coarse nodes use the coarse step** (results can change for models with a
   `group` `new_stepduration`). A unit or connection whose balance nodes are all in coarse groups now has one flow
   per coarse step, a rate that stays the same over the step, so the model gets smaller (the three-region hydrogen

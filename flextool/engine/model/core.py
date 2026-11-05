@@ -2484,12 +2484,13 @@ def _ramp_limit_share(b: "_Build", ramp_speed: Param, side: str, points: "pl.Dat
 
 
 def _predecessor_points(rows_subset: "pl.DataFrame", d) -> "pl.DataFrame":
-    """``(p, source, sink, d, t)`` at the predecessor identity of each row of ``rows_subset`` (:func:`_ramp_rows`
-    link rows: ``__d_prev`` / ``__t_prev``), in the dtypes of ``d.dt``."""
+    """``(p, source, sink, d, t)`` at the predecessor identity of the rows of ``rows_subset`` (:func:`_ramp_rows`
+    link rows: ``__d_prev`` / ``__t_prev``), in the dtypes of ``d.dt``, each point once: at a branch point several
+    rows (one per branch) share the predecessor, and a repeated point would repeat its value in every join on it."""
     return rows_subset.select(
         "p", "source", "sink",
         pl.col("__d_prev").cast(d.dt.schema["d"]).alias("d"),
-        pl.col("__t_prev").cast(d.dt.schema["t"]).alias("t"))
+        pl.col("__t_prev").cast(d.dt.schema["t"]).alias("t")).unique(maintain_order=True)
 
 
 def _attach_at_predecessor(rows_subset: "pl.DataFrame", values: "pl.DataFrame", keys: list) -> "pl.DataFrame":

@@ -701,3 +701,24 @@ def test_min_load_constant_vs_map_same_ramp_rows(tmp_path_factory) -> None:
         step = list(run(tmp_path_factory, url, scen).values())[-1]
         stoch_shapes[kind] = _row_shapes(build(step.flex_data))
     assert stoch_shapes["const"] == stoch_shapes["time"]
+
+
+def test_branch_point_shutdown_share_counted_once(tmp_path_factory) -> None:
+    """At a branch point (the mid-horizon fixture: trunk p2035 = t0001–t0003 continues into the branches p2040_high
+    and p2040_low at t0004) each branch's down-ramp row reads its own shut-down with c·SD′ of the trunk's last step
+    once.  base: linear online, min_load 0.4, ramp speed 1e-3 / min on base -> elec, c = 1, 1-h steps:
+    SD′[p2035, t0003] = min(1, 0.4 + ½·1e-3·60·1) = 0.43.  Before: the trunk step was looked up once per branch and
+    the share was multiplied by the repeats (1.72 with two branches)."""
+    rel = ["base", "elec"]
+    vals = [["unit", "base", "startup_method", b64("linear", "str")], ["unit", "base", "min_load", b64(0.4, "float")],
+            *_ramp(1e-3, rel)]
+    url, scen = make_db(tmp_path_factory, alt="ramp_branch", values=vals, base_chain=["init", "base", "stoch"],
+                        fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_midhorizon_nreal0.json")
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    rows = {k: v for k, v in row_terms(build(step.flex_data), "ramp_sink_down_constraint", "base,base,elec,p2040_").items()
+            if k.endswith(",t0004]")}
+    assert sorted(rows) == [f"ramp_sink_down_constraint[base,base,elec,p2040_{b},t0004]" for b in ("high", "low")]
+    for name, terms in rows.items():
+        branch = name.split(",")[3]
+        assert coef(terms, f"v_shutdown_linear[base,{branch},t0004]") == pytest.approx(0.43, abs=TOL), name
+        assert coef(terms, "v_flow[base,base,elec,p2035,t0003]") == pytest.approx(-1.0, abs=TOL)
