@@ -1382,6 +1382,49 @@ def _read_p_entity_all_existing_csv(workdir: Path | None,
               .select("e", "d", "value"))
 
 
+def _process_capacity_per_unit_lf(cap_lf: pl.LazyFrame, source: "InputSource") -> pl.LazyFrame:
+    """Lazy ``[p, d, value]``: the capacity ``[e, d, value]`` (MW / MWh) of each entity divided by its unitsize
+    (:func:`_entity_unitsize_lf`; ``UNITSIZE_DEFAULT`` where absent).
+
+    capacity = existing × virtual_unitsize when virtual_unitsize is set, else existing, so the result is the existing
+    unit count: ``existing`` itself with virtual_unitsize, 1 without it (unitsize = existing).
+    """
+    us_lf = _entity_unitsize_lf(source)
+    return (cap_lf.pipe(rename_to_axis, {"e": "p"})
+                  .join(us_lf.pipe(rename_to_axis, {"e": "p"}), on="p", how="left")
+                  .with_columns(us=pl.col("us").fill_null(UNITSIZE_DEFAULT))
+                  .with_columns(value=pl.col("value") / pl.col("us"))
+                  .select("p", "d", "value"))
+
+
+def _explicit_process_existing(source: "InputSource") -> list[str]:
+    """Units and connections with an explicit ``existing`` row (Spine's default-broadcast rows excluded)."""
+    names: list[str] = []
+    for cls in ("unit", "connection"):
+        ex = _try_param_explicit(source, cls, "existing")
+        if ex is not None and ex.height > 0:
+            names.extend(str(x) for x in ex.get_column("name").unique().to_list())
+    return sorted(set(names))
+
+
+def _pre_existing_process_capacity_lf(source: "InputSource",
+                                       active_solve: str | None,
+                                       periods: list[str],
+                                       workdir: Path | None,
+                                       *,
+                                       provider: "object | None" = None,
+                                       ) -> pl.LazyFrame | None:
+    """Lazy ``[e, d, value]``: the lifetime-gated existing capacity (``p_entity_pre_existing``: existing ×
+    virtual_unitsize when it is set, else existing) of each unit / connection with an explicit ``existing``, over
+    ``periods``.  ``None`` when no process has an explicit ``existing`` or ``periods`` is empty."""
+    from flextool.engine.preprocess.params._existing import p_entity_pre_existing_lf
+    names = _explicit_process_existing(source)
+    if not names or not periods:
+        return None
+    return (p_entity_pre_existing_lf(source, active_solve, periods, workdir=workdir, provider=provider)
+              .filter(pl.col("e").cast(pl.Utf8).is_in(names)))
+
+
 def p_process_existing_count_from_source(
     source: "InputSource",
     dt: pl.DataFrame,
@@ -1390,121 +1433,46 @@ def p_process_existing_count_from_source(
     *,
     provider: "object | None" = None,
 ) -> Param | None:
-    """Per-(p, d) existing unit count = ``existing / unitsize``.
+    """Per-(p, d) existing unit count = capacity / unitsize (= ``existing`` when virtual_unitsize is set).
 
-    Audit §3.6.2 / canonical unitsize cascade per
-    ``entity_period_calc_params.py:186-202``::
+    capacity[p, d] = existing[p, d] × virtual_unitsize[p] when virtual_unitsize is set, else existing[p, d];
+    unitsize per the canonical cascade (:func:`_entity_unitsize_lf`)::
 
         unitsize = virtual_unitsize (if explicitly set and non-zero)
                   OR existing       (if non-zero)
                   OR 1000.0
 
-    The "explicitly set" check uses ``source.parameter_explicit(...)``
-    which returns only entities with rows in ``parameter_value`` —
-    Spine's default-broadcast rows are suppressed so the cascade can
-    distinguish "absent in JSON" from "set to the schema default".
+    The capacity comes from the canonical chained ``p_entity_all_existing`` (multi-solve handoff state and
+    lifetime gate integrated) when the run has emitted it; otherwise from ``p_entity_pre_existing`` (the
+    lifetime-gated existing × virtual_unitsize cascade over the periods of ``dt``) for the units / connections
+    with an explicit ``existing``.
 
-    For multi-period scenarios with no investment (default fixture
-    coverage), ``existing`` does not vary with ``d`` — the result is a
-    cross-product against the period set.
-
-    Returns ``None`` when no entity has an explicit existing capacity.
+    Returns ``None`` when no process has an explicit existing capacity.
     """
     if dt is None:
         return None
 
-    # Γ.6.D — prefer the canonical chained ``p_entity_all_existing.csv``
-    # when available (carries multi-solve handoff state and lifetime
-    # gate already integrated).  We still need the unitsize cascade per
-    # entity to convert capacity → unit count.
     pae_csv = _read_p_entity_all_existing_csv(workdir, provider=provider)
     if pae_csv is not None and pae_csv.height > 0:
         # Restrict to process-side entities (unit ∪ connection).
         proc_set, _, _ = _entity_classes_lookup(source)
         per_proc = pae_csv.filter(pl.col("e").is_in(list(proc_set)))
         if per_proc.height > 0:
-            us_lf = _entity_unitsize_lf(source)
-            df = (per_proc.lazy()
-                     .pipe(rename_to_axis, {"e": "p"})
-                     .join(us_lf.pipe(rename_to_axis, {"e": "p"}), on="p", how="left")
-                     .with_columns(us=pl.col("us").fill_null(UNITSIZE_DEFAULT))
-                     .with_columns(value=pl.col("value") / pl.col("us"))
-                     .select("p", "d", "value")
+            df = (_process_capacity_per_unit_lf(per_proc.lazy(), source)
                      .sort("p", "d")
                      .collect())
             if df.height > 0:
                 return Param(("p", "d"), df)
 
-    parts: list[pl.LazyFrame] = []
-    for cls in ("unit", "connection"):
-        ex = _try_param_explicit(source, cls, "existing")
-        if ex is None:
-            continue
-        ex_lf = ex.lazy().select(
-            alias_to_axis("name", "p"),
-            pl.col("value").cast(pl.Float64).alias("existing"),
-        )
-        us = _try_param_explicit(source, cls, "virtual_unitsize")
-        if us is not None and us.height > 0:
-            us_lf = us.lazy().select(
-                alias_to_axis("name", "p"),
-                pl.col("value").cast(pl.Float64).alias("us_raw"),
-            )
-            ex_lf = (ex_lf.join(us_lf, on="p", how="left")
-                            .with_columns(
-                                us_raw=pl.col("us_raw").fill_null(0.0)))
-        else:
-            ex_lf = ex_lf.with_columns(us_raw=pl.lit(0.0))
-        # Apply the canonical cascade: virtual_unitsize → existing → 1000.
-        ex_lf = ex_lf.with_columns(
-            us=pl.when(pl.col("us_raw") != 0.0)
-                  .then(pl.col("us_raw"))
-                  .when(pl.col("existing") != 0.0)
-                  .then(pl.col("existing"))
-                  .otherwise(pl.lit(UNITSIZE_DEFAULT))
-        )
-        parts.append(ex_lf)
-    if not parts:
+    periods = [str(d) for d in dt.get_column("d").unique(maintain_order=True).to_list()]
+    cap_lf = _pre_existing_process_capacity_lf(source, active_solve, periods, workdir, provider=provider)
+    if cap_lf is None:
         return None
-    base = pl.concat(parts)
-    # Defensive re-cast: align d to canonical Enum so the cross-join
-    # output keeps Enum dtype on (p, d) for the downstream Param.
-    periods = dt.lazy().select(alias_to_axis("d", "d")).unique()
-    out = (base.join(periods, how="cross")
-                .with_columns(value=pl.col("existing") / pl.col("us"))
-                .select("p", "d", "value")
-                .sort("p", "d")
-                .collect())
+    out = (_process_capacity_per_unit_lf(cap_lf, source)
+              .sort("p", "d")
+              .collect())
     if out.height == 0:
         return None
-    # Γ.6.D — apply lifetime gate to the existing-count cascade.  Mirrors
-    # ``entity_period_calc_params.write_p_entity_existing_chain`` line
-    # 1571-1582: ``p_entity_existing_count = all_existing / unitsize``
-    # where ``all_existing`` carries the lifetime gate from
-    # ``p_entity_pre_existing``.  For ``reinvest_choice`` / ``no_investment``
-    # entities past expiry, zero out the row.
-    expired = _lifetime_expired_pairs(
-        source, active_solve, workdir,
-        methods=("reinvest_choice", "no_investment"), provider=provider)
-    if expired:
-        # Phase 4: build the (p, d) expired index with axis-aware Enum
-        # dtypes so the join against the cascade-typed ``out`` composes
-        # natively under activation.
-        expired_lf = axis_lazyframe({
-            "p": [e for (e, _d) in expired],
-            "d": [d for (_e, d) in expired],
-        })
-        out = (out.lazy()
-                  .join(expired_lf.with_columns(_expired=pl.lit(True)),
-                          on=["p", "d"], how="left")
-                  .with_columns(
-                      value=pl.when(pl.col("_expired").fill_null(False))
-                                .then(0.0)
-                                .otherwise(pl.col("value"))
-                  )
-                  .select("p", "d", "value")
-                  .sort("p", "d")
-                  .collect())
     return Param(("p", "d"), out)
 
 
@@ -1783,8 +1751,8 @@ def apply_derived_a(
     # Δ.12c-fix gap #4: the helper handles two paths:
     # (1) ``p_entity_all_existing.csv`` (workdir-derived, carries
     #     multi-solve handoff state and lifetime gate);
-    # (2) explicit ``unit.existing`` / ``connection.existing`` cascade
-    #     (existing / unitsize per (p, d)).
+    # (2) ``p_entity_pre_existing`` (existing × virtual_unitsize) for the
+    #     explicit ``unit.existing`` / ``connection.existing``; count = capacity / unitsize per (p, d).
     # Returns ``None`` for fixtures with neither path active (pure-invest
     # without initial capacity).  Keep conditional so the seed Param
     # (which always emits a row per process for ``base_cap_pd`` from the
@@ -2413,7 +2381,7 @@ def flow_from_n(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# §3.3.3 — p_flow_upper_existing (existing/unitsize per arc)
+# §3.3.3 — p_flow_upper_existing (existing_count = capacity / unitsize per arc)
 # ---------------------------------------------------------------------------
 
 
@@ -2437,13 +2405,7 @@ def _flow_upper_existing_from_chained_csv(source: "InputSource",
     per_proc = pae_csv.filter(pl.col("e").is_in(list(proc_set)))
     if per_proc.height == 0:
         return None
-    us_lf = _entity_unitsize_lf(source)
-    base = (per_proc.lazy()
-              .pipe(rename_to_axis, {"e": "p"})
-              .join(us_lf.pipe(rename_to_axis, {"e": "p"}), on="p", how="left")
-              .with_columns(us=pl.col("us").fill_null(UNITSIZE_DEFAULT))
-              .with_columns(value=pl.col("value") / pl.col("us"))
-              .select("p", "d", "value"))
+    base = _process_capacity_per_unit_lf(per_proc.lazy(), source)
     if pss is None or pss.height == 0:
         return None
     out = (pss.lazy()
@@ -2464,15 +2426,14 @@ def p_flow_upper_existing_from_source(source: "InputSource",
                                          ctx: "SolveContext | None" = None,
                                          provider: "object | None" = None,
                                          ) -> "Param | None":
-    """Cross-join ``base_cap_pd = existing_capacity / unitsize`` per
-    (p, d) with ``pss`` to produce per-arc structural existing bound.
+    """Per-arc structural existing bound: the existing unit count (capacity / unitsize per (p, d), =
+    ``existing`` when virtual_unitsize is set) cross-joined with ``pss``.
 
-    ``base_cap_pd`` is sourced from ``unit/connection.existing`` +
-    ``unit/connection.virtual_unitsize`` parameters at the source
-    boundary; default unitsize is 1.0.  The CSV path uses the
-    preprocessed ``p_entity_period_existing_capacity.csv`` which
-    bakes in the lifetime-cumulative chain — for fixtures without
-    multi-period invest (single-period) the value collapses to plain
+    capacity[p, d] = existing[p, d] × virtual_unitsize[p] when virtual_unitsize is set, else existing[p, d];
+    unitsize = virtual_unitsize, else existing, else 1000 (:func:`_entity_unitsize_lf`).  The capacity comes from
+    the canonical chained ``p_entity_all_existing`` (multi-solve handoff and lifetime gate integrated) when the run
+    has emitted it; otherwise from ``p_entity_pre_existing`` (the lifetime-gated existing × virtual_unitsize
+    cascade) over ``period_in_use`` (:func:`_fallback_period_in_use`) for the units / connections with an explicit
     ``existing``.
 
     Schema: ``Param[(p, source, sink, d), value]``.
@@ -2484,73 +2445,18 @@ def p_flow_upper_existing_from_source(source: "InputSource",
     _enums = get_global_axis_enums()
     if _enums is not None and pss is not None:
         pss = cast_frame_axes(pss, _enums)
-    # Γ.6.D — prefer the canonical ``p_entity_all_existing.csv`` when
-    # available (carries chained existing + lifetime gate from the
-    # multi-solve handoff).
     chained = _flow_upper_existing_from_chained_csv(
         source, pss, workdir, provider=provider)
     if chained is not None:
         return chained
 
-    # Source `existing` lives on unit / connection / node; we want
-    # process-side only.  The Spine classes carry a 1d_map (period → value).
-    # Use ``parameter_explicit`` so default-broadcast rows don't pollute
-    # the cap frame; entities absent from ``existing`` have no cap.
-    parts: list[pl.LazyFrame] = []
-    e_unit = _try_param_explicit(source, "unit", "existing")
-    if e_unit is not None:
-        parts.append(e_unit.lazy().select(
-            alias_to_axis("name", "p"),
-            alias_to_axis(_index_col(e_unit, "period"), "d"),
-            pl.col("value").cast(pl.Float64).alias("cap"),
-        ) if _index_col(e_unit, "period") in e_unit.columns
-            else _broadcast_existing_to_pd(e_unit, source, workdir, ctx=ctx, provider=provider))
-    e_conn = _try_param_explicit(source, "connection", "existing")
-    if e_conn is not None:
-        parts.append(e_conn.lazy().select(
-            alias_to_axis("name", "p"),
-            alias_to_axis(_index_col(e_conn, "period"), "d"),
-            pl.col("value").cast(pl.Float64).alias("cap"),
-        ) if _index_col(e_conn, "period") in e_conn.columns
-            else _broadcast_existing_to_pd(e_conn, source, workdir, ctx=ctx, provider=provider))
-    if not parts:
-        return None
-
-    cap = pl.concat(parts).unique()
-
-    # Unitsize cascade per ``entity_period_calc_params.py:186-202``.
-    # Use ``parameter_explicit`` to mirror flextool's ``p_unit.get(name,
-    # None)`` semantic: only entities with an explicit JSON row count as
-    # "set"; default-broadcast rows fall through to the cascade.
-    us_parts: list[pl.LazyFrame] = []
-    for cls in ("unit", "connection"):
-        us_df = _try_param_explicit(source, cls, "virtual_unitsize")
-        if us_df is None or us_df.height == 0:
-            continue
-        us_parts.append(us_df.lazy().select(
-            alias_to_axis("name", "p"),
-            pl.col("value").cast(pl.Float64).alias("us"),
-        ))
-    if us_parts:
-        us = pl.concat(us_parts).unique()
-        cap = cap.join(us, on="p", how="left")
-    else:
-        cap = cap.with_columns(us=pl.lit(None).cast(pl.Float64))
-    # flextool's unitsize cascade (mod L1279 / entity_period_calc_params
-    # _params.py:159-198): virtual_unitsize → existing → 1000.
-    cap = cap.with_columns(
-        us=pl.when(pl.col("us").is_not_null() & (pl.col("us") != 0.0))
-              .then(pl.col("us"))
-              .when(pl.col("cap").is_not_null() & (pl.col("cap") != 0.0))
-              .then(pl.col("cap"))
-              .otherwise(pl.lit(UNITSIZE_DEFAULT))
-    )
-
-    base = (cap.with_columns(value=pl.col("cap") / pl.col("us"))
-               .select("p", "d", "value"))
-
     if pss is None or pss.height == 0:
         return None
+    periods = _fallback_period_in_use(source, workdir, ctx=ctx, provider=provider)
+    cap_lf = _pre_existing_process_capacity_lf(source, active_solve, periods, workdir, provider=provider)
+    if cap_lf is None:
+        return None
+    base = _process_capacity_per_unit_lf(cap_lf, source)
     out = (pss.lazy()
               .join(base, on="p", how="inner")
               .select("p", "source", "sink", "d", "value")
@@ -2558,105 +2464,39 @@ def p_flow_upper_existing_from_source(source: "InputSource",
               .collect())
     if out.height == 0:
         return None
-    # Γ.6.D — lifetime gate.  CSV path's p_flow_upper_existing pulls
-    # from ``p_entity_period_existing_capacity.csv`` which inherits the
-    # lifetime-gated existing chain.  We mirror by zeroing rows whose
-    # (p, d) is past the ``reinvest_choice`` / ``no_investment`` expiry.
-    expired = _lifetime_expired_pairs(
-        source, active_solve, workdir,
-        methods=("reinvest_choice", "no_investment"), provider=provider)
-    if expired:
-        expired_lf = axis_lazyframe({
-            "p": [e for (e, _d) in expired],
-            "d": [d for (_e, d) in expired],
-        })
-        out = (out.lazy()
-                  .join(expired_lf.with_columns(_expired=pl.lit(True)),
-                          on=["p", "d"], how="left")
-                  .with_columns(
-                      value=pl.when(pl.col("_expired").fill_null(False))
-                                .then(0.0)
-                                .otherwise(pl.col("value"))
-                  )
-                  .select("p", "source", "sink", "d", "value")
-                  .sort("p", "source", "sink", "d")
-                  .collect())
     return Param(("p", "source", "sink", "d"), out)
 
 
-def _index_col(df: pl.DataFrame, candidate: str) -> str:
-    """Probe for ``candidate`` in df.columns; if missing, return the
-    first non-(name, value) column.  Helps when the source emits the
-    period index under an alternative name (``x``, ``period``).
-    """
-    if candidate in df.columns:
-        return candidate
-    for c in df.columns:
-        if c not in ("name", "value"):
-            return c
-    return candidate  # caller will trip a clear error
+def _fallback_period_in_use(source: "InputSource",
+                            workdir: Path | None = None,
+                            *,
+                            ctx: "SolveContext | None" = None,
+                            provider: "object | None" = None,
+                            ) -> list[str]:
+    """``period_in_use`` for the provider-less existing fallback.
 
-
-def _broadcast_existing_to_pd(df: pl.DataFrame,
-                                 source: "InputSource",
-                                 workdir: Path | None = None,
-                                 *,
-                                 ctx: "SolveContext | None" = None,
-                                 provider: "object | None" = None,
-                                 ) -> pl.LazyFrame:
-    """Fallback: when ``existing`` is a scalar (not 1d_map), broadcast
-    over ``period_in_use``.
-
-    flextool's per_solve_sets.py:95-101 defines ``period_in_use`` as the
-    union of realised + invest periods plus stochastic-branch siblings;
-    ``p_flow_upper_existing`` is keyed on (p, d) for d ∈ period_in_use,
-    so we mirror that union here.  When ``workdir`` is provided we read
-    the canonical ``period_in_use_set.csv`` (includes stochastic
-    branches); otherwise fall back to the realised + invest union.
-
-    Path B Cat B: when ``ctx`` is provided, the in-memory
-    :pyattr:`SolveContext.period_in_use` frame is consulted first.
+    flextool's per_solve_sets.py:95-101 defines ``period_in_use`` as the union of realised + invest periods plus
+    stochastic-branch siblings.  The in-memory :pyattr:`SolveContext.period_in_use` frame is consulted first, then
+    the canonical ``period_in_use_set.csv`` (includes stochastic branches) when ``workdir`` is provided; otherwise
+    the realised + invest union of the source's solves.
     """
     if ctx is not None:
         piu_ctx = ctx.period_in_use
         if piu_ctx.height > 0:
-            pd_lf = piu_ctx.lazy().select("d").unique()
-            return (df.lazy()
-                      .select(alias_to_axis("name", "p"),
-                               pl.col("value").cast(pl.Float64).alias("cap"))
-                      .join(pd_lf, how="cross")
-                      .select("p", "d", "cap"))
+            return [str(d) for d in piu_ctx.get_column("d").unique(maintain_order=True).to_list()]
     if workdir is not None:
         piu_path = Path(workdir) / "solve_data" / "period_in_use_set.csv"
         if _provider_has_key(provider, piu_path):  # Step 1-g-5 — Provider-first
             piu_df = _provider_read(provider, piu_path)
             if piu_df.height > 0 and "period" in piu_df.columns:
-                pd_lf = (piu_df.lazy()
-                            .select(alias_to_axis("period", "d"))
-                            .unique())
-                return (df.lazy()
-                          .select(alias_to_axis("name", "p"),
-                                   pl.col("value").cast(pl.Float64).alias("cap"))
-                          .join(pd_lf, how="cross")
-                          .select("p", "d", "cap"))
-    parts: list[pl.LazyFrame] = []
+                return [str(d) for d in piu_df.get_column("period").unique(maintain_order=True).to_list()]
+    periods: list[str] = []
     for par in ("realized_periods", "invest_periods"):
         rp = _try_param(source, "solve", par)
         if rp is None:
             continue
-        parts.append(rp.lazy().select(alias_to_axis("value", "d")))
-    if not parts:
-        return pl.DataFrame(schema={
-            "p": schema_dtype(_enums, "p"),
-            "d": schema_dtype(_enums, "d"),
-            "cap": pl.Float64,
-        }).lazy()
-    pd_lf = pl.concat(parts).unique()
-    return (df.lazy()
-              .select(alias_to_axis("name", "p"),
-                       pl.col("value").cast(pl.Float64).alias("cap"))
-              .join(pd_lf, how="cross")
-              .select("p", "d", "cap"))
+        periods.extend(str(d) for d in rp.get_column("value").to_list())
+    return list(dict.fromkeys(periods))
 
 
 # ---------------------------------------------------------------------------
@@ -3172,7 +3012,7 @@ def apply_derived_b(
             ctx=ctx, provider=provider)
 
     # ─── §3.3.3b p_arc_max_cap_coef (per-arc capacity_max_coeff) ───────
-    # ``p_flow_upper_existing`` is existing/unitsize only and drops the
+    # ``p_flow_upper_existing`` is existing_count only and drops the
     # per-arc ``capacity_max_coeff`` that the .mod's maxToSink /
     # maxFromSource apply.  Carry the factor here so the model/core.py maxFlow
     # consumer can fold it onto every arc bound by the existing-only RHS
@@ -5042,7 +4882,7 @@ def p_arc_max_cap_coef_from_source(source: "InputSource",
                                       ) -> "Param | None":
     """Per-(p, source, sink) ``capacity_max_coeff`` factor for **direct**
     arcs and indirect **output** arcs — the multiplier the ``maxFlow`` RHS drops when it uses
-    ``p_flow_upper_existing`` (which is ``existing/unitsize`` only).
+    ``p_flow_upper_existing`` (which is ``existing_count`` = capacity / unitsize only).
 
     Mirrors flextool.mod ``maxToSink`` / ``maxFromSource``:
 
