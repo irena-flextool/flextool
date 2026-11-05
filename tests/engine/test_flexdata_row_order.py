@@ -41,7 +41,7 @@ _CASES = [
       "flow_constraint_idx"]),
     pytest.param(("nested", "test_db_url", ["multi_fullYear_battery_nested_multi_invest"],
                   ["ndt_fix_storage_quantity", "dtt_timeline_matching"]),
-                 marks=pytest.mark.slow),  # ~4 min: four runs of a nested rolling cascade
+                 marks=[pytest.mark.slow, pytest.mark.nightly_heavy]),  # ~4 min: four runs of a nested rolling cascade
     ("stochastic", "stochastic_db_url", ["2_day_stochastic_dispatch", "1_week_rolling_wind"],
      ["label_steps", "period_last", "period_branch"]),
     ("rp", "lh2_rp_invest_db_url", ["lh2_three_region_rp_invest"],

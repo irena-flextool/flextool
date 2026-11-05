@@ -206,6 +206,7 @@ pythonpath = ["."]
 addopts = "--import-mode=importlib -n auto --dist loadfile -m 'not csv_reload and not axis_enums'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "nightly_heavy: the heaviest tests (~1 h of CI worker time); the PR Tests workflow deselects them and its nightly job runs them. Local runs include them",
     "solver: marks tests that invoke a real solver (5-60s each); deselect with '-m \"not solver\"'",
     "smoke: fast Layer-1 scenarios for the per-commit gate",
     "gui: opens a real interactive Tk window; opt-in via --run-gui (deselected by default)",

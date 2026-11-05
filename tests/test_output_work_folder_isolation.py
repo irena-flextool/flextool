@@ -255,6 +255,7 @@ def test_reused_work_folder_gives_fresh_outputs_wrong_diffs(
     assert diffs == [], f"reused work folder differs from fresh: {diffs}"
 
 
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_reused_work_folder_gives_fresh_outputs_crash(
     tests_db_url: str, tmp_path_factory: pytest.TempPathFactory,
 ) -> None:

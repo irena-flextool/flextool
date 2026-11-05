@@ -96,6 +96,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "CI); pass this — ideally under 'xvfb-run -a' — to exercise them."
         ),
     )
+    parser.addoption(
+        "--shard",
+        metavar="K/N",
+        default=None,
+        help=(
+            "Run only shard K of N: a module-atomic, time-balanced slice of the "
+            "selected tests (weights in tests/ci_durations.json; see "
+            "tests/_ci_shard.py). The N shards partition the unsharded selection."
+        ),
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -132,6 +142,16 @@ def pytest_configure(config: pytest.Config) -> None:
         "gui: opens a real interactive Tk window; opt-in via --run-gui "
         "(deselected by default)",
     )
+
+    shard = config.getoption("--shard", default=None)
+    if shard:
+        from _ci_shard import ShardPlugin, parse_shard
+
+        try:
+            k, n = parse_shard(shard)
+        except ValueError as exc:
+            raise pytest.UsageError(str(exc)) from None
+        config.pluginmanager.register(ShardPlugin(k, n), "flextool_ci_shard")
 
 
 # GUI test modules that open a real Tk window and therefore need an interactive

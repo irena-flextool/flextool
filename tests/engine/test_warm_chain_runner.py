@@ -121,6 +121,7 @@ def test_warm_chain_cold_fallback(scenario_workdir) -> None:
 # still avoids redundant Var/Cstr construction on the second-and-
 # later iterations.
 
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_warm_native_rolling_speedup(scenario_workdir) -> None:
     """Δ.12d — on the rolling-horizon ``fullYear_roll`` fixture
     (``dispatch_fullYear_roll_roll_<i>`` × N), warm-mode runtime

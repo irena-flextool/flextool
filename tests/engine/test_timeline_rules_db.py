@@ -372,6 +372,7 @@ def _roll_case(data: dict) -> dict:
 
 
 @pytest.mark.slow
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_rolling_solve_without_period_timeset_builds_the_same_lp(tmp_path_factory) -> None:
     """``fullYear_roll`` without ``period_timeset`` (sole timeset ``fullYear``) builds, roll by roll, the LP of
     plain ``fullYear_roll``: the rolls (synthetic names) keep their workdir path, the parent solve gets the

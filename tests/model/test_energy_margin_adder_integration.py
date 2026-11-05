@@ -340,6 +340,7 @@ def test_case1_west_demand_deepened_builds_and_gated(case1_cascades):
 # deepens west's invest demand by that period's value (not a flat scalar)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_period_map_adder_deepens_per_period(period_map_cascades):
     """A period (1d) Map ``energy_margin_adder`` survives DB → ingestion →
     emit → solve: in ``invest_24h`` every ``west`` demand row in period
@@ -412,6 +413,7 @@ def test_period_map_adder_deepens_per_period(period_map_cascades):
 # Case 2 — CREATE demand rows on a genuinely zero-inflow node
 # ---------------------------------------------------------------------------
 
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_case2_creates_rows_on_zero_inflow_node(case2_cascades):
     """With ``battery`` marked ``no_inflow`` it has NO inflow row adder-off;
     adder-on the emitter CREATES one ``-adder`` demand row per invest
@@ -476,6 +478,7 @@ def test_case2_creates_rows_on_zero_inflow_node(case2_cascades):
 # complete on a real solve (no silent revert to an un-scaled LP)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_autoscale_strict_registers_adder_param(tmp_path_factory, monkeypatch):
     """With ``FLEXTOOL_AUTOSCALE_STRICT=1`` an adder-carrying solve completes
     without the autoscale silent-revert — proving the

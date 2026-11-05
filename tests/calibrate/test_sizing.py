@@ -489,6 +489,7 @@ def test_empirical_a_times_W_representative_periods(tmp_path_factory):
 
 @pytest.mark.solver
 @pytest.mark.slow
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_run_calibration_drives_slack_down(tmp_path_factory):
     """On the nested under-build fixture, real sizing (undamped) must raise
     the adder each iteration and drive total unserved slack DOWN, monotone,

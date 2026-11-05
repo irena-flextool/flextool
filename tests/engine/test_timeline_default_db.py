@@ -416,6 +416,7 @@ def _patch_roll_default(data: dict) -> dict:
 
 
 @pytest.mark.slow
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_rolling_whole_timeline_default_builds_the_same_lp(tmp_path_factory):
     """``fullYear_roll`` (72 rolls) with no ``timeset_duration`` anywhere must build the identical
     LP, roll by roll, to plain ``fullYear_roll``.  Guards the per-roll re-evaluation: the DB-side

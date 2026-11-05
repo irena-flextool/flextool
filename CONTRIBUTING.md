@@ -48,6 +48,29 @@ deselected by default; run it with
 `pytest -m axis_enums tests/engine/axis_enums -n 8` (it also runs nightly in
 the non-gating CI job `enum-mode`).
 
+The heaviest tests (~1 h of CI worker time) carry the `nightly_heavy` marker.
+A local `pytest tests/` runs them like any other test; only the PR "Tests"
+workflow deselects them (`-m "not csv_reload and not axis_enums and not
+nightly_heavy"` — a command-line `-m` replaces the `addopts` one), and its
+`nightly-heavy` job runs them on Linux every night and on `workflow_dispatch`.
+Mark a test `nightly_heavy` only when it costs minutes and a faster test of the
+same area stays in the PR run.
+
+CI splits the PR run of each OS/Python cell into 4 shards with
+`--shard K/N` (`tests/_ci_shard.py`): module-atomic (a module's tests stay in
+one shard, so module-scoped fixtures are built once) and balanced by the
+per-module worker seconds in `tests/ci_durations.json`. The shards partition
+exactly what the same command selects unsharded (`tests/test_ci_shard.py`).
+Reproduce a CI shard locally with e.g.
+`pytest tests/ --shard 2/4 -m "not csv_reload and not axis_enums and not nightly_heavy"`.
+When the shard times drift apart, refresh the weights from a few complete
+Linux job logs:
+```bash
+gh api repos/:owner/:repo/actions/jobs/<job-id>/logs > job.log
+python tools/ci_durations.py job1.log job2.log ...   # writes tests/ci_durations.json
+```
+Logs from the sharded PR jobs can be combined (each covers its own modules).
+
 Run a specific test file:
 ```bash
 pytest tests/test_scenarios.py -v
