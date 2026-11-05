@@ -15,6 +15,18 @@
 # are written into jemalloc at runtime; see ``flextool/_allocator.py``.
 from flextool._allocator import configure_polars_allocator as _configure_polars_allocator
 _configure_polars_allocator()
+# polars' default ``engine="auto"`` lets polars 2.x run some lazy queries on the
+# streaming engine, whose joins, group_by and unique return rows in an order
+# that changes from run to run, and whose partial sums are added in a varying
+# order (last-bit differences in the discount factors, hence in the LP).  The
+# outputs, the LP and the parity tests are built and verified on the in-memory
+# engine (what ``auto`` is in polars 1.x), so FlexTool selects it; a
+# POLARS_ENGINE_AFFINITY from the environment wins.  Calls that pass
+# ``engine="streaming"`` explicitly sort or reduce order-independently.
+import os as _os  # noqa: E402  (after the allocator config above)
+if "POLARS_ENGINE_AFFINITY" not in _os.environ:
+    import polars as _pl
+    _pl.Config.set_engine_affinity("in-memory")
 import warnings as _warnings  # noqa: E402  (after the allocator config above)
 # Silence requests' RequestsDependencyWarning.  The FlexTool venv ships a
 # ``requests`` whose pinned urllib3/charset_normalizer version ranges lag the

@@ -7,7 +7,9 @@ hash seed.  Each producer therefore either keeps its input order (``unique(maint
 sorts by its keys.
 
 Each case runs the cascade in two child processes (``PYTHONHASHSEED`` 1 and 2), twice in each, and writes
-every ``pl.DataFrame`` field of every step's FlexData and every ``output_raw`` parquet.  The four runs must
+every ``pl.DataFrame`` field of every step's FlexData and every ``output_raw`` parquet.  ``import flextool``
+selects polars' in-memory engine: polars 2.x's ``auto`` runs some queries on the streaming engine, whose row
+order and partial-sum order are not stable.  The four runs must
 be ``.equals`` without sorting: run 1 == run 2 in one process, and process 1 == process 2.  The sweep
 covers every FlexData frame field, so it also catches producers not named here.  Fields the fixtures
 exercise: ``nodeState_first_dt``, ``storage_bind_{within_timeblock,forward_only,within_solve}``,
@@ -87,6 +89,23 @@ def _frames(root: Path) -> dict[str, pl.DataFrame]:
 def _differing(a: dict[str, pl.DataFrame], b: dict[str, pl.DataFrame]) -> list[str]:
     assert a.keys() == b.keys(), sorted(set(a) ^ set(b))[:20]
     return [k for k, ref in a.items() if not ref.equals(b[k])]
+
+
+@pytest.mark.parametrize(("first", "env_affinity", "expected"), [
+    ("flextool", None, "in-memory"), ("polars", None, "in-memory"), ("flextool", "streaming", "streaming")])
+def test_importing_flextool_selects_the_in_memory_engine(first, env_affinity, expected) -> None:
+    # polars 2.x's ``engine="auto"`` runs some lazy queries on the streaming engine, whose row order and partial-sum
+    # order change from run to run; the sweep below fails on it.  A value from the environment wins.
+    env = {k: v for k, v in os.environ.items() if k != "POLARS_ENGINE_AFFINITY"}
+    if env_affinity is not None:
+        env["POLARS_ENGINE_AFFINITY"] = env_affinity
+    second = "polars" if first == "flextool" else "flextool"
+    code = (f"import {first}, {second}, os\nimport polars as pl\n"
+            "print('AFFINITY', pl.Config.state(env_only=True).get('POLARS_ENGINE_AFFINITY'))")
+    proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("AFFINITY "))
+    assert line.split()[1] == expected
 
 
 @pytest.mark.solver

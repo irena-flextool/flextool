@@ -2,6 +2,10 @@
 
 - **Python 3.14 is supported and tested** (CI matrix now 3.13 and 3.14 on Linux, Windows and macOS; 3.11 is still
   checked by the nightly CI as the minimum version).
+- **Fixed: results changed slightly from run to run with polars 2.x** (row order of output files, last digits of
+  discount factors, costs and duals). polars 2.x runs some queries on its streaming engine, which does not keep
+  row order and adds partial sums in a varying order. FlexTool now selects polars' in-memory engine (the default
+  of polars 1.x) when it is imported; a `POLARS_ENGINE_AFFINITY` set in the environment is respected.
 - **Fixed: inflow scaling silently dropped demand or turned it into supply** (models that now stop with an error
   ran with a wrong demand before). `inflow_method` `scale_to_annual_flow`, `scale_in_proportion` and
   `scale_to_annual_and_peak_flow` now stop with an error naming the node, method and period when the period has no
