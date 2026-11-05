@@ -94,8 +94,9 @@ def _ensure_compatible_solver_stack():
 
     Two known cases (see ``flextool.env_check``): the default ``polars``
     runtime on a CPU without AVX2/FMA/BMI2/MOVBE (cure: add the compatible
-    runtime, ``polars[rtcompat]``), and ``highspy==1.14.0`` import-crashing
-    on older Windows (cure: ``highspy==1.13.1``).  Both surface as a native
+    runtime, ``polars[rtcompat]``), and an old ``highspy`` (1.14.0)
+    import-crashing on older Windows (cure: highspy 1.15 or later, which
+    ships its own C++ runtime).  Both surface as a native
     crash — a Windows access violation (exit ``3221225477``) or a POSIX
     ``SIGILL``/``SIGSEGV``.  The CPU flags are read first, so the compatible
     polars runtime goes in before polars ever crashes; then the imports are
@@ -317,7 +318,7 @@ def update_flextool(skip_git):
 
     # After (re)install, make sure the native solver stack actually runs on
     # this machine; auto-fix the known incompatible-build cases (polars CPU
-    # baseline, highspy 1.14.0 on older Windows) if a component crashes.
+    # baseline, a highspy older than 1.15 on older Windows) if a component crashes.
     _ensure_compatible_solver_stack()
 
     migrate_project("./.spinetoolbox/project_temp.json","./.spinetoolbox/project.json")

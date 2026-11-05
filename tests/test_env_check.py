@@ -162,24 +162,48 @@ def test_compat_extra_matches_core_polars_requirement():
     assert _requirement_parts(compat[len("polars[rtcompat]"):]) == _requirement_parts(core[len("polars"):])
 
 
-def test_highspy_downgrade_steps_shape():
-    steps = env_check.downgrade_highspy_steps(python="/some/python")
-    assert len(steps) == 1
-    assert steps[0] == [
-        "/some/python", "-m", "pip", "install",
-        f"highspy=={env_check.HIGHSPY_GOOD_VERSION}",
-    ]
-    assert env_check.HIGHSPY_GOOD_VERSION == "1.13.1"
+def _flextool_highspy_spec():
+    import tomllib
+
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+    (req,) = [r for r in pyproject["project"]["dependencies"] if r.startswith("highspy")]
+    return req[len("highspy"):].replace(" ", "")
+
+
+@pytest.mark.parametrize("old", ["1.13.1", "1.14.0"])
+def test_highspy_older_than_its_own_cpp_runtime_is_upgraded_within_flextool_requirement(monkeypatch, old):
+    # highspy <= 1.14 imports the system msvcp140.dll (1.14.0 crashes on
+    # Windows 10 1809 / Server 2019, HiGHS#2964; 1.13.1 was the old heal's pin).
+    _fake_dists(monkeypatch, highspy=old)
+    monkeypatch.setattr(env_check, "_flextool_requirement_spec", lambda name, fallback: _flextool_highspy_spec())
+    (step,) = env_check.highspy_upgrade_steps(python="/some/python")
+    assert step == ["/some/python", "-m", "pip", "install", "highspy" + _flextool_highspy_spec()]
+
+
+@pytest.mark.parametrize("current", ["1.15.0", "1.15.1", "1.16.0", None])
+def test_no_highspy_remedy_from_the_release_with_its_own_cpp_runtime(monkeypatch, current):
+    _fake_dists(monkeypatch, highspy=current)
+    assert env_check.highspy_upgrade_steps() is None
+    assert env_check.has_remediation("highspy") is False
+
+
+def test_flextool_requires_a_highspy_with_its_own_cpp_runtime():
+    # The requirement's floor must exclude the releases the remedy replaces,
+    # or "Update FlexTool" would leave them in place.
+    spec = _flextool_highspy_spec()
+    floor = next(part[2:] for part in spec.split(",") if part.startswith(">="))
+    assert env_check._release(floor) >= env_check.HIGHSPY_OWN_CPP_RUNTIME
+    assert env_check._HIGHSPY_SPEC_FALLBACK == spec
 
 
 def test_default_python_is_current_interpreter(monkeypatch):
-    _fake_dists(monkeypatch, polars="1.40.1")
+    _fake_dists(monkeypatch, polars="1.40.1", highspy="1.14.0")
     assert env_check.polars_compat_steps()[0][0] == sys.executable
-    assert env_check.downgrade_highspy_steps()[0][0] == sys.executable
+    assert env_check.highspy_upgrade_steps()[0][0] == sys.executable
 
 
 def test_remediation_dispatch_by_component(monkeypatch):
-    _fake_dists(monkeypatch, polars="1.40.1", polars_runtime_32="1.40.1")
+    _fake_dists(monkeypatch, polars="1.40.1", polars_runtime_32="1.40.1", highspy="1.14.0")
     _fake_cpu(monkeypatch, env_check.CPU_NEEDS_COMPAT, ["avx2"])
     assert env_check.has_remediation("polars") is True
     assert env_check.has_remediation("highspy") is True

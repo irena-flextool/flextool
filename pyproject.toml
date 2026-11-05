@@ -83,11 +83,12 @@ dependencies = [
     # an un-conditioned solve.  The lower bound keeps a fresh install from
     # resolving to an older wheel; patch releases are allowed, the next minor
     # is capped until it has been tested (the weekly canary workflow,
-    # .github/workflows/canary.yml, flags a new minor).  flextool.env_check's
-    # older-Windows auto-heal (HiGHS#2964) still installs highspy==1.13.1
-    # directly with pip; pip lets that through (it only warns about this
-    # requirement), so the heal is unaffected by the lower bound.
-    "highspy>=1.14.0,<1.15",
+    # .github/workflows/canary.yml, flags a new minor).  1.15.1 is the floor:
+    # from 1.15 the Windows wheel ships its own msvcp140.dll, while 1.14.0
+    # (system msvcp140) import-crashes on Windows 10 1809 / Server 2019
+    # (HiGHS#2964); flextool.env_check offers this requirement when an older
+    # highspy crashes.
+    "highspy>=1.15.1,<1.16",
     # polars 1.40 introduced `pl.struct(...).is_sorted()` (and polar_high's
     # `_verify_dense_sorted` relies on the same call); older versions raise
     # "could not apply comparison on series of dtype 'binary[offset]'" and

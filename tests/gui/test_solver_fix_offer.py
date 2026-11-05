@@ -48,15 +48,17 @@ def test_declined_proactive_offer_runs_nothing(monkeypatch):
 
 
 def test_crash_offer_uses_component_remedy(monkeypatch):
+    monkeypatch.setattr(env_check, "_dist_version", {"highspy": "1.14.0"}.get)
     monkeypatch.setattr(main_window.messagebox, "askyesno", lambda *a, **kw: True)
     jobs = []
     probe = env_check.StackProbe(env_check.NATIVE_FAULT, 3221225477, failed_component="highspy")
     main_window.MainWindow._offer_solver_fix(_stand_in(jobs), probe)
     (steps, _kw), = jobs
-    assert steps == env_check.downgrade_highspy_steps(sys.executable)
+    assert steps == env_check.highspy_upgrade_steps(sys.executable)
 
 
 def test_declined_offer_runs_nothing(monkeypatch):
+    monkeypatch.setattr(env_check, "_dist_version", {"highspy": "1.14.0"}.get)
     monkeypatch.setattr(main_window.messagebox, "askyesno", lambda *a, **kw: False)
     jobs = []
     probe = env_check.StackProbe(env_check.NATIVE_FAULT, 3221225477, failed_component="highspy")

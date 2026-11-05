@@ -326,7 +326,18 @@ FlexTool uses the HiGHS solver, called via the `highspy` Python package (install
   (its `._pth` file makes it ignore `PYTHONPATH`), so its wheel is built with the runner's Python first. The job
   ends with smoke steps: imports and `flextool.env_check` in the bundled Python, a solve of the `base` example, and
   `spinetoolbox.exe --list-items flextool` (headless). The embedded Python has no tkinter, so the FlexTool GUI does
-  not run from the bundle.
+  not run from the bundle. It also gets both polars runtimes (`polars[rtcompat]` of the installed polars, when the
+  bundled FlexTool selects the default runtime on AVX2 processors) and the Visual C++ runtime DLLs (`msvcp140*.dll`,
+  `concrt140.dll`, `vcruntime140*.dll` from the runner's Visual Studio `VC\Redist\MSVC\<version>\x64\Microsoft.VC14x.CRT`
+  folder, Microsoft's redistributable files) next to `python.exe`; smoke steps check that the default runtime loads
+  on the runner, that the compatible one imports and runs, and that `python.exe` loads its own `msvcp140.dll`.
+- **`old-cpu.yml`** — nightly and manual, non-gating: FlexTool under qemu user-mode emulation of processors without
+  AVX2 (`-cpu Nehalem`, `-cpu SandyBridge`), driven by `.github/scripts/old_cpu_emulation.sh`. It checks that polars'
+  default runtime crashes there, that `env_check` and `import flextool` refuse it with the fix, that
+  `update_flextool.py --skip-git` installs the compatible runtime, that the `base` example then solves, and that the
+  AVX2 host still selects the default runtime. Locally (no root needed): `apt-get download qemu-user-static`,
+  `dpkg-deb -x` it, then `QEMU=<dir>/usr/bin/qemu-x86_64-static bash .github/scripts/old_cpu_emulation.sh Nehalem
+  <venv with FlexTool, default runtime only> <FlexTool source> <work dir>`.
 
 ## Dependency caps and the canary
 
@@ -339,11 +350,10 @@ openpyxl, xlsxwriter, matplotlib, pyyaml, the GUI helpers) are uncapped.
 | `polars` | `<3` (next major) | majors change behaviour silently (2.0 broke the rolling warm-start) |
 | `pandas` | `<4` (next major) | floor `>=2.2.3` is spinedb-api's own requirement |
 | `spinedb-api` | `<0.37` (next minor) | 0.x: minor releases break the API (0.33, 0.34, 0.36); `>=0.36.5` for the `parameter_group` table |
-| `highspy` | `<1.15` (next minor) | patch releases allowed; `>=1.14.0` for `user_objective_scale` |
+| `highspy` | `<1.16` (next minor) | patch releases allowed; `>=1.15.1`: from 1.15 the Windows wheel ships its own `msvcp140.dll` (1.14.0 import-crashes on Windows 10 1809 / Server 2019, HiGHS#2964) |
 
-`flextool/env_check.py` may downgrade highspy to 1.13.1 on older Windows
-(HiGHS#2964); it installs that version with pip directly, which the floor
-does not block (pip only warns).
+When an older highspy crashes natively, `flextool/env_check.py` offers
+`pip install "highspy>=1.15.1,<1.16"` (FlexTool's own requirement).
 
 The weekly **canary** (`.github/workflows/canary.yml`, also runnable by hand
 with *Run workflow*) lifts the caps with `.github/scripts/dependency_caps.py

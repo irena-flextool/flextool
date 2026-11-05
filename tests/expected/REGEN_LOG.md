@@ -1195,3 +1195,19 @@ node's inflow 0:
 Results: `coal_wind_ev` / `test_a_lot*` dispatch, costs and (multi-year) investments move by the EV charging;
 `scale_to_peak_flow` node balance and summary now show the 9e6 MWh demand.  Regenerated with
 `pytest tests/test_scenarios.py --regenerate <scenario>`; the multi-row header cells kept their previous spelling.
+
+## 2026-11-05 — `coal_co2_limit`, `5weeks_battery_intraperiod_blocks` (highspy 1.14.0 -> 1.15.1)
+
+**Context.** FlexTool's highspy requirement moved to `>=1.15.1,<1.16` (from 1.15 the Windows wheel ships its own
+`msvcp140.dll`; HiGHS#2964).  The LP is unchanged (the solver version does not enter the LP build); HiGHS 1.15.1
+picks another vertex of a degenerate optimum in two scenarios.  With highspy 1.14.0 both still match the old goldens
+(checked with polars 2.1.0 and 1.40.1); the other 64 scenarios match under 1.15.1.
+
+- `coal_co2_limit`: the 142.2426 MWh coal step under the CO2 cap moves from t0009 to t0008 (same coal energy, same
+  CO2); `costs__dt` moves the matching commodity/CO2 cost between those two steps.  Column sums of `costs__dt`,
+  `co2.csv` and the total cost (1780.16775 M CUR) are unchanged.
+- `5weeks_battery_intraperiod_blocks`: the battery's charge/state path differs at a few steps (`node_state__dt`,
+  `node__dt`); the objective (956.429622232 M CUR, `summary_solve.csv`) and `costs__dt` are unchanged.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`; the timestamp line of
+`summary_solve.csv` was put back.

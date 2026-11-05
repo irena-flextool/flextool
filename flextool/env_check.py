@@ -13,8 +13,11 @@ real cases we have hit:
   without importing polars, so the cure can be installed *before* the first
   crash, and a CPU below even x86-64-v2 gets a clear "unsupported" message.
 * ``highspy`` ``1.14.0`` crashes on *import* on older Windows (Server 2019 /
-  Windows 10 1809-era), see ERGO-Code/HiGHS#2964 — a missing dependency in
-  that wheel; works on Windows 11 / Linux.  Cure: pin ``highspy==1.13.1``.
+  Windows 10 1809-era), see ERGO-Code/HiGHS#2964; works on Windows 11 /
+  Linux.  highspy up to 1.14 uses the system's ``msvcp140.dll`` (an old one
+  is the likely cause); from 1.15 the wheel ships its own.  FlexTool needs
+  highspy 1.15.1 or newer, so the cure for an older highspy is to install
+  one within FlexTool's requirement.
 
 Either way the symptom is a Windows access violation (``0xC0000005`` → exit
 ``3221225477``) or a POSIX ``SIGILL``/``SIGSEGV``.  A native fault
@@ -40,9 +43,10 @@ import re
 import subprocess
 import sys
 
-# highspy 1.14.0 import-crashes on older Windows (HiGHS#2964); 1.13.1 is the
-# last good release.  Used as the downgrade target.
-HIGHSPY_GOOD_VERSION = "1.13.1"
+# highspy from this release on ships its own C++ runtime (msvcp140) instead
+# of importing the system's; older ones import-crash on older Windows
+# (HiGHS#2964, 1.14.0).
+HIGHSPY_OWN_CPP_RUNTIME = (1, 15)
 
 # Probe program: import each native extension in turn and print a *flushed*
 # marker after each one survives.  On a native crash the already-flushed
@@ -563,14 +567,15 @@ def cpu_verdict() -> CpuVerdict:
 
 # ── remediation steps ─────────────────────────────────────────────
 
-# flextool's own polars requirement, used when no standard polars version is
-# installed to pin to (the retired polars-lts-cpu stopped at 1.33.1).
+# flextool's own polars / highspy requirements, used when the installed
+# flextool's metadata cannot be read (e.g. running from a source checkout).
 _POLARS_SPEC_FALLBACK = ">=1.40,<3"
+_HIGHSPY_SPEC_FALLBACK = ">=1.15.1,<1.16"
 
 
-def _flextool_polars_spec() -> str:
-    """The version specifier of flextool's ``polars`` requirement (e.g.
-    ``">=1.40,<3"``), from the installed flextool's metadata."""
+def _flextool_requirement_spec(name: str, fallback: str) -> str:
+    """The version specifier of flextool's requirement on *name* (e.g.
+    ``">=1.40,<3"`` for ``polars``), from the installed flextool's metadata."""
     try:
         requirements = importlib.metadata.requires("flextool") or []
     except importlib.metadata.PackageNotFoundError:
@@ -578,12 +583,16 @@ def _flextool_polars_spec() -> str:
     for req in requirements:
         if "extra ==" in req:
             continue
-        match = re.match(r"^polars\s*(?:\[[^\]]*\])?\s*([^;]*)", req.strip())
-        if match and not req.strip().lower().startswith(("polars-", "polars_")):
+        match = re.match(rf"^{re.escape(name)}\s*(?:\[[^\]]*\])?\s*([^;]*)", req.strip())
+        if match and not req.strip().lower().startswith((f"{name}-", f"{name}_")):
             spec = match.group(1).strip().strip("()").replace(" ", "")
             if spec:
                 return spec
-    return _POLARS_SPEC_FALLBACK
+    return fallback
+
+
+def _flextool_polars_spec() -> str:
+    return _flextool_requirement_spec("polars", _POLARS_SPEC_FALLBACK)
 
 
 def polars_compat_steps(python: str | None = None) -> list[list[str]] | None:
@@ -626,11 +635,24 @@ def proactive_polars_fix_needed() -> bool:
     return cpu_verdict().status == CPU_NEEDS_COMPAT and polars_compat_steps() is not None
 
 
-def downgrade_highspy_steps(python: str | None = None) -> list[list[str]]:
-    """pip step that pins highspy to the last release without the older-
-    Windows import crash (HiGHS#2964)."""
+def _release(version: str | None) -> tuple[int, ...]:
+    """The leading numeric release of a version string (``"1.15.1"`` ->
+    ``(1, 15, 1)``)."""
+    match = re.match(r"\d+(?:\.\d+)*", version or "")
+    return tuple(int(part) for part in match.group(0).split(".")) if match else ()
+
+
+def highspy_upgrade_steps(python: str | None = None) -> list[list[str]] | None:
+    """pip step that replaces a highspy older than 1.15 (it uses the
+    system's ``msvcp140.dll``; 1.14.0 import-crashes on older Windows,
+    HiGHS#2964) with one within flextool's requirement, which ships its own
+    C++ runtime; ``None`` when highspy is 1.15 or newer already (or not
+    installed: a crash is then not highspy's)."""
+    installed = _release(_dist_version("highspy"))
+    if not installed or installed >= HIGHSPY_OWN_CPP_RUNTIME:
+        return None
     py = python or sys.executable
-    return [[py, "-m", "pip", "install", f"highspy=={HIGHSPY_GOOD_VERSION}"]]
+    return [[py, "-m", "pip", "install", f"highspy{_flextool_requirement_spec('highspy', _HIGHSPY_SPEC_FALLBACK)}"]]
 
 
 def _banner(message: str) -> str:
@@ -653,10 +675,10 @@ _REMEDIATIONS = {
         ),
     },
     "highspy": {
-        "steps": downgrade_highspy_steps,
+        "steps": highspy_upgrade_steps,
         "banner": _banner(
-            f"Your computer needs HiGHS solver 'highspy=={HIGHSPY_GOOD_VERSION}' "
-            "to run FlexTool."
+            "Your computer needs a newer HiGHS solver (highspy 1.15 or later, which brings its own "
+            "C++ runtime) to run FlexTool."
         ),
     },
 }
@@ -699,6 +721,16 @@ UNFIXABLE_HELP = (
     "libraries), a missing Visual C++ runtime, or running from a network/"
     "mapped drive. Rebuild the venv from a clean python.org Python on a "
     "local disk (e.g. C:), not a network drive, and keep the project local too."
+)
+
+
+# For an ordinary ImportError "DLL load failed" (not a native crash): a
+# compiled extension did not find a DLL, most often the Microsoft Visual C++
+# runtime (msvcp140.dll) on a Windows without the redistributable.
+DLL_LOAD_HELP = (
+    "A library could not load a DLL it needs. On Windows this is most often the Microsoft Visual C++ "
+    "2015-2022 runtime (msvcp140.dll): install the Visual C++ Redistributable (x64) from "
+    "https://aka.ms/vs/17/release/vc_redist.x64.exe and try again."
 )
 
 
@@ -1135,6 +1167,8 @@ def main(argv: list[str] | None = None) -> int:
     if probe.is_native_fault:
         print("\n" + unfixable_help())
         return 1
+    if not probe.ok and "DLL load failed" in probe.stderr:
+        print("\n" + DLL_LOAD_HELP)
     return 0 if probe.ok else 2
 
 
