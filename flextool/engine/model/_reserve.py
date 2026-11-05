@@ -1069,7 +1069,7 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
     #   s_out = slope[p,d,t] when x_out is v_flow on an arc of process_source_sink_eff, else 1 (power drawn at n per
     #           unit of x_out)
     #   C, M  = the channel arc's maxFlow (maxFlow_back) RHS and invest multiplier (b.flow_upper_rhs,
-    #           b.flow_cap_mult: capacity_max_coeff · availability · existing / unitsize and coef · availability)
+    #           b.flow_cap_mult: capacity_max_coeff · availability · existing_count and coef · availability)
     #   a channel p does not have contributes nothing (x = 0, C = 0, M = 0, s_out = 1)
     # ─── EQ. ─── connection_reserve_{up,down}_online_{linear,integer} ────────
     #   same LHS without invest terms  ≤  κ · availability · v_online[p,d,t]   (κ, availability of the up row's

@@ -151,6 +151,21 @@ module it lives in. Each row, objective term and variable carries an
 `EQ.` / `OBJ.` / `VAR.` header with its formula, so
 `grep -rn "EQ. ─── maxFlow" flextool/engine` finds an equation.
 
+**Capacity symbols used in the headers.** For a unit, connection or storage
+node `e` in period `d`:
+
+- `capacity[e,d] = existing[e,d] × virtual_unitsize[e]` when
+  `virtual_unitsize` is set, else `existing[e,d]` (MW, or MWh for storage).
+  With `virtual_unitsize`, `existing` is the number of units.
+- `unitsize[e] = virtual_unitsize[e]`, else `existing` (the largest period
+  value), else 1000.
+- `existing_count[e,d] = capacity[e,d] / unitsize[e]`: equal to `existing`
+  when `virtual_unitsize` is set; otherwise 1 (less in a period whose
+  `existing` is below the largest, 0 without existing capacity).
+- `invest_*`, `retire_*`, `cumulative_*`, `invest_forced` and the capacity a
+  construction lead time carries are MW (MWh) in every case. `v_invest` and
+  `v_divest` are continuous, in units of `unitsize`.
+
 **What lives where.** `model/core.py` holds the core model that every run
 uses: node balance, storage state, flows and capacity, conversion,
 investment maxima, CO2 caps, user constraints, profiles and the core

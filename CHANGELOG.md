@@ -328,9 +328,8 @@
   variables** (`startup_method = binary`). `existing` is the capacity in MW (MWh for storage); with
   `virtual_unitsize` the number of units is `existing` / `virtual_unitsize`. The warning names the entity, the
   resulting count and the unit size. Results unchanged.
-- **Docs: `existing` is capacity, not a number of units.** The `existing` and `virtual_unitsize` descriptions (in
-  the database and the reference) said that with `virtual_unitsize` set, `existing` counts units; FlexTool has
-  always read it as MW (MWh for storage) and divided it by `virtual_unitsize`.
+- **Docs: with `virtual_unitsize`, `existing` is the number of units** (as in FlexTool 3 and every 4.x release);
+  the 4.x reference example said MW. Results unchanged.
 - **Docs: `constraint_invested_capacity_coeff` is a coefficient per MW (MWh for storage).** Its description said
   "Not multiplied by unitsize"; FlexTool has always applied it to the invested capacity in MW (MWh).
 - **Docs: `increase_reserve_ratio` applies to upward and downward reserve alike.** The ratio stands for the

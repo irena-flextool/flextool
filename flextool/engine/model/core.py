@@ -1165,7 +1165,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
     #   ∀ (n,d,t) ∈ nodeState_rp × rp_block_first
     # Capacity bounds of the boundary and block-start states, as maxState
     # bounds v_state: a base period of d is bounded by d's capacity.
-    # state_upper = existing / state_unitsize, so every term is in state units.
+    # state_upper = capacity / state_unitsize, so every term is in state units.
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
     if _has_rows(d.rp_base_period_set):
@@ -1931,7 +1931,7 @@ def _eq_max_flow(b: _Build) -> None:
     # v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t] + Σ_r v_reserve_down[p,r,s,d,t] · φ[p,s,k,d,t]
     #   − M·Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
     #   + M·Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
-    #   ≤ M · existing[p,d] / unitsize[p]
+    #   ≤ M · existing_count[p,d]
     #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∉ flow_bound_arcs or (p,s,k) ∈ reserve_down_input_arcs
     #   M = capacity_max_coeff[p,s,k] · availability[p,d,t] on capped / uncapped arcs
     #   φ = 1 where v_flow is the input (k = p), 1/slope[p,d,t] on a direct unit's input→output arc
@@ -1974,10 +1974,10 @@ def _eq_max_flow(b: _Build) -> None:
 
     # ─── EQ. ─── maxFlow_negCap ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # (maxFlow LHS)  ≥  M · existing[p,d] / unitsize[p]
+    # (maxFlow LHS)  ≥  M · existing_count[p,d]
     #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,d) ∈ pd_neg_cap
     # Negative-capacity processes (unitsize < 0 and existing < 0): dividing
-    # v_flow·unitsize ≤ existing by the negative unitsize flips the sense, so
+    # v_flow·unitsize ≤ capacity by the negative unitsize flips the sense, so
     # the capacity becomes a minimum output.  maxFlow keeps the ≤ side.
     pd_neg_cap = getattr(d, "pd_neg_cap", None)
     if _has_rows(pd_neg_cap):
@@ -1994,7 +1994,7 @@ def _eq_max_flow(b: _Build) -> None:
     # ─── EQ. ─── maxFlow_back ────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_flow_back[p,s,k,d,t] − M·Σ v_invest_p[p,d′] + M·Σ v_divest_p[p,d′]
-    #   ≤ M · existing[p,d] / unitsize[p]
+    #   ≤ M · existing_count[p,d]
     #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∈ twoway1var_arcs
     # Caps the reverse flow of two-way one-variable arcs by the same built
     # capacity, so |v_flow − v_flow_back| ≤ capacity.  No reserve term.
@@ -2030,14 +2030,14 @@ def _eq_max_output_sum(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_k v_flow[p,p,k,d,t] + Σ_k Σ_r v_reserve_up[p,r,k,d,t]
     #   − av·Σ v_invest_p[p,d′] + av·Σ v_divest_p[p,d′]
-    #   ≤ av · existing[p,d] / unitsize[p]
+    #   ≤ av · existing_count[p,d]
     #   ∀ p ∈ process_indirect with an output arc k, (d,t);   av = availability[p,d,t]
     # The capacity of an indirect (multi-flow) unit is the maximum sum of its
     # outputs; maxFlow caps each output arc alone.  capacity_max_coeff is not
     # applied.  Negative-capacity (p,d) rows get only the ≥ twin
     # maxOutputSum_negCap: with both, a k-output unit would need Σ out = c
     # while maxFlow pins every arc to c.
-    # existing[p,d]/unitsize[p] is the value maxFlow's output arcs of p carry
+    # existing_count[p,d] is the value maxFlow's output arcs of p carry
     # (all equal; max collapses them); a unit without an existing row gets 0.
     # Availability defaults to 1.0 for processes without availability data.
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
@@ -2187,7 +2187,7 @@ def _eq_ramp(b: _Build) -> None:
     # built (the capacity, or the online predecessor, can differ).
     # c scales the room as the arc's capacity is scaled: capacity_max_coeff[p,k] on the sink side; on the source
     # side input_share_max[p,s], or on an indirect unit's input arc p_indirect_input_cap.  v_flow and v_reserve
-    # are in units of unitsize, existing_count = existing / unitsize.  Arcs with conversion_flow_coeff = 0 get no
+    # are in units of unitsize, existing_count = capacity / unitsize.  Arcs with conversion_flow_coeff = 0 get no
     # row.
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
@@ -3410,8 +3410,8 @@ def _eq_user_constraints(b: _Build) -> None:
     #   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
     #   ∀ (cn,d,t) ∈ cdt_{eq,le,ge} with a flow or state coefficient   (process_constraint_*)
     #   ∀ (cn,d) of the other constraints of cdt_{eq,le,ge}             (process_constraint_*_period)
-    # where, for e a process p (us = unitsize, existing = existing_count·unitsize) or a storage node n
-    # (us = state_unitsize, existing = state existing capacity), MW (MWh):
+    # where, for e a process p (us = unitsize, existing = capacity = existing_count·unitsize) or a storage node n
+    # (us = state_unitsize, existing = capacity, the storage capacity), MW (MWh):
     #   inv[e,d] = Σ_{(e,o,d) ∈ edd_invest_commission} v_invest[e,o]·us[e] + carried_commission[e,d]
     #   con[e,d] = Σ_{(e,o,d) ∈ edd_invest_in_construction} v_invest[e,o]·us[e] + carried_in_construction[e,d]
     #   pre[e,d] = existing[e,d] − carried_commission[e,d] + Σ_{(e,d′,d) ∈ edd_invest_lookback} v_invest[e,d′]·us[e]
@@ -3769,7 +3769,7 @@ def _eq_max_state(b: _Build) -> None:
     # v_state[n,d,t] + Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
     #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]  ≤  state_upper[n,d]
     #   ∀ (n,d,t) ∈ nodeState_dt
-    # Caps the storage state by the built storage capacity.  state_upper = existing / state_unitsize, so
+    # Caps the storage state by the built storage capacity.  state_upper = capacity / state_unitsize, so
     # every term is in state units.
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
@@ -3800,7 +3800,7 @@ def _eq_state_profiles(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] − profile[f,d,t]·av[n,d,t]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + profile[f,d,t]·av[n,d,t]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
-    #   ≤ / ≥ / =  profile[f,d,t] · av[n,d,t] · existing[n,d] / state_unitsize[n]
+    #   ≤ / ≥ / =  profile[f,d,t] · av[n,d,t] · capacity[n,d] / state_unitsize[n]
     #   ∀ (n,f) ∈ node_profile_{upper,lower,fixed}, (d,t) ∈ dt
     # Bounds the storage state by a profile times the built storage capacity, in state units.
     # av = node availability, 1 for nodes without availability data.  The invest/divest terms are
@@ -3856,7 +3856,7 @@ def _eq_storage_start_binding(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] − state_start[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + state_start[n]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
-    #   = state_start[n] · existing[n,d] / state_unitsize[n]
+    #   = state_start[n] · capacity[n,d] / state_unitsize[n]
     #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ storage_fix_start, n ∉ carried,
     #     n ∉ bind_forward_only ∪ bind_within_timeblock ∪ bind_within_solve ∪ bind_within_period ∪ nodeStateBlock
     # Pins the state at the first step to the share state_start of the built storage capacity (state
@@ -3952,7 +3952,7 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d′,t′] − state_start[n]·Σ_{(n,d″,d′) ∈ edd_invest_set} v_invest_n[n,d″]
     #   + state_start[n]·Σ_{(n,d″,d′) ∈ ndd_divest_active} v_divest_n[n,d″]
-    #   = state_start[n] · existing[n,d′] / state_unitsize[n]
+    #   = state_start[n] · capacity[n,d′] / state_unitsize[n]
     #   ∀ n ∈ storage_fix_start ∩ (bind_within_timeblock ∪ bind_within_solve ∪ bind_within_period
     #     ∪ looping nodeStateBlock), n ∉ carried, (n,d,t) ∈ nodeState_first_dt, (d′,t′) = the step (d,t) starts
     #     from (the node's wrap), (n,d′,t′) ∉ the steps node_balance_fix_quantity_eq_lower fixes
@@ -4011,7 +4011,7 @@ def _eq_storage_end_binding(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] − state_end[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + state_end[n]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
-    #   = state_end[n] · existing[n,d] / state_unitsize[n]
+    #   = state_end[n] · capacity[n,d] / state_unitsize[n]
     #   ∀ n ∈ storage_fix_end, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last, storage_solve_at_model_end,
     #     (n,d,t) ∉ the steps node_balance_fix_quantity_eq_lower / node_storage_usage_fix_le fix
     # Pins the state at the end of the last step of the entire model to the share state_end of the built storage
@@ -4094,7 +4094,7 @@ def _eq_storage_reference_value(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] − reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
     #   + reference_value[n,d,t]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
-    #   = reference_value[n,d,t] · existing[n,d] / state_unitsize[n]
+    #   = reference_value[n,d,t] · capacity[n,d] / state_unitsize[n]
     #   ∀ n ∈ storage_use_reference_value, (n,d,t) ∈ horizon_end,
     #     (n ∈ nodeStateBlock ⇒ d ∈ period_block_chain), (n,d,t) ∉ the steps an upper-level solve fixes
     #   horizon_end = nodeState_last_dt ∩ period_last  ∪  block_tail_end
@@ -4664,7 +4664,7 @@ def _max_flow_rhs(d, inv_procs: "pl.DataFrame | None" = None,
       availability or capacity coefficient.
     * **input**: input arcs of indirect (multi-flow) units.  Their capacity is the maximum sum of the
       outputs (maxOutputSum) and conversion_indirect ties the inputs to the outputs.  An input arc s is
-      limited to M_s · (existing/unitsize + Σ v_invest − Σ v_divest), M_s = p_indirect_input_cap · a
+      limited to M_s · (existing_count + Σ v_invest − Σ v_divest), M_s = p_indirect_input_cap · a
       (input_share_max times the full-load input per unit of capacity; with the default share 1 the
       input alone could run the unit at full output, so the limit is a loose bound).  ``a`` is
       ``x(availability)`` (:func:`flextool.engine.model._online._fuel_share`), the input drawn at derated
@@ -4672,11 +4672,11 @@ def _max_flow_rhs(d, inv_procs: "pl.DataFrame | None" = None,
       availability would cap the derated full output of a min_load_efficiency unit (fed the ``__av``
       column computed below, the section credited only where the unit has an online variable; #102).
       Processes without invest/divest variables in this solve (``inv_procs``) have a constant capacity:
-      M_s · existing/unitsize becomes a v_flow upper bound and the arc gets no maxFlow row.  Processes
+      M_s · existing_count becomes a v_flow upper bound and the arc gets no maxFlow row.  Processes
       with them keep the row, their invest/divest terms carrying M_s.
     * **capped**: direct arcs and indirect output arcs:
-      v_flow ≤ coef · availability · (existing/unitsize + Σ v_invest − Σ v_divest), RHS =
-      existing/unitsize · coef · availability.  ``p_flow_upper_existing`` is filled with 0 for greenfield
+      v_flow ≤ coef · availability · (existing_count + Σ v_invest − Σ v_divest), RHS =
+      existing_count · coef · availability.  ``p_flow_upper_existing`` is filled with 0 for greenfield
       arcs, ``p_arc_max_cap_coef`` and ``p_process_availability`` with their default 1 (a Param · Param
       product is an inner join and would drop the unauthored rows, giving RHS = 0).
 
