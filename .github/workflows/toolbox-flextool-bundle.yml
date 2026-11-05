@@ -151,6 +151,39 @@ jobs:
           $polars = ./python.exe -c "from importlib.metadata import version; print(version('polars'))"
           ./python.exe -m pip install "polars[rtcompat]==$polars"
           ./python.exe -m pip list
+      - name: Add the Visual C++ runtime to embedded Python
+        run: |
+          # The embeddable Python has vcruntime140.dll and vcruntime140_1.dll
+          # but not the C++ standard library. Bundled extensions that import
+          # the system msvcp140.dll (pywin32, debugpy; highspy before 1.15)
+          # fail with "DLL load failed" on a Windows without the Visual C++
+          # 2015-2022 Redistributable, or crash with an older one. The files
+          # come from the runner's Visual Studio redistributable folder
+          # (VC\Redist\MSVC\<version>\x64\Microsoft.VC14x.CRT), which
+          # Microsoft's Visual Studio license lists as Distributable Code to
+          # ship next to a program (app-local); the versions are printed. The
+          # whole set is copied so msvcp140 and vcruntime140 match.
+          $vswhere = "${Env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "no Visual Studio with the C++ tools on the runner" }
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Where-Object { $_.Name -match '^\d+(\.\d+)+$' } |
+            Sort-Object { [version]$_.Name } -Descending |
+            ForEach-Object { Get-ChildItem (Join-Path $_.FullName "x64") -Directory -Filter "Microsoft.VC*.CRT" -ErrorAction SilentlyContinue } |
+            Select-Object -First 1
+          if (-not $crt) { throw "no x64 C++ runtime under $vs\VC\Redist\MSVC" }
+          Write-Output "C++ runtime from $($crt.FullName)"
+          $dlls = Get-ChildItem $crt.FullName -Filter *.dll | Where-Object { $_.Name -match '^(msvcp140.*|concrt140|vcruntime140(_1)?)\.dll$' }
+          foreach ($dll in $dlls) {
+            $target = Join-Path embedded-python $dll.Name
+            if (Test-Path $target) {
+              $old = [version](Get-Item $target).VersionInfo.FileVersionRaw
+              if ([version]$dll.VersionInfo.FileVersionRaw -lt $old) { throw "$($dll.Name) $($dll.VersionInfo.FileVersionRaw) is older than the embedded Python's $old" }
+            }
+            Copy-Item $dll.FullName $target -Force
+            Write-Output "  $($dll.Name) $($dll.VersionInfo.FileVersionRaw)"
+          }
+          if (-not (Test-Path embedded-python/msvcp140.dll)) { throw "msvcp140.dll was not copied" }
       - name: Build bundle
         run: |
           python -m PyInstaller spinetoolbox.spec -- --embedded-python=embedded-python
@@ -182,6 +215,13 @@ jobs:
           & $py -c "import flextool, polars, highspy, polar_high, pandas, pyarrow, spinedb_api, odf, ipykernel, win32api; from importlib.metadata import version; print({p: version(p) for p in ('flextool', 'polars', 'highspy', 'polar-high', 'spinedb-api', 'pandas')})"
           & $py -m pip check
           & $py -m flextool.env_check
+      - name: "Smoke: the bundled Python loads its own msvcp140.dll"
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $py = Resolve-Path "dist/Spine Toolbox/_internal/Python/python.exe"
+          # The runner has msvcp140.dll in System32 too: check that the copy
+          # next to python.exe is the one loaded.
+          & $py -c "import ctypes, os, sys; from ctypes import wintypes; k = ctypes.WinDLL('kernel32'); k.GetModuleFileNameW.argtypes = [wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]; h = ctypes.WinDLL('msvcp140.dll')._handle; buf = ctypes.create_unicode_buffer(1024); k.GetModuleFileNameW(h, buf, 1024); print(buf.value); assert os.path.dirname(buf.value).lower() == os.path.dirname(sys.executable).lower(), buf.value"
       - name: "Smoke: both polars runtimes in the bundled Python"
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
