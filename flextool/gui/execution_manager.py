@@ -342,7 +342,7 @@ class JobType(Enum):
     MIGRATION = auto()      # database schema / data version migration
     UPDATE = auto()         # FlexTool self-update (git pull / pip upgrade)
     DB_EDITOR = auto()      # Spine DB Editor launch (recorded only on failure)
-    ENV_REPAIR = auto()     # native-library compatibility fix (polars-lts-cpu swap)
+    ENV_REPAIR = auto()     # native-library compatibility fix (polars compat runtime, highspy pin)
 
 
 @dataclass

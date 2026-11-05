@@ -73,18 +73,34 @@ def _reinstall_if_needed():
         )
 
 
+def _run_fix_steps(steps) -> bool:
+    """Run pip *steps* in order, echoing each; stop at the first failure."""
+    for step in steps:
+        print("\n$ " + " ".join(step))
+        completed = subprocess.run(step)
+        if completed.returncode != 0:
+            print(
+                f"Warning: '{' '.join(step)}' exited {completed.returncode}. "
+                f"Run it manually to finish the fix."
+            )
+            return False
+    return True
+
+
 def _ensure_compatible_solver_stack():
     """Verify the native solver stack (polars, highspy/HiGHS) runs on this
     machine and, if a component crashes natively, re-install the compatible
     build automatically.
 
     Two known cases (see ``flextool.env_check``): the default ``polars``
-    wheel on a CPU lacking the SIMD baseline it was built for (cure:
-    ``polars-lts-cpu``), and ``highspy==1.14.0`` import-crashing on older
-    Windows (cure: ``highspy==1.13.1``).  Both surface as a native crash —
-    a Windows access violation (exit ``3221225477``) or a POSIX
-    ``SIGILL``/``SIGSEGV``.  We probe in a child process so the crash is
-    observable and pinpoint which component died, then apply its remedy.
+    runtime on a CPU without AVX2/FMA/BMI2/MOVBE (cure: add the compatible
+    runtime, ``polars[rtcompat]``), and ``highspy==1.14.0`` import-crashing
+    on older Windows (cure: ``highspy==1.13.1``).  Both surface as a native
+    crash — a Windows access violation (exit ``3221225477``) or a POSIX
+    ``SIGILL``/``SIGSEGV``.  The CPU flags are read first, so the compatible
+    polars runtime goes in before polars ever crashes; then the imports are
+    probed in a child process so a crash is observable and the component
+    that died is pinpointed and its remedy applied.
 
     Run unattended here (the user already opted into installs by choosing
     "Update FlexTool"), but loudly: the banner names what is happening and
@@ -95,6 +111,15 @@ def _ensure_compatible_solver_stack():
     from flextool import env_check
 
     print("\nChecking that the solver libraries run on this computer...")
+    verdict = env_check.cpu_verdict()
+    if verdict.status == env_check.CPU_UNSUPPORTED:
+        print("\n" + env_check.unsupported_cpu_help(verdict))
+        return
+    if env_check.proactive_polars_fix_needed():
+        print("\n" + env_check.proactive_banner(verdict))
+        if not _run_fix_steps(env_check.polars_compat_steps(sys.executable)):
+            return
+
     probe = env_check.probe_solver_stack()
     print(env_check.diagnostics_report(probe))
     if not probe.is_native_fault:
@@ -104,25 +129,19 @@ def _ensure_compatible_solver_stack():
 
     steps = env_check.remediation_steps(probe.failed_component, sys.executable)
     if steps is None:
-        # A native crash with no package-level remedy (e.g. polar_high).
-        print("\n" + env_check.UNFIXABLE_HELP)
+        # A native crash with no package-level remedy (e.g. polar_high, or a
+        # compatible polars runtime that is already in place).
+        print("\n" + env_check.unfixable_help())
         return
 
     print("\n" + env_check.remediation_banner(probe.failed_component))
-    for step in steps:
-        print("\n$ " + " ".join(step))
-        completed = subprocess.run(step)
-        if completed.returncode != 0:
-            print(
-                f"Warning: '{' '.join(step)}' exited {completed.returncode}. "
-                f"Run it manually to finish the fix."
-            )
-            return
+    if not _run_fix_steps(steps):
+        return
 
     reprobe = env_check.probe_solver_stack()
     print("\n" + reprobe.summary())
     if not reprobe.ok:
-        print("\n" + env_check.UNFIXABLE_HELP)
+        print("\n" + env_check.unfixable_help())
 
 
 def _sync_settings_param_defs(json_template, sqlite_path):

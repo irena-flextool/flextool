@@ -1,5 +1,17 @@
 ## Unreleased
 
+- **Fixed: FlexTool on processors without AVX2** (for example Celeron/Pentium laptops up to about 2021, Intel Core
+  from before 2013, AMD FX). polars' default build crashes on these. The automatic fix installed `polars-lts-cpu`,
+  whose last release (1.33.1) is older than the polars FlexTool needs, so the fixed install was still broken. FlexTool
+  now installs the compatible build of the same polars version (`polars[rtcompat]`, about 10-30% slower), which polars
+  loads in preference to the default build. It reads the processor's features first, so on such a processor the
+  compatible build is installed when FlexTool is imported, before polars can crash, and also by "Update FlexTool" and
+  the GUI's startup check; an install that has `polars-lts-cpu` is moved to `polars[rtcompat]`. A processor without
+  even SSE4.2/POPCNT (x86-64-v2, for example Core 2 or Phenom II), which no current build of FlexTool's libraries
+  supports, now gets a message that says so. New install option `pip install "flextool[compat]"`;
+  `python -m flextool.env_check` reports the processor's features and the installed polars builds; set
+  `FLEXTOOL_NO_ENV_CHECK=1` to skip the checks. The install pages now list the system requirements (64-bit Windows 10
+  or 11, Linux or macOS; an x86-64-v2 processor, AVX2 recommended).
 - **Windows Toolbox bundle: Python 3.14, with FlexTool installed in the bundled Python.** Before, the bundle's
   Python (3.12) had only pandas and spinedb-api, so FlexTool 4 tools could not run in it (polars, highspy and
   polar-high were installed into the build machine's Python instead). The bundle build now also runs an import

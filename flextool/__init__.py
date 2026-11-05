@@ -1,4 +1,28 @@
 """FlexTool energy system optimization model package."""
+# On a processor without AVX2/FMA/BMI2/MOVBE, polars' default native runtime
+# can crash as soon as polars is imported (below, transitively).  Read the
+# CPU flags first (stdlib only) and, when needed, install the compatible
+# runtime of the installed polars version, which polars then loads.  See
+# flextool.env_check.ensure_polars_runtime_before_import.  env_check.py is
+# loaded from its file under a private name, so ``python -m
+# flextool.env_check`` still runs a fresh module (no runpy warning).
+def _ensure_polars_runtime() -> None:
+    import importlib.util
+    import os
+    import sys
+
+    name = "flextool._env_check_at_import"
+    spec = importlib.util.spec_from_file_location(name, os.path.join(os.path.dirname(__file__), "env_check.py"))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # dataclasses look their module up while it executes
+    try:
+        spec.loader.exec_module(module)
+        module.ensure_polars_runtime_before_import()
+    finally:
+        sys.modules.pop(name, None)
+
+
+_ensure_polars_runtime()
 # jemalloc decay config for polars, applied BEFORE the first ``import polars``
 # (which happens transitively in the imports below).  polars statically links
 # jemalloc and reads ``_RJEM_MALLOC_CONF`` once, when its runtime library
@@ -13,7 +37,7 @@
 # do NOT touch polars memory: this is the lever that does.  When polars was
 # imported before flextool (a Toolbox console, a notebook), the same values
 # are written into jemalloc at runtime; see ``flextool/_allocator.py``.
-from flextool._allocator import configure_polars_allocator as _configure_polars_allocator
+from flextool._allocator import configure_polars_allocator as _configure_polars_allocator  # noqa: E402
 _configure_polars_allocator()
 # polars' default ``engine="auto"`` lets polars 2.x run some lazy queries on the
 # streaming engine, whose joins, group_by and unique return rows in an order

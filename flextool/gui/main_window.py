@@ -1142,9 +1142,11 @@ class MainWindow(tk.Tk):
         self.after(1500, self._check_update_async)
 
         # Once per environment, verify that the installed polars build runs
-        # on this CPU; if it crashes natively, offer a one-click swap to
-        # polars-lts-cpu (the whole reason a "wrong wheel for this machine"
-        # install otherwise dies with an opaque 0xC0000005 mid-solve).
+        # on this CPU; on a CPU without AVX2 (read from the CPU flags, before
+        # polars crashes) or after a native crash, offer a one-click install
+        # of the compatible polars runtime (the whole reason a "wrong wheel
+        # for this machine" install otherwise dies with an opaque 0xC0000005
+        # mid-solve).
         self.after(2200, self._check_polars_async)
 
     def _check_update_async(self) -> None:
@@ -1208,6 +1210,11 @@ class MainWindow(tk.Tk):
 
         def _worker() -> None:
             try:
+                if env_check.proactive_polars_fix_needed():
+                    # The CPU lacks the default polars runtime's features:
+                    # fix before the probe (or a scenario) crashes on it.
+                    self.post_to_main(self._offer_solver_fix, None, True)
+                    return
                 probe = env_check.probe_solver_stack()
             except Exception:
                 logger.debug("solver-stack probe failed to run", exc_info=True)
@@ -1233,7 +1240,7 @@ class MainWindow(tk.Tk):
                     "Scenario crashed — check your Python environment",
                     "The scenario stopped with a native crash, but FlexTool's "
                     "solver libraries (polars and HiGHS) import and run fine on "
-                    "this computer.\n\n" + env_check.UNFIXABLE_HELP,
+                    "this computer.\n\n" + env_check.unfixable_help(),
                 )
             return
 
@@ -1245,41 +1252,65 @@ class MainWindow(tk.Tk):
 
         if not env_check.has_remediation(probe.failed_component):
             # A native crash with no package-level remedy (e.g. polar_high).
-            messagebox.showerror("FlexTool cannot run on this computer yet", env_check.UNFIXABLE_HELP)
+            messagebox.showerror("FlexTool cannot run on this computer yet", env_check.unfixable_help())
             return
 
         self._offer_solver_fix(probe)
 
-    def _offer_solver_fix(self, probe) -> None:
-        """Ask the user to let FlexTool re-install the compatible build."""
+    def _offer_solver_fix(self, probe, proactive: bool = False) -> None:
+        """Ask the user to let FlexTool re-install the compatible build.
+
+        *proactive*: no crash yet — the CPU flags show the processor lacks
+        what the default polars runtime needs (*probe* is then ``None``).
+        """
         from flextool import env_check
 
-        comp = probe.failed_component
-        what = {
-            "polars": "the 'polars' data library",
-            "highspy": "the HiGHS solver (highspy)",
-        }.get(comp, "a solver library")
+        if proactive:
+            comp = "polars"
+            verdict = env_check.cpu_verdict()
+            steps = env_check.polars_compat_steps(sys.executable)
+            intro = env_check.proactive_banner(verdict)
+            missing = ", ".join(verdict.missing_default) or "AVX2"
+            question = (
+                f"This computer's processor has no {missing}. The default build "
+                "of the 'polars' data library needs these, so scenarios would "
+                "crash.\n\n"
+                "FlexTool can install the compatible build (polars[rtcompat], "
+                "about 10-30% slower) for you. Progress is shown in the "
+                "execution window.\n\n"
+                "Install the compatible build now?"
+            )
+        else:
+            comp = probe.failed_component
+            steps = env_check.remediation_steps(comp, sys.executable)
+            intro = env_check.remediation_banner(comp)
+            what = {
+                "polars": "the 'polars' data library",
+                "highspy": "the HiGHS solver (highspy)",
+            }.get(comp, "a solver library")
+            question = (
+                f"{what} crashed when FlexTool tested it on this computer — "
+                "scenarios will not run until this is fixed.\n\n"
+                "FlexTool can automatically re-install the compatible version "
+                "for you. Progress is shown in the execution window.\n\n"
+                "Re-install the compatible version now?"
+            )
+        if not steps:
+            return
         proceed = messagebox.askyesno(
-            "FlexTool cannot run on this computer yet",
-            f"{what} crashed when FlexTool tested it on this computer — "
-            "scenarios will not run until this is fixed.\n\n"
-            "FlexTool can automatically re-install the compatible version "
-            "for you. Progress is shown in the execution window.\n\n"
-            "Re-install the compatible version now?",
-            icon="warning",
+            "FlexTool cannot run on this computer yet", question, icon="warning",
         )
         if not proceed:
             return
 
         from flextool.gui.execution_manager import JobType
 
-        steps = env_check.remediation_steps(comp, sys.executable)
         self._run_cli_job(
             steps,
             job_type=JobType.ENV_REPAIR,
             description=f"Fix {comp} compatibility",
             action_key="solver_compat_fix",
-            intro=env_check.remediation_banner(comp),
+            intro=intro,
             on_finish=self._on_solver_fix_finished,
         )
 
@@ -1304,7 +1335,7 @@ class MainWindow(tk.Tk):
                 "verified they run on this computer. You can run scenarios now.",
             )
         else:
-            messagebox.showerror("Still not working", env_check.UNFIXABLE_HELP)
+            messagebox.showerror("Still not working", env_check.unfixable_help())
 
     def _show_project_dialog_if_needed(self) -> None:
         """Open the ProjectDialog if no project is currently loaded."""

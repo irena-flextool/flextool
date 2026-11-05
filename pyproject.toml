@@ -133,6 +133,12 @@ Issues = "https://github.com/irena-flextool/flextool/issues"
 [project.optional-dependencies]
 toolbox = ["spinetoolbox"]
 viewer = ["tsdownsample>=0.1.3", "networkx>=3.0"]
+# Processors without AVX2/FMA/BMI2/MOVBE (x86-64-v3): polars' default native
+# runtime crashes there.  polars-runtime-compat (x86-64-v2) is installed next
+# to it and polars loads it in preference; it is about 10-30% slower and
+# safe on any x86-64-v2 CPU.  flextool.env_check installs the same build
+# when it detects such a CPU.
+compat = ["polars[rtcompat]>=1.40,<3"]
 # Backward-compat alias — engine-polars is now the only engine and its
 # dependencies are part of the core install.  Empty list kept so any
 # automation pinned to ``pip install flextool[engine-polars]`` keeps
