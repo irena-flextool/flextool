@@ -1270,15 +1270,12 @@ class MainWindow(tk.Tk):
             verdict = env_check.cpu_verdict()
             steps = env_check.polars_compat_steps(sys.executable)
             intro = env_check.proactive_banner(verdict)
-            missing = ", ".join(verdict.missing_default) or "AVX2"
             question = (
-                f"This computer's processor has no {missing}. The default build "
-                "of the 'polars' data library needs these, so scenarios would "
-                "crash.\n\n"
-                "FlexTool can install the compatible build (polars[rtcompat], "
-                "about 10-30% slower) for you. Progress is shown in the "
+                env_check.compat_runtime_message(verdict, steps)
+                + "\n\nUntil it is installed, scenarios will not run (they stop with this "
+                "message). FlexTool can run the command for you; progress is shown in the "
                 "execution window.\n\n"
-                "Install the compatible build now?"
+                "Run it now?"
             )
         else:
             comp = probe.failed_component

@@ -1,8 +1,11 @@
 """FlexTool energy system optimization model package."""
 # On a processor without AVX2/FMA/BMI2/MOVBE, polars' default native runtime
 # can crash as soon as polars is imported (below, transitively).  Read the
-# CPU flags first (stdlib only) and, when needed, install the compatible
-# runtime of the installed polars version, which polars then loads.  See
+# CPU flags first (stdlib only) and, when the compatible runtime of the
+# installed polars version is needed, say why and give the pip command: in a
+# terminal FlexTool asks before running it; without one (a GUI subprocess, a
+# Toolbox tool, CI) the import stops with that message (an ImportError).  The
+# GUI offers the install in its own dialog.  See
 # flextool.env_check.ensure_polars_runtime_before_import.  env_check.py is
 # loaded from its file under a private name, so ``python -m
 # flextool.env_check`` still runs a fresh module (no runpy warning).

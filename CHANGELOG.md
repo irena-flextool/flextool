@@ -4,9 +4,12 @@
   from before 2013, AMD FX). polars' default build crashes on these. The automatic fix installed `polars-lts-cpu`,
   whose last release (1.33.1) is older than the polars FlexTool needs, so the fixed install was still broken. FlexTool
   now installs the compatible build of the same polars version (`polars[rtcompat]`, about 10-30% slower), which polars
-  loads in preference to the default build. It reads the processor's features first, so on such a processor the
-  compatible build is installed when FlexTool is imported, before polars can crash, and also by "Update FlexTool" and
-  the GUI's startup check; an install that has `polars-lts-cpu` is moved to `polars[rtcompat]`. A processor without
+  loads in preference to the default build. It reads the processor's features when FlexTool is imported, before
+  polars can crash. On such a processor without the compatible build, it prints why (the missing CPU features) and the
+  exact pip command; in a terminal it asks "Run it now? [y/N]" and installs only on yes, and without a terminal (a
+  Spine Toolbox tool, a GUI-started run, CI) it stops with that message instead of installing anything. The GUI's
+  startup check shows the reason and the command in a dialog and runs it if you agree, and "Update FlexTool"
+  (`flextool-update`) installs it; an install that has `polars-lts-cpu` is moved to `polars[rtcompat]`. A processor without
   even SSE4.2/POPCNT (x86-64-v2, for example Core 2 or Phenom II), which no current build of FlexTool's libraries
   supports, now gets a message that says so. New install option `pip install "flextool[compat]"`;
   `python -m flextool.env_check` reports the processor's features and the installed polars builds; set

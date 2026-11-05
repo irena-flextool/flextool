@@ -396,13 +396,6 @@ class _Ran:
         return subprocess.CompletedProcess(argv, self.returncode)
 
 
-@pytest.fixture(autouse=True)
-def _private_install_lock(monkeypatch, tmp_path):
-    lock = str(tmp_path / "compat.lock")
-    monkeypatch.setattr(env_check, "_install_lock_path", lambda: lock)
-    return lock
-
-
 def _no_polars_imported(monkeypatch):
     for name in [m for m in sys.modules if m == "polars" or m.startswith("polars.")]:
         monkeypatch.delitem(sys.modules, name)
@@ -410,22 +403,145 @@ def _no_polars_imported(monkeypatch):
     monkeypatch.delenv("POLARS_FORCE_PKG", raising=False)
 
 
-def test_import_guard_installs_compat_runtime_on_non_avx2_cpu(monkeypatch, capsys):
+def _needs_compat(monkeypatch, missing=("avx2", "fma")):
     _no_polars_imported(monkeypatch)
     _fake_dists(monkeypatch, polars="1.40.1", polars_runtime_32="1.40.1")
-    _fake_cpu(monkeypatch, env_check.CPU_NEEDS_COMPAT, ["avx2", "fma"])
+    return _fake_cpu(monkeypatch, env_check.CPU_NEEDS_COMPAT, list(missing))
+
+
+_COMPAT_STEP = [sys.executable, "-m", "pip", "install", "polars[rtcompat]==1.40.1"]
+
+
+class _Stream:
+    """A stdin/stdout stand-in that is, or is not, a terminal."""
+
+    def __init__(self, tty):
+        self.tty = tty
+        self.written = []
+
+    def isatty(self):
+        return self.tty
+
+    def write(self, text):
+        self.written.append(text)
+
+    def flush(self):
+        pass
+
+
+def _answers(*replies):
+    asked = []
+
+    def ask(prompt):
+        asked.append(prompt)
+        return replies[len(asked) - 1]
+
+    return ask, asked
+
+
+def test_import_guard_without_terminal_never_installs(monkeypatch):
+    # A GUI subprocess, Toolbox tool, CI or pytest: stdin/stdout are not a
+    # terminal.  The guard must stop with the reason and the command, and
+    # must not run pip.
+    _needs_compat(monkeypatch)
+    monkeypatch.setattr(sys, "stdin", _Stream(tty=False))
+    monkeypatch.setattr(sys, "stdout", _Stream(tty=False))
+    monkeypatch.setattr(sys, "orig_argv", [sys.executable, "-m", "flextool.cli.cmd_run_flextool"])
     ran = _Ran()
-    assert env_check.ensure_polars_runtime_before_import(run=ran) == "installed"
-    assert ran.calls == [[sys.executable, "-m", "pip", "install", "polars[rtcompat]==1.40.1"]]
+    with pytest.raises(ImportError) as err:
+        env_check.ensure_polars_runtime_before_import(run=ran)
+    assert ran.calls == []
+    text = str(err.value)
+    assert "avx2, fma" in text
+    assert env_check.format_command(_COMPAT_STEP) in text
+    assert "FLEXTOOL_NO_ENV_CHECK" in text
+
+
+def test_import_guard_terminal_yes_installs(monkeypatch, capsys):
+    _needs_compat(monkeypatch)
+    ask, asked = _answers("y")
+    ran = _Ran()
+    assert env_check.ensure_polars_runtime_before_import(run=ran, ask=ask, interactive=True, entry="ask") == "installed"
+    assert asked == ["Run it now? [y/N] "]
+    assert ran.calls == [_COMPAT_STEP]
+    out = capsys.readouterr().out
+    assert "avx2, fma" in out and env_check.format_command(_COMPAT_STEP) in out
+
+
+@pytest.mark.parametrize("reply", ["", "n", "no", "maybe", "Y es"])
+def test_import_guard_terminal_without_explicit_yes_installs_nothing(monkeypatch, reply):
+    _needs_compat(monkeypatch)
+    ask, _asked = _answers(reply)
+    ran = _Ran()
+    with pytest.raises(env_check.CompatRuntimeRequired, match="Not installed"):
+        env_check.ensure_polars_runtime_before_import(run=ran, ask=ask, interactive=True, entry="ask")
+    assert ran.calls == []
+
+
+def test_import_guard_terminal_end_of_input_is_no(monkeypatch):
+    _needs_compat(monkeypatch)
+
+    def ask(_prompt):
+        raise EOFError
+
+    ran = _Ran()
+    with pytest.raises(env_check.CompatRuntimeRequired):
+        env_check.ensure_polars_runtime_before_import(run=ran, ask=ask, interactive=True, entry="ask")
+    assert ran.calls == []
+
+
+def test_import_guard_terminal_yes_but_pip_fails(monkeypatch):
+    _needs_compat(monkeypatch)
+    ask, _asked = _answers("yes")
+    with pytest.raises(env_check.CompatRuntimeRequired, match="exit 1"):
+        env_check.ensure_polars_runtime_before_import(run=_Ran(returncode=1), ask=ask, interactive=True, entry="ask")
+
+
+def test_import_guard_defers_to_gui_without_asking(monkeypatch, capsys):
+    _needs_compat(monkeypatch)
+    ran = _Ran()
+    ask = lambda _p: pytest.fail("asked")  # noqa: E731
+    assert env_check.ensure_polars_runtime_before_import(run=ran, ask=ask, interactive=True, entry="defer") == "deferred"
+    assert ran.calls == []
+    assert env_check.format_command(_COMPAT_STEP) in capsys.readouterr().err
+
+
+def test_import_guard_update_repairs_without_asking(monkeypatch, capsys):
+    _needs_compat(monkeypatch)
+    ran = _Ran()
+    ask = lambda _p: pytest.fail("asked")  # noqa: E731
+    result = env_check.ensure_polars_runtime_before_import(run=ran, ask=ask, interactive=False, entry="repair")
+    assert result == "installed"
+    assert ran.calls == [_COMPAT_STEP]
     assert "avx2, fma" in capsys.readouterr().err
 
 
-def test_import_guard_reports_failed_install(monkeypatch, capsys):
-    _no_polars_imported(monkeypatch)
-    _fake_dists(monkeypatch, polars="1.40.1")
-    _fake_cpu(monkeypatch, env_check.CPU_NEEDS_COMPAT, ["avx2"])
-    assert env_check.ensure_polars_runtime_before_import(run=_Ran(returncode=1)) == "failed"
+def test_import_guard_update_reports_failed_install(monkeypatch, capsys):
+    _needs_compat(monkeypatch)
+    assert env_check.ensure_polars_runtime_before_import(run=_Ran(returncode=1), entry="repair") == "failed"
     assert "polars[rtcompat]==1.40.1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("orig_argv", "argv0", "expected"),
+    [
+        (["python", "-m", "flextool.gui"], "-m", "defer"),
+        (["python", "-X", "dev", "-m", "flextool.gui.__main__"], "-m", "defer"),
+        (["pythonw.exe", "C:\\venv\\Scripts\\flextool.exe"], "C:\\venv\\Scripts\\flextool.exe", "defer"),
+        (["python", "/venv/bin/flextool-gui"], "/venv/bin/flextool-gui", "defer"),
+        (["python", "-m", "flextool.env_check"], "-m", "defer"),
+        (["python", "-m", "flextool.cli.cmd_update_flextool"], "-m", "repair"),
+        (["python", "update_flextool.py", "--skip-git"], "update_flextool.py", "repair"),
+        (["python", "/venv/bin/flextool-update"], "/venv/bin/flextool-update", "repair"),
+        (["python", "-m", "flextool.cli.cmd_run_flextool"], "-m", "ask"),
+        (["python", "run_flextool.py"], "run_flextool.py", "ask"),
+        (["python", "-c", "import flextool"], "-c", "ask"),
+        (["python", "-m", "pytest", "tests"], "-m", "ask"),
+        (["python"], "", "ask"),
+    ],
+)
+def test_import_entry_mode(orig_argv, argv0, expected):
+    assert env_check.import_entry_mode(orig_argv, argv0) == expected
 
 
 @pytest.mark.parametrize(
@@ -446,48 +562,9 @@ def test_import_guard_leaves_environment_alone(monkeypatch, status, dists, env, 
     _fake_dists(monkeypatch, **dists)
     _fake_cpu(monkeypatch, status, ["avx2"], ["sse4.2"] if status == env_check.CPU_UNSUPPORTED else [])
     ran = _Ran()
-    assert env_check.ensure_polars_runtime_before_import(run=ran) == expected
+    ask = lambda _p: pytest.fail("asked")  # noqa: E731
+    assert env_check.ensure_polars_runtime_before_import(run=ran, ask=ask, interactive=False) == expected
     assert ran.calls == []
-
-
-def test_import_guard_waits_for_a_concurrent_install(monkeypatch, _private_install_lock):
-    # Another process holds the lock and finishes the install while this one
-    # waits: no second pip run, and the lock is gone afterwards.
-    import os
-
-    _no_polars_imported(monkeypatch)
-    dists = {"polars": "1.40.1"}
-    monkeypatch.setattr(env_check, "_dist_version", lambda name: dists.get(name))
-    _fake_cpu(monkeypatch, env_check.CPU_NEEDS_COMPAT, ["avx2"])
-    open(_private_install_lock, "w").close()
-    slept = []
-
-    def other_process_finishes(seconds):
-        slept.append(seconds)
-        dists["polars-runtime-compat"] = "1.40.1"
-        os.remove(_private_install_lock)
-
-    ran = _Ran()
-    assert env_check.ensure_polars_runtime_before_import(run=ran, sleep=other_process_finishes) == "not_needed"
-    assert slept == [1.0]
-    assert ran.calls == []
-    assert not os.path.exists(_private_install_lock)
-
-
-def test_import_guard_takes_over_a_stale_lock(monkeypatch, _private_install_lock):
-    import os
-    import time
-
-    _no_polars_imported(monkeypatch)
-    _fake_dists(monkeypatch, polars="1.40.1")
-    _fake_cpu(monkeypatch, env_check.CPU_NEEDS_COMPAT, ["avx2"])
-    open(_private_install_lock, "w").close()
-    old = time.time() - 2 * env_check._INSTALL_LOCK_STALE_S
-    os.utime(_private_install_lock, (old, old))
-    ran = _Ran()
-    assert env_check.ensure_polars_runtime_before_import(run=ran, sleep=lambda s: pytest.fail("waited")) == "installed"
-    assert len(ran.calls) == 1
-    assert not os.path.exists(_private_install_lock)
 
 
 def test_import_guard_skips_when_polars_already_imported(monkeypatch):

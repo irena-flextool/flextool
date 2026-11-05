@@ -25,10 +25,24 @@ def test_proactive_offer_installs_compat_runtime(monkeypatch):
     monkeypatch.setattr(main_window.messagebox, "askyesno", lambda title, text, **kw: asked.append(text) or True)
     jobs = []
     main_window.MainWindow._offer_solver_fix(_stand_in(jobs), None, True)
-    assert "avx2" in asked[0]
     (steps, kw), = jobs
     assert steps == [[sys.executable, "-m", "pip", "install", "polars[rtcompat]==1.40.1"]]
+    # The dialog states the reason and the exact command it will run.
+    assert "avx2" in asked[0]
+    assert env_check.format_command(steps[0]) in asked[0]
+    assert asked[0].endswith("Run it now?")
     assert kw["intro"] == env_check.proactive_banner()
+
+
+def test_declined_proactive_offer_runs_nothing(monkeypatch):
+    monkeypatch.setattr(env_check, "_dist_version", {"polars": "1.40.1"}.get)
+    monkeypatch.setattr(
+        env_check, "cpu_verdict", lambda: env_check.CpuVerdict(env_check.CPU_NEEDS_COMPAT, "t", ["avx2"])
+    )
+    monkeypatch.setattr(main_window.messagebox, "askyesno", lambda *a, **kw: False)
+    jobs = []
+    main_window.MainWindow._offer_solver_fix(_stand_in(jobs), None, True)
+    assert jobs == []
 
 
 def test_crash_offer_uses_component_remedy(monkeypatch):

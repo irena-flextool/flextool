@@ -112,8 +112,11 @@ On a processor without AVX2 (for example a Celeron/Pentium laptop up to about 20
 Intel Core from before 2013 or an AMD FX), add the `compat` extra:
 `pip install "flextool[toolbox,viewer,compat]"`. It installs the compatible build of the
 `polars` data library, which is about 10-30% slower but runs on any x86-64-v2 processor.
-FlexTool also installs it by itself when it finds such a processor (when FlexTool is
-imported, and in "Update FlexTool"). `python -m flextool.env_check` reports what it found.
+When FlexTool finds such a processor without the compatible build, it says why and gives
+the pip command: in a terminal it asks "Run it now? [y/N]" and installs only on yes;
+without a terminal (a Spine Toolbox tool, CI) it stops with that message; the GUI offers
+the install in a dialog, and `flextool-update` installs it. `python -m flextool.env_check`
+reports what it found.
 
 Your prompt should now show `(.venv)`. Verify with `python --version` — it
 should report 3.11 or newer.

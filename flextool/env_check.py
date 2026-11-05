@@ -675,24 +675,155 @@ def _stderr(message: str) -> None:
         sys.stderr.flush()
 
 
-def ensure_polars_runtime_before_import(run=subprocess.run, sleep=None) -> str:
-    """Make the compatible polars runtime available before polars is first
-    imported, on a CPU that lacks the default runtime's features.
+class CompatRuntimeRequired(ImportError):
+    """``import flextool`` stopped: this processor needs the compatible
+    polars build, which is not installed, and FlexTool did not install it
+    (no terminal to ask in, or the user said no).  The message gives the
+    reason and the command that installs it."""
+
+
+def format_command(argv: list[str]) -> str:
+    """*argv* as a command line to copy into this platform's shell."""
+    if os.name == "nt":
+        return subprocess.list2cmdline(argv)
+    import shlex
+
+    return shlex.join(argv)
+
+
+def compat_runtime_reason(verdict: CpuVerdict | None = None) -> str:
+    """Why this processor needs the compatible polars build."""
+    verdict = verdict or cpu_verdict()
+    missing = ", ".join(verdict.missing_default) or "AVX2"
+    return (
+        f"This computer's processor has no {missing}. The standard build of the 'polars' data library, "
+        "which FlexTool uses, is compiled for processors with these instructions (x86-64-v3: most "
+        "processors from 2013 on) and crashes on this one. The compatible build (polars[rtcompat], "
+        "about 10-30% slower) runs on this processor."
+    )
+
+
+def compat_runtime_message(verdict: CpuVerdict | None = None, steps: list[list[str]] | None = None) -> str:
+    """The reason plus the exact command(s) that install the compatible build."""
+    steps = steps if steps is not None else polars_compat_steps()
+    commands = "\n".join("  " + format_command(step) for step in steps or [])
+    return f"{compat_runtime_reason(verdict)}\n\nTo install it, run:\n{commands}"
+
+
+# How the import-time check behaves, by what started this Python process:
+# ENTRY_ASK asks in the terminal (or stops with CompatRuntimeRequired when
+# there is none); the GUI and the diagnostics command import flextool
+# themselves and offer / print the fix, so the check only notes it
+# (ENTRY_DEFER); "Update FlexTool" is a repair the user asked for, so it
+# installs without asking (ENTRY_REPAIR).
+ENTRY_ASK = "ask"
+ENTRY_DEFER = "defer"
+ENTRY_REPAIR = "repair"
+_ENTRY_MODULES = {
+    "flextool.gui": ENTRY_DEFER,
+    "flextool.gui.__main__": ENTRY_DEFER,
+    "flextool.env_check": ENTRY_DEFER,
+    "flextool.cli.cmd_update_flextool": ENTRY_REPAIR,
+}
+_ENTRY_SCRIPTS = {
+    "flextool": ENTRY_DEFER,
+    "flextool-gui": ENTRY_DEFER,
+    "flextool-update": ENTRY_REPAIR,
+    "update_flextool": ENTRY_REPAIR,
+}
+
+
+def _script_mode(path: str) -> str:
+    name = re.split(r"[\\/]", path)[-1].lower()
+    for suffix in (".exe", ".pyw", ".py", "-script"):
+        name = name.removesuffix(suffix)
+    return _ENTRY_SCRIPTS.get(name, ENTRY_ASK)
+
+
+def import_entry_mode(orig_argv: list[str] | None = None, argv0: str | None = None) -> str:
+    """:data:`ENTRY_ASK`, :data:`ENTRY_DEFER` or :data:`ENTRY_REPAIR` for
+    the command line that started this process.  Read from
+    ``sys.orig_argv`` (while ``python -m pkg.mod`` imports ``pkg``,
+    ``sys.argv[0]`` is still ``-m``), then from the script in
+    ``sys.argv[0]`` (an installed launcher such as ``flextool-update.exe``)."""
+    argv = list(sys.orig_argv if orig_argv is None else orig_argv)[1:]
+    argv0 = (sys.argv[0] if sys.argv else "") if argv0 is None else argv0
+    mode = ENTRY_ASK
+    skip_next = False
+    for i, arg in enumerate(argv):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "-m":
+            mode = _ENTRY_MODULES.get(argv[i + 1] if i + 1 < len(argv) else "", ENTRY_ASK)
+            break
+        if arg.startswith("-m"):
+            mode = _ENTRY_MODULES.get(arg[2:], ENTRY_ASK)
+            break
+        if arg in ("-c", "-") or (arg.startswith("-c") and not arg.startswith("--")):
+            break
+        if arg in ("-W", "-X", "--check-hash-based-pycs"):
+            skip_next = True
+            continue
+        if not arg.startswith("-"):
+            mode = _script_mode(arg)
+            break
+    if mode == ENTRY_ASK and argv0 not in ("", "-m", "-c"):
+        mode = _script_mode(argv0)
+    return mode
+
+
+def _has_terminal() -> bool:
+    """True if stdin and stdout are both a terminal, so a question can be
+    asked and answered (not a GUI subprocess, Toolbox tool, CI or pytest)."""
+    try:
+        return bool(sys.stdin and sys.stdin.isatty() and sys.stdout and sys.stdout.isatty())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _run_steps(steps: list[list[str]], run) -> int | str:
+    """Run pip *steps* in order, echoing each on stderr; 0, or the first
+    failing exit code (or why it could not start)."""
+    for step in steps:
+        _stderr("$ " + format_command(step))
+        try:
+            returncode = run(step).returncode
+        except OSError as exc:
+            returncode = f"not started ({exc})"
+        if returncode != 0:
+            return returncode
+    importlib.invalidate_caches()
+    return 0
+
+
+def ensure_polars_runtime_before_import(run=subprocess.run, ask=input, interactive=None, entry=None) -> str:
+    """Offer the compatible polars runtime before polars is first imported,
+    on a CPU that lacks the default runtime's features.
 
     Called at the top of ``flextool/__init__.py``.  The default runtime can
-    crash natively on such a CPU already while flextool's modules import
-    (not only on the first vectorised op), and then neither the GUI nor
-    ``python -m flextool.env_check`` would get to run the child-process
-    probe that offers the fix.  So the CPU flags are read here (stdlib only)
-    and, when needed, the compat runtime of the installed polars version is
-    installed with pip, loudly on stderr; polars then loads it.  Returns
-    what was done (``"skipped"``, ``"not_needed"``, ``"unsupported"``,
-    ``"installed"``, ``"failed"``); *run* and *sleep* are parameters for
-    tests.  Concurrent imports wait on a lock file so only one runs pip.
+    crash natively on such a CPU already while flextool's modules import, so
+    the CPU flags are read here (stdlib only).  When the compatible runtime
+    is needed and missing, what happens depends on :func:`import_entry_mode`:
 
-    Skipped when polars is already imported (a Toolbox console, a
-    notebook), when ``POLARS_FORCE_PKG`` picks a runtime, or when
-    ``FLEXTOOL_NO_ENV_CHECK`` is set.
+    * ask (scripts, the CLI, Toolbox tools, ``python -c``): with a terminal,
+      print the reason and the command and ask "Run it now? [y/N]"; only an
+      explicit yes runs pip.  Without a terminal (*interactive* false: a GUI
+      subprocess, a Toolbox tool, CI, pytest), or on no, or when pip fails,
+      raise :class:`CompatRuntimeRequired` with the reason and the command.
+      pip never runs without a yes.
+    * defer (the GUI, ``python -m flextool.env_check``): note the reason on
+      stderr and continue; the GUI's startup check offers the install and
+      the diagnostics command prints it.
+    * repair (``flextool-update``): the user asked for a repair, so install
+      without asking (``"failed"`` is reported and the update continues).
+
+    Returns ``"skipped"``, ``"not_needed"``, ``"unsupported"``,
+    ``"deferred"``, ``"installed"`` or ``"failed"``.  *run*, *ask*,
+    *interactive* and *entry* are parameters for tests.  Skipped when polars
+    is already imported (a Toolbox console, a notebook), when
+    ``POLARS_FORCE_PKG`` picks a runtime, or when ``FLEXTOOL_NO_ENV_CHECK``
+    is set.
     """
     if (
         "polars" in sys.modules
@@ -706,91 +837,41 @@ def ensure_polars_runtime_before_import(run=subprocess.run, sleep=None) -> str:
     if verdict.status == CPU_UNSUPPORTED:
         _stderr(unsupported_cpu_help(verdict))
         return "unsupported"
-    if verdict.status != CPU_NEEDS_COMPAT or polars_compat_steps() is None:
+    steps = polars_compat_steps()
+    if verdict.status != CPU_NEEDS_COMPAT or steps is None:
         return "not_needed"
-    if sleep is None:
-        import time
-
-        sleep = time.sleep
-    lock = _acquire_install_lock(sleep)
-    try:
-        # Another process may have installed it while this one waited.
-        importlib.invalidate_caches()
-        steps = polars_compat_steps()
-        if not steps:
-            return "not_needed"
+    message = compat_runtime_message(verdict, steps)
+    entry = entry or import_entry_mode()
+    if entry == ENTRY_DEFER:
+        _stderr(message)
+        return "deferred"
+    if entry == ENTRY_REPAIR:
         _stderr(proactive_banner(verdict))
-        for step in steps:
-            _stderr("$ " + " ".join(step))
-            try:
-                returncode = run(step).returncode
-            except OSError as exc:
-                returncode = f"not started ({exc})"
-            if returncode != 0:
-                _stderr(
-                    f"FlexTool could not install the compatible polars build (exit {returncode}). "
-                    "polars will probably crash on this processor. Install it yourself with:\n  "
-                    + "\n  ".join(" ".join(s) for s in steps)
-                )
-                return "failed"
-        importlib.invalidate_caches()
+        returncode = _run_steps(steps, run)
+        if returncode != 0:
+            _stderr(f"FlexTool could not install the compatible polars build (exit {returncode}). {message}")
+            return "failed"
         return "installed"
-    finally:
-        _release_install_lock(lock)
 
-
-# Processes that import flextool at the same time (parallel Toolbox tools,
-# GUI workers) must not run pip into one environment concurrently.  A lock
-# file per interpreter prefix serialises the import-time install; a lock
-# older than this is left over from a killed process and is taken over.
-_INSTALL_LOCK_STALE_S = 900.0
-_INSTALL_LOCK_WAIT_S = 600.0
-
-
-def _install_lock_path() -> str:
-    import tempfile
-
-    key = hashlib.sha256(sys.prefix.encode()).hexdigest()[:12]
-    return os.path.join(tempfile.gettempdir(), f"flextool-polars-compat-{key}.lock")
-
-
-def _acquire_install_lock(sleep, path: str | None = None) -> str | None:
-    """Create the lock file, waiting while another process holds it.
-    Returns the path to remove afterwards, or ``None`` if the lock could not
-    be taken (then the install runs unlocked rather than not at all)."""
-    import time
-
-    path = path or _install_lock_path()
-    waited = 0.0
-    while True:
-        try:
-            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-            return path
-        except FileExistsError:
-            try:
-                age = time.time() - os.path.getmtime(path)
-            except OSError:
-                continue  # released meanwhile: try again
-            if age > _INSTALL_LOCK_STALE_S or waited >= _INSTALL_LOCK_WAIT_S:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-                continue
-            if waited == 0.0:
-                _stderr("Waiting for another FlexTool process to install the compatible polars build...")
-            sleep(1.0)
-            waited += 1.0
-        except OSError:
-            return None
-
-
-def _release_install_lock(path: str | None) -> None:
-    if path is not None:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+    opt_out = (
+        "Then start FlexTool again. (To skip this check, set FLEXTOOL_NO_ENV_CHECK=1; polars will "
+        "then probably crash on this processor.)"
+    )
+    if not (_has_terminal() if interactive is None else interactive):
+        raise CompatRuntimeRequired(f"{message}\n\n{opt_out}")
+    print(message, flush=True)
+    try:
+        answer = ask("Run it now? [y/N] ")
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if answer.strip().lower() not in ("y", "yes"):
+        raise CompatRuntimeRequired(f"Not installed. {message}\n\n{opt_out}")
+    returncode = _run_steps(steps, run)
+    if returncode != 0:
+        raise CompatRuntimeRequired(
+            f"FlexTool could not install the compatible polars build (exit {returncode}). {message}\n\n{opt_out}"
+        )
+    return "installed"
 
 
 def _cpu_hint(verdict: CpuVerdict | None = None) -> str:
@@ -846,12 +927,12 @@ def main(argv: list[str] | None = None) -> int:
     if proactive_polars_fix_needed():
         print("\nThis processor needs the compatible polars build. Fix:")
         for step in polars_compat_steps():
-            print("  " + " ".join(step))
+            print("  " + format_command(step))
         return 1
     if probe.is_native_fault and has_remediation(probe.failed_component):
         print("\nFix:")
         for step in remediation_steps(probe.failed_component):
-            print("  " + " ".join(step))
+            print("  " + format_command(step))
         return 1
     if probe.is_native_fault:
         print("\n" + unfixable_help())
