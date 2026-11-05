@@ -77,7 +77,7 @@ def read_dump_stamp(folder: Path | str) -> dict | None:
 def _write_stamp_file(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` through a sibling temp file, so a reader never sees a half-written stamp."""
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
     os.replace(tmp, path)
 
 
