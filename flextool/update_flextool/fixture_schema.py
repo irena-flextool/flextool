@@ -123,9 +123,15 @@ def _schema_sections_text(fmt: Format) -> str:
         db_path = str(Path(tmp) / "schema.sqlite")
         with contextlib.redirect_stdout(io.StringIO()):
             initialize_database(str(schema_json), db_path)
-        with DatabaseMapping("sqlite:///" + db_path) as db:
-            parse = pack_value if fmt == "packed" else keep_serialized_parse
-            data = export_data(db, parse_value=parse)
+        # ``with`` closes only the session; ``close()`` also disposes the engine, whose pooled connection
+        # otherwise keeps the file open and Windows cannot delete the temporary directory.
+        db = DatabaseMapping("sqlite:///" + db_path)
+        try:
+            with db:
+                parse = pack_value if fmt == "packed" else keep_serialized_parse
+                data = export_data(db, parse_value=parse)
+        finally:
+            db.close()
     sections = json.loads(json.dumps({key: data.get(key, []) for key in SCHEMA_SECTIONS}))
     if fmt == "packed":
         for row in sections["parameter_definitions"]:

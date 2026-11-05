@@ -86,6 +86,52 @@ def test_schema_sections_do_not_depend_on_the_hash_seed() -> None:
     assert digests == {local}
 
 
+def _open_files_under(folder: Path) -> list[str]:
+    fd_dir = Path("/proc/self/fd")
+    out = []
+    for fd in fd_dir.iterdir():
+        try:
+            target = os.readlink(fd)
+        except OSError:
+            continue
+        if target.startswith(str(folder)):
+            out.append(target)
+    return out
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="open files are listed from /proc")
+def test_schema_database_is_closed_before_its_folder_is_removed(monkeypatch, tmp_path) -> None:
+    # Windows cannot delete a file that is still open: the temporary schema database must have no open handle
+    # when its folder is removed.  Here the folder is checked for open files just before removal.
+    import contextlib
+    import tempfile
+
+    from flextool.update_flextool import fixture_schema
+
+    held: list[list[str]] = []
+
+    @contextlib.contextmanager
+    def checked_temporary_directory():
+        folder = tmp_path / "schema_tmp"
+        folder.mkdir()
+        yield str(folder)
+        held.append(_open_files_under(folder))
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", checked_temporary_directory)
+    fixture_schema._schema_sections_text.__wrapped__("packed")
+    assert held == [[]]
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="open files are listed from /proc")
+def test_initialize_database_leaves_no_open_handle(tmp_path) -> None:
+    from flextool.update_flextool.initialize_database import initialize_database
+
+    db_path = tmp_path / "schema.sqlite"
+    initialize_database(str(package_data_path("schemas/spinedb_schema.json")), str(db_path))
+    assert db_path.is_file()
+    assert _open_files_under(tmp_path) == []
+
+
 def test_sync_of_a_current_fixture_changes_nothing() -> None:
     data = _fixture()
     assert section_diffs(data, "packed") == []
