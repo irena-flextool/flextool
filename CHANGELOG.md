@@ -11,6 +11,12 @@
   (`highs.opt`, `gurobi.opt`, ...) from the previous run's work folder** instead of from `solver_config/` or
   `FLEXTOOL_SOLVER_CONFIG_DIR`. A run no longer sets `FLEXTOOL_SOLVER_CONFIG_DIR`, and `run_flextool` no longer
   writes its flags into environment variables.
+- **Changed: an out-of-range numeric flag is ignored with a warning, like its environment variable.**
+  `--solver-time-limit 0` (or a negative value) used to reach HiGHS as a zero time limit, which stops the solve at
+  once, while `FLEXTOOL_HIGHS_TIME_LIMIT=0` was ignored. Both forms now warn and fall through to the next setting
+  (no limit by default). The same holds for a negative `--solver-mip-gap` and for `--highs-threads 0`.
+- **Docs: `--warm-start` also works without `--save-memory`.** It reuses the HiGHS basis in-process too; the help
+  and the documentation said it worked only with `--save-memory`.
 - **New flags `--benders-workers N` and `--basis-cache-dir PATH`** for `run_flextool`, the command-line twins of
   `FLEXTOOL_BENDERS_WORKERS` and `FLEXTOOL_BASIS_CACHE_DIR`.
 - **GUI runs now use the same solver settings as terminal and Spine Toolbox runs** (behaviour change, notice). The

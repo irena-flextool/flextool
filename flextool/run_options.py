@@ -339,10 +339,12 @@ def resolve(
     """Return the first set tier of *spec*: flag, environment variable, database, default.
 
     An empty environment variable counts as unset.  A malformed one logs one warning naming the variable and
-    falls through to the next tier.  Never writes the environment.
+    falls through to the next tier.  A numeric flag value is held to the same rule as its environment variable
+    (``--solver-time-limit 0`` is ignored like ``FLEXTOOL_HIGHS_TIME_LIMIT=0``).  Never writes the environment.
     """
     if cli is not None:
-        return Resolved(cli, "cli")
+        if _cli_value_valid(spec, cli):
+            return Resolved(cli, "cli")
     env = os.environ if environ is None else environ
     if spec.env is not None:
         raw = env.get(spec.env)
@@ -357,6 +359,22 @@ def resolve(
     if db is not None:
         return Resolved(db, "db")
     return Resolved(spec.default, "default")
+
+
+def _cli_value_valid(spec: OptionSpec, cli: Any) -> bool:
+    """False, with one warning, when a numeric flag value fails the rule of :attr:`OptionSpec.parse`.
+
+    argparse already converts the text to a number (``type=float`` / ``int``) and checks ``choices``; the range
+    rule (positive, at least 0, ...) lives in ``parse``, so the flag is checked with it here.
+    """
+    if isinstance(cli, bool) or not isinstance(cli, (int, float)) or spec.flag is None:
+        return True
+    try:
+        spec.parse(_format_value(cli))
+    except ValueError as exc:
+        _logger.warning("Ignoring %s %s (%s).", spec.flag, _format_value(cli), exc)
+        return False
+    return True
 
 
 @dataclass(frozen=True)

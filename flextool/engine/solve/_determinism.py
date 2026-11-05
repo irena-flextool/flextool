@@ -17,15 +17,16 @@ Pinned:
 * ``parallel="off"`` — no multi-threading parallelism inside HiGHS.
   This alone forces the serial dual simplex (HiGHS' default solver), so we
   deliberately do NOT also set ``threads=1`` here.  The user can override via
-  ``--highs-threads N`` (N > 1), which flips ``parallel`` to ``on`` and sets
-  ``threads=N`` in ``_finalise_highs_options`` — N == 1 leaves this pin
+  ``--highs-threads N`` / ``FLEXTOOL_HIGHS_THREADS`` (N > 1), which flips
+  ``parallel`` to ``on`` and sets ``threads=N`` in the operator layer of the
+  HiGHS options (``_operator_highs_overrides``) — N == 1 leaves this pin
   intact and keeps default behaviour byte-identical.  HiGHS still initialises
   a single, process-global thread scheduler on the FIRST ``Highs::run()`` of
   the process; subsequent ``Highs`` instances that try to set ``threads`` to
   a different value are rejected with
   ``"global scheduler has already been initialized"``.  We avoid that error
-  path because ``_finalise_highs_options`` resolves ``FLEXTOOL_HIGHS_THREADS``
-  from a process-level env var set by the CLI before any solve runs — every
+  path because the thread count comes from the run's options
+  (``state.run_options``), resolved once per run before any solve — every
   sub-solve in the cascade sees the same value, so the scheduler is
   initialised once with the final thread count and never reconfigured.
   ``parallel=off`` (the default) is sufficient for determinism (no

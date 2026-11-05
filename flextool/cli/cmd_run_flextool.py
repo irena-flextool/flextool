@@ -497,8 +497,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--warm-start', action='store_true', default=None,
         help='Reuse a cached HiGHS basis across solves of the same '
-             'structural model (save-memory subprocess path only); safe '
-             'cold fallback on any mismatch.  Environment variable: '
+             'structural model, both in-process and on the --save-memory '
+             'subprocess path (not for Benders solves); safe cold '
+             'fallback on any mismatch.  Environment variable: '
              'FLEXTOOL_WARM_START=1.',
     )
     parser.add_argument(
@@ -663,7 +664,8 @@ def build_parser() -> argparse.ArgumentParser:
                         metavar='SECONDS',
                         help='HiGHS wall-clock time limit '
                              '(``time_limit`` option, seconds).  '
-                             'Unset (default) means no limit.  It '
+                             'Unset (default) means no limit; 0 or a '
+                             'negative value is ignored with a warning.  It '
                              'overrides a time_limit in highs.opt or a '
                              'solve\'s solver_arguments.  Environment '
                              'variable: FLEXTOOL_HIGHS_TIME_LIMIT; the '

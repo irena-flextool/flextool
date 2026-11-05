@@ -97,6 +97,9 @@ import polar_high.benders as _ph_benders
 import polar_high.decomposition as _ph_decomposition
 
 from flextool.engine.solve import _region_filter
+from flextool.run_options import OPTIONS as RUN_OPTIONS
+from flextool.run_options import RunOptions
+from flextool.run_options import resolve as resolve_run_option
 from flextool.engine import build_flextool as _build_flextool
 from flextool.engine.input._axis_enums import (
     get_global_axis_enums,
@@ -221,34 +224,30 @@ def _benders_failure_message(summary: str, meaning: str, how_to_avoid: str) -> s
 # safety net confirming the floor never produced an invalid bound.
 _ETA_FLOOR_MULT = 1.1
 
-# Environment twin of ``--benders-workers``: the per-iteration region-solve worker
-# count (machine-local; no schema/DB knob).  Read here only for a direct
-# ``solve_benders`` call with ``workers=None``; the cascade passes the run's
-# resolved value.  Unset/<=0 = auto (min(n_regions, cpu-1)); ``workers=1`` (or
-# 1 region) keeps the fully-sequential path.
-_BENDERS_WORKERS_ENV = "FLEXTOOL_BENDERS_WORKERS"
+# ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS`` and ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` are run options:
+# :mod:`flextool.run_options` parses them, once per run.  Unset / <= 0 workers = auto (min(n_regions, cpu-1));
+# ``workers=1`` (or 1 region) keeps the fully-sequential path.
 
 
-def _resolve_benders_workers(n_regions: int, workers) -> int:
+def _benders_run_option(key: str, run_options: RunOptions | None, db=None):
+    """Value of the run option *key*: the run's resolved value, else (a direct call) the environment.
+
+    The flag and environment tiers win over the solve's database value *db*.
+    """
+    if run_options is not None:
+        return run_options.with_db(key, db).value
+    return resolve_run_option(RUN_OPTIONS[key], db=db).value
+
+
+def _resolve_benders_workers(n_regions: int, workers, run_options: RunOptions | None = None) -> int:
     """Resolve the effective region-solve worker count.
 
-    Precedence: the ``workers`` argument (the cascade passes the run's
-    ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS``) > the
-    ``FLEXTOOL_BENDERS_WORKERS`` env, read only when ``workers`` is ``None``
-    (a direct call) > auto ``min(n, cpu-1)``.  Clamped to ``[1, n_regions]``
-    by :func:`resolve_worker_count`.
+    Precedence: an explicit ``workers`` argument > the run's ``--benders-workers`` /
+    ``FLEXTOOL_BENDERS_WORKERS`` (from *run_options*; ``None`` reads the environment) > auto
+    ``min(n, cpu-1)``.  Clamped to ``[1, n_regions]`` by :func:`resolve_worker_count`.
     """
-    env = os.environ.get(_BENDERS_WORKERS_ENV) if workers is None else None
-    if env:
-        try:
-            env_n = int(env)
-        except ValueError:
-            _logger.warning(
-                "Benders: ignoring non-integer %s=%r", _BENDERS_WORKERS_ENV, env
-            )
-        else:
-            if env_n > 0:
-                workers = env_n
+    if workers is None:
+        workers = _benders_run_option("benders_workers", run_options)
     return resolve_worker_count(n_regions, workers)
 
 
@@ -273,8 +272,7 @@ def _resolve_benders_max_stall() -> int:
 
     Precedence: an explicit positive ``FLEXTOOL_BENDERS_MAX_STALL`` env wins;
     otherwise the ``_STALL_WINDOW_DEFAULT``.  Mirrors
-    :func:`_resolve_benders_workers` EXACTLY, including the non-integer-warning
-    branch (a malformed value is ignored, not fatal).
+    the run options' rule for a malformed value: it is ignored with a warning, not fatal.
     """
     k = _STALL_WINDOW_DEFAULT
     env = os.environ.get(_BENDERS_MAX_STALL_ENV)
@@ -407,18 +405,16 @@ def _resolve_benders_cut_policy() -> str:
     return policy
 
 
-# Env override for the Benders in-out separation weight ``λ`` (machine-local; NO
-# schema/DB knob in Phase 1 — mirrors ``FLEXTOOL_BENDERS_WORKERS`` /
-# ``FLEXTOOL_BENDERS_MAX_STALL``, avoids a migration).  ``λ`` is the weight on
+# Env override of the Benders in-out separation weight ``λ`` (machine-local, over the per-solve
+# ``solve.benders_in_out_weight``; parsed by :mod:`flextool.run_options`).  ``λ`` is the weight on
 # the stable interior CENTRE in ``f_sep = λ·centre + (1-λ)·f_out`` fed to
 # :class:`polar_high.InOutStabilizer` (one instance PER REGION).  ``0.0``
 # (default) ⇒ OFF: the in-out block is skipped entirely and the loop is
 # byte-identical to exact Benders.  ``λ ∈ (0, 1)`` ⇒ ON, larger = more
 # stabilisation.  ``λ ≥ 1`` ("never query the master") is non-convergent and
-# ``λ < 0`` is meaningless — both are IGNORED with a warning (the default 0.0 is
-# used), mirroring the non-float-warning branch below and in
-# :func:`_resolve_benders_max_stall`.
-_BENDERS_IN_OUT_WEIGHT_ENV = "FLEXTOOL_BENDERS_IN_OUT_WEIGHT"
+# ``λ < 0`` is meaningless — both are IGNORED with a warning (the solve's value is
+# used).
+_BENDERS_IN_OUT_WEIGHT_ENV = RUN_OPTIONS["benders_in_out_weight"].env
 
 # Machine-local trust-region stabilizer knob (specs/
 # benders_masterfuel_convergence_theory.md §C, RANK 3).  An ABSOLUTE box
@@ -553,38 +549,19 @@ def _apply_region_autoscale(pb: Problem, cfg, region_name: str) -> "Layer2Plan |
     return plan
 
 
-def _resolve_benders_in_out_weight(db_value: float = 0.0) -> float:
+def _resolve_benders_in_out_weight(
+    db_value: float = 0.0, run_options: RunOptions | None = None,
+) -> float:
     """Resolve the Benders in-out separation weight ``λ``.
 
-    Precedence (mirrors :func:`_resolve_benders_workers`' env-first
-    resolution): an explicit, valid ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` in
-    ``[0, 1)`` (machine-local) OVERRIDES the per-solve DB value; otherwise
-    the DB ``db_value`` (the ``solve.benders_in_out_weight`` parameter,
-    default ``0.0`` = OFF).  A non-float OR an out-of-``[0, 1)`` env value
-    is IGNORED (not fatal, warned) and the DB value is used — ``λ ≥ 1``
-    never queries the master (non-convergent) and ``λ < 0`` is meaningless,
-    both config mistakes worth surfacing rather than silently clamping.
+    A valid ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` in ``[0, 1)`` (machine-local; from *run_options*, ``None``
+    reads the environment) OVERRIDES the per-solve DB value; otherwise the DB ``db_value`` (the
+    ``solve.benders_in_out_weight`` parameter, default ``0.0`` = OFF).  A non-float OR an out-of-``[0, 1)``
+    environment value is IGNORED with one warning (by :func:`flextool.run_options.resolve`) and the DB value is
+    used: ``λ ≥ 1`` never queries the master (non-convergent) and ``λ < 0`` is meaningless, both config mistakes
+    worth surfacing rather than silently clamping.
     """
-    weight = db_value
-    env = os.environ.get(_BENDERS_IN_OUT_WEIGHT_ENV)
-    if env:
-        try:
-            env_w = float(env)
-        except ValueError:
-            _logger.warning(
-                "Benders: ignoring non-float %s=%r",
-                _BENDERS_IN_OUT_WEIGHT_ENV, env,
-            )
-        else:
-            if 0.0 <= env_w < 1.0:
-                weight = env_w
-            else:
-                _logger.warning(
-                    "Benders: ignoring out-of-range %s=%r (must be in [0, 1); "
-                    ">= 1 never queries the master, < 0 is meaningless)",
-                    _BENDERS_IN_OUT_WEIGHT_ENV, env,
-                )
-    return weight
+    return float(_benders_run_option("benders_in_out_weight", run_options, db=db_value))
 
 
 def _resolve_benders_trust_region_radius() -> float | None:
@@ -2012,6 +1989,7 @@ def solve_benders(
     progress_callback: Callable[[dict], None] | None = None,
     subsolve_callback: Callable[[dict], None] | None = None,
     workers: int | None = None,
+    run_options: RunOptions | None = None,
     solver_options: dict | None = None,
     scaling_config: ScalingConfig | None = None,
 ) -> BendersResult:
@@ -2062,8 +2040,8 @@ def solve_benders(
         in-out separation weight ``λ``; default ``0.0`` = OFF = exact
         Benders, byte-identical).  Passed through to
         :func:`_resolve_benders_in_out_weight`, where the machine-local
-        ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` env — when set and valid —
-        overrides it.
+        ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT`` (from *run_options*) — when set and
+        valid — overrides it.
     progress_callback
         Optional ``Callable[[dict], None]`` invoked ONCE per outer Benders
         iteration (after that iteration's master + region solves), so a
@@ -2079,13 +2057,16 @@ def solve_benders(
         N independent region subproblem solves).  ``None`` (default)
         auto-resolves to ``min(n_regions, cpu_count - 1)``; ``<= 1`` (or a
         single region) keeps the fully-sequential path.  ``None`` also lets the
-        machine-local ``FLEXTOOL_BENDERS_WORKERS`` env set it (a direct call);
-        the cascade passes the run's resolved value.
+        run's ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS`` set it.
         The region solves are independent (each region owns its own HiGHS
         handle) and each solves single-threaded, so the parallel result is
         DETERMINISTIC — bit-identical ``(cost_r, cut slopes)`` and therefore
         identical LB/UB/iteration-count to ``workers=1`` (see the
         determinism gate test).
+    run_options
+        The run's resolved operator options (the cascade passes them);
+        ``None`` (a direct call) resolves ``benders_workers`` and
+        ``benders_in_out_weight`` from the environment.
     solver_options
         The solve's resolved user HiGHS options (``solver_config/highs.opt``
         < ``solve.solver_mip_gap`` < ``solver_arguments`` < CLI flags; no
@@ -2135,6 +2116,7 @@ def solve_benders(
             in_out_weight=in_out_weight,
             progress_callback=progress_callback,
             subsolve_callback=subsolve_callback, workers=workers,
+            run_options=run_options,
             solver_options=solver_options, scaling_config=scaling_config,
         )
     finally:
@@ -2327,7 +2309,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                          obj_scale: float = 1.0,
                          in_out_weight: float = 0.0,
                          progress_callback=None, subsolve_callback=None,
-                         workers=None, solver_options=None,
+                         workers=None, run_options: RunOptions | None = None,
+                         solver_options=None,
                          scaling_config: ScalingConfig | None = None) -> BendersResult:
     # --- master-hosted node set (plan §3 membership rule): every balance/
     # state node in NO region group is hosted natively in the MASTER.
@@ -2376,7 +2359,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # ``_resolve_benders_workers`` applies the machine-local env override and clamps to ``[1, n]`` (one region
     # per split).  Resolved before the region build: with more than one worker the region subproblems keep
     # HiGHS single-threaded (no user ``threads`` / ``parallel``) so the parallel pass stays deterministic.
-    eff_workers = _resolve_benders_workers(len(splits), workers)
+    eff_workers = _resolve_benders_workers(len(splits), workers, run_options)
     region_options = dict(solver_options) if solver_options else {}
     master_options = dict(solver_options) if solver_options else {}
     thread_keys = {"threads", "parallel"} & set(region_options)
@@ -2672,7 +2655,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # In-out separation weight λ (machine-local env overrides the per-solve
     # DB value; 0.0 = OFF = exact Benders, byte-identical inside the
     # coordinator by construction).
-    in_out_weight = _resolve_benders_in_out_weight(in_out_weight)
+    in_out_weight = _resolve_benders_in_out_weight(in_out_weight, run_options)
     if in_out_weight > 0.0 and master_hosted:
         # λ>0 with master-hosted nodes is SUPPORTED via the coordinator's
         # consistent-point upper bound.  A master hosting balance/storage

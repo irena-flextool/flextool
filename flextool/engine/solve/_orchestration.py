@@ -2837,8 +2837,9 @@ def _drive_cascade(
                     state, complete_solve_name, baseline=None,
                 ),
                 scaling_config=scaling_config,
-                # ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS``; None = automatic.
-                workers=run_options.value("benders_workers"),
+                # ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS`` and
+                # ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT``, resolved once for the run.
+                run_options=run_options,
             )
 
             # Final summary — convergence + the valid LB/UB sandwich that

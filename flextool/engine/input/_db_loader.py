@@ -22,7 +22,20 @@ class FlexToolRunner:
     See the engine cascade modules for the full input-writing flow.
     """
 
-    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, solver_config_dir=None, root_dir=None, work_folder=None, highs_threads=None, auto_scale=False, timing_recorder: "TimingRecorder | None" = None, run_options: "RunOptions | None" = None):
+    def __init__(
+        self,
+        input_db_url=None,
+        output_path=None,
+        scenario_name=None,
+        flextool_dir=None,
+        solver_config_dir=None,
+        root_dir=None,
+        work_folder=None,
+        highs_threads=None,
+        auto_scale=False,
+        timing_recorder: "TimingRecorder | None" = None,
+        run_options: "RunOptions | None" = None,
+    ):
         try:
             logger = logging.getLogger(__name__)
             # Resolve work_folder: default to cwd for backward compatibility

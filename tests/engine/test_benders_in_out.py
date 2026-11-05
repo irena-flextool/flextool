@@ -34,6 +34,7 @@ from flextool.engine.solve._benders import (
     _resolve_benders_in_out_weight,
     solve_benders,
 )
+from flextool.run_options import RunOptions
 from tests._support.load import load_scenario
 
 _REGIONS = ["region_A", "region_B", "region_C"]
@@ -51,6 +52,12 @@ _needs_in_out_ub_fix = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 # Env resolver — default + reject paths (mirrors _resolve_benders_max_stall).
 # ---------------------------------------------------------------------------
+
+
+def _assert_one_warning_naming_the_variable(caplog):
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert _BENDERS_IN_OUT_WEIGHT_ENV in warnings[0].getMessage()
 
 
 def test_resolver_default_is_zero(monkeypatch):
@@ -75,7 +82,7 @@ def test_resolver_rejects_non_float_with_warning(monkeypatch, caplog):
     monkeypatch.setenv(_BENDERS_IN_OUT_WEIGHT_ENV, "not-a-number")
     with caplog.at_level(logging.WARNING):
         assert _resolve_benders_in_out_weight() == 0.0
-    assert any("non-float" in r.message for r in caplog.records)
+    _assert_one_warning_naming_the_variable(caplog)
 
 
 @pytest.mark.parametrize("val", ["1.0", "1.5", "2.0"])
@@ -85,7 +92,7 @@ def test_resolver_rejects_weight_ge_one_with_warning(monkeypatch, caplog, val):
     monkeypatch.setenv(_BENDERS_IN_OUT_WEIGHT_ENV, val)
     with caplog.at_level(logging.WARNING):
         assert _resolve_benders_in_out_weight() == 0.0
-    assert any("out-of-range" in r.message for r in caplog.records)
+    _assert_one_warning_naming_the_variable(caplog)
 
 
 @pytest.mark.parametrize("val", ["-0.1", "-1.0"])
@@ -93,7 +100,7 @@ def test_resolver_rejects_weight_lt_zero_with_warning(monkeypatch, caplog, val):
     monkeypatch.setenv(_BENDERS_IN_OUT_WEIGHT_ENV, val)
     with caplog.at_level(logging.WARNING):
         assert _resolve_benders_in_out_weight() == 0.0
-    assert any("out-of-range" in r.message for r in caplog.records)
+    _assert_one_warning_naming_the_variable(caplog)
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +125,23 @@ def test_resolver_invalid_env_falls_back_to_db_value(monkeypatch, caplog):
     monkeypatch.setenv(_BENDERS_IN_OUT_WEIGHT_ENV, "not-a-number")
     with caplog.at_level(logging.WARNING):
         assert _resolve_benders_in_out_weight(0.3) == pytest.approx(0.3)
-    assert any("non-float" in r.message for r in caplog.records)
+    _assert_one_warning_naming_the_variable(caplog)
+
+
+def test_resolver_takes_the_run_options_without_re_reading_the_environment(monkeypatch, caplog):
+    """The run's resolved options are used as given: a malformed variable warns once, when the run resolves its
+    options, and the Benders resolver neither re-reads nor re-warns; the solve's value is used."""
+    monkeypatch.setenv(_BENDERS_IN_OUT_WEIGHT_ENV, "not-a-number")
+    with caplog.at_level(logging.WARNING):
+        opts = RunOptions.from_env()
+    _assert_one_warning_naming_the_variable(caplog)
+    caplog.clear()
+    monkeypatch.setenv(_BENDERS_IN_OUT_WEIGHT_ENV, "0.9")  # not seen: the options were resolved before
+    with caplog.at_level(logging.WARNING):
+        assert _resolve_benders_in_out_weight(0.3, opts) == pytest.approx(0.3)
+    assert not caplog.records
+    env_opts = RunOptions.from_env(environ={_BENDERS_IN_OUT_WEIGHT_ENV: "0.6"})
+    assert _resolve_benders_in_out_weight(0.3, env_opts) == pytest.approx(0.6)
 
 
 # ---------------------------------------------------------------------------

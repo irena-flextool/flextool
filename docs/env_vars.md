@@ -22,13 +22,13 @@ read (for example `FLEXTOOL_HIGHS_THREADS=many`) is ignored with one warning tha
 |---|---|---|---|
 | `FLEXTOOL_HIGHS_THREADS` | `--highs-threads` | positive integer (default `1`) | HiGHS solver threads. More than 1 turns on HiGHS' parallel mode, which is faster but not bit-for-bit reproducible. |
 | `FLEXTOOL_HIGHS_PRESOLVE` | `--presolve` | `on` / `off` / `choose` | HiGHS presolve. Unset keeps `on`. |
-| `FLEXTOOL_HIGHS_TIME_LIMIT` | `--solver-time-limit` | seconds | HiGHS wall-clock limit per solve. Unset means no limit. |
+| `FLEXTOOL_HIGHS_TIME_LIMIT` | `--solver-time-limit` | seconds | HiGHS wall-clock limit per solve, a positive number. Unset means no limit; 0 or a negative value is ignored with a warning, for the flag and the variable alike. |
 | `FLEXTOOL_HIGHS_MIP_GAP` | `--solver-mip-gap` | relative gap, e.g. `0.005` | MIP gap for every solve of the run. Unset: each solve's `solver_mip_gap`, else `mip_rel_gap` in `solver_config/highs.opt`. |
 | `FLEXTOOL_SOLVER_LOG_LEVEL` | `--solver-log-level` | `silent` / `normal` / `verbose` | HiGHS log output (default `normal`). |
 | `FLEXTOOL_SCALING` | `--scaling` | `off` / `solver_only` / `basic` / `full` | Autoscaler strategy for every solve; overrides each solve's `scaling` (default `full`). See [LP scaling pipeline](dev/scaling.md). |
 | `FLEXTOOL_USER_BOUND_SCALE` | `--user-bound-scale` | integer in `[-10, 0]` | Pins HiGHS' `user_bound_scale` exponent; unset lets the autoscaler choose. |
 | `FLEXTOOL_SAVE_MEMORY` | `--save-memory` | `1` | Solve each LP in a separate process to lower peak memory (slower). |
-| `FLEXTOOL_WARM_START` | `--warm-start` | `1` | With `--save-memory`, reuse a cached HiGHS basis for solves of the same model structure. |
+| `FLEXTOOL_WARM_START` | `--warm-start` | `1` | Reuse a cached HiGHS basis for solves of the same model structure, both in-process and with `--save-memory` (not for Benders solves). |
 | `FLEXTOOL_BASIS_CACHE_DIR` | `--basis-cache-dir` | folder | Where the warm-start basis cache is kept (default `<work folder>/basis_cache`). Share one folder to reuse bases between runs. |
 | `FLEXTOOL_BENDERS_WORKERS` | `--benders-workers` | positive integer | Threads for the region solves of a Benders solve. Unset or `0`: the number of regions, at most the number of cores minus one. |
 

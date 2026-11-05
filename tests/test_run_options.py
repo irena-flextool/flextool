@@ -99,6 +99,49 @@ def test_benders_workers_zero_means_automatic_without_warning(caplog):
     assert not caplog.records
 
 
+@pytest.mark.parametrize(
+    ("key", "bad", "bad_text"),
+    [
+        ("solver_time_limit", 0.0, "0"),
+        ("solver_time_limit", -5.0, "-5"),
+        ("solver_mip_gap", -0.1, "-0.1"),
+        ("highs_threads", 0, "0"),
+    ],
+)
+def test_out_of_range_flag_is_ignored_like_its_environment_variable(key, bad, bad_text, caplog):
+    """A flag value outside the option's range warns once and falls through, exactly as the same text in the
+    environment variable does: both forms give the database value."""
+    spec = OPTIONS[key]
+    db_value = SAMPLES[key][3]
+    with caplog.at_level(logging.WARNING, logger="flextool.run_options"):
+        from_flag = resolve(spec, cli=bad, environ={}, db=db_value)
+    flag_warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="flextool.run_options"):
+        from_env = resolve(spec, environ={spec.env: bad_text}, db=db_value)
+    env_warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert (from_flag.value, from_flag.source) == (from_env.value, from_env.source) == (db_value, "db")
+    assert len(flag_warnings) == len(env_warnings) == 1
+    assert spec.flag in flag_warnings[0].getMessage()
+
+
+def test_out_of_range_flag_lets_the_environment_variable_through():
+    from flextool.cli.cmd_run_flextool import build_parser
+
+    args = build_parser().parse_args(["sqlite:///x.sqlite", "--solver-time-limit", "0"])
+    opts = RunOptions.from_cli(args, environ={"FLEXTOOL_HIGHS_TIME_LIMIT": "120"})
+    assert (opts.value("solver_time_limit"), opts.source("solver_time_limit")) == (120.0, "env")
+
+
+def test_benders_workers_flag_zero_is_an_explicit_automatic(caplog):
+    """``--benders-workers 0`` is the documented automatic setting: kept as the flag's choice, no warning."""
+    spec = OPTIONS["benders_workers"]
+    with caplog.at_level(logging.WARNING, logger="flextool.run_options"):
+        got = resolve(spec, cli=0, environ={spec.env: "5"})
+    assert (got.value, got.source) == (0, "cli")
+    assert not caplog.records
+
+
 def _flags(**given):
     """A parsed command line: every registry flag unset (None) except *given*."""
     ns = {spec.dest: None for spec in OPTIONS.values() if spec.flag}

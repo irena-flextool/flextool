@@ -15,11 +15,15 @@ ship.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 
-from flextool.engine.solve._benders import solve_benders
+from polar_high import resolve_worker_count
+
+from flextool.engine.solve._benders import _resolve_benders_workers, solve_benders
+from flextool.run_options import RunOptions
 from tests._support.load import load_scenario, save_provider
 
 _REGIONS = ["region_A", "region_B", "region_C"]
@@ -97,6 +101,25 @@ def test_parallel_equals_sequential_exact(ti_data) -> None:
         assert par.invest_solution_vars[name].equals(
             seq.invest_solution_vars[name]
         ), f"invest_solution_vars[{name}] differs between parallel and sequential"
+
+
+def test_malformed_workers_variable_warns_once(monkeypatch, caplog) -> None:
+    """A malformed ``FLEXTOOL_BENDERS_WORKERS`` is reported once, by the run's option resolution; the Benders
+    worker count then uses the resolved (automatic) value without reading the variable again."""
+    monkeypatch.setenv("FLEXTOOL_BENDERS_WORKERS", "many")
+    with caplog.at_level(logging.WARNING):
+        opts = RunOptions.from_env()
+        workers = _resolve_benders_workers(4, None, opts)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "FLEXTOOL_BENDERS_WORKERS" in warnings[0].getMessage()
+    assert workers == resolve_worker_count(4, None)
+
+
+def test_explicit_workers_beat_the_run_options() -> None:
+    opts = RunOptions.from_env(environ={"FLEXTOOL_BENDERS_WORKERS": "3"})
+    assert _resolve_benders_workers(4, None, opts) == resolve_worker_count(4, 3)
+    assert _resolve_benders_workers(4, 1, opts) == 1
 
 
 def test_env_override_resolves(ti_data, monkeypatch) -> None:
