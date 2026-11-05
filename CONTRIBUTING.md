@@ -318,6 +318,15 @@ FlexTool uses the HiGHS solver, called via the `highspy` Python package (install
 - **`tests.yml`** — runs pytest on all three platforms and verifies the master template is up to date. Triggered on push/PR to `main`.
 - **`ci.yml`** — smoke gate on every push/PR; full suite on push to `main` and nightly; slow tests nightly; the axis-Enum mode LP parity run (`enum-mode`) nightly, non-gating.
 - **`canary.yml`** — weekly dependency canary (see below).
+- **`toolbox-flextool-bundle.yml`** — manual (*Run workflow*, inputs: the Spine Toolbox ref and the FlexTool
+  ref): builds the Windows zip with a frozen Spine Toolbox and FlexTool. The runner's Python (3.14) only builds the
+  frozen Toolbox; the Python embedded in the bundle (`_internal/Python/python.exe`, same 3.14.x, which Toolbox runs
+  the FlexTool tools with) gets FlexTool and all its dependencies installed with its own pip, and
+  `update_flextool.py` runs with it. odfpy is published only as an sdist and the embedded Python cannot build it
+  (its `._pth` file makes it ignore `PYTHONPATH`), so its wheel is built with the runner's Python first. The job
+  ends with smoke steps: imports and `flextool.env_check` in the bundled Python, a solve of the `base` example, and
+  `spinetoolbox.exe --list-items flextool` (headless). The embedded Python has no tkinter, so the FlexTool GUI does
+  not run from the bundle.
 
 ## Dependency caps and the canary
 

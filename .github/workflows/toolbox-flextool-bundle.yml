@@ -1,13 +1,34 @@
 name: Make Bundle for Toolbox and FlexTool
 
+# Builds a Windows zip with a frozen Spine Toolbox and FlexTool. The frozen
+# Toolbox runs Python tools with its embedded interpreter
+# (`_internal/Python/python.exe`), so FlexTool and its dependencies are
+# installed into that interpreter, not into the runner's Python (which only
+# builds the frozen Toolbox). Smoke steps at the end run the bundled
+# interpreter and spinetoolbox.exe.
+
 on:
   workflow_dispatch:
     inputs:
       git-ref:
-        description: "Git branch, tag or SHA to bundle."
+        description: "Spine Toolbox git branch, tag or SHA to bundle."
         required: true
         type: string
         default: ""
+      flextool-ref:
+        description: "FlexTool branch or tag to bundle."
+        required: false
+        type: string
+        default: "main"
+
+env:
+  # Minor version of both the runner's Python and the embedded Python. The
+  # full version (for the embeddable zip) is taken from the runner's Python.
+  PYTHON_MINOR: "3.14"
+
+defaults:
+  run:
+    shell: pwsh
 
 jobs:
   bundle:
@@ -22,53 +43,96 @@ jobs:
       - name: "Set up Python"
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12.7"
+          python-version: ${{ env.PYTHON_MINOR }}
           cache: pip
           cache-dependency-path: |
             pyproject.toml
             requirements.txt
+      - name: Get full Python version
+        id: py-full
+        run: |
+          $ver = python -c "import platform; print(platform.python_version())"
+          if (-not $ver.StartsWith("$Env:PYTHON_MINOR.")) { throw "runner Python is $ver, expected $Env:PYTHON_MINOR.x" }
+          "ver=$ver" >> $Env:GITHUB_OUTPUT
+          Write-Output "Python $ver"
       - name: Install dependencies
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           python -m pip install --upgrade pip
-          python -m pip install numpy  # See issue #2852. Remove when PyInstaller supports numpy 2.0+
           python -m pip install -r requirements.txt
       - name: Install PyInstaller
         run: |
           python -m pip install PyInstaller
       - name: List packages
-        run:
+        run: |
           python -m pip list
       - name: Download embeddable Python
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ver = "${{ steps.py-full.outputs.ver }}"
           mkdir embedded-python
           cd embedded-python
-          ls
-          curl -o python.zip https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip
+          curl -fsSL -o python.zip "https://www.python.org/ftp/python/$ver/python-$ver-embed-amd64.zip"
           tar xf python.zip
           del python.zip
       - name: Edit embedded Python search paths
         run: |
           cd embedded-python
-          Add-Content ./*._pth "Lib"
-          Add-Content ./*._pth "Lib/site-packages"
-          cat ./*._pth
+          # `import site` makes the interpreter process site-packages *.pth
+          # files (pywin32 puts win32/lib on the path through one).
+          $pth = Get-Item ./*._pth
+          (Get-Content $pth) -replace '^#\s*import site', 'import site' | Set-Content $pth
+          Add-Content $pth "Lib"
+          Add-Content $pth "Lib/site-packages"
+          Get-Content $pth
+          if (-not (Select-String -Path $pth -Pattern '^import site' -Quiet)) { throw "import site not enabled in $pth" }
       - name: Download get-pip.py
         run: |
           cd embedded-python
-          curl -sSL https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+          curl -fsSL https://bootstrap.pypa.io/get-pip.py -o get-pip.py
       - name: Install pip for embedded Python
-        run : |
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           cd embedded-python
           ./python.exe get-pip.py
+          del get-pip.py
       - name: List packages in embedded Python
         run: |
-          cd embedded-python/Scripts
-          ./pip.exe list
-      - name: Add pandas and spinedb-api==0.32.2
+          cd embedded-python
+          ./python.exe -m pip list
+      - name: Add setuptools, ipykernel and jill to embedded Python
         run: |
-          cd embedded-python/Scripts
-          ./pip.exe --version
-          ./pip.exe install pandas spinedb-api
+          $PSNativeCommandUseErrorActionPreference = $true
+          cd embedded-python
+          ./python.exe -m pip --version
+          # setuptools: the embedded Python ignores PYTHONPATH (._pth), which
+          # pip's isolated build environment relies on, so source installs
+          # (FlexTool itself, and its self-update later) build with this one.
+          # ipykernel and jill: Toolbox's Jupyter console.
+          ./python.exe -m pip install setuptools ipykernel jill
+      - name: Clone FlexTool
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          git clone https://github.com/irena-flextool/flextool.git --depth=1 --branch "${{ inputs.flextool-ref }}" flextool
+          git -C flextool log -1 --format="FlexTool %H %s"
+      - name: Build odfpy wheel
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          # odfpy (a FlexTool dependency) is published only as an sdist, and
+          # the embedded Python cannot build it (see above). It is pure
+          # Python, so a wheel built with the runner's Python works there.
+          python -m pip wheel --no-deps odfpy -w wheelhouse
+          Get-ChildItem wheelhouse
+      - name: Install FlexTool into embedded Python
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cd embedded-python
+          # Non-editable: the clone is moved into the bundle afterwards, and
+          # FlexTool's self-update reinstalls it from there.
+          ./python.exe -m pip install --no-build-isolation --find-links ../wheelhouse ../flextool
+          ./python.exe -m pip list
+          # Leave the clone as cloned (no build/ or *.egg-info in the bundle).
+          git -C ../flextool clean -fdxq
       - name: Build bundle
         run: |
           python -m PyInstaller spinetoolbox.spec -- --embedded-python=embedded-python
@@ -77,20 +141,59 @@ jobs:
         shell: bash
         run: |
           python -c "from importlib.metadata import version; print('version=' + version('spinetoolbox'))" >> $GITHUB_OUTPUT
-      - name: Install FlexTool
+      - name: Move FlexTool into the bundle
         run: |
-          cd "dist/Spine Toolbox"
-          git clone https://github.com/irena-flextool/flextool.git --depth=1
+          Move-Item flextool "dist/Spine Toolbox/flextool"
       - name: Update FlexTool
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           cd "dist/Spine Toolbox/flextool"
-          python update_flextool.py --skip-git
+          # The bundled interpreter, so the reinstall and the solver-stack
+          # check of update_flextool act on what the bundle ships.
+          ..\_internal\Python\python.exe update_flextool.py --skip-git
       - name: Add flextool start bat-file
-        shell: pwsh
         run: |
           cd "dist/Spine Toolbox"
           $content = 'start "" ./spinetoolbox.exe flextool'
           Set-Content -Path Flextool.bat -Value $content
+      - name: "Smoke: imports in the bundled Python"
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $py = Resolve-Path "dist/Spine Toolbox/_internal/Python/python.exe"
+          & $py -c "import sys; print(sys.version); assert sys.version_info[:2] == tuple(map(int, '$Env:PYTHON_MINOR'.split('.'))), sys.version"
+          & $py -c "import flextool, polars, highspy, polar_high, pandas, pyarrow, spinedb_api, odf, ipykernel, win32api; from importlib.metadata import version; print({p: version(p) for p in ('flextool', 'polars', 'highspy', 'polar-high', 'spinedb-api', 'pandas')})"
+          & $py -m pip check
+          & $py -m flextool.env_check
+      - name: "Smoke: solve the base example with the bundled Python"
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $py = Resolve-Path "dist/Spine Toolbox/_internal/Python/python.exe"
+          # Solve in a copy so the outputs do not end up in the artifact.
+          $work = Join-Path $Env:RUNNER_TEMP "flextool-smoke"
+          Copy-Item -Recurse "dist/Spine Toolbox/flextool" $work
+          cd $work
+          & $py -m flextool.cli.cmd_run_flextool sqlite:///templates/examples.sqlite --scenario-name base --write-methods parquet
+          $parquet = Get-ChildItem -Recurse -Filter *.parquet "output_parquet/base" -ErrorAction SilentlyContinue
+          if (-not $parquet) { throw "no parquet output in output_parquet/base" }
+          Write-Output "$($parquet.Count) parquet files in output_parquet/base"
+      - name: "Smoke: start spinetoolbox.exe headless"
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          cd "dist/Spine Toolbox"
+          # spinetoolbox.exe is a windowed (no console) exe: start it with
+          # redirected output, list the flextool project's items without
+          # opening the GUI, and kill it if it does not exit in time.
+          $out = Join-Path $Env:RUNNER_TEMP "toolbox-stdout.txt"
+          $err = Join-Path $Env:RUNNER_TEMP "toolbox-stderr.txt"
+          $p = Start-Process -FilePath ./spinetoolbox.exe -ArgumentList "--list-items", "flextool" -PassThru -NoNewWindow -RedirectStandardOutput $out -RedirectStandardError $err
+          $null = $p.Handle  # keeps ExitCode readable after the process exits
+          $exited = $p.WaitForExit(300000)
+          if (-not $exited) { $p.Kill($true) }
+          Get-Content $out -ErrorAction SilentlyContinue
+          Get-Content $err -ErrorAction SilentlyContinue | Select-Object -Last 40
+          if (-not $exited) { throw "spinetoolbox.exe did not exit within 300 s" }
+          if ($p.ExitCode -ne 0) { throw "spinetoolbox.exe --list-items exited $($p.ExitCode)" }
       - name: Upload archive with artifact v4
         uses: actions/upload-artifact@v4
         with:

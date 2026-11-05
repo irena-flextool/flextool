@@ -1,5 +1,9 @@
 ## Unreleased
 
+- **Windows Toolbox bundle: Python 3.14, with FlexTool installed in the bundled Python.** Before, the bundle's
+  Python (3.12) had only pandas and spinedb-api, so FlexTool 4 tools could not run in it (polars, highspy and
+  polar-high were installed into the build machine's Python instead). The bundle build now also runs an import
+  check, a solve of the `base` example and a headless start of Spine Toolbox.
 - **Python 3.14 is supported and tested** (CI matrix now 3.13 and 3.14 on Linux, Windows and macOS; 3.11 is still
   checked by the nightly CI as the minimum version).
 - **Fixed: results changed slightly from run to run with polars 2.x** (row order of output files, last digits of
