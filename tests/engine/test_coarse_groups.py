@@ -3,8 +3,9 @@
 Owner decision Q1: a node of a group whose ``new_stepduration`` is longer than the solve's step is balanced once
 per coarse step by summing its fine balance terms (``nodeBalanceCoarse_eq``), and a coarse storage node keeps one
 state per coarse step (``stateConstantCoarse_eq``).  A unit or connection whose balance nodes are all coarse has
-one flow per coarse step (owner decision 2026-11-03, ``tests/engine/test_coarse_flows.py``); every other flow, and
-online status, reserves and angles, stay on the solve's step; listing a unit or connection in a coarse group has no
+one flow per coarse step (owner decision 2026-11-03, ``tests/engine/test_coarse_flows.py``) and, with online
+variables, its units online once per coarse step (``tests/engine/test_coarse_online_reserves.py``); every other
+flow and online status, and reserves and angles, stay on the solve's step; listing a unit or connection in a coarse group has no
 effect on time resolution (Q-c15-A default, warned where it would have mattered).
 
 Fixtures: ``tests/fixtures/lh2_three_region.json`` (h2_* / lh2_* in the 24-h ``daily_group``, elec_* hourly),
@@ -182,24 +183,27 @@ def test_explicit_coarse_unit_fine_side(tmp_path_factory, caplog, monkeypatch) -
                for r in caplog.records)
 
 
-def test_coarse_unit_online_every_step(tmp_path_factory) -> None:
-    """liquefier_A (daily nodes) with linear online (#12): one v_online column per hour, every maxFlow_online row
-    bounds the flow by its own hour's online capacity, and the start-up at t0025 lags t0024.  Before: v_online only
-    at the 7 coarse steps, maxFlow_online read 0 in 161 hours (v_flow ≤ 0) and every day counted as a start-up."""
+def test_coarse_unit_online_once_per_day(tmp_path_factory) -> None:
+    """liquefier_A (daily nodes) with linear online (#12): a coarse process with units online once per day
+    (test_coarse_online_reserves.py): 7 v_online columns, every maxFlow_online_linear_coarse row bounds the day's
+    flow by its own day's online capacity, and the start-up of day 2 (t0025) is relative to day 1's units online
+    (the column at t0001).  Before the online rule of coarse processes: one v_online column per hour (the unit kept
+    the solve's step); before #12: v_online only at the 7 coarse steps but read as 0 in the other 161 hours."""
     step = _last(_lh2(tmp_path_factory, "c_uc", [
         ["unit", "liquefier_A", "startup_method", _s("linear")], ["unit", "liquefier_A", "min_load", _f(0.3)],
         ["unit", "liquefier_A", "virtual_unitsize", _f(50.0)]]))
     pb = build(step.flex_data)
     m = pb.canonicalise()
-    assert sum(1 for c in m.col_names if c.startswith("v_online_linear[liquefier_A,")) == 168
-    rows = row_terms(pb, "maxFlow_online_linear", "liquefier_A,")
-    assert len(rows) == 168
+    assert sum(1 for c in m.col_names if c.startswith("v_online_linear[liquefier_A,")) == 7
+    rows = row_terms(pb, "maxFlow_online_linear_coarse", "liquefier_A,")
+    assert len(rows) == 7
     for name, terms in rows.items():
         t = name[:-1].split(",")[-1]
         assert coef(terms, f"v_online_linear[liquefier_A,y2030,{t}]") < 0
+        assert sum(1 for c in terms if c.startswith("v_online_linear[")) == 1
     start = row_terms(pb, "online_change_linear", "liquefier_A,y2030,t0025")
     terms = start["online_change_linear[liquefier_A,y2030,t0025]"]
-    assert "v_online_linear[liquefier_A,y2030,t0024]" in terms
+    assert "v_online_linear[liquefier_A,y2030,t0001]" in terms
 
 
 def test_coarse_outputs_expanded(tmp_path_factory) -> None:

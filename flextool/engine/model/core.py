@@ -305,6 +305,10 @@ class _Build:
     rp_start_idx: pl.DataFrame | None = None         # (n, d, t) of v_state_rp_start
     p_olin_idx: pl.DataFrame | None = None           # (p, d, t) of the linear online vars
     p_oint_idx: pl.DataFrame | None = None           # (p, d, t) of the integer online vars
+    # (p, d, t) of the online rows and of the registered online / startup / shutdown columns: p_olin_idx /
+    # p_oint_idx with a coarse process only at its coarse steps' first fine steps (_coarse_flows.domain).
+    p_olin_rows: pl.DataFrame | None = None
+    p_oint_rows: pl.DataFrame | None = None
     twoway1var_arcs: pl.DataFrame | None = None      # (p, source, sink) of v_flow_back
     # Per-arc capacity (see _max_flow_rhs): bound of v_flow, RHS of maxFlow.
     invest_procs: pl.DataFrame | None = None         # processes with invest/divest vars
@@ -585,9 +589,11 @@ def _prepare(b: _Build) -> None:
     if b.has_online_lin:
         b.p_olin_idx = d.p_online_dt.join(d.process_online_linear, on="p",
                                           how="inner")
+        b.p_olin_rows = b.p_olin_idx
     if b.has_online_int:
         b.p_oint_idx = d.p_online_dt.join(d.process_online_integer, on="p",
                                           how="inner")
+        b.p_oint_rows = b.p_oint_idx
     if b.has_proc:
         b.twoway1var_arcs = _two_way_one_var_arcs(d)
         procs = [s.select(pl.col("p").cast(pl.Utf8))
@@ -598,6 +604,10 @@ def _prepare(b: _Build) -> None:
         (b.flow_upper_rhs, b.flow_cap_mult,
          b.flow_var_upper, b.flow_bound_arcs) = _max_flow_rhs(d, b.invest_procs)
         _coarse_flows.prepare(b)
+        if b.has_online_lin:
+            b.p_olin_rows = _coarse_flows.domain(b, b.p_olin_idx)
+        if b.has_online_int:
+            b.p_oint_rows = _coarse_flows.domain(b, b.p_oint_idx)
         if b.has_coarse_proc and b.flow_bound_arcs is not None:
             # A coarse arc is capped per coarse step by maxFlow_coarse, never by a per-step variable bound.
             fine = ~pl.col("p").cast(pl.Utf8).is_in(_coarse_flows.coarse_procs(b)["p"].cast(pl.Utf8).implode())

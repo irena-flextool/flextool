@@ -438,8 +438,12 @@ def coarse_process_exclusions(flex_data: "FlexData") -> dict[str, str]:
         for p in sorted(procs):
             out.setdefault(p, why)
 
-    add(_frame_values(d.process_online, "p"), "it has online variables (startups, minimum up / down time)")
-    add(_frame_values(getattr(d, "process_minload", None), "p"), "it has a minimum load")
+    ramp: set[str] = set()
+    for k in ("sink_up", "sink_down", "source_up", "source_down"):
+        ramp |= _frame_values(getattr(d, f"process_source_sink_ramp_limit_{k}", None), "p")
+    add(_frame_values(d.process_online, "p") & ramp,
+        "it has online variables and ramp limits (its start-up / shut-down capacity reduction and the ramps of "
+        "its units online are per solve step)")
     add(_frame_values(getattr(d, "prundt", None), "p"), "it provides reserves")
     add(_frame_values(getattr(d, "process_delayed", None), "p"), "it has a delay")
     add(_frame_values(getattr(d, "connection_dc_power_flow", None), "p"), "it is a DC power-flow line")
@@ -481,7 +485,9 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
     per arc), averaging a fine-feasible flow over each coarse step keeps every row and the cost.  Reasons: a
     variable cost or a price that varies within a coarse step (the fine flows could pick the cheapest steps),
     an efficiency that varies (the most efficient steps), two or more limits that vary (the averaged rows are
-    their relaxation), ramp limits (ramps between coarse steps)."""
+    their relaxation), ramp limits (ramps between coarse steps), online variables (units online, start-ups and
+    shut-downs once per coarse step), a minimum up / down time (counted in whole coarse steps) and a minimum load
+    that varies within a coarse step (the averaged floor is the step-mean floor)."""
     from flextool.engine.preprocess.params._coarse import varies_within_coarse_steps as varies
     from flextool.engine.preprocess.params._coarse import varying_within_coarse_steps as varying
 
@@ -528,46 +534,87 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
     for k in ("sink_up", "sink_down", "source_up", "source_down"):
         ramp |= _frame_values(getattr(d, f"process_source_sink_ramp_limit_{k}", None), "p")
     add(ramp & _frame_values(steps, "p"), "it has ramp limits (they apply between coarse steps)")
+    coarse = _frame_values(steps, "p")
+    add(_frame_values(d.process_online, "p") & coarse,
+        "its units online, start-ups and shut-downs are decided once per coarse step")
+    add((_frame_values(getattr(d, "pdt_uptime_set", None), "p") | _frame_values(getattr(d, "pdt_downtime_set", None),
+                                                                               "p")) & coarse,
+        "its minimum up / down time counts whole coarse steps")
+    add(varies(_param_frame(getattr(d, "p_min_load", None)), steps, ("p",))
+        & _frame_values(getattr(d, "process_minload", None), "p") & _frame_values(d.process_online, "p"),
+        "its minimum load varies within a coarse step")
     return out
 
 
 def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]:
-    """The coarse processes of ``steps`` ``(p, d, b_first, t)`` with a coarse step that the forecast tie
-    (``non_anticipativity_storage_use``) covers only in part.
+    """The coarse processes of ``steps`` ``(p, d, b_first, t)`` with a coarse step that a forecast tie covers only
+    in part, or whose coarse steps differ between a forecast and its reference forecast over the tied steps.
 
-    The tie holds the net flow into each balance node of a ``groupStochastic`` group equal in every forecast of
-    an anchor period over the tied steps ``dt_non_anticipativity`` (the committed steps) only.  A coarse
-    process has one flow per coarse step, so a tie on one fine step of a coarse step holds its flow over the
-    whole step: where a coarse step reaches past the end of the tied steps the forecasts could no longer differ
-    after it, although nothing is committed there.  Such a process keeps the solve's step."""
+    The ties hold over the tied steps ``dt_non_anticipativity`` (the committed steps) only, between the forecasts
+    of an anchor period: the net flow into each balance node of a ``groupStochastic`` group
+    (``non_anticipativity_storage_use``) and the units online of every online process
+    (``non_anticipativity_online_*``).  A coarse process has one flow and one units-online value per coarse step,
+    so a tie on one fine step of a coarse step holds the whole step: where a coarse step reaches past the end of
+    the tied steps the forecasts could no longer differ after it, although nothing is committed there.  A tie row
+    pairs the column of a forecast's coarse step with the reference forecast's column at the same step, which is
+    one value per step only where both forecasts cut the tied steps into the same coarse steps.  Such a process
+    keeps the solve's step."""
     from flextool.engine.model._non_anticipativity import reference_forecasts
 
     d = flex_data
-    gn, gs, pss = d.group_node, d.groupStochastic, d.process_source_sink
-    tie = d.dt_non_anticipativity
-    if any(f is None or f.height == 0 for f in (gn, gs, pss, tie, d.nodeBalance, steps)):
+    pss, tie = d.process_source_sink, d.dt_non_anticipativity
+    if any(f is None or f.height == 0 for f in (pss, tie, steps)):
         return set()
     forecasts = [(a, f) for a, f in reference_forecasts(d) if len(f) >= 2]
     if not forecasts:
         return set()
-    nodes = (_frame_values(gn.join(gs.select("g").unique(), on="g", how="semi"), "n")
-             & _frame_values(d.nodeBalance, "n"))
-    arcs = pss.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")))
-    procs = set(arcs.filter(pl.col("source").is_in(sorted(nodes)) | pl.col("sink").is_in(sorted(nodes)))
-                ["p"].to_list())
+    procs = _frame_values(d.process_online, "p")
+    gn, gs = d.group_node, d.groupStochastic
+    if all(f is not None and f.height > 0 for f in (gn, gs, d.nodeBalance)):
+        nodes = (_frame_values(gn.join(gs.select("g").unique(), on="g", how="semi"), "n")
+                 & _frame_values(d.nodeBalance, "n"))
+        arcs = pss.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")))
+        procs |= set(arcs.filter(pl.col("source").is_in(sorted(nodes)) | pl.col("sink").is_in(sorted(nodes)))
+                     ["p"].to_list())
+    if not procs:
+        return set()
     tied_by_anchor = tie.select(pl.col("d").cast(pl.Utf8).alias("anchor"), pl.col("t").cast(pl.Utf8)).unique()
-    tied = (pl.DataFrame([(a, f) for a, fs in forecasts for f in fs], schema={"anchor": pl.Utf8, "d": pl.Utf8},
-                         orient="row")
-            .join(tied_by_anchor, on="anchor", how="inner")
-            .select("d", "t", __tied=pl.lit(True)))
-    forecast_periods = sorted({f for _, fs in forecasts for f in fs})
+    fan = pl.DataFrame([(a, f, fs[0]) for a, fs in forecasts for f in fs],
+                       schema={"anchor": pl.Utf8, "d": pl.Utf8, "d_ref": pl.Utf8}, orient="row")
+    tied = (fan.join(tied_by_anchor, on="anchor", how="inner")
+            .select("d", "d_ref", "t", __tied=pl.lit(True)))
     st = (steps.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "b_first", "t")))
-          .filter(pl.col("p").is_in(sorted(procs)) & pl.col("d").is_in(forecast_periods))
+          .filter(pl.col("p").is_in(sorted(procs)) & pl.col("d").is_in(fan["d"].to_list()))
           .join(tied, on=["d", "t"], how="left"))
     part = (st.group_by("p", "d", "b_first")
             .agg(pl.col("__tied").is_not_null().any().alias("__any"), pl.col("__tied").is_not_null().all().alias("__all"))
             .filter(pl.col("__any") & ~pl.col("__all")))
-    return set(part["p"].to_list())
+    ref = steps.select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8).alias("d_ref"), pl.col("t").cast(pl.Utf8),
+                       pl.col("b_first").cast(pl.Utf8).alias("__b_ref"))
+    other = (st.filter(pl.col("__tied").is_not_null())
+             .join(ref, on=["p", "d_ref", "t"], how="left")
+             .filter(pl.col("__b_ref").is_null() | (pl.col("__b_ref") != pl.col("b_first"))))
+    return set(part["p"].to_list()) | set(other["p"].to_list())
+
+
+def coarse_pin_varies(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]:
+    """The coarse processes of ``steps`` ``(p, d, b_first, t)`` with a coarse step whose units online are pinned
+    (``p_fix_online``: the realization solve takes the committed values of its parent) on only part of the step,
+    or to values that change within the step.  The fine model pins each step to its own value; one units-online
+    value per coarse step could only take a mean (fractional for integer units) or pin the free steps too.  Such
+    a process keeps the solve's step."""
+    from flextool.engine.preprocess.params._coarse import varies_within_coarse_steps
+
+    pin = _param_frame(getattr(flex_data, "p_fix_online", None))
+    if pin is None or pin.height == 0 or steps is None or steps.height == 0:
+        return set()
+    st = steps.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "b_first", "t")))
+    pins = pin.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "t")), pl.col("value").cast(pl.Float64))
+    part = (st.join(pins.select("p", "d", "t", __pin=pl.lit(True)), on=["p", "d", "t"], how="left")
+            .group_by("p", "d", "b_first")
+            .agg(pl.col("__pin").is_not_null().any().alias("__any"), pl.col("__pin").is_not_null().all().alias("__all"))
+            .filter(pl.col("__any") & ~pl.col("__all")))
+    return set(part["p"].to_list()) | varies_within_coarse_steps(pins, st, ("p",))
 
 
 def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
@@ -600,11 +647,16 @@ def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
 
     frames = frames_for(excluded)
     if frames is not None and frames.processCoarse.height > 0:
-        straddle = coarse_tie_straddles(flex_data, frames.process_coarse_step)
-        if straddle:
-            why = ("the forecasts are tied (non-anticipativity) over only part of one of its coarse steps, and "
-                   "one flow per coarse step would tie the whole step")
-            frames = frames_for({**excluded, **{p: why for p in straddle}})
+        kept: dict[str, str] = {}
+        why = ("the forecasts are tied (non-anticipativity) over only part of one of its coarse steps, and one "
+               "value per coarse step would tie the whole step")
+        kept.update({p: why for p in sorted(coarse_tie_straddles(flex_data, frames.process_coarse_step))})
+        why = ("its units online are pinned to a commitment that covers only part of one of its coarse steps or "
+               "changes within it")
+        for p in sorted(coarse_pin_varies(flex_data, frames.process_coarse_step)):
+            kept.setdefault(p, why)
+        if kept:
+            frames = frames_for({**excluded, **kept})
     coarse_process_messages(frames)
     if frames is None or frames.processCoarse.height == 0:
         return

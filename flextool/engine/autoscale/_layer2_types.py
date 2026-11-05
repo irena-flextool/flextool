@@ -504,6 +504,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # _unit_floors.py (minFlow_output_floor_<sfx>: per-output
     # floor of a multi-output unit; unit-count flow units)
     "minFlow_output_floor": CstrFamily(QuantityType.DIMENSIONLESS),
+    # Coarse online processes, averaged over each coarse step — flextool/engine/model/_coarse_flows.py add_cstr
+    # (f"{family}{sfx}_coarse").  Explicit: the fine-family prefixes would otherwise resolve them silently.
+    **{f"{fam}_{kind}_coarse": CstrFamily(QuantityType.DIMENSIONLESS)
+       for fam in ("maxFlow_online", "maxFlow_back_online", "maxOutputSum_online", "minFlow_minload",
+                   "minFlow_output_floor")
+       for kind in ("linear", "integer")},
     # _unit_floors.py: downward-reserve headroom rows (zero
     # floor) per unit / per arc; unit-count flow units
     "minFlow_reserve": CstrFamily(QuantityType.DIMENSIONLESS),

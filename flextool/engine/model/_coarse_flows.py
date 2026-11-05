@@ -7,9 +7,13 @@ steps t of b.  The registered variable has a row only at each coarse step's firs
 fine variable and maps each fine row to the column of its coarse step.  Every term that reads the alias is
 unchanged: a sum over the fine steps of a coarse step (the coarse node balance, costs, CO2, cumulative flow) adds
 the fine coefficients on the one column, Σ_t v·Δt·slope_t = v_b·Σ_t Δt·slope_t.  :func:`alias` serves any *level*
-of a coarse process keyed ``(p, …, d, t)`` (a value that holds through the step, like a rate).
+of a coarse process keyed ``(p, …, d, t)`` (a value that holds through the step, like a rate): its units online
+(``_online``) are aliased like its flows.  Its *events* (start-ups, shut-downs) are registered at ``b_first`` only
+and are not aliased: a fine row of an interior step has no event term (an alias would count one start-up on
+every fine step of a sum over t).
 
-The arc-local rows of a coarse process (capacity, output sum, conversion, input share, profiles) are not written per fine step: :func:`add_cstr` writes them once per coarse step as
+The arc-local rows of a coarse process (capacity, output sum, conversion, input share, profiles, the online
+capacity and the minimum load) are not written per fine step: :func:`add_cstr` writes them once per coarse step as
 the twin family ``<family>_coarse``, the fine row's Δt-weighted average over the step (EQ. header in
 :func:`add_cstr`).  A constant flow could not meet a per-step equality while a parameter varies within the step;
 the average lets time-varying availability, profile, efficiency and capacity coefficients act through their step
@@ -167,13 +171,16 @@ def add_cstr(b: "_Build", name: str, *, over: pl.DataFrame, sense: str, lhs_term
         m.add_cstr(name, over=fine, sense=sense, lhs_terms=lhs_terms, rhs_terms=rhs_terms)
     # ─── EQ. ─── maxFlow_coarse, maxFlow_negCap_coarse, maxFlow_back_coarse, maxOutputSum_coarse,
     #             maxOutputSum_negCap_coarse, conversion_indirect_coarse, minInputShare_coarse,
-    #             profile_flow_{upper_limit,lower_limit,fixed}_coarse ─────────────────────────────────────────
+    #             profile_flow_{upper_limit,lower_limit,fixed}_coarse, maxFlow_online_{linear,integer}_coarse,
+    #             maxFlow_back_online_{linear,integer}_coarse, maxOutputSum_online_{linear,integer}_coarse,
+    #             minFlow_minload_{linear,integer}_coarse, minFlow_output_floor_{linear,integer}_coarse ───────
     # Σ_{t∈b} w[p,d,b,t] · ( LHS_t − RHS_t )  {≤,=,≥}  0      w = Δt / Δ_b,  Δ_b = Σ_{t∈b} Δt
     #   ∀ p ∈ processCoarse, (…, p, d, b) the coarse steps of p (b = its first fine step b_first);
-    #   LHS_t / RHS_t = the terms of the fine row of the family (maxFlow, …, profile_flow_fixed) at (d, t)
+    #   LHS_t / RHS_t = the terms of the fine row of the family (maxFlow, …, minFlow_output_floor) at (d, t)
     # The fine row's Δt-weighted average over the coarse step.  The flow is one column per coarse step, so its own
     # term averages to itself; time-varying availability, profile, efficiency (slope) and capacity coefficients act
-    # through their step means.  With one time-varying limit per arc the averaged row allows exactly the energy the
+    # through their step means; so do the units online (one value per coarse step) times a time-varying
+    # availability or minimum load (the mean of the product).  With one time-varying limit per arc the averaged row allows exactly the energy the
     # fine rows allow over the step; with several it is their convex relaxation (it can be looser).
     if coarse.height > 0:
         m.add_cstr(f"{name}_coarse", over=coarse, sense=sense,

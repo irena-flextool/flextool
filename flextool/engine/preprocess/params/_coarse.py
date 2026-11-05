@@ -3,17 +3,20 @@
 A group whose ``new_stepduration`` is longer than the solve's time step makes its balance and storage nodes
 *coarse*: each coarse node is balanced once per coarse step by summing its fine balance terms over the step
 (``nodeBalanceCoarse_eq``); a coarse storage node keeps one state per coarse step (``stateConstantCoarse_eq``).
-Online status, reserves and angles stay on the solve's steps.
+Reserves and angles stay on the solve's steps.
 
 A unit or connection whose every balance node is coarse is a *coarse process* (:func:`coarse_process_frames`):
-its flows have one value per coarse step of its nodes (a rate that stays the same over the step).  A process
-with a fine balance node, or with no balance node, keeps the solve's step, and so does a process with a
-feature whose rows are per fine step and couple the flow to other per-step terms (online variables, reserves,
-a delay, DC power flow, an exact connection, minimum load, a user constraint flow term, a flow group instant
-limit, a capacity-margin / inertia / non-synchronous group): those rows would not hold for a flow that cannot
-change within the coarse step.  In a stochastic solve, a process at a node whose net flow is tied between the
-forecasts also keeps the solve's step when a coarse step holds both tied (committed) and untied steps
-(``flex_data.coarse_tie_straddles``): its one flow would tie the untied steps too.
+its flows have one value per coarse step of its nodes (a rate that stays the same over the step), and so do its
+units online, start-ups and shut-downs (the start and stop at the step's start; minimum up / down times count
+whole coarse steps).  A process with a fine balance node, or with no balance node, keeps the solve's step, and
+so does a process with a feature whose rows are per fine step and couple the flow to other per-step terms
+(online variables together with ramp limits, reserves, a delay, DC power flow, an exact connection, a user
+constraint flow term, a flow group instant limit, a capacity-margin / inertia / non-synchronous group): those
+rows would not hold for a flow that cannot change within the coarse step.  In a stochastic solve, a process at
+a node whose net flow is tied between the forecasts, and every online process, also keeps the solve's step when
+a coarse step holds both tied (committed) and untied steps (``flex_data.coarse_tie_straddles``): its one value
+would tie the untied steps too.  A realization solve keeps a process at the solve's step when its units online
+are pinned on part of a coarse step or to values that change within one (``flex_data.coarse_pin_varies``).
 
 :func:`coarse_node_frames` cuts the solve's steps into coarse steps.  It is the only source of the coarse
 steps; the per-block timelines of the block layout (``solve_data/block_step_duration`` etc.) do not feed the

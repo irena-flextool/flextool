@@ -14,6 +14,7 @@ import polars as pl
 from flextool.engine.input._axis_enums import cast_dim
 from flextool.engine.model import _balance_terms
 from flextool.engine.model._common import _has_rows, _var_view
+from flextool.engine.model._online import online_rows
 from flextool.engine.preprocess.params._branch import forecast_star_pairs
 
 if TYPE_CHECKING:
@@ -237,6 +238,9 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # Units online are the same in every forecast over the tied steps, the committed section decided before the
     # forecast is known (inside a fan: the committed cells of its period label, solve_data/committed_in_fan).
     # With no tied step (shared_operation_periods = [], or a rolling fan only in the look-ahead) they are free.
+    # A coarse process (processCoarse) is tied once per coarse step, at its first fine step: it is coarse only where
+    # each of its coarse steps is wholly tied or wholly untied and both forecasts have the same coarse steps
+    # (flex_data.coarse_tie_straddles).
     for kind, v_online, online_set in (("integer", v_online_integer, d.process_online_integer),
                                        ("linear", v_online_linear, d.process_online_linear)):
         if v_online is None or not _has_rows(online_set):
@@ -251,6 +255,10 @@ def add_dispatch_constraints(b: "_Build") -> None:
                     .join(pdt, on=["p", "d", "t"], how="inner")
                     .join(pdt.rename({"d": "b"}), on=["p", "b", "t"], how="inner")
                     .select("p", "d", "b", "t").unique())
+        if b.has_coarse_proc:
+            # A coarse process: one row per wholly tied coarse step, at its first fine step (the rows of the other
+            # fine steps tie the same two columns).
+            over = over.join(online_rows(b, kind).select("p", "d", "t"), on=["p", "d", "t"], how="semi")
         if over.height > 0:
             m.add_cstr(
                 f"non_anticipativity_online_{kind}",

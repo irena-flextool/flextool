@@ -11,6 +11,11 @@ v_online), suffixed ``_linear`` / ``_integer``.  A process is online by its star
 ``minimum_time_method``); a connection with a startup method has online capacity in service covering both flow
 directions, and no minimum load, minimum up / down times or startup reduction (connections have no such
 parameters).
+
+A coarse process (``processCoarse``) has one units-online value per coarse step (an aliased level) and one
+start-up / shut-down per coarse step at its start (events registered at the step's first fine step); its online
+capacity and minimum-load rows are averaged over the step (``_coarse_flows.add_cstr``).  An online process with
+ramp limits or reserves keeps the solve's step (``flex_data.coarse_process_exclusions``).
 """
 
 from typing import TYPE_CHECKING
@@ -20,6 +25,7 @@ from polar_high import Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.model import _coarse_flows
 from flextool.engine.model._common import (
     _availability_factor, _capped_arcs, _coef_factor, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap,
     _indirect_sum_arcs, _utf8_keys, _var_view,
@@ -41,10 +47,17 @@ def add_variables(b: "_Build") -> None:
     #   ∀ (p,d,t) ∈ p_online_dt, p ∈ process_online_linear
     # Units online, and units started / shut down: the change of units online, online_change
     # (count of unitsize), continuous.
+    # ─── VAR. ─── v_online / v_startup / v_shutdown (coarse processes) ───────
+    # on[p,d,b], su[p,d,b], sd[p,d,b]   ∀ p ∈ processCoarse ∩ process_online, (d,b) the coarse steps of p
+    #   (b = its first fine step b_first)
+    # Units online once per coarse step, held over its fine steps (a level: b.v_online_* is indexed on every fine
+    # step, _coarse_flows.alias); the units started / shut down at the step's start (events: registered at b only,
+    # not aliased, so a sum over t counts each once and a fine row of an interior step has no event term).
     if b.has_online_lin:
-        b.v_online_linear = m.add_var("v_online_linear", ("p", "d", "t"), b.p_olin_idx)
-        b.v_startup_linear = m.add_var("v_startup_linear", ("p", "d", "t"), b.p_olin_idx)
-        b.v_shutdown_linear = m.add_var("v_shutdown_linear", ("p", "d", "t"), b.p_olin_idx)
+        b.v_online_linear = _coarse_flows.alias(
+            b, m.add_var("v_online_linear", ("p", "d", "t"), b.p_olin_rows), b.p_olin_idx)
+        b.v_startup_linear = m.add_var("v_startup_linear", ("p", "d", "t"), b.p_olin_rows)
+        b.v_shutdown_linear = m.add_var("v_shutdown_linear", ("p", "d", "t"), b.p_olin_rows)
 
     # ─── VAR. ─── v_online_integer / v_startup_integer / v_shutdown_integer ──
     # ─────────────────────────────────────────────────────────────────────────
@@ -53,9 +66,10 @@ def add_variables(b: "_Build") -> None:
     # As the linear family, but units online are integer; startups and
     # shutdowns stay continuous.
     if b.has_online_int:
-        b.v_online_integer = m.add_var("v_online_integer", ("p", "d", "t"), b.p_oint_idx, integer=True)
-        b.v_startup_integer = m.add_var("v_startup_integer", ("p", "d", "t"), b.p_oint_idx)
-        b.v_shutdown_integer = m.add_var("v_shutdown_integer", ("p", "d", "t"), b.p_oint_idx)
+        b.v_online_integer = _coarse_flows.alias(
+            b, m.add_var("v_online_integer", ("p", "d", "t"), b.p_oint_rows, integer=True), b.p_oint_idx)
+        b.v_startup_integer = m.add_var("v_startup_integer", ("p", "d", "t"), b.p_oint_rows)
+        b.v_shutdown_integer = m.add_var("v_shutdown_integer", ("p", "d", "t"), b.p_oint_rows)
 
 
 def uc_classes(b: "_Build") -> list:
@@ -72,6 +86,24 @@ def uc_classes(b: "_Build") -> list:
     return classes
 
 
+def online_rows(b: "_Build", kind: str) -> pl.DataFrame:
+    """``(p, d, t)`` of the online rows of UC class ``kind``: every step of a fine process, the first fine step of
+    each coarse step of a coarse process (the registered online / startup / shutdown columns)."""
+    return b.p_olin_rows if kind == "linear" else b.p_oint_rows
+
+
+def _no_coarse(b: "_Build", arcs: "pl.DataFrame | None", family: str) -> None:
+    """Raise when ``arcs`` (with ``p``) hold a coarse process: ``family`` is written per solve step with event terms
+    at t and its successor, which a coarse process does not have (its classification keeps an online process with
+    ramp limits or reserves at the solve's step, ``flex_data.coarse_process_exclusions``)."""
+    if not b.has_coarse_proc or arcs is None or arcs.height == 0:
+        return
+    hit = _coarse_flows.split_arcs(b, arcs.select("p").unique())[1]
+    if hit.height > 0:
+        raise RuntimeError(f"{family}: coarse process(es) {sorted(hit['p'].cast(pl.Utf8).to_list())} reached a "
+                           "per-step online row with start-up / shut-down terms; they must keep the solve's step")
+
+
 def add_constraints(b: "_Build") -> None:
     """Online units, startups, shutdowns, minimum up/down times and the parent-commitment pin.
 
@@ -85,6 +117,7 @@ def add_constraints(b: "_Build") -> None:
 
     for kind, p_idx, online_set, v_online, v_startup, v_shutdown in uc_classes(b):
         sfx = f"_{kind}"
+        rows = online_rows(b, kind)
 
         # Units invested before / divested before d, restricted to this class:
         #   invest_term = −Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
@@ -120,7 +153,7 @@ def add_constraints(b: "_Build") -> None:
         # Units online cannot exceed the units built.
         # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
         #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
-        m.add_cstr(f"maxOnline{sfx}",   over=p_idx, sense="<=",
+        m.add_cstr(f"maxOnline{sfx}",   over=rows, sense="<=",
                    lhs_terms=_lhs_with_invdiv(v_online, "online"),
                    rhs_terms={"max_units": d.p_process_existing_count})
 
@@ -136,6 +169,12 @@ def add_constraints(b: "_Build") -> None:
         # a period that does not continue the previous one, after a gap in the timeline and at a representative-block
         # start.  No link across a gap, a representative-block start or a new year (as ramps and min up/down).  The
         # successor side does not wrap: a stretch end has no successor (_successor_steps).
+        # A coarse process (processCoarse) has these rows, and maxOnline / maxStartup / maxShutdown, only at the first
+        # fine step b of each of its coarse steps (online_rows); v_online_prev reads the alias of v_online, i.e. the
+        # coarse step b⁻ that holds the fine predecessor of b (or the stretch's last coarse step on a wrap; a carried
+        # first step is always a coarse step's first step, as coarse steps break at every roll and stretch start).
+        # Units online, started and shut down are then decided once per coarse step, the start / stop at its start;
+        # the rows of the interior steps would read 0 = 0 or be implied.
         rco = d.p_roll_continue_online
         d_dtype, t_dtype = p_idx.schema["d"], p_idx.schema["t"]
 
@@ -149,7 +188,7 @@ def add_constraints(b: "_Build") -> None:
             p_carry_rows = (online_set.select("p").unique()
                             .join(carry_al, on="p", how="inner")
                             .join(carry_dt, how="cross")
-                            .join(p_idx.select("p", "d", "t"), on=["p", "d", "t"], how="inner")
+                            .join(rows.select("p", "d", "t"), on=["p", "d", "t"], how="inner")
                             .select("p", "d", "t", "value"))
             if p_carry_rows.height > 0:
                 carry_rows = p_carry_rows
@@ -168,7 +207,7 @@ def add_constraints(b: "_Build") -> None:
                          .pipe(rename_to_axis,
                                {"d": "d", "t": "t", "d_previous": "d_previous", "t_previous": "t_previous"}))
             link_rows = (online_set.select("p").unique().join(link_cast, how="cross")
-                        .join(p_idx.select("p", "d", "t"), on=["p", "d", "t"], how="inner"))
+                        .join(rows.select("p", "d", "t"), on=["p", "d", "t"], how="inner"))
             if link_rows.height > 0:
                 link_native = link_rows
 
@@ -191,7 +230,7 @@ def add_constraints(b: "_Build") -> None:
         # shutdown without one going offline, is impossible; a fleet (unitsize < built) can still start and
         # stop units in the same step (both cost nothing extra on the ramp rows of a single-output arc, part
         # C) — a single integer unit cannot (maxStartup / maxShutdown forbid it there).
-        m.add_cstr(f"online_change{sfx}", over=p_idx, sense="==",
+        m.add_cstr(f"online_change{sfx}", over=rows, sense="==",
                    lhs_terms={"online": v_online, "shutdown": v_shutdown},
                    rhs_terms={"startup": v_startup, **online_prev_terms})
 
@@ -199,7 +238,7 @@ def add_constraints(b: "_Build") -> None:
         # ─────────────────────────────────────────────────────────────────────
         # v_startup[p,d,t] − v_online[p,d,t]  ≤  0                                 ∀ (p,d,t) ∈ p_idx
         # Units started in a step are online in it.
-        m.add_cstr(f"maxStartup{sfx}", over=p_idx, sense="<=",
+        m.add_cstr(f"maxStartup{sfx}", over=rows, sense="<=",
                    lhs_terms={"startup": v_startup, "online_neg": -v_online})
 
         # ─── EQ. ─── maxShutdown_{linear,integer} ─────────────────────────────
@@ -223,8 +262,8 @@ def add_constraints(b: "_Build") -> None:
             carry_pdt = carry_rows.select("p", "d", "t")
             exclude_shutdown = (carry_pdt if exclude_shutdown is None
                                 else pl.concat([exclude_shutdown, carry_pdt]).unique())
-        max_shutdown_over = (p_idx if exclude_shutdown is None
-                             else p_idx.join(exclude_shutdown, on=["p", "d", "t"], how="anti"))
+        max_shutdown_over = (rows if exclude_shutdown is None
+                             else rows.join(exclude_shutdown, on=["p", "d", "t"], how="anti"))
         if max_shutdown_over.height > 0:
             sd_lhs = _lhs_with_invdiv(v_shutdown, "shutdown")
             sd_lhs["online"] = v_online
@@ -293,6 +332,7 @@ def add_constraints(b: "_Build") -> None:
             branch_rows = None
             red = _cap_reduction(b, pss_online, input_side=False)
             if red is not None:
+                _no_coarse(b, red, f"maxFlow_online{sfx}")
                 kappa = (_coef_factor(pss_online, d.p_arc_max_cap_coef, ["p", "source", "sink"]).frame
                          if d.p_arc_max_cap_coef is not None
                          else pss_online.select("p", "source", "sink").unique().with_columns(value=pl.lit(1.0)))
@@ -302,10 +342,10 @@ def add_constraints(b: "_Build") -> None:
                     shutdown_rows = (over2, {"online": online_rhs, **row2})
                 if over3.height > 0:
                     branch_rows = (over3, {"online": online_rhs, **row3})
-            m.add_cstr(f"maxFlow_online{sfx}",
-                       over=over_pss_online, sense="<=",
-                       lhs_terms=online_lhs,
-                       rhs_terms=online_rhs_terms)
+            _coarse_flows.add_cstr(b, f"maxFlow_online{sfx}",
+                                   over=over_pss_online, sense="<=",
+                                   lhs_terms=online_lhs,
+                                   rhs_terms=online_rhs_terms)
             if shutdown_rows is not None:
                 m.add_cstr(f"maxFlow_online_shutdown{sfx}",
                            over=shutdown_rows[0], sense="<=",
@@ -337,8 +377,9 @@ def add_constraints(b: "_Build") -> None:
                     back_rhs = back_rhs * _availability_factor(d, back_on)
                 if d.p_arc_max_cap_coef is not None:
                     back_rhs = back_rhs * _coef_factor(back_on, d.p_arc_max_cap_coef, keys)
-                m.add_cstr(f"maxFlow_back_online{sfx}", over=back_on.join(d.dt, how="cross"), sense="<=",
-                           lhs_terms={"flow_back": b.v_flow_back}, rhs_terms={"online": back_rhs})
+                _coarse_flows.add_cstr(b, f"maxFlow_back_online{sfx}", over=back_on.join(d.dt, how="cross"),
+                                       sense="<=", lhs_terms={"flow_back": b.v_flow_back},
+                                       rhs_terms={"online": back_rhs})
 
         # ─── EQ. ─── maxInputFlow_online_{linear,integer} ────────────────────
         # ─────────────────────────────────────────────────────────────────────
@@ -399,15 +440,15 @@ def add_constraints(b: "_Build") -> None:
                                                how="semi")
                         if up_sink.height > 0:
                             sum_lhs["reserve_up"] = Sum(Where(reserve_at_sink, up_sink), over=("r", "ud", "sink"))
-                    m.add_cstr(f"maxOutputSum_online{sfx}",
-                               over=over_sum_on, sense="<=",
-                               lhs_terms=sum_lhs,
-                               rhs_terms={"online": sum_online_rhs})
+                    _coarse_flows.add_cstr(b, f"maxOutputSum_online{sfx}",
+                                           over=over_sum_on, sense="<=",
+                                           lhs_terms=sum_lhs,
+                                           rhs_terms={"online": sum_online_rhs})
 
         # ─── EQ. ─── minimum_uptime_{linear,integer} ─────────────────────────
         # ─────────────────────────────────────────────────────────────────────
         # v_online[p,d,t]  ≥  Σ_{(p,d′,t′,d,t) ∈ uptime_lookback} v_startup[p,d′,t′] + carry_up[p,d,t]
-        #   ∀ (p,d,t) ∈ pdt_uptime_set ∩ this class
+        #   ∀ (p,d,t) ∈ pdt_uptime_set ∩ this class ∩ online_rows
         # A unit started within the minimum uptime stays online.
         # uptime_lookback = {(p,d′,t′,d,t) : (d′,t′) = (d,t), or (d′,t′) an ancestor of (d,t) along dt_ramp_link
         #   with elapsed(d′,t′ → d,t) = Σ step_duration over the chain from (d′,t′) up to, not including, (d,t)
@@ -417,15 +458,23 @@ def add_constraints(b: "_Build") -> None:
         # carry_up[p,d,t] = Σ_{h ∈ online_history} startup[p,h] over the root r ∈ dt_ramp_carry that is (d,t) or an
         #   ancestor of it along dt_ramp_link, with elapsed(r → d,t) + hours_to_end[h] < min_uptime[p]
         #   (d.uptime_carry, 0-filled; absent where no step continues the previous solve's last realized step).
+        # A coarse process: rows and look-back only at the first fine steps of its coarse steps (its only start-ups),
+        #   so elapsed(b′ → b) = Σ of the coarse durations from b′ up to b: a start-up counts while the steps since
+        #   its start last less than min_uptime, i.e. min_uptime in whole coarse steps, rounded up.  A row whose
+        #   look-back holds only its own step and no carry (the previous coarse step lasts ≥ min_uptime) is maxStartup
+        #   and is not built.
         if (d.pdt_uptime_set is not None and d.pdt_uptime_set.height > 0
                 and d.uptime_lookback is not None and d.uptime_lookback.height > 0):
             up_idx = d.pdt_uptime_set.join(online_set, on="p", how="inner")
+            if b.has_coarse_proc:
+                up_idx = up_idx.join(rows, on=["p", "d", "t"], how="semi")
             if up_idx.height > 0:
                 # Lookback rows whose v_startup exists and whose process is in this class.
-                p_idx_back = p_idx.pipe(rename_to_axis, {"d": "d_back", "t": "t_back"})
+                p_idx_back = rows.pipe(rename_to_axis, {"d": "d_back", "t": "t_back"})
                 lkb = (d.uptime_lookback.join(online_set, on="p", how="inner")
                        .join(p_idx_back, on=["p", "d_back", "t_back"], how="inner")
                        .join(up_idx, on=["p", "d", "t"], how="inner"))
+                up_idx, lkb = _drop_own_step_rows(b, up_idx, lkb, d.uptime_carry)
                 if lkb.height > 0:
                     v_startup_at = _var_view(v_startup, f"__lookback_up{sfx}",
                                              {"d": "d_back", "t": "t_back"}, to_axis=True)
@@ -446,18 +495,22 @@ def add_constraints(b: "_Build") -> None:
         # A unit shut down within the minimum downtime stays offline: existing − v_online ≥
         # Σ v_shutdown, with the invest/divest terms of maxOnline (without them an invest-only
         # unit with existing = 0 could never be online).
-        # downtime_lookback: as uptime_lookback with min_downtime[p].
+        # downtime_lookback: as uptime_lookback with min_downtime[p] (a coarse process as in minimum_uptime; a row
+        #   whose look-back holds only its own step and no carry is implied by maxShutdown / online_change).
         # carry_dn: as carry_up with shutdown[p,h] and min_downtime[p] (d.downtime_carry, 0-filled).
         # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
         #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
         if (d.pdt_downtime_set is not None and d.pdt_downtime_set.height > 0
                 and d.downtime_lookback is not None and d.downtime_lookback.height > 0):
             dn_idx = d.pdt_downtime_set.join(online_set, on="p", how="inner")
+            if b.has_coarse_proc:
+                dn_idx = dn_idx.join(rows, on=["p", "d", "t"], how="semi")
             if dn_idx.height > 0:
-                p_idx_back = p_idx.pipe(rename_to_axis, {"d": "d_back", "t": "t_back"})
+                p_idx_back = rows.pipe(rename_to_axis, {"d": "d_back", "t": "t_back"})
                 lkb = (d.downtime_lookback.join(online_set, on="p", how="inner")
                        .join(p_idx_back, on=["p", "d_back", "t_back"], how="inner")
                        .join(dn_idx, on=["p", "d", "t"], how="inner"))
+                dn_idx, lkb = _drop_own_step_rows(b, dn_idx, lkb, d.downtime_carry)
                 if lkb.height > 0:
                     v_shutdown_at = _var_view(v_shutdown, f"__lookback_dn{sfx}",
                                               {"d": "d_back", "t": "t_back"}, to_axis=True)
@@ -477,7 +530,9 @@ def add_constraints(b: "_Build") -> None:
 
     # ─── EQ. ─── online_fix_eq_{linear,integer} ──────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_online[p,d,t] = p_fix_online[p,d,t]   ∀ (p,d,t) ∈ p_idx with a p_fix_online value
+    # v_online[p,d,t] = p_fix_online[p,d,t]   ∀ (p,d,t) ∈ online_rows with a p_fix_online value
+    #   (a coarse process: at the first fine step of each coarse step; its pin is the same on every fine step of
+    #   the step, or the process keeps the solve's step, flex_data.coarse_pin_varies)
     # In a separate-dispatch solve, pins units online to the commitment of the parent solve.
     # Only declared v_online cells are pinned.  p_fix_online is Utf8-keyed: it is joined to
     # the native-typed index through Utf8 copies of (p, d, t).
@@ -487,8 +542,8 @@ def add_constraints(b: "_Build") -> None:
             pl.col("d").cast(pl.Utf8).alias("_dk"),
             pl.col("t").cast(pl.Utf8).alias("_tk"),
             "value")
-        for kind, p_idx, _online_set, v_online, _v_startup, _v_shutdown in uc_classes(b):
-            pin = (p_idx.select("p", "d", "t").unique()
+        for kind, _p_idx, _online_set, v_online, _v_startup, _v_shutdown in uc_classes(b):
+            pin = (online_rows(b, kind).select("p", "d", "t").unique()
                    .with_columns(_pk=pl.col("p").cast(pl.Utf8),
                                  _dk=pl.col("d").cast(pl.Utf8),
                                  _tk=pl.col("t").cast(pl.Utf8))
@@ -504,6 +559,32 @@ def add_constraints(b: "_Build") -> None:
                 lhs_terms={"online": Where(v_online, over)},
                 rhs_terms={"target": Param(("p", "d", "t"), pin)},
             )
+
+
+def _drop_own_step_rows(b: "_Build", idx: pl.DataFrame, lkb: pl.DataFrame,
+                        carry: "pl.DataFrame | None") -> "tuple[pl.DataFrame, pl.DataFrame]":
+    """``idx`` / ``lkb`` (minimum up / down time rows and their look-back) without the rows of coarse processes
+    whose look-back holds only their own step and nothing is carried: such a row reads on ≥ su (or on + sd ≤
+    count), which maxStartup (maxShutdown and online_change) already state.  That is the case where the previous
+    coarse step lasts at least the minimum time (its first fine step is then outside the look-back)."""
+    if not b.has_coarse_proc or idx.height == 0:
+        return idx, lkb
+    keys = ["p", "d", "t"]
+    coarse = _coarse_flows.split_arcs(b, idx.select("p").unique())[1]
+    if coarse.height == 0:
+        return idx, lkb
+    own = (lkb.join(coarse, on="p", how="semi")
+           .group_by(keys).agg(pl.len().alias("__n"))
+           .filter(pl.col("__n") == 1)
+           .select(keys))
+    if carry is not None and carry.height > 0 and own.height > 0:
+        carried = carry.select(*(pl.col(k).cast(pl.Utf8) for k in keys))
+        own = (_utf8_keys(own.lazy(), keys).join(carried.rename({k: f"_{k}" for k in keys}).lazy(),
+                                                 on=[f"_{k}" for k in keys], how="anti")
+               .select(keys).collect())
+    if own.height == 0:
+        return idx, lkb
+    return idx.join(own, on=keys, how="anti"), lkb.join(own, on=keys, how="anti")
 
 
 def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame", v_online, v_startup,
@@ -540,6 +621,7 @@ def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame"
         in_arcs = pl.concat([reserve_arcs, red.select(keys).unique(maintain_order=True)]).unique(maintain_order=True)
     if in_arcs.height == 0:
         return
+    _no_coarse(b, in_arcs, f"maxInputFlow_online{sfx}")
     over = in_arcs.join(d.dt, how="cross")
     cap = _indirect_input_cap(d, in_arcs)
     rhs = v_online * Param(("p", "source", "sink", "d", "t"), cap)

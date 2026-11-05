@@ -2,10 +2,10 @@
 
 Owner decision 2026-11-03 ("Coarse new_stepduration groups"): a process between coarse nodes has one flow per
 coarse step (a rate constant over the step); a process with a fine balance node keeps the solve's step, and so
-does a process with a feature whose rows are per fine step (online variables, reserves, a delay, DC power flow,
-an exact connection, minimum load, a user-constraint flow term, a flow-group instant limit, a capacity-margin /
+does a process with a feature whose rows are per fine step (online variables with ramp limits, reserves, a delay,
+DC power flow, an exact connection, a user-constraint flow term, a flow-group instant limit, a capacity-margin /
 inertia / non-synchronous group), or, in a stochastic solve, a forecast tie that covers only part of one of its
-coarse steps.
+coarse steps.  Online processes: test_coarse_online_reserves.py.
 
 Fixture: ``tests/fixtures/lh2_three_region.json`` (h2_* / lh2_* in the 24-h ``daily_group``, elec_* hourly; the
 liquefiers h2 -> lh2 and the pipes lh2 <-> lh2 are between daily nodes, the electrolysers elec -> h2 are not),
@@ -131,17 +131,24 @@ def test_lh2_coarse_processes(tmp_path_factory) -> None:
     assert liq.select("d", "b_first", "t").equals(node)
 
 
-def test_lh2_online_unit_stays_fine(tmp_path_factory, caplog, monkeypatch) -> None:
-    """liquefier_A with online variables keeps the solve's step (owner Q2), with an info line naming the reason;
-    the other liquefiers and the pipes stay coarse."""
+def test_lh2_online_unit_with_ramps_stays_fine(tmp_path_factory, caplog, monkeypatch) -> None:
+    """liquefier_A with online variables is coarse (its units online once per day, test_coarse_online_reserves);
+    with a ramp limit too it keeps the solve's step (its start-up / shut-down capacity reduction and online ramps
+    are per solve step), with an info line naming the reason; the other liquefiers and the pipes stay coarse."""
+    uc = [["unit", "liquefier_A", "startup_method", _s("linear")], ["unit", "liquefier_A", "min_load", _f(0.3)],
+          ["unit", "liquefier_A", "virtual_unitsize", _f(50.0)]]
+    fd = last_stochastic(_lh2(tmp_path_factory, "cf_uc", uc)).flex_data
+    assert _coarse_procs(fd) == LH2_COARSE
     monkeypatch.setattr(_coarse, "_WARNED", set())
     caplog.set_level(logging.INFO, logger=_coarse.__name__)
-    fd = last_stochastic(_lh2(tmp_path_factory, "cf_uc", [
-        ["unit", "liquefier_A", "startup_method", _s("linear")], ["unit", "liquefier_A", "min_load", _f(0.3)],
-        ["unit", "liquefier_A", "virtual_unitsize", _f(50.0)]])).flex_data
+    rel = ["liquefier_A", "lh2_A"]
+    ramp = [["unit__outputNode", rel, "ramp_method", _s("ramp_limit")],
+            ["unit__outputNode", rel, "ramp_speed_up", _f(2e-4)], ["unit__outputNode", rel, "ramp_speed_down", _f(2e-4)]]
+    fd = last_stochastic(_lh2(tmp_path_factory, "cf_uc_ramp", uc + ramp)).flex_data
     assert _coarse_procs(fd) == LH2_COARSE - {"liquefier_A"}
     msgs = [r.message for r in caplog.records]
-    assert any("'liquefier_A' connects only nodes of coarse" in m and "online variables" in m for m in msgs)
+    assert any("'liquefier_A' connects only nodes of coarse" in m and "online variables and ramp limits" in m
+               for m in msgs)
     assert any("use the 24 h time step of their nodes" in m and "'pipe_AB'" in m for m in msgs)
 
 

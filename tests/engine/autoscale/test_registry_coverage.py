@@ -310,6 +310,10 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxFlow_coarse", "maxFlow_negCap_coarse", "maxFlow_back_coarse", "maxOutputSum_coarse",
     "maxOutputSum_negCap_coarse", "conversion_indirect_coarse", "minInputShare_coarse",
     "profile_flow_upper_limit_coarse", "profile_flow_lower_limit_coarse", "profile_flow_fixed_coarse",
+    # Coarse online processes — the same add_cstr with the UC class suffix before "_coarse".
+    *(f"{fam}_{kind}_coarse" for fam in ("maxFlow_online", "maxFlow_back_online", "maxOutputSum_online",
+                                         "minFlow_minload", "minFlow_output_floor")
+      for kind in ("linear", "integer")),
 ]
 
 

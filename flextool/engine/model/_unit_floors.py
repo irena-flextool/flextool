@@ -14,6 +14,7 @@ import polars as pl
 from polar_high import Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
+from flextool.engine.model import _coarse_flows
 from flextool.engine.model._common import _drop_uncapped, _indirect_sum_arcs, _utf8_keys, _var_view
 from flextool.engine.model._online import uc_classes
 from flextool.engine.input._param_shapes import promote_param_to_dt
@@ -105,9 +106,9 @@ def add_constraints(b: "_Build") -> None:
                 rhs: dict = {"floor": floor}
                 if views is not None:
                     rhs.update(_rdn_terms(d, views, _restrict_selectors(sel_meas, a_on), per_arc=False))
-                m.add_cstr(f"minFlow_minload{sfx}", over=over, sense=">=",
-                           lhs_terms={"flow_sum": Sum(Where(v_flow, a_on), over=("source", "sink"))},
-                           rhs_terms=rhs)
+                _coarse_flows.add_cstr(b, f"minFlow_minload{sfx}", over=over, sense=">=",
+                                       lhs_terms={"flow_sum": Sum(Where(v_flow, a_on), over=("source", "sink"))},
+                                       rhs_terms=rhs)
                 minload_rows.append(over.select("p", "d", "t"))
 
             # ─── EQ. ─── minFlow_output_floor_{linear,integer} ───────────────
@@ -131,9 +132,9 @@ def add_constraints(b: "_Build") -> None:
             rhs = {"floor": floor * coef}
             if views is not None:
                 rhs.update(_rdn_terms(d, views, _restrict_selectors(sel_meas, f_arcs.select(keys)), per_arc=True))
-            m.add_cstr(f"minFlow_output_floor{sfx}", over=f_over,
-                       sense=">=", lhs_terms={"flow": v_flow},
-                       rhs_terms=rhs)
+            _coarse_flows.add_cstr(b, f"minFlow_output_floor{sfx}", over=f_over,
+                                   sense=">=", lhs_terms={"flow": v_flow},
+                                   rhs_terms=rhs)
             floor_rows.append(f_over)
 
     if views is None:
