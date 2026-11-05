@@ -510,9 +510,11 @@ def _apply_delta_to_db(sqlite_url: str, delta: dict, entity_classes: dict[str, t
     """
     # Lazy import so module import doesn't pay the spinedb_api startup
     # cost when only validation is requested.
-    from spinedb_api import DatabaseMapping, to_database
+    from spinedb_api import to_database
 
-    with DatabaseMapping(sqlite_url, create=False, upgrade=False) as db:
+    from flextool.update_flextool.db_handle import open_database_mapping
+
+    with open_database_mapping(sqlite_url, create=False, upgrade=False) as db:
         # --- entities ----------------------------------------------------
         for row in delta.get("new_entities") or []:
             cls = row["class"]

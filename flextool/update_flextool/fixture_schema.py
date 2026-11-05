@@ -37,10 +37,11 @@ import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
-from spinedb_api import DatabaseMapping, export_data
+from spinedb_api import export_data
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
+from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.export_database import keep_serialized_parse
 from flextool.update_flextool.initialize_database import initialize_database
 
@@ -123,15 +124,10 @@ def _schema_sections_text(fmt: Format) -> str:
         db_path = str(Path(tmp) / "schema.sqlite")
         with contextlib.redirect_stdout(io.StringIO()):
             initialize_database(str(schema_json), db_path)
-        # ``with`` closes only the session; ``close()`` also disposes the engine, whose pooled connection
-        # otherwise keeps the file open and Windows cannot delete the temporary directory.
-        db = DatabaseMapping("sqlite:///" + db_path)
-        try:
-            with db:
-                parse = pack_value if fmt == "packed" else keep_serialized_parse
-                data = export_data(db, parse_value=parse)
-        finally:
-            db.close()
+        # Closes the engine too, so Windows can delete the temporary directory.
+        with open_database_mapping("sqlite:///" + db_path) as db:
+            parse = pack_value if fmt == "packed" else keep_serialized_parse
+            data = export_data(db, parse_value=parse)
     sections = json.loads(json.dumps({key: data.get(key, []) for key in SCHEMA_SECTIONS}))
     if fmt == "packed":
         for row in sections["parameter_definitions"]:

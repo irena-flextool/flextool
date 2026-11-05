@@ -100,14 +100,14 @@ def _filter_db(
     # spinedb_api is the canonical handle for filtering Spine DBs — it
     # owns the cascade semantics so we don't have to track FK ordering
     # by hand.
-    from spinedb_api import DatabaseMapping
+    from flextool.update_flextool.db_handle import open_database_mapping
 
     if not (exclude_scenarios or exclude_alternatives or exclude_entities):
         # Recipe wants the source verbatim — skip the DatabaseMapping
         # open/commit cycle entirely (spinedb_api raises NothingToCommit
         # if commit_session is called with no pending changes).
         return
-    with DatabaseMapping(sqlite_url, create=False, upgrade=False) as db:
+    with open_database_mapping(sqlite_url, create=False, upgrade=False) as db:
         for name in exclude_scenarios:
             db.remove_scenario(name=name)
         for name in exclude_alternatives:

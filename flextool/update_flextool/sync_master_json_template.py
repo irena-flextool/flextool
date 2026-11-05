@@ -22,8 +22,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from spinedb_api import DatabaseMapping, export_data, import_data
+from spinedb_api import export_data, import_data
 
+from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.db_migration import migrate_repository_database
 
 from flextool._resources import package_data_path
@@ -38,7 +39,7 @@ def _create_db_from_template(template_path: Path, db_path: Path) -> None:
         template = json.load(f)
 
     url = f"sqlite:///{db_path}"
-    with DatabaseMapping(url, create=True) as db:
+    with open_database_mapping(url, create=True) as db:
         for alt in db.find_alternatives():
             try:
                 db.remove_alternative(name=alt["name"])
@@ -51,7 +52,7 @@ def _create_db_from_template(template_path: Path, db_path: Path) -> None:
 def _export_db_to_json(db_path: Path) -> dict:
     """Export a Spine DB to a JSON-serializable dict."""
     url = f"sqlite:///{db_path}"
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         data = export_data(db)
     # export_data returns tuples; convert to lists for JSON
     return {k: [list(item) for item in v] for k, v in data.items()}

@@ -3,11 +3,12 @@ import os
 import argparse
 from dataclasses import dataclass
 from typing import Callable
-from spinedb_api import import_data, DatabaseMapping, from_database, SpineDBAPIError, to_database, Map
+from spinedb_api import import_data, from_database, SpineDBAPIError, to_database, Map
 from spinedb_api.exception import NothingToCommit
 import logging
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
+from flextool.update_flextool.db_handle import open_database_mapping
 from flextool._resources import package_data_path
 
 
@@ -91,7 +92,7 @@ def migrate_database(
         logging.critical("No sqlite file at " + database_path)
         exit(-1)
 
-    with DatabaseMapping(mapping_name, create = False, upgrade = True) as db:
+    with open_database_mapping(mapping_name, create=False, upgrade=True) as db:
         sq= db.object_parameter_definition_sq
         settings_parameter = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "version").one_or_none()
         if settings_parameter is None:
@@ -4935,7 +4936,7 @@ def migrate_repository_database(database_path: str) -> None:
     """
     migrate_database(database_path)
     url = database_path if "://" in database_path else "sqlite:///" + database_path
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         if remove_behaviour_change_markers(db):
             db.commit_session("Removed behaviour-change markers (repository database)")
 

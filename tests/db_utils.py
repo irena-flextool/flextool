@@ -19,13 +19,14 @@ import json
 from pathlib import Path
 
 import pandas as pd
-from spinedb_api import DatabaseMapping, export_data, import_data
+from spinedb_api import export_data, import_data
 
 # The fixtures' [base64, type] value packing lives with the schema-section
 # generator so that tools in the package need not import from ``tests``.
 from flextool.update_flextool.fixture_schema import pack_value as _pack_value
 from flextool.update_flextool.fixture_schema import unpack_value as _unpack_value
 from flextool.update_flextool.fixture_schema import dump_fixture_json
+from flextool.update_flextool.db_handle import open_database_mapping
 
 
 def db_to_json(db_path: Path, json_path: Path) -> None:
@@ -35,7 +36,7 @@ def db_to_json(db_path: Path, json_path: Path) -> None:
     # resolved back to a filesystem path. No-op on POSIX. (cf.
     # cmd_open_results_db._sqlite_url, which already does this.)
     url = f"sqlite:///{db_path.resolve().as_posix()}"
-    with DatabaseMapping(url) as db_map:
+    with open_database_mapping(url) as db_map:
         data = export_data(db_map, parse_value=_pack_value)
     dump_fixture_json(data, json_path)
     print(f"Exported {len(data.get('parameter_values', []))} parameter values → {json_path}")
@@ -50,7 +51,7 @@ def json_to_db(json_path: Path, db_path: Path) -> str:
     # resolved back to a filesystem path. No-op on POSIX. (cf.
     # cmd_open_results_db._sqlite_url, which already does this.)
     url = f"sqlite:///{db_path.resolve().as_posix()}"
-    with DatabaseMapping(url, create=True) as db_map:
+    with open_database_mapping(url, create=True) as db_map:
         count, errors = import_data(db_map, unparse_value=_unpack_value, **data)
         if errors:
             raise RuntimeError(f"Import errors: {errors[:5]}")
