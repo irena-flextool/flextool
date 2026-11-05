@@ -41,6 +41,7 @@ from flextool.process_outputs.write_outputs import write_outputs
 from flextool.cli._console import run_tool
 from flextool.cli._timing import TimingRecorder
 from flextool.common_utils.precision import resolve_precision_digits
+from flextool.run_options import OPTIONS, RunOptions
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import DatabaseMapping, to_database, DateTime
@@ -73,7 +74,7 @@ sys.stdout = FlushingStream(sys.stdout)
 #1: Infeasible or unbounded problem (not implemented in the toolbox, functionally same as -1. For a possiblity of a graphical depiction)
 
 
-def _run_solve(args, scenario_name, work_folder, timing_recorder):
+def _run_solve(args, scenario_name, work_folder, timing_recorder, run_options=None):
     """Δ.21 — drive the native polar_high cascade.
 
     Returns a tuple ``(return_code, last_step)`` where ``last_step``
@@ -104,6 +105,7 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder):
         scenario_name,
         work_folder=work_folder,
         csv_dump=csv_dump_on,
+        run_options=run_options,
     )
 
     # ``--csv-dump``: snapshot the last sub-solve's Provider to disk.
@@ -432,7 +434,41 @@ def _input_db_filesystem_path(input_db_url):
     return Path(no_query)
 
 
-def main():
+def _run_options_from_args(args):
+    """The run's :class:`~flextool.run_options.RunOptions`: the given flags over the environment.
+
+    A ``--highs-threads`` below 1 is ignored with a warning (the environment variable or the default 1 then
+    applies); a ``--benders-workers`` of 0 or less is the automatic setting.
+    """
+    if args.highs_threads is not None and args.highs_threads < 1:
+        logging.warning("Ignoring --highs-threads %s: it must be at least 1.", args.highs_threads)
+        args.highs_threads = None
+    if args.benders_workers is not None and args.benders_workers < 1:
+        args.benders_workers = None
+    return RunOptions.from_cli(args)
+
+
+def _carry_flags_into_env(run_options):
+    """Set the environment variable of every flag given on the command line.
+
+    The engine readers still take these options from their environment variables; a variable is written only
+    for a flag that was given, so a value set in the shell for an option without a flag stays as it was.
+    """
+    for key, spec in OPTIONS.items():
+        resolved = run_options.get(key)
+        if resolved.source != "cli" or spec.env is None:
+            continue
+        os.environ[spec.env] = "1" if resolved.value is True else str(resolved.value)
+
+
+def _polars_thread_count() -> int:
+    """Size of polars' thread pool (``POLARS_MAX_THREADS``, else the core count), for the run header."""
+    import polars as pl
+    return pl.thread_pool_size()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The ``cmd_run_flextool`` command line (also used to check what the GUI and child runs send)."""
     parser = argparse.ArgumentParser()
     parser.description = "Run flextool using the specified database URL. Return codes are 0: success, 1: infeasible or unbounded, -1: failure."
     parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
@@ -458,7 +494,7 @@ def main():
              'when investigating Python-side allocation regressions.',
     )
     parser.add_argument(
-        '--save-memory', action='store_true',
+        '--save-memory', action='store_true', default=None,
         help='Trade wall time for peak memory: build the LP, write it to '
              'a temp MPS file, drop everything Python-side AND the live '
              'HiGHS instance, then spawn a separate subprocess to solve '
@@ -469,13 +505,22 @@ def main():
              'I/O per sub-solve. Also disables warm-LP reuse across '
              'cascade iterations (the Problem is released after MPS '
              'write). Off by default; use when models OOM on the default '
-             'in-process path.',
+             'in-process path.  Environment variable: '
+             'FLEXTOOL_SAVE_MEMORY=1.',
     )
     parser.add_argument(
-        '--warm-start', action='store_true',
+        '--warm-start', action='store_true', default=None,
         help='Reuse a cached HiGHS basis across solves of the same '
              'structural model (save-memory subprocess path only); safe '
-             'cold fallback on any mismatch.',
+             'cold fallback on any mismatch.  Environment variable: '
+             'FLEXTOOL_WARM_START=1.',
+    )
+    parser.add_argument(
+        '--basis-cache-dir', metavar='PATH', default=None,
+        help='Folder for the --warm-start basis cache (default: '
+             '<work folder>/basis_cache).  Share one folder between runs '
+             'to reuse bases across them.  Environment variable: '
+             'FLEXTOOL_BASIS_CACHE_DIR; the flag wins.',
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,
@@ -531,16 +576,18 @@ def main():
                              'coefficients.  0 or unset disables rounding (default).  '
                              'Overrides the FLEXTOOL_PRECISION_DIGITS env var.')
     parser.add_argument('--region', metavar='GROUP_NAME', default=None,
-                        help='Produce a filtered per-region input directory '
-                             '``input_region_<GROUP_NAME>/`` for Benders '
-                             'decomposition (Agent 3.1).  The group must have '
+                        help='Write the filtered inputs of one Benders region '
+                             'to ``input_region_<GROUP_NAME>/`` and stop; no '
+                             'solve runs.  The group must have '
                              '``decomposition_method=benders_regional`` in '
-                             'the DB.  Cross-region processes are replaced '
-                             'with import/export half-flows; the coupling '
-                             'variables are listed in '
-                             '``solve_data/region_coupling.csv``.  When this '
-                             'flag is set, no solve runs — this is the '
-                             'filter-only entry point used by the coordinator.')
+                             'the database.  For inspecting what a region '
+                             'subproblem sees: cross-region processes are '
+                             'replaced with import/export half-flows and the '
+                             'coupling variables are listed in '
+                             '``solve_data/region_coupling.csv``.  Benders '
+                             'solves themselves are set per solve in the '
+                             'database (solve.decomposition) and do not '
+                             'need this flag.')
     # Decomposition is DB-driven and per-solve (v62): set
     # ``solve.decomposition = benders`` plus the per-solve
     # ``solve.benders_max_iter`` / ``benders_tolerance`` /
@@ -548,12 +595,20 @@ def main():
     # CLI flags were removed — the orchestrator reads the scheme per solve
     # so a single chain can mix monolithic and Benders solves.  See
     # docs/dev/decomposition.md.
-    parser.add_argument('--highs-threads', type=int, default=1,
-                        help='Number of HiGHS solver threads.  Default 1. '
+    parser.add_argument('--highs-threads', type=int, default=None, metavar='N',
+                        help='Number of HiGHS solver threads (default 1). '
                              'Values > 1 enable HiGHS parallel mode and trade '
                              'determinism for wall-clock speedup; goldens are '
                              'not guaranteed to reproduce across runs in that '
-                             'mode.')
+                             'mode.  Environment variable: '
+                             'FLEXTOOL_HIGHS_THREADS; the flag wins.')
+    parser.add_argument('--benders-workers', type=int, default=None, metavar='N',
+                        help='Threads for the region solves of a Benders '
+                             'solve (default, or 0: min(regions, cores - 1)). '
+                             'A per-machine choice; the decomposition itself '
+                             'is set per solve in the database.  Environment '
+                             'variable: FLEXTOOL_BENDERS_WORKERS; the flag '
+                             'wins.')
     parser.add_argument(
         '--scaling',
         choices=['off', 'solver_only', 'basic', 'full'],
@@ -634,13 +689,15 @@ def main():
     parser.add_argument('--solver-mip-gap', type=float, default=None,
                         metavar='GAP',
                         help='HiGHS MIP relative optimality gap '
-                             '(``mip_rel_gap`` option).  Unset (default) '
-                             'keeps HiGHS\' built-in 1e-4.  Only affects '
-                             'MIP solves (integer investments, '
+                             '(``mip_rel_gap`` option) for every solve of '
+                             'the run.  Unset (default): each solve uses its '
+                             '``solver_mip_gap`` in the database, else '
+                             '``mip_rel_gap`` in solver_config/highs.opt.  '
+                             'Only affects MIP solves (integer investments, '
                              'unit-commitment / online variables); '
-                             'pure-LP solves ignore it.  Routed through '
-                             'the effective-options resolver as a CLI '
-                             'override (highest precedence).')
+                             'pure-LP solves ignore it.  Environment '
+                             'variable: FLEXTOOL_HIGHS_MIP_GAP; the flag '
+                             'wins.')
     parser.add_argument('--matrix-file-format',
                         choices=['mps', 'lp'],
                         default=None,
@@ -676,50 +733,14 @@ def main():
                              'solve_data/ (one folder: a later sub-solve '
                              'overwrites the files of an earlier one).')
 
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
-    # --user-bound-scale / --presolve are surfaced through env vars
-    # read by ``_orchestration._finalise_highs_options`` and the
-    # cascade's user_bound_scale resolution.  Env vars keep the
-    # threading shallow: no new kwargs on run_chain_from_db /
-    # run_orchestration / _drive_cascade required.
-    if args.user_bound_scale is not None:
-        os.environ['FLEXTOOL_USER_BOUND_SCALE'] = str(args.user_bound_scale)
-    if args.presolve is not None:
-        os.environ['FLEXTOOL_HIGHS_PRESOLVE'] = args.presolve
-    if args.highs_threads is not None and args.highs_threads >= 1:
-        os.environ['FLEXTOOL_HIGHS_THREADS'] = str(args.highs_threads)
-    if args.solver_log_level is not None:
-        os.environ['FLEXTOOL_SOLVER_LOG_LEVEL'] = args.solver_log_level
-    if args.solver_time_limit is not None:
-        # Use the existing FLEXTOOL_HIGHS_TIME_LIMIT env var which the
-        # orchestrator's CLI-overrides builder already consults; the
-        # name is a historical artefact from the diagnostic shim that
-        # predated the resolver but the semantics are identical.
-        os.environ['FLEXTOOL_HIGHS_TIME_LIMIT'] = str(args.solver_time_limit)
-    if args.solver_mip_gap is not None:
-        os.environ['FLEXTOOL_HIGHS_MIP_GAP'] = str(args.solver_mip_gap)
-    if args.matrix_file_format is not None:
-        os.environ['FLEXTOOL_MATRIX_FILE_FORMAT'] = args.matrix_file_format
-    # ``--scaling`` (off/solver_only/basic/full) — CLI > env > default-full.
-    # Surfacing via the same ``FLEXTOOL_SCALING`` env var that
-    # ``resolve_scaling_config`` already consults keeps the threading
-    # shallow (no new kwargs on run_chain_from_db / run_orchestration /
-    # _drive_cascade).  When the flag is unset (``args.scaling is None``)
-    # the existing env value — if any — survives untouched, preserving
-    # the env-fallback contract.
-    if args.scaling is not None:
-        os.environ['FLEXTOOL_SCALING'] = args.scaling
-    # ``--save-memory`` — opt-in peak-RSS reduction at solve time.
-    # Plumbed via env var so the orchestrator picks it up without an
-    # extra kwarg on ``run_chain_from_db`` / ``_drive_cascade``.
-    if args.save_memory:
-        os.environ['FLEXTOOL_SAVE_MEMORY'] = '1'
-    # ``--warm-start`` — opt-in HiGHS basis reuse across structurally
-    # identical solves (save-memory subprocess path only).  Plumbed via
-    # env var like ``--save-memory``; the subprocess solver reads it
-    # directly and fails safe to a cold solve on any mismatch.
-    if args.warm_start:
-        os.environ['FLEXTOOL_WARM_START'] = '1'
+    run_options = _run_options_from_args(args)
+    _carry_flags_into_env(run_options)
 
     # Accept either a SQLAlchemy URL ("sqlite:///path") or a bare
     # filesystem path ("path/to.sqlite") for any DB argument. Downstream
@@ -886,6 +907,8 @@ def main():
         ("DB URL", str(input_db_url)),
         ("Scenario", scenario_name),
         ("Output", str(args.output_location or output_path)),
+        ("Options", ", ".join(run_options.summary_lines()) or "defaults"),
+        ("Polars threads", str(_polars_thread_count())),
     ]
     _header_keyw = max(len(k) for k, _ in _header_pairs) + 2
     print("")
@@ -897,7 +920,7 @@ def main():
 
     try:
         return_code, last_step = _run_solve(
-            args, scenario_name, work_folder, timing_recorder,
+            args, scenario_name, work_folder, timing_recorder, run_options,
         )
     except Exception as e:
         # FlexToolUserError signals a user-visible configuration problem

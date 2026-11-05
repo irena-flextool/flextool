@@ -59,6 +59,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from flextool.engine.solve._acceptance import classify_acceptance
+from flextool.run_options import RunOptions
 from flextool.engine.solve._handoff import SolveHandoff
 from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
@@ -4686,6 +4687,7 @@ def run_chain_from_db(
     keep_solutions: bool = False,
     csv_dump: bool = False,
     override_provider: "Callable[[], dict[str, pl.DataFrame]] | None" = None,
+    run_options: "RunOptions | None" = None,
 ) -> dict[str, OrchestrationStep]:
     """Run a flextool multi-solve scenario end-to-end natively.
 
@@ -4734,6 +4736,11 @@ def run_chain_from_db(
         per-step state — required by tests that need per-step
         ``solution`` / ``flex_data`` access (parity sweeps, warm
         comparisons, etc.).
+    run_options : RunOptions, optional
+        The run's operator options (``cmd_run_flextool`` passes the parsed
+        flags over the environment).  ``None`` resolves them from the
+        environment variables alone (Spine Toolbox tools, a Python
+        console, tests).  Stored on ``RunnerState.run_options``.
 
     Returns
     -------
@@ -4966,6 +4973,9 @@ def run_chain_from_db(
         # :mod:`flextool.engine.solve._run_model` (Phase 5b) invokes
         # it after the parent-handoff translator at every iteration.
         state.override_provider = override_provider
+        state.run_options = (
+            run_options if run_options is not None else RunOptions.from_env()
+        )
 
         return run_orchestration(
             state, work_folder, runner_factory=_runner_factory,

@@ -147,3 +147,30 @@ def test_to_argv_forwards_only_flag_given_options():
         environ={"FLEXTOOL_HIGHS_THREADS": "4"},
     )
     assert opts.to_argv() == ["--solver-mip-gap", "0.0005", "--scaling", "off", "--save-memory"]
+
+
+def test_to_argv_round_trips_through_the_run_parser():
+    from flextool.cli.cmd_run_flextool import build_parser
+
+    given = {
+        "highs_threads": 3, "presolve": "off", "solver_log_level": "silent", "solver_time_limit": 12.5,
+        "solver_mip_gap": 0.0005, "matrix_file_format": "lp", "scaling": "basic", "user_bound_scale": -3,
+        "save_memory": True, "warm_start": True, "basis_cache_dir": "/tmp/cache", "benders_workers": 2,
+    }
+    flagged = {key for key, spec in OPTIONS.items() if spec.flag}
+    assert set(given) == flagged
+    parent = RunOptions.from_cli(_flags(**{OPTIONS[k].dest: v for k, v in given.items()}), environ={})
+    args = build_parser().parse_args(["sqlite:///x.sqlite", *parent.to_argv()])
+    child = RunOptions.from_cli(args, environ={})
+    assert {k: (r.value, r.source) for k, r in child.resolved.items() if r.source == "cli"} == {
+        k: (v, "cli") for k, v in given.items()
+    }
+
+
+def test_registry_flags_default_to_unset_on_the_run_parser():
+    from flextool.cli.cmd_run_flextool import build_parser
+
+    args = build_parser().parse_args(["sqlite:///x.sqlite"])
+    for spec in OPTIONS.values():
+        if spec.flag:
+            assert getattr(args, spec.dest) is None, spec.flag

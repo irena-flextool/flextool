@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from flextool.cli._timing import TimingRecorder
     from flextool.engine.input._solve_config import SolveConfig
     from flextool.engine.solve._handoff import SolveHandoff
+    from flextool.run_options import RunOptions
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +193,10 @@ class RunnerState:
     timing_recorder: "TimingRecorder | None" = None
     # HiGHS thread count (CLI override; solver_runner defaults to 4 when None).
     highs_threads: int | None = None
+    # The run's operator options (flags over environment variables), see :mod:`flextool.run_options`.
+    # ``run_chain_from_db`` always sets it; ``None`` on a state built directly (tests), where a reader falls
+    # back to ``RunOptions.from_env()``.
+    run_options: "RunOptions | None" = None
     # Gates ``data.dump_csvs`` from inside the cascade — set by
     # ``run_orchestration`` from its ``csv_dump`` argument.
     csv_dump: bool = False

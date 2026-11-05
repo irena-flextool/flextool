@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Fixed: `FLEXTOOL_HIGHS_THREADS` was ignored by `run_flextool`.** The `--highs-threads` flag always sent 1, which
+  replaced the environment variable, so HiGHS ran on one thread. An unset flag now lets the environment variable
+  through; a given flag still wins. The flags of the other options with an environment variable twin work the same
+  way (flag > environment variable > database > default).
+- **New flags `--benders-workers N` and `--basis-cache-dir PATH`** for `run_flextool`, the command-line twins of
+  `FLEXTOOL_BENDERS_WORKERS` and `FLEXTOOL_BASIS_CACHE_DIR`.
+- The run header lists the options set by a flag or an environment variable, with where each came from, and the
+  number of polars threads.
 - **Processors with AVX2 keep polars' fast build when the compatible build is installed too.** polars loads its
   compatible build (`polars[rtcompat]`) first whenever it is installed, so a `flextool[compat]` install ran about
   10-30% slower on every processor. `import flextool` now selects polars' default build on a processor that has
