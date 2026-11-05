@@ -301,10 +301,21 @@ heat) only need a coarser energy balance.  A node of a group whose
 `new_stepduration` is longer than the solve's step is a *coarse node*:
 it is balanced once per coarse step by summing its fine balance terms
 (`nodeBalanceCoarse_eq`), and a coarse storage node keeps one state per
-coarse step (`stateConstantCoarse_eq`).  Every flow, online status,
-reserve and angle stays on the solve's steps (owner decision Q1), so an
-arc between a fine and a coarse node — or between two coarse nodes —
+coarse step (`stateConstantCoarse_eq`).  An arc between a fine and a
+coarse node stays on the solve's steps and enters both balances, so it
 conserves energy at both ends without any per-arc weights or filters.
+
+A unit or connection whose every balance node is coarse is a *coarse
+process* (`params._coarse.coarse_process_frames` → `processCoarse`,
+`process_coarse_step`): its flows, units online, start-ups / shut-downs,
+reserve and the direction of an exact connection have one column per
+coarse step (`model/_coarse_flows`, §3.6).  Only a process with a delay
+keeps the solve's steps (`flex_data.coarse_process_exclusions`), plus
+Benders cross-region arcs and master flows (§3.5), stochastic processes
+whose coarse step a forecast tie covers in part
+(`flex_data.coarse_tie_straddles`) and realization-solve processes whose
+pin varies within a step (`flex_data.coarse_pin_varies`); an info line
+names each with its reason.
 
 This is structurally different from the Benders path: there is one
 LP, one HiGHS run, no outer loop.
@@ -324,7 +335,8 @@ Validation in `validate_group_membership`:
 - every entity may belong to at most one resolution-group
 - every entity may belong to at most one decomposition-group (the
   Benders region groups counted here too)
-- reserve participants must NOT sit in any resolution-group
+- reserve participants may sit in a resolution-group (a coarse provider
+  holds one reserve per coarse step; the requirement stays per solve step)
 
 Validation in `params._coarse.coarse_node_frames`: a group step that is
 not a multiple of the solve's step, a fine step crossing the end of a
@@ -384,23 +396,56 @@ so the blocks chain forward and the roll carry starts the chain).
   row's dual for a coarse parent node.
 - **Benders:** region subproblems and the master filter the coarse frames
   by node; half-flows enter coarse rows like any arc, so a region↔master
-  boundary may join nodes of different resolutions.
+  boundary may join nodes of different resolutions.  Cross-region arcs and
+  master flows stay on the solve's steps (`_region_filter`); a process
+  inside one region may be coarse in its subproblem.
 - **Warm start:** the coarse frames are in the fingerprint.
 
-### 3.6 Outputs
+### 3.6 Coarse processes and the row rule
 
-Every variable lives on the solve's steps, so outputs need no expansion;
-a coarse storage state is constant within its coarse step.  Coarse-node
-prices are the `nodeBalanceCoarse_eq` duals broadcast to the fine steps of
-each coarse step (`read_highs_solution._broadcast_block_node_duals`).
+`model/_coarse_flows` (module docstring is the reference):
 
-### 3.7 Caveats
+- **Levels** (`v_flow(_back)`, `v_online_*`, `v_reserve`,
+  `v_exact_forward`; `v_angle` of a coarse-angle node, `vq_inertia` /
+  `vq_non_synchronous` of an averaged row) are registered at each coarse
+  step's first fine step `b_first` and read through `alias`, which maps
+  every fine row to its step's column.
+- **Events** (`v_startup_*`, `v_shutdown_*`) live at `b_first` only and are
+  not aliased; minimum up / down times count whole coarse steps.
+- **Arc-local rows** (capacity, conversion, profiles, online capacity,
+  minimum load, start-up / shut-down reduction, reserve limits) are written
+  once per coarse step as the twin family `<family>_coarse`, the
+  Δt-weighted average of the fine row (`add_cstr`).
+- **Row rule** (`add_row_rule_cstr`, `row_partition`;
+  `flex_data.coarse_row_members` / `COARSE_ROW_FAMILIES`): a row coupling
+  several entities (capacity margin, inertia, non-synchronous, flow-group
+  instant flow, user constraint, forecast storage-use tie, DC power flow)
+  whose every member is coarse is one averaged `<family>_coarse` row per
+  coarse step; a row with a fine member stays per solve step and reads the
+  coarse terms at their constant value.  The reserve requirement
+  (`reserveBalance_*`) is always per solve step.
+- Ramps run between coarse steps (`ramp_rows`, `reserve_room_rows`).
+- The behaviour notice `coarse_process_flows` (upgraded databases only)
+  names coarse processes whose result can differ from the fine model
+  (`flex_data.coarse_process_reasons`).
 
-- Block-aware reserves are not implemented; if you tag a reserve
-  participant into a resolution group, the validator refuses the
-  scenario.
-- Commitment (online status) per coarse step is not a feature: units and
-  connections always decide per solve step (owner question Q-c15-A).
+### 3.7 Outputs
+
+Every reader of a coarse variable expands it to the solve's steps through
+`engine/output/_coarse_flows` (`COARSE_VARS`: `copy` for levels, `first`
+for events — the whole start-up at the step's first fine step, 0 at the
+others, so totals and costs are the LP's); a grep gate in the tests keeps
+direct reads out.  A coarse storage state is constant within its coarse
+step.  Coarse-node prices are the `nodeBalanceCoarse_eq` duals broadcast
+to the fine steps of each coarse step
+(`read_highs_solution._broadcast_block_node_duals`).
+
+### 3.8 Caveats
+
+- A process with a delay keeps the solve's steps (its flow is shifted by
+  solve steps).
+- An averaged row sees step means: a capacity margin covers the mean net
+  demand of the step, not its peak.
 
 The engine-side overview of flex-temporal lives in
 [engine.md § Flex-temporal decomposition](engine.md#flex-temporal-decomposition).

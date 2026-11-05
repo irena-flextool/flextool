@@ -967,12 +967,25 @@ timeline that HiGHS sees through `polar_high`.
 ## Flex-temporal decomposition
 
 A node of a `group` whose `new_stepduration` is longer than the solve's
-step is a *coarse node*.  Every flow, online status, reserve and angle
-stays on the solve's steps; a coarse node is balanced once per coarse
+step is a *coarse node*.  A coarse node is balanced once per coarse
 step by `nodeBalanceCoarse_eq` — `nodeBalance_eq` summed over the fine
 steps of the coarse step — and a coarse storage node keeps one state per
 coarse step (`stateConstantCoarse_eq`).  No arc is filtered or weighted by
-block: every arc enters the balance of both its nodes.
+block: every arc enters the balance of both its nodes.  A unit or
+connection whose every balance node is coarse (`processCoarse`) has one
+flow, units online, start-up / shut-down, reserve and exact direction per
+coarse step (`model/_coarse_flows`: aliased levels, events at `b_first`,
+averaged `<family>_coarse` twins of its arc-local rows); rows coupling
+several entities follow the row rule (averaged per coarse step when every
+member is coarse, else per solve step with the coarse terms constant).
+Only a delay keeps a process at the solve's step.  Readers expand coarse
+variables through `engine/output/_coarse_flows` (`COARSE_VARS`).
+
+- `model/_coarse_flows` — `alias`, `domain`, `add_cstr` (twins),
+  `add_row_rule_cstr` / `row_partition` (row rule), `ramp_rows`.
+- `params/_coarse.coarse_process_frames` + `flex_data.coarse_process_*`,
+  `coarse_tie_straddles`, `coarse_pin_varies` — which processes are coarse,
+  which keep the solve's step and why (info line), and the notice reasons.
 
 - `emit/_blocks.py` / `_block_layout.BlockLayout` — per-solve node blocks
   (`entity_block`) and block step durations; the default block's period

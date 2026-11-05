@@ -99,70 +99,58 @@
   the number of branches squared (1.04 instead of 0.26 with two branches), which let units shut down at the branch
   point drop their flow faster than the ramp limit allows.
 - **Units and connections between coarse nodes use the coarse step** (results can change for models with a
-  `group` `new_stepduration`). A unit or connection whose balance nodes are all in coarse groups now has one flow
-  per coarse step, a rate that stays the same over the step, so the model gets smaller (the three-region hydrogen
-  test model: 7 instead of 168 flow variables per liquefier and pipe arc in a week). Its capacity, availability,
-  profile, efficiency and input-share limits apply to their average over the coarse step, and ramp limits apply
-  between coarse steps. The result is the same as with flows at the solve's step when each flow has at most one
-  limit that varies within the step and its cost, efficiency and prices do not vary within the step; otherwise
-  the result can differ (hourly flows could use the cheapest or most efficient hours, and several varying limits
-  are looser when averaged). Units and connections with a node outside the coarse groups keep the solve's step,
-  and so do those with a delay; also flows that cross Benders regions or live in the Benders master, and, in a
-  stochastic solve, those at a stochastic node whose coarse step is only partly tied between the forecasts. An
-  info line lists the units and connections that use a coarse step and those kept at the solve's step with the
-  reason. Their flows are written at every time step of the solve, the same value through each coarse step. An
-  upgraded database prints a notice naming each such unit or connection whose results can change, and why.
-  Requires polar-high 3.12.1.
-- **Units with online variables between coarse nodes use the coarse step too** (results change for such units:
-  `startup_method` linear or integer, all balance nodes in coarse groups). Their units online, start-ups and
-  shut-downs are decided once per coarse step (a unit starts or stops at the start of the step), their minimum
-  load and online capacity apply to the average over the step, and a minimum up or down time counts whole coarse
-  steps (a start-up counts while the steps since its start last less than `min_uptime`, so a 30-h minimum on
-  daily steps holds the unit for two days, and one of at most a day adds nothing). The units online are written
-  at every time step of the solve (the same value through the step), each start-up and shut-down at the first
-  time step of its coarse step (0 at the others), so start-up totals and costs are the model's. With ramp limits,
-  its start-up and shut-down capacity reduction uses the coarse step: a unit started at the start of a step is
-  limited to its mean output over the whole step while ramping up from minimum load (at full load for the rest of
-  the step once the ramp reaches it), likewise before a shut-down, and its units online ramp between coarse steps.
-  A unit with online variables keeps the solve's step in a stochastic solve when its coarse step is only partly
-  tied between the forecasts, and in a realization solve when its committed units online change within a coarse
-  step or are pinned on only part of it. The coarse-step notice names these
-  units with the reasons (units online once per coarse step, minimum times in whole coarse steps, a minimum load
-  that varies within the step, the start-up / shut-down capacity reduction on the coarse step).
-- **Units and connections between coarse nodes that provide reserves use the coarse step too** (results change
-  for such models; before, a node in a group with `new_stepduration` could not be in a reserve group, and a model
-  with one stopped with "participates in reserves but is a member of resolution-group"). Nodes of a coarse group may
-  now be in reserve groups. A unit or connection whose balance nodes are all coarse holds one reserve per coarse
-  step, written at every time step of the step; the reserve requirement is still checked at every time step of the
-  solve. Its reserve limits (the share of its capacity, a connection's net position, the floor of its flow, the
-  storage energy for `reserve_duration` when the storage node and every provider are coarse) apply to the average
-  over the step, with the average availability or profile (for example a wind unit offers reserve against its mean
-  capacity factor over the step), and the room its ramp limit leaves for reserve is the smallest of the step's time
-  steps. In a stochastic solve such a provider keeps the solve's step when the forecasts are tied over only part of
-  one of its coarse steps, and in a realization solve when its committed reserve changes within a coarse step. The
-  coarse-step notice names these units and connections (one reserve per coarse step; the headroom on the
-  step-mean availability or profile).
-- **Exact connections and DC power-flow lines between coarse nodes use the coarse step too** (results change for
-  such models; before, they kept the solve's step). An `exact` connection whose nodes are all coarse chooses its
-  direction once per coarse step, and its direction limits apply to the average over the step. A DC line whose
-  nodes are all coarse has one flow per coarse step; a coarse node whose every DC line uses the coarse step has one
-  voltage angle per coarse step (written at every time step of the step), and the DC power-flow row of a line
-  between two such nodes is one row per coarse step. A coarse DC line at a node that also has a DC line at the
-  solve's step keeps its DC power-flow row at every time step, which holds the angle difference across it constant
-  through the coarse step; the coarse-step notice names such lines.
-- **Rows that combine several units and connections follow one rule on coarse steps** (results change for models
-  with coarse units or connections in such rows; before, those units and connections kept the solve's step). A
-  capacity-margin, inertia, non-synchronous or flow-group instant-flow row of a group, a user constraint with flow
-  or storage terms, and the stochastic storage-use tie of a node are one row per coarse step, the average of the
-  row over the step, when every unit and connection in the row uses the coarse step; the inertia and
-  non-synchronous shortfalls are then one value per coarse step (written at every time step of the step). Such a
-  row uses the step mean of the demand, inflow, profile or limit in it: an averaged capacity margin covers the mean
-  net demand of the step, not its peak hour, and the coarse-step notice names the units and connections of such
-  rows where the demand, inflow, profile or limit varies within a coarse step. A row that mixes units or
-  connections on the coarse step with others on the solve's step stays at every time step and sees the coarse
-  flows constant through their step; the notice names those too. The stochastic storage-use tie of a node whose
-  units and connections are all coarse now ties the forecasts' energy over each coarse step; before, it tied each
-  time step separately, which over-constrained the forecasts when an efficiency varied within the step.
+  `group` `new_stepduration`; before, every flow, unit commitment and reserve stayed at the solve's step). A unit
+  or connection whose balance nodes are all in coarse groups now decides once per coarse step, so the model gets
+  smaller (the three-region hydrogen test model: 7 instead of 168 flow variables per liquefier and pipe arc in a
+  week). Requires polar-high 3.12.1.
+  - *Flows*: one flow per coarse step, a rate that stays the same over the step. Its capacity, availability,
+    profile, efficiency and input-share limits apply to their average over the coarse step, and ramp limits apply
+    between coarse steps. The result is the same as with flows at the solve's step when each flow has at most one
+    limit that varies within the step and its cost, efficiency and prices do not vary within the step; otherwise
+    the result can differ (hourly flows could use the cheapest or most efficient hours, and several varying limits
+    are looser when averaged).
+  - *Units with online variables* (`startup_method` linear or integer): units online, start-ups and shut-downs are
+    decided once per coarse step (a unit starts or stops at the start of the step); minimum load and online
+    capacity apply to the average over the step; a minimum up or down time counts whole coarse steps (a start-up
+    counts while the steps since its start last less than `min_uptime`, so a 30-h minimum on daily steps holds the
+    unit for two days, and one of at most a day adds nothing). With ramp limits, the start-up and shut-down
+    capacity reduction uses the coarse step: a unit started at the start of a step is limited to its mean output
+    over the whole step while ramping up from minimum load (at full load for the rest of the step once the ramp
+    reaches it), likewise before a shut-down, and its units online ramp between coarse steps.
+  - *Reserves*: nodes of a coarse group may now be in reserve groups (before, such a model stopped with
+    "participates in reserves but is a member of resolution-group"). A provider holds one reserve per coarse step;
+    the reserve requirement is still checked at every time step of the solve. Its reserve limits (the share of its
+    capacity, a connection's net position, the floor of its flow, the storage energy for `reserve_duration` when
+    the storage node and every provider are coarse) apply to the average over the step, with the average
+    availability or profile (a wind unit offers reserve against its mean capacity factor over the step), and the
+    room its ramp limit leaves for reserve is the smallest of the step's time steps.
+  - *Exact connections and DC power flow*: an `exact` connection chooses its direction once per coarse step, its
+    direction limits applying to the average over the step. A DC line has one flow per coarse step; a coarse node
+    whose every DC line uses the coarse step has one voltage angle per coarse step.
+  - *Rows that combine several units and connections*: a capacity-margin, inertia or non-synchronous row of a
+    group, a flow group's instant-flow limit, a user constraint with flow or storage terms, the DC power-flow row
+    of a line and the stochastic storage-use tie of a node are one row per coarse step, the average of the row
+    over the step, when every unit and connection in the row uses the coarse step; the inertia and
+    non-synchronous shortfalls are then one value per coarse step. Such a row uses the step mean of the demand,
+    inflow, profile, limit or constant in it: an averaged capacity margin covers the mean net demand of the step,
+    not its peak hour. A row that mixes units or connections on the coarse step with others on the solve's step
+    stays at every time step and sees the coarse flows constant through their step (a coarse DC line at a node
+    that also has a DC line at the solve's step holds the angle difference across it constant through the step).
+  - *What keeps the solve's step*: units and connections with a node outside the coarse groups, and those with a
+    delay; flows that cross Benders regions or live in the Benders master; in a stochastic solve, a unit or
+    connection at a stochastic node, with online variables or providing reserves, whose coarse step is tied
+    between the forecasts over only part of it; in a realization solve, one whose committed units online or
+    reserve change within a coarse step or are pinned on only part of it. An info line lists the units and
+    connections that use a coarse step and those kept at the solve's step with the reason.
+  - *Outputs*: flows, units online, reserves, voltage angles and the shortfalls of averaged rows are written at
+    every time step of the solve, the same value through each coarse step; each start-up and shut-down is written
+    whole at the first time step of its coarse step (0 at the others), so start-up totals and costs are the
+    model's.
+  - An upgraded database prints a notice naming each coarse unit or connection whose results can differ from
+    flows at the solve's step, and why (a cost, price, efficiency or minimum load varying within the step, two or
+    more varying limits, ramp limits, online variables, minimum times, the coarse start-up reduction, reserves and
+    their step-mean headroom, a mixed row, or an averaged row whose demand, inflow, profile or limit varies within
+    the step).
 - **A Benders master that HiGHS left with an undetermined status after its cold retry is solved once more from
   its reloaded LP** (polar-high 3.12.1), instead of stopping with "Benders master problem did not solve to
   optimality". This happened on badly scaled masters (an unscaled objective with cut slopes near 1e9).
