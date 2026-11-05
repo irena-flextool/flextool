@@ -32,7 +32,6 @@ def write_input_for_region(
     region_group: str,
     output_dir: Path,
     work_folder: Path | None = None,
-    precision_digits: int = 0,
 ) -> dict:
     """Write a self-contained ``input_region_<region>/`` directory for one
     decomposition region's standalone solve.
@@ -54,7 +53,7 @@ def write_input_for_region(
 
     Parameters
     ----------
-    input_db_url, scenario_name, logger, work_folder, precision_digits
+    input_db_url, scenario_name, logger, work_folder
         Standard cascade entry-point inputs.
     region_group
         The group name whose ``decomposition_method`` is
@@ -79,7 +78,6 @@ def write_input_for_region(
         logger,
         scenario_name=scenario_name,
         work_folder=work_folder,
-        precision_digits=precision_digits,
     )
 
     # 2. Validate region membership BEFORE filtering — surface a clear

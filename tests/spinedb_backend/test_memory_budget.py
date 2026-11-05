@@ -115,7 +115,6 @@ def test_input_derivation_peak_rss_under_budget(tmp_path, examples_db_url) -> No
             provider,
             scenario_name="test_a_lot",
             work_folder=tmp_path,
-            precision_digits=0,
         )
         wall_s = time.perf_counter() - t0
 

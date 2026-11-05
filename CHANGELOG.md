@@ -24,6 +24,9 @@
 - **Removed `--matrix-file-format` and `FLEXTOOL_MATRIX_FILE_FORMAT`** (and the GUI's "Matrix file format"
   setting). They had no effect: HiGHS is called in-process, or with an MPS file under `--save-memory`, and
   commercial solvers are always given an MPS file. A GUI project that stored the setting opens as before.
+- **Removed `--precision-digits`, `FLEXTOOL_PRECISION_DIGITS` and `FLEXTOOL_REPORT_NEAR_DUPS`.** They never affected
+  a normal run (only `--region` passed the rounding on), so results do not change. FlexTool does not round input
+  values; the developer documentation said it rounded them to 10 significant figures by default, which was wrong.
 - The run header lists the options set by a flag or an environment variable, with where each came from, and the
   number of polars threads.
 - **Processors with AVX2 keep polars' fast build when the compatible build is installed too.** polars loads its

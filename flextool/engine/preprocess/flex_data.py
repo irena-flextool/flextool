@@ -6895,35 +6895,23 @@ def build_handoff_from_solution(
     if nodes_state and last_step is not None and "v_state" in sol._vars:
         last_d, last_t = last_step
         rcs_rows: list[tuple[str, float]] = []
-        import os
-        if os.environ.get("FLEXTOOL_DISABLE_VSTATE_FILTER") == "1":
-            # Old path: materialize the FULL (n, d, t) v_state frame
-            # for the whole dispatch window, then drop all but the
-            # last (d, t).  ~17GB transient peak on the real DES model.
-            v_state = sol.value("v_state")
-            last_state = (
-                v_state.filter(
-                    (pl.col("d") == last_d) & (pl.col("t") == last_t))
-                if v_state is not None and v_state.height > 0
-                else None)
+        # Filter the variable's col_id frame to ONLY the last
+        # (d, t) keys, then pull values for those rows alone.
+        # Avoids materializing the full per-step v_state frame.
+        # ``sol.value`` does ``v.frame.select(dims).with_columns(
+        # value=col_value[col_id])``; we replicate that against the
+        # pre-filtered frame so the result equals filtering
+        # ``sol.value("v_state")`` to the last (d, t).
+        _v = sol._vars["v_state"]
+        _last_frame = _v.frame.filter(
+            (pl.col("d") == last_d) & (pl.col("t") == last_t))
+        if _last_frame.height > 0:
+            _ids = _last_frame["col_id"].to_numpy()
+            _vals = sol.col_value[_ids]
+            last_state = _last_frame.select(*_v.dims).with_columns(
+                value=pl.Series(_vals))
         else:
-            # Filter the variable's col_id frame to ONLY the last
-            # (d, t) keys, then pull values for those rows alone.
-            # Avoids materializing the full per-step v_state frame.
-            # ``sol.value`` does ``v.frame.select(dims).with_columns(
-            # value=col_value[col_id])``; we replicate that against the
-            # pre-filtered frame so the result is byte-identical to the
-            # old path's post-filter output.
-            _v = sol._vars["v_state"]
-            _last_frame = _v.frame.filter(
-                (pl.col("d") == last_d) & (pl.col("t") == last_t))
-            if _last_frame.height > 0:
-                _ids = _last_frame["col_id"].to_numpy()
-                _vals = sol.col_value[_ids]
-                last_state = _last_frame.select(*_v.dims).with_columns(
-                    value=pl.Series(_vals))
-            else:
-                last_state = None
+            last_state = None
         if last_state is not None:
             nodes_state_set = set(nodes_state)
             for r in last_state.iter_rows(named=True):

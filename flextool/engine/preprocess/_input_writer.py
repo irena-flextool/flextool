@@ -43,7 +43,6 @@ def write_workdir_inputs(
     *,
     provider: "FlexDataProvider",
     logger: logging.Logger | None = None,
-    precision_digits: int = 0,
     memory_recorder=None,
 ) -> None:
     """Populate *provider* with every cascade-input frame derived from
@@ -76,8 +75,6 @@ def write_workdir_inputs(
     logger : logging.Logger, optional
         Logger to use during emission.  ``None`` builds a default
         named logger.
-    precision_digits : int, default 0
-        Float precision forwarded to ``SpineDBBackend.parameter_values``.
     """
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -93,7 +90,6 @@ def write_workdir_inputs(
         logger,
         scenario_name=scenario_name,
         work_folder=work_folder,
-        precision_digits=precision_digits,
         memory_recorder=memory_recorder,
     )
 

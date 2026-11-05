@@ -54,7 +54,6 @@ def _run_dc_pf(db) -> tuple[FlexDataProvider, dict[str, str]]:
     backend._db = db  # type: ignore[attr-defined]
     import spinedb_api as _api
     backend._api = _api  # type: ignore[attr-defined]
-    backend._precision_digits = 0  # type: ignore[attr-defined]
     provider = FlexDataProvider()
     overrides = derive_dc_power_flow(backend, provider, logger)
     return provider, overrides
@@ -148,7 +147,6 @@ def _run_process_method(
     backend._db = db  # type: ignore[attr-defined]
     import spinedb_api as _api
     backend._api = _api  # type: ignore[attr-defined]
-    backend._precision_digits = 0  # type: ignore[attr-defined]
     provider = FlexDataProvider()
     derive_process_method(
         backend, provider, logger,

@@ -68,7 +68,6 @@ def run(
     *,
     scenario_name: "str | None" = None,
     work_folder: "Path | None" = None,
-    precision_digits: int = 0,
     memory_recorder=None,
 ) -> None:
     """Populate *provider* with the canonical ``input/`` + derivation
@@ -109,8 +108,6 @@ def run(
         ported to Provider-only operation.  When ``None`` defaults to
         :func:`pathlib.Path.cwd`.  Becomes optional in a later step
         once every writer is Provider-only.
-    precision_digits
-        Float precision forwarded to ``SpineDBBackend.parameter_values``.
     """
     from flextool.spinedb_backend import SpineDBBackend
     from flextool.input_derivation._specs import (
@@ -171,7 +168,6 @@ def run(
         backend = SpineDBBackend.__new__(SpineDBBackend)
         backend._db = db                              # type: ignore[attr-defined]
         backend._api = api                            # type: ignore[attr-defined]
-        backend._precision_digits = precision_digits  # type: ignore[attr-defined]
         backend._scenario_name = scenario_name        # type: ignore[attr-defined]
 
         for spec in _DEFAULT_VALUES_SPECS:

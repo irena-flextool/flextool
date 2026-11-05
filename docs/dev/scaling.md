@@ -169,20 +169,18 @@ the legacy family is off unless forced via the
 `FLEXTOOL_FORCE_ROW_SCALING` test hook. Output un-scaling is wired into
 `process_outputs/read_highs_solution.py` either way.
 
-## Precision rounding
+## Input values are not rounded
 
-Every numeric CSV cell is rounded to 10 significant figures by default
-before it is written to `input/` or `solve_data/`. On very large
-values (e.g. annual flows in the 1e9 range) this may shift downstream
-objectives by `≤ 1e-11` relative — sub-microscopic but real and
-deterministic.
-
-Override with `--precision-digits 15` to effectively disable rounding.
+FlexTool passes every input value to the model at full double
+precision; nothing rounds parameter values before the LP is built.
+(An earlier `--precision-digits` option claimed to round inputs to 10
+significant figures, but it never reached a normal run; it was removed.)
 
 ## Troubleshooting checklist
 
-- **"My objective doesn't match a pre-scaling reference."** Check
-  `--precision-digits`. Default 10; was effectively 16 before.
+- **"My objective doesn't match a pre-scaling reference."** Compare
+  with `--scaling=off`: the scaled and unscaled solves agree within the
+  solver tolerance, not bit for bit.
 - **"HiGHS reports non-optimal."** Read the console hint and open
   `solve_data/autoscale_<solve>.yaml`. The post-Layer-2 ranges show
   whether Layer 2 compressed the spread; the `layer3` section shows

@@ -990,10 +990,7 @@ slack semantics.
    `node_capacity_for_scaling` / `group_capacity_for_scaling` derived
    from connected-entity unitsizes; rounded to powers of 10 to preserve
    HiGHS symmetry detection.
-4. **Precision cleanup (`--precision-digits`).** Every numeric value is
-   rounded to 10 significant figures so benign precision artifacts don't
-   trip near-duplicate detection.
-5. **Autoscale package** (`engine/autoscale/`). Three layers,
+4. **Autoscale package** (`engine/autoscale/`). Three layers,
    on by default (gate via `--scaling=off` / `FLEXTOOL_SCALING=off`;
    intermediate modes are `solver_only`, `basic`, `full`):
    - **Layer 1 — detect** (`_ranges.py`). Walks the assembled LP and
@@ -1047,7 +1044,7 @@ slack semantics.
      range) and folds D's escape-tier valve into the same pass, so the
      LP arriving at HiGHS is comfortably within the solver's
      conditioning sweet spot.
-6. **YAML audit** (`engine/autoscale/_report.py`). After every
+5. **YAML audit** (`engine/autoscale/_report.py`). After every
    solve, writes `solve_data/autoscale_<solve>.yaml` covering Layer 1
    ranges, the Layer 2 plan (per-type exponents + post-L2 ranges),
    and the Layer 3 plan (`user_bound_scale`, escape-tier).
@@ -1058,11 +1055,11 @@ slack semantics.
    — never as the certified cause. Accept/reject itself is decided by
    `engine/solve/_acceptance.py` from the solver's own diagnostics
    (see "Solve acceptance" below), not by the range report.
-7. **Manual override.** `--user-bound-scale N` (or DB
-   `solve.user_bound_scale`) pins Layer 3's bound-scale exponent and
+6. **Manual override.** `--user-bound-scale N` (or
+   `FLEXTOOL_USER_BOUND_SCALE`) pins Layer 3's bound-scale exponent and
    disables the auto-pick. Useful when the audit hints at a value the
    recommender did not lock in.
-8. **Output un-scaling** (`process_outputs/read_highs_solution.py`).
+7. **Output un-scaling** (`process_outputs/read_highs_solution.py`).
    Every `VariableSpec` carries an `unscale_by` field; the Layer 2 +
    Layer 3 reverse maps are applied in the writer so downstream
    consumers see absolute units regardless of which layers fired.

@@ -125,7 +125,6 @@ class FlexToolRunner:
         self,
         input_db_url,
         scenario_name=None,
-        precision_digits: int = 0,
         *,
         provider=None,
     ) -> None:
@@ -147,7 +146,6 @@ class FlexToolRunner:
             self.state.logger,
             scenario_name=scenario_name,
             work_folder=self.state.paths.work_folder,
-            precision_digits=precision_digits,
         )
         # Persist the cascade-input Provider on ``self.state`` so the
         # native cascade picks up the seeded ``input/<class>`` frames.

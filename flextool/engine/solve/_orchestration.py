@@ -3003,34 +3003,30 @@ def _drive_cascade(
                     set(_ilk[_iidx + 1:])
                     if (_iidx is not None and _ilk) else set()
                 )
-                # Disable knob for A/B peak-memory measurement and the
-                # regression test's negative control (mirrors the
-                # ``POLAR_HIGH_DISABLE_PRUNE_DOWN`` style escape hatch).
-                if os.environ.get("FLEXTOOL_DISABLE_XLEVEL_RELEASE") != "1":
-                    _released = False
-                    for _k, _step in (getattr(self, "_all_steps", None) or {}).items():
-                        _lvl = self._step_level_keys.get(_k)
-                        if _lvl is None or _lvl == _tlvl or _lvl in _upcoming:
-                            continue  # current level or still-upcoming: keep
-                        _sol = getattr(_step, "solution", None)
-                        if _sol is not None and getattr(_sol, "highs", None) is not None:
-                            _sol.highs = None
-                            _released = True
-                        if getattr(_step, "flex_data_provider", None) is not None:
-                            _step.flex_data_provider = None
-                            _released = True
-                        # Also evict the exhausted level's entry from the
-                        # per-level FlexDataProvider cache — it is keyed by
-                        # level_key and only reused by FUTURE same-level rolls,
-                        # of which an exhausted level has none.  Without this
-                        # the cache (``state._level_providers``) pins the
-                        # level's polars FlexData for the whole cascade even
-                        # after the step ref above is dropped.
-                        _lp = getattr(self.state, "_level_providers", None)
-                        if isinstance(_lp, dict) and _lp.pop(_lvl, None) is not None:
-                            _released = True
-                    if _released:
-                        _try_malloc_trim()
+                _released = False
+                for _k, _step in (getattr(self, "_all_steps", None) or {}).items():
+                    _lvl = self._step_level_keys.get(_k)
+                    if _lvl is None or _lvl == _tlvl or _lvl in _upcoming:
+                        continue  # current level or still-upcoming: keep
+                    _sol = getattr(_step, "solution", None)
+                    if _sol is not None and getattr(_sol, "highs", None) is not None:
+                        _sol.highs = None
+                        _released = True
+                    if getattr(_step, "flex_data_provider", None) is not None:
+                        _step.flex_data_provider = None
+                        _released = True
+                    # Also evict the exhausted level's entry from the
+                    # per-level FlexDataProvider cache — it is keyed by
+                    # level_key and only reused by FUTURE same-level rolls,
+                    # of which an exhausted level has none.  Without this
+                    # the cache (``state._level_providers``) pins the
+                    # level's polars FlexData for the whole cascade even
+                    # after the step ref above is dropped.
+                    _lp = getattr(self.state, "_level_providers", None)
+                    if isinstance(_lp, dict) and _lp.pop(_lvl, None) is not None:
+                        _released = True
+                if _released:
+                    _try_malloc_trim()
                 # Cross-level retention audit — runs AFTER the eviction above so
                 # a correct release records zero violators.  Gated by the same
                 # ``not keep_solutions`` as the eviction: the release invariant
@@ -3377,10 +3373,7 @@ def _drive_cascade(
                     # so this is safe.  ``flex_data_provider`` is NOT dropped
                     # here — same-level rolls reuse the per-level provider
                     # cache (``state._level_providers``).
-                    if (
-                        not keep_solutions
-                        and os.environ.get("FLEXTOOL_DISABLE_XLEVEL_RELEASE") != "1"
-                    ):
+                    if not keep_solutions:
                         _cr_released = False
                         for _ck, _cstep in (getattr(self, "_all_steps", None) or {}).items():
                             _csol = getattr(_cstep, "solution", None)

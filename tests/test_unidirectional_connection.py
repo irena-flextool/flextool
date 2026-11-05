@@ -93,7 +93,6 @@ def test_write_process_method_routes_unidirectional_to_1way_1var_off(
         backend = SpineDBBackend.__new__(SpineDBBackend)
         backend._db = db                                  # type: ignore[attr-defined]
         backend._api = _spinedb_api                       # type: ignore[attr-defined]
-        backend._precision_digits = 0                     # type: ignore[attr-defined]
         derive_process_method(backend, provider, logger,
                               ct_method_overrides=None)
     frame = provider.get("input/process_method")

@@ -183,7 +183,6 @@ python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
 
 | Flag | Description |
 |---|---|
-| `--precision-digits N` | Round every numeric input parameter to N significant figures before writing CSVs (typical: 10). Collapses float noise so HiGHS `mip_detect_symmetry` can aggregate structurally identical coefficients. Overrides `FLEXTOOL_PRECISION_DIGITS`; `0` or unset disables rounding |
 | `--scaling {off,solver_only,basic,full}` | FlexTool autoscaler strategy (see [scaling.md](dev/scaling.md)). `off` disables all scaling including HiGHS' internal equilibration; `solver_only` keeps only HiGHS' default matrix scaling; `basic` adds FlexTool's Layer-1 range detection and Layer-3 `user_*_scale` recommendation without LP mutation; `full` (default) adds Layer-2 semantic per-type column/row/cost scaling. Env fallback: `FLEXTOOL_SCALING` |
 | `--user-bound-scale N` | Pin HiGHS' `user_bound_scale` exponent (multiplies all column bounds and RHS by `2**N`). Use the value HiGHS suggests in its scaling warning; clamped to `[-10, 0]`. Overrides the Layer-3 auto-pick and any DB value |
 | `--presolve {on,off,choose}` | HiGHS `presolve` override. Default keeps the determinism-pinned `on`; `off` disables presolve (slower but useful for memory or numerical diagnostics) |

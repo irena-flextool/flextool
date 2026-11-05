@@ -40,7 +40,6 @@ from flextool._mem_sampler import start_mem_sampler
 from flextool.process_outputs.write_outputs import write_outputs
 from flextool.cli._console import run_tool
 from flextool.cli._timing import TimingRecorder
-from flextool.common_utils.precision import resolve_precision_digits
 from flextool.run_options import RunOptions
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
@@ -555,13 +554,6 @@ def build_parser() -> argparse.ArgumentParser:
                              'Enables parallel scenario execution by isolating each run.')
     parser.add_argument('--only-first-file-per-plot', action='store_true', default=False,
                         help='Only produce the first file for each plot (quick overview mode)')
-    parser.add_argument('--precision-digits', metavar='N', type=int, default=None,
-                        help='Round every numeric input parameter to N significant '
-                             'figures before writing CSVs (typical: 10).  '
-                             'Collapses accumulated float-noise so HiGHS '
-                             'mip_detect_symmetry can aggregate structurally-identical '
-                             'coefficients.  0 or unset disables rounding (default).  '
-                             'Overrides the FLEXTOOL_PRECISION_DIGITS env var.')
     parser.add_argument('--region', metavar='GROUP_NAME', default=None,
                         help='Write the filtered inputs of one Benders region '
                              'to ``input_region_<GROUP_NAME>/`` and stop; no '
@@ -652,7 +644,9 @@ def build_parser() -> argparse.ArgumentParser:
                              '"on" setting from '
                              '``DETERMINISM_OPTIONS``.  ``off`` disables '
                              'presolve entirely (much slower but useful '
-                             'for memory or numerical diagnostics).')
+                             'for memory or numerical diagnostics).  '
+                             'Environment variable: '
+                             'FLEXTOOL_HIGHS_PRESOLVE; the flag wins.')
     parser.add_argument('--solver-log-level',
                         choices=['silent', 'normal', 'verbose'],
                         default=None,
@@ -662,19 +656,18 @@ def build_parser() -> argparse.ArgumentParser:
                              'and ``verbose`` both set '
                              '``output_flag=true``; ``verbose`` also '
                              'bumps ``log_dev_level=2`` for per-'
-                             'iteration solver telemetry.  Replaces '
-                             'the v55-era DB-stored solver_log_level '
-                             'knob (removed in Batch C.7).')
+                             'iteration solver telemetry.  Environment '
+                             'variable: FLEXTOOL_SOLVER_LOG_LEVEL; the '
+                             'flag wins.')
     parser.add_argument('--solver-time-limit', type=float, default=None,
                         metavar='SECONDS',
                         help='HiGHS wall-clock time limit '
                              '(``time_limit`` option, seconds).  '
-                             'Unset (default) means no limit.  '
-                             'Replaces the v55-era DB-stored '
-                             'solver_time_limit knob (removed in '
-                             'Batch C.8).  Routed through the '
-                             'effective-options resolver as a CLI '
-                             'override (highest precedence).')
+                             'Unset (default) means no limit.  It '
+                             'overrides a time_limit in highs.opt or a '
+                             'solve\'s solver_arguments.  Environment '
+                             'variable: FLEXTOOL_HIGHS_TIME_LIMIT; the '
+                             'flag wins.')
     parser.add_argument('--solver-mip-gap', type=float, default=None,
                         metavar='GAP',
                         help='HiGHS MIP relative optimality gap '
@@ -812,13 +805,9 @@ def main():
     timing_recorder = TimingRecorder(work_folder=wf, scenario=scenario_name)
     t_total_start = time.perf_counter()
 
-    # resolve_precision_digits respects FLEXTOOL_PRECISION_DIGITS env override.
-    effective_precision = resolve_precision_digits(args.precision_digits)
-
-    # --- Regional filter mode (Agent 3.1) --------------------------------
-    # ``--region GROUP`` produces ``input_region_<GROUP>/`` and exits
-    # without invoking the solver.  The Benders coordinator (Agent
-    # 3.2) then orchestrates multiple region solves itself.
+    # --- Regional filter mode ---------------------------------------------
+    # ``--region GROUP`` writes ``input_region_<GROUP>/`` (the inputs one
+    # Benders region subproblem sees) and exits without invoking the solver.
     if args.region:
         from flextool.decomposition.region_decomposition import (
             write_input_for_region as _write_input_for_region,
@@ -832,7 +821,6 @@ def main():
                 region_group=args.region,
                 output_dir=_region_output,
                 work_folder=work_folder,
-                precision_digits=effective_precision,
             )
         except Exception as exc:
             logging.error("Regional filter failed: %s", exc, exc_info=True)

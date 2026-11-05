@@ -70,13 +70,6 @@ FLEXTOOL_MEM_SAMPLER=1 FLEXTOOL_MEM_SAMPLER_INTERVAL_MS=50 \
 | `FLEXTOOL_COLD_KEEP_PROVIDER` | unset (off) | `1` | Under `--save-memory`, keep the `flex_data_provider` alive across cold iterations instead of rebuilding from the Spine DB each time. Trades steady-state RSS for skipping a per-iter DB re-read. Off by default because peak RSS is the typical save-memory bottleneck. |
 | `FLEXTOOL_RSS_BUDGET_MB` | unset (no eviction) | MB (float) | Soft RSS budget for the `flex_data_provider`'s lazy-frame eviction. When set, the provider drops cached frames once RSS crosses the threshold (subject to lifetime info). Useful on long-running workflows where intermediate frames accumulate; unset gives unbounded retention. |
 
-## Precision cleanup
-
-| Variable | Default | Set to | What it does |
-|---|---|---|---|
-| `FLEXTOOL_PRECISION_DIGITS` | unset (passthrough) | integer 1–15 | Round every numeric CSV cell written to `input/` / `solve_data/` to N significant figures. Env-var fallback for `--precision-digits N`. `0` or unset disables. CLI takes precedence. See [LP scaling pipeline § Precision rounding](scaling.md#precision-rounding). |
-| `FLEXTOOL_REPORT_NEAR_DUPS` | unset (off) | `1` / `true` / `yes` / `on` | Run the near-duplicate parameter-value diagnostic. Off by default; equivalent to `--report-near-duplicates`. Surfaces clusters of values that are nearly-but-not-exactly equal — useful before tightening `FLEXTOOL_PRECISION_DIGITS`. |
-
 ## Niche / test hooks
 
 These are documented for completeness. Most users will never set
