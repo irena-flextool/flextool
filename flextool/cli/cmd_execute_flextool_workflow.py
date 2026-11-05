@@ -21,7 +21,24 @@ from flextool.cli._console import run_tool
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 
 
-def main():
+def run_flextool_args(args: argparse.Namespace, *, output_config: str, output_subdir: str) -> list[str]:
+    """The ``cmd_run_flextool`` arguments of the model-execution phase.
+
+    The workflow has no solver options of its own: the child run inherits this process's environment
+    unchanged, so solver settings given as environment variables reach it as set.
+    """
+    argv = [args.input_db_url, args.output_db_url,
+            '--scenario-name', args.scenario_name,
+            '--output-config', output_config,
+            '--output-subdir', output_subdir,
+            '--write-methods', *args.write_methods]
+    if args.debug != 'off':
+        argv.append(f'--debug={args.debug}')
+    return argv
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The ``cmd_execute_flextool_workflow`` command line."""
     parser = argparse.ArgumentParser(
         description='Execute complete FlexTool workflow',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -76,7 +93,11 @@ Examples:
                              'selects ``basic``.  See cmd_run_flextool '
                              '--help for level semantics.')
 
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
 
     # Self-heal missing lightweight settings DBs so fresh clones don't
     # fail opaquely when the user forgot to run `flextool-update`. Only
@@ -153,13 +174,7 @@ Examples:
         output_config = str(package_data_path("schemas/default_plots.yaml"))
 
     cmd = [sys.executable, '-m', 'flextool.cli.cmd_run_flextool',
-           args.input_db_url, args.output_db_url,
-           '--scenario-name', args.scenario_name,
-           '--output-config', output_config,
-           '--output-subdir', output_subdir,
-           '--write-methods'] + args.write_methods
-    if args.debug != 'off':
-        cmd.append(f'--debug={args.debug}')
+           *run_flextool_args(args, output_config=output_config, output_subdir=output_subdir)]
 
     result = subprocess.run(cmd)
     if result.returncode != 0:
