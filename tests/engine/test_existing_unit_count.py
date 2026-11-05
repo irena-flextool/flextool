@@ -4,7 +4,8 @@ The existing unit count is capacity / unitsize, so it equals ``existing`` with v
 (unitsize = existing).  These tests pin the provider-less fallbacks of ``params._derived`` (no chained
 ``p_entity_all_existing``: workdir None) on an in-memory source.  Unit ``u`` (a → b) has existing 2 and
 virtual_unitsize 250 (two 250 MW units, 500 MW): count 2.  Its twin ``w`` has existing 500 MW and no
-virtual_unitsize: unitsize 500, count 500 / 500 = 1.
+virtual_unitsize: unitsize 500, count 500 / 500 = 1.  Storage node ``s`` has existing 3 and virtual_unitsize 100
+(three 100 MWh units, 300 MWh).
 """
 from __future__ import annotations
 
@@ -19,14 +20,16 @@ from tests.engine._unit_db import FLEXTOOL_ROOT, COAL, PLANT, b64, build, demand
 PERIOD = "p2020"
 
 
-def _source(existing_shape: str) -> InMemoryReader:
+def _source(existing_shape: str, extra: dict | None = None) -> InMemoryReader:
     if existing_shape == "constant":
         existing = pl.DataFrame({"name": ["u", "w"], "value": [2.0, 500.0]})
+        node_existing = pl.DataFrame({"name": ["s"], "value": [3.0]})
     else:
         existing = pl.DataFrame({"name": ["u", "w"], "period": [PERIOD, PERIOD], "value": [2.0, 500.0]})
+        node_existing = pl.DataFrame({"name": ["s"], "period": [PERIOD], "value": [3.0]})
     return InMemoryReader(entities={
         "unit": pl.DataFrame({"name": ["u", "w"]}),
-        "node": pl.DataFrame({"name": ["a", "b"]}),
+        "node": pl.DataFrame({"name": ["a", "b", "s"]}),
         "connection": pl.DataFrame(schema={"name": pl.Utf8}),
         "solve": pl.DataFrame({"name": ["s"]}),
         "unit__inputNode": pl.DataFrame({"unit": ["u", "w"], "node": ["a", "a"]}),
@@ -34,7 +37,10 @@ def _source(existing_shape: str) -> InMemoryReader:
     }, parameters={
         ("unit", "existing"): existing,
         ("unit", "virtual_unitsize"): pl.DataFrame({"name": ["u"], "value": [250.0]}),
+        ("node", "existing"): node_existing,
+        ("node", "virtual_unitsize"): pl.DataFrame({"name": ["s"], "value": [100.0]}),
         ("solve", "realized_periods"): pl.DataFrame({"name": ["s"], "value": [PERIOD]}),
+        **(extra or {}),
     })
 
 
@@ -58,6 +64,45 @@ def test_flow_upper_existing_fallback_is_existing_count_per_arc(existing_shape):
     assert upper is not None
     assert upper.frame.select("p", "source", "sink").rows() == [("u", "a", "b"), ("w", "a", "b")]
     assert _values(upper.frame) == {"u": 2.0, "w": 1.0}
+
+
+def _by_entity(frame: pl.DataFrame, col: str) -> dict[str, float]:
+    assert frame["d"].cast(pl.Utf8).to_list() == [PERIOD] * frame.height
+    return {str(e): float(v) for e, v in zip(frame[col].to_list(), frame["value"].to_list())}
+
+
+@pytest.mark.parametrize("existing_shape", ["constant", "period_map"])
+def test_all_existing_fallback_is_capacity(existing_shape):
+    """Existing capacity = existing × virtual_unitsize: u 2 × 250 = 500 MW, w 500 MW, s 3 × 100 = 300 MWh; the
+    nodes without existing have 0."""
+    pae = _derived.p_entity_all_existing_from_source(_source(existing_shape), "s", None)
+    assert pae is not None
+    assert _by_entity(pae.frame, "e") == {"a": 0.0, "b": 0.0, "s": 300.0, "u": 500.0, "w": 500.0}
+
+
+@pytest.mark.parametrize("existing_shape", ["constant", "period_map"])
+def test_max_units_fallback_counts_existing_capacity(existing_shape):
+    """invest_total with invest_max_total 250 MW on u and w: max units = (existing capacity + 250) / unitsize, so
+    u (500 + 250) / 250 = 3 and w (500 + 250) / 500 = 1.5.  s (no invest) keeps its existing 300 / 100 = 3."""
+    invest = {
+        ("unit", "invest_method"): pl.DataFrame({"name": ["u", "w"], "value": ["invest_total", "invest_total"]}),
+        ("unit", "invest_max_total"): pl.DataFrame({"name": ["u", "w"], "value": [250.0, 250.0]}),
+    }
+    ed_invest = pl.DataFrame({"e": ["u", "w"], "d": [PERIOD, PERIOD]})
+    units = _derived.p_entity_max_units_from_source(_source(existing_shape, invest), ed_invest, "s", None)
+    assert units is not None
+    assert _by_entity(units.frame, "e") == pytest.approx({"s": 3.0, "u": 3.0, "w": 1.5})
+
+
+@pytest.mark.parametrize(("existing_shape", "active_solve"),
+                         [("constant", "s"), ("period_map", "s"), ("period_map", None)])
+def test_state_existing_capacity_fallback_is_capacity(existing_shape, active_solve):
+    """Storage capacity of s = 3 × 100 = 300 MWh; also without a solve (no period set), where a period map
+    gives the periods."""
+    cap = _derived.p_state_existing_capacity_from_source(
+        _source(existing_shape), active_solve, pl.DataFrame({"n": ["s"]}), None)
+    assert cap is not None
+    assert _by_entity(cap.frame, "n") == {"s": 300.0}
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +142,7 @@ def _unmet(step, node: str) -> list[float]:
 
 @pytest.mark.solver
 def test_unit_capacity_is_count_times_virtual_unitsize(tmp_path_factory):
-    """T1: coal_plant existing 2, virtual_unitsize 250 (2 × 250 MW) and its twin existing 500 MW without
+    """coal_plant existing 2, virtual_unitsize 250 (2 × 250 MW) and its twin existing 500 MW without
     virtual_unitsize (unitsize 500, count 1): both have 500 MW, the LP differs only by the unitsize scaling.  At
     800 MW demand both run at 500 MW every step and leave 300 MW unserved."""
     cases = {
@@ -106,7 +151,7 @@ def test_unit_capacity_is_count_times_virtual_unitsize(tmp_path_factory):
         "mw": ([["unit", PLANT, "existing", b64(500.0, "float")]], 1.0, 500.0),
     }
     for alt, (vals, count, size) in cases.items():
-        step = solve(tmp_path_factory, alt=f"t1_{alt}", values=_pinned_values(*vals), base_chain=_BASE)
+        step = solve(tmp_path_factory, alt=f"count_unit_{alt}", values=_pinned_values(*vals), base_chain=_BASE)
         fd = step.flex_data
         assert _value(fd.p_process_existing_count, p=PLANT) == pytest.approx(count)
         assert _value(fd.p_unitsize, p=PLANT) == pytest.approx(size)
@@ -120,10 +165,10 @@ def test_unit_capacity_is_count_times_virtual_unitsize(tmp_path_factory):
 
 @pytest.mark.solver
 def test_storage_capacity_is_count_times_virtual_unitsize(tmp_path_factory):
-    """T3: battery existing 3, virtual_unitsize 100: 300 MWh in 100 MWh units, so maxState caps v_state at 3.
+    """battery existing 3, virtual_unitsize 100: 300 MWh in 100 MWh units, so maxState caps v_state at 3.
     fix_start 0.5 with the fixture's bind_within_timeblock pins the wrap target, the last step of the timeblock:
     v_state(t0048) = 0.5 × 300 / 100 = 1.5 units = 150 MWh."""
-    step = solve(tmp_path_factory, alt="t3_battery", base_chain=_BASE + ["battery"], values=_pinned_values(
+    step = solve(tmp_path_factory, alt="count_battery", base_chain=_BASE + ["battery"], values=_pinned_values(
         ["node", "battery", "existing", b64(3.0, "float")],
         ["node", "battery", "virtual_unitsize", b64(100.0, "float")],
         ["node", "battery", "storage_state_start", b64(0.5, "float")]))
@@ -142,12 +187,12 @@ def test_storage_capacity_is_count_times_virtual_unitsize(tmp_path_factory):
 
 @pytest.mark.solver
 def test_connection_capacity_is_count_times_virtual_unitsize(tmp_path_factory):
-    """T4: west_east existing 2, virtual_unitsize 50 (100 MW).  coal_plant 5000 MW (no virtual_unitsize) keeps west
+    """west_east existing 2, virtual_unitsize 50 (100 MW).  coal_plant 5000 MW (no virtual_unitsize) keeps west
     supplied, north is cut off (west_north, east_north existing 0).  East (300 MW demand, penalty 500 €/MWh, no own
     supply) values each delivered MW at 500 €/MWh, more than the 50 / 0.9 €/MWh it costs at west, so the connection
     runs at its 100 MW every step.  A connection's flow is the flow into its sink (nodeBalance_eq: the source gives
     flow / efficiency), so east gets 100 MW and 300 − 100 = 200 MW stay unserved."""
-    step = solve(tmp_path_factory, alt="t4_network", base_chain=_BASE + ["network"], values=_pinned_values(
+    step = solve(tmp_path_factory, alt="count_network", base_chain=_BASE + ["network"], values=_pinned_values(
         ["unit", PLANT, "existing", b64(5000.0, "float")],
         ["connection", "west_east", "existing", b64(2.0, "float")],
         ["connection", "west_east", "virtual_unitsize", b64(50.0, "float")],
@@ -169,10 +214,10 @@ def test_connection_capacity_is_count_times_virtual_unitsize(tmp_path_factory):
 @pytest.mark.parametrize(("west_mw", "units", "out_mw", "unmet_mw"),
                          [(800.0, 3.0, 600.0, 200.0), (450.0, 3.0, 450.0, 0.0), (100.0, 1.0, 100.0, 0.0)])
 def test_binary_online_commits_whole_units_of_virtual_unitsize(tmp_path_factory, west_mw, units, out_mw, unmet_mw):
-    """T5: coal_plant binary online, existing 3, virtual_unitsize 200 (three 200 MW units), min_load 0.4: at most 3
+    """coal_plant binary online, existing 3, virtual_unitsize 200 (three 200 MW units), min_load 0.4: at most 3
     units online, each between 80 and 200 MW.  800 MW: 3 units at 600 MW, 200 MW unserved.  450 MW: 200·on ≥ 450
     needs on = 3 (floor 240 ≤ 450).  100 MW: on = 1 (on = 2 would force 160 MW, dumped at penalty_down 800)."""
-    step = solve(tmp_path_factory, alt=f"t5_binary_{int(west_mw)}", base_chain=_BASE, values=[
+    step = solve(tmp_path_factory, alt=f"count_binary_{int(west_mw)}", base_chain=_BASE, values=[
         demand("west", west_mw), ["node", "west", "penalty_up", b64(10000.0, "float")],
         ["unit", PLANT, "existing", b64(3.0, "float")],
         ["unit", PLANT, "virtual_unitsize", b64(200.0, "float")],
@@ -198,12 +243,12 @@ def test_binary_online_commits_whole_units_of_virtual_unitsize(tmp_path_factory,
 @pytest.mark.solver
 @pytest.mark.parametrize(("invest_max_mw", "v_invest"), [(500.0, 2.0), (400.0, 1.6)])
 def test_investment_limit_is_mw_and_units_are_continuous(tmp_path_factory, invest_max_mw, v_invest):
-    """T6: coal_plant existing 1, virtual_unitsize 250 (250 MW), invest_total with invest_max_total in MW and a
+    """coal_plant existing 1, virtual_unitsize 250 (250 MW), invest_total with invest_max_total in MW and a
     cheap invest_cost.  maxInvest_entity_total: 250·v_invest ≤ invest_max_total, so v_invest ≤ 2 (500 MW) or ≤ 1.6
     (400 MW, not a whole number).  maxInvest_var_bound caps v_invest at (existing capacity + invest_max_total) /
     unitsize = 3 (2.6): the existing capacity is in it.  Unserved load is worth far more than the annuity, so the
     model builds to the limit: 250 + 250·v_invest MW (750 or 650) runs every step, the rest of 800 MW is unmet."""
-    step = solve(tmp_path_factory, alt=f"t6_invest_{int(invest_max_mw)}", base_chain=_BASE, values=_pinned_values(
+    step = solve(tmp_path_factory, alt=f"count_inv_{int(invest_max_mw)}", base_chain=_BASE, values=_pinned_values(
         ["unit", PLANT, "existing", b64(1.0, "float")],
         ["unit", PLANT, "virtual_unitsize", b64(250.0, "float")],
         ["unit", PLANT, "invest_method", b64("invest_total", "str")],
@@ -245,10 +290,10 @@ def _fixture_steps(tmp_path_factory, alt: str, fixture: tuple, values: list) -> 
 
 @pytest.mark.solver
 def test_rolling_dispatch_chain_keeps_unit_counts(tmp_path_factory):
-    """T7: rolling_separate_dispatch has coal_plant existing 3 × 600 MW and gas_plant 2 × 250 MW (binary online, no
+    """rolling_separate_dispatch has coal_plant existing 3 × 600 MW and gas_plant 2 × 250 MW (binary online, no
     investment).  The capacity handed from roll to roll and to the realized dispatch is 1800 / 500 MW, so every
     roll and the dispatch solve keep the counts 3 and 2 and cap the units online at them."""
-    steps = _fixture_steps(tmp_path_factory, "t7_rolling", _ROLLING, [])
+    steps = _fixture_steps(tmp_path_factory, "count_rolling", _ROLLING, [])
     assert len(steps) > 1
     for name, step in steps.items():
         fd = step.flex_data
@@ -288,7 +333,7 @@ _SHAPE_CASES = {
 @pytest.mark.solver
 @pytest.mark.parametrize("solve_kind", list(_SHAPE_CASES))
 def test_existing_count_constant_and_period_map_give_the_same_lp(tmp_path_factory, solve_kind):
-    """T8: with virtual_unitsize, existing as a constant and as the equivalent period map give the same count in
+    """With virtual_unitsize, existing as a constant and as the equivalent period map give the same count in
     every period, so every step's LP is the same in a single, a rolling and a stochastic solve."""
     fixture, units, extra = _SHAPE_CASES[solve_kind]
     lps = {}
@@ -296,7 +341,7 @@ def test_existing_count_constant_and_period_map_give_the_same_lp(tmp_path_factor
         values = list(extra) + [
             ["unit", unit, "existing", b64(v, "float") if shape == "constant" else _period_map(period, v)]
             for unit, period, v in units]
-        alt = f"t8_{solve_kind}_{shape}"
+        alt = f"count_{solve_kind}_{shape}"
         if fixture is None:
             url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=_BASE)
             steps = run(tmp_path_factory, url, scen)

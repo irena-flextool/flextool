@@ -4208,7 +4208,7 @@ def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
             # dedup, takes the *last* period's value.  For a retiring
             # unit whose map ends at 0 (e.g. ``220→0`` by expiry) that
             # collapses the cascade input to 0, defaults unitsize to
-            # ``1000`` and turns ``existing_count = existing/unitsize``
+            # ``1000`` and turns ``existing_count = capacity/unitsize``
             # into a spurious fraction (caps continuous online below 1
             # and forbids integer online entirely).  Take the per-entity
             # MAX over whatever period rows exist — index-name-agnostic
@@ -5067,7 +5067,7 @@ def p_flow_upper_from_source(source: "InputSource",
     ``p_entity_all_existing`` — fallback when ``p_entity_max_units`` is
     absent (no invest configured); when both invest sets are empty
     flextool's preprocessing still emits ``p_flow_max`` rows valued at
-    ``existing/unitsize`` per arc.  This matches the slow path's
+    the existing unit count (capacity/unitsize) per arc.  This matches the slow path's
     behaviour in the no-invest case.
 
     Returns ``None`` when no usable inputs exist (empty pss or dt) —
@@ -5093,7 +5093,7 @@ def p_flow_upper_from_source(source: "InputSource",
             .pipe(rename_to_axis, {"e": "p"})
             .select("p", alias_to_axis("d", "d"), pl.col("value").alias("cap_per_unit")))
     else:
-        # Derive from existing / unitsize.  We only need rows that join
+        # Derive from existing capacity / unitsize.  We only need rows that join
         # against pss, so we filter inline.
         if p_entity_all_existing is None or p_entity_all_existing.frame.height == 0:
             return None
@@ -6430,11 +6430,12 @@ def p_entity_all_existing_from_source(source: "InputSource",
         p_entity_all_existing[e, d] = pre_existing[e, d]
 
     where ``pre_existing[e, d]`` is the lifetime-gated existing
-    capacity from
-    ``preprocessing/entity_period_calc_params.py:write_p_entity_pre_existing``:
+    capacity (:func:`._existing.p_entity_pre_existing_lf`), with
+    capacity[e, d] = existing[e, d] × virtual_unitsize[e] when
+    virtual_unitsize is set, else existing[e, d]:
 
-      * ``reinvest_automatic`` → ``entity.existing[e, d]``.
-      * ``reinvest_choice`` / ``no_investment`` → ``entity.existing[e, d]``
+      * ``reinvest_automatic`` → capacity[e, d].
+      * ``reinvest_choice`` / ``no_investment`` → capacity[e, d]
         only while ``p_years_d[d] < life_sum(e)``; 0 thereafter.
       * Any other ``lifetime_method`` → 0.
 
@@ -6497,86 +6498,14 @@ def p_entity_all_existing_from_source(source: "InputSource",
                         return Param(("e", "d"), df2)
             except Exception:
                 pass
-    # Enumerate all entities across unit / node / connection.
-    ent_names: list[str] = []
-    for ec in ("unit", "node", "connection"):
-        ents = _try_entities(source, ec)
-        if ents is None or ents.height == 0:
-            continue
-        for n in ents["name"].to_list():
-            ent_names.append(str(n))
-    ent_names = list(dict.fromkeys(ent_names))
-    if not ent_names:
-        return None
-    # Build the (e, d) grid with default 0.0.
-    grid = (axis_lazyframe({"e": ent_names})
-              .join(axis_lazyframe({"d": piu}), how="cross")
-              .with_columns(value=pl.lit(0.0)))
-    # Read explicit existing rows.  Period-dim detection mirrors
-    # ``_existing._per_entity_param_lf``: the period column may
-    # be named ``period`` (canonical) or carry a user-renamed
-    # ``Map.index_name`` (e.g. ``x``).  Treat any extra non-name/value
-    # column as the period dim.
-    parts: list[pl.LazyFrame] = []
-    for ec in ("unit", "node", "connection"):
-        df = _try_param(source, ec, "existing")
-        if df is None or df.height == 0:
-            continue
-        cols = df.columns
-        extra = [c for c in cols if c not in ("name", "value")]
-        period_col = "period" if "period" in extra else (extra[0] if extra else None)
-        if period_col is not None:
-            parts.append(df.lazy().select(
-                alias_to_axis("name", "e"),
-                alias_to_axis(pl.col(period_col).cast(pl.Utf8, strict=False), "d"),
-                pl.col("value").cast(pl.Float64).alias("ex"),
-            ))
-        else:
-            base = df.lazy().select(
-                alias_to_axis("name", "e"),
-                pl.col("value").cast(pl.Float64).alias("ex"),
-            )
-            parts.append(base.join(axis_lazyframe({"d": piu}), how="cross")
-                              .select("e", "d", "ex"))
-    if parts:
-        explicit = pl.concat(parts).unique(subset=["e", "d"], keep="last")
-        merged = (grid.join(explicit, on=["e", "d"], how="left")
-                       .with_columns(value=pl.coalesce(pl.col("ex"),
-                                                            pl.col("value")))
-                       .select("e", "d", "value"))
-    else:
-        merged = grid.select("e", "d", "value")
-    out = merged.sort("e", "d").collect()
+    # No chained frame: the lifetime-gated existing capacity of every unit / node / connection
+    # (p_entity_pre_existing: existing × virtual_unitsize when it is set, else existing; 0 without existing).
+    from flextool.engine.preprocess.params._existing import p_entity_pre_existing_lf
+    out = (p_entity_pre_existing_lf(source, active_solve, piu, workdir=workdir, provider=provider)
+             .sort("e", "d")
+             .collect())
     if out.height == 0:
         return None
-    # Γ.6.D — apply the lifetime gate.  Mirrors
-    # ``entity_period_calc_params.write_p_entity_pre_existing`` (line
-    # 320-348): for entities with ``lifetime_method`` ∈ {reinvest_choice,
-    # no_investment}, zero out existing past ``life_sum(e)`` expiry.
-    expired = _lifetime_expired_pairs(
-        source, active_solve, workdir,
-        methods=("reinvest_choice", "no_investment"), provider=provider)
-    # Also need to zero out entities whose lifetime_method is none of
-    # the three allowed values (default fallback handles this since
-    # _entity_lifetime_methods returns "reinvest_automatic" by default,
-    # which is allowed — only explicit unrecognised values would fall
-    # through, and flextool's own writer drops them too).
-    if expired:
-        expired_lf = axis_lazyframe({
-            "e": [e for (e, _d) in expired],
-            "d": [d for (_e, d) in expired],
-        })
-        out = (out.lazy()
-                  .join(expired_lf.with_columns(_expired=pl.lit(True)),
-                          on=["e", "d"], how="left")
-                  .with_columns(
-                      value=pl.when(pl.col("_expired").fill_null(False))
-                                .then(0.0)
-                                .otherwise(pl.col("value"))
-                  )
-                  .select("e", "d", "value")
-                  .sort("e", "d")
-                  .collect())
     return Param(("e", "d"), out)
 
 
@@ -7852,8 +7781,9 @@ def p_state_existing_capacity_from_source(source: "InputSource",
     restricted to nodes carrying state (``nodeState`` set).
 
     Algorithm: take ``p_entity_all_existing`` for nodes only, restrict to
-    nodes in ``nodeState_df``.  Falls back to ``node.existing`` directly
-    when the chained Param isn't available.  Broadcasts onto the full
+    nodes in ``nodeState_df``.  Falls back to the lifetime-gated existing
+    capacity (existing × virtual_unitsize when it is set) of the state
+    nodes when the chained Param isn't available.  Broadcasts onto the full
     period set including stochastic-branch siblings (workdir-aware).
     """
     if nodeState_df is None or nodeState_df.height == 0:
@@ -7897,29 +7827,25 @@ def p_state_existing_capacity_from_source(source: "InputSource",
         df = base.sort("n", "d")
         if df.height > 0:
             return Param(("n", "d"), df)
-    # Fallback: read node.existing directly.
+    # Fallback (no period_in_use for p_entity_all_existing): the lifetime-gated existing capacity
+    # (existing × virtual_unitsize when it is set) of the state nodes with an explicit existing, over the full
+    # period set or, without one, the periods of an existing period map.
     ex = _try_param(source, "node", "existing")
     if ex is None or ex.height == 0:
         return None
-    cols = ex.columns
-    if "period" in cols:
-        df = (ex.lazy()
-                .pipe(rename_to_axis, {"name": "n", "period": "d"})
-                .filter(pl.col("n").is_in(list(state_n)))
-                .select("n", "d", pl.col("value").cast(pl.Float64))
-                .sort("n", "d")
-                .collect())
-    else:
-        if not full_periods:
-            return None
-        df = (ex.lazy()
-                .pipe(rename_to_axis, {"name": "n"})
-                .filter(pl.col("n").is_in(list(state_n)))
-                .select("n", pl.col("value").cast(pl.Float64))
-                .join(axis_lazyframe({"d": full_periods}), how="cross")
-                .select("n", "d", "value")
-                .sort("n", "d")
-                .collect())
+    ex_nodes = set(ex["name"].cast(pl.Utf8).to_list()) & state_n
+    periods = full_periods
+    if not periods and "period" in ex.columns:
+        periods = sorted({str(d) for d in ex["period"].drop_nulls().to_list()})
+    if not ex_nodes or not periods:
+        return None
+    from flextool.engine.preprocess.params._existing import p_entity_pre_existing_lf
+    df = (p_entity_pre_existing_lf(source, active_solve, periods, workdir=workdir, provider=provider)
+            .filter(pl.col("e").cast(pl.Utf8).is_in(sorted(ex_nodes)))
+            .pipe(rename_to_axis, {"e": "n"})
+            .select("n", "d", "value")
+            .sort("n", "d")
+            .collect())
     if df.height == 0:
         return None
     return Param(("n", "d"), df)
