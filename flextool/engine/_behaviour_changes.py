@@ -99,10 +99,12 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "one flow per coarse step of its nodes (before: one per time step of the solve), with its "
                      "availability, profiles and efficiency averaged over the coarse step and its ramp limits "
                      "between coarse steps; a unit with online variables decides its units online, start-ups "
-                     "and shut-downs once per coarse step and counts its minimum up / down time in whole coarse "
-                     "steps (results change where, within a coarse step, a cost, price, efficiency or minimum "
-                     "load varies, two or more limits vary, ramp limits apply, or the unit has online "
-                     "variables)."),
+                     "and shut-downs once per coarse step, counts its minimum up / down time in whole coarse "
+                     "steps and takes its start-up / shut-down capacity reduction over the coarse step; a "
+                     "reserve provider holds one reserve per coarse step, the requirement checked at every "
+                     "time step (results change where, within a coarse step, a cost, price, efficiency or "
+                     "minimum load varies, two or more limits vary, ramp limits apply, or the unit has online "
+                     "variables or provides reserves)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "coarse_process_flows"),
         ),
         BehaviourChange(

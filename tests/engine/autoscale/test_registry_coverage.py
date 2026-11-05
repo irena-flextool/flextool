@@ -316,6 +316,15 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
                                          "maxFlow_online_shutdown_branch", "maxInputFlow_online",
                                          "maxInputFlow_online_shutdown", "maxInputFlow_online_shutdown_branch")
       for kind in ("linear", "integer")),
+    # Coarse reserve providers — the same add_cstr (and the storage rows by the row rule), the reserve ramp room.
+    "minFlow_reserve", "minFlow_reserve_arc", "minFlow_reserve_coarse", "minFlow_reserve_arc_coarse",
+    "reserve_process_upward", "reserve_process_downward",
+    "reserve_process_upward_coarse", "reserve_process_downward_coarse",
+    *(f"connection_reserve_{ud}{sfx}{c}" for ud in ("up", "down")
+      for sfx in ("", "_online_linear", "_online_integer", "_exact") for c in ("", "_coarse")),
+    "reserve_storage_up_floor", "reserve_storage_down_headroom",
+    "reserve_storage_up_floor_coarse", "reserve_storage_down_headroom_coarse",
+    *(f"ramp_{side}_{dir_}_reserve_coarse" for side in ("sink", "source") for dir_ in ("up", "down")),
 ]
 
 

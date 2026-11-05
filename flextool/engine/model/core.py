@@ -309,6 +309,9 @@ class _Build:
     # p_oint_idx with a coarse process only at its coarse steps' first fine steps (_coarse_flows.domain).
     p_olin_rows: pl.DataFrame | None = None
     p_oint_rows: pl.DataFrame | None = None
+    # (p, r, ud, n, d, t) of the registered v_reserve columns and of reserve_fix_eq / non_anticipativity_reserve:
+    # prundt with a coarse process only at its coarse steps' first fine steps (_coarse_flows.domain).
+    prundt_rows: pl.DataFrame | None = None
     twoway1var_arcs: pl.DataFrame | None = None      # (p, source, sink) of v_flow_back
     # Per-arc capacity (see _max_flow_rhs): bound of v_flow, RHS of maxFlow.
     invest_procs: pl.DataFrame | None = None         # processes with invest/divest vars
@@ -2101,8 +2104,7 @@ def _eq_ramp(b: _Build) -> None:
     """Ramp limits of process flows."""
     if not b.has_ramp:
         return
-    m, d = b.m, b.d
-    v_flow = b.v_flow
+    d = b.d
     link, carry = ramp_step_links(d)
 
     # ─── EQ. ─── ramp_{sink,source}_{up,down}_constraint ─────────────────────
@@ -2146,6 +2148,16 @@ def _eq_ramp(b: _Build) -> None:
     # Steps without a predecessor, on arcs that hold reserve in that direction there (prundt):
     #   R↑ ≤ ρ·c·cap (up),  −R↓ ≥ −ρ·c·cap (down),  ρ = ramp_speed · 60 · step_duration[d,t] < 1;
     #   cap = v_online[p,d,t] for units with online variables, built units otherwise.
+    # ─── EQ. ─── ramp_{sink,source}_{up,down}_reserve_coarse ─────────────────
+    # R↑[p,s,k,d,b] ≤ ρ_min · c̄ · cap (up),  −R↓[p,s,k,d,b] ≥ −ρ_min · c̄ · cap (down)
+    #   ∀ arc of a coarse process with the ramp limit, holding reserve in that direction on its coarse step (d,b)
+    #   (b = its first fine step);  ρ_min = min_{t∈b} ρ_t < 1, ρ_t the room of the fine row at t:
+    #   ramp_speed · 60 · (step_duration[d′,t′] + step_duration[d,t]) / 2 with t's ramp predecessor (d′,t′) (a
+    #   carried one: its carried duration), ramp_speed · 60 · step_duration[d,t] without one;  c̄ the step mean of c;
+    #   cap = v_online (units online of the step) or the built units
+    # A coarse process holds one reserve and one flow per coarse step: the fine rows inside the step (no flow change)
+    # would bound the reserve by each step's own room, so the smallest binds; the ramp between coarse steps above
+    # still holds the reserve together with the flow change.
     # R↑ = Σ_r v_reserve[p,r,up,k,d,t] + φ·Σ_r v_reserve[p,r,down,s,d,t]
     #   (raises the arc: up at its sink, down at its source)
     # R↓ = Σ_r v_reserve[p,r,down,k,d,t] + φ·Σ_r v_reserve[p,r,up,s,d,t]
@@ -2187,87 +2199,97 @@ def _eq_ramp(b: _Build) -> None:
         if idx_set.height == 0:
             continue
         up = dir_ == "up"
-        sign = 1.0 if up else -1.0
+        room_rows = None
         if b.has_coarse_proc:
-            # A coarse process ramps between its coarse steps (_coarse_flows.ramp_rows).
+            # A coarse process ramps between its coarse steps (_coarse_flows.ramp_rows); the reserve it holds in this
+            # direction has its own room at the solve's steps of each coarse step (_coarse_flows.reserve_room_rows).
             fine_arcs, coarse_arcs = _coarse_flows.split_arcs(b, idx_set)
             parts = []
             if fine_arcs.height > 0:
                 parts.append(_ramp_rows(d, fine_arcs, ramp_speed, side, dir_, link, carry))
             if coarse_arcs.height > 0:
                 parts.append(_coarse_flows.ramp_rows(b, coarse_arcs, ramp_speed, side, link, carry))
-            if not parts:
-                continue
-            rows = pl.concat(parts)
+                room_rows = _coarse_flows.reserve_room_rows(b, coarse_arcs, ramp_speed, side, dir_, link, carry)
+            rows = pl.concat(parts) if parts else None
         else:
             rows = _ramp_rows(d, idx_set, ramp_speed, side, dir_, link, carry)
-        if rows.height == 0:
-            continue
-        over = rows.select(*keys, "d", "t")
-        flow_rows = rows.filter(pl.col("__kind") != "reserve").select(*keys, "d", "t")
-        linked = rows.filter(pl.col("__kind") == "link")
-        carried = rows.filter(pl.col("__kind") == "carry")
+        for name, family_rows in ((f"ramp_{side}_{dir_}_constraint", rows),
+                                  (f"ramp_{side}_{dir_}_reserve_coarse", room_rows)):
+            if family_rows is not None and family_rows.height > 0:
+                _ramp_family(b, name, family_rows, idx_set, ramp_speed, side, up, keys)
 
-        lhs: dict = {}
-        if flow_rows.height > 0:
-            lhs["flow"] = Where(v_flow, flow_rows)
-        if linked.height > 0:
-            prev = _var_view(v_flow, "__ramp_prev", {"d": "d_previous", "t": "t_previous"}, to_axis=True)
-            pairs = linked.select(*keys, "d", "t",
-                                  pl.col("__d_prev").cast(prev.frame.schema["d_previous"]).alias("d_previous"),
-                                  pl.col("__t_prev").cast(prev.frame.schema["t_previous"]).alias("t_previous"))
-            lhs["flow_prev"] = -Sum(Where(prev, pairs), over=("d_previous", "t_previous"))
-        if up:
-            if b.reserve_up_to_sink is not None:
-                lhs["reserve_up"] = b.reserve_up_to_sink
-            lhs.update(b.reserve_down_at_source)
-        else:
-            if b.reserve_down_to_sink is not None:
-                lhs["reserve_down"] = -b.reserve_down_to_sink
-            lhs.update({k: -v for k, v in b.reserve_up_at_source.items()})
 
-        # Split rows by UC class membership (design §3.2): a process has one startup method, so it belongs to
-        # at most one online class; the rest are built rows (c14a's existing_count / invest / divest terms).
-        online_rows: dict = {}
-        online_p_frames = []
-        for kind, _p_idx_k, online_set_k, v_online_k, v_startup_k, v_shutdown_k in _online.uc_classes(b):
-            sub = (_utf8_keys(rows.lazy(), ["p"])
-                   .join(_utf8_keys(online_set_k.lazy().select("p"), ["p"]).select("_p").unique(),
-                         on="_p", how="semi")
-                   .select(rows.columns).collect())
-            if sub.height > 0:
-                online_rows[kind] = (sub, v_online_k, v_startup_k, v_shutdown_k)
-                online_p_frames.append(sub.select("p").unique())
-        if online_p_frames:
-            excl_p = pl.concat(online_p_frames).unique()
-            built_rows = (_utf8_keys(rows.lazy(), ["p"])
-                          .join(_utf8_keys(excl_p.lazy(), ["p"]).select("_p"), on="_p", how="anti")
-                          .select(rows.columns).collect())
-        else:
-            built_rows = rows
+def _ramp_family(b: _Build, name: str, rows: pl.DataFrame, idx_set: pl.DataFrame, ramp_speed: Param, side: str,
+                 up: bool, keys: list) -> None:
+    """The rows ``rows`` (:func:`_ramp_rows` columns) of the ramp family ``name`` (EQ. header in :func:`_eq_ramp`)."""
+    m, d = b.m, b.d
+    v_flow = b.v_flow
+    sign = 1.0 if up else -1.0
+    over = rows.select(*keys, "d", "t")
+    flow_rows = rows.filter(pl.col("__kind") != "reserve").select(*keys, "d", "t")
+    linked = rows.filter(pl.col("__kind") == "link")
+    carried = rows.filter(pl.col("__kind") == "carry")
 
-        rhs: dict = {}
-        if built_rows.height > 0:
-            rate_built = _ramp_rate(d, idx_set, side, built_rows, keys, b=b)
-            rhs["limit"] = (rate_built * d.p_process_existing_count) * sign
-            if b.has_invest_p:
-                rhs["invest"] = (b.invest_in_dispatch_p * rate_built) * sign
-            if b.has_divest_p:
-                rhs["divest"] = (b.divest_in_dispatch_p * rate_built) * (-sign)
-        for kind, (sub, v_online_k, v_startup_k, v_shutdown_k) in online_rows.items():
-            for name, term in _online_ramp_rhs(b, idx_set, ramp_speed, side, up, sub,
-                                               v_online_k, v_startup_k, v_shutdown_k, keys).items():
-                rhs[f"{name}_{kind}"] = term
-        if carried.height > 0:
-            rhs["roll_continue_flow"] = Param(("p", "source", "sink", "d", "t"),
-                                              carried.select(*keys, "d", "t", value=pl.col("__f_hat")))
-        m.add_cstr(
-            f"ramp_{side}_{dir_}_constraint",
-            over      = over,
-            sense     = "<=" if up else ">=",
-            lhs_terms = lhs,
-            rhs_terms = rhs,
-        )
+    lhs: dict = {}
+    if flow_rows.height > 0:
+        lhs["flow"] = Where(v_flow, flow_rows)
+    if linked.height > 0:
+        prev = _var_view(v_flow, "__ramp_prev", {"d": "d_previous", "t": "t_previous"}, to_axis=True)
+        pairs = linked.select(*keys, "d", "t",
+                              pl.col("__d_prev").cast(prev.frame.schema["d_previous"]).alias("d_previous"),
+                              pl.col("__t_prev").cast(prev.frame.schema["t_previous"]).alias("t_previous"))
+        lhs["flow_prev"] = -Sum(Where(prev, pairs), over=("d_previous", "t_previous"))
+    if up:
+        if b.reserve_up_to_sink is not None:
+            lhs["reserve_up"] = b.reserve_up_to_sink
+        lhs.update(b.reserve_down_at_source)
+    else:
+        if b.reserve_down_to_sink is not None:
+            lhs["reserve_down"] = -b.reserve_down_to_sink
+        lhs.update({k: -v for k, v in b.reserve_up_at_source.items()})
+
+    # Split rows by UC class membership (design §3.2): a process has one startup method, so it belongs to
+    # at most one online class; the rest are built rows (c14a's existing_count / invest / divest terms).
+    online_rows: dict = {}
+    online_p_frames = []
+    for kind, _p_idx_k, online_set_k, v_online_k, v_startup_k, v_shutdown_k in _online.uc_classes(b):
+        sub = (_utf8_keys(rows.lazy(), ["p"])
+               .join(_utf8_keys(online_set_k.lazy().select("p"), ["p"]).select("_p").unique(),
+                     on="_p", how="semi")
+               .select(rows.columns).collect())
+        if sub.height > 0:
+            online_rows[kind] = (sub, v_online_k, v_startup_k, v_shutdown_k)
+            online_p_frames.append(sub.select("p").unique())
+    if online_p_frames:
+        excl_p = pl.concat(online_p_frames).unique()
+        built_rows = (_utf8_keys(rows.lazy(), ["p"])
+                      .join(_utf8_keys(excl_p.lazy(), ["p"]).select("_p"), on="_p", how="anti")
+                      .select(rows.columns).collect())
+    else:
+        built_rows = rows
+
+    rhs: dict = {}
+    if built_rows.height > 0:
+        rate_built = _ramp_rate(d, idx_set, side, built_rows, keys, b=b)
+        rhs["limit"] = (rate_built * d.p_process_existing_count) * sign
+        if b.has_invest_p:
+            rhs["invest"] = (b.invest_in_dispatch_p * rate_built) * sign
+        if b.has_divest_p:
+            rhs["divest"] = (b.divest_in_dispatch_p * rate_built) * (-sign)
+    for kind, (sub, v_online_k, v_startup_k, v_shutdown_k) in online_rows.items():
+        for term_name, term in _online_ramp_rhs(b, idx_set, ramp_speed, side, up, sub,
+                                                v_online_k, v_startup_k, v_shutdown_k, keys).items():
+            rhs[f"{term_name}_{kind}"] = term
+    if carried.height > 0:
+        rhs["roll_continue_flow"] = Param(("p", "source", "sink", "d", "t"),
+                                          carried.select(*keys, "d", "t", value=pl.col("__f_hat")))
+    m.add_cstr(
+        name,
+        over      = over,
+        sense     = "<=" if up else ">=",
+        lhs_terms = lhs,
+        rhs_terms = rhs,
+    )
 
 
 def ramp_step_links(d) -> "tuple[pl.DataFrame, pl.DataFrame]":

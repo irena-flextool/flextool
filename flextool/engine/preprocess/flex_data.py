@@ -438,7 +438,6 @@ def coarse_process_exclusions(flex_data: "FlexData") -> dict[str, str]:
         for p in sorted(procs):
             out.setdefault(p, why)
 
-    add(_frame_values(getattr(d, "prundt", None), "p"), "it provides reserves")
     add(_frame_values(getattr(d, "process_delayed", None), "p"), "it has a delay")
     add(_frame_values(getattr(d, "connection_dc_power_flow", None), "p"), "it is a DC power-flow line")
     add(_frame_values(getattr(d, "process_exact", None), "p"), "it is an exact connection")
@@ -482,7 +481,9 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
     their relaxation), ramp limits (ramps between coarse steps), online variables (units online, start-ups and
     shut-downs once per coarse step), a minimum up / down time (counted in whole coarse steps) and a minimum load
     that varies within a coarse step (the averaged floor is the step-mean floor); with ramp limits too, the start-up /
-    shut-down capacity reduction of the coarse step (the mean share over the whole step)."""
+    shut-down capacity reduction of the coarse step (the mean share over the whole step); reserves (one per coarse
+    step while the requirement is checked at every solve step), and with an availability or profile that varies
+    within a step, the reserve headroom on its step mean."""
     from flextool.engine.preprocess.params._coarse import varies_within_coarse_steps as varies
     from flextool.engine.preprocess.params._coarse import varying_within_coarse_steps as varying
 
@@ -540,6 +541,17 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
         "its minimum load varies within a coarse step")
     add(ramp & _frame_values(d.process_online, "p") & coarse,
         "its start-up / shut-down capacity reduction uses the coarse step")
+    reserve = _frame_values(getattr(d, "prundt", None), "p") & coarse
+    add(reserve, "it holds one reserve per coarse step (the requirement is checked at every time step)")
+    headroom = varies(_param_frame(d.p_process_availability), steps, ("p",))
+    for idx in (d.process_profile_upper, d.process_profile_lower, d.process_profile_fixed):
+        if idx is None or idx.height == 0 or profile is None:
+            continue
+        f_col = "f" if "f" in idx.columns else "profile"
+        arcs = idx.select(pl.col("p").cast(pl.Utf8), pl.col(f_col).cast(pl.Utf8).alias("f")).unique()
+        headroom |= varies(arcs.join(profile.with_columns(pl.col("f").cast(pl.Utf8)), on="f", how="inner"),
+                           steps, ("p", "f"))
+    add(reserve & headroom, "its reserve headroom uses the step-mean availability / profile")
     return out
 
 
@@ -549,8 +561,9 @@ def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]
 
     The ties hold over the tied steps ``dt_non_anticipativity`` (the committed steps) only, between the forecasts
     of an anchor period: the net flow into each balance node of a ``groupStochastic`` group
-    (``non_anticipativity_storage_use``) and the units online of every online process
-    (``non_anticipativity_online_*``).  A coarse process has one flow and one units-online value per coarse step,
+    (``non_anticipativity_storage_use``), the units online of every online process
+    (``non_anticipativity_online_*``) and the reserve of every reserve provider (``non_anticipativity_reserve``).
+    A coarse process has one flow, one units-online value and one reserve per coarse step,
     so a tie on one fine step of a coarse step holds the whole step: where a coarse step reaches past the end of
     the tied steps the forecasts could no longer differ after it, although nothing is committed there.  A tie row
     pairs the column of a forecast's coarse step with the reference forecast's column at the same step, which is
@@ -565,7 +578,8 @@ def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]
     forecasts = [(a, f) for a, f in reference_forecasts(d) if len(f) >= 2]
     if not forecasts:
         return set()
-    procs = _frame_values(d.process_online, "p")
+    procs = _frame_values(d.process_online, "p") | _frame_values(
+        getattr(d, "process_reserve_upDown_node_active", None), "p")
     gn, gs = d.group_node, d.groupStochastic
     if all(f is not None and f.height > 0 for f in (gn, gs, d.nodeBalance)):
         nodes = (_frame_values(gn.join(gs.select("g").unique(), on="g", how="semi"), "n")
@@ -595,23 +609,31 @@ def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]
 
 
 def coarse_pin_varies(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]:
-    """The coarse processes of ``steps`` ``(p, d, b_first, t)`` with a coarse step whose units online are pinned
-    (``p_fix_online``: the realization solve takes the committed values of its parent) on only part of the step,
-    or to values that change within the step.  The fine model pins each step to its own value; one units-online
-    value per coarse step could only take a mean (fractional for integer units) or pin the free steps too.  Such
-    a process keeps the solve's step."""
+    """The coarse processes of ``steps`` ``(p, d, b_first, t)`` with a coarse step whose units online or reserve
+    are pinned (``p_fix_online`` / ``p_fix_reserve``: the realization solve takes the committed values of its
+    parent) on only part of the step, or to values that change within the step.  The fine model pins each step to
+    its own value; one value per coarse step could only take a mean (fractional for integer units) or pin the free
+    steps too.  Such a process keeps the solve's step."""
     from flextool.engine.preprocess.params._coarse import varies_within_coarse_steps
 
-    pin = _param_frame(getattr(flex_data, "p_fix_online", None))
-    if pin is None or pin.height == 0 or steps is None or steps.height == 0:
+    if steps is None or steps.height == 0:
         return set()
     st = steps.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "b_first", "t")))
-    pins = pin.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "t")), pl.col("value").cast(pl.Float64))
-    part = (st.join(pins.select("p", "d", "t", __pin=pl.lit(True)), on=["p", "d", "t"], how="left")
-            .group_by("p", "d", "b_first")
-            .agg(pl.col("__pin").is_not_null().any().alias("__any"), pl.col("__pin").is_not_null().all().alias("__all"))
-            .filter(pl.col("__any") & ~pl.col("__all")))
-    return set(part["p"].to_list()) | varies_within_coarse_steps(pins, st, ("p",))
+    out: set[str] = set()
+    for name, keys in (("p_fix_online", ("p",)), ("p_fix_reserve", ("p", "r", "ud", "n"))):
+        pin = _param_frame(getattr(flex_data, name, None))
+        if pin is None or pin.height == 0:
+            continue
+        pins = pin.select(*(pl.col(c).cast(pl.Utf8) for c in (*keys, "d", "t")), pl.col("value").cast(pl.Float64))
+        # A pinned (p, keys…) whose pin covers only part of a coarse step of p.
+        part = (st.join(pins.select(*keys).unique(), on="p", how="inner")
+                .join(pins.select(*keys, "d", "t", __pin=pl.lit(True)), on=[*keys, "d", "t"], how="left")
+                .group_by(*keys, "d", "b_first")
+                .agg(pl.col("__pin").is_not_null().any().alias("__any"),
+                     pl.col("__pin").is_not_null().all().alias("__all"))
+                .filter(pl.col("__any") & ~pl.col("__all")))
+        out |= set(part["p"].to_list()) | varies_within_coarse_steps(pins, st, keys)
+    return out
 
 
 def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
@@ -648,8 +670,8 @@ def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
         why = ("the forecasts are tied (non-anticipativity) over only part of one of its coarse steps, and one "
                "value per coarse step would tie the whole step")
         kept.update({p: why for p in sorted(coarse_tie_straddles(flex_data, frames.process_coarse_step))})
-        why = ("its units online are pinned to a commitment that covers only part of one of its coarse steps or "
-               "changes within it")
+        why = ("its units online or its reserve are pinned to a commitment that covers only part of one of its "
+               "coarse steps or changes within it")
         for p in sorted(coarse_pin_varies(flex_data, frames.process_coarse_step)):
             kept.setdefault(p, why)
         if kept:
@@ -6801,11 +6823,11 @@ def build_handoff_from_solution(
         from flextool.engine.model._non_anticipativity import reserve_tie_cells
         _rcells = reserve_tie_cells(flex_data)
         if _rcells is not None:
-            _v = sol._vars["v_reserve"]
-            _ids = _v.frame["col_id"].to_numpy()
-            _fr = (_v.frame.select(*_v.dims)
-                   .with_columns(value=pl.Series(sol.col_value[_ids]))
-                   .with_columns(*(pl.col(c).cast(pl.Utf8) for c in _v.dims)))
+            from flextool.engine.output._coarse_flows import var_values
+
+            # Every fine step (a coarse process's reserve holds through its coarse step).
+            _all = var_values(sol, flex_data, "v_reserve")
+            _fr = _all.with_columns(*(pl.col(c).cast(pl.Utf8) for c in _all.columns if c != "value"))
             _re = (_fr.join(_rcells, left_on=["d", "t"],
                             right_on=["d_ref", "t"], how="inner")
                    .select(pl.col("p").alias("process"),

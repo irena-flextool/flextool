@@ -155,18 +155,6 @@ def _build_inputs_from_fixture(workdir: Path):
         (g, p) for g, p in group_process_all if p in conn_set
     ]
 
-    # Reserve membership (Agent 1.7) --------------------------------------
-    reserve_upDown_group = [
-        (r[0], r[1], r[2])
-        for r in _read_csv_rows(inp / "reserve__upDown__group__method.csv")
-        if len(r) >= 4 and r[3] != "no_reserve"
-    ]
-    process_reserve_upDown_node = [
-        (r[0], r[1], r[2], r[3])
-        for r in _read_csv_rows(inp / "process__reserve__upDown__node.csv")
-        if len(r) >= 4
-    ]
-
     # active_time_list: reconstructed from block_step_duration's default
     # rows.  This is what the reference would build when given the
     # default-block timeline directly.
@@ -208,8 +196,6 @@ def _build_inputs_from_fixture(workdir: Path):
         group_unit=group_unit,
         group_connection=group_connection,
         group_node=group_node,
-        reserve_upDown_group=reserve_upDown_group,
-        process_reserve_upDown_node=process_reserve_upDown_node,
         active_time_list=active_time_list,
         default_jump_list=default_jump_list,
     )
@@ -233,8 +219,6 @@ def _run_port(inputs: dict) -> BlockLayout:
         group_connection=inputs["group_connection"],
         group_node=inputs["group_node"],
         decomposition_groups=inputs["decomposition_groups"],
-        reserve_upDown_group=inputs["reserve_upDown_group"],
-        process_reserve_upDown_node=inputs["process_reserve_upDown_node"],
         active_time_list=inputs["active_time_list"],
         default_jump_list=inputs["default_jump_list"],
     )
@@ -360,25 +344,6 @@ def test_validate_group_membership_rejects_dual_resolution_membership() -> None:
             group_node=[],
             resolution_groups={"hourly_group": 1.0, "daily_group": 24.0},
             decomposition_groups={},
-        )
-
-
-def test_validate_group_membership_rejects_reserve_in_resolution_group() -> None:
-    """V1 rule: reserve participants must NOT sit in a resolution-group."""
-    from flextool.engine.preprocess.params._block_layout import (
-        validate_group_membership,
-    )
-    from flextool.engine.input._solve_state import FlexToolConfigError
-
-    with pytest.raises(FlexToolConfigError, match="participates in reserves"):
-        validate_group_membership(
-            group_unit=[],
-            group_connection=[],
-            group_node=[("daily_group", "n1")],
-            resolution_groups={"daily_group": 24.0},
-            decomposition_groups={},
-            reserve_upDown_group=[("res", "up", "g_res")],
-            process_reserve_upDown_node=[("p1", "res", "up", "n1")],
         )
 
 

@@ -6,8 +6,11 @@ online, start-ups and shut-downs are decided once per coarse step (the start / s
 minimum up / down time counts whole coarse steps, the online capacity and minimum-load rows are averaged over the
 step, and the outputs show units online on every solve step and each start-up / shut-down at its step's first
 solve step.  With ramp limits, its start-up / shut-down capacity reduction uses the mean share over the whole coarse
-step and its units online ramp between coarse steps.  An online process with reserves keeps the solve's step, and
-so does one whose forecast tie or realization pin covers only part of a coarse step.
+step and its units online ramp between coarse steps.  A coarse process holds one reserve per coarse step (owner
+decision (5)–(7)): its reserve limits (per process, per connection position, minimum flow, storage energy when every
+member is coarse) are averaged over the step, the reserve's ramp room is the smallest of the step's solve steps, and
+the requirement rows stay per solve step.  A process whose forecast tie or realization pin covers only part of a
+coarse step keeps the solve's step.
 
 Fixtures: ``tests/fixtures/lh2_three_region.json`` (liquefier_A h2_A -> lh2_A between daily nodes, one week of
 hourly steps), ``tests/fixtures/stochastics.json`` and ``tests.json`` (hand-built model), with override
@@ -80,14 +83,14 @@ def test_online_unit_is_coarse_with_one_column_per_day(tmp_path_factory) -> None
 # ---------------------------------------------------------------------------
 # Exact: the coarse model == the fine model with every coarse-process value tied over each coarse step
 
-_LEVELS = ("v_flow", "v_flow_back", "v_online_linear", "v_online_integer")
+_LEVELS = ("v_flow", "v_flow_back", "v_online_linear", "v_online_integer", "v_reserve")
 _EVENTS = ("v_startup_linear", "v_startup_integer", "v_shutdown_linear", "v_shutdown_integer")
 
 
 def _add_ties(pb, fd) -> None:
     """In the fine LP ``pb`` of ``fd`` (every process at the solve's step): for each coarse process of
     ``fd.process_coarse_step`` and each interior fine step t of a coarse step b, ``x[…,t] = x[…,b]`` for a level x
-    (flows, units online) and ``x[…,t] = 0`` for an event x (start-ups, shut-downs)."""
+    (flows, units online, reserves) and ``x[…,t] = 0`` for an event x (start-ups, shut-downs)."""
     from polar_high.engine import Var
 
     steps = getattr(fd, "process_coarse_step", None)
@@ -681,3 +684,325 @@ def test_coarse_branch_point_reduction_equals_3h_solve(tmp_path_factory) -> None
     assert [c.split(",")[1] for c in sd_cols] == ["p2040_high", "p2040_low"]
     assert len(row_terms(build(step3.flex_data), "maxFlow_online_shutdown_branch_linear", "base,")) == 2
     assert float(coarse.obj) == pytest.approx(float(step3.obj), rel=1e-9)
+
+
+
+# ---------------------------------------------------------------------------
+# Reserves: one reserve per coarse step, the requirement checked at every solve step
+
+def _reserve(r: str, ud: str, group: str, providers: list, *, reservation, penalty: float = 1000.0,
+             duration: "float | None" = None) -> tuple[list, list]:
+    """Entities and values of reserve ``r`` (timeseries method) for ``group`` with ``providers`` ``(class, p, n)``
+    (max_share 1, reliability 1); ``reservation`` a float or a time-map value list."""
+    grp = [r, ud, group]
+    ents = [["upDown", ud, None], ["reserve", r, None], ["reserve__upDown__group", grp, None]]
+    vals = [["reserve__upDown__group", grp, "reserve_method", _s("timeseries_only")],
+            ["reserve__upDown__group", grp, "penalty_reserve", _f(penalty)],
+            ["reserve__upDown__group", grp, "reservation",
+             reservation if isinstance(reservation, list) else _f(reservation)]]
+    if duration is not None:
+        vals.append(["reserve__upDown__group", grp, "reserve_duration", _f(duration)])
+    for cls, p, n in providers:
+        rel = f"reserve__upDown__{cls}__node"
+        ents.append([rel, [r, ud, p, n], None])
+        vals += [[rel, [r, ud, p, n], "is_enabled", _s("yes")], [rel, [r, ud, p, n], "max_share", _f(1.0)],
+                 [rel, [r, ud, p, n], "reliability", _f(1.0)]]
+    return ents, vals
+
+
+# lh2: upward reserve r_up for lh2_A / lh2_B by liquefier_A (at lh2_A) and pipe_AB (at lh2_B, with a 2-h reserve
+# duration: pipe_AB draws on the storage lh2_A, reserve_storage_up_floor), downward reserve r_dn by both; 20 MW each,
+# constant.  With liquefier_A's units online (_UC_FULL) and every parameter constant within a day.
+_LH2_RES_GROUP = [["group", "lh2_res", None], ["group__node", ["lh2_res", "lh2_A"], None],
+                  ["group__node", ["lh2_res", "lh2_B"], None]]
+
+
+def _lh2_reserves() -> tuple[list, list]:
+    providers = [("unit", "liquefier_A", "lh2_A"), ("connection", "pipe_AB", "lh2_B")]
+    e_up, v_up = _reserve("r_up", "up", "lh2_res", providers, reservation=20.0, duration=2.0)
+    e_dn, v_dn = _reserve("r_dn", "down", "lh2_res", providers, reservation=20.0)
+    ents = _LH2_RES_GROUP + e_up + [e for e in e_dn if e[0] != "upDown" or e[1] != "up"]
+    return ents, v_up + v_dn
+
+
+def _lh2_res_case(tmp_path_factory, alt: str, case: str) -> dict:
+    ents, vals = _lh2_reserves()
+    if case == "rp":
+        url, scen = make_db(tmp_path_factory, alt=alt, values=_UC_FULL + vals, fixture_json=LH2_RP, entities=ents,
+                            base_chain=_chain(LH2_RP, "lh2_three_region_rp_invest"))
+        return run(tmp_path_factory, url, scen)
+    return _lh2(tmp_path_factory, alt, _UC_FULL + vals + (_ROLLING if case == "rolling" else []), entities=ents)
+
+
+def test_coarse_reserve_structure(tmp_path_factory) -> None:
+    """lh2 with reserves: liquefier_A and pipe_AB stay coarse; v_reserve has one column per day for each provider
+    (p, r, ud, n); the per-process reserve limits are one averaged row per day (reserve_process_*_coarse,
+    connection_reserve_*_coarse) while the requirement rows stay hourly (168 per reserve and group); the storage
+    row of lh2_A (its state and pipe_AB's reserve both coarse) is one row per day."""
+    fd = last_stochastic(_lh2_res_case(tmp_path_factory, "co_res_struct", "single")).flex_data
+    assert _coarse_procs(fd) == LH2_COARSE
+    pb = build(fd)
+    for prefix in ("v_reserve[liquefier_A,r_up,up,lh2_A,", "v_reserve[pipe_AB,r_dn,down,lh2_B,"):
+        assert [_keys(c)[-1] for c in _cols(pb, prefix)] == _DAYS, prefix
+    assert len(row_terms(pb, "reserve_process_upward_coarse", "liquefier_A,")) == 7
+    assert not row_terms(pb, "reserve_process_upward", "liquefier_A,")
+    for fam in ("connection_reserve_up_coarse", "connection_reserve_down_coarse"):
+        assert len(row_terms(pb, fam, "pipe_AB,")) == 7, fam
+    for r in ("r_up,up,lh2_res,", "r_dn,down,lh2_res,"):
+        assert len(row_terms(pb, "reserveBalance_timeseries_eq", r)) == 168, r
+    assert sorted(_keys(r)[-1] for r in row_terms(pb, "reserve_storage_up_floor_coarse", "lh2_A,")) == _DAYS
+    assert not row_terms(pb, "reserve_storage_up_floor", "lh2_A,")
+
+
+@pytest.mark.parametrize("case", ["single", "rolling", "rp"])
+def test_coarse_reserves_equal_tied_fine_model(tmp_path_factory, monkeypatch, case) -> None:
+    """lh2 with reserves (above) and liquefier_A's units online: the coarse model has the objective of the hourly
+    model with every coarse-process flow, units online and reserve tied over each day (start-ups 0 after a day's
+    first hour), in a single, a rolling and a representative-period invest solve: averaged rows with parameters
+    constant within a day are the fine rows, and the requirement is checked every hour in both."""
+    coarse = _lh2_res_case(tmp_path_factory, f"co_res_tie_{case}", case)
+    held = 0.0
+    for s in without_realization(coarse).values():
+        assert {"liquefier_A", "pipe_AB"} <= _coarse_procs(s.flex_data)
+        held += float(s.solution.value("v_reserve")["value"].sum())
+    assert held > 1e-6
+    _tied_fine(monkeypatch)
+    tied = _lh2_res_case(tmp_path_factory, f"co_res_tie_{case}_fine", case)
+    assert len(coarse) == len(tied)
+    assert _total_objective(coarse) == pytest.approx(_total_objective(tied), rel=1e-9)
+
+
+# Hand-built reserve model (tests.json, 2 days of 1-h steps, period p2020): coal_market -> gen_d -> hd as above but
+# without online variables: gen_d 50 MW existing, one unit of 50 MW (no virtual_unitsize: the unit size is the
+# existing capacity; v in units of 50 MW), efficiency 1; hd
+# demand 25 MW for the 24 hours of day 1, 0 on day 2.  Upward reserve r_up for the group hd_res = {hd} by gen_d
+# (max_share 1, reliability 1): 10 MW in hours 1–12, 30 MW in hours 13–24, 60 MW on day 2; penalty_reserve 1000.
+# gen_d is coarse: f_k and R_k once per day k.
+# Rows: day 1 balance 24·50·f_1 = 600 MWh ⇒ f_1 = 0.5 (25 MW; more costs penalty_down + fuel, less penalty_up);
+#   maxFlow_coarse f_1 + R_1 ≤ 1 ⇒ R_1 ≤ 25 MW; reserveBalance per hour 50·R_1 + shortfall_t ≥ requirement_t.
+# (a) no ramp limit: the shortfall 30 − 50·R_1 of hours 13–24 falls with R_1 ⇒ R_1 = 25 MW (the cap), shortfall 0 in
+#     hours 1–12 and 5 MW in hours 13–24 (an hourly flow could not avoid it either: hd is balanced per day, but one
+#     reserve per day under one flow per day holds 25 MW).  Day 2: f_2 = 0 and the requirement 60 MW is above the
+#     cap, so R_2 = 50 MW (unique: every output is determined).
+# (b) upward ramp limit 0.2/60 per minute on gen_d -> hd: every fine row of day 1 has the room ρ_t = 0.2 (1-h
+#     steps: (1 + 1)/2 h, and t0001 without a predecessor 1 h), so the one row of day 1 is R_1 ≤ 0.2 · 1 unit = 10 MW
+#     (ramp_sink_up_reserve_coarse); no ramp row between the days (ρ̄ = 0.2·24 ≥ 1).  ⇒ R_1 = 10 MW, shortfall 0 in
+#     hours 1–12 and 20 MW in hours 13–24.  The hourly model tied over each day has the same rows: R_1 ≤ 0.2 at
+#     t0001 and inside day 1 (flow change 0), and at t0025 f_2 − f_1 + R_2 ≤ 0.2 with f_2 − f_1 = −0.5.  (Upward only:
+#     a downward limit would hold the hourly flow above 0 in hour 25, which the coarse ramp between days does not.)
+
+_RES_HAND_ENTITIES = [["node", "hd", None], ["unit", "gen_d", None], ["group", "daily", None],
+                      ["unit__inputNode", ["gen_d", "coal_market"], None], ["unit__outputNode", ["gen_d", "hd"], None],
+                      ["group__node", ["daily", "hd"], None], ["group", "hd_res", None],
+                      ["group__node", ["hd_res", "hd"], None]]
+
+
+def _hand_res(tmp_path_factory, alt: str, ramp: bool):
+    url, scen = _hand_res_db(tmp_path_factory, alt, ramp)
+    return run(tmp_path_factory, url, scen)
+
+
+def _hand_res_db(tmp_path_factory, alt: str, ramp: bool) -> tuple[str, str]:
+    demand = b64({"index_type": "str", "index_name": "time",
+                  "data": [[t, -25.0 if h < 24 else 0.0] for h, t in enumerate(_HOURS)]}, "map")
+    req = b64({"index_type": "str", "index_name": "time",
+               "data": [[t, (10.0 if h < 12 else 30.0) if h < 24 else 60.0] for h, t in enumerate(_HOURS)]}, "map")
+    ents, res_vals = _reserve("r_up", "up", "hd_res", [("unit", "gen_d", "hd")], reservation=req)
+    vals = [["group", "daily", "new_stepduration", _f(24.0)],
+            ["node", "hd", "node_type", _s("balance")], ["node", "hd", "inflow", demand],
+            ["node", "hd", "penalty_up", _f(10000.0)], ["node", "hd", "penalty_down", _f(1000.0)],
+            ["unit", "gen_d", "conversion_method", _s("constant_efficiency")], ["unit", "gen_d", "efficiency", _f(1.0)],
+            ["unit", "gen_d", "existing", _f(50.0)]] + res_vals
+    if ramp:
+        vals += [["unit__outputNode", ["gen_d", "hd"], "ramp_method", _s("ramp_limit")],
+                 ["unit__outputNode", ["gen_d", "hd"], "ramp_speed_up", _f(0.2 / 60.0)]]
+    return make_db(tmp_path_factory, alt=alt, values=vals, base_chain=_HAND_CHAIN, entities=_RES_HAND_ENTITIES + ents)
+
+
+def _hourly_of(step, var: str, **keys) -> list[float]:
+    from flextool.engine.output._coarse_flows import var_values
+
+    v = var_values(step.solution, step.flex_data, var)
+    rows = utf8(v.drop("value")).with_columns(value=v["value"])
+    for k, x in keys.items():
+        rows = rows.filter(pl.col(k) == x)
+    rows = rows.sort("t")
+    assert rows["t"].to_list() == _HOURS, var
+    return rows["value"].to_list()
+
+
+@pytest.mark.parametrize("ramp, held", [(False, 25.0), (True, 10.0)])
+def test_hand_built_coarse_reserve(tmp_path_factory, monkeypatch, ramp, held) -> None:
+    """The hand-built reserve model (derivation above): gen_d holds one reserve per day, 25 MW on day 1 (10 MW with
+    the ramp limit), written on every hour of the day; the hourly requirement leaves a shortfall of 30 MW − that
+    in hours 13–24 and none in hours 1–12; the coarse model has the objective of the hourly model with gen_d's flow
+    and reserve tied over each day."""
+    from flextool.engine.model._reserve import reserve_shortfall_scale
+
+    steps = _hand_res(tmp_path_factory, f"co_res_hand{int(ramp)}", ramp)
+    step = last_stochastic(steps)
+    fd = step.flex_data
+    assert "gen_d" in _coarse_procs(fd)
+    res = _hourly_of(step, "v_reserve", p="gen_d")
+    assert [50.0 * v for v in res[:24]] == pytest.approx([held] * 24, abs=1e-7)
+    assert [50.0 * f for f in _hourly(step, "v_flow")[:24]] == pytest.approx([25.0] * 24, abs=1e-7)
+    keys = ["r", "ud", "g", "d", "t"]
+    vq = utf8(step.solution.value("vq_reserve")).filter(pl.col("g") == "hd_res")
+    scale = utf8(reserve_shortfall_scale(fd).frame).filter(pl.col("g") == "hd_res").rename({"value": "__s"})
+    short = vq.join(scale, on=[c for c in keys if c in scale.columns], how="inner").with_columns(mw=pl.col("value") * pl.col("__s")).sort("t")
+    assert short["t"].to_list() == _HOURS
+    assert short["mw"].to_list()[:24] == pytest.approx([0.0] * 12 + [30.0 - held] * 12, abs=1e-6)
+    pb = build(fd)
+    assert [_keys(c)[-1] for c in _cols(pb, "v_reserve[gen_d,")] == ["t0001", "t0025"]
+    assert len(row_terms(pb, "reserveBalance_timeseries_eq", "r_up,up,hd_res,")) == 48
+    room = row_terms(pb, "ramp_sink_up_reserve_coarse", "gen_d,")
+    if ramp:
+        assert sorted(room) == [f"ramp_sink_up_reserve_coarse[gen_d,coal_market,hd,p2020,{t}]" for t in ("t0001", "t0025")]
+        lo, hi = row_bounds(pb, "ramp_sink_up_reserve_coarse", "gen_d,coal_market,hd,p2020,t0001")[
+            "ramp_sink_up_reserve_coarse[gen_d,coal_market,hd,p2020,t0001]"]
+        assert hi == pytest.approx(0.2)
+    else:
+        assert not room
+    _tied_fine(monkeypatch)
+    tied = _hand_res(tmp_path_factory, f"co_res_hand{int(ramp)}_fine", ramp)
+    assert _total_objective(steps) == pytest.approx(_total_objective(tied), rel=1e-9)
+
+
+# Stochastic: top_turbine (above) also holds upward reserve r_up for the group upper_res = {upper} (10 MW).
+def _top_reserve() -> tuple[list, list]:
+    ents, vals = _reserve("r_up", "up", "upper_res", [("unit", "top_turbine", "upper")], reservation=10.0)
+    return [["group", "upper_res", None], ["group__node", ["upper_res", "upper"], None]] + ents, vals
+
+
+def _reserve_tie_reach(fd) -> list[tuple[str, str, str]]:
+    """``(column, d, t)``: each reserve column of a non_anticipativity_reserve row with a fine step it holds that is
+    not tied."""
+    tie = utf8(fd.dt_non_anticipativity)
+    tied = {(f, t) for a, fs in _forecasts(fd).items() for f in fs
+            for t in tie.filter(pl.col("d") == a)["t"].to_list()}
+    held: dict[tuple[str, str, str], list[str]] = {}
+    if fd.process_coarse_step is not None:
+        for p, d, b, t in utf8(fd.process_coarse_step).select("p", "d", "b_first", "t").iter_rows():
+            held.setdefault((p, d, b), []).append(t)
+    out = []
+    for terms in row_terms(build(fd), "non_anticipativity_reserve").values():
+        for col in terms:
+            k = _keys(col)
+            p, d, t = k[0], k[-2], k[-1]
+            out += [(col, d, s) for s in held.get((p, d, t), [t]) if (d, s) not in tied]
+    return out
+
+
+@pytest.mark.parametrize("step", [24.0, 48.0])
+def test_stochastic_reserve_tie_stays_within_the_committed_steps(tmp_path_factory, step) -> None:
+    """Rolling stochastic dispatch (96-h horizon, 24-h jump) with top_turbine holding reserve: each roll ties the
+    reserve between the forecasts over its 24 committed hours.  24-h coarse steps: top_turbine is coarse in every
+    roll, tied by one row per forecast pair at the day's first hour.  48-h steps: a roll's first coarse step holds
+    committed and uncommitted hours, so top_turbine keeps the solve's step there; no tie row holds an uncommitted
+    hour."""
+    ents, vals = _top_reserve()
+    url, scen = make_db(tmp_path_factory, alt=f"co_sto_res{int(step)}", values=_top_values(step) + vals,
+                        base_chain=_chain(STOCH, "1_week_rolling_wind"), entities=_TOP_ENTITIES + ents,
+                        fixture_json=STOCH)
+    steps = without_realization(run(tmp_path_factory, url, scen))
+    rolls = [s.flex_data for s in steps.values() if _forecasts(s.flex_data)]
+    assert len(rolls) >= 5
+    coarse_in = []
+    for fd in rolls:
+        assert _reserve_tie_reach(fd) == []
+        coarse_in.append("top_turbine" in _coarse_procs(fd))
+    if step == 24.0:
+        assert all(coarse_in)
+        for fd in rolls:
+            rows = [r for r in row_terms(build(fd), "non_anticipativity_reserve") if "top_turbine" in r]
+            assert len(rows) == sum(len(fs) - 1 for fs in _forecasts(fd).values()), rows
+    else:
+        assert not coarse_in[0] and not all(coarse_in)
+
+
+def test_realization_solve_pins_coarse_reserve_once_per_day(tmp_path_factory) -> None:
+    """2-day stochastic dispatch with a realized designation (every hour tied) and top_turbine holding reserve: the
+    committed reserve is handed to the realization solve on every hour (the value of its day), so the pin is the
+    same on every hour of each day, top_turbine is coarse in the realization solve and pinned by one reserve_fix_eq
+    row per day; its realized reserve equals the committed one."""
+    ents, vals = _top_reserve()
+    url, scen = make_db(tmp_path_factory, alt="co_pin_res",
+                        values=_top_values(24.0) + vals + [["solve", "2day_dispatch", "stochastic_branches",
+                                                            _realized_branches()]],
+                        base_chain=_chain(STOCH, "2_day_stochastic_dispatch"), entities=_TOP_ENTITIES + ents,
+                        fixture_json=STOCH)
+    steps = run(tmp_path_factory, url, scen)
+    real = [s for k, s in steps.items() if "__realized_dispatch" in k]
+    assert len(real) == 1
+    fd = real[0].flex_data
+    assert "top_turbine" in _coarse_procs(fd)
+    pin = utf8(fd.p_fix_reserve.frame).filter(pl.col("p") == "top_turbine").sort("t")
+    assert pin["t"].to_list() == [f"t{h:04d}" for h in range(1, 49)]
+    days = [pin["value"][:24].unique().to_list(), pin["value"][24:].unique().to_list()]
+    assert all(len(v) == 1 for v in days)
+    rows = row_terms(build(fd), "reserve_fix_eq", "top_turbine,")
+    assert sorted(_keys(r)[-1] for r in rows) == ["t0001", "t0025"]
+    res = utf8(real[0].solution.value("v_reserve")).filter(pl.col("p") == "top_turbine").sort("t")
+    assert res["value"].to_list() == pytest.approx([days[0][0], days[1][0]], abs=1e-9)
+
+
+def test_pin_rule_covers_reserve_pins() -> None:
+    """flex_data.coarse_pin_varies: a coarse process whose reserve pin (p_fix_reserve) covers only part of one of its
+    coarse steps, or changes within one, keeps the solve's step, per (p, r, ud, n); one pinned to the same value on
+    every hour of each coarse step does not."""
+    from types import SimpleNamespace
+
+    from polar_high import Param
+
+    from flextool.engine.preprocess.flex_data import coarse_pin_varies
+
+    hours = [f"t{h}" for h in range(1, 7)]
+    steps = pl.DataFrame({"p": [p for p in ("const", "part", "vary") for _ in hours], "d": ["d1"] * 18,
+                          "b_first": (["t1"] * 3 + ["t4"] * 3) * 3, "t": hours * 3})
+    rows = ([("const", "n1", t, 1.0 if i < 3 else 2.0) for i, t in enumerate(hours)]
+            + [("const", "n2", t, 3.0) for t in hours]
+            + [("part", "n1", t, 1.0) for t in hours[:4]]
+            + [("vary", "n1", t, 1.0) for t in hours] + [("vary", "n2", t, float(i)) for i, t in enumerate(hours)])
+    pins = pl.DataFrame({"p": [r[0] for r in rows], "r": ["r_up"] * len(rows), "ud": ["up"] * len(rows),
+                         "n": [r[1] for r in rows], "d": ["d1"] * len(rows), "t": [r[2] for r in rows],
+                         "value": [r[3] for r in rows]})
+    fd = SimpleNamespace(p_fix_online=None, p_fix_reserve=Param(("p", "r", "ud", "n", "d", "t"), pins))
+    assert coarse_pin_varies(fd, steps) == {"part", "vary"}
+
+
+
+def test_reserve_outputs_equal_tied_fine_model(tmp_path_factory, monkeypatch) -> None:
+    """The hand-built reserve model (unique optimum): every written primal output (output_raw v_* / vq_*: flows,
+    reserves, shortfalls) of the coarse model equals that of the hourly model tied over each day — the reserve on
+    every hour of its day (25 MW on day 1, 50 MW on day 2)."""
+    from flextool.engine import run_chain_from_db
+    from tests.engine._unit_db import assert_outputs_equal, output_frames
+
+    folders = {}
+    for kind in ("coarse", "tied"):
+        if kind == "tied":
+            _tied_fine(monkeypatch)
+        url, scen = _hand_res_db(tmp_path_factory, f"co_res_out_{kind}", False)
+        folders[kind] = tmp_path_factory.mktemp(f"co_res_out_{kind}_w")
+        steps = run_chain_from_db(url, scen, work_folder=folders[kind], keep_solutions=True)
+        assert "gen_d" in _coarse_procs(last_stochastic(steps).flex_data)
+    assert_outputs_equal(folders["coarse"], folders["tied"], "y2020_2day_dispatch")
+    outs = output_frames(folders["coarse"], "y2020_2day_dispatch")
+    assert "v_reserve" in outs
+
+
+
+def test_notice_reasons_of_a_coarse_reserve_provider(tmp_path_factory) -> None:
+    """The behaviour notice names a coarse reserve provider with "one reserve per coarse step", and, when its
+    availability varies within a day, the step-mean headroom; pipe_AB (a provider with a constant availability)
+    gets only the first."""
+    from flextool.engine.preprocess.flex_data import coarse_process_reasons
+
+    ents, vals = _lh2_reserves()
+    fd = last_stochastic(_lh2(tmp_path_factory, "co_res_reasons", _UC_FULL + vals + [
+        ["unit", "liquefier_A", "availability", _tmap_lh2(lambda h: 0.8 + 0.2 * (h % 2))]], entities=ents)).flex_data
+    why = coarse_process_reasons(fd, fd.process_coarse_step)
+    one = "it holds one reserve per coarse step (the requirement is checked at every time step)"
+    assert one in why["liquefier_A"]
+    assert "its reserve headroom uses the step-mean availability / profile" in why["liquefier_A"]
+    assert why["pipe_AB"] == [one]

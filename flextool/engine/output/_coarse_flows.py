@@ -6,8 +6,8 @@ row is keyed by the step's first fine step ``b_first``.  Every reader that needs
 expands them to every fine step of the coarse step, by the variable's mode:
 
 * ``copy`` — a *level* that holds through the whole step (a flow is a rate in MW per unitsize, units online a
-  count): the value is copied to each fine step, so ``energy = Σ_t flow · Δt`` stays the LP's energy and the
-  Δt-weighted mean of units online is the LP's;
+  count, a reserve a capacity held): the value is copied to each fine step, so ``energy = Σ_t flow · Δt`` stays
+  the LP's energy and the Δt-weighted means of units online and of the reserve are the LP's;
 * ``first`` — an *event* at the step's start (units started / shut down): the whole value stays at the first fine
   step and the other fine steps get 0, so totals and costs (Σ_t) are the LP's, an integer unit shows whole
   start-ups, and the minimum up / down time history (``params._mintime.history_hours_to_end``) has the event at
@@ -34,7 +34,7 @@ import polars as pl
 #: its step (module docstring): ``copy`` the value, or keep it at the ``first`` fine step (0 at the others).
 COARSE_VARS: dict[str, str] = {
     "v_flow": "copy", "v_flow_back": "copy",
-    "v_online_linear": "copy", "v_online_integer": "copy",
+    "v_online_linear": "copy", "v_online_integer": "copy", "v_reserve": "copy",
     "v_startup_linear": "first", "v_startup_integer": "first",
     "v_shutdown_linear": "first", "v_shutdown_integer": "first",
 }

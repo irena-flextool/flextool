@@ -28,7 +28,7 @@ def add_constraints(b: "_Build") -> None:
     """Minimum load, per-output floors and the downward-reserve headroom of units."""
     if not b.has_proc:
         return
-    m, d = b.m, b.d
+    d = b.d
     v_flow = b.v_flow
     v_reserve = b.v_reserve
     arcs = unit_measured_arcs(d)
@@ -146,7 +146,7 @@ def add_constraints(b: "_Build") -> None:
     # Σ_{(p,s,k) ∈ A_p} v_flow[p,s,k,d,t]  ≥  Rdn_p[p,d,t]
     #   ∀ unit p with a reducing reserve on A_p, (p,d,t) ∈ prundt without a minFlow_minload row
     # Zero floor of units without a minimum-load row: a unit cannot offer more downward reserve
-    # than its output.
+    # than its output.  A coarse unit: minFlow_reserve_coarse, the row's mean over each coarse step.
     meas_hit = _selector_arcs(sel_meas, arcs)
     if meas_hit.height > 0:
         a_res = arcs.join(meas_hit.select("p").unique(), on="p", how="semi")
@@ -156,7 +156,7 @@ def add_constraints(b: "_Build") -> None:
         if minload_rows:
             over = over.join(pl.concat(minload_rows).unique(), on=["p", "d", "t"], how="anti")
         if over.height > 0:
-            m.add_cstr("minFlow_reserve", over=over, sense=">=",
+            _coarse_flows.add_cstr(b, "minFlow_reserve", over=over, sense=">=",
                        lhs_terms={"flow_sum": Sum(Where(v_flow, a_res), over=("source", "sink"))},
                        rhs_terms=_rdn_terms(d, views, sel_meas, per_arc=False))
 
@@ -165,7 +165,7 @@ def add_constraints(b: "_Build") -> None:
     # v_flow[p,s,k,d,t]  ≥  Rdn_a[p,s,k,d,t]
     #   ∀ unit arc (p,s,k) with a reducing reserve, outside A_p or one of several arcs in A_p,
     #     (p,d,t) ∈ prundt, without a minFlow_output_floor row
-    # Per-arc zero floor where the per-unit rows cannot see the arc.
+    # Per-arc zero floor where the per-unit rows cannot see the arc.  A coarse unit: minFlow_reserve_arc_coarse.
     all_hit = _selector_arcs(sel_all, unit_arcs_all)
     if all_hit.height == 0:
         return
@@ -185,7 +185,7 @@ def add_constraints(b: "_Build") -> None:
         over = over.join(pl.concat(floor_rows).unique(), on=[*keys, "d", "t"], how="anti")
     if over.height == 0:
         return
-    m.add_cstr("minFlow_reserve_arc", over=over, sense=">=",
+    _coarse_flows.add_cstr(b, "minFlow_reserve_arc", over=over, sense=">=",
                lhs_terms={"flow": v_flow},
                rhs_terms=_rdn_terms(d, views, _restrict_selectors(sel_all, arc_rows), per_arc=True))
 

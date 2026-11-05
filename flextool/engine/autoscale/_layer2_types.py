@@ -280,6 +280,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # Ramp constraints, prefix-matched: ramp_<side>_<dir>_constraint.
     # flextool/engine/model/core.py _eq_ramp
     "ramp": CstrFamily(QuantityType.DIMENSIONLESS),
+    # The reserve ramp room of coarse processes, one row per coarse step (core.py _eq_ramp,
+    # _coarse_flows.reserve_room_rows).  Explicit, with the ramp family's type.
+    **{f"ramp_{side}_{dir_}_reserve_coarse": CstrFamily(QuantityType.DIMENSIONLESS)
+       for side in ("sink", "source") for dir_ in ("up", "down")},
 
     # ── Investment caps — entity scope.
     # flextool/engine/model/core.py _eq_invest_max_units
@@ -515,6 +519,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # floor) per unit / per arc; unit-count flow units
     "minFlow_reserve": CstrFamily(QuantityType.DIMENSIONLESS),
     "minFlow_reserve_arc": CstrFamily(QuantityType.DIMENSIONLESS),
+    # Coarse reserve providers, averaged over each coarse step — flextool/engine/model/_coarse_flows.py add_cstr
+    # (_unit_floors.py, _reserve.py).  Explicit: the fine-family prefixes would otherwise resolve them silently.
+    "minFlow_reserve_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
+    "minFlow_reserve_arc_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     # model/core.py _eq_min_input_share: homogeneous input-mixing row
     # (input_share_min) in unit-count flow units
     "minInputShare": CstrFamily(QuantityType.DIMENSIONLESS),
@@ -560,6 +568,15 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # flextool/engine/model/_reserve.py _add_storage_energy_constraints
     "reserve_storage_up_floor": CstrFamily(QuantityType.ENERGY),
     "reserve_storage_down_headroom": CstrFamily(QuantityType.ENERGY),
+    # Coarse reserve providers, averaged over each coarse step — flextool/engine/model/_coarse_flows.py add_cstr
+    # (f"{name}_coarse"; the storage rows by the row rule).  Explicit: the fine-family prefixes would otherwise
+    # resolve them silently.
+    "reserve_process_upward_coarse": CstrFamily(QuantityType.POWER),
+    "reserve_process_downward_coarse": CstrFamily(QuantityType.POWER),
+    **{f"connection_reserve_{ud}{sfx}_coarse": CstrFamily(QuantityType.DIMENSIONLESS)
+       for ud in ("up", "down") for sfx in ("", "_online_linear", "_online_integer", "_exact")},
+    "reserve_storage_up_floor_coarse": CstrFamily(QuantityType.ENERGY),
+    "reserve_storage_down_headroom_coarse": CstrFamily(QuantityType.ENERGY),
 
     # ── Group slack constraints.
     # flextool/engine/model/_group_slack.py _eq_capacity_margin

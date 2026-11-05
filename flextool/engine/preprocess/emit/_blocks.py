@@ -144,8 +144,6 @@ def validate_group_membership(
     group_node: Iterable[tuple[str, str]],
     resolution_groups: dict[str, float],
     decomposition_groups: dict[str, str],
-    reserve_upDown_group: Iterable[tuple[str, str, str]] | None = None,
-    process_reserve_upDown_node: Iterable[tuple[str, str, str, str]] | None = None,
 ) -> None:
     """Reject configurations with ambiguous block / region membership.
 
@@ -157,14 +155,9 @@ def validate_group_membership(
     ``decomposition_method != 'none'``).  Membership in any number of
     regular groups (CO2 caps, reserves, inertia …) is unconstrained.
 
-    Agent 1.7 additional rule: V1 restricts reserves to the default
-    (finest) temporal block.  Any entity that participates in a reserve
-    (reserve-group member nodes, or processes listed in
-    ``process_reserve_upDown_node``) must therefore NOT sit in a
-    resolution-group.  Mixing reserves with coarse-resolution
-    participants creates subtle semantic issues around energy vs. power
-    aggregation; V1 forbids the configuration outright so the reserve
-    constraints in ``flextool.mod`` can stay at the fine ``dt`` index.
+    Reserve participants may sit in a resolution-group: the reserve rows stay
+    on the solve's steps (a coarse process holds one reserve per coarse step,
+    ``model/_reserve``).
 
     Args:
         group_unit: ``(group, unit)`` membership tuples.
@@ -175,18 +168,11 @@ def validate_group_membership(
         decomposition_groups: group_name → decomposition_method value.
             Only groups with a value other than ``"none"`` count as
             decomposition-groups.
-        reserve_upDown_group: ``(reserve, upDown, group)`` rows defining
-            active reserves.  When the iterable is empty the reserve
-            rule is a no-op.
-        process_reserve_upDown_node: ``(process, reserve, upDown, node)``
-            rows of processes that participate in reserves.
 
     Raises:
         FlexToolConfigError: if any entity is in two or more
-            resolution-groups, two or more decomposition-groups, or
-            is a reserve participant while sitting in a resolution-
-            group (Agent 1.7 V1 rule).  The message names the entity
-            and both conflicting groups.
+            resolution-groups or two or more decomposition-groups.  The
+            message names the entity and both conflicting groups.
     """
     res_set = set(resolution_groups.keys())
     decomp_set = {g for g, m in decomposition_groups.items() if m and m != "none"}
@@ -216,39 +202,6 @@ def validate_group_membership(
                 f"entity '{e}' is a member of multiple decomposition-groups "
                 f"({sorted(set(gs))}); each entity may belong to at most "
                 f"one group with decomposition_method != 'none'."
-            )
-
-    # Agent 1.7: reserve-block compatibility.  Collect the set of
-    # reserve-participating entities (nodes whose reserve-groups are
-    # active, plus the processes and their nodes listed in
-    # ``process_reserve_upDown_node``) and reject any entity whose
-    # resolution-group is set (entity_res[e] non-empty).
-    reserve_groups: set[str] = set()
-    if reserve_upDown_group is not None:
-        for row in reserve_upDown_group:
-            if len(row) >= 3:
-                reserve_groups.add(row[2])
-    reserve_entities: set[str] = set()
-    # Nodes carried into a reserve via group membership.
-    for g, n in group_node:
-        if g in reserve_groups:
-            reserve_entities.add(n)
-    # Processes (and their nodes) explicitly listed as reserve
-    # participants.
-    if process_reserve_upDown_node is not None:
-        for row in process_reserve_upDown_node:
-            if len(row) >= 4:
-                reserve_entities.add(row[0])  # process
-                reserve_entities.add(row[3])  # node
-
-    for e in sorted(reserve_entities):
-        gs = entity_res.get(e, [])
-        if gs:
-            errors.append(
-                f"entity '{e}' participates in reserves but is a member of "
-                f"resolution-group(s) {sorted(set(gs))}; V1 restricts "
-                f"reserves to the default (finest) block — move '{e}' out "
-                f"of the resolution-group or drop the reserve participation."
             )
 
     if errors:
@@ -1153,24 +1106,9 @@ def emit_block_data_for_solve(
     group_unit = [(g, p) for g, p in group_process if p in unit_set]
     group_connection = [(g, p) for g, p in group_process if p in conn_set]
 
-    reserve_upDown_group: list[tuple[str, str, str]] = []
-    for row in _read_input_rows(inp, "reserve__upDown__group__method.csv",
-                                provider):
-        if len(row) >= 4 and row[3] != "no_reserve":
-            reserve_upDown_group.append((row[0], row[1], row[2]))
-    process_reserve_upDown_node: list[tuple[str, str, str, str]] = []
-    for row in _read_input_rows(inp, "process__reserve__upDown__node.csv",
-                                provider):
-        if len(row) >= 4:
-            process_reserve_upDown_node.append(
-                (row[0], row[1], row[2], row[3])
-            )
-
     validate_group_membership(
         group_unit, group_connection, group_node,
         resolution_groups, decomposition_groups,
-        reserve_upDown_group=reserve_upDown_group,
-        process_reserve_upDown_node=process_reserve_upDown_node,
     )
 
     block_assignments = derive_blocks(

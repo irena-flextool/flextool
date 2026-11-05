@@ -14,8 +14,7 @@ parameters).
 
 A coarse process (``processCoarse``) has one units-online value per coarse step (an aliased level) and one
 start-up / shut-down per coarse step at its start (events registered at the step's first fine step); its online
-capacity and minimum-load rows are averaged over the step (``_coarse_flows.add_cstr``).  An online process with
-reserves keeps the solve's step (``flex_data.coarse_process_exclusions``).  With ramp limits, its start-up /
+capacity and minimum-load rows are averaged over the step (``_coarse_flows.add_cstr``).  With ramp limits, its start-up /
 shut-down capacity reduction uses the coarse step (``_cap_reduction``: the mean share over the whole step of a
 unit that starts at the step's start or stops at its end) and its units online ramp between coarse steps
 (``core._eq_ramp``).

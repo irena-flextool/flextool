@@ -21,6 +21,7 @@ from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine.preprocess._provider_io import _provider_key
+from flextool.engine.model import _coarse_flows
 from flextool.engine.model._common import (
     _connection_procs, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap, _utf8_keys, _var_view,
 )
@@ -496,7 +497,14 @@ def add_variables(b: "_Build") -> None:
     # v_reserve[p,r,ud,n,d,t] ≥ 0   ∀ (p,r,ud,n,d,t) ∈ prundt
     # Reserve r in direction ud (up / down) that process p holds for node n,
     # in units of unitsize like v_flow: MW = v_reserve · unitsize[p].
-    b.v_reserve = m.add_var("v_reserve", ("p", "r", "ud", "n", "d", "t"), d.prundt, lower=0.0)
+    # ─── VAR. ─── v_reserve (coarse processes) ───────────────────────────────
+    # v_reserve[p,r,ud,n,d,b] ≥ 0   ∀ p ∈ processCoarse, (p,r,ud,n) of prundt, (d,b) the coarse steps of p
+    #   (b = its first fine step b_first)
+    # One reserve per coarse step, held over its fine steps (a level: b.v_reserve is indexed on every fine step,
+    # _coarse_flows.alias); the requirement rows still read it at every solve step.
+    b.prundt_rows = _coarse_flows.domain(b, d.prundt)
+    b.v_reserve = _coarse_flows.alias(
+        b, m.add_var("v_reserve", ("p", "r", "ud", "n", "d", "t"), b.prundt_rows, lower=0.0), d.prundt)
 
     # ─── VAR. ─── vq_reserve ─────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -844,7 +852,8 @@ def add_constraints(b: "_Build") -> None:
     # v_reserve[p,r,ud,n,d,t] − max_share[p,r,ud,n] · c[p,n,d,t] · Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
     #   + max_share[p,r,ud,n] · c[p,n,d,t] · Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
     #   ≤ max_share[p,r,ud,n] · c[p,n,d,t] · existing_count[p,d]
-    #   ∀ (p,r,ud,n,d,t) ∈ prundt with ud = up / down
+    #   ∀ (p,r,ud,n,d,t) ∈ prundt with ud = up / down (a coarse process: reserve_process_{upward,downward}_coarse,
+    #     the row's mean over each coarse step, _coarse_flows.add_cstr: one reserve per step under the step-mean c)
     #   c = 1 at a node the process feeds, and for connections;
     #   at an input node n of a unit (n the source of one of its arcs and not a sink):
     #     c = input_cap[p,n,p,d,t]           indirect unit (input_share_max × full-load input per unit)
@@ -886,7 +895,7 @@ def add_constraints(b: "_Build") -> None:
                 if edd_p_div.height > 0:
                     v_div_at = _var_view(b.v_divest_p, f"__at_{name}", {"d": "d_divest"}, to_axis=True)
                     lhs["divest"] = Sum(Where(v_div_at, edd_p_div), over=("d_divest",)) * share
-            m.add_cstr(name, over=idx, sense="<=", lhs_terms=lhs, rhs_terms={"max": rhs_param})
+            _coarse_flows.add_cstr(b, name, over=idx, sense="<=", lhs_terms=lhs, rhs_terms={"max": rhs_param})
 
     _add_connection_reserve_constraints(b)
     _add_storage_energy_constraints(b)
@@ -899,6 +908,8 @@ def _add_reserve_fix(b: "_Build") -> None:
     # ─── EQ. ─── reserve_fix_eq ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_reserve[p,r,ud,n,d,t] = p_fix_reserve[p,r,ud,n,d,t]   ∀ (p,r,ud,n,d,t) ∈ prundt with a p_fix_reserve value
+    #   (a coarse process: at the first fine step of each coarse step; its pin is the same on every fine step of
+    #   the step, or the process keeps the solve's step, flex_data.coarse_pin_varies)
     # In a realization solve, pins the reserve each process holds to the non-anticipativity-tied reserve of the
     # stochastic solve it realizes (that solve's reference forecast on its tied steps).  Only declared v_reserve
     # cells are pinned.  p_fix_reserve is Utf8-keyed: it is joined to the native-typed index through Utf8 copies.
@@ -907,7 +918,7 @@ def _add_reserve_fix(b: "_Build") -> None:
         return
     keys = ("p", "r", "ud", "n", "d", "t")
     fix_u = fix.frame.select(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys), "value")
-    pin = (d.prundt.select(*keys).unique()
+    pin = (b.prundt_rows.select(*keys).unique()
            .with_columns(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys))
            .join(fix_u, on=[f"_{k}" for k in keys], how="inner")
            .select(*keys, "value"))
@@ -1011,7 +1022,6 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
     conns = _connection_procs(d)
     if conns is None or conns.height == 0 or b.v_flow is None or d.prundt.height == 0:
         return
-    m = b.m
     from flextool.engine.model import _exact, _online
 
     keys = ["p", "source", "sink"]
@@ -1068,6 +1078,8 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
     #   same LHS − Ū · v_exact_forward[p,d,t]  ≤  0     when that channel is the exact connection's forward arc
     #   same LHS + Ū · v_exact_forward[p,d,t]  ≤  Ū     when it is the reverse arc
     #   ∀ rows above with p ∈ process_exact;  Ū = p_flow_upper · capacity_max_coeff · availability of the arc
+    # A coarse connection: each family as <family>_coarse, the row's mean over each coarse step
+    #   (_coarse_flows.add_cstr): one reserve and one flow per step under the step-mean capacity and availability.
     # A connection's reserve at a node is limited by its net position there: upward reserve by the free capacity
     # into n plus the flow out of n it can stop, downward reserve by the flow into n it can stop plus the free
     # capacity out of n (converted to power at n by the efficiency).  One row
@@ -1161,7 +1173,7 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
                     built["invest_neg"] = -(b.invest_in_dispatch_p * mult)
                 if b.divest_in_dispatch_p is not None:
                     built["divest"] = b.divest_in_dispatch_p * mult
-        m.add_cstr(f"connection_reserve_{ud}", over=dom, sense="<=", lhs_terms=built, rhs_terms={"cap": rhs})
+        _coarse_flows.add_cstr(b, f"connection_reserve_{ud}", over=dom, sense="<=", lhs_terms=built, rhs_terms={"cap": rhs})
 
         if ch_own is None:
             continue
@@ -1173,7 +1185,7 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
             on_dom = own_dom.join(on_p, on="_p", how="semi")
             if on_dom.height == 0:
                 continue
-            m.add_cstr(f"connection_reserve_{ud}_online_{kind}", over=on_dom.select("p", "n", "d", "t"), sense="<=",
+            _coarse_flows.add_cstr(b, f"connection_reserve_{ud}_online_{kind}", over=on_dom.select("p", "n", "d", "t"), sense="<=",
                        lhs_terms=dict(lhs), rhs_terms={"online": v_online * factor})
         # Direction switch of an exact connection: the own channel is its forward or its reverse arc.
         if exact is not None:
@@ -1196,7 +1208,7 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
                     pl.when(pl.col("__fwd")).then(0.0).otherwise(pl.col("value")).alias("value")), 0.0)
                 ex_lhs = dict(lhs)
                 ex_lhs["switch"] = b.v_exact_forward * coef
-                m.add_cstr(f"connection_reserve_{ud}_exact", over=ex_dom.select("p", "n", "d", "t"), sense="<=",
+                _coarse_flows.add_cstr(b, f"connection_reserve_{ud}_exact", over=ex_dom.select("p", "n", "d", "t"), sense="<=",
                            lhs_terms=ex_lhs, rhs_terms={"cap": cap})
 
 
@@ -1310,6 +1322,19 @@ def _with_section(d, grid: "pl.LazyFrame") -> "pl.LazyFrame":
     return grid.join(sec, on=["__p", "d", "t"], how="left")
 
 
+def _storage_partition(b: "_Build", providers: pl.DataFrame, over: pl.DataFrame) -> "pl.DataFrame | None":
+    """The coarse steps of the storage nodes n of ``providers`` ``(p, …, n, …)`` whose reserve-energy row has only
+    coarse members (the state of n and every provider p, :func:`_coarse_flows.row_partition`); ``None`` without."""
+    if not b.has_coarse_proc:
+        return None
+    pn = providers.select(pl.col("n").cast(pl.Utf8), pl.col("p").cast(pl.Utf8)).unique()
+    members = pl.concat([
+        pn.select("n", kind=pl.lit("n"), e=pl.col("n")).unique(),
+        pn.select("n", kind=pl.lit("p"), e=pl.col("p")),
+    ]).sort("n", "kind", "e")
+    return _coarse_flows.row_partition(b, members, over)
+
+
 def _add_storage_energy_constraints(b: "_Build") -> None:
     """Storage-backed reserve providers hold the energy to sustain their reserve for reserve_duration."""
     d = b.d
@@ -1317,7 +1342,6 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
     if (dur is None or not _has_rows(d.nodeState) or not _has_rows(d.process_source_sink)
             or b.v_state is None or d.p_state_unitsize is None):
         return
-    m = b.m
     v_state = b.v_state
     us_n = d.p_state_unitsize
     dt = d.dt
@@ -1398,6 +1422,11 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
     # that cannot sustain the duration commits less and the group pays the
     # shortfall penalty.  Couples to the intra-period state v_state only,
     # not to the representative-period state v_state_inter.
+    # Row rule: a storage node n whose state is coarse (constant within its coarse step, stateConstantCoarse_eq) and
+    # whose providers are all coarse processes gets one row per coarse step, reserve_storage_up_floor_coarse (the
+    # row's mean over the step of the providers' partition, _coarse_flows.add_cstr): the reserve, the state and the
+    # step-mean slope are then all one value per step.  Otherwise the row stays per solve step and reads a coarse
+    # provider's reserve at its constant value.  The same for reserve_storage_down_headroom.
     join_up = _providers("up", balance_side="sink", storage_side="source")
     if join_up is not None:
         back_up = None
@@ -1406,8 +1435,10 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
             join_up = join_up.drop("__back")
         slope_up = _slope_factor(join_up.select("p").unique(), reciprocal=False, back=back_up)
         e_up = Sum(Where(v_res_nb * d.p_unitsize * dur * slope_up, join_up), over=("p", "r", "ud", "nb", "g"))
-        m.add_cstr("reserve_storage_up_floor", over=join_up.select("n").unique().join(dt, how="cross"), sense=">=",
-                   lhs_terms={"state": v_state * us_n, "energy_neg": -e_up}, rhs_terms={"zero": 0.0})
+        over_up = join_up.select("n").unique().join(dt, how="cross")
+        _coarse_flows.add_cstr(b, "reserve_storage_up_floor", over=over_up, sense=">=",
+                               lhs_terms={"state": v_state * us_n, "energy_neg": -e_up}, rhs_terms={"zero": 0.0},
+                               partition=_storage_partition(b, join_up, over_up))
 
     # ─── EQ. ─── reserve_storage_down_headroom ───────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -1443,8 +1474,10 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
             edd_inv_n = _entity_rows(d.edd_invest_set, "e", d.nodeState, "n")
             if edd_inv_n.height > 0:
                 state_lhs["invest_neg"] = -(Sum(Where(v_inv_n_at, edd_inv_n), over=("d_invest",)) * us_n)
-        m.add_cstr("reserve_storage_down_headroom", over=join_dn.select("n").unique().join(dt, how="cross"),
-                   sense="<=", lhs_terms=state_lhs, rhs_terms={"upper": d.p_state_upper * us_n})
+        over_dn = join_dn.select("n").unique().join(dt, how="cross")
+        _coarse_flows.add_cstr(b, "reserve_storage_down_headroom", over=over_dn, sense="<=", lhs_terms=state_lhs,
+                               rhs_terms={"upper": d.p_state_upper * us_n},
+                               partition=_storage_partition(b, join_dn, over_dn))
 
 
 # ---------------------------------------------------------------------------

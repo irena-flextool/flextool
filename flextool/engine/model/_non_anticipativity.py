@@ -273,13 +273,18 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_reserve[p,r,ud,n,d,t] − v_reserve[p,r,ud,n,b,t] = 0
     #   ∀ (p,r,ud,n) ∈ process_reserve_upDown_node_active, (d,b) ∈ forecast star, (d,t) ∈ tied steps
-    # Reserve offered is the same in every forecast over the tied steps.
+    # Reserve offered is the same in every forecast over the tied steps.  A coarse process is tied once per coarse step,
+    # at its first fine step (coarse only where each coarse step is wholly tied or untied, as the units online).
     if v_reserve is not None and _has_rows(d.process_reserve_upDown_node_active) \
             and _has_rows(d.reserve_upDown_group):
         over = (d.process_reserve_upDown_node_active
                 .join(star, how="cross")
                 .join(tie_dt, on="d", how="inner")
                 .select("p", "r", "ud", "n", "d", "b", "t").unique())
+        if b.has_coarse_proc:
+            # A coarse process: one row per wholly tied coarse step, at its first fine step.
+            keys = ["p", "r", "ud", "n", "d", "t"]
+            over = over.join(b.prundt_rows.select(keys), on=keys, how="semi")
         if over.height > 0:
             m.add_cstr(
                 "non_anticipativity_reserve",

@@ -2,7 +2,7 @@
 
 Owner decision 2026-11-03 ("Coarse new_stepduration groups"): a process between coarse nodes has one flow per
 coarse step (a rate constant over the step); a process with a fine balance node keeps the solve's step, and so
-does a process with a feature whose rows are per fine step (reserves, a delay,
+does a process with a feature whose rows are per fine step (a delay,
 DC power flow, an exact connection, a user-constraint flow term, a flow-group instant limit, a capacity-margin /
 inertia / non-synchronous group), or, in a stochastic solve, a forecast tie that covers only part of one of its
 coarse steps.  Online processes: test_coarse_online_reserves.py.

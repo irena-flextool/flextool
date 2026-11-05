@@ -3,20 +3,21 @@
 A group whose ``new_stepduration`` is longer than the solve's time step makes its balance and storage nodes
 *coarse*: each coarse node is balanced once per coarse step by summing its fine balance terms over the step
 (``nodeBalanceCoarse_eq``); a coarse storage node keeps one state per coarse step (``stateConstantCoarse_eq``).
-Reserves and angles stay on the solve's steps.
+Angles stay on the solve's steps.
 
 A unit or connection whose every balance node is coarse is a *coarse process* (:func:`coarse_process_frames`):
 its flows have one value per coarse step of its nodes (a rate that stays the same over the step), and so do its
 units online, start-ups and shut-downs (the start and stop at the step's start; minimum up / down times count
-whole coarse steps).  A process with a fine balance node, or with no balance node, keeps the solve's step, and
-so does a process with a feature whose rows are per fine step and couple the flow to other per-step terms
-(reserves, a delay, DC power flow, an exact connection, a user
-constraint flow term, a flow group instant limit, a capacity-margin / inertia / non-synchronous group): those
-rows would not hold for a flow that cannot change within the coarse step.  In a stochastic solve, a process at
-a node whose net flow is tied between the forecasts, and every online process, also keeps the solve's step when
-a coarse step holds both tied (committed) and untied steps (``flex_data.coarse_tie_straddles``): its one value
-would tie the untied steps too.  A realization solve keeps a process at the solve's step when its units online
-are pinned on part of a coarse step or to values that change within one (``flex_data.coarse_pin_varies``).
+whole coarse steps) and its reserve (the requirement is still checked at every solve step).  A process with a fine
+balance node, or with no balance node, keeps the solve's step, and so does a process with a feature whose rows are
+per fine step and couple the flow to other per-step terms (a delay, DC power flow, an exact connection, a user
+constraint flow term, a flow group instant limit, a capacity-margin / inertia / non-synchronous group): those rows
+would not hold for a flow that cannot change within the coarse step.  In a stochastic solve, a process at a node
+whose net flow is tied between the forecasts, every online process and every reserve provider also keeps the
+solve's step when a coarse step holds both tied (committed) and untied steps (``flex_data.coarse_tie_straddles``):
+its one value would tie the untied steps too.  A realization solve keeps a process at the solve's step when its
+units online or its reserve are pinned on part of a coarse step or to values that change within one
+(``flex_data.coarse_pin_varies``).
 
 :func:`coarse_node_frames` cuts the solve's steps into coarse steps.  It is the only source of the coarse
 steps; the per-block timelines of the block layout (``solve_data/block_step_duration`` etc.) do not feed the
@@ -376,3 +377,61 @@ def varies_within_coarse_steps(frame: "pl.DataFrame | None", steps: pl.DataFrame
                                keys: tuple[str, ...] = ()) -> set[str]:
     """The processes of :func:`varying_within_coarse_steps`."""
     return set(varying_within_coarse_steps(frame, steps, keys)["p"].to_list())
+
+
+def coarse_row_steps(members: pl.DataFrame, process_steps: "pl.DataFrame | None",
+                     node_steps: "pl.DataFrame | None", step_duration: "pl.DataFrame | None",
+                     solve_step: float = 1.0) -> pl.DataFrame:
+    """The coarse steps of the row keys whose every member is coarse (the row rule): ``(key…, d, b_first, t, w)``.
+
+    ``members`` ``(key…, kind, e)`` lists the entities whose time-varying variables can appear in the row of each
+    key: kind ``p`` a process (its flows, units online, reserve), kind ``n`` a node (the state of a coarse storage
+    node, constant within its coarse step).  ``process_steps`` ``(p, d, b_first, t)`` (``process_coarse_step``),
+    ``node_steps`` ``(n, d, b_first, t)`` (``node_coarse_step``), ``step_duration`` ``(d, t, value)``.  A key is
+    coarse when every member has coarse steps and they nest (every coarse step of the member with the most steps
+    lies inside one coarse step of each other member: the coarse steps of all groups are chunked from the same run
+    starts); it takes that member's coarse steps, ``w = Δt / Δ_b``.  Keys with a fine member (a mixed row: per solve
+    step, its coarse terms read at their constant value) are not returned.  Utf8 keys."""
+    keys = [c for c in members.columns if c not in ("kind", "e")]
+    out_schema = {**{k: pl.Utf8 for k in keys}, "d": pl.Utf8, "b_first": pl.Utf8, "t": pl.Utf8, "w": pl.Float64}
+    parts = []
+    for kind, frame, col in (("p", process_steps, "p"), ("n", node_steps, "n")):
+        f = _utf8(frame, (col, "d", "b_first", "t"))
+        if f is not None and f.height > 0:
+            parts.append(f.select(pl.lit(kind).alias("kind"), pl.col(col).alias("e"), "d", "b_first", "t"))
+    if not parts or members.height == 0:
+        return pl.DataFrame(schema=out_schema)
+    st = pl.concat(parts).unique()
+    mem = members.select(*(pl.col(c).cast(pl.Utf8) for c in members.columns)).unique()
+    coarse_e = st.select("kind", "e").unique().with_columns(__c=pl.lit(True))
+    ok = (mem.join(coarse_e, on=["kind", "e"], how="left")
+          .group_by(keys).agg(pl.col("__c").is_not_null().all().alias("__ok"))
+          .filter(pl.col("__ok")).select(keys))
+    if ok.height == 0:
+        return pl.DataFrame(schema=out_schema)
+    mem = mem.join(ok, on=keys, how="semi")
+    count = st.group_by("kind", "e").agg(pl.struct("d", "b_first").n_unique().alias("__n"))
+    pick = (mem.join(count, on=["kind", "e"], how="inner")
+            .sort([*keys, "__n", "kind", "e"], descending=[*([False] * len(keys)), True, False, False])
+            .group_by(keys, maintain_order=True).first()
+            .select(*keys, pl.col("kind").alias("__kind"), pl.col("e").alias("__e")))
+    chosen = (pick.join(st.rename({"kind": "__kind", "e": "__e"}), on=["__kind", "__e"], how="inner")
+              .select(*keys, "d", "b_first", "t"))
+    # Nesting: each chosen coarse step lies inside one coarse step of every member, over the same fine steps.
+    per_member = (mem.join(st.rename({"b_first": "__b_m"}), on=["kind", "e"], how="inner")
+                  .join(chosen, on=[*keys, "d", "t"], how="full", coalesce=True))
+    bad = (per_member.group_by(*keys, "kind", "e", "d", "b_first")
+           .agg(pl.col("__b_m").n_unique().alias("__nb"), pl.col("__b_m").null_count().alias("__miss"))
+           .filter((pl.col("__nb") != 1) | (pl.col("__miss") > 0) | pl.col("b_first").is_null())
+           .select(keys).unique())
+    chosen = chosen.join(bad, on=keys, how="anti")
+    sd = _utf8(step_duration, ("d", "t"))
+    if sd is not None and step_duration is not None and "value" in step_duration.columns:
+        dur = sd.with_columns(__dt=step_duration["value"].cast(pl.Float64)).select("d", "t", "__dt")
+    else:
+        dur = pl.DataFrame(schema={"d": pl.Utf8, "t": pl.Utf8, "__dt": pl.Float64})
+    return (chosen.join(dur, on=["d", "t"], how="left")
+            .with_columns(pl.col("__dt").fill_null(float(solve_step)))
+            .with_columns((pl.col("__dt") / pl.col("__dt").sum().over(*keys, "d", "b_first")).alias("w"))
+            .select(*keys, "d", "b_first", "t", "w")
+            .sort([*keys, "d", "t"]))

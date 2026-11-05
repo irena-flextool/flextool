@@ -78,15 +78,14 @@ def validate_group_membership(
     group_node: Iterable[tuple[str, str]],
     resolution_groups: dict[str, float],
     decomposition_groups: dict[str, str],
-    reserve_upDown_group: Iterable[tuple[str, str, str]] | None = None,
-    process_reserve_upDown_node: Iterable[tuple[str, str, str, str]] | None = None,
 ) -> None:
     """Reject configurations with ambiguous block / region membership.
 
     Mirrors ``flextool/engine/_blocks.validate_group_membership``
     1:1.  Each entity may belong to at most one resolution-group and
-    at most one decomposition-group; reserve participants must NOT
-    sit in any resolution-group (V1 reserve-block compatibility rule).
+    at most one decomposition-group.  Reserve participants may sit in a
+    resolution-group: the reserve rows stay on the solve's steps (a coarse
+    process holds one reserve per coarse step, ``model/_reserve``).
 
     Raises:
         FlexToolConfigError: on any of the rule violations.
@@ -118,31 +117,6 @@ def validate_group_membership(
                 f"entity '{e}' is a member of multiple decomposition-groups "
                 f"({sorted(set(gs))}); each entity may belong to at most "
                 f"one group with decomposition_method != 'none'."
-            )
-
-    reserve_groups: set[str] = set()
-    if reserve_upDown_group is not None:
-        for row in reserve_upDown_group:
-            if len(row) >= 3:
-                reserve_groups.add(row[2])
-    reserve_entities: set[str] = set()
-    for g, n in group_node:
-        if g in reserve_groups:
-            reserve_entities.add(n)
-    if process_reserve_upDown_node is not None:
-        for row in process_reserve_upDown_node:
-            if len(row) >= 4:
-                reserve_entities.add(row[0])  # process
-                reserve_entities.add(row[3])  # node
-
-    for e in sorted(reserve_entities):
-        gs = entity_res.get(e, [])
-        if gs:
-            errors.append(
-                f"entity '{e}' participates in reserves but is a member of "
-                f"resolution-group(s) {sorted(set(gs))}; V1 restricts "
-                f"reserves to the default (finest) block — move '{e}' out "
-                f"of the resolution-group or drop the reserve participation."
             )
 
     if errors:
@@ -374,10 +348,6 @@ class BlockLayout:
         group_connection: Iterable[tuple[str, str]],
         group_node: Iterable[tuple[str, str]],
         decomposition_groups: dict[str, str] | None = None,
-        reserve_upDown_group: Iterable[tuple[str, str, str]] | None = None,
-        process_reserve_upDown_node: (
-            Iterable[tuple[str, str, str, str]] | None
-        ) = None,
         active_time_list: dict[str, list] | None = None,
         default_jump_list: Iterable[tuple] | None = None,
         validate: bool = True,
@@ -412,8 +382,6 @@ class BlockLayout:
                 gu, gc, gn,
                 resolution_groups,
                 decomp,
-                reserve_upDown_group=reserve_upDown_group,
-                process_reserve_upDown_node=process_reserve_upDown_node,
             )
 
         layout = cls()
@@ -565,46 +533,6 @@ class BlockLayout:
         group_unit = _pairs("group__unit", "unit")
         group_connection = _pairs("group__connection", "connection")
 
-        # ── 5. Reserve membership (optional; absent on most fixtures) ──
-        reserve_upDown_group: list[tuple[str, str, str]] = []
-        rug_df = _try_entities(source, "reserve__upDown__group")
-        if rug_df is not None and rug_df.height > 0:
-            # Filter rows whose ``method`` (if defined) is not ``no_reserve``.
-            method_param = _try_param(
-                source, "reserve__upDown__group", "method",
-            )
-            excluded: set[tuple[str, str, str]] = set()
-            if method_param is not None:
-                for row in method_param.iter_rows(named=True):
-                    if str(row.get("value", "")) == "no_reserve":
-                        excluded.add(
-                            (row["reserve"], row["upDown"], row["group"])
-                        )
-            for r, ud, g in zip(
-                rug_df["reserve"].to_list(),
-                rug_df["upDown"].to_list(),
-                rug_df["group"].to_list(),
-            ):
-                if (r, ud, g) in excluded:
-                    continue
-                reserve_upDown_group.append((r, ud, g))
-
-        process_reserve_upDown_node: list[tuple[str, str, str, str]] = []
-        for cls_name, p_col in (
-            ("reserve__upDown__unit__node", "unit"),
-            ("reserve__upDown__connection__node", "connection"),
-        ):
-            df = _try_entities(source, cls_name)
-            if df is None or df.height == 0:
-                continue
-            for p, r, ud, n in zip(
-                df[p_col].to_list(),
-                df["reserve"].to_list(),
-                df["upDown"].to_list(),
-                df["node"].to_list(),
-            ):
-                process_reserve_upDown_node.append((p, r, ud, n))
-
         # ── 8. active_time_list — derived from timeline + solve configs.
         from flextool.engine.input._timeline import get_active_time
 
@@ -639,10 +567,6 @@ class BlockLayout:
             group_connection=group_connection,
             group_node=group_node,
             decomposition_groups=decomposition_groups,
-            reserve_upDown_group=reserve_upDown_group or None,
-            process_reserve_upDown_node=(
-                process_reserve_upDown_node or None
-            ),
             active_time_list=active_time_list,
             default_jump_list=None,
             validate=validate,

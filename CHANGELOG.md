@@ -107,7 +107,7 @@
   limit that varies within the step and its cost, efficiency and prices do not vary within the step; otherwise
   the result can differ (hourly flows could use the cheapest or most efficient hours, and several varying limits
   are looser when averaged). Units and connections with a node outside the coarse groups keep the solve's step,
-  and so do those with reserves, a delay, DC power flow, an `exact`
+  and so do those with a delay, DC power flow, an `exact`
   connection, a flow in a user constraint, a flow group instant limit or a node in a capacity-margin, inertia or
   non-synchronous group; also flows that cross Benders regions or live in the Benders master, and, in a
   stochastic solve, those at a stochastic node whose coarse step is only partly tied between the forecasts. An
@@ -131,6 +131,19 @@
   step or are pinned on only part of it. The coarse-step notice names these
   units with the reasons (units online once per coarse step, minimum times in whole coarse steps, a minimum load
   that varies within the step, the start-up / shut-down capacity reduction on the coarse step).
+- **Units and connections between coarse nodes that provide reserves use the coarse step too** (results change
+  for such models; before, a node in a group with `new_stepduration` could not be in a reserve group, and a model
+  with one stopped with "participates in reserves but is a member of resolution-group"). Nodes of a coarse group may
+  now be in reserve groups. A unit or connection whose balance nodes are all coarse holds one reserve per coarse
+  step, written at every time step of the step; the reserve requirement is still checked at every time step of the
+  solve. Its reserve limits (the share of its capacity, a connection's net position, the floor of its flow, the
+  storage energy for `reserve_duration` when the storage node and every provider are coarse) apply to the average
+  over the step, with the average availability or profile (for example a wind unit offers reserve against its mean
+  capacity factor over the step), and the room its ramp limit leaves for reserve is the smallest of the step's time
+  steps. In a stochastic solve such a provider keeps the solve's step when the forecasts are tied over only part of
+  one of its coarse steps, and in a realization solve when its committed reserve changes within a coarse step. The
+  coarse-step notice names these units and connections (one reserve per coarse step; the headroom on the
+  step-mean availability or profile).
 - **A Benders master that HiGHS left with an undetermined status after its cold retry is solved once more from
   its reloaded LP** (polar-high 3.12.1), instead of stopping with "Benders master problem did not solve to
   optimality". This happened on badly scaled masters (an unscaled objective with cut slopes near 1e9).
