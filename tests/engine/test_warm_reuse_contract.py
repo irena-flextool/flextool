@@ -340,7 +340,11 @@ def test_cold_built_solve_releases_previous_warm_problem(tmp_path_factory, monke
     from flextool.engine import run_chain_from_db
     from flextool.engine.model import core
     from flextool.engine.solve import _warm
+    from flextool.run_options import Resolved, RunOptions
 
+    # The run's options are resolved once; the test switches save-memory on for the later sub-solves through
+    # the run's own resolution (its ``resolved`` mapping), as a flag would have set it.
+    run_options = RunOptions.from_env({})
     url, scen = make_db(tmp_path_factory, alt="reuse_release", values=_three_solves([]),
                         base_chain=["init", "west", "coal"], entities=THREE_ENTITIES)
     built: list = []
@@ -352,7 +356,7 @@ def test_cold_built_solve_releases_previous_warm_problem(tmp_path_factory, monke
         wp = orig_build_warm(*args, **kwargs)
         built.append(weakref.ref(wp))
         # Every later sub-solve takes the save-memory (cold) path.
-        monkeypatch.setenv("FLEXTOOL_SAVE_MEMORY", "1")
+        run_options.resolved["save_memory"] = Resolved(True, "cli")
         return wp
 
     def build(pb, data, **kwargs):
@@ -361,11 +365,10 @@ def test_cold_built_solve_releases_previous_warm_problem(tmp_path_factory, monke
             alive_at_cold_build.append(built[0]() is not None)
         return orig_build(pb, data, **kwargs)
 
-    monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
     monkeypatch.setattr(_warm, "_build_warm_problem", build_warm)
     monkeypatch.setattr(core, "build_flextool", build)
     steps = run_chain_from_db(url, scen, warm=True, keep_solutions=False,
-                              work_folder=tmp_path_factory.mktemp("reuse_release_w"))
+                              work_folder=tmp_path_factory.mktemp("reuse_release_w"), run_options=run_options)
     assert list(steps) == [DISPATCH, TWIN, LAST]
     assert len(built) == 1, "expected one warm build (the first solve) before save-memory took over"
     assert alive_at_cold_build and not any(alive_at_cold_build), (

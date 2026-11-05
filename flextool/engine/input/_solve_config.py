@@ -35,6 +35,8 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
 
+    from flextool.run_options import RunOptions
+
 
 # ---------------------------------------------------------------------------
 # DB-reader helpers used by the solve-config factory.
@@ -241,7 +243,6 @@ class SolveConfig:
         logger: logging.Logger,
         use_row_scaling: dict | None = None,
         scale_the_objective: dict | None = None,
-        user_bound_scale: dict | None = None,
         solver_configs: dict[str, "SolverConfig"] | None = None,
         decomposition: dict | None = None,
         benders_max_iter: dict | None = None,
@@ -271,15 +272,6 @@ class SolveConfig:
         )
         self.scale_the_objective: dict = (
             scale_the_objective if scale_the_objective is not None else {}
-        )
-        # solve-name → integer user_bound_scale override.  When set, overrides
-        # polar-high's stream-time auto-pick
-        # (``polar_high.engine._recommend_user_bound_scale``).  Pass the
-        # value HiGHS recommends in its "user-scaled problem has some
-        # excessively large row bounds — Consider setting the user_bound_scale
-        # option to <N>" warning for the most reliable result.
-        self.user_bound_scale: dict = (
-            user_bound_scale if user_bound_scale is not None else {}
         )
         # v52 multi-solver dispatch — solve-name → :class:`SolverConfig`.
         # Empty when no ``solver_*`` parameters are authored on any solve;
@@ -382,9 +374,12 @@ class SolveConfig:
 
     @classmethod
     def load_from_db(
-        cls, db: "DatabaseMapping", logger: logging.Logger
+        cls, db: "DatabaseMapping", logger: logging.Logger, run_options: "RunOptions | None" = None,
     ) -> "SolveConfig":
         """Read all solve-level parameters from *db* into a SolveConfig.
+
+        *run_options* supplies ``--matrix-file-format`` (the default
+        ``SolverConfig.io_api``); ``None`` reads the environment.
 
         Loading order is preserved exactly — see the four-step block at
         the bottom of this method.
@@ -469,8 +464,8 @@ class SolveConfig:
         # (which downstream callers still consume); we reuse that dict
         # here rather than re-querying.
         # Batch C.9 — ``solver_io_api`` DB axis removed.  Replaced by
-        # the ``--matrix-file-format`` CLI flag (mps | lp),
-        # env-var-plumbed via ``FLEXTOOL_MATRIX_FILE_FORMAT``.  The
+        # the ``--matrix-file-format`` flag (mps | lp; environment twin
+        # ``FLEXTOOL_MATRIX_FILE_FORMAT``), read from *run_options*.  The
         # in-process vs. file dispatch is implicit:
         # * HiGHS + no --save-memory: ``SolverConfig.io_api`` defaults
         #   to ``"direct"`` (in-process binding).
@@ -482,10 +477,11 @@ class SolveConfig:
         #   (``"mps"`` or ``"lp"``) applies uniformly to every solve.
         # ``matrix_file_format`` stays an empty dict (no per-solve
         # author override since the DB axis is gone); the default is
-        # resolved below using the env var when present, else
-        # ``"direct"``.
-        import os as _os_c9
-        _cli_io_api = _os_c9.environ.get("FLEXTOOL_MATRIX_FILE_FORMAT")
+        # the run's ``matrix_file_format`` when set, else ``"direct"``.
+        from flextool.run_options import RunOptions
+        _cli_io_api = (
+            run_options if run_options is not None else RunOptions.from_env()
+        ).value("matrix_file_format")
         matrix_file_format: dict = {}
         # Batch C.7 — ``solver_log_level`` shortcut removed; use the
         # --solver-log-level CLI flag (silent / normal / verbose →
@@ -546,9 +542,6 @@ class SolveConfig:
         use_row_scaling: dict = {}
         scale_the_objective: dict = params_to_dict(
             db=db, cl="solve", par="scale_the_objective", mode=DictMode.DICT
-        )
-        user_bound_scale: dict = params_to_dict(
-            db=db, cl="solve", par="user_bound_scale", mode=DictMode.DICT
         )
 
         # v60/v62 per-solve decomposition scheme + Benders knobs.  Only
@@ -659,7 +652,7 @@ class SolveConfig:
             v = raw.get(key)
             return int(float(v)) if v is not None else None
 
-        # Batch C.9 — the CLI ``--matrix-file-format`` env var override
+        # Batch C.9 — the run's ``--matrix-file-format``
         # (when set, ``"mps"`` or ``"lp"``) becomes the default
         # ``SolverConfig.io_api`` for every solve.  Otherwise the
         # default is ``"direct"`` (HiGHS in-process binding; commercial
@@ -693,7 +686,6 @@ class SolveConfig:
             logger=logger,
             use_row_scaling=use_row_scaling,
             scale_the_objective=scale_the_objective,
-            user_bound_scale=user_bound_scale,
             solver_configs=solver_configs,
             decomposition=decomposition,
             benders_max_iter=benders_max_iter,
@@ -749,6 +741,7 @@ class SolveConfig:
         db_url: str,
         scenario: str,
         logger: logging.Logger | None = None,
+        run_options: "RunOptions | None" = None,
     ) -> "SolveConfig":
         """Convenience factory: open *db_url*, apply *scenario*, load.
 
@@ -778,7 +771,7 @@ class SolveConfig:
             # customer DBs (H2_trade ≈ 13 MB, 2.5 s → 0.35 s).
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            return cls.load_from_db(db, logger)
+            return cls.load_from_db(db, logger, run_options)
 
     @classmethod
     def load_from_source(
@@ -971,7 +964,7 @@ class SolveConfig:
         the run()-site guard no-ops → no re-spawn).
 
         NOT copied — ``scaling`` / ``solver_configs`` / ``use_row_scaling``
-        / ``scale_the_objective`` / ``user_bound_scale``: the cascade
+        / ``scale_the_objective``: the cascade
         ``run()`` closure in ``_orchestration._drive_cascade`` resolves
         those from the SEPARATE cascade ``state.solve`` (NOT this
         ``runner.state.solve``, which is the config this method mutates),

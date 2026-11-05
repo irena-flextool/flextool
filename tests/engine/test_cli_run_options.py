@@ -12,7 +12,7 @@ import pytest
 
 import flextool.engine
 from flextool.cli import cmd_run_flextool
-from flextool.engine.solve._orchestration import _cli_highs_overrides
+from flextool.engine.solve._orchestration import _operator_highs_overrides
 
 _OPTION_ENV_VARS = (
     "FLEXTOOL_HIGHS_THREADS", "FLEXTOOL_HIGHS_PRESOLVE", "FLEXTOOL_SOLVER_LOG_LEVEL", "FLEXTOOL_HIGHS_TIME_LIMIT",
@@ -38,7 +38,7 @@ def _run_main(monkeypatch, tmp_path, *flags):
 
     def recorder(input_db_url, scenario_name, **kwargs):
         seen["kwargs"] = kwargs
-        seen["highs_overrides"] = _cli_highs_overrides()
+        seen["highs_overrides"] = _operator_highs_overrides(kwargs["run_options"])
         return {}
 
     monkeypatch.setattr(flextool.engine, "run_chain_from_db", recorder)

@@ -105,6 +105,7 @@ from flextool.engine.input._axis_enums import (
 )
 from flextool.engine.autoscale import (
     Layer2Plan,
+    ScalingConfig,
     ScalingMode,
     apply_layer2,
     apply_scaling,
@@ -2010,6 +2011,7 @@ def solve_benders(
     subsolve_callback: Callable[[dict], None] | None = None,
     workers: int | None = None,
     solver_options: dict | None = None,
+    scaling_config: ScalingConfig | None = None,
 ) -> BendersResult:
     """Run the multi-cut Benders loop on the regional decomposition of
     ``data``.
@@ -2092,6 +2094,11 @@ def solve_benders(
         so the parallel pass stays deterministic.  A time limit applies to
         each sub-solve, not to the whole decomposition.  ``None`` = HiGHS
         defaults (tests).
+    scaling_config
+        The solve's autoscaler config (the run's ``--scaling`` /
+        ``FLEXTOOL_SCALING`` over the solve's ``solve.scaling``), applied to
+        every region subproblem.  ``None`` resolves it from the environment
+        (:func:`resolve_scaling_config`), the form of a direct call.
 
     Returns
     -------
@@ -2125,7 +2132,7 @@ def solve_benders(
             in_out_weight=in_out_weight,
             progress_callback=progress_callback,
             subsolve_callback=subsolve_callback, workers=workers,
-            solver_options=solver_options,
+            solver_options=solver_options, scaling_config=scaling_config,
         )
     finally:
         if _enums_token is not None:
@@ -2317,7 +2324,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                          obj_scale: float = 1.0,
                          in_out_weight: float = 0.0,
                          progress_callback=None, subsolve_callback=None,
-                         workers=None, solver_options=None) -> BendersResult:
+                         workers=None, solver_options=None,
+                         scaling_config: ScalingConfig | None = None) -> BendersResult:
     # --- master-hosted node set (plan §3 membership rule): every balance/
     # state node in NO region group is hosted natively in the MASTER.
     # Empty on every all-nodes-grouped model ⇒ every branch below keyed on
@@ -2359,9 +2367,9 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # is set via ``set_solver_option`` (which MERGES), so it composes with the
     # ``run_crossover`` pin below.  Only the Layer-2 plan is kept (to scale the
     # pins / unscale the solution); Layer 3 is HiGHS-internal and transparent to
-    # the cut math.  ``resolve_scaling_config(None)`` reads ``FLEXTOOL_SCALING``
-    # from the environment (same cascade-internal convention the monolith uses).
-    _scale_cfg = resolve_scaling_config(None)
+    # the cut math.  The cascade passes the solve's resolved ``scaling_config``;
+    # a direct call (``None``) resolves it from the environment.
+    _scale_cfg = scaling_config if scaling_config is not None else resolve_scaling_config(None)
     # ``_resolve_benders_workers`` applies the machine-local env override and clamps to ``[1, n]`` (one region
     # per split).  Resolved before the region build: with more than one worker the region subproblems keep
     # HiGHS single-threaded (no user ``threads`` / ``parallel``) so the parallel pass stays deterministic.

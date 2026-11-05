@@ -10,6 +10,7 @@ from flextool.engine.input._solve_config import SolveConfig
 from flextool.engine.input._timeline import TimelineConfig
 from flextool.engine.input._solve_state import PathConfig, RunnerState, FlexToolError, FlexToolConfigError
 from flextool.cli._timing import TimingRecorder
+from flextool.run_options import RunOptions
 
 
 class FlexToolRunner:
@@ -21,7 +22,7 @@ class FlexToolRunner:
     See the engine cascade modules for the full input-writing flow.
     """
 
-    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, solver_config_dir=None, root_dir=None, work_folder=None, highs_threads=None, auto_scale=False, timing_recorder: "TimingRecorder | None" = None):
+    def __init__(self, input_db_url=None, output_path=None, scenario_name=None, flextool_dir=None, solver_config_dir=None, root_dir=None, work_folder=None, highs_threads=None, auto_scale=False, timing_recorder: "TimingRecorder | None" = None, run_options: "RunOptions | None" = None):
         try:
             logger = logging.getLogger(__name__)
             # Resolve work_folder: default to cwd for backward compatibility
@@ -78,7 +79,7 @@ class FlexToolRunner:
                 db.fetch_all("parameter_value")
                 check_version(db=db, logger=logger)
                 # Solve-level fields — delegated to SolveConfig
-                solve = SolveConfig.load_from_db(db=db, logger=logger)
+                solve = SolveConfig.load_from_db(db=db, logger=logger, run_options=run_options)
                 # Timeline-level fields — delegated to TimelineConfig
                 timeline = TimelineConfig.load_from_db(db=db, logger=logger)
 
@@ -90,6 +91,8 @@ class FlexToolRunner:
             self.state = RunnerState(
                 paths=paths, solve=solve, timeline=timeline, logger=logger,
             )
+            # The run's operator options (``None`` = read the environment when a reader needs them).
+            self.state.run_options = run_options
             # HiGHS thread count (CLI override; solver_runner defaults to 4 when None).
             self.state.highs_threads = highs_threads
             # Agent 8 (LP-scaling) — opt-in flag that lets the Python

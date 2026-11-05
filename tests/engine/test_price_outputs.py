@@ -375,8 +375,8 @@ def test_price_independent_of_lp_scaling(tmp_path_factory, monkeypatch) -> None:
     real_cfg = orch._autoscale_resolve_config
     real2, real3 = orch._autoscale_apply_layer2_pre_solve, orch._autoscale_apply_layer3_pre_solve
 
-    def forced_cfg(cli_args=None):
-        return dataclasses.replace(real_cfg(cli_args), threshold_decades=1.0, user_objective_scale=3)
+    def forced_cfg(cli_args=None, **kwargs):
+        return dataclasses.replace(real_cfg(cli_args, **kwargs), threshold_decades=1.0, user_objective_scale=3)
 
     def spy2(*a, **k):
         plan, ranges = real2(*a, **k)

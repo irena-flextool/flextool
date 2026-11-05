@@ -326,3 +326,90 @@ def test_benders_converges_with_threads_and_parallel_regions(tmp_path, monkeypat
     assert step.is_benders and step.optimal is True and step.obj is not None
     if _benders._WARM_REPINS_SCHEDULER:
         assert any(_norm(o.get("threads")) == 2.0 for o in seen), "the master did not get the thread count"
+
+
+# ---------------------------------------------------------------------------
+# The engine readers take the run's options; the environment is only their fallback
+# ---------------------------------------------------------------------------
+
+_READER_ENV = {
+    "FLEXTOOL_HIGHS_THREADS": "4", "FLEXTOOL_HIGHS_PRESOLVE": "off", "FLEXTOOL_HIGHS_TIME_LIMIT": "7",
+    "FLEXTOOL_HIGHS_MIP_GAP": "0.3", "FLEXTOOL_SOLVER_LOG_LEVEL": "silent", "FLEXTOOL_WARM_START": "1",
+    "FLEXTOOL_SAVE_MEMORY": "1", "FLEXTOOL_SCALING": "off", "FLEXTOOL_USER_BOUND_SCALE": "-4",
+    "FLEXTOOL_MATRIX_FILE_FORMAT": "lp",
+}
+
+
+def _env_options(environ: dict):
+    from flextool.run_options import RunOptions
+
+    return RunOptions.from_env(environ)
+
+
+def test_no_flag_and_no_env_leave_highs_serial() -> None:
+    """Unset ``--highs-threads`` and ``FLEXTOOL_HIGHS_THREADS``: no operator HiGHS key at all, so the engine's
+    ``parallel=off`` pin stands and no ``threads`` reaches HiGHS — what the flag's former default 1 gave."""
+    from flextool.engine.solve._orchestration import _baseline_highs_options, _operator_highs_overrides
+
+    assert _operator_highs_overrides(_env_options({})) == {}
+    effective = _resolve_effective_highs_options(
+        solver_arguments_map={}, highs_opt_path=None, cli_overrides=_operator_highs_overrides(_env_options({})),
+        baseline=_baseline_highs_options(), solver_config=SolverConfig())
+    assert effective["parallel"] == "off" and "threads" not in effective
+    one = _env_options({"FLEXTOOL_HIGHS_THREADS": "1"})
+    assert _operator_highs_overrides(one) == _operator_highs_overrides(_env_options({}))
+
+
+def test_operator_highs_layer_comes_from_run_options(monkeypatch) -> None:
+    from flextool.engine.solve._orchestration import _operator_highs_overrides
+
+    for name, value in _READER_ENV.items():
+        monkeypatch.setenv(name, value)
+    assert _operator_highs_overrides(_env_options({})) == {}
+    from_env = _operator_highs_overrides(None)
+    assert from_env == _operator_highs_overrides(_env_options(_READER_ENV))
+    assert from_env == {"threads": 4, "parallel": "on", "presolve": "off", "time_limit": 7.0,
+                        "mip_rel_gap": 0.3, "output_flag": False}
+
+
+def test_warm_start_and_basis_cache_come_from_run_options(tmp_path, monkeypatch) -> None:
+    from flextool.engine.solve._orchestration import _basis_cache_active, _basis_cache_dir
+    from flextool.engine.solve._subprocess_solve import resolve_basis_cache_dir
+
+    monkeypatch.setenv("FLEXTOOL_WARM_START", "1")
+    monkeypatch.setenv("FLEXTOOL_BASIS_CACHE_DIR", str(tmp_path / "env_cache"))
+    assert _basis_cache_active("none", "highs", None) is True
+    assert _basis_cache_active("none", "highs", _env_options({})) is False
+    chosen = _env_options({"FLEXTOOL_WARM_START": "1", "FLEXTOOL_BASIS_CACHE_DIR": str(tmp_path / "chosen")})
+    assert _basis_cache_active("none", "highs", chosen) is True
+    assert _basis_cache_dir(tmp_path / "work", chosen) == tmp_path / "chosen"
+    assert resolve_basis_cache_dir(tmp_path / "work", _env_options({})) == tmp_path / "work" / "basis_cache"
+    assert resolve_basis_cache_dir(tmp_path / "work") == tmp_path / "env_cache"
+
+
+def test_scaling_config_comes_from_run_options(monkeypatch) -> None:
+    from polar_high.autoscale import ScalingMode
+
+    from flextool.engine.autoscale import resolve_scaling_config
+
+    monkeypatch.setenv("FLEXTOOL_SCALING", "off")
+    monkeypatch.setenv("FLEXTOOL_USER_BOUND_SCALE", "-4")
+    assert resolve_scaling_config(None).mode is ScalingMode.OFF
+    assert resolve_scaling_config(None).user_bound_scale == -4
+    clean = resolve_scaling_config(None, run_options=_env_options({}))
+    assert clean.mode is ScalingMode.FULL and clean.user_bound_scale is None
+    assert resolve_scaling_config(None, run_options=_env_options({}), db_scaling="basic").mode is ScalingMode.BASIC
+    env_wins = resolve_scaling_config(None, run_options=_env_options({"FLEXTOOL_SCALING": "solver_only"}),
+                                      db_scaling="basic")
+    assert env_wins.mode is ScalingMode.SOLVER_ONLY
+
+
+def test_matrix_file_format_comes_from_run_options(options_db, monkeypatch) -> None:
+    from flextool.engine.input._solve_config import SolveConfig
+
+    url, _cfg = options_db
+    monkeypatch.setenv("FLEXTOOL_MATRIX_FILE_FORMAT", "lp")
+    from_env = SolveConfig.load_from_db_url(url, "custom")
+    chosen = SolveConfig.load_from_db_url(url, "custom", run_options=_env_options({}))
+    assert from_env.solver_configs[SOLVE].io_api == "lp"
+    assert chosen.solver_configs[SOLVE].io_api == "direct"

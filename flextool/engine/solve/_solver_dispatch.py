@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
     from polar_high import Problem
 
+    from flextool.run_options import RunOptions
+
 
 # ---------------------------------------------------------------------------
 # Effective HiGHS-options resolver (Batch C.1)
@@ -143,7 +145,7 @@ def _resolve_effective_highs_options(
        options win over the convenience knobs.
     5. ``cli_overrides`` — keys injected by CLI flags
        (``--highs-threads``, ``--solver-time-limit``, …) via
-       :func:`flextool.engine.solve._orchestration._cli_highs_overrides`.
+       :func:`flextool.engine.solve._orchestration._operator_highs_overrides`.
        Highest precedence; the operator's command-line intent is
        authoritative.
 
@@ -301,6 +303,7 @@ def run_one_solve(
     save_memory: bool = False,
     solve_name: str | None = None,
     work_folder: "Path | None" = None,
+    run_options: "RunOptions | None" = None,
 ):
     """Dispatch *problem* to the chosen solver.
 
@@ -354,6 +357,9 @@ def run_one_solve(
         files under ``<work_folder>/solve_data/subprocess/`` for post-
         mortem inspection.  ``None`` uses a self-cleaning tempdir.
         Ignored on the in-process path.
+    run_options
+        The run's operator options, handed to the subprocess path (warm-start
+        basis cache).  ``None`` reads the environment.
 
     Returns
     -------
@@ -393,6 +399,7 @@ def run_one_solve(
                 solve_name=solve_name or "solve",
                 logger=logger,
                 work_folder=work_folder,
+                run_options=run_options,
             )
         # Names reach HiGHS only when a HiGHS option writes a file with them.
         return problem.solve(keep_solver=True, highs_names="auto")
@@ -433,6 +440,7 @@ def run_one_solve(
             solve_name=solve_name or "solve",
             logger=logger,
             work_folder=work_folder,
+            run_options=run_options,
         )
     except RuntimeError as e:
         msg = str(e)

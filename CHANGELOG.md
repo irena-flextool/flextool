@@ -4,6 +4,9 @@
   replaced the environment variable, so HiGHS ran on one thread. An unset flag now lets the environment variable
   through; a given flag still wins. The flags of the other options with an environment variable twin work the same
   way (flag > environment variable > database > default).
+- **Fixed: a solve with Benders decomposition ignored its `scaling` setting.** Its region subproblems were scaled
+  with `full`, or with the `scaling` of the solve that ran before it in the chain. Each solve now uses its own
+  `scaling`; `--scaling` / `FLEXTOOL_SCALING` still override it.
 - **New flags `--benders-workers N` and `--basis-cache-dir PATH`** for `run_flextool`, the command-line twins of
   `FLEXTOOL_BENDERS_WORKERS` and `FLEXTOOL_BASIS_CACHE_DIR`.
 - The run header lists the options set by a flag or an environment variable, with where each came from, and the

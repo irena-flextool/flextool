@@ -73,6 +73,8 @@ import numpy as np
 if TYPE_CHECKING:
     from polar_high import Problem, Solution
 
+    from flextool.run_options import RunOptions
+
 
 # Warm-start first-transfer A/B margin.  A supplied basis disables HiGHS'
 # presolve, so a *far* / stale seed can make the warm solve SLOWER than a
@@ -1129,6 +1131,27 @@ def _looks_like_license_error(*texts: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def resolve_basis_cache_dir(work_folder: Path | str | None, run_options: "RunOptions | None" = None) -> Path:
+    """The warm-start basis cache directory; created if missing.
+
+    ``--basis-cache-dir`` / ``FLEXTOOL_BASIS_CACHE_DIR`` (``run_options``; ``None`` reads the environment) >
+    ``<work_folder>/basis_cache`` > ``<tmp>/flextool_basis_cache``.  The in-process ``.nbasis`` cache and the
+    subprocess ``.bas`` cache share it.
+    """
+    from flextool.run_options import RunOptions
+
+    options = run_options if run_options is not None else RunOptions.from_env()
+    configured = options.value("basis_cache_dir")
+    if configured:
+        cache_dir = Path(configured)
+    elif work_folder is not None:
+        cache_dir = Path(work_folder) / "basis_cache"
+    else:
+        cache_dir = Path(tempfile.gettempdir()) / "flextool_basis_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
 def solve_via_subprocess(
     problem: "Problem",
     solver_name: str,
@@ -1137,6 +1160,7 @@ def solve_via_subprocess(
     solve_name: str,
     logger: logging.Logger | None = None,
     work_folder: Path | None = None,
+    run_options: "RunOptions | None" = None,
 ) -> "Solution":
     """Solve *problem* via the appropriate CLI subprocess; return a Solution.
 
@@ -1167,6 +1191,9 @@ def solve_via_subprocess(
         When given, intermediate files live under
         ``<work_folder>/solve_data/subprocess/`` for post-mortem.
         ``None`` uses a self-cleaning temp dir.
+    run_options
+        The run's operator options; the HiGHS path reads ``warm_start`` and
+        ``basis_cache_dir`` from them.  ``None`` reads the environment.
 
     Returns
     -------
@@ -1179,7 +1206,7 @@ def solve_via_subprocess(
     if solver_name == "highs":
         return _solve_highs_subprocess(
             problem, options, solve_name=solve_name, logger=logger,
-            work_folder=work_folder,
+            work_folder=work_folder, run_options=run_options,
         )
     if solver_name in _SCRIPTS:
         return _solve_commercial_subprocess(
@@ -1204,6 +1231,7 @@ def _solve_highs_subprocess(
     solve_name: str,
     logger: logging.Logger | None,
     work_folder: Path | None,
+    run_options: "RunOptions | None" = None,
 ) -> "Solution":
     """HiGHS-specific subprocess path (unchanged contract).
 
@@ -1213,7 +1241,7 @@ def _solve_highs_subprocess(
     ``highspy.Highs.readModel`` (which used to dominate cold-path RSS).
 
     **Warm-start arm** (opt-in, active only when the save-memory
-    subprocess path runs *and* ``FLEXTOOL_WARM_START == "1"``): a native
+    subprocess path runs *and* ``--warm-start`` / ``FLEXTOOL_WARM_START=1`` is set): a native
     HiGHS ``.bas`` basis is cached in a persistent directory that
     survives the per-solve ``out_dir`` cleanup, keyed by the MPS
     structural fingerprint (``problem._last_mps_fingerprint``).  On a
@@ -1245,6 +1273,10 @@ def _solve_highs_subprocess(
     """
     from polar_high import Solution
 
+    from flextool.run_options import RunOptions
+
+    if run_options is None:
+        run_options = RunOptions.from_env()
     cleanup = work_folder is None
     if work_folder is not None:
         out_dir = Path(work_folder) / "solve_data" / "subprocess"
@@ -1257,7 +1289,7 @@ def _solve_highs_subprocess(
     sol_path = out_dir / f"{safe_name}.sol"
     opts_path = out_dir / f"{safe_name}.opt"
 
-    # Warm-start basis-cache slots (populated only under FLEXTOOL_WARM_START;
+    # Warm-start basis-cache slots (populated only with warm start on;
     # declared here so the ``finally`` cleanup can reference them safely).
     warm_cached: Path | None = None
     warm_tmp_bas: Path | None = None
@@ -1295,7 +1327,7 @@ def _solve_highs_subprocess(
         # --- Warm-start arm (opt-in) ------------------------------------
         # Keyed by the MPS structural fingerprint.  Everything here is
         # defensive: on any hiccup we drop the warm slots and solve cold.
-        if os.environ.get("FLEXTOOL_WARM_START") == "1":
+        if run_options.value("warm_start"):
             try:
                 fp = getattr(problem, "_last_mps_fingerprint", None)
                 if fp is None:
@@ -1305,17 +1337,7 @@ def _solve_highs_subprocess(
                             "skipped for %r", solve_name,
                         )
                 else:
-                    cache_env = os.environ.get("FLEXTOOL_BASIS_CACHE_DIR")
-                    if cache_env:
-                        cache_dir = Path(cache_env)
-                    elif work_folder is not None:
-                        cache_dir = Path(work_folder) / "basis_cache"
-                    else:
-                        cache_dir = (
-                            Path(tempfile.gettempdir())
-                            / "flextool_basis_cache"
-                        )
-                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    cache_dir = resolve_basis_cache_dir(work_folder, run_options)
                     warm_cached = cache_dir / f"{fp}.bas"
                     warm_nowarm_marker = cache_dir / f"{fp}.nowarm"
                     warm_abtested_marker = cache_dir / f"{fp}.abtested"

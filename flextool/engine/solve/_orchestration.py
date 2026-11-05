@@ -202,8 +202,8 @@ def _baseline_highs_options(
     * :data:`DETERMINISM_OPTIONS` — ``random_seed`` / ``parallel`` /
       ``solver`` / ``presolve`` pins for byte-deterministic LP solutions.
     * ``user_bound_scale`` — only when ``user_bound_scale_override`` is
-      a non-zero integer (CLI ``--user-bound-scale N`` / DB
-      ``solve.user_bound_scale``).  Clamped to the HiGHS-safe range
+      a non-zero integer (``--user-bound-scale N`` /
+      ``FLEXTOOL_USER_BOUND_SCALE``).  Clamped to the HiGHS-safe range
       ``[USER_BOUND_SCALE_MIN, USER_BOUND_SCALE_MAX]``.  When unset, the
       autoscaler's Layer 3 may still emit its own value based on the
       coefficient ranges.
@@ -235,54 +235,56 @@ def _baseline_highs_options(
     return options
 
 
-def _cli_highs_overrides() -> dict[str, object]:
-    """HiGHS options from the CLI flags, read from their env vars at call time.
+def _run_options_or_env(run_options: "RunOptions | None") -> RunOptions:
+    """*run_options*, or the environment's options for a caller that passes none (library call, test)."""
+    return run_options if run_options is not None else RunOptions.from_env()
 
-    The top layer of :func:`_solve_highs_options`:
+
+def _operator_highs_overrides(run_options: "RunOptions | None" = None) -> dict[str, object]:
+    """HiGHS options the operator set for this run, by flag or environment variable.
+
+    The top layer of :func:`_solve_highs_options`.  Only options whose source is a flag or an environment variable
+    contribute; a registry default adds nothing, so an unset option leaves the lower layers in charge.  ``None``
+    reads the environment (:meth:`RunOptions.from_env`).
 
     * ``--solver-time-limit S`` (``FLEXTOOL_HIGHS_TIME_LIMIT``) → ``time_limit``
     * ``--solver-mip-gap GAP`` (``FLEXTOOL_HIGHS_MIP_GAP``) → ``mip_rel_gap``
       (only bites MIP solves)
     * ``--presolve {on,off,choose}`` (``FLEXTOOL_HIGHS_PRESOLVE``) → ``presolve``
     * ``--highs-threads N`` (``FLEXTOOL_HIGHS_THREADS``): N > 1 → ``threads=N``
-      and ``parallel=on`` (trades determinism for wall-clock speed); N ≤ 1
+      and ``parallel=on`` (trades determinism for wall-clock speed); N = 1
       keeps the deterministic DETERMINISM_OPTIONS pins.  Every Highs instance
       of a sub-solve sees the same value, which sidesteps HiGHS' "global
       scheduler already initialised" rejection.
     * ``--solver-log-level {silent,normal,verbose}``
       (``FLEXTOOL_SOLVER_LOG_LEVEL``): ``silent`` → ``output_flag=False``,
       ``verbose`` → ``output_flag=True`` + ``log_dev_level=2``, ``normal`` →
-      ``output_flag=True``; anything else leaves the HiGHS default.
+      ``output_flag=True``.
 
-    Malformed numeric values are ignored.
+    A malformed environment value is ignored with one warning (:func:`flextool.run_options.resolve`).
     """
+    opts = _run_options_or_env(run_options)
+
+    def given(key: str):
+        resolved = opts.get(key)
+        return resolved.value if resolved.source in ("cli", "env") else None
+
     cli: dict[str, object] = {}
-    tlim = os.environ.get("FLEXTOOL_HIGHS_TIME_LIMIT")
-    if tlim:
-        try:
-            cli["time_limit"] = float(tlim)
-        except ValueError:
-            pass
-    mip_gap = os.environ.get("FLEXTOOL_HIGHS_MIP_GAP")
-    if mip_gap:
-        try:
-            cli["mip_rel_gap"] = float(mip_gap)
-        except ValueError:
-            pass
-    presolve = os.environ.get("FLEXTOOL_HIGHS_PRESOLVE")
-    if presolve in ("on", "off", "choose"):
+    tlim = given("solver_time_limit")
+    if tlim is not None:
+        cli["time_limit"] = float(tlim)
+    mip_gap = given("solver_mip_gap")
+    if mip_gap is not None:
+        cli["mip_rel_gap"] = float(mip_gap)
+    presolve = given("presolve")
+    if presolve is not None:
         cli["presolve"] = presolve
-    threads = os.environ.get("FLEXTOOL_HIGHS_THREADS")
-    if threads is not None:
-        try:
-            n = int(threads)
-        except ValueError:
-            n = 1
-        if n > 1:
-            cli["threads"] = n
-            # HiGHS needs ``parallel="on"`` before it uses the threads.
-            cli["parallel"] = "on"
-    log_level = os.environ.get("FLEXTOOL_SOLVER_LOG_LEVEL")
+    threads = given("highs_threads")
+    if threads is not None and int(threads) > 1:
+        cli["threads"] = int(threads)
+        # HiGHS needs ``parallel="on"`` before it uses the threads.
+        cli["parallel"] = "on"
+    log_level = given("solver_log_level")
     if log_level == "silent":
         cli["output_flag"] = False
     elif log_level == "verbose":
@@ -305,7 +307,8 @@ def _solve_highs_options(
     ``baseline`` (engine determinism pins + scale; ``None`` for the echoed
     "Solver args" line and for Benders) < ``solver_config/highs.opt`` <
     the solve's convenience knobs (``solve.solver_mip_gap``) < the solve's
-    ``solver_arguments`` < the CLI flags (:func:`_cli_highs_overrides`).
+    ``solver_arguments`` < the operator's flags / environment variables
+    (:func:`_operator_highs_overrides`, from ``state.run_options``).
     ``run_chain_from_db`` seeds ``state.paths.solver_config_dir`` to the
     work-folder ``solver_config`` copy; a bare ``PathConfig`` leaves it
     None and the highs.opt layer is empty.
@@ -325,7 +328,7 @@ def _solve_highs_options(
             complete_solve_name, {}
         ),
         highs_opt_path=highs_opt_path,
-        cli_overrides=_cli_highs_overrides(),
+        cli_overrides=_operator_highs_overrides(state.run_options),
         baseline=baseline,
         solver_config=state.solve.solver_configs.get(
             complete_solve_name, SolverConfig()
@@ -341,6 +344,7 @@ def _autoscale_emit_layer1(
     work_folder: str | os.PathLike | None,
     layer2_plan: "_AutoscaleLayer2Plan | None" = None,
     layer3_plan: "_AutoscaleLayer3Plan | None" = None,
+    scaling_config: "ScalingConfig | None" = None,
 ) -> None:
     """Layer 1 (detect) post-solve emitter.
 
@@ -358,15 +362,9 @@ def _autoscale_emit_layer1(
     solve, which the subprocess child does not share back) skips the
     layer with a debug-level note rather than breaking the solve.
     """
-    # ``cli_args=None`` is intentional: the CLI surface
-    # (``cmd_run_flextool``) mirrors ``--scaling`` /
-    # ``--user-bound-scale`` into the ``FLEXTOOL_SCALING`` /
-    # ``FLEXTOOL_USER_BOUND_SCALE`` env vars before invoking the
-    # orchestrator, matching the existing env-threading convention
-    # documented on the ``run_chain_from_db`` call site.  Cascade-
-    # internal hops therefore observe operator intent without
-    # plumbing the parsed ``args`` namespace through every helper.
-    cfg = _autoscale_resolve_config(None)
+    # ``scaling_config`` is the sub-solve's resolved config (the run's options over the solve's
+    # ``solve.scaling``); ``None`` (a direct call) resolves it from the environment.
+    cfg = scaling_config if scaling_config is not None else _autoscale_resolve_config(None)
     if not _autoscale_mode_enables_layer1(cfg.mode):
         return
     if sol is None:
@@ -437,6 +435,7 @@ def _autoscale_apply_layer3_pre_solve(
     layer2_plan: "_AutoscaleLayer2Plan | None",
     solve_name: str,
     logger: logging.Logger,
+    scaling_config: "ScalingConfig | None" = None,
 ) -> "_AutoscaleLayer3Plan | None":
     """Layer 3 (HiGHS-native top-up) pre-solve apply.
 
@@ -457,7 +456,7 @@ def _autoscale_apply_layer3_pre_solve(
     ``user_bound_scale`` or ``user_objective_scale``, Layer 3 skips that
     axis and the caller's value wins.
     """
-    cfg = _autoscale_resolve_config(None)
+    cfg = scaling_config if scaling_config is not None else _autoscale_resolve_config(None)
     if not _autoscale_mode_enables_layer3(cfg.mode):
         return None
     try:
@@ -504,6 +503,7 @@ def _autoscale_apply_layer2_pre_solve(
     *,
     solve_name: str,
     logger: logging.Logger,
+    scaling_config: "ScalingConfig | None" = None,
 ) -> "tuple[_AutoscaleLayer2Plan | None, _AutoscaleRangeReport | None]":
     """Layer 2 (semantic per-type scaling) pre-solve apply.
 
@@ -531,7 +531,7 @@ def _autoscale_apply_layer2_pre_solve(
     operator-facing log line and YAML report describe the *scaled*
     LP that HiGHS actually saw.
     """
-    cfg = _autoscale_resolve_config(None)
+    cfg = scaling_config if scaling_config is not None else _autoscale_resolve_config(None)
     # Layer 2 is FlexTool-side semantic per-quantity scaling: only fires
     # in ``ScalingMode.FULL``.  In ``BASIC`` we still want Layer 1's
     # pre-solve ranges to be available for the console summary, so we
@@ -727,10 +727,13 @@ def _autoscale_lp_shape_signature(pb: "Problem", base_solve_name: str) -> tuple:
     return (base_solve_name, int(pb._next_col), var_sig, cstr_sig)
 
 
-def _basis_cache_active(decomposition: "str | None", solver_name: str) -> bool:
+def _basis_cache_active(
+    decomposition: "str | None", solver_name: str, run_options: "RunOptions | None" = None,
+) -> bool:
     """Gate for the Phase-4 in-process warm-start basis cache.
 
-    True only when (a) the operator opted in with ``FLEXTOOL_WARM_START=1``,
+    True only when (a) the operator opted in with ``--warm-start`` /
+    ``FLEXTOOL_WARM_START=1`` (``run_options``; ``None`` reads the environment),
     (b) the in-process solver is HiGHS — the only solver whose live handle
     supports ``setBasis`` / ``getBasis`` for basis transfer, and (c) the
     active solve is NOT Benders-decomposed.  A Benders solve never builds a
@@ -743,30 +746,24 @@ def _basis_cache_active(decomposition: "str | None", solver_name: str) -> bool:
     (and every non-HiGHS / Benders path) stays byte-identical.
     """
     return (
-        os.environ.get("FLEXTOOL_WARM_START") == "1"
+        bool(_run_options_or_env(run_options).value("warm_start"))
         and solver_name == "highs"
         and decomposition != "benders"
     )
 
 
-def _basis_cache_dir(work_folder: "Path | str | None") -> Path:
+def _basis_cache_dir(
+    work_folder: "Path | str | None", run_options: "RunOptions | None" = None,
+) -> Path:
     """Resolve the shared warm-start basis cache directory (Phase-2 pattern).
 
-    ``FLEXTOOL_BASIS_CACHE_DIR`` env > ``<work_folder>/basis_cache`` >
-    ``<tmp>/flextool_basis_cache``.  Mirrors the resolution used by the
-    subprocess ``.bas`` arm in :mod:`_subprocess_solve` so the in-process
-    ``.nbasis`` files land alongside their ``.bas`` counterparts.  Creates
-    the directory (``parents=True, exist_ok=True``).
+    The same resolution as the subprocess ``.bas`` arm
+    (:func:`flextool.engine.solve._subprocess_solve.resolve_basis_cache_dir`), so the in-process ``.nbasis`` files
+    land alongside their ``.bas`` counterparts.
     """
-    cache_env = os.environ.get("FLEXTOOL_BASIS_CACHE_DIR")
-    if cache_env:
-        cache_dir = Path(cache_env)
-    elif work_folder is not None:
-        cache_dir = Path(work_folder) / "basis_cache"
-    else:
-        cache_dir = Path(tempfile.gettempdir()) / "flextool_basis_cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir
+    from flextool.engine.solve._subprocess_solve import resolve_basis_cache_dir
+
+    return resolve_basis_cache_dir(work_folder, _run_options_or_env(run_options))
 
 
 def _autoscale_emit_console_summary(
@@ -779,6 +776,7 @@ def _autoscale_emit_console_summary(
     already_emitted: set[str],
     memrec: "_MemoryRecorder | None" = None,
     logger: logging.Logger | None = None,
+    scaling_config: "ScalingConfig | None" = None,
 ) -> None:
     """Emit the one-line user-visible autoscale summary.
 
@@ -797,7 +795,7 @@ def _autoscale_emit_console_summary(
     The checkpoint is gated by the same dedup as the summary, so it fires
     once per base solve — exactly when the summary text is printed.
     """
-    cfg = _autoscale_resolve_config(None)
+    cfg = scaling_config if scaling_config is not None else _autoscale_resolve_config(None)
     if not _autoscale_mode_enables_layer1(cfg.mode):
         return
     if ranges_pre is None:
@@ -853,6 +851,7 @@ if TYPE_CHECKING:
 
     import polars as pl
     from polar_high import Problem, Solution
+    from polar_high.autoscale import ScalingConfig
 
     from flextool.engine.preprocess.flex_data import FlexData
 
@@ -2282,30 +2281,14 @@ def run_orchestration(
     # ``_drive_cascade`` can consult it (gates ``data.dump_csvs``).
     state.csv_dump = bool(csv_dump)  # type: ignore[attr-defined]
 
-    # Per-solve autoscaler mode (v64 ``solve.scaling``): capture whether
-    # the operator pinned the mode explicitly via ``--scaling`` /
-    # ``FLEXTOOL_SCALING`` (the CLI mirrors the flag into the env var)
-    # BEFORE the per-solve loop can overwrite it.  When set, the operator
-    # override wins over every solve's DB value; when unset, each solve's
-    # ``solve.scaling`` drives ``FLEXTOOL_SCALING`` in ``_drive_cascade``.
-    # Restore on exit so the DB-derived env never leaks to the caller.
-    state.scaling_user_env = os.environ.get(  # type: ignore[attr-defined]
-        "FLEXTOOL_SCALING")
-
     # The cascade solver runs polar_high on each solve and captures the
     # handoff.  We use flextool's orchestration loop driver because it
     # encodes the recursive/rolling/stochastic expansion + per-solve
     # preprocessing chain we still consume.  Our cascade solver is the
     # `solver.run(...)` callback inside that loop.
-    try:
-        return _drive_cascade(state, work_folder, solves, runner_factory,
-                              db_url=db_url, scenario_name=scenario_name,
-                              warm=warm, keep_solutions=keep_solutions)
-    finally:
-        if state.scaling_user_env is None:
-            os.environ.pop("FLEXTOOL_SCALING", None)
-        else:
-            os.environ["FLEXTOOL_SCALING"] = state.scaling_user_env
+    return _drive_cascade(state, work_folder, solves, runner_factory,
+                          db_url=db_url, scenario_name=scenario_name,
+                          warm=warm, keep_solutions=keep_solutions)
 
 
 def _drive_cascade(
@@ -2429,6 +2412,12 @@ def _drive_cascade(
     # ``--csv-dump``: the per-sub-solve gates (``dump_csvs`` and the handoff writers' dump branch) read
     # ``runner.state``, so the flag must be on the runner's state, not only on the outer one.
     runner.state.csv_dump = bool(getattr(state, "csv_dump", False))  # type: ignore[attr-defined]
+    # The run's operator options (flags / environment variables), resolved once: a RunnerState built without
+    # them (a direct ``run_orchestration`` call, a test) reads the environment here.  Both states carry the same
+    # object so every reader of the cascade sees one resolution.
+    run_options = _run_options_or_env(getattr(state, "run_options", None))
+    state.run_options = run_options
+    runner.state.run_options = run_options
     runner.state.logger.setLevel(logging.ERROR)
     # Forward the opt-in memory recorder (no-op when env var unset) so
     # ``_PolarHighCascadeSolver.run`` can fire the first-iter checkpoints.
@@ -2671,6 +2660,8 @@ def _drive_cascade(
             complete_solve_name: str,
             base_solve_name: str,
             data,
+            *,
+            scaling_config: "ScalingConfig",
         ) -> int:
             """Run *complete_solve_name* via the Benders region driver.
 
@@ -2845,6 +2836,7 @@ def _drive_cascade(
                 solver_options=_solve_highs_options(
                     state, complete_solve_name, baseline=None,
                 ),
+                scaling_config=scaling_config,
             )
 
             # Final summary — convergence + the valid LB/UB sandwich that
@@ -3161,6 +3153,15 @@ def _drive_cascade(
                 provider=_sub_solve_provider,
             )
             _horizon_keys = None
+            # The autoscaler config of this sub-solve, resolved once: ``--scaling`` /
+            # ``FLEXTOOL_SCALING`` > the solve's ``solve.scaling`` > ``full``.  Every
+            # consumer gets it explicitly — the Benders regions, the baseline options, the
+            # cold/warm LP build and the Layer 1/2/3 helpers — so a solve never sees another
+            # solve's mode.
+            _scaling_cfg = _autoscale_resolve_config(
+                None, run_options=run_options,
+                db_scaling=state.solve.scaling_for(base_solve_name),
+            )
             if state.solve.decomposition_for(base_solve_name) == "benders":
                 # A Benders solve writes no outputs (it returns before
                 # ``write_outputs_for_solve``), so it has no raw dump either.
@@ -3173,40 +3174,23 @@ def _drive_cascade(
                 self._release_warm_problem()
                 return self._run_benders_solve(
                     complete_solve_name, base_solve_name, data,
+                    scaling_config=_scaling_cfg,
                 )
 
             user_obj_scale = state.solve.scale_the_objective.get(complete_solve_name)
             effective_obj_scale = _resolve_effective_obj_scale(user_obj_scale)
             _emit_provider_obj_scale(self.state, effective_obj_scale)
             # ``user_bound_scale`` resolution priority:
-            # ``FLEXTOOL_USER_BOUND_SCALE`` env var (set by
-            # ``--user-bound-scale`` CLI flag) > DB ``solve.user_bound_scale``
-            # > autoscale Layer 3's automatic recommendation > HiGHS'
-            # own internal scaling.  HiGHS' "Consider setting the
+            # ``--user-bound-scale`` / ``FLEXTOOL_USER_BOUND_SCALE`` (the
+            # run's options) > autoscale Layer 3's automatic recommendation
+            # > HiGHS' own internal scaling.  The database has no
+            # ``user_bound_scale`` parameter.  HiGHS' "Consider setting the
             # user_bound_scale option to <N>" warning still prints a
             # value if any case slips through Layer 3; pass it via
             # ``--user-bound-scale``.
-            _cli_ubs = os.environ.get("FLEXTOOL_USER_BOUND_SCALE")
             user_bound_scale_override = _resolve_user_bound_scale_override(
-                _cli_ubs if _cli_ubs is not None
-                else state.solve.user_bound_scale.get(complete_solve_name)
+                run_options.value("user_bound_scale")
             )
-            # Per-solve autoscaler mode (v64 ``solve.scaling``): unless the
-            # operator pinned it via ``--scaling`` / ``FLEXTOOL_SCALING``
-            # (captured in ``state.scaling_user_env`` before the loop), the
-            # solve's DB value drives ``FLEXTOOL_SCALING``.  Set it fresh
-            # each sub-solve (default ``full`` when the solve does not author
-            # it) so per-solve differences and the cascade-internal env
-            # readers below stay consistent.  Precedence: operator override >
-            # ``solve.scaling`` > default ``full``.
-            if getattr(state, "scaling_user_env", None) is None:
-                _db_scaling = state.solve.scaling_for(base_solve_name)
-                os.environ["FLEXTOOL_SCALING"] = _db_scaling or "full"
-            # Resolve the autoscaler's mode once for this sub-solve so the
-            # baseline-options builder, the cold/warm LP construction, and
-            # the Layer 2 / Layer 3 helpers all see the same value.  Cascade-
-            # internal call sites read ``FLEXTOOL_SCALING`` from env.
-            _scaling_cfg = _autoscale_resolve_config(None)
             _scaling_mode = _scaling_cfg.mode
 
             # Per-solve ``solver_arguments`` 1d-map (Batch C.1), listed first
@@ -3248,7 +3232,7 @@ def _drive_cascade(
             # can no longer be warm-reused, so every iteration must
             # cold-rebuild.  Resolve once per sub-solve (cheap) so the
             # knob can be toggled between runs of the same cascade.
-            _save_memory = os.environ.get("FLEXTOOL_SAVE_MEMORY") == "1"
+            _save_memory = bool(run_options.value("save_memory"))
             _warm_disabled_by_save_memory = warm and _save_memory
             if _warm_disabled_by_save_memory and not getattr(
                 self, "_warm_disabled_by_save_memory_warned", False
@@ -3496,6 +3480,7 @@ def _drive_cascade(
                             inner_pb,
                             solve_name=complete_solve_name,
                             logger=self.state.logger,
+                            scaling_config=_scaling_cfg,
                         )
                         # Cache the pre-Layer-2 RangeReport so subsequent
                         # warm reuses can still attach it as
@@ -3509,6 +3494,7 @@ def _drive_cascade(
                             layer2_plan=self._autoscale_warm_layer2_plan,
                             solve_name=complete_solve_name,
                             logger=self.state.logger,
+                            scaling_config=_scaling_cfg,
                         )
                         _autoscale_ranges_post = None
                         if not _autoscale_disable_cache():
@@ -3542,6 +3528,7 @@ def _drive_cascade(
                         already_emitted=self._autoscale_summary_emitted,
                         memrec=_memrec_local if _emit_phase else None,
                         logger=self.state.logger,
+                        scaling_config=_scaling_cfg,
                     )
                     _phase_prof("autoscale_done")
                     # Phase 4 Step 4b — in-process warm-start basis
@@ -3561,6 +3548,7 @@ def _drive_cascade(
                     if _basis_cache_active(
                         state.solve.decomposition_for(base_solve_name),
                         _active_solver_cfg.name,
+                        run_options,
                     ):
                         try:
                             fresh_fp = inner_pb.basis_name_fingerprint()
@@ -3569,6 +3557,7 @@ def _drive_cascade(
                                 if nb is None:
                                     _bc_dir = _basis_cache_dir(
                                         self.state.paths.work_folder,
+                                        run_options,
                                     )
                                     _nb_path = (
                                         _bc_dir / f"{fresh_fp}.nbasis"
@@ -3693,6 +3682,7 @@ def _drive_cascade(
                     and _basis_cache_active(
                         state.solve.decomposition_for(base_solve_name),
                         _active_solver_cfg.name,
+                        run_options,
                     )
                 ):
                     try:
@@ -3700,6 +3690,7 @@ def _drive_cascade(
                         self._inproc_basis_cache[fresh_fp] = nb_out
                         _bc_dir = _basis_cache_dir(
                             self.state.paths.work_folder,
+                            run_options,
                         )
                         _tmp = (
                             _bc_dir
@@ -3851,6 +3842,7 @@ def _drive_cascade(
                         pb,
                         solve_name=complete_solve_name,
                         logger=self.state.logger,
+                        scaling_config=_scaling_cfg,
                     )
                     if _autoscale_profile:
                         _ap("layer2_applied",
@@ -3868,6 +3860,7 @@ def _drive_cascade(
                         layer2_plan=_autoscale_layer2_plan,
                         solve_name=complete_solve_name,
                         logger=self.state.logger,
+                        scaling_config=_scaling_cfg,
                     )
                     if _autoscale_profile:
                         _ap("layer3_applied")
@@ -3884,11 +3877,8 @@ def _drive_cascade(
                         and _autoscale_ranges_pre.trigger
                     ):
                         try:
-                            _autoscale_cfg_for_post = _autoscale_resolve_config(
-                                None,
-                            )
                             _autoscale_ranges_post = _autoscale_compute_ranges(
-                                pb, _autoscale_cfg_for_post,
+                                pb, _scaling_cfg,
                             )
                         except Exception:  # pragma: no cover — non-fatal
                             self.state.logger.exception(
@@ -3930,6 +3920,7 @@ def _drive_cascade(
                     already_emitted=self._autoscale_summary_emitted,
                     memrec=_memrec_local if _emit_phase else None,
                     logger=self.state.logger,
+                    scaling_config=_scaling_cfg,
                 )
                 _phase_prof("autoscale_done")
                 if _autoscale_profile:
@@ -3989,6 +3980,7 @@ def _drive_cascade(
                     save_memory=_save_memory,
                     solve_name=complete_solve_name,
                     work_folder=state.paths.work_folder,
+                    run_options=run_options,
                 )
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
@@ -4038,6 +4030,7 @@ def _drive_cascade(
                 if self.state.paths is not None else None,
                 layer2_plan=locals().get("_autoscale_layer2_plan"),
                 layer3_plan=locals().get("_autoscale_layer3_plan"),
+                scaling_config=_scaling_cfg,
             )
             _phase_prof("layer1emit_done")
             # Memory checkpoint after the solve completes.  Fires on
@@ -4766,6 +4759,9 @@ def run_chain_from_db(
         logger = logging.getLogger(
             f"flextool.engine.solve.run_chain_from_db[{scenario_name}]"
         )
+    # The run's operator options: the CLI passes its flags over the environment; a library caller (Spine Toolbox
+    # tool, Python console, test) passes none and gets the environment's.
+    run_options = _run_options_or_env(run_options)
 
     # v52 multi-solver dispatch (Phase 2 startup hint).  Probe each
     # solver in polar-high's catalog with a trivial 1-var LP so users
@@ -4920,6 +4916,7 @@ def run_chain_from_db(
                 flextool_dir=flextool_dir_resolved,
                 solver_config_dir=solver_config_dir_resolved,
                 work_folder=work_folder,
+                run_options=run_options,
             )
             runner.state.logger.setLevel(logging.ERROR)
             return runner
@@ -4931,7 +4928,7 @@ def run_chain_from_db(
         from flextool.engine.input._solve_config import SolveConfig
         from flextool.engine.input._timeline import TimelineConfig
 
-        sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
+        sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger, run_options=run_options)
         _memrec.checkpoint("solve_config_loaded", logger,
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)
@@ -4973,9 +4970,7 @@ def run_chain_from_db(
         # :mod:`flextool.engine.solve._run_model` (Phase 5b) invokes
         # it after the parent-handoff translator at every iteration.
         state.override_provider = override_provider
-        state.run_options = (
-            run_options if run_options is not None else RunOptions.from_env()
-        )
+        state.run_options = run_options
 
         return run_orchestration(
             state, work_folder, runner_factory=_runner_factory,
