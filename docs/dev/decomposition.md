@@ -194,7 +194,7 @@ that authors neither falls back to these defaults.
 
 The master handles existing and investable trade connections in ONE
 build. An existing-only arc (`existing > 0`, no `invest_method`) carries
-no invest variable; its flow is bounded by `existing / unitsize` through
+no invest variable; its flow is bounded by the existing unit count (`existing_count` = capacity / unitsize) through
 the FlexTool `maxFlow` RHS (`p_flow_upper_existing`). An investable arc
 gets a `v_invest` var and its capacity is bounded by `existing +
 invested`. A greenfield arc (`existing = 0`) is unchanged — all its trade

@@ -995,9 +995,9 @@ class _BendersMaster:
         # ``v_invest_p`` column — it contributes an empty ``_C_cols`` entry
         # (zero invested capacity, zero handoff invest), and its flow is
         # bounded natively by the FlexTool ``maxFlow`` row at
-        # ``p_flow_upper_existing = existing/unitsize`` (model._max_flow_rhs;
+        # ``p_flow_upper_existing = capacity/unitsize`` (model._max_flow_rhs;
         # ``has_invest_p`` False ⇒ no ``-v_invest_p`` LHS term ⇒
-        # ``v_flow ≤ existing/unitsize``).  Mixed masters (some pipes
+        # ``v_flow ≤ capacity/unitsize``).  Mixed masters (some pipes
         # investable, some existing-only) are handled in ONE master: the
         # FlexTool emit bounds each arc by ``existing + invested``, the
         # invest var existing only for the investable subset.
@@ -1023,7 +1023,7 @@ class _BendersMaster:
                 for d in periods
             ]
 
-        # Per master f col-id, the EXISTING flow capacity ``existing/unitsize``
+        # Per master f col-id, the EXISTING flow capacity ``capacity/unitsize``
         # the FlexTool ``maxFlow`` RHS (``p_flow_upper_existing``) enforces.
         # The master-side capacity self-check (``solve_benders``) bounds each
         # cell's chosen flow by ``existing_cap + invested`` — so an
@@ -1031,7 +1031,7 @@ class _BendersMaster:
         # capacity, while a greenfield arc (existing=0) is unchanged.  The
         # reduced data's ``p_flow_upper_existing`` is keyed
         # ``(p, source, sink, d[, t])`` and already unitsize-normalised
-        # (existing/unitsize), the SAME normalisation the master ``v_flow``
+        # (existing unit count = capacity/unitsize), the SAME normalisation the master ``v_flow``
         # lives in (Phase-1 §A.5), so it drops in cell-for-cell.
         self._existing_cap_by_col: dict[int, float] = {}
         fue = getattr(reduced, "p_flow_upper_existing", None)
@@ -3024,7 +3024,7 @@ def _clamp_flow_to_capacity(
     The master's chosen capacity must support its chosen flow: the coupling row
     ``C − f ≥ 0`` (≡ ``f ≤ existing_cap + Σ v_invest_p``) holds at the master
     optimum.  For a GREENFIELD arc the existing term is 0 (cap = invested C);
-    for an EXISTING-only arc the invested C is 0 (cap = existing/unitsize); for
+    for an EXISTING-only arc the invested C is 0 (cap = existing capacity / unitsize); for
     a BOTH arc both contribute.
 
     The solver returns a vertex only within its feasibility tolerance of the

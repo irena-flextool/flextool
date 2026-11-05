@@ -504,7 +504,7 @@ gate misfires on the common `"x"`-indexed map and the code either drops
 the row or collapses it via a downstream `.unique(subset=["e"],
 keep="last")` — for a *retiring* `existing` map (nameplate → 0 at expiry)
 that keeps the last period's `0`, defaulting `unitsize` to `1000` and
-turning `existing_count = existing/unitsize` into a spurious fraction
+turning `existing_count = capacity / unitsize` into a spurious fraction
 (caps continuous online below 1; forbids integer online entirely).
 
 **Safe idioms** (use one of these for any raw per-entity map read):

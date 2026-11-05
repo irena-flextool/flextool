@@ -1099,7 +1099,7 @@ class FlexData:
     p_unitsize: Param | None = None              # (p,)
     p_all_entity_unitsize: Param | None = None  # (e,) — all entities (processes + connections + nodes); used by scaling
     p_flow_upper: Param | None = None            # (p, source, sink, d, t) — preprocessed structural max (existing + max_invest_cum)
-    p_flow_upper_existing: Param | None = None   # (p, source, sink, d) — existing/unitsize only; used by maxFlow
+    p_flow_upper_existing: Param | None = None   # (p, source, sink, d) — existing unit count (capacity/unitsize) only; used by maxFlow
     p_arc_max_cap_coef: Param | None = None      # (p, source, sink) — per-arc capacity factor for DIRECT + indirect OUTPUT arcs (maxToSink: capacity_max_coeff, min'd with an authored input_share_max on direct units; maxFromSource: input_share_max); folded onto p_flow_upper_existing in maxFlow
     p_indirect_input_cap: Param | None = None    # (p, source, sink, d, t) — indirect-unit INPUT arcs: input_share_max × full-load input flow per unit of capacity; × availability × capacity = the arc's limit (v_flow upper bound, or maxFlow row when the unit invests/divests)
     process_source_sink_uncapped: pl.DataFrame | None = None  # (p, source, sink) — conversion_flow_coeff = 0 arcs: outside every per-edge capacity / ramp / min-load constraint
@@ -1483,7 +1483,7 @@ class FlexData:
     p_state_existing_capacity: Param | None = None  # (n, d)
     # ─── Storage end-state binding (use_reference_value) ─────────────────
     # mod:2802-2822 — pins v_state at the last timestep of period_last to
-    # ``reference_value × existing/unitsize`` for nodes with
+    # ``reference_value × existing capacity / unitsize`` for nodes with
     # ``storage_solve_horizon_method=use_reference_value`` and no
     # competing fix_end / fix_start_end / bind_within_solve method.
     storage_use_reference_value: pl.DataFrame | None = None  # (n,)
@@ -3716,7 +3716,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
 
     # node__storage_solve_horizon_method (.mod:663): nodes with method
     # ``use_reference_value`` get a v_state pin at the last timestep of
-    # the last period, equal to ``reference_value × existing/unitsize``.
+    # the last period, equal to ``reference_value × existing capacity / unitsize``.
     sshm_path = inp / "node__storage_solve_horizon_method.csv"
     sshm_key = "input/node__storage_solve_horizon_method"
     if not _provider_has(provider, sshm_key, sshm_path):
@@ -4925,7 +4925,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             # In the .mod, maxFlow is ``v_flow * unitsize ≤ existing × ...``.
             # When both are negative (e.g. anti_energy_plant: us=-50, existing=-50)
             # dividing by unitsize FLIPS the inequality direction, yielding
-            # ``v_flow ≥ existing/unitsize`` (a forced *minimum* output).
+            # ``v_flow ≥ capacity/unitsize`` (a forced *minimum* output).
             # We therefore route these (p, d) rows out of the standard ``≤``
             # maxFlow and into a sign-flipped ``≥`` companion constraint.
             neg_pd = cap_us_pd.filter(
@@ -4933,7 +4933,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             ).select("p", "d")
             if neg_pd.height > 0:
                 pd_neg_cap = neg_pd
-            # p_flow_upper_existing = (existing/unitsize) per (p, source, sink, d).
+            # p_flow_upper_existing = existing unit count (capacity/unitsize) per (p, source, sink, d).
             # This is the *true* structural existing-capacity upper bound on
             # v_flow.  It corresponds to the .mod's RHS without invest/divest
             # (assuming cap_coef=1).  flextool's preprocessed p_flow_max may
@@ -4986,7 +4986,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         # dtttdt is needed by both storage and online features — always load
         # it when present (preprocessing always emits it for non-trivial
-        # solves).  p_process_existing_count (= existing/unitsize per (p, d))
+        # solves).  p_process_existing_count (= capacity/unitsize per (p, d))
         # is needed by online + profile features — always load when processes
         # exist.
         dtttdt = _read_step_previous(sd / "step_previous.csv", provider=provider)
