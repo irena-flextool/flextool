@@ -133,6 +133,24 @@ jobs:
           ./python.exe -m pip list
           # Leave the clone as cloned (no build/ or *.egg-info in the bundle).
           git -C ../flextool clean -fdxq
+      - name: Add the compatible polars runtime to embedded Python
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cd embedded-python
+          # polars loads polars-runtime-compat (x86-64-v2) in preference to its
+          # default runtime (x86-64-v3 + MOVBE, crashes without AVX2) whenever
+          # it is installed, so with both the bundle also runs on processors
+          # without AVX2. `import flextool` selects the default runtime
+          # (POLARS_PREFER_PKG) on processors that have AVX2, so they keep its
+          # speed; a FlexTool without that selection would run the slower
+          # compatible runtime everywhere, so it gets the default runtime only.
+          if (-not (Select-String -Path ../flextool/flextool/env_check.py -Pattern '^def prefer_default_runtime' -Quiet)) {
+            Write-Output "::warning::FlexTool ${{ inputs.flextool-ref }} does not select the default polars runtime; the compatible runtime is not added."
+            exit 0
+          }
+          $polars = ./python.exe -c "from importlib.metadata import version; print(version('polars'))"
+          ./python.exe -m pip install "polars[rtcompat]==$polars"
+          ./python.exe -m pip list
       - name: Build bundle
         run: |
           python -m PyInstaller spinetoolbox.spec -- --embedded-python=embedded-python
@@ -164,6 +182,19 @@ jobs:
           & $py -c "import flextool, polars, highspy, polar_high, pandas, pyarrow, spinedb_api, odf, ipykernel, win32api; from importlib.metadata import version; print({p: version(p) for p in ('flextool', 'polars', 'highspy', 'polar-high', 'spinedb-api', 'pandas')})"
           & $py -m pip check
           & $py -m flextool.env_check
+      - name: "Smoke: both polars runtimes in the bundled Python"
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $py = Resolve-Path "dist/Spine Toolbox/_internal/Python/python.exe"
+          if (-not (Select-String -Path "dist/Spine Toolbox/flextool/flextool/env_check.py" -Pattern '^def prefer_default_runtime' -Quiet)) {
+            Write-Output "FlexTool ${{ inputs.flextool-ref }} ships the default polars runtime only; skipped."
+            exit 0
+          }
+          & $py -c "from importlib.metadata import version as v; p = v('polars'); rt = {r: v('polars-runtime-' + r) for r in ('32', 'compat')}; print('polars', p, rt); assert set(rt.values()) == {p}, rt"
+          # GitHub's runners have AVX2: FlexTool selects the default runtime.
+          & $py -c "import os, flextool, polars._plr as plr; print(plr.RUNTIME_REPR, os.environ.get('POLARS_PREFER_PKG')); assert plr.RUNTIME_REPR in ('rt32', 'rt64'), plr.RUNTIME_REPR"
+          # Without FlexTool's selection polars loads the compatible runtime; it runs here too.
+          & $py -c "import polars as pl, polars._plr as plr; print(plr.RUNTIME_REPR); assert plr.RUNTIME_REPR == 'rtcompat', plr.RUNTIME_REPR; assert pl.DataFrame({'a': [3, 1, 2]}).sort('a')['a'].to_list() == [1, 2, 3]"
       - name: "Smoke: solve the base example with the bundled Python"
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
