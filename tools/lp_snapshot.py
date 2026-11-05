@@ -1332,10 +1332,12 @@ def _patch_coarse_dc_nostorage(data: dict) -> dict:
 
 
 def _patch_coarse_uc(data: dict) -> dict:
-    """lh2: liquefier_A (h2_A daily -> lh2_A daily) with linear online: online variables on every hour (#12)."""
+    """lh2: liquefier_A (h2_A daily -> lh2_A daily) with linear online: online variables on every hour (#12).
+    Its 200 MW are 4 units of 50 MW."""
     return _overlay(data, name="coarse_uc", base="lh2_three_region",
                     values=[["unit", "liquefier_A", "startup_method", "linear"],
                             ["unit", "liquefier_A", "min_load", 0.3],
+                            ["unit", "liquefier_A", "existing", 4.0],
                             ["unit", "liquefier_A", "virtual_unitsize", 50.0]])
 
 

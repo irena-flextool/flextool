@@ -113,6 +113,8 @@ def _build_invest_spec(method: str = "none") -> dict:
          "invest"],
         ["unit", "gas_plant", "virtual_unitsize", _pack(100.0, "float"),
          "invest"],
+        # Its 1000 MW as 10 units of 100 MW.
+        ["unit", "gas_plant", "existing", _pack(10.0, "float"), "invest"],
         # Solve-level investment intent (recourse over the single period).
         ["solve", "1week_rolling", "stochastic_invest_method",
          _pack(method, "str"), "invest"],

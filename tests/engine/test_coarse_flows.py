@@ -140,7 +140,7 @@ def test_lh2_online_unit_with_ramps_is_coarse(tmp_path_factory, caplog, monkeypa
     from flextool.engine.preprocess.flex_data import coarse_process_reasons
 
     uc = [["unit", "liquefier_A", "startup_method", _s("linear")], ["unit", "liquefier_A", "min_load", _f(0.3)],
-          ["unit", "liquefier_A", "virtual_unitsize", _f(50.0)]]
+          ["unit", "liquefier_A", "existing", _f(4.0)], ["unit", "liquefier_A", "virtual_unitsize", _f(50.0)]]
     monkeypatch.setattr(_coarse, "_WARNED", set())
     caplog.set_level(logging.INFO, logger=_coarse.__name__)
     rel = ["liquefier_A", "lh2_A"]

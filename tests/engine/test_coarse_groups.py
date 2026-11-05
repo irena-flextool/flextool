@@ -192,7 +192,7 @@ def test_coarse_unit_online_once_per_day(tmp_path_factory) -> None:
     the solve's step); before #12: v_online only at the 7 coarse steps but read as 0 in the other 161 hours."""
     step = _last(_lh2(tmp_path_factory, "c_uc", [
         ["unit", "liquefier_A", "startup_method", _s("linear")], ["unit", "liquefier_A", "min_load", _f(0.3)],
-        ["unit", "liquefier_A", "virtual_unitsize", _f(50.0)]]))
+        ["unit", "liquefier_A", "existing", _f(4.0)], ["unit", "liquefier_A", "virtual_unitsize", _f(50.0)]]))
     pb = build(step.flex_data)
     m = pb.canonicalise()
     assert sum(1 for c in m.col_names if c.startswith("v_online_linear[liquefier_A,")) == 7

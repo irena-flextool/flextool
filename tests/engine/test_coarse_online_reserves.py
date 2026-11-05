@@ -34,9 +34,9 @@ from tests.engine.test_coarse_flows import (
 pytestmark = pytest.mark.solver
 
 _DAYS = [f"t{24 * k + 1:04d}" for k in range(7)]
-# liquefier_A as the lp_snapshot fixture coarse_uc: linear online, min_load 0.3, unitsize 50 (4 units of 200 MW).
+# liquefier_A as the lp_snapshot fixture coarse_uc: linear online, min_load 0.3, its 200 MW as 4 units of 50 MW.
 _UC = [["unit", "liquefier_A", "startup_method", _s("linear")], ["unit", "liquefier_A", "min_load", _f(0.3)],
-       ["unit", "liquefier_A", "virtual_unitsize", _f(50.0)]]
+       ["unit", "liquefier_A", "existing", _f(4.0)], ["unit", "liquefier_A", "virtual_unitsize", _f(50.0)]]
 # ... with a start-up cost, a minimum up / down time longer than a day, and a liquid hydrogen demand at lh2_A that
 # alternates between 10 MW and 150 MW from day to day (10 MW on the first) with almost no storage there, so the
 # units start and stop.
@@ -262,7 +262,7 @@ def test_roll_carry_of_coarse_units_online(tmp_path_factory) -> None:
 #
 # hd: a balance node in a 24-h group, demand 25 MW for the 24 hours of day 1 (600 MWh), 0 on day 2; penalty_up
 # 10000 and penalty_down 1000 €/MWh (P = 1000: a surplus costs P).  gen_d: coal_market (commodity, no balance: neutral;
-# coal price 20 €/MWh) -> hd, efficiency 1, existing 100 MW = one unit of 100 MW (virtual_unitsize 100), linear
+# coal price 20 €/MWh) -> hd, efficiency 1, existing 1 = one unit of 100 MW (virtual_unitsize 100), linear
 # online, min_load 0.5, startup_cost 1000 €/MW (1e5 € per unit started).  gen_d is coarse: on_k, su_k, sd_k once
 # per day k (k = 1, 2), flow F_k.
 # Rows (EQ. headers of online_change, maxFlow_online_coarse, minFlow_minload_coarse, minimum_uptime):
@@ -293,7 +293,7 @@ def _hand_uc_values(min_uptime: float) -> list:
             ["node", "hd", "node_type", _s("balance")], ["node", "hd", "inflow", demand],
             ["node", "hd", "penalty_up", _f(10000.0)], ["node", "hd", "penalty_down", _f(1000.0)],
             ["unit", "gen_d", "conversion_method", _s("constant_efficiency")], ["unit", "gen_d", "efficiency", _f(1.0)],
-            ["unit", "gen_d", "existing", _f(100.0)], ["unit", "gen_d", "virtual_unitsize", _f(100.0)],
+            ["unit", "gen_d", "existing", _f(1.0)], ["unit", "gen_d", "virtual_unitsize", _f(100.0)],
             ["unit", "gen_d", "startup_method", _s("linear")], ["unit", "gen_d", "min_load", _f(0.5)],
             ["unit", "gen_d", "startup_cost", _f(1000.0)],
             ["unit", "gen_d", "minimum_time_method", _s("min_uptime")],
@@ -357,7 +357,7 @@ def _top_values(step: float) -> list:
         ["node", "top", "inflow", _f(100.0)], ["node", "top", "storage_start_end_method", _s("fix_start")],
         ["node", "top", "storage_state_start", _f(0.5)],
         ["node", "top", "penalty_up", _f(5000.0)], ["node", "top", "penalty_down", _f(5000.0)],
-        ["unit", "top_turbine", "efficiency", _f(1.0)], ["unit", "top_turbine", "existing", _f(300.0)],
+        ["unit", "top_turbine", "efficiency", _f(1.0)], ["unit", "top_turbine", "existing", _f(3.0)],
         ["unit", "top_turbine", "virtual_unitsize", _f(100.0)], ["unit", "top_turbine", "startup_method", _s("linear")],
         ["unit", "top_turbine", "min_load", _f(0.2)], ["unit", "top_turbine", "startup_cost", _f(10.0)]]
 

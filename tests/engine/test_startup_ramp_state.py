@@ -391,8 +391,8 @@ def test_integer_fake_starts_buy_no_ramp_room(tmp_path_factory) -> None:
 
 
 def test_room_on_online_capacity(tmp_path_factory) -> None:
-    """C2: coal_plant split into 2 units of 250 MW (``virtual_unitsize`` 250, existing 500 -> existing_count
-    2), binary online, ramp 0.005/min on its output (rho-bar = 0.3 at an interior hourly step, c = 1 -- no
+    """C2: coal_plant split into 2 units of 250 MW (``virtual_unitsize`` 250, existing 2 -> existing_count
+    2, 500 MW), binary online, ramp 0.005/min on its output (rho-bar = 0.3 at an interior hourly step, c = 1 -- no
     capacity_max_coeff authored); coal_chp left WITHOUT a startup_method (built, non-online) but given its
     own output ramp, 0.01/min (rho-bar_chp = 0.6), existing_count_chp = 1 (virtual_unitsize unauthored falls
     back to existing itself).  Demand 200 MW at west (needs at most one of coal_plant's 2 units).
@@ -404,6 +404,7 @@ def test_room_on_online_capacity(tmp_path_factory) -> None:
     up row keeps the untouched c14a shape: no v_online term, RHS bound = +rho-bar_chp*c_chp*existing_count_chp
     = 0.6*1*1 = 0.6."""
     values = no_ratio_constraint() + [
+        ["unit", PLANT, "existing", b64(2.0, "float")],
         ["unit", PLANT, "virtual_unitsize", b64(250.0, "float")],
         ["unit", PLANT, "startup_method", b64("binary", "str")],
         ["unit__outputNode", [PLANT, "west"], "ramp_method", b64("ramp_limit", "str")],

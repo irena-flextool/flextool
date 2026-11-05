@@ -20,16 +20,16 @@ which still passes byte-identical).
 Fixture (``separate_dispatch_noinvest.json``, built from JSON per CLAUDE.md
 invariant 3): a fan-at-first stochastic separate_dispatch solve on ``p2035``
 (branches ``rlz`` w=0 realized / ``high`` w=0.5 / ``low`` w=0.5) over 3 steps.
-A committable ``peaker`` (existing 100 MW, virtual_unitsize 50 -> 2 units,
+A committable ``peaker`` (existing 2 units of virtual_unitsize 50 MW = 100 MW,
 min_load 0.5, startup_cost 1, other_operational_cost 10 CUR/MWh, NO invest)
 backs ``wind`` (existing 100 MW, upper_limit, CF rlz 0.5 / high 0.8 / low 0.0)
 against 100 MW demand.
 
 Hand-calc (sibling ``stoch_rd__realized_dispatch``, realized ``rlz`` branch,
 H = 8760/3 = 2920 h/step):
-  * The sibling resolves peaker existing_count = 100/50 unitsize... in
-    capacity (MW) terms ``p_process_existing_count`` carries the MW capacity
-    = 100 (NOT 0 — the fix).
+  * The sibling resolves peaker's capacity ``p_entity_all_existing`` =
+    2 x 50 = 100 MW and ``p_process_existing_count`` = 100 / 50 = 2 units
+    (NOT 0 — the fix).
   * Realized ``rlz`` wind CF 0.5 -> 50 MW; demand 100 -> peaker 50 MW.  The
     parent hedge pins v_online = 2.0 (low needs the full 2 units); min_load
     floor 0.5*2.0*50 = 50 MW == the realized need, so output is exactly 50 MW
@@ -53,7 +53,8 @@ SCENARIO = "separate_dispatch_noinvest"
 PARENT = "stoch_rd"
 SIBLING = "stoch_rd__realized_dispatch"
 
-PEAKER_EXISTING_MW = 100.0        # the operational existing the fix must resolve
+PEAKER_EXISTING_UNITS = 2.0       # the operational existing count the fix must resolve
+PEAKER_CAPACITY_MW = 100.0        # = PEAKER_EXISTING_UNITS x virtual_unitsize 50
 SIBLING_OBJECTIVE = 4_380_000.0   # realized rlz dispatch cost (hand-calc)
 PINNED_V_ONLINE = 2.0             # parent hedge commitment pinned into sibling
 
@@ -103,18 +104,21 @@ def chain(tmp_path_factory):
 @pytest.mark.solver
 def test_sibling_resolves_operational_existing_capacity(chain):
     """THE FIX: the sibling resolves peaker's operational ``existing``
-    capacity (100 MW), NOT 0 — the no-invest realized-existing fallback."""
+    (2 units, 100 MW), NOT 0 — the no-invest realized-existing fallback."""
     steps, _ = chain
     fd = steps[SIBLING].flex_data
     assert fd.p_process_existing_count is not None, (
         "sibling built no p_process_existing_count"
     )
-    cap = (fd.p_process_existing_count.frame
-           .filter(pl.col("p") == "peaker")["value"].max())
-    assert cap == pytest.approx(PEAKER_EXISTING_MW, abs=1e-9), (
-        f"sibling peaker existing_count = {cap}, expected "
-        f"{PEAKER_EXISTING_MW} (0.0 would be the pre-fix capacity bug)"
+    count = (fd.p_process_existing_count.frame
+             .filter(pl.col("p") == "peaker")["value"].max())
+    assert count == pytest.approx(PEAKER_EXISTING_UNITS, abs=1e-9), (
+        f"sibling peaker existing_count = {count}, expected "
+        f"{PEAKER_EXISTING_UNITS} (0.0 would be the pre-fix capacity bug)"
     )
+    cap = (fd.p_entity_all_existing.frame
+           .filter(pl.col("e") == "peaker")["value"].max())
+    assert cap == pytest.approx(PEAKER_CAPACITY_MW, abs=1e-9)
 
 
 @pytest.mark.solver

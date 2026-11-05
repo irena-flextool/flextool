@@ -179,10 +179,11 @@ def test_block_cycle(tmp_path_factory):
 def test_fix_start_with_investment(tmp_path_factory):
     """forward_only, fix_start 0.5, a forced storage build (invest_min_total), loss 0.05: the first-step row carries
     the invested start energy as the step's previous state, (1 − β)·0.5·su on v_invest_n, the existing start energy
-    (1 − β)·0.5·existing in the bound and −(1 + α)·su on the first state."""
+    (1 − β)·0.5·capacity in the bound (existing 1 × virtual_unitsize 100 = 100 MWh) and −(1 + α)·su on the first
+    state."""
     vals = [v for v in _values(0.05) if v[2] not in ("storage_state_start", "existing")] + [
         ["node", "battery", "storage_state_start", b64(0.5, "float")],
-        ["node", "battery", "existing", b64(100.0, "float")],
+        ["node", "battery", "existing", b64(1.0, "float")],
         ["node", "battery", "invest_method", b64("invest_total", "str")],
         ["node", "battery", "invest_max_total", b64(1000.0, "float")],
         ["node", "battery", "invest_min_total", b64(200.0, "float")],
