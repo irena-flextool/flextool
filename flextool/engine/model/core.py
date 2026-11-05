@@ -13,7 +13,7 @@ grep ``EQ. ─── <name>`` to find an equation.
 Variables, in declaration (column) order.  p process, n node, d period, t step, b base period, g group,
 r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW / MWh.
   v_flow[p,source,sink,d,t]            flow on a process arc; × unitsize = MW (a coarse process: one column per
-                                       coarse step, read on every step through _coarse_flows.flow_alias)
+                                       coarse step, read on every step through _coarse_flows.alias)
   vq_state_up / _down[n,d,t]           balance slack (shortfall / surplus), MW
   v_state[n,d,t]                       storage state; × state_unitsize = MWh
   v_state_inter[n,d,b]                 representative-period storage state at base-period boundaries of d
@@ -786,10 +786,10 @@ def _declare_variables(b: _Build) -> None:
     # ─── VAR. ─── v_flow (coarse processes) ──────────────────────────────────
     # v_flow[p,s,k,d,b] ≥ 0   ∀ p ∈ processCoarse, (p,s,k) arcs, (d,b) the coarse steps of p (b = first fine step)
     # The flow of a coarse process: one rate per coarse step, the same on its fine steps.  b.v_flow is indexed
-    # on every fine step (_coarse_flows.flow_alias): a fine row of a coarse process reads its step's column.
+    # on every fine step (_coarse_flows.alias): a fine row of a coarse process reads its step's column.
     if b.has_proc:
         upper = b.flow_var_upper if b.flow_var_upper is not None else float("inf")
-        b.v_flow = _coarse_flows.flow_alias(
+        b.v_flow = _coarse_flows.alias(
             b, m.add_var("v_flow", ("p", "source", "sink", "d", "t"), _coarse_flows.domain(b, b.pss_dt),
                          lower=0.0, upper=upper),
             b.pss_dt)
@@ -861,7 +861,7 @@ def _declare_variables(b: _Build) -> None:
     if _has_rows(b.twoway1var_arcs):
         back_idx = b.twoway1var_arcs.join(d.dt, how="cross").select("p", "source", "sink", "d", "t")
         if back_idx.height > 0:
-            b.v_flow_back = _coarse_flows.flow_alias(
+            b.v_flow_back = _coarse_flows.alias(
                 b, m.add_var("v_flow_back", ("p", "source", "sink", "d", "t"), _coarse_flows.domain(b, back_idx),
                              lower=0.0),
                 back_idx)

@@ -157,7 +157,12 @@ def history_hours_to_end(cells: pl.DataFrame, link: "pl.DataFrame | None", last:
     stops where :func:`mintime_lookback` stops (a step without a predecessor among *cells*).  ``None`` when *last*
     is not a cell or ``dur(last) ≥ l_max`` (no minimum time reaches past the end).  Raises ``ValueError`` when
     *link* is ``None`` although there are several realized cells (the predecessor links were not built, so the
-    history cannot be walked; the consumer raises in the same case, :func:`mintime_lookback`)."""
+    history cannot be walked; the consumer raises in the same case, :func:`mintime_lookback`).
+
+    The cells are the solve's fine steps, also where a coarse process has one start-up / shut-down per coarse step:
+    its readers (``engine.output._coarse_flows``, mode ``first``) put the event at the step's first fine step and 0
+    at the others.  The event happens at the start of its coarse step, so the fine ``hours_to_end`` of that first
+    step is exact, and the last realized step (an interior step of a coarse step) keeps its row."""
     steps = (cells.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8), pl.col("dur").cast(pl.Float64))
              .unique(subset=["d", "t"], keep="first", maintain_order=True)
              .with_row_index("i"))

@@ -6203,10 +6203,10 @@ def _roll_end_flow(sol, flex_data: "FlexData | None", last: "tuple[str, str] | N
     if not sets or last is None:
         return None
     arcs = pl.concat(sets).unique()
-    from flextool.engine.output._coarse_flows import flow_values
+    from flextool.engine.output._coarse_flows import var_values
 
     # Every fine step, also of coarse processes (one LP column per coarse step).
-    flows = flow_values(sol, flex_data)
+    flows = var_values(sol, flex_data, "v_flow")
     frame = flows.filter((pl.col("d").cast(pl.Utf8) == last[0]) & (pl.col("t").cast(pl.Utf8) == last[1]))
     if frame.height == 0:
         return None
@@ -6647,24 +6647,18 @@ def build_handoff_from_solution(
         # The last committed step lies in the fan (after every pre-reveal realized step): read the tied value.
         online_step = (fan_online["d_ref"][-1], fan_online["t"][-1])
     if online_step is not None and _has_online_var:
+        from flextool.engine.output._coarse_flows import var_values
+
         last_d_on, last_t_on = online_step
         rco_rows: list[tuple[str, float]] = []
         for _vname in ("v_online_linear", "v_online_integer"):
-            if _vname not in sol._vars:
+            # Every fine step (a coarse process's units online hold through its coarse step, whose last fine
+            # step is the last realized step), then the committed-jump-end (d, t).
+            _all = var_values(sol, flex_data, _vname)
+            if _all is None:
                 continue
-            _v = sol._vars[_vname]
-            # col_id-filtered pull (mirrors the memory-frugal v_state
-            # path above): filter the variable's col_id frame to the
-            # single committed-jump-end (d, t), then read values for
-            # those rows alone instead of materialising the full frame.
-            _last_frame = _v.frame.filter(
-                (pl.col("d") == last_d_on) & (pl.col("t") == last_t_on))
-            if _last_frame.height == 0:
-                continue
-            _ids = _last_frame["col_id"].to_numpy()
-            _vals = sol.col_value[_ids]
-            _lst = _last_frame.select(*_v.dims).with_columns(
-                value=pl.Series(_vals))
+            _lst = _all.filter((pl.col("d").cast(pl.Utf8) == str(last_d_on))
+                               & (pl.col("t").cast(pl.Utf8) == str(last_t_on)))
             for r in _lst.iter_rows(named=True):
                 rco_rows.append((str(r["p"]), float(r["value"])))
         if rco_rows:
@@ -6724,15 +6718,14 @@ def build_handoff_from_solution(
         _cells = online_tie_cells(flex_data)
         _parts: list[pl.DataFrame] = []
         if _cells is not None:
+            from flextool.engine.output._coarse_flows import var_values
+
             for _vn in ("v_online_linear", "v_online_integer"):
-                if _vn not in sol._vars:
+                # Every fine step (a coarse process's units online hold through its coarse step).
+                _all = var_values(sol, flex_data, _vn)
+                if _all is None:
                     continue
-                _v = sol._vars[_vn]
-                _ids = _v.frame["col_id"].to_numpy()
-                _fr = (_v.frame.select(*_v.dims)
-                       .with_columns(value=pl.Series(sol.col_value[_ids]))
-                       .with_columns(pl.col("d").cast(pl.Utf8),
-                                     pl.col("t").cast(pl.Utf8)))
+                _fr = _all.with_columns(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
                 _re = (_fr.join(_cells, left_on=["d", "t"],
                                 right_on=["d_ref", "t"], how="inner")
                        .select(pl.col("p").cast(pl.Utf8).alias("process"),
@@ -6841,21 +6834,23 @@ def build_handoff_from_solution(
                                    float(lmap["_L"].max()))
         hist_now = None
         if h2e is not None:
+            from flextool.engine.output._coarse_flows import var_values
+
             def _pull_online_metric(vnames):
+                # Every fine step: a coarse process's start-up / shut-down stays at its coarse step's first fine
+                # step (the event at the step's start, 0 at its other steps; history_hours_to_end).
                 frames = []
                 for vn in vnames:
-                    if vn not in sol._vars:
+                    _all = var_values(sol, flex_data, vn)
+                    if _all is None:
                         continue
-                    _v = sol._vars[vn]
-                    _fr = (_v.frame.with_columns(pl.col("d").cast(pl.Utf8).alias("__d"),
-                                                 pl.col("t").cast(pl.Utf8).alias("__t"))
+                    _fr = (_all.with_columns(pl.col("d").cast(pl.Utf8).alias("__d"),
+                                             pl.col("t").cast(pl.Utf8).alias("__t"))
                            .join(h2e, left_on=["__d", "__t"], right_on=["d", "t"], how="inner"))
                     if _fr.height == 0:
                         continue
-                    _ids = _fr["col_id"].to_numpy()
                     frames.append(_fr.select(pl.col("p").cast(pl.Utf8), pl.col("__d").alias("d"),
-                                             pl.col("__t").alias("t"))
-                                  .with_columns(value=pl.Series(sol.col_value[_ids])))
+                                             pl.col("__t").alias("t"), pl.col("value")))
                 if not frames:
                     return None
                 return pl.concat(frames).group_by(["p", "d", "t"]).agg(pl.col("value").sum())
@@ -7215,9 +7210,9 @@ def build_handoff_from_solution(
             and sol is not None
             and flex_data is not None
             and "v_flow" in getattr(sol, "_vars", {})):
-        from flextool.engine.output._coarse_flows import flow_values
+        from flextool.engine.output._coarse_flows import var_values
 
-        v_flow_long = flow_values(sol, flex_data)
+        v_flow_long = var_values(sol, flex_data, "v_flow")
         if v_flow_long is not None and v_flow_long.height > 0:
             fs_steps_fu = (fs_steps_df
                 .select(alias_to_axis("period", "d"),
@@ -7355,7 +7350,7 @@ def build_handoff_from_solution(
                                 "v_online_linear", "v_online_integer",
                             ):
                                 if var_name in sol_vars:
-                                    vd = sol.value(var_name)
+                                    vd = var_values(sol, flex_data, var_name)
                                     if vd is not None and vd.height > 0:
                                         vd = vd.with_columns(
                                             pl.col("p").cast(pl.Utf8),

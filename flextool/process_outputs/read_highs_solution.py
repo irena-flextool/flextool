@@ -732,9 +732,10 @@ def extract_variable(
     has no period index at all — row index collapses to just
     ``(solve,)`` (used for ``co2_max_total[g]``).
 
-    The flows of coarse processes (``v_flow`` / ``v_flow_back``) have one
-    LP column per coarse step; their value is copied to every fine step
-    of the step (:mod:`flextool.engine.output._coarse_flows`).  The coarse
+    The variables of coarse processes (``_coarse_flows.COARSE_VARS``: flows,
+    units online, start-ups, shut-downs) have one LP column per coarse step;
+    a level is copied to every fine step of the step, an event stays at its
+    first fine step (:mod:`flextool.engine.output._coarse_flows`).  The coarse
     steps come from ``coarse_steps`` (``(p, d, b_first, t)``) or else from
     ``flex_data``.
 
@@ -894,9 +895,9 @@ def extract_variable(
     # must not load.
     from flextool.engine.output import _coarse_flows
 
-    if name in _coarse_flows.COARSE_FLOW_VARS and has_period and has_time:
+    if name in _coarse_flows.COARSE_VARS and has_period and has_time:
         steps = coarse_steps if coarse_steps is not None else _coarse_flows.coarse_steps(flex_data)
-        _coarse_flows.expand_value_keys(values_by_key, steps)
+        _coarse_flows.expand_value_keys(values_by_key, steps, mode=_coarse_flows.COARSE_VARS[name])
 
     # No variable values matched — produce the same N_rows × 0-cols
     # frame phase-3 CSV writers would have produced (with the canonical

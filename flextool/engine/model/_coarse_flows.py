@@ -1,18 +1,19 @@
-"""Coarse processes: one flow per coarse step of their nodes (``FlexData.processCoarse``).
+"""Coarse processes: one value per coarse step of their nodes (``FlexData.processCoarse``).
 
 A unit or connection whose every balance node is coarse (``preprocess/params/_coarse.coarse_process_frames``) has
 one ``v_flow`` / ``v_flow_back`` column per coarse step b of its nodes, a rate that stays the same over the fine
-steps t of b.  The registered variable has a row only at each coarse step's first fine step ``b_first``; the
-model reads it through an *alias* (:func:`flow_alias`) that is indexed on every fine step like a fine flow and
-maps each fine row to the column of its coarse step.  Every term that reads the alias is unchanged: a sum over
-the fine steps of a coarse step (the coarse node balance, costs, CO2, cumulative flow) adds the fine
-coefficients on the one column, Σ_t v·Δt·slope_t = v_b·Σ_t Δt·slope_t.
+steps t of b.  The registered variable has a row only at each coarse step's first fine step ``b_first``
+(:func:`domain`); the model reads it through an *alias* (:func:`alias`) that is indexed on every fine step like a
+fine variable and maps each fine row to the column of its coarse step.  Every term that reads the alias is
+unchanged: a sum over the fine steps of a coarse step (the coarse node balance, costs, CO2, cumulative flow) adds
+the fine coefficients on the one column, Σ_t v·Δt·slope_t = v_b·Σ_t Δt·slope_t.  :func:`alias` serves any *level*
+of a coarse process keyed ``(p, …, d, t)`` (a value that holds through the step, like a rate).
 
-The arc-local rows of a coarse process (capacity, output sum, conversion, input share, profiles) are not written
-per fine step: :func:`add_cstr` writes them once per coarse step as the twin family ``<family>_coarse``, the
-fine row's Δt-weighted average over the step (EQ. header in :func:`add_cstr`).  A constant flow could not meet a
-per-step equality while a parameter varies within the step; the average lets time-varying availability,
-profile, efficiency and capacity coefficients act through their step means.
+The arc-local rows of a coarse process (capacity, output sum, conversion, input share, profiles) are not written per fine step: :func:`add_cstr` writes them once per coarse step as
+the twin family ``<family>_coarse``, the fine row's Δt-weighted average over the step (EQ. header in
+:func:`add_cstr`).  A constant flow could not meet a per-step equality while a parameter varies within the step;
+the average lets time-varying availability, profile, efficiency and capacity coefficients act through their step
+means.
 """
 from __future__ import annotations
 
@@ -67,7 +68,7 @@ def _step_of(b: "_Build", frame: pl.DataFrame) -> pl.DataFrame:
 
 
 def domain(b: "_Build", index: pl.DataFrame) -> pl.DataFrame:
-    """The rows of a flow variable's ``index`` ``(p, source, sink, d, t)`` that get a column: every row of a fine
+    """The rows of a variable's ``index`` (with ``p``, ``d``, ``t``) that get a column: every row of a fine
     process, and each coarse step's first fine step of a coarse process."""
     if not b.has_coarse_proc:
         return index
@@ -75,10 +76,10 @@ def domain(b: "_Build", index: pl.DataFrame) -> pl.DataFrame:
     return keep.select(index.columns)
 
 
-def flow_alias(b: "_Build", registered: Var, index: pl.DataFrame) -> Var:
-    """``registered`` (declared over :func:`domain` of ``index``) indexed on every row of ``index``: a coarse
-    process's fine row carries the column of its coarse step.  Not registered on the Problem; sorted by
-    ``(p, source, sink, d, t)`` like the registered frame."""
+def alias(b: "_Build", registered: Var, index: pl.DataFrame) -> Var:
+    """``registered`` (a level declared over :func:`domain` of ``index``, dims ``(p, …, d, t)`` with ``t`` last)
+    indexed on every row of ``index``: a coarse process's fine row carries the column of its coarse step.  Not
+    registered on the Problem; sorted by its dims like the registered frame."""
     if not b.has_coarse_proc:
         return registered
     dims = registered.dims

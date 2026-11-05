@@ -11,9 +11,9 @@ Columns (one fixed schema per family; every part is built with the same dtypes):
   per unitsize as in the LP, Layer-2-unscaled) and ``reduced_cost`` (column dual × 1/scale_the_objective);
 * constraints: ``<dims…>``, ``solve``, ``roll``, ``realized`` and ``dual`` (row dual × 1/scale_the_objective).
 
-The dump is LP-shaped: a coarse process (one flow column per coarse step) has its ``v_flow`` / ``v_flow_back``
-rows only at each coarse step's first fine step (``b_first``), unlike the normal output, which copies the flow to
-every fine step (:mod:`flextool.engine.output._coarse_flows`).
+The dump is LP-shaped: a coarse process (one column per coarse step) has the rows of its variables of
+``_coarse_flows.COARSE_VARS`` only at each coarse step's first fine step (``b_first``), unlike the normal output,
+which writes them on every fine step (:mod:`flextool.engine.output._coarse_flows`).
 
 Duals keep the HiGHS sign convention; no weight, price, unitsize or cost conversion.  A MIP solve, or a solve whose
 duals are not valid, writes null duals and reduced costs (never 0).

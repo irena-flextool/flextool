@@ -168,16 +168,16 @@ class _Steps:
                                         "t": [f"t{h}" for h in range(1, 7)], "w": [1.0 / 3.0] * 6})
 
 
-def test_expand_coarse_flows_copies_to_missing_steps() -> None:
+def test_expand_coarse_copies_to_missing_steps() -> None:
     """A coarse flow (one LP row per coarse step) is copied to the other fine steps of its step, right after its
     own row; a fine process is unchanged; a step that has its own LP row keeps it (an LP whose flows are fine
     comes back unchanged)."""
-    from flextool.engine.output._coarse_flows import expand_coarse_flows
+    from flextool.engine.output._coarse_flows import expand_coarse
 
     lp = pl.DataFrame({"p": ["elz", "elz", "pipe", "pipe"], "source": ["a", "a", "x", "x"],
                        "sink": ["b", "b", "y", "y"], "d": ["d1"] * 4, "t": ["t1", "t2", "t1", "t4"],
                        "value": [5.0, 6.0, 2.0, 3.0]})
-    out = expand_coarse_flows(lp, _Steps())
+    out = expand_coarse(lp, _Steps())
     assert out.columns == lp.columns and out.schema == lp.schema
     assert out.filter(pl.col("p") == "elz").equals(lp.filter(pl.col("p") == "elz"))
     pipe = out.filter(pl.col("p") == "pipe")
@@ -185,12 +185,31 @@ def test_expand_coarse_flows_copies_to_missing_steps() -> None:
     assert pipe["value"].to_list() == [2.0, 2.0, 2.0, 3.0, 3.0, 3.0]
     fine_lp = pl.DataFrame({"p": ["pipe"] * 6, "source": ["x"] * 6, "sink": ["y"] * 6, "d": ["d1"] * 6,
                             "t": [f"t{h}" for h in range(1, 7)], "value": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]})
-    assert expand_coarse_flows(fine_lp, _Steps()).equals(fine_lp)
-    assert expand_coarse_flows(lp, None).equals(lp)
+    assert expand_coarse(fine_lp, _Steps()).equals(fine_lp)
+    assert expand_coarse(lp, None).equals(lp)
+
+
+def test_expand_coarse_first_step_mode() -> None:
+    """An event variable (start-ups): the value stays at the coarse step's first fine step and the other fine steps
+    of the step get 0, so the sum over the step is the LP's value; a fine process and the dtypes are unchanged."""
+    from flextool.engine.output._coarse_flows import COARSE_VARS, expand_coarse
+
+    lp = pl.DataFrame({"p": ["elz", "elz", "pipe", "pipe"], "d": ["d1"] * 4, "t": ["t1", "t2", "t1", "t4"],
+                       "value": [5.0, 6.0, 2.0, 3.0]})
+    out = expand_coarse(lp, _Steps(), mode="first")
+    assert out.schema == lp.schema
+    assert out.filter(pl.col("p") == "elz").equals(lp.filter(pl.col("p") == "elz"))
+    pipe = out.filter(pl.col("p") == "pipe")
+    assert pipe["t"].to_list() == [f"t{h}" for h in range(1, 7)]
+    assert pipe["value"].to_list() == [2.0, 0.0, 0.0, 3.0, 0.0, 0.0]
+    assert {n for n, m in COARSE_VARS.items() if m == "first"} == {
+        "v_startup_linear", "v_startup_integer", "v_shutdown_linear", "v_shutdown_integer"}
+    with pytest.raises(ValueError):
+        expand_coarse(lp, _Steps(), mode="spread")
 
 
 def test_expand_value_keys_copies_to_missing_steps() -> None:
-    """The HiGHS-name reader's keys ``(d, t, p, source, sink)``: the same rule as expand_coarse_flows."""
+    """The HiGHS-name reader's keys ``(d, t, p, source, sink)``: the same rule as expand_coarse."""
     from flextool.engine.output._coarse_flows import coarse_steps, expand_value_keys
 
     keys = {("d1", "t1", "pipe", "x", "y"): 2.0, ("d1", "t4", "pipe", "x", "y"): 3.0,
@@ -199,28 +218,48 @@ def test_expand_value_keys_copies_to_missing_steps() -> None:
     pipe = {k[1]: v for k, v in keys.items() if k[2] == "pipe"}
     assert pipe == {"t1": 2.0, "t2": 2.0, "t3": 2.0, "t4": 3.0, "t5": 9.0, "t6": 3.0}
     assert keys[("d1", "t2", "elz", "a", "b")] == 6.0
+    events = {("d1", "t1", "pipe"): 1.0, ("d1", "t2", "elz"): 6.0}
+    expand_value_keys(events, coarse_steps(_Steps()), mode="first")
+    assert {k[1]: v for k, v in events.items() if k[2] == "pipe"} == {
+        "t1": 1.0, "t2": 0.0, "t3": 0.0}
 
 
-_FLOW_READS = re.compile(r"""\.value\(\s*["']v_flow(_back)?["']|_vars\[\s*["']v_flow(_back)?["']\s*\]"""
-                         r"""|col_id_of_var\(\s*["']v_flow|fix_cols\(\s*["']v_flow""")
-# Files that may read the LP's flow columns as they are: the expansion helper itself, and Benders, which reads only
-# the half-flows of cross-region arcs (a cross-region process is never coarse).
-_RAW_FLOW_READERS = {"flextool/engine/output/_coarse_flows.py", "flextool/engine/solve/_benders.py"}
+def _gate_patterns():
+    from flextool.engine.output._coarse_flows import COARSE_VARS
+
+    names = "|".join(sorted(COARSE_VARS, key=len, reverse=True))
+    literal = re.compile(rf"""\.value\(\s*["']({names})["']|_vars\[\s*["']({names})["']\s*\]"""
+                         rf"""|col_id_of_var\(\s*["']({names})|fix_cols\(\s*["']({names})""")
+    # A read whose variable name is not a literal (a loop over names): flagged when a coarse variable's name is
+    # quoted within the eight lines above it.
+    dynamic = re.compile(r"""\.value\(\s*[A-Za-z_]\w*\s*\)|_vars\[\s*[A-Za-z_]\w*\s*\]"""
+                         r"""|col_id_of_var\(\s*[A-Za-z_]\w*|fix_cols\(\s*[A-Za-z_]\w*""")
+    quoted = re.compile(rf"""["']({names})["']""")
+    return literal, dynamic, quoted
 
 
-def test_flow_readers_expand_coarse_flows() -> None:
-    """Every reader of v_flow / v_flow_back values outside the expansion helper goes through it: a raw read
-    would see a coarse flow only at its coarse step's first fine step (outputs lose the other steps, the CO2
-    carry under-counts)."""
+# Files that may read the LP's columns as they are: the expansion helper itself, and Benders, which reads only the
+# half-flows of cross-region arcs (a cross-region process is never coarse).
+_RAW_READERS = {"flextool/engine/output/_coarse_flows.py", "flextool/engine/solve/_benders.py"}
+
+
+def test_readers_expand_coarse_variables() -> None:
+    """Every reader of the values of a variable of _coarse_flows.COARSE_VARS (flows, units online, start-ups,
+    shut-downs) outside the expansion helper goes through it: a raw read would see a coarse process only at its
+    coarse step's first fine step (outputs lose the other steps, the CO2 carry under-counts, the roll carry of
+    units online reads no value at an interior last realized step)."""
+    literal, dynamic, quoted = _gate_patterns()
     hits = []
     for path in sorted((FLEXTOOL_ROOT / "flextool").rglob("*.py")):
         rel = path.relative_to(FLEXTOOL_ROOT).as_posix()
-        if rel in _RAW_FLOW_READERS:
+        if rel in _RAW_READERS:
             continue
-        for i, line in enumerate(path.read_text().splitlines(), 1):
-            if _FLOW_READS.search(line):
+        lines = path.read_text().splitlines()
+        for i, line in enumerate(lines, 1):
+            if literal.search(line) or (dynamic.search(line)
+                                        and any(quoted.search(x) for x in lines[max(0, i - 9):i])):
                 hits.append(f"{rel}:{i}: {line.strip()}")
-    assert not hits, "raw v_flow reads (use flextool.engine.output._coarse_flows):\n" + "\n".join(hits)
+    assert not hits, "raw coarse-variable reads (use flextool.engine.output._coarse_flows):\n" + "\n".join(hits)
 
 
 # ---------------------------------------------------------------------------
@@ -461,11 +500,11 @@ def _hand(tmp_path_factory, alt: str, cost=None, efficiency=None):
 
 
 def _mw(step, p: str, source: str, sink: str) -> list[float]:
-    from flextool.engine.output._coarse_flows import flow_values
+    from flextool.engine.output._coarse_flows import var_values
 
     us = float(utf8(step.flex_data.p_unitsize.frame).filter(pl.col("p") == p)["value"][0])
-    f = utf8(flow_values(step.solution, step.flex_data).drop("value")).with_columns(
-        value=flow_values(step.solution, step.flex_data)["value"])
+    flows = var_values(step.solution, step.flex_data, "v_flow")
+    f = utf8(flows.drop("value")).with_columns(value=flows["value"])
     rows = f.filter((pl.col("p") == p) & (pl.col("source") == source) & (pl.col("sink") == sink)).sort("t")
     assert rows["t"].to_list() == _HOURS
     return [v * us for v in rows["value"].to_list()]
