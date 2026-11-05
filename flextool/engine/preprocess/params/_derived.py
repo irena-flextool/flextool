@@ -2639,16 +2639,23 @@ def _mle_section(eta: pl.Expr, eta_min: pl.Expr, min_load: pl.Expr) -> pl.Expr:
     """Section (input per online unit) of a min_load_efficiency cell, the curve through (min_load, eta_min) and
     (1, eta):
 
-        section = min_load · (1/eta_min − 1/eta) / (1 − min_load)    (min_load 0 → 0 whatever eta_min is)
+        section = min_load · (1/eta_min − 1/eta) · (1 / (1 − min_load))    (min_load 0 → 0 whatever eta_min is)
 
     Unrounded.  Algebraically 1/eta − (1/eta − min_load/eta_min)/(1 − min_load), but written as a product of
     the efficiency difference so that a flat curve (eta_min = eta) gives exactly 0: the difference form left a
     float residue (−2.2e-16 for eta 0.9, min_load 0.3) on v_online that reached the objective as a ~1e-17 cost,
     a 16-decade cost range that autoscale centred with a 2^25 objective scale and HiGHS' dual simplex then failed
     on (excessive dual values, no model status).  The rolling emit seed
-    ``_period_params._derive_conversion_trio`` evaluates the same float operations in the same order."""
+    ``_period_params._derive_conversion_trio`` evaluates the same float operations in the same order.
+
+    The division by ``1 − min_load`` is a multiplication by its reciprocal.  Polars divides a column by a
+    scalar-valued (broadcast) column as a multiplication by the reciprocal, but a column by a column as a true
+    division, and whether ``min_load`` stays scalar-valued depends on how it was authored (a constant or a
+    period map) and on the polars version; the two differ by an ulp.  With only multiplications and
+    ``1.0 / x`` divisions the bits do not depend on the representation, so a constant and its equivalent map
+    give the same section on every path."""
     return (pl.when(min_load == 0.0).then(0.0)
-            .otherwise(min_load * (1.0 / eta_min - 1.0 / eta) / (1.0 - min_load)))
+            .otherwise(min_load * (1.0 / eta_min - 1.0 / eta) * (1.0 / (1.0 - min_load))))
 
 
 def _mle_slope(eta: pl.Expr, eta_min: pl.Expr, min_load: pl.Expr) -> pl.Expr:

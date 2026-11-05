@@ -1021,7 +1021,7 @@ def _derive_conversion_trio(
     section as the single solve and slope + section = 1/eta (#140):
 
         conv_rate = 1/eta
-        section⁰  = min_load · (1/eta_min − 1/eta) / (1 − min_load)  (min_load_efficiency only; min_load 0 → 0)
+        section⁰  = min_load · (1/eta_min − 1/eta) · (1 / (1 − min_load))  (min_load_efficiency only; min_load 0 → 0)
         slope⁰    = 1/eta − section⁰                                  (min_load_efficiency)
                   = conv_rate                                        (other processes)
         slope = slope⁰·k_sink/k_src, section = section⁰/k_src        (#10 / Q12: direct units only)
@@ -1124,7 +1124,7 @@ def _derive_conversion_trio(
             # the single solve); a flat curve (em = eff) gives a section of exactly 0.  Fold the direct-unit
             # ratio onto the unfolded section⁰/slope⁰ afterwards (#10 / Q12), same order as
             # ``_derived.p_section_from_source`` / ``p_slope_from_source``.
-            v = ml * ((1.0 / em if em else 0.0) - cr) / denom if (ml != 0.0 and denom) else 0.0
+            v = ml * ((1.0 / em if em else 0.0) - cr) * (1.0 / denom) if (ml != 0.0 and denom) else 0.0
             slope0 = cr - v
             mle_slope[(p, d, t)] = slope0 * k_sink / k_src
             sec_p.append(p)
