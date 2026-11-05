@@ -82,7 +82,7 @@ def test_angle_var_bounds_pi_literal(tmp_path: Path):
     )
     assert _dc_power_flow.has_feature(d) is True
 
-    b = SimpleNamespace(m=Problem(), d=d, v_angle=None)
+    b = SimpleNamespace(m=Problem(), d=d, v_angle=None, has_coarse_proc=False)
     _dc_power_flow.add_variables(b)
     v_angle = b.v_angle
     # Hand-calc: bounds are ±_PI_LITERAL == ±3.14159265 exactly.
