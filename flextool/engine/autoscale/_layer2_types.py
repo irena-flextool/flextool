@@ -268,6 +268,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # would otherwise resolve them silently.
     "maxFlow_exact_forward": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxFlow_exact_reverse": CstrFamily(QuantityType.DIMENSIONLESS),
+    # Coarse exact connections, averaged over each coarse step — _coarse_flows.add_cstr (f"{name}_coarse").
+    "maxFlow_exact_forward_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
+    "maxFlow_exact_reverse_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     # Indirect-unit capacity on the SUM of output flows (+ its neg-cap
     # ``≥`` twin).  flextool/engine/model/core.py (_eq_max_output_sum).
     "maxOutputSum": CstrFamily(QuantityType.DIMENSIONLESS),
@@ -536,6 +539,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── DC PF.
     # flextool/engine/model/_dc_power_flow.py _eq_dc_flow — RHS=0, skip.
     "dc_flow_eq": CstrFamily(None),
+    # The row rule on coarse steps (a coarse line between coarse-angle nodes) — _coarse_flows.add_row_rule_cstr.
+    "dc_flow_eq_coarse": CstrFamily(None),
     # flextool/engine/model/_dc_power_flow.py _eq_reference_angle — fixed-zero angle
     # at the reference node; RHS=0, skip per-row scaling.
     "dc_reference_angle_eq": CstrFamily(None),

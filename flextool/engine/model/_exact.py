@@ -3,7 +3,9 @@
 Owns the variable v_exact_forward (one binary per exact connection and step: the connection is set to its forward
 direction) and the rows maxFlow_exact_forward / maxFlow_exact_reverse.  The flows' capacity rows (maxFlow,
 maxFlow_online) stay in model/core.py and model/_online.py; the connection reserve rows read :func:`exact_arcs` and
-:func:`exact_bound` for their direction-switch rows (model/_reserve.py).
+:func:`exact_bound` for their direction-switch rows (model/_reserve.py).  A coarse exact connection
+(``processCoarse``) has one direction per coarse step (an aliased level, like its flows) and its direction rows are
+averaged over the step (``_coarse_flows.add_cstr``).
 """
 
 from typing import TYPE_CHECKING
@@ -12,6 +14,7 @@ import polars as pl
 from polar_high import Param
 
 from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.model import _coarse_flows
 from flextool.engine.model._common import _has_rows, _utf8_keys
 
 if TYPE_CHECKING:
@@ -109,15 +112,22 @@ def add_variables(b: "_Build") -> None:
     # 1: the exact connection is set to its forward direction (node_1 → node_2 of connection__node__node) in the
     # step, 0: to the reverse direction.  One binary per connection: the whole connection transfers in one
     # direction.  No cost, no inter-temporal link.
+    # ─── VAR. ─── v_exact_forward (coarse connections) ───────────────────────
+    # v_exact_forward[p,d,b] ∈ {0, 1}   ∀ p ∈ processCoarse ∩ process_exact, (d,b) the coarse steps of p
+    #   (b = its first fine step b_first)
+    # One direction per coarse step, held over its fine steps (a level: b.v_exact_forward is indexed on every fine
+    # step, _coarse_flows.alias), as the connection's flows are one value per coarse step.
     idx = arcs.select("p").unique(maintain_order=True).join(d.dt.select("d", "t"), how="cross")
-    b.v_exact_forward = b.m.add_var("v_exact_forward", ("p", "d", "t"), idx, lower=0.0, upper=1.0, integer=True)
+    b.v_exact_forward = _coarse_flows.alias(
+        b, b.m.add_var("v_exact_forward", ("p", "d", "t"), _coarse_flows.domain(b, idx), lower=0.0, upper=1.0,
+                       integer=True), idx)
 
 
 def add_constraints(b: "_Build") -> None:
     """maxFlow_exact_forward / maxFlow_exact_reverse."""
     if b.v_exact_forward is None:
         return
-    m, d = b.m, b.d
+    d = b.d
     arcs = b.exact_arcs
     fwd = arcs.filter(pl.col("forward")).select("p", "source", "sink")
     rev = arcs.filter(~pl.col("forward")).select("p", "source", "sink")
@@ -133,10 +143,13 @@ def add_constraints(b: "_Build") -> None:
     # each step it carries flow in one direction only.  maxFlow and maxFlow_online still bound each direction by
     # the built and the online capacity; with investment Ū is a valid big-M (GMPL used v_online_integer and the
     # unit count as the switch, which fails for a non-integer number of units).
-    m.add_cstr("maxFlow_exact_forward", over=fwd.join(d.dt.select("d", "t"), how="cross"), sense="<=",
-               lhs_terms={"flow": b.v_flow, "switch_neg": -(y * exact_bound(d, fwd))},
-               rhs_terms={"zero": 0.0})
+    # A coarse connection: maxFlow_exact_forward_coarse / maxFlow_exact_reverse_coarse, the rows' mean over each
+    # coarse step (_coarse_flows.add_cstr): v_flow ≤ Ū_b · v_exact_forward[p,d,b] with Ū_b the step mean of Ū —
+    # the flow and the direction are one value per step.
+    _coarse_flows.add_cstr(b, "maxFlow_exact_forward", over=fwd.join(d.dt.select("d", "t"), how="cross"),
+                           sense="<=", lhs_terms={"flow": b.v_flow, "switch_neg": -(y * exact_bound(d, fwd))},
+                           rhs_terms={"zero": 0.0})
     u_rev = exact_bound(d, rev)
-    m.add_cstr("maxFlow_exact_reverse", over=rev.join(d.dt.select("d", "t"), how="cross"), sense="<=",
-               lhs_terms={"flow": b.v_flow, "switch": y * u_rev},
-               rhs_terms={"upper": u_rev})
+    _coarse_flows.add_cstr(b, "maxFlow_exact_reverse", over=rev.join(d.dt.select("d", "t"), how="cross"),
+                           sense="<=", lhs_terms={"flow": b.v_flow, "switch": y * u_rev},
+                           rhs_terms={"upper": u_rev})

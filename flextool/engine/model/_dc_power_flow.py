@@ -5,6 +5,11 @@ the connection's susceptance times the voltage-angle difference of its end nodes
 component (node_reference_angle, chosen in input derivation) has its angle pinned to 0.  The reverse flow
 v_flow_back of the arcs, its capacity row and its node-balance terms belong to model/core.py, which shares them
 with the other method_2way_1var_off arcs; :func:`nodeBalance_back_flow_terms` builds those balance terms.
+
+Coarse steps (``new_stepduration`` groups): a coarse node whose every DC line is a coarse process
+(``flex_data.coarse_angle_steps``) has one angle per coarse step (an aliased level); dc_flow_eq follows the row
+rule — a coarse line between two such nodes gets one row per coarse step (``dc_flow_eq_coarse``), any other line
+keeps a row per solve step and reads a coarse flow or angle at its constant value.
 """
 from __future__ import annotations
 
@@ -16,6 +21,7 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import cast_dim
+from flextool.engine.model import _coarse_flows
 from flextool.engine.model._common import _has_rows
 
 if TYPE_CHECKING:
@@ -179,10 +185,26 @@ def add_variables(b: _Build) -> None:
     # −π ≤ v_angle[n,d,t] ≤ π   ∀ n ∈ node_dc_power_flow, (d,t) ∈ dt
     # Voltage angle of node n, radians (π = 3.14159265).  Variable bounds are
     # scalar, so the reference nodes are pinned to 0 by dc_reference_angle_eq.
-    b.v_angle = b.m.add_var(
-        "v_angle", ("n", "d", "t"), angle_idx,
-        lower=-_PI_LITERAL, upper=_PI_LITERAL,
-    )
+    # ─── VAR. ─── v_angle (coarse-angle nodes) ───────────────────────────────
+    # −π ≤ v_angle[n,d,b] ≤ π   ∀ n ∈ coarse-angle nodes, (d,b) the coarse steps of n (b = its first fine step)
+    #   coarse-angle node = a node of node_dc_power_flow in a coarse group whose every DC line is a coarse process
+    #   (flex_data.coarse_angle_steps)
+    # One angle per coarse step, held over its fine steps (a level: b.v_angle is indexed on every fine step,
+    # _coarse_flows.alias).  A coarse node with a DC line at the solve's step keeps an angle per solve step.
+    b.angle_steps = _angle_steps(b)
+    b.v_angle = _coarse_flows.alias(
+        b, b.m.add_var("v_angle", ("n", "d", "t"), _coarse_flows.domain(b, angle_idx, b.angle_steps),
+                       lower=-_PI_LITERAL, upper=_PI_LITERAL),
+        angle_idx, b.angle_steps)
+
+
+def _angle_steps(b: _Build) -> pl.DataFrame:
+    """``(n, d, b_first, t)`` of the coarse-angle nodes (``flex_data.coarse_angle_steps``); empty without any."""
+    from flextool.engine.preprocess.flex_data import coarse_angle_steps
+
+    if not b.has_coarse_proc:
+        return pl.DataFrame(schema={c: pl.Utf8 for c in ("n", "d", "b_first", "t")})
+    return coarse_angle_steps(b.d)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +231,10 @@ def _eq_reference_angle(b: _Build) -> None:
     # ─── EQ. ─── dc_reference_angle_eq ───────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_angle[n,d,t] = 0   ∀ n ∈ node_reference_angle, (d,t) ∈ dt
+    #   (a coarse-angle node: (d,b) its coarse steps, b = the step's first fine step)
     # Fixes the angle reference of each connected DC network.
+    if b.angle_steps is not None:
+        ref_idx = _coarse_flows.domain(b, ref_idx, b.angle_steps)
     b.m.add_cstr(
         "dc_reference_angle_eq",
         over      = ref_idx,
@@ -234,8 +259,12 @@ def _eq_dc_flow(b: _Build) -> None:
     #   = susceptance[p] · (v_angle[s,d,t] − v_angle[k,d,t])
     #   ∀ (p,s,k) ∈ DC arcs (dc_arcs_frame), (d,t) ∈ dt
     # Linearised AC flow: the signed flow (MW) on a DC arc follows the angle difference of its end nodes.
-    # v_flow_back is absent when the model has no reverse-flow variable.  All DC nodes are on the
-    # default time block, so the rows run over dt.
+    # v_flow_back is absent when the model has no reverse-flow variable.  The rows run over dt.
+    # Row rule (coarse steps): a coarse line whose both end nodes are coarse-angle nodes gets one row per coarse
+    # step, dc_flow_eq_coarse = the row's mean over the step (_coarse_flows.add_cstr; the susceptance is constant,
+    # so it is the row itself on one flow and two angles per step).  Any other line keeps a row per solve step and
+    # reads a coarse flow or angle at its constant value (a coarse line to a node with a fine DC line holds the
+    # angle difference constant over the coarse step).
     over = dc_arcs.join(d.dt, how="cross").select("p", "source", "sink", "d", "t")
     flow_signed = Where(v_flow, dc_arcs)
     if b.v_flow_back is not None:
@@ -247,13 +276,29 @@ def _eq_dc_flow(b: _Build) -> None:
                       frame=v_angle.frame.rename({"n": "sink"}), lower=v_angle.lower, upper=v_angle.upper)
     angle_diff = (Where(v_angle_src, dc_arcs.select("p", "source"))
                   - Where(v_angle_snk, dc_arcs.select("p", "sink"))) * d.p_connection_susceptance
-    b.m.add_cstr(
-        "dc_flow_eq",
+    _coarse_flows.add_row_rule_cstr(
+        b, "dc_flow_eq",
         over      = over,
         sense     = "==",
         lhs_terms = {"flow": flow_signed * d.p_unitsize},
         rhs_terms = {"angle_diff": angle_diff},
+        partition = _dc_partition(b, dc_arcs, over),
     )
+
+
+def _dc_partition(b: _Build, dc_arcs: pl.DataFrame, over: pl.DataFrame) -> "pl.DataFrame | None":
+    """The coarse steps ``(p, source, sink, d, b_first, t, w)`` of the DC arcs whose line is a coarse process and
+    whose both end nodes are coarse-angle nodes (:func:`_coarse_flows.row_partition`); None without any."""
+    steps = b.angle_steps
+    if steps is None or steps.height == 0:
+        return None
+    arcs = dc_arcs.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink"))).unique()
+    members = pl.concat([
+        arcs.with_columns(kind=pl.lit("p"), e=pl.col("p")),
+        arcs.with_columns(kind=pl.lit("n"), e=pl.col("source")),
+        arcs.with_columns(kind=pl.lit("n"), e=pl.col("sink")),
+    ]).sort("p", "source", "sink", "kind", "e")
+    return _coarse_flows.row_partition(b, members, over, node_steps=steps)
 
 
 # ---------------------------------------------------------------------------

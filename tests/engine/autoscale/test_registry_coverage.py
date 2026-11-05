@@ -325,6 +325,8 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "reserve_storage_up_floor", "reserve_storage_down_headroom",
     "reserve_storage_up_floor_coarse", "reserve_storage_down_headroom_coarse",
     *(f"ramp_{side}_{dir_}_reserve_coarse" for side in ("sink", "source") for dir_ in ("up", "down")),
+    # Coarse exact connections (add_cstr) and the row rule (add_row_rule_cstr writes f"{name}_coarse").
+    "maxFlow_exact_forward_coarse", "maxFlow_exact_reverse_coarse", "dc_flow_eq", "dc_flow_eq_coarse",
 ]
 
 

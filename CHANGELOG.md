@@ -107,9 +107,9 @@
   limit that varies within the step and its cost, efficiency and prices do not vary within the step; otherwise
   the result can differ (hourly flows could use the cheapest or most efficient hours, and several varying limits
   are looser when averaged). Units and connections with a node outside the coarse groups keep the solve's step,
-  and so do those with a delay, DC power flow, an `exact`
-  connection, a flow in a user constraint, a flow group instant limit or a node in a capacity-margin, inertia or
-  non-synchronous group; also flows that cross Benders regions or live in the Benders master, and, in a
+  and so do those with a delay, a flow in a user constraint, a flow group instant limit or a node in a
+  capacity-margin, inertia or non-synchronous group; also flows that cross Benders regions or live in the Benders
+  master, and, in a
   stochastic solve, those at a stochastic node whose coarse step is only partly tied between the forecasts. An
   info line lists the units and connections that use a coarse step and those kept at the solve's step with the
   reason. Their flows are written at every time step of the solve, the same value through each coarse step. An
@@ -144,6 +144,14 @@
   one of its coarse steps, and in a realization solve when its committed reserve changes within a coarse step. The
   coarse-step notice names these units and connections (one reserve per coarse step; the headroom on the
   step-mean availability or profile).
+- **Exact connections and DC power-flow lines between coarse nodes use the coarse step too** (results change for
+  such models; before, they kept the solve's step). An `exact` connection whose nodes are all coarse chooses its
+  direction once per coarse step, and its direction limits apply to the average over the step. A DC line whose
+  nodes are all coarse has one flow per coarse step; a coarse node whose every DC line uses the coarse step has one
+  voltage angle per coarse step (written at every time step of the step), and the DC power-flow row of a line
+  between two such nodes is one row per coarse step. A coarse DC line at a node that also has a DC line at the
+  solve's step keeps its DC power-flow row at every time step, which holds the angle difference across it constant
+  through the coarse step; the coarse-step notice names such lines.
 - **A Benders master that HiGHS left with an undetermined status after its cold retry is solved once more from
   its reloaded LP** (polar-high 3.12.1), instead of stopping with "Benders master problem did not solve to
   optimality". This happened on badly scaled masters (an unscaled objective with cut slopes near 1e9).

@@ -2,7 +2,8 @@
 
 A coarse process (``FlexData.processCoarse``, :func:`flextool.engine.preprocess.params._coarse.coarse_process_frames`)
 has one column per coarse step of its nodes for each of its time-indexed variables (:data:`COARSE_VARS`): the LP
-row is keyed by the step's first fine step ``b_first``.  Every reader that needs the values on the solve's steps
+row is keyed by the step's first fine step ``b_first``.  So does the angle of a coarse-angle node
+(:data:`COARSE_VAR_STEPS`).  Every reader that needs the values on the solve's steps
 expands them to every fine step of the coarse step, by the variable's mode:
 
 * ``copy`` — a *level* that holds through the whole step (a flow is a rate in MW per unitsize, units online a
@@ -30,39 +31,57 @@ from __future__ import annotations
 
 import polars as pl
 
-#: The variables whose coarse-process columns live on coarse steps -> how a value reaches the other fine steps of
-#: its step (module docstring): ``copy`` the value, or keep it at the ``first`` fine step (0 at the others).
+#: The variables whose coarse columns live on coarse steps -> how a value reaches the other fine steps of its
+#: step (module docstring): ``copy`` the value, or keep it at the ``first`` fine step (0 at the others).
 COARSE_VARS: dict[str, str] = {
     "v_flow": "copy", "v_flow_back": "copy",
-    "v_online_linear": "copy", "v_online_integer": "copy", "v_reserve": "copy",
+    "v_online_linear": "copy", "v_online_integer": "copy", "v_reserve": "copy", "v_exact_forward": "copy",
     "v_startup_linear": "first", "v_startup_integer": "first",
     "v_shutdown_linear": "first", "v_shutdown_integer": "first",
+    "v_angle": "copy",
 }
 
+#: The variables of :data:`COARSE_VARS` that are not keyed by a process -> whose coarse steps they take: the
+#: coarse-angle nodes (``flex_data.coarse_angle_steps``).  The others take the coarse processes' steps.
+COARSE_VAR_STEPS: dict[str, str] = {"v_angle": "angle"}
 
-def coarse_steps(flex_data) -> "pl.DataFrame | None":
-    """``(p, d, b_first, t)`` (Utf8) of the coarse processes of ``flex_data``; ``None`` without any."""
-    steps = getattr(flex_data, "process_coarse_step", None) if flex_data is not None else None
+
+def coarse_steps(flex_data, name: "str | None" = None) -> "pl.DataFrame | None":
+    """``(key, d, b_first, t)`` (Utf8) of the coarse entities of variable ``name`` in ``flex_data``
+    (:data:`COARSE_VAR_STEPS`; default and any other name: the coarse processes, key ``p``); ``None`` without
+    any."""
+    if flex_data is None:
+        return None
+    kind = COARSE_VAR_STEPS.get(name or "")
+    if kind is None:
+        steps = getattr(flex_data, "process_coarse_step", None)
+        cols = ("p", "d", "b_first", "t")
+    elif getattr(flex_data, "process_coarse_step", None) is None or flex_data.process_coarse_step.height == 0:
+        return None
+    else:
+        from flextool.engine.preprocess.flex_data import coarse_angle_steps
+
+        steps, cols = coarse_angle_steps(flex_data), ("n", "d", "b_first", "t")
     if steps is None or steps.height == 0:
         return None
-    return steps.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "b_first", "t")))
+    return steps.select(*(pl.col(c).cast(pl.Utf8) for c in cols))
 
 
 def expand_coarse(frame: "pl.DataFrame | None", flex_data, *, mode: str = "copy", p: str = "p", d: str = "d",
-                  t: str = "t", value: str = "value") -> "pl.DataFrame | None":
-    """``frame`` (an LP-shaped frame of a :data:`COARSE_VARS` variable: key columns with ``p``, ``d``, ``t``, and
-    ``value``) with each coarse-process row at a coarse step's first fine step written to the other fine steps of
-    the step that the frame has no row for: its value (``mode="copy"``) or 0 (``mode="first"``).  Rows keep the
-    frame's order (each added row right after its source row, then in solve order) and dtypes; the other columns
-    are copied unchanged."""
+                  t: str = "t", value: str = "value", name: "str | None" = None) -> "pl.DataFrame | None":
+    """``frame`` (an LP-shaped frame of a :data:`COARSE_VARS` variable: key columns with the entity key ``p``,
+    ``d``, ``t``, and ``value``) with each coarse row at a coarse step's first fine step written to the other fine
+    steps of the step that the frame has no row for: its value (``mode="copy"``) or 0 (``mode="first"``).  The
+    coarse steps are those of variable ``name`` (:func:`coarse_steps`).  Rows keep the frame's order (each added
+    row right after its source row, then in solve order) and dtypes; the other columns are copied unchanged."""
     if mode not in ("copy", "first"):
         raise ValueError(f"expand_coarse: unknown mode {mode!r}")
-    steps = coarse_steps(flex_data)
+    steps = coarse_steps(flex_data, name)
     if frame is None or steps is None or frame.height == 0:
         return frame
     keys = [c for c in frame.columns if c != value]
     others = (steps.filter(pl.col("t") != pl.col("b_first")).with_row_index("__j", offset=1)
-              .rename({"p": "__p", "d": "__d", "b_first": "__b", "t": "__t"}))
+              .rename({steps.columns[0]: "__p", "d": "__d", "b_first": "__b", "t": "__t"}))
     lead = frame.with_row_index("__i")
     copies = (lead.with_columns(pl.col(p).cast(pl.Utf8).alias("__p"), pl.col(d).cast(pl.Utf8).alias("__d"),
                                 pl.col(t).cast(pl.Utf8).alias("__b"))
@@ -84,13 +103,13 @@ def var_values(sol, flex_data, name: str) -> "pl.DataFrame | None":
     if sol is None or name not in getattr(sol, "_vars", {}):
         return None
     frame = sol.value(name)
-    if name not in COARSE_VARS:
+    if name not in COARSE_VARS or frame is None or frame.height == 0:
         return frame
-    return expand_coarse(frame, flex_data, mode=COARSE_VARS[name])
+    return expand_coarse(frame, flex_data, mode=COARSE_VARS[name], p=frame.columns[0], name=name)
 
 
 def coarse_step_members(steps: "pl.DataFrame | None") -> "dict[tuple[str, str, str], list[str]]":
-    """``(p, d, b_first)`` -> the other fine steps of the coarse step, in solve order (:func:`coarse_steps`)."""
+    """``(key, d, b_first)`` -> the other fine steps of the coarse step, in solve order (:func:`coarse_steps`)."""
     out: dict[tuple[str, str, str], list[str]] = {}
     if steps is None:
         return out
@@ -102,9 +121,10 @@ def coarse_step_members(steps: "pl.DataFrame | None") -> "dict[tuple[str, str, s
 
 def expand_value_keys(values_by_key: "dict[tuple[str, ...], float]", steps: "pl.DataFrame | None", *,
                       mode: str = "copy") -> None:
-    """In place: each key ``(d, t, p, …)`` of a coarse process at its coarse step's first fine step gets an entry
+    """In place: each key ``(d, t, e, …)`` of a coarse entity at its coarse step's first fine step gets an entry
     for every other fine step of the step that has no key of its own (the HiGHS-name reader's row keys: period,
-    time, then the process column first): its value (``mode="copy"``) or 0 (``mode="first"``)."""
+    time, then the entity column first — the process, or the node of :data:`COARSE_VAR_STEPS`): its value
+    (``mode="copy"``) or 0 (``mode="first"``)."""
     if mode not in ("copy", "first"):
         raise ValueError(f"expand_value_keys: unknown mode {mode!r}")
     members = coarse_step_members(steps)

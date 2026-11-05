@@ -8,9 +8,12 @@ fine variable and maps each fine row to the column of its coarse step.  Every te
 unchanged: a sum over the fine steps of a coarse step (the coarse node balance, costs, CO2, cumulative flow) adds
 the fine coefficients on the one column, Σ_t v·Δt·slope_t = v_b·Σ_t Δt·slope_t.  :func:`alias` serves any *level*
 of a coarse process keyed ``(p, …, d, t)`` (a value that holds through the step, like a rate): its units online
-(``_online``) and its reserve (``_reserve``) are aliased like its flows.  Its *events* (start-ups, shut-downs) are registered at ``b_first`` only
-and are not aliased: a fine row of an interior step has no event term (an alias would count one start-up on
-every fine step of a sum over t).
+(``_online``), its reserve (``_reserve``) and the direction of an exact connection (``_exact``) are aliased like its
+flows; :func:`alias` with ``steps`` serves a level of another coarse entity: the angle of a coarse-angle node
+(``_dc_power_flow``).
+The *events* of a coarse process (start-ups, shut-downs) are registered at ``b_first`` only and are not aliased: a
+fine row of an interior step has no event term (an alias would count one start-up on every fine step of a sum
+over t).
 
 The arc-local rows of a coarse process (capacity, output sum, conversion, input share, profiles, the online
 capacity, the minimum load and the reserve limits) are not written per fine step: :func:`add_cstr` writes them once per coarse step as
@@ -18,6 +21,10 @@ the twin family ``<family>_coarse``, the fine row's Δt-weighted average over th
 :func:`add_cstr`).  A constant flow could not meet a per-step equality while a parameter varies within the step;
 the average lets time-varying availability, profile, efficiency and capacity coefficients act through their step
 means.
+
+Rows that couple several entities follow the *row rule* (:func:`add_row_rule_cstr`): a row whose every member is
+coarse (:func:`row_partition`; DC power flow, the storage reserve rows) is one averaged row per coarse step; a row
+that mixes coarse and fine members stays per solve step and reads the coarse terms at their constant value.
 """
 from __future__ import annotations
 
@@ -61,34 +68,42 @@ def coarse_procs(b: "_Build") -> pl.DataFrame:
     return b.coarse_steps.select("p").unique(maintain_order=True)
 
 
-def _step_of(b: "_Build", frame: pl.DataFrame) -> pl.DataFrame:
-    """``frame`` with ``b_first`` (Utf8) of every row of a coarse process (null for the other rows)."""
-    steps = b.coarse_steps.select("p", "d", "t", "b_first")
+def _step_of(b: "_Build", frame: pl.DataFrame, steps: "pl.DataFrame | None" = None) -> pl.DataFrame:
+    """``frame`` with ``b_first`` (Utf8) of every row of a coarse entity (null for the other rows).  ``steps``
+    ``(key, d, b_first, t)``: the coarse steps of the entities in column ``key`` of ``frame`` (default the coarse
+    processes' ``(p, d, b_first, t)``)."""
+    if steps is None:
+        steps = b.coarse_steps.select("p", "d", "t", "b_first")
+    on = [c for c in steps.columns if c != "b_first"]
+    steps = steps.select(*on, "b_first")
     left = frame
-    for c in _KEYS:
+    for c in on:
         if left.schema[c] != steps.schema[c]:
             steps = steps.with_columns(pl.col(c).cast(left.schema[c], strict=False))
-    return left.join(steps, on=list(_KEYS), how="left")
+    return left.join(steps, on=on, how="left")
 
 
-def domain(b: "_Build", index: pl.DataFrame) -> pl.DataFrame:
-    """The rows of a variable's ``index`` (with ``p``, ``d``, ``t``) that get a column: every row of a fine
-    process, and each coarse step's first fine step of a coarse process."""
-    if not b.has_coarse_proc:
+def domain(b: "_Build", index: pl.DataFrame, steps: "pl.DataFrame | None" = None) -> pl.DataFrame:
+    """The rows of a variable's ``index`` (with ``p``, ``d``, ``t``; with ``steps``, its key column) that get a
+    column: every row of a fine entity, and each coarse step's first fine step of a coarse one (``steps`` as in
+    :func:`_step_of`)."""
+    if not b.has_coarse_proc or (steps is not None and steps.height == 0):
         return index
-    keep = _step_of(b, index).filter(pl.col("b_first").is_null() | (pl.col("t").cast(pl.Utf8) == pl.col("b_first")))
+    keep = (_step_of(b, index, steps)
+            .filter(pl.col("b_first").is_null() | (pl.col("t").cast(pl.Utf8) == pl.col("b_first"))))
     return keep.select(index.columns)
 
 
-def alias(b: "_Build", registered: Var, index: pl.DataFrame) -> Var:
-    """``registered`` (a level declared over :func:`domain` of ``index``, dims ``(p, …, d, t)`` with ``t`` last)
-    indexed on every row of ``index``: a coarse process's fine row carries the column of its coarse step.  Not
-    registered on the Problem; sorted by its dims like the registered frame."""
-    if not b.has_coarse_proc:
+def alias(b: "_Build", registered: Var, index: pl.DataFrame, steps: "pl.DataFrame | None" = None) -> Var:
+    """``registered`` (a level declared over :func:`domain` of ``index``, dims ``(key, …, d, t)`` with ``t`` last)
+    indexed on every row of ``index``: a coarse entity's fine row carries the column of its coarse step (``steps``
+    as in :func:`_step_of`; default the coarse processes).  Not registered on the Problem; sorted by its dims like
+    the registered frame."""
+    if not b.has_coarse_proc or (steps is not None and steps.height == 0):
         return registered
     dims = registered.dims
     t_dtype = registered.frame.schema["t"]
-    rows = (_step_of(b, index.select(dims))
+    rows = (_step_of(b, index.select(dims), steps)
             .with_columns(pl.coalesce(pl.col("b_first").cast(t_dtype, strict=False), pl.col("t")).alias("__t_col")))
     cols = registered.frame.rename({"t": "__t_col"})
     frame = (rows.join(cols, on=[*dims[:-1], "__t_col"], how="inner")
@@ -154,7 +169,9 @@ def average(b: "_Build", term, w: "Param | None" = None):
             if wf.schema[c] != frame.schema[c]:
                 wf = wf.with_columns(pl.col(c).cast(frame.schema[c], strict=False))
         key = [c for c in w.dims if c not in ("d", "b_first", "t")]
-        dims = tuple(dict.fromkeys((*key, *("b_first" if c == "t" else c for c in term.dims))))
+        # A term keyed by t without d (a time map) takes the period of the weights: the steps of every period.
+        at_t = ("d", "b_first") if "d" in w.dims and "d" not in term.dims else ("b_first",)
+        dims = tuple(dict.fromkeys((*key, *(x for c in term.dims for x in (at_t if c == "t" else (c,))))))
         weighted = (frame.join(wf.rename({"value": "__w"}), on=on, how="inner")
                     .with_columns(value=pl.col("value") * pl.col("__w"))
                     .select(*dims, "t", "value"))
@@ -199,9 +216,11 @@ def add_cstr(b: "_Build", name: str, *, over: pl.DataFrame, sense: str, lhs_term
     #             minFlow_reserve_coarse, minFlow_reserve_arc_coarse, reserve_process_{upward,downward}_coarse,
     #             connection_reserve_{up,down}_coarse, connection_reserve_{up,down}_online{sfx}_coarse,
     #             connection_reserve_{up,down}_exact_coarse, reserve_storage_up_floor_coarse,
-    #             reserve_storage_down_headroom_coarse   ({sfx} = _linear / _integer) ──────────────────────────
+    #             reserve_storage_down_headroom_coarse, maxFlow_exact_{forward,reverse}_coarse; by the row rule
+    #             (add_row_rule_cstr): dc_flow_eq_coarse   ({sfx} = _linear / _integer) ──────────────────────
     # Σ_{t∈b} w[K,d,b,t] · ( LHS_t − RHS_t )  {≤,=,≥}  E[K,d,b]      w = Δt / Δ_b,  Δ_b = Σ_{t∈b} Δt
-    #   ∀ coarse row key K (a coarse process p, or a row key whose every member is coarse: row_partition), (…, d, b)
+    #   ∀ coarse row key K (a coarse process p, or a row key whose every member is coarse: row_partition — a
+    #   storage node n, a DC arc between coarse-angle nodes), (…, d, b)
     #   its coarse steps (b = its first fine step b_first);  LHS_t / RHS_t = the level terms of the fine row of the
     #   family at (d, t);  E = the row's event terms on the coarse grid (start-ups at b, shut-downs at the coarse
     #   successor b⁺: the capacity reduction of maxFlow_online / maxInputFlow_online and their _shutdown rows)
@@ -230,22 +249,36 @@ def add_twin(b: "_Build", name: str, *, over: pl.DataFrame, sense: str, lhs_term
                  rhs_terms={**{k: average(b, v, w) for k, v in rhs_terms.items()}, **(coarse_rhs or {})})
 
 
-def row_partition(b: "_Build", members: pl.DataFrame, like: pl.DataFrame) -> "pl.DataFrame | None":
+def row_partition(b: "_Build", members: pl.DataFrame, like: pl.DataFrame,
+                  node_steps: "pl.DataFrame | None" = None) -> "pl.DataFrame | None":
     """The coarse steps ``(key…, d, b_first, t, w)`` of the row keys of ``members`` ``(key…, kind, e)`` whose every
     member is coarse (``params._coarse.coarse_row_steps``: kind ``p`` a process with its coarse steps, kind ``n`` a
-    coarse node), with ``key…``, ``d`` and ``t`` in the dtypes of the rows' index ``like`` and ``b_first`` Utf8;
-    ``None`` without such a key."""
+    coarse node — of ``node_steps`` ``(n, d, b_first, t)`` when given, else of ``node_coarse_step``), with ``key…``,
+    ``d`` and ``t`` in the dtypes of the rows' index ``like`` and ``b_first`` Utf8; ``None`` without such a key."""
     from flextool.engine.preprocess.params._coarse import coarse_row_steps
 
     if not b.has_coarse_proc or members.height == 0:
         return None
     d = b.d
     psd = d.p_step_duration.frame if d.p_step_duration is not None else None
-    steps = coarse_row_steps(members, b.coarse_steps, getattr(d, "node_coarse_step", None), psd)
+    nodes = getattr(d, "node_coarse_step", None) if node_steps is None else node_steps
+    steps = coarse_row_steps(members, b.coarse_steps, nodes, psd)
     if steps.height == 0:
         return None
     keys = [c for c in members.columns if c not in ("kind", "e")]
     return steps.with_columns(*(pl.col(c).cast(like.schema[c]) for c in (*keys, "d", "t")))
+
+
+def add_row_rule_cstr(b: "_Build", name: str, *, over: pl.DataFrame, sense: str, lhs_terms: dict,
+                      rhs_terms: dict, partition: "pl.DataFrame | None") -> None:
+    """A row family under the row rule: the rows of the keys of ``partition`` (:func:`row_partition`, every member
+    coarse) as ``<name>_coarse``, one averaged row per coarse step (EQ. header in :func:`add_cstr`); every other row
+    (a key with a fine member, or with no time-varying member) per solve step as ``name``, reading the coarse terms
+    at their constant value.  Without such a key: ``m.add_cstr(name, …)`` unchanged."""
+    if partition is None or partition.height == 0 or not b.has_coarse_proc:
+        b.m.add_cstr(name, over=over, sense=sense, lhs_terms=lhs_terms, rhs_terms=rhs_terms)
+        return
+    add_cstr(b, name, over=over, sense=sense, lhs_terms=lhs_terms, rhs_terms=rhs_terms, partition=partition)
 
 
 def at_step(b: "_Build", var: Var) -> Var:

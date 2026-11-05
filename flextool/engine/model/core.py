@@ -28,6 +28,8 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
   v_flow_back[p,source,sink,d,t]       reverse flow of 2-way 1-var and DC arcs; × unitsize = MW
   v_exact_forward[p,d,t]               exact connection set to its forward direction, binary   [_exact]
   v_angle[n,d,t]                       voltage angle, rad in [−π, π]                          [_dc_power_flow]
+                                       (units online, start-ups, reserves, directions and angles of coarse
+                                       entities: one column per coarse step)
   v_trade[c,n,d,i]                     commodity bought in tier i; × commodity unitsize = MWh [_commodity_ladder]
   vq_capacity_margin[g,d], vq_inertia[g,d,t], vq_non_synchronous[g,d,t]
                                        group floor slacks, fraction of the group's scale      [_group_slack]
@@ -350,6 +352,7 @@ class _Build:
     vq_inertia: Var | None = None
     vq_non_synchronous: Var | None = None
     v_angle: Var | None = None
+    angle_steps: pl.DataFrame | None = None      # (n, d, b_first, t) of the coarse-angle nodes (_dc_power_flow)
     v_trade: Var | None = None
 
     # ── shared expressions ──

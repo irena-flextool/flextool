@@ -102,9 +102,11 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "and shut-downs once per coarse step, counts its minimum up / down time in whole coarse "
                      "steps and takes its start-up / shut-down capacity reduction over the coarse step; a "
                      "reserve provider holds one reserve per coarse step, the requirement checked at every "
-                     "time step (results change where, within a coarse step, a cost, price, efficiency or "
-                     "minimum load varies, two or more limits vary, ramp limits apply, or the unit has online "
-                     "variables or provides reserves)."),
+                     "time step; an exact connection chooses its direction and a DC node whose lines are all "
+                     "coarse its angle once per coarse step (results change where, within a coarse step, a "
+                     "cost, price, efficiency or minimum load varies, two or more limits vary, ramp limits "
+                     "apply, the unit has online variables or provides reserves, or a coarse DC line meets a "
+                     "DC line at the solve's step)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "coarse_process_flows"),
         ),
         BehaviourChange(

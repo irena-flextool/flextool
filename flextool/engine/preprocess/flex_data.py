@@ -439,8 +439,6 @@ def coarse_process_exclusions(flex_data: "FlexData") -> dict[str, str]:
             out.setdefault(p, why)
 
     add(_frame_values(getattr(d, "process_delayed", None), "p"), "it has a delay")
-    add(_frame_values(getattr(d, "connection_dc_power_flow", None), "p"), "it is a DC power-flow line")
-    add(_frame_values(getattr(d, "process_exact", None), "p"), "it is an exact connection")
     add(_frame_values(getattr(d, "flow_constraint_idx", None), "p"), "a user constraint has a flow term on it")
     gpn = getattr(d, "group_process_node", None)
     instant = set()
@@ -483,7 +481,8 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
     that varies within a coarse step (the averaged floor is the step-mean floor); with ramp limits too, the start-up /
     shut-down capacity reduction of the coarse step (the mean share over the whole step); reserves (one per coarse
     step while the requirement is checked at every solve step), and with an availability or profile that varies
-    within a step, the reserve headroom on its step mean."""
+    within a step, the reserve headroom on its step mean; a coarse DC line whose power-flow row stays at the solve's
+    step (:func:`_dc_mixed_reasons`)."""
     from flextool.engine.preprocess.params._coarse import varies_within_coarse_steps as varies
     from flextool.engine.preprocess.params._coarse import varying_within_coarse_steps as varying
 
@@ -552,7 +551,25 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
         headroom |= varies(arcs.join(profile.with_columns(pl.col("f").cast(pl.Utf8)), on="f", how="inner"),
                            steps, ("p", "f"))
     add(reserve & headroom, "its reserve headroom uses the step-mean availability / profile")
+    for p, why in _dc_mixed_reasons(d, coarse):
+        out.setdefault(p, []).append(why)
     return out
+
+
+def _dc_mixed_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str, str]]:
+    """``(p, reason)`` of the coarse DC lines with an end node whose angle stays at the solve's step (a DC line at
+    the solve's step meets that node): their DC power-flow row is per solve step with the flow constant."""
+    d = flex_data
+    a = _dc_arcs_utf8(d)
+    if a is None:
+        return []
+    angle = set(coarse_angle_steps(d)["n"].to_list())
+    a = a.unique()
+    mixed = a.filter(pl.col("p").is_in(sorted(coarse))
+                     & ~(pl.col("source").is_in(sorted(angle)) & pl.col("sink").is_in(sorted(angle))))
+    return [(p, "its DC power-flow row stays at the solve's step (a DC line at the solve's step meets one of its "
+                "nodes) and holds the angle difference constant over the coarse step")
+            for p in sorted(set(mixed["p"].to_list()))]
 
 
 def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]:
@@ -634,6 +651,50 @@ def coarse_pin_varies(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]:
                 .filter(pl.col("__any") & ~pl.col("__all")))
         out |= set(part["p"].to_list()) | varies_within_coarse_steps(pins, st, keys)
     return out
+
+
+def _utf8_frame(frame: "pl.DataFrame | None", cols: tuple[str, ...]) -> "pl.DataFrame | None":
+    if frame is None or frame.height == 0 or any(c not in frame.columns for c in cols):
+        return None
+    return frame.select(*(pl.col(c).cast(pl.Utf8) for c in cols))
+
+
+def _dc_arcs_utf8(flex_data: "FlexData") -> "pl.DataFrame | None":
+    """``(p, source, sink)`` (Utf8) of the DC arcs, as ``_dc_power_flow.dc_arcs_frame`` picks them (the arcs of
+    ``connection_dc_power_flow`` lines between ``node_dc_power_flow`` nodes, one orientation), read with Utf8 keys:
+    the frames can still differ in dtype while FlexData is being built."""
+    d = flex_data
+    lines = _frame_values(getattr(d, "connection_dc_power_flow", None), "p")
+    nodes = _frame_values(getattr(d, "node_dc_power_flow", None), "n")
+    src = getattr(d, "process_source_toSink_dc", None)
+    arcs = _utf8_frame(src if src is not None else d.process_source_sink, ("p", "source", "sink"))
+    if arcs is None or not lines or not nodes:
+        return None
+    out = arcs.filter(pl.col("p").is_in(sorted(lines)) & pl.col("source").is_in(sorted(nodes))
+                      & pl.col("sink").is_in(sorted(nodes)))
+    return out if out.height > 0 else None
+
+
+def coarse_angle_steps(flex_data: "FlexData") -> pl.DataFrame:
+    """``(n, d, b_first, t)`` (Utf8): the coarse steps of the *coarse-angle* nodes — the nodes of
+    ``node_dc_power_flow`` that are coarse (``node_coarse_step``) and whose every DC line
+    (``_dc_power_flow.dc_arcs_frame``) is a coarse process.  Their voltage angle is one value per coarse step; a
+    coarse node with a DC line that keeps the solve's step keeps an angle per solve step, so the fine line keeps
+    its per-step physics (owner decision 2026-11-04, Q3).  Empty without such a node."""
+    empty = pl.DataFrame(schema={c: pl.Utf8 for c in ("n", "d", "b_first", "t")})
+    d = flex_data
+    ncs = _utf8_frame(getattr(d, "node_coarse_step", None), ("n", "d", "b_first", "t"))
+    dc_nodes = _frame_values(getattr(d, "node_dc_power_flow", None), "n")
+    coarse_p = _frame_values(getattr(d, "processCoarse", None), "p")
+    if ncs is None or not dc_nodes or not coarse_p or d.process_source_sink is None:
+        return empty
+    a = _dc_arcs_utf8(d)
+    fine_line_nodes: set[str] = set()
+    if a is not None:
+        fine = a.filter(~pl.col("p").is_in(sorted(coarse_p)))
+        fine_line_nodes = set(fine["source"].to_list()) | set(fine["sink"].to_list())
+    keep = sorted(dc_nodes - fine_line_nodes)
+    return ncs.filter(pl.col("n").is_in(keep))
 
 
 def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
