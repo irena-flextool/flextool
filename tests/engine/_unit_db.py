@@ -7,6 +7,7 @@ tmp dir and migrated (never a checked-in ``.sqlite``).
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 from pathlib import Path
 
@@ -172,14 +173,36 @@ def uc(unit: str, min_load: float, method: str = "linear") -> list:
             ["unit", unit, "min_load", b64(min_load, "float")]]
 
 
+@contextlib.contextmanager
+def axis_vocabulary(fd):
+    """The run's axis vocabulary live for the duration (``fd._axis_enums``; None in Utf8 mode).
+
+    In axis-Enum mode (``FLEXTOOL_AXIS_ENUMS=1``) the model builders and the region split read the axis vocabulary
+    from the live context (``set_global_axis_enums``), which ``run_chain_from_db`` resets when the run ends; a test
+    that rebuilds or splits a run's FlexData afterwards sets it as the run does.  A FlexData without the attribute
+    (a Benders region's, from ``_region_filter.split``) is built under its parent's vocabulary, as the Benders
+    solve builds it: the live one is left as it is."""
+    from flextool.engine.input._axis_enums import reset_global_axis_enums, set_global_axis_enums
+
+    if not hasattr(fd, "_axis_enums"):
+        yield
+        return
+    token = set_global_axis_enums(fd._axis_enums)
+    try:
+        yield
+    finally:
+        reset_global_axis_enums(token)
+
+
 def build(fd):
-    """Build (do not solve) the LP for ``fd``."""
+    """Build (do not solve) the LP for ``fd``, with the run's axis vocabulary (:func:`axis_vocabulary`)."""
     from polar_high import Problem
 
     from flextool.engine import build_flextool
 
     pb = Problem()
-    build_flextool(pb, fd)
+    with axis_vocabulary(fd):
+        build_flextool(pb, fd)
     return pb
 
 

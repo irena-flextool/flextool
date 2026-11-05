@@ -22,7 +22,8 @@ import pytest
 
 from flextool.engine.preprocess.params import _coarse
 from tests.engine._lp_rows import row_bounds, row_terms
-from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, last_stochastic, make_db, run, utf8, without_realization
+from tests.engine._unit_db import (FLEXTOOL_ROOT, axis_vocabulary, b64, build, last_stochastic, make_db, run, utf8,
+                                   without_realization)
 
 pytestmark = pytest.mark.solver
 
@@ -806,18 +807,21 @@ def test_benders_regions_keep_cross_region_flows_fine(tmp_path_factory, monkeypa
     regions = ["region_A", "region_B", "region_C"]
     membership = rf.load_region_membership(fd, regions)
     hosted = frozenset(rf.compute_master_hosted_nodes(fd, membership))
-    splits = rf.split(fd, regions=regions, region_membership=membership, benders_uncap_cross_region=True,
-                      master_hosted_nodes=hosted)
+    with axis_vocabulary(fd):
+        splits = rf.split(fd, regions=regions, region_membership=membership, benders_uncap_cross_region=True,
+                          master_hosted_nodes=hosted)
     for sp in splits:
         r = sp.region[-1]
         assert _coarse_procs(sp.data) == {f"liquefier_{r}"}
-        cols = _flow_cols(build(sp.data), "v_flow[")
+        with axis_vocabulary(fd):
+            cols = _flow_cols(build(sp.data), "v_flow[")
         assert len([c for c in cols if c.startswith(f"v_flow[liquefier_{r},")]) == 7
         assert sp.half_flows
         for hf in sp.half_flows:
             assert hf.original_p.startswith("pipe_")
             assert len([c for c in cols if c.startswith(f"v_flow[{hf.virtual_p},")]) == 168
-    master = rf.master_network_data(fd, regions, region_membership=membership, master_hosted_nodes=hosted)
+    with axis_vocabulary(fd):
+        master = rf.master_network_data(fd, regions, region_membership=membership, master_hosted_nodes=hosted)
     assert master.processCoarse is None and master.process_coarse_step is None
     _fine_flows(monkeypatch)
     url, scen = make_db(tmp_path_factory, alt="cf_benders_fine", values=[], fixture_json=LH2,

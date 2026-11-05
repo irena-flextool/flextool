@@ -18,15 +18,16 @@ alternatives built from JSON under the pytest tmp dir.
 """
 from __future__ import annotations
 
+import numpy as np
 import polars as pl
 import pytest
 
 from tests.engine._lp_rows import row_bounds, row_terms
 from tests.engine._unit_db import (
-    FLEXTOOL_ROOT, b64, build, last_stochastic, make_db, run, utf8, without_realization,
+    FLEXTOOL_ROOT, b64, build, is_realization, last_stochastic, make_db, run, utf8, without_realization,
 )
 from tests.engine.test_coarse_flows import (
-    LH2_COARSE, LH2_RP, STOCH, _chain, _coarse_procs, _f, _forecasts, _keys, _lh2, _s, _stoch_values,
+    LH2, LH2_COARSE, LH2_RP, STOCH, _chain, _coarse_procs, _f, _forecasts, _keys, _lh2, _s, _stoch_values,
     _STOCH_ENTITIES, _tmap_lh2, _total_objective,
 )
 
@@ -1006,3 +1007,65 @@ def test_notice_reasons_of_a_coarse_reserve_provider(tmp_path_factory) -> None:
     assert one in why["liquefier_A"]
     assert "its reserve headroom uses the step-mean availability / profile" in why["liquefier_A"]
     assert why["pipe_AB"] == [one]
+
+
+# ---------------------------------------------------------------------------
+# Constant vs equivalent map: min_load and availability of a coarse online reserve provider
+
+
+def _tmap_const(value: float, hours: int) -> list:
+    """A ``time`` map over ``hours`` hourly steps t0001 … with the same ``value`` at every step."""
+    return b64({"index_type": "str", "index_name": "time",
+                "data": [[f"t{h + 1:04d}", value] for h in range(hours)]}, "map")
+
+
+def _same_lp(a, b) -> None:
+    """The canonical LPs of FlexData ``a`` and ``b`` are identical: names, matrix, bounds, costs, integrality."""
+    ma, mb = build(a).canonicalise(), build(b).canonicalise()
+    assert list(ma.row_names) == list(mb.row_names)
+    assert list(ma.col_names) == list(mb.col_names)
+    for field in ("col_ptr", "row_idx", "val", "row_lb", "row_ub", "sense_char", "col_obj", "col_lb", "col_ub",
+                  "col_int"):
+        assert np.array_equal(getattr(ma, field), getattr(mb, field)), field
+
+
+def _shaped_case(tmp_path_factory, case: str, shape: str) -> tuple[dict, str]:
+    """``case`` single / rolling (lh2: liquefier_A with linear units online, a 30-h minimum up / down time and
+    reserves r_up / r_dn) or stochastic (stochastics.json rolling stochastic dispatch, 24-h coarse steps:
+    top_turbine with linear units online holding reserve r_up), with the provider's min_load and availability
+    given as constants or (``shape`` "map") as time maps holding the same value at every step.  Returns the run's
+    steps and the provider."""
+    alt = f"co_shape_{case}_{shape}"
+    if case == "stochastic":
+        unit, hours, min_load, avail = "top_turbine", 8760, 0.2, 0.9
+        ents, vals = _top_reserve()
+        base = [v for v in _top_values(24.0) + vals if not (v[1] == unit and v[2] == "min_load")]
+        chain, fixture, entities = _chain(STOCH, "1_week_rolling_wind"), STOCH, _TOP_ENTITIES + ents
+    else:
+        unit, hours, min_load, avail = "liquefier_A", 168, 0.3, 0.9
+        ents, vals = _lh2_reserves()
+        base = [v for v in _UC_FULL + vals if not (v[1] == unit and v[2] == "min_load")]
+        base += _ROLLING if case == "rolling" else []
+        chain, fixture, entities = _chain(LH2, "lh2_three_region"), LH2, ents
+    shaped = [["unit", unit, "min_load", _f(min_load) if shape == "constant" else _tmap_const(min_load, hours)],
+              ["unit", unit, "availability", _f(avail) if shape == "constant" else _tmap_const(avail, hours)]]
+    url, scen = make_db(tmp_path_factory, alt=alt, values=base + shaped, base_chain=chain, entities=entities,
+                        fixture_json=fixture)
+    return run(tmp_path_factory, url, scen), unit
+
+
+@pytest.mark.parametrize("case", ["single", "rolling", "stochastic"])
+def test_constant_and_equivalent_map_give_the_same_coarse_lp(tmp_path_factory, case) -> None:
+    """min_load and availability of a coarse unit with units online that holds reserve, given as constants or as
+    time maps with the same value at every step: every solve of the run (each roll; each stochastic roll and its
+    realization solve) builds the same LP — the averaged online-capacity, minimum-load and reserve rows read the
+    step mean of a map that equals the constant."""
+    const, unit = _shaped_case(tmp_path_factory, case, "constant")
+    mapped, _ = _shaped_case(tmp_path_factory, case, "map")
+    assert list(const) == list(mapped)
+    assert len(const) >= (1 if case == "single" else 3)
+    for name in const:
+        a, b = const[name].flex_data, mapped[name].flex_data
+        if not is_realization(name):
+            assert unit in _coarse_procs(a) and unit in _coarse_procs(b), name
+        _same_lp(a, b)
