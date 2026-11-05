@@ -34,7 +34,8 @@ def netload_db(tmp_path: Path) -> str:
     * ``n_vre``  — the VRE injection node.
     * ``wind``   — a VRE unit whose ``unit__node__profile`` sets NO
       ``profile_method`` (schema-default ``upper_limit`` → must read as VRE);
-      investable (``invest_no_limit``), existing 3.0, virtual_unitsize 1.5.
+      investable (``invest_no_limit``), existing 3.0 units of virtual_unitsize 1.5
+      (capacity 3 × 1.5 = 4.5).
     * ``solar``  — a VRE unit with an EXPLICIT ``profile_method == upper_limit``;
       non-investable (default ``not_allowed``), existing 2.0.
     * ``gas``    — a NON-VRE unit whose profile arc is ``profile_method ==
@@ -118,17 +119,25 @@ def test_reader_node_granularity_fallback(netload_db: str):
     }
 
 
-def test_reader_vre_set_and_default_upper_limit(netload_db: str):
-    """wind (default upper_limit) and solar (explicit) are VRE; gas is not."""
+def test_reader_vre_set_and_default_upper_limit(netload_db: str, capsys):
+    """wind (default upper_limit) and solar (explicit) are VRE; gas is not.
+
+    With virtual_unitsize, existing is the number of units: wind's capacity is 3 × 1.5 = 4.5.  solar has no
+    virtual_unitsize, so its existing 2.0 is the capacity.  The reader names wind (virtual_unitsize ≠ 1) in a note.
+    """
     with DatabaseMapping(netload_db) as db:
         inputs = read_netload_inputs(db)
+    notes = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Note: net-load clustering")]
+    assert len(notes) == 1, notes
+    assert "wind (3 × 1.5 = 4.5 MW)" in notes[0]
+    assert "solar" not in notes[0]
 
     assert set(inputs.vre) == {"wind", "solar"}  # gas (fixed) excluded
 
     wind = inputs.vre["wind"]
     assert wind.node == "n_vre"
     assert wind.profile == "wind_profile"
-    assert wind.existing_cap == 3.0
+    assert wind.existing_cap == 4.5
     assert wind.unitsize == 1.5
     assert wind.investable is True  # invest_no_limit
 

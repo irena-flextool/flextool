@@ -330,6 +330,14 @@
   names the entity, the count and the unit size. Results unchanged.
 - **Docs: with `virtual_unitsize`, `existing` is the number of units** (as in FlexTool 3 and every 4.x release);
   the 4.x reference example said MW. Results unchanged.
+- **Fixed: net-load representative-period clustering reads `existing` as the number of units with
+  `virtual_unitsize`** (results change: the selected representative periods can differ for a VRE unit with
+  `virtual_unitsize` other than 1 and a non-zero `existing`, when the representative periods are selected again).
+  The existing VRE capacity is now `existing` × `virtual_unitsize`, as in the model; before, the clustering used
+  `existing` as MW. The tool prints a note naming such units. Stored selections are not changed.
+- **Fixed: the `--region` export gave a cross-region connection with `virtual_unitsize` only `existing` MW.** The
+  virtual half-flow connection of the region's input now carries `existing` × `virtual_unitsize`. Solve results
+  (including the Benders decomposition) are unchanged.
 - **Docs: `constraint_invested_capacity_coeff` is a coefficient per MW (MWh for storage).** Its description said
   "Not multiplied by unitsize"; FlexTool has always applied it to the invested capacity in MW (MWh).
 - **Docs: `increase_reserve_ratio` applies to upward and downward reserve alike.** The ratio stands for the

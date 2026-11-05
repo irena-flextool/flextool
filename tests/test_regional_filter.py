@@ -441,3 +441,51 @@ class TestFilterPreservesSharedEntities:
         # shared identifier objects, not spatial).  We only check that
         # at least the in-region wind profile is present.
         assert "wind_profile_A" in profiles
+
+
+def _staged_provider_from_json(data: dict, tmp_path_factory: pytest.TempPathFactory):
+    """Cascade-input Provider of the fixture ``data`` (a parsed JSON fixture), as :func:`staged_provider`."""
+    import json
+
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    folder = tmp_path_factory.mktemp("lh2_vu")
+    json_path = folder / "lh2_three_region_vu.json"
+    json_path.write_text(json.dumps(data))
+    url = json_to_db(json_path, folder / "lh2_three_region_vu.sqlite")
+    provider = FlexDataProvider()
+    prev_cwd = os.getcwd()
+    try:
+        os.chdir(folder)
+        _input_derivation_run(url, provider, logging.getLogger("test_regional_filter"),
+                              scenario_name=SCENARIO, work_folder=folder)
+    finally:
+        os.chdir(prev_cwd)
+    return provider
+
+
+class TestVirtualConnectionCapacity:
+    def test_pipe_with_virtual_unitsize_gives_existing_times_unitsize(
+        self, tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        """pipe_AB as 2 units of virtual_unitsize 25 MW (the fixture's 50 MW): with virtual_unitsize, existing is
+        the number of units, so the region_A export half-flow carries 2 × 25 = 50 MW with virtual_unitsize 1."""
+        import base64
+        import json
+
+        def packed(x: float) -> list:
+            return [base64.b64encode(json.dumps(x).encode()).decode(), "float"]
+
+        data = json.loads((FIXTURES_DIR / "lh2_three_region.json").read_text())
+        values = [v for v in data["parameter_values"] if not (v[0] == "connection" and v[1] == "pipe_AB"
+                                                              and v[2] in ("existing", "virtual_unitsize"))]
+        values += [["connection", "pipe_AB", "existing", packed(2.0), "lh2_three_region"],
+                   ["connection", "pipe_AB", "virtual_unitsize", packed(25.0), "lh2_three_region"]]
+        data["parameter_values"] = values
+        provider = _staged_provider_from_json(data, tmp_path_factory)
+        region_provider, _ = build_region_provider(
+            provider, region="region_A", all_regions=["region_A", "region_B", "region_C"])
+        frame = region_provider.get("input/p_process")
+        rows = {(str(r[1]), str(r[0])): str(r[2]) for r in frame.rows()
+                if str(r[0]) == "hf_pipe_AB__export__region_A"}
+        assert float(rows[("existing", "hf_pipe_AB__export__region_A")]) == 50.0
+        assert float(rows[("virtual_unitsize", "hf_pipe_AB__export__region_A")]) == 1.0

@@ -50,7 +50,9 @@ class VreUnit:
     Attributes:
         node: The node the unit's profiled output arc connects to.
         profile: The availability profile name (0-1 series) governing the arc.
-        existing_cap: Existing capacity (``unit.existing``; 0.0 if unset).
+        existing_cap: Existing capacity in MW: ``unit.existing`` ×
+            ``unit.virtual_unitsize`` when that is set and > 0 (``existing`` is
+            then the number of units), else ``unit.existing``; 0.0 if unset.
         unitsize: Unit size (``unit.virtual_unitsize``; 1.0 placeholder when
             unset — carried for later phases, unused by the Phase 1-2 math).
         investable: Whether the unit's ``invest_method`` permits *building* new
@@ -165,7 +167,9 @@ def _read_vre(db: DatabaseMapping) -> dict[str, VreUnit]:
     ``upper_limit`` — the SCHEMA DEFAULT, so an arc with no explicit
     ``profile_method`` row (absent from the param reader) counts as VRE via
     default-fill. Each qualifying unit's ``existing`` / ``virtual_unitsize`` /
-    ``invest_method`` scalars are read to build its :class:`VreUnit`.
+    ``invest_method`` scalars are read to build its :class:`VreUnit`; with
+    ``virtual_unitsize`` (> 0) ``existing`` is the number of units, so the
+    existing capacity is existing × virtual_unitsize.
 
     A unit with several upper-limit arcs keeps the FIRST in sorted
     ``(unit, node, profile)`` order (deterministic); such multi-arc VRE units
@@ -204,13 +208,16 @@ def _read_vre(db: DatabaseMapping) -> dict[str, VreUnit]:
         if unit in vre:
             # Keep the first (sorted) upper-limit arc for a multi-arc unit.
             continue
-        existing_cap = _coerce_float(existing_raw.get(unit))
+        existing = _coerce_float(existing_raw.get(unit))
         unitsize = _coerce_float(unitsize_raw.get(unit))
         invest_method = invest_raw.get(unit, "not_allowed")
+        existing_cap = existing if existing is not None else 0.0
+        if unitsize is not None and unitsize > 0.0:
+            existing_cap *= unitsize
         vre[unit] = VreUnit(
             node=node,
             profile=profile,
-            existing_cap=existing_cap if existing_cap is not None else 0.0,
+            existing_cap=existing_cap,
             # virtual_unitsize is a later-phase concern; default 1.0 keeps it a
             # usable divisor. Unused by the Phase 1-2 net-load math.
             unitsize=unitsize if unitsize is not None else 1.0,
@@ -313,6 +320,23 @@ def _read_units_by_group(
     return units_by_group, "group"
 
 
+def _print_unit_count_capacity_note(vre: dict[str, VreUnit]) -> None:
+    """Name the VRE units whose net-load capacity reads ``existing`` as the number of units.
+
+    Earlier FlexTool versions read ``existing`` as MW here also with ``virtual_unitsize``; for a unit with
+    virtual_unitsize ≠ 1 and existing ≠ 0 the net load, and so the representative-period selection, changes.
+    Printed once per read, only when such a unit exists.
+    """
+    changed = [(name, u) for name, u in vre.items() if u.unitsize != 1.0 and u.existing_cap != 0.0]
+    if not changed:
+        return
+    listing = ", ".join(f"{name} ({u.existing_cap / u.unitsize:g} × {u.unitsize:g} = {u.existing_cap:g} MW)"
+                        for name, u in changed)
+    print(f"Note: net-load clustering reads existing as the number of units of virtual_unitsize for {listing}. "
+          f"Earlier FlexTool versions read existing as MW here, so representative periods selected before may "
+          f"differ.", flush=True)
+
+
 def read_netload_inputs(db: DatabaseMapping) -> NetloadInputs:
     """Read all net-load inputs from an open, scenario-filtered database mapping.
 
@@ -330,6 +354,7 @@ def read_netload_inputs(db: DatabaseMapping) -> NetloadInputs:
     demand_ts, demand_scalar = _read_inflows(db)
     profiles = _read_profiles(db)
     vre = _read_vre(db)
+    _print_unit_count_capacity_note(vre)
     step_durations = _read_step_durations(db)
     all_nodes = _read_all_nodes(db)
     units_by_group, granularity = _read_units_by_group(db, all_nodes)
