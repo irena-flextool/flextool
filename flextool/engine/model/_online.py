@@ -15,7 +15,10 @@ parameters).
 A coarse process (``processCoarse``) has one units-online value per coarse step (an aliased level) and one
 start-up / shut-down per coarse step at its start (events registered at the step's first fine step); its online
 capacity and minimum-load rows are averaged over the step (``_coarse_flows.add_cstr``).  An online process with
-ramp limits or reserves keeps the solve's step (``flex_data.coarse_process_exclusions``).
+reserves keeps the solve's step (``flex_data.coarse_process_exclusions``).  With ramp limits, its start-up /
+shut-down capacity reduction uses the coarse step (``_cap_reduction``: the mean share over the whole step of a
+unit that starts at the step's start or stops at its end) and its units online ramp between coarse steps
+(``core._eq_ramp``).
 """
 
 from typing import TYPE_CHECKING
@@ -90,18 +93,6 @@ def online_rows(b: "_Build", kind: str) -> pl.DataFrame:
     """``(p, d, t)`` of the online rows of UC class ``kind``: every step of a fine process, the first fine step of
     each coarse step of a coarse process (the registered online / startup / shutdown columns)."""
     return b.p_olin_rows if kind == "linear" else b.p_oint_rows
-
-
-def _no_coarse(b: "_Build", arcs: "pl.DataFrame | None", family: str) -> None:
-    """Raise when ``arcs`` (with ``p``) hold a coarse process: ``family`` is written per solve step with event terms
-    at t and its successor, which a coarse process does not have (its classification keeps an online process with
-    ramp limits or reserves at the solve's step, ``flex_data.coarse_process_exclusions``)."""
-    if not b.has_coarse_proc or arcs is None or arcs.height == 0:
-        return
-    hit = _coarse_flows.split_arcs(b, arcs.select("p").unique())[1]
-    if hit.height > 0:
-        raise RuntimeError(f"{family}: coarse process(es) {sorted(hit['p'].cast(pl.Utf8).to_list())} reached a "
-                           "per-step online row with start-up / shut-down terms; they must keep the solve's step")
 
 
 def add_constraints(b: "_Build") -> None:
@@ -295,6 +286,14 @@ def add_constraints(b: "_Build") -> None:
         #   smaller SU when both); red_sd likewise with ramp_speed_down at the pre-shutdown step (d,t); 0 without a
         #   ramp limit.  (d⁺,t⁺) = a successor whose ramp predecessor (dt_ramp_link) is (d,t) — the same period
         #   (today's only case) or the next continuing period (#98).
+        # A coarse process (processCoarse): the averaged twins maxFlow_online{sfx}_coarse,
+        #   maxFlow_online_shutdown{sfx}_coarse and maxFlow_online_shutdown_branch{sfx}_coarse (_coarse_flows.add_cstr)
+        #   with the reduction on the coarse grid: red_su[p,s,k,d,b] = max(0, ā_b − SU_b) at the start-ups of b and
+        #   red_sd = max(0, ā_b − SD_b) at the shut-downs of the coarse successor b⁺ (the coarse step whose first
+        #   step's ramp predecessor lies in b, _coarse_flows.coarse_links); ā_b, m̄l_b the Δt-weighted means over b,
+        #   SU_b = m̄l_b + ½·ρ_b while ρ_b ≤ 1 − m̄l_b, else 1 − (1 − m̄l_b)²/(2·ρ_b), ρ_b = ramp_speed_up · 60 · Δ_b
+        #   (the mean share over the whole step of a unit started at its start that ramps up to full load within
+        #   it; SD_b with the down speed: a unit stopping at the end of b); κ its step mean.
         # A unit's flow and the reserve that raises it — upward reserve at the arc's sink and
         # "consume more" downward reserve at its source — are limited by the units online
         # (spinning reserve: an offline unit holds neither).  The reserve terms are maxFlow's (units only; an online
@@ -330,32 +329,52 @@ def add_constraints(b: "_Build") -> None:
             online_rhs_terms: dict = {"online": online_rhs}
             shutdown_rows = None
             branch_rows = None
-            red = _cap_reduction(b, pss_online, input_side=False)
-            if red is not None:
-                _no_coarse(b, red, f"maxFlow_online{sfx}")
+            fine_red: dict = {}
+            coarse_red: dict = {}
+            coarse_shutdown = None
+            coarse_branch = None
+            red, red_c = _cap_reduction(b, pss_online, input_side=False)
+            if red is not None or red_c is not None:
                 kappa = (_coef_factor(pss_online, d.p_arc_max_cap_coef, ["p", "source", "sink"]).frame
                          if d.p_arc_max_cap_coef is not None
                          else pss_online.select("p", "source", "sink").unique().with_columns(value=pl.lit(1.0)))
+            if red is not None:
                 row1, row2, over2, over3, row3 = _reduction_terms(red, kappa, v_startup, v_shutdown, sfx)
-                online_rhs_terms.update(row1)
+                fine_red = row1
                 if over2.height > 0:
                     shutdown_rows = (over2, {"online": online_rhs, **row2})
                 if over3.height > 0:
                     branch_rows = (over3, {"online": online_rhs, **row3})
+            if red_c is not None:
+                # A coarse process: the reduction on the coarse grid (start-ups at b, shut-downs at b⁺).
+                coarse_red, row2, over2, over3, row3 = _reduction_terms(
+                    red_c, kappa, _coarse_flows.at_step(b, v_startup), v_shutdown, f"_coarse{sfx}", tcol="b_first")
+                if over2.height > 0:
+                    coarse_shutdown = (over2, row2)
+                if over3.height > 0:
+                    coarse_branch = (over3, row3)
             _coarse_flows.add_cstr(b, f"maxFlow_online{sfx}",
                                    over=over_pss_online, sense="<=",
                                    lhs_terms=online_lhs,
-                                   rhs_terms=online_rhs_terms)
+                                   rhs_terms=online_rhs_terms, fine_rhs=fine_red, coarse_rhs=coarse_red)
             if shutdown_rows is not None:
                 m.add_cstr(f"maxFlow_online_shutdown{sfx}",
                            over=shutdown_rows[0], sense="<=",
                            lhs_terms=online_lhs,
                            rhs_terms=shutdown_rows[1])
+            if coarse_shutdown is not None:
+                _coarse_flows.add_twin(b, f"maxFlow_online_shutdown{sfx}", over=coarse_shutdown[0], sense="<=",
+                                       lhs_terms=online_lhs, rhs_terms={"online": online_rhs},
+                                       coarse_rhs=coarse_shutdown[1])
             if branch_rows is not None:
                 m.add_cstr(f"maxFlow_online_shutdown_branch{sfx}",
                            over=branch_rows[0], sense="<=",
                            lhs_terms=online_lhs,
                            rhs_terms=branch_rows[1])
+            if coarse_branch is not None:
+                _coarse_flows.add_twin(b, f"maxFlow_online_shutdown_branch{sfx}", over=coarse_branch[0], sense="<=",
+                                       lhs_terms=online_lhs, rhs_terms={"online": online_rhs},
+                                       coarse_rhs=coarse_branch[1])
 
         # ─── EQ. ─── maxFlow_back_online_{linear,integer} ────────────────────
         # ─────────────────────────────────────────────────────────────────────
@@ -409,6 +428,9 @@ def add_constraints(b: "_Build") -> None:
         #   started unit can always draw what it needs at min load.  (d⁺,t⁺) = a successor whose ramp
         #   predecessor (dt_ramp_link) is (d,t) — the same period (today's only case) or the next continuing
         #   period (#98).
+        # A coarse process: the averaged twins maxInputFlow_online{sfx}_coarse (+ _shutdown, _shutdown_branch), with
+        #   input_cap and x(availability) as step means and the reduction on the coarse grid as in maxFlow_online
+        #   (SU_in_b, SD_in_b from the step-mean x(min_load) / input_share_max and ρ_b).
         # The online analogue of maxFlow on an indirect unit's input arc: consuming more needs online capacity,
         # and a starting (stopping) unit draws at most its startup (pre-shutdown) share of the input.  The other
         # inputs and the outputs are not adjusted (the per-arc simplification of the input-side floors).
@@ -615,13 +637,13 @@ def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame"
     ramp_sets = [f for f in (d.process_source_sink_ramp_limit_source_up, d.process_source_sink_ramp_limit_source_down)
                  if _has_rows(f)]
     ramp_arcs = _online_inputs(pl.concat([f.select(keys) for f in ramp_sets]).unique() if ramp_sets else None)
-    red = _cap_reduction(b, ramp_arcs, input_side=True) if ramp_arcs.height > 0 else None
+    red, red_c = (_cap_reduction(b, ramp_arcs, input_side=True) if ramp_arcs.height > 0 else (None, None))
     in_arcs = reserve_arcs
-    if red is not None:
-        in_arcs = pl.concat([reserve_arcs, red.select(keys).unique(maintain_order=True)]).unique(maintain_order=True)
+    for r in (red, red_c):
+        if r is not None:
+            in_arcs = pl.concat([in_arcs, r.select(keys).unique(maintain_order=True)]).unique(maintain_order=True)
     if in_arcs.height == 0:
         return
-    _no_coarse(b, in_arcs, f"maxInputFlow_online{sfx}")
     over = in_arcs.join(d.dt, how="cross")
     cap = _indirect_input_cap(d, in_arcs)
     rhs = v_online * Param(("p", "source", "sink", "d", "t"), cap)
@@ -631,31 +653,52 @@ def _add_max_input_flow_online(b: "_Build", sfx: str, online_set: "pl.DataFrame"
     lhs.update(b.reserve_down_at_source)
     rhs_terms: dict = {"online": rhs}
     over2 = over3 = None
-    row2 = row3 = {}
+    row1 = row2 = row3 = {}
     if red is not None:
         row1, row2, over2, over3, row3 = _reduction_terms(red, cap, v_startup, v_shutdown, f"_in{sfx}")
-        rhs_terms.update(row1)
-    b.m.add_cstr(f"maxInputFlow_online{sfx}", over=over, sense="<=", lhs_terms=lhs, rhs_terms=rhs_terms)
+    c1 = c2 = c3 = {}
+    c_over2 = c_over3 = None
+    if red_c is not None:
+        # A coarse process: the input limit's step mean, the reduction on the coarse grid.
+        cap_c = _coarse_flows.average(b, Param(("p", "source", "sink", "d", "t"), cap)).frame
+        c1, c2, c_over2, c_over3, c3 = _reduction_terms(red_c, cap_c, _coarse_flows.at_step(b, v_startup),
+                                                        v_shutdown, f"_in_coarse{sfx}", tcol="b_first")
+    _coarse_flows.add_cstr(b, f"maxInputFlow_online{sfx}", over=over, sense="<=", lhs_terms=lhs,
+                           rhs_terms=rhs_terms, fine_rhs=row1, coarse_rhs=c1)
     if over2 is not None and over2.height > 0:
         b.m.add_cstr(f"maxInputFlow_online_shutdown{sfx}", over=over2, sense="<=", lhs_terms=lhs,
                      rhs_terms={"online": rhs, **row2})
+    if c_over2 is not None and c_over2.height > 0:
+        _coarse_flows.add_twin(b, f"maxInputFlow_online_shutdown{sfx}", over=c_over2, sense="<=", lhs_terms=lhs,
+                               rhs_terms={"online": rhs}, coarse_rhs=c2)
     if over3 is not None and over3.height > 0:
         b.m.add_cstr(f"maxInputFlow_online_shutdown_branch{sfx}", over=over3, sense="<=", lhs_terms=lhs,
                      rhs_terms={"online": rhs, **row3})
+    if c_over3 is not None and c_over3.height > 0:
+        _coarse_flows.add_twin(b, f"maxInputFlow_online_shutdown_branch{sfx}", over=c_over3, sense="<=",
+                               lhs_terms=lhs, rhs_terms={"online": rhs}, coarse_rhs=c3)
 
 
-def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *, input_side: bool) -> "pl.DataFrame | None":
-    """Startup / shutdown capacity reduction of online arcs ``arcs`` (``p, source, sink``) over dt.
+def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *,
+                   input_side: bool) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
+    """Startup / shutdown capacity reduction of online arcs ``arcs`` (``p, source, sink``): ``(fine, coarse)``.
 
-    Returns ``(p, source, sink, d, t, red_su, red_sd, d_next, t_next, __nsucc)`` in the dtypes of ``arcs`` /
-    ``d.dt`` (``d_next``, ``t_next`` Utf8, null where the step has no successor; ``__nsucc`` = the number of
-    successors of ``(d, t)``, 0 without one), one row PER SUCCESSOR at a branch point (several rows sharing
-    ``(p, source, sink, d, t)``, critique item 1), only rows with ``red_su > 0`` or (a successor and
-    ``red_sd > 0``); ``None`` when there are none.  See the EQ. header of maxFlow_online:
+    ``fine`` covers the arcs of fine processes over dt: ``(p, source, sink, d, t, red_su, red_sd, d_next, t_next,
+    __nsucc)`` in the dtypes of ``arcs`` / ``d.dt`` (``d_next``, ``t_next`` Utf8, null where the step has no
+    successor; ``__nsucc`` = the number of successors of ``(d, t)``, 0 without one), one row PER SUCCESSOR at a
+    branch point (several rows sharing ``(p, source, sink, d, t)``, critique item 1), only rows with ``red_su > 0``
+    or (a successor and ``red_sd > 0``); ``None`` when there are none.  See the EQ. header of maxFlow_online:
     ``SU = min(1, ml + ½ · ramp_speed_up · 60 · step_duration)`` over the sides of the arc with an up ramp limit,
     ``red_su = max(0, availability − SU)``; ``SD`` / ``red_sd`` likewise with the down speeds.  ``ml`` is
     ``min_load`` on an output-measured arc (``input_side`` False) and the input the unit draws at min load as a
     share of the arc's input limit on an indirect unit's input arc (``input_side`` True).
+
+    ``coarse`` covers the arcs of coarse processes in the same columns, one row per coarse step b (``t`` = its
+    first fine step b_first) and coarse successor b⁺ (``d_next``, ``t_next`` = b⁺'s first fine step,
+    :func:`_coarse_flows.coarse_links`): ml and availability are their Δt-weighted means over b and SU / SD the
+    mean share over the whole step of a unit that starts at its start / stops at its end,
+    :func:`_coarse_flows.step_limit_share` with ρ_b = ramp_speed · 60 · Δ_b (the exact mean of a linear ramp that
+    saturates at full load).
     """
     d = b.d
     keys = ["p", "source", "sink"]
@@ -676,8 +719,24 @@ def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *, input_side: bool) -> "p
                    .with_columns(__dir=pl.lit(dir_)))
             sides.append(hit)
     if not sides:
-        return None
+        return None, None
     speeds = pl.concat(sides)
+    if b.has_coarse_proc:
+        fine_arcs, coarse_arcs = _coarse_flows.split_arcs(b, arcs)
+    else:
+        fine_arcs, coarse_arcs = arcs, arcs.head(0)
+    fine = (_reduction_rows(b, fine_arcs, speeds, input_side=input_side, coarse=False)
+            if fine_arcs.height > 0 else None)
+    coarse = (_reduction_rows(b, coarse_arcs, speeds, input_side=input_side, coarse=True)
+              if coarse_arcs.height > 0 else None)
+    return fine, coarse
+
+
+def _reduction_rows(b: "_Build", arcs: "pl.DataFrame", speeds: "pl.LazyFrame", *, input_side: bool,
+                    coarse: bool) -> "pl.DataFrame | None":
+    """The rows of :func:`_cap_reduction` for ``arcs`` (all fine or all coarse processes, ``coarse``)."""
+    d = b.d
+    keys = ["p", "source", "sink"]
     base = (_utf8_keys(arcs.select(keys).unique(maintain_order=True).join(d.dt.select("d", "t"), how="cross")
                        .lazy(), keys + ["d", "t"])
             .join(speeds.select("_p", "_source", "_sink").unique(), on=["_p", "_source", "_sink"], how="semi"))
@@ -704,26 +763,50 @@ def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *, input_side: bool) -> "p
         grid = grid.join(avail, on=on, how="left").with_columns(pl.col("__av").fill_null(1.0))
     else:
         grid = grid.with_columns(__av=pl.lit(1.0))
-    # One startup (shutdown) step reaches ml + half a step's ramp on average (Q-c14a-A); the tightest side wins.
+    if coarse:
+        # One row per coarse step b (named by its first fine step): Δ_b and the step means of ml and availability.
+        st = b.coarse_steps.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                                          pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("b_first").alias("_b"),
+                                          pl.col("w").alias("__w"))
+        t_dtype = d.dt.schema["t"]
+        grid = (grid.join(st, on=["_p", "_d", "_t"], how="inner")
+                .group_by(*keys, "d", "_p", "_source", "_sink", "_d", "_b")
+                .agg(pl.col("__dur").sum(), (pl.col("__w") * pl.col("__ml")).sum().alias("__ml"),
+                     (pl.col("__w") * pl.col("__av")).sum().alias("__av"))
+                .with_columns(pl.col("_b").cast(t_dtype).alias("t"), pl.col("_b").alias("_t")))
+        # The mean share over the whole step of a unit that starts at its start (stops at its end).
+        lim_expr = _coarse_flows.step_limit_share(pl.col("__ml"), pl.col("__speed") * 60.0 * pl.col("__dur"))
+        from flextool.engine.model.core import ramp_step_links
+
+        links = _coarse_flows.coarse_links(b, ramp_step_links(d)[0])
+        succ = links.lazy().select("_p", pl.col("__d_prev").alias("_d"), pl.col("__t_prev").alias("_t"),
+                                   pl.col("_d").alias("d_next"), pl.col("_b").alias("t_next"))
+        succ_on = ["_p", "_d", "_t"]
+        nsucc_over = ["_p", "_source", "_sink", "_d", "_t"]
+    else:
+        # One startup (shutdown) step reaches ml + half a step's ramp on average (Q-c14a-A).
+        lim_expr = pl.min_horizontal(pl.lit(1.0), pl.col("__ml") + 0.5 * pl.col("__speed") * 60.0 * pl.col("__dur"))
+        succ = _successor_steps(d)
+        succ_on = ["_d", "_t"]
+        nsucc_over = ["_p", "_source", "_sink", "_d", "_t"]
+    # The tightest side wins.
     lim = (grid.join(speeds, on=["_p", "_source", "_sink"], how="inner")
-           .with_columns(__lim=pl.min_horizontal(pl.lit(1.0),
-                                                 pl.col("__ml") + 0.5 * pl.col("__speed") * 60.0 * pl.col("__dur")))
+           .with_columns(__lim=lim_expr)
            .group_by("_p", "_source", "_sink", "_d", "_t", "__dir")
            .agg(pl.col("__lim").min()))
     su = lim.filter(pl.col("__dir") == "up").select("_p", "_source", "_sink", "_d", "_t",
                                                      pl.col("__lim").alias("__su"))
     sd = lim.filter(pl.col("__dir") == "down").select("_p", "_source", "_sink", "_d", "_t",
                                                        pl.col("__lim").alias("__sd"))
-    succ = _successor_steps(d)
     out = (grid.join(su, on=["_p", "_source", "_sink", "_d", "_t"], how="left")
            .join(sd, on=["_p", "_source", "_sink", "_d", "_t"], how="left")
-           .join(succ, on=["_d", "_t"], how="left")
+           .join(succ, on=succ_on, how="left")
            .with_columns(red_su=(pl.col("__av") - pl.col("__su")).clip(lower_bound=0.0).fill_null(0.0),
                          red_sd=pl.when(pl.col("t_next").is_not_null())
                          .then((pl.col("__av") - pl.col("__sd")).clip(lower_bound=0.0).fill_null(0.0))
                          .otherwise(0.0))
            .with_columns(__nsucc=pl.when(pl.col("t_next").is_not_null())
-                         .then(pl.col("t_next").count().over("_p", "_source", "_sink", "_d", "_t"))
+                         .then(pl.col("t_next").count().over(*nsucc_over))
                          .otherwise(0))
            .filter((pl.col("red_su") > 0.0) | (pl.col("red_sd") > 0.0))
            .select(*keys, "d", "t", "red_su", "red_sd", "d_next", "t_next", "__nsucc")
@@ -868,10 +951,14 @@ def _fuel_share(d, levels: "pl.LazyFrame", online_p: "pl.LazyFrame | None" = Non
                     .otherwise(None))
 
 
-def _reduction_terms(red: "pl.DataFrame", kappa: "pl.DataFrame", v_startup, v_shutdown, sfx: str):
+def _reduction_terms(red: "pl.DataFrame", kappa: "pl.DataFrame", v_startup, v_shutdown, sfx: str, *,
+                     tcol: str = "t"):
     """RHS terms of maxFlow_online / maxFlow_online_shutdown / maxFlow_online_shutdown_branch (or the input
     triple) from ``red`` (:func:`_cap_reduction`) and the arc limit factor ``kappa``
     ``(p, source, sink, d, t, value)``: returns ``(terms_row1, terms_row2, over_row2, over_row3, terms_row3)``.
+    ``tcol="b_first"``: the coarse rows of :func:`_cap_reduction` (``v_startup`` the :func:`_coarse_flows.at_step`
+    view, ``kappa`` keyed ``b_first`` where it varies in time): terms and rows keyed ``(p, source, sink, d,
+    b_first)``, the coarse grid of the ``<family>_coarse`` twins, with the shut-down at the coarse successor b⁺.
 
     Predecessor rows with a UNIQUE successor (``__nsucc <= 1``, the common case — today's structure, byte-
     unchanged) feed row1 / row2 exactly as before.  Predecessor rows at a branch point (``__nsucc > 1``,
@@ -883,7 +970,10 @@ def _reduction_terms(red: "pl.DataFrame", kappa: "pl.DataFrame", v_startup, v_sh
     be split per branch; row3's rows give the tight, correctly-isolated bound there instead (row1 alone, without
     the cross-term, is still a valid — just looser — bound, so nothing is under-constrained).
     """
-    keys = ["p", "source", "sink", "d", "t"]
+    keys = ["p", "source", "sink", "d", tcol]
+    if tcol != "t":
+        # The coarse grid: the row's step named by its first fine step (Utf8), the column of :func:`at_step`.
+        red = red.with_columns(pl.col("t").cast(pl.Utf8)).rename({"t": tcol})
     on = [k for k in keys if k in kappa.columns]
     r = (_utf8_keys(red.lazy(), on)
          .join(_utf8_keys(kappa.lazy(), on).select([f"_{k}" for k in on] + [pl.col("value").alias("__k")]),

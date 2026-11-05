@@ -125,23 +125,26 @@ def _ordered_sum(frame: pl.DataFrame, keys: list[str], order: str) -> pl.DataFra
     return srt[starts].select(keys).with_columns(value=pl.Series("value", sums, dtype=pl.Float64))
 
 
-def average(b: "_Build", term):
+def average(b: "_Build", term, w: "Param | None" = None):
     """``term`` (a row term of an arc-local family, open dims with ``t``) as its Δt-weighted mean over each coarse
-    step: ``Σ_{t∈b} w[p,d,b,t] · term[…,t]`` with open dims ``(…, b_first)``.  A term without ``t`` (and a
-    scalar) is the same on every fine step of the step, so it is returned as it is (Σ_t w = 1)."""
-    w = b.coarse_w
+    step: ``Σ_{t∈b} w[K,d,b,t] · term[…,t]`` with open dims ``(…, b_first)``; ``w`` the weights of the row's
+    partition keyed ``(K, d, b_first, t)`` (default :attr:`coarse_w`, K = ``p``).  A term without ``t`` (and a
+    scalar, and an event term on the coarse grid) is the same on every fine step of the step, so it is returned as
+    it is (Σ_t w = 1)."""
+    w = b.coarse_w if w is None else w
     if isinstance(term, (int, float)):
         return term
     if isinstance(term, Param):
         if "t" not in term.dims:
             return term
         frame = term.frame
-        on = [c for c in _KEYS if c in term.dims]
+        on = [c for c in w.dims if c != "b_first" and c in term.dims]
         wf = w.frame
         for c in on:
             if wf.schema[c] != frame.schema[c]:
                 wf = wf.with_columns(pl.col(c).cast(frame.schema[c], strict=False))
-        dims = tuple(dict.fromkeys(("p",) + tuple("b_first" if c == "t" else c for c in term.dims)))
+        key = [c for c in w.dims if c not in ("d", "b_first", "t")]
+        dims = tuple(dict.fromkeys((*key, *("b_first" if c == "t" else c for c in term.dims))))
         weighted = (frame.join(wf.rename({"value": "__w"}), on=on, how="inner")
                     .with_columns(value=pl.col("value") * pl.col("__w"))
                     .select(*dims, "t", "value"))
@@ -159,33 +162,105 @@ def average(b: "_Build", term):
 
 
 def add_cstr(b: "_Build", name: str, *, over: pl.DataFrame, sense: str, lhs_terms: dict,
-             rhs_terms: dict) -> None:
+             rhs_terms: dict, fine_rhs: "dict | None" = None, coarse_rhs: "dict | None" = None) -> None:
     """``m.add_cstr(name, …)`` for the rows of fine processes and ``<name>_coarse`` for those of coarse ones (the
-    EQ. header below)."""
+    EQ. header below).  ``fine_rhs`` holds right-hand-side terms of the fine rows only (after ``rhs_terms``);
+    ``coarse_rhs`` the event terms E of the coarse rows, already on the coarse grid (open dims with ``b_first``,
+    :func:`at_step`), added to the averaged right-hand side unchanged.  ``over`` may name a coarse row by its
+    coarse step's first fine step."""
     m = b.m
     if not b.has_coarse_proc:
-        m.add_cstr(name, over=over, sense=sense, lhs_terms=lhs_terms, rhs_terms=rhs_terms)
+        m.add_cstr(name, over=over, sense=sense, lhs_terms=lhs_terms, rhs_terms={**rhs_terms, **(fine_rhs or {})})
         return
     fine, coarse = _split(b, over)
     if fine.height > 0:
-        m.add_cstr(name, over=fine, sense=sense, lhs_terms=lhs_terms, rhs_terms=rhs_terms)
-    # ─── EQ. ─── maxFlow_coarse, maxFlow_negCap_coarse, maxFlow_back_coarse, maxOutputSum_coarse,
+        m.add_cstr(name, over=fine, sense=sense, lhs_terms=lhs_terms, rhs_terms={**rhs_terms, **(fine_rhs or {})})
+    # ─── EQ. ─── <family>_coarse: maxFlow_coarse, maxFlow_negCap_coarse, maxFlow_back_coarse, maxOutputSum_coarse,
     #             maxOutputSum_negCap_coarse, conversion_indirect_coarse, minInputShare_coarse,
-    #             profile_flow_{upper_limit,lower_limit,fixed}_coarse, maxFlow_online_{linear,integer}_coarse,
-    #             maxFlow_back_online_{linear,integer}_coarse, maxOutputSum_online_{linear,integer}_coarse,
-    #             minFlow_minload_{linear,integer}_coarse, minFlow_output_floor_{linear,integer}_coarse ───────
-    # Σ_{t∈b} w[p,d,b,t] · ( LHS_t − RHS_t )  {≤,=,≥}  0      w = Δt / Δ_b,  Δ_b = Σ_{t∈b} Δt
-    #   ∀ p ∈ processCoarse, (…, p, d, b) the coarse steps of p (b = its first fine step b_first);
-    #   LHS_t / RHS_t = the terms of the fine row of the family (maxFlow, …, minFlow_output_floor) at (d, t)
+    #             profile_flow_{upper_limit,lower_limit,fixed}_coarse, maxFlow_online{sfx}_coarse,
+    #             maxFlow_online_shutdown{sfx}_coarse, maxFlow_online_shutdown_branch{sfx}_coarse,
+    #             maxFlow_back_online{sfx}_coarse, maxInputFlow_online{sfx}_coarse,
+    #             maxInputFlow_online_shutdown{sfx}_coarse, maxInputFlow_online_shutdown_branch{sfx}_coarse,
+    #             maxOutputSum_online{sfx}_coarse, minFlow_minload{sfx}_coarse, minFlow_output_floor{sfx}_coarse,
+    #             minFlow_reserve_coarse, minFlow_reserve_arc_coarse, reserve_process_{upward,downward}_coarse,
+    #             connection_reserve_{up,down}_coarse, connection_reserve_{up,down}_online{sfx}_coarse,
+    #             connection_reserve_{up,down}_exact_coarse, reserve_storage_up_floor_coarse,
+    #             reserve_storage_down_headroom_coarse   ({sfx} = _linear / _integer) ──────────────────────────
+    # Σ_{t∈b} w[K,d,b,t] · ( LHS_t − RHS_t )  {≤,=,≥}  E[K,d,b]      w = Δt / Δ_b,  Δ_b = Σ_{t∈b} Δt
+    #   ∀ coarse row key K (a coarse process p, or a row key whose every member is coarse: row_partition), (…, d, b)
+    #   its coarse steps (b = its first fine step b_first);  LHS_t / RHS_t = the level terms of the fine row of the
+    #   family at (d, t);  E = the row's event terms on the coarse grid (start-ups at b, shut-downs at the coarse
+    #   successor b⁺: the capacity reduction of maxFlow_online / maxInputFlow_online and their _shutdown rows)
     # The fine row's Δt-weighted average over the coarse step.  The flow is one column per coarse step, so its own
     # term averages to itself; time-varying availability, profile, efficiency (slope) and capacity coefficients act
-    # through their step means; so do the units online (one value per coarse step) times a time-varying
-    # availability or minimum load (the mean of the product).  With one time-varying limit per arc the averaged row allows exactly the energy the
-    # fine rows allow over the step; with several it is their convex relaxation (it can be looser).
+    # through their step means (the mean of a product, not the product of means); so do the units online and the
+    # reserve (one value per coarse step) times a time-varying availability, profile or minimum load.  With one
+    # time-varying limit per arc the averaged row allows exactly the energy the fine rows allow over the step;
+    # with several it is their convex relaxation (it can be looser).
     if coarse.height > 0:
-        m.add_cstr(f"{name}_coarse", over=coarse, sense=sense,
-                   lhs_terms={k: average(b, v) for k, v in lhs_terms.items()},
-                   rhs_terms={k: average(b, v) for k, v in rhs_terms.items()})
+        add_twin(b, name, over=coarse, sense=sense, lhs_terms=lhs_terms, rhs_terms=rhs_terms,
+                 coarse_rhs=coarse_rhs)
+
+
+def add_twin(b: "_Build", name: str, *, over: pl.DataFrame, sense: str, lhs_terms: dict, rhs_terms: dict,
+             coarse_rhs: "dict | None" = None, w: "Param | None" = None) -> None:
+    """``<name>_coarse`` over the coarse rows ``over`` (``t`` replaced by ``b_first``): the averaged terms (with the
+    weights ``w`` of the rows' partition, default the coarse processes' :attr:`coarse_w`) and the event terms
+    ``coarse_rhs`` (EQ. header in :func:`add_cstr`)."""
+    b.m.add_cstr(f"{name}_coarse", over=over, sense=sense,
+                 lhs_terms={k: average(b, v, w) for k, v in lhs_terms.items()},
+                 rhs_terms={**{k: average(b, v, w) for k, v in rhs_terms.items()}, **(coarse_rhs or {})})
+
+
+def at_step(b: "_Build", var: Var) -> Var:
+    """The coarse-process columns of an event variable ``var`` (start-ups / shut-downs, registered at each coarse
+    step's first fine step only, dims ``(p, …, d, t)``) keyed on the coarse grid: dims ``(p, …, d, b_first)``,
+    ``b_first`` Utf8 (as the coarse rows of :func:`_split`).  :func:`average` passes it through unchanged."""
+    procs = coarse_procs(b).select(pl.col("p").cast(pl.Utf8).alias("__p"))
+    frame = (var.frame.with_columns(pl.col("p").cast(pl.Utf8).alias("__p"))
+             .join(procs, on="__p", how="semi")
+             .with_columns(pl.col("t").cast(pl.Utf8))
+             .rename({"t": "b_first"})
+             .select(*[("b_first" if c == "t" else c) for c in var.dims], "col_id"))
+    return Var(var.name, tuple("b_first" if c == "t" else c for c in var.dims), frame)
+
+
+def spans(b: "_Build") -> pl.DataFrame:
+    """``(_p, _d, _b, __dur)`` (Utf8 keys): the duration Δ_b = Σ_{t∈b} Δt of every coarse step b (named by its first
+    fine step) of every coarse process."""
+    psd = b.d.p_step_duration.frame.select(pl.col("d").cast(pl.Utf8).alias("_d"),
+                                           pl.col("t").cast(pl.Utf8).alias("_t"),
+                                           pl.col("value").cast(pl.Float64).alias("__dt"))
+    st = b.coarse_steps.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                               pl.col("b_first").alias("_b"), pl.col("t").cast(pl.Utf8).alias("_t"))
+    return _ordered_sum(st.join(psd, on=["_d", "_t"], how="left").select("_p", "_d", "_b", "_t", value="__dt"),
+                        ["_p", "_d", "_b"], "_t").rename({"value": "__dur"})
+
+
+def coarse_links(b: "_Build", link: pl.DataFrame) -> pl.DataFrame:
+    """``(_p, _d, _b, __d_prev, __t_prev, __dur, __dur_prev)`` (Utf8 keys): every coarse step b of a coarse process p
+    with a predecessor b⁻ — the coarse step that holds the fine predecessor of b's first step (``link``,
+    :func:`core.ramp_step_links`); ``__t_prev`` is b⁻'s first fine step, ``__dur`` / ``__dur_prev`` the durations
+    Δ_b / Δ_b⁻.  Read the other way round, b is a coarse successor b⁺ of b⁻."""
+    span = spans(b)
+    st = b.coarse_steps.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("__d_prev"),
+                               pl.col("t").cast(pl.Utf8).alias("__t_fine"), pl.col("b_first").alias("__t_prev"))
+    return (span.join(link.select("_d", pl.col("_t").alias("_b"), "__d_prev", pl.col("__t_prev").alias("__t_fine")),
+                      on=["_d", "_b"], how="inner")
+            .join(st, on=["_p", "__d_prev", "__t_fine"], how="inner")
+            .join(span.select("_p", pl.col("_d").alias("__d_prev"), pl.col("_b").alias("__t_prev"),
+                              pl.col("__dur").alias("__dur_prev")), on=["_p", "__d_prev", "__t_prev"], how="inner")
+            .select("_p", "_d", "_b", "__d_prev", "__t_prev", "__dur", "__dur_prev"))
+
+
+def step_limit_share(ml: pl.Expr, rho: pl.Expr) -> pl.Expr:
+    """The mean output share over a coarse step of a unit that starts at its step's start (or stops at its end):
+    synchronised at ``ml`` and ramping at ``rho`` (the share of capacity the ramp speed covers in the whole step,
+    ramp_speed · 60 · Δ_b) up to full load, ``ml + ½·ρ`` while the ramp does not reach full load (ρ ≤ 1 − ml) and
+    ``1 − (1 − ml)² / (2ρ)`` once it does (full load for the rest of the step); 1 for ml ≥ 1."""
+    return (pl.when(ml >= 1.0).then(pl.lit(1.0))
+            .when(rho <= 1.0 - ml).then(ml + 0.5 * rho)
+            .otherwise(1.0 - (1.0 - ml) * (1.0 - ml) / (2.0 * rho)))
 
 
 def split_arcs(b: "_Build", arcs: pl.DataFrame) -> "tuple[pl.DataFrame, pl.DataFrame]":
@@ -224,27 +299,14 @@ def ramp_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: Param, side: str, lin
     process holds no reserve, so there are no reserve-only rows."""
     d = b.d
     keys = ["p", "source", "sink"]
-    psd = d.p_step_duration.frame.select(pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
-                                         pl.col("value").cast(pl.Float64).alias("__dt"))
-    st = b.coarse_steps.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
-                               pl.col("b_first").alias("_b"), pl.col("t").cast(pl.Utf8).alias("_t"))
-    span = _ordered_sum(st.join(psd, on=["_d", "_t"], how="left").select("_p", "_d", "_b", "_t", value="__dt"),
-                        ["_p", "_d", "_b"], "_t").rename({"value": "__dur"})
-    owner = st.select("_p", pl.col("_d").alias("__d_prev"), pl.col("_t").alias("__t_fine"),
-                      pl.col("_b").alias("__t_prev"))
     speed = ramp_speed.frame.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col(side).cast(pl.Utf8).alias("_n"),
                                     pl.col("value").cast(pl.Float64).alias("__speed"))
     base = (arcs.select(keys).unique(maintain_order=True)
             .with_columns(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys))
             .with_columns(pl.col(f"_{side}").alias("_n"))
             .join(speed, on=["_p", "_n"], how="inner")
-            .join(span, on="_p", how="inner"))
-    with_link = (base.join(link.select("_d", pl.col("_t").alias("_b"), "__d_prev",
-                                       pl.col("__t_prev").alias("__t_fine")), on=["_d", "_b"], how="inner")
-                 .join(owner, on=["_p", "__d_prev", "__t_fine"], how="inner")
-                 .join(span.select("_p", pl.col("_d").alias("__d_prev"), pl.col("_b").alias("__t_prev"),
-                                   pl.col("__dur").alias("__dur_prev")), on=["_p", "__d_prev", "__t_prev"],
-                       how="inner")
+            .join(spans(b), on="_p", how="inner"))
+    with_link = (base.join(coarse_links(b, link).drop("__dur"), on=["_p", "_d", "_b"], how="inner")
                  .with_columns(__kind=pl.lit("link"), __f_hat=pl.lit(None, pl.Float64)))
     parts = [with_link.filter((pl.col("__d_prev") != pl.col("_d"))
                               | (pl.col("__speed") * 60.0 * (pl.col("__dur") + pl.col("__dur_prev")) / 2.0 < 1.0))]

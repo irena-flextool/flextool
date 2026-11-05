@@ -107,7 +107,7 @@
   limit that varies within the step and its cost, efficiency and prices do not vary within the step; otherwise
   the result can differ (hourly flows could use the cheapest or most efficient hours, and several varying limits
   are looser when averaged). Units and connections with a node outside the coarse groups keep the solve's step,
-  and so do those with online variables and ramp limits, reserves, a delay, DC power flow, an `exact`
+  and so do those with reserves, a delay, DC power flow, an `exact`
   connection, a flow in a user constraint, a flow group instant limit or a node in a capacity-margin, inertia or
   non-synchronous group; also flows that cross Benders regions or live in the Benders master, and, in a
   stochastic solve, those at a stochastic node whose coarse step is only partly tied between the forecasts. An
@@ -122,12 +122,15 @@
   steps (a start-up counts while the steps since its start last less than `min_uptime`, so a 30-h minimum on
   daily steps holds the unit for two days, and one of at most a day adds nothing). The units online are written
   at every time step of the solve (the same value through the step), each start-up and shut-down at the first
-  time step of its coarse step (0 at the others), so start-up totals and costs are the model's. Such a unit with
-  ramp limits still keeps the solve's step, and so does, in a stochastic solve, any unit with online variables
-  whose coarse step is only partly tied between the forecasts, and, in a realization solve, one whose committed
-  units online change within a coarse step or are pinned on only part of it. The coarse-step notice names these
+  time step of its coarse step (0 at the others), so start-up totals and costs are the model's. With ramp limits,
+  its start-up and shut-down capacity reduction uses the coarse step: a unit started at the start of a step is
+  limited to its mean output over the whole step while ramping up from minimum load (at full load for the rest of
+  the step once the ramp reaches it), likewise before a shut-down, and its units online ramp between coarse steps.
+  A unit with online variables keeps the solve's step in a stochastic solve when its coarse step is only partly
+  tied between the forecasts, and in a realization solve when its committed units online change within a coarse
+  step or are pinned on only part of it. The coarse-step notice names these
   units with the reasons (units online once per coarse step, minimum times in whole coarse steps, a minimum load
-  that varies within the step).
+  that varies within the step, the start-up / shut-down capacity reduction on the coarse step).
 - **A Benders master that HiGHS left with an undetermined status after its cold retry is solved once more from
   its reloaded LP** (polar-high 3.12.1), instead of stopping with "Benders master problem did not solve to
   optimality". This happened on badly scaled masters (an unscaled objective with cut slopes near 1e9).

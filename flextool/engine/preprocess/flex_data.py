@@ -438,12 +438,6 @@ def coarse_process_exclusions(flex_data: "FlexData") -> dict[str, str]:
         for p in sorted(procs):
             out.setdefault(p, why)
 
-    ramp: set[str] = set()
-    for k in ("sink_up", "sink_down", "source_up", "source_down"):
-        ramp |= _frame_values(getattr(d, f"process_source_sink_ramp_limit_{k}", None), "p")
-    add(_frame_values(d.process_online, "p") & ramp,
-        "it has online variables and ramp limits (its start-up / shut-down capacity reduction and the ramps of "
-        "its units online are per solve step)")
     add(_frame_values(getattr(d, "prundt", None), "p"), "it provides reserves")
     add(_frame_values(getattr(d, "process_delayed", None), "p"), "it has a delay")
     add(_frame_values(getattr(d, "connection_dc_power_flow", None), "p"), "it is a DC power-flow line")
@@ -487,7 +481,8 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
     an efficiency that varies (the most efficient steps), two or more limits that vary (the averaged rows are
     their relaxation), ramp limits (ramps between coarse steps), online variables (units online, start-ups and
     shut-downs once per coarse step), a minimum up / down time (counted in whole coarse steps) and a minimum load
-    that varies within a coarse step (the averaged floor is the step-mean floor)."""
+    that varies within a coarse step (the averaged floor is the step-mean floor); with ramp limits too, the start-up /
+    shut-down capacity reduction of the coarse step (the mean share over the whole step)."""
     from flextool.engine.preprocess.params._coarse import varies_within_coarse_steps as varies
     from flextool.engine.preprocess.params._coarse import varying_within_coarse_steps as varying
 
@@ -543,6 +538,8 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
     add(varies(_param_frame(getattr(d, "p_min_load", None)), steps, ("p",))
         & _frame_values(getattr(d, "process_minload", None), "p") & _frame_values(d.process_online, "p"),
         "its minimum load varies within a coarse step")
+    add(ramp & _frame_values(d.process_online, "p") & coarse,
+        "its start-up / shut-down capacity reduction uses the coarse step")
     return out
 
 

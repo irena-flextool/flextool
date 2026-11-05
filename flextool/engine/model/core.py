@@ -2138,6 +2138,11 @@ def _eq_ramp(b: _Build) -> None:
     #   step_duration → Δ_b = Σ_{t∈b} Δt, so ρ̄ = speed · 60 · (Δ_b⁻ + Δ_b)/2 (no row inside a coarse step; with
     #   24-h steps an in-period row exists only for a speed below 1/1440 per minute); a time-varying source factor
     #   c is its coarse-step mean; the carried step is the arc's last realized coarse step (its length carried).
+    #   With online variables v_online is the step's value, v_startup / v_shutdown the events at b (start-ups and
+    #   shut-downs relative to b⁻, online_change); c and F are their means over b (F[b⁻] over b⁻) and
+    #   SU[b] = mean share over b of a unit started at b's start: ml + ½·ρ_b while ρ_b ≤ 1 − ml, else
+    #   1 − (1 − ml)²/(2·ρ_b), ρ_b = ramp_speed_up · 60 · Δ_b, ml the mean over b (SD′[b⁻] likewise with the down
+    #   speed over b⁻: the exact mean of a linear ramp that reaches full load within the step).
     # Steps without a predecessor, on arcs that hold reserve in that direction there (prundt):
     #   R↑ ≤ ρ·c·cap (up),  −R↓ ≥ −ρ·c·cap (down),  ρ = ramp_speed · 60 · step_duration[d,t] < 1;
     #   cap = v_online[p,d,t] for units with online variables, built units otherwise.
@@ -2443,7 +2448,16 @@ def _ramp_limit_share(b: "_Build", ramp_speed: Param, side: str, points: "pl.Dat
     ``points`` (c14c design §1.2/§3.1).  ``ml`` via :func:`flextool.engine.model._online._min_load_share`,
     ``input_side`` per arc (an indirect unit's input arc: ``source != p``, ``sink == p``, ``p`` in
     ``process_indirect``); this row's own ``ramp_speed`` only — no min over sides (unlike ``maxFlow_online``,
-    which keeps the tighter of the two)."""
+    which keeps the tighter of the two).  A point of a coarse process (``t`` = the first fine step of its coarse
+    step b) takes the mean share over the whole step, ``_coarse_flows.step_limit_share`` of the step-mean ml and
+    ρ_b = ramp_speed · 60 · Δ_b."""
+    if b.has_coarse_proc:
+        fine_pts, coarse_pts = _coarse_flows.split_arcs(b, points)
+        if coarse_pts.height > 0:
+            parts = [_coarse_ramp_limit_share(b, ramp_speed, side, coarse_pts)]
+            if fine_pts.height > 0:
+                parts.insert(0, _ramp_limit_share(b, ramp_speed, side, fine_pts))
+            return pl.concat(parts)
     d = b.d
     keys = ["p", "source", "sink"]
     pts = _utf8_keys(points.lazy(), keys + ["d", "t"]).collect()
@@ -2481,6 +2495,63 @@ def _ramp_limit_share(b: "_Build", ramp_speed: Param, side: str, points: "pl.Dat
                pl.lit(1.0), pl.col("__ml") + 0.5 * pl.col("__speed") * 60.0 * pl.col("__dur")))
            .select(*keys, "d", "t", "value"))
     return out
+
+
+def _coarse_ramp_limit_share(b: "_Build", ramp_speed: Param, side: str, points: "pl.DataFrame") -> "pl.DataFrame":
+    """:func:`_ramp_limit_share` at ``points`` of coarse processes (``t`` = b_first): over the fine steps t of each
+    coarse step b, Δ_b = Σ Δt and the Δt-weighted mean ml, then the mean share of a unit starting at the step's
+    start (stopping at its end) with ρ_b = ramp_speed · 60 · Δ_b (``_coarse_flows.step_limit_share``)."""
+    d = b.d
+    keys = ["p", "source", "sink"]
+    st = b.coarse_steps.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                               pl.col("b_first").alias("_b"), pl.col("t").cast(pl.Utf8).alias("__tf"),
+                               pl.col("w").alias("__w"))
+    pts = (_utf8_keys(points.select(*keys, "d", "t").unique().lazy(), keys + ["d", "t"]).collect()
+           .rename({"_t": "_b"})
+           .join(st, on=["_p", "_d", "_b"], how="inner")
+           .rename({"__tf": "_t"}))
+    fine = pts.select(*keys, pl.col("_d").cast(d.dt.schema["d"]).alias("d"),
+                      pl.col("_t").cast(d.dt.schema["t"]).alias("t")).unique()
+    share = _ramp_limit_share_terms(b, side, fine)
+    dur = d.p_step_duration.frame.select(
+        pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
+        pl.col("value").cast(pl.Float64).alias("__dur"))
+    speed = ramp_speed.frame.select(
+        pl.col("p").cast(pl.Utf8).alias("_p"), pl.col(side).cast(pl.Utf8).alias("_n"),
+        pl.col("value").cast(pl.Float64).alias("__speed"))
+    return (pts.join(share, on=["_p", "_source", "_sink", "_d", "_t"], how="left")
+            .with_columns(pl.col("__ml").fill_null(0.0))
+            .join(dur, on=["_d", "_t"], how="inner")
+            .group_by(*keys, "d", "t", "_p", "_source", "_sink")
+            .agg(pl.col("__dur").sum(), (pl.col("__w") * pl.col("__ml")).sum().alias("__ml"))
+            .with_columns(pl.col(f"_{side}").alias("_n"))
+            .join(speed, on=["_p", "_n"], how="inner")
+            .with_columns(value=_coarse_flows.step_limit_share(pl.col("__ml"),
+                                                               pl.col("__speed") * 60.0 * pl.col("__dur")))
+            .select(*keys, "d", "t", "value"))
+
+
+def _ramp_limit_share_terms(b: "_Build", side: str, points: "pl.DataFrame") -> "pl.DataFrame":
+    """``(_p, _source, _sink, _d, _t, __ml)``: the min-load share ml of :func:`_ramp_limit_share` at ``points``
+    (``p, source, sink, d, t``), input-side per arc."""
+    d = b.d
+    keys = ["p", "source", "sink"]
+    pts = _utf8_keys(points.lazy(), keys + ["d", "t"]).collect()
+    indirect = getattr(d, "process_indirect", None)
+    if indirect is not None and indirect.height > 0:
+        ind_p = _utf8_keys(indirect.lazy().select("p"), ["p"]).select("_p").unique().collect()
+        is_in = ((pts["_source"] != pts["_p"]) & (pts["_sink"] == pts["_p"])
+                 & pts["_p"].is_in(ind_p["_p"].to_list()))
+    else:
+        is_in = pl.Series([False] * pts.height)
+    parts = []
+    if pts.filter(is_in).height > 0:
+        parts.append(_online._min_load_share(b, pts.filter(is_in).lazy(), input_side=True).collect())
+    if pts.filter(~is_in).height > 0:
+        parts.append(_online._min_load_share(b, pts.filter(~is_in).lazy(), input_side=False).collect())
+    return (pl.concat(parts) if parts
+            else pl.DataFrame(schema={"_p": pl.Utf8, "_source": pl.Utf8, "_sink": pl.Utf8, "_d": pl.Utf8,
+                                      "_t": pl.Utf8, "__ml": pl.Float64}))
 
 
 def _predecessor_points(rows_subset: "pl.DataFrame", d) -> "pl.DataFrame":
@@ -2524,7 +2595,7 @@ def _online_ramp_rhs(b: "_Build", idx_set: "pl.DataFrame", ramp_speed: Param, si
     """
     d = b.d
     sign = 1.0 if up else -1.0
-    terms: dict = {"online": (v_online_k * _ramp_rate(d, idx_set, side, sub, keys)) * sign}
+    terms: dict = {"online": (v_online_k * _ramp_rate(d, idx_set, side, sub, keys, b=b)) * sign}
 
     flow_kind = sub.filter(pl.col("__kind") != "reserve")
     if flow_kind.height == 0:
@@ -2532,8 +2603,14 @@ def _online_ramp_rhs(b: "_Build", idx_set: "pl.DataFrame", ramp_speed: Param, si
     link_kind = flow_kind.filter(pl.col("__kind") == "link")
     carry_kind = flow_kind.filter(pl.col("__kind") == "carry")
     c_param = _c_param_plain(d, idx_set, side)
-    c_vals = _c_values(flow_kind, c_param, keys)
     floor_tbl = _unit_floors.arc_floor_share(d, idx_set)
+    if b.has_coarse_proc:
+        # A coarse process: c and F are their coarse-step means, keyed at each step's first fine step (b, b⁻).
+        c_param = _coarse_flows.at_first_steps(b, c_param)
+        if floor_tbl is not None:
+            floor_tbl = _coarse_flows.at_first_steps(
+                b, Param(("p", "source", "sink", "d", "t"), floor_tbl.select(*keys, "d", "t", "value"))).frame
+    c_vals = _c_values(flow_kind, c_param, keys)
 
     if up:
         # startup: c·(SU_t − ρ̄) — can be 0 or negative (keep the sign, drop exact zeros).

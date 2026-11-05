@@ -5,9 +5,9 @@ whose every balance node is coarse keeps one flow per coarse step also when it h
 online, start-ups and shut-downs are decided once per coarse step (the start / stop at the step's start), a
 minimum up / down time counts whole coarse steps, the online capacity and minimum-load rows are averaged over the
 step, and the outputs show units online on every solve step and each start-up / shut-down at its step's first
-solve step.  An online process with ramp limits (start-up / shut-down capacity reduction, online ramps) or with
-reserves keeps the solve's step, and so does one whose forecast tie or realization pin covers only part of a
-coarse step.
+solve step.  With ramp limits, its start-up / shut-down capacity reduction uses the mean share over the whole coarse
+step and its units online ramp between coarse steps.  An online process with reserves keeps the solve's step, and
+so does one whose forecast tie or realization pin covers only part of a coarse step.
 
 Fixtures: ``tests/fixtures/lh2_three_region.json`` (liquefier_A h2_A -> lh2_A between daily nodes, one week of
 hourly steps), ``tests/fixtures/stochastics.json`` and ``tests.json`` (hand-built model), with override
@@ -19,7 +19,9 @@ import polars as pl
 import pytest
 
 from tests.engine._lp_rows import row_bounds, row_terms
-from tests.engine._unit_db import b64, build, last_stochastic, make_db, run, utf8, without_realization
+from tests.engine._unit_db import (
+    FLEXTOOL_ROOT, b64, build, last_stochastic, make_db, run, utf8, without_realization,
+)
 from tests.engine.test_coarse_flows import (
     LH2_COARSE, LH2_RP, STOCH, _chain, _coarse_procs, _f, _forecasts, _keys, _lh2, _s, _stoch_values,
     _STOCH_ENTITIES, _tmap_lh2, _total_objective,
@@ -508,3 +510,174 @@ def test_notice_reasons_of_a_coarse_online_unit(tmp_path_factory) -> None:
                                   "its minimum up / down time counts whole coarse steps",
                                   "its minimum load varies within a coarse step"]
     assert "pipe_AB" not in why
+
+
+# ---------------------------------------------------------------------------
+# Start-up / shut-down capacity reduction and the ramps of units online on the coarse step
+#
+# The hand-built model above with min_uptime 24 h and a ramp limit on gen_d -> hd, ramp_speed_up = ramp_speed_down
+# = s per minute.  On a 24-h coarse step ρ_b = s·60·24 (the share of capacity the speed covers in the step) and a
+# unit started at the step's start averages SU_b = ml + ½·ρ_b over the step while ρ_b ≤ 1 − ml (it has not reached
+# full load), else 1 − (1 − ml)²/(2·ρ_b); SD_b likewise for a unit that stops at the step's end (EQ. headers of
+# maxFlow_online and _eq_ramp).  ml = 0.5, availability 1.
+# Rows (v_flow f_k in units of 100 MW): maxFlow_online_coarse day 1: f_1 ≤ on_1 − (1 − SU)·su_1 (red_sd − red_su = 0);
+#   maxFlow_online_shutdown_coarse day 1 (successor day 2): f_1 ≤ on_1 − (1 − SD)·sd_2; day 2 has no successor (the
+#   solve's last step: no shut-down reduction) and no start-up (below).  Ramp rows only between day 1 and day 2
+#   (ρ̄ = s·60·(24 + 24)/2 < 1; day 1 has no predecessor): down f_2 − f_1 ≥ −(ρ̄·(on_2 − su_2) + SD·sd_2) + F·su_2,
+#   up f_2 − f_1 ≤ ρ̄·(on_2 − su_2) + SU·su_2 − F·sd_2, F = ml = 0.5.
+# Optimum as case (a): on_2 = 0 (a day-2 unit costs 1200·1020 € per unit of surplus, more than its start-up), so
+#   su_1 = on_1 (the wrap), sd_2 = on_1, f_1 = 0.25 and the cheapest on_1 meets f_1 ≤ SU·on_1, f_1 ≤ SD·on_1 and the
+#   down ramp −0.25 ≥ −SD·on_1, all three on_1 ≥ 0.25 / SU (SU = SD); the up ramp −0.25 ≤ −0.5·on_1 holds; the min
+#   load 0.25 ≥ 0.5·on_1 holds for SU ≥ 0.5.
+#   s = 1e-4: ρ_b = 0.144 ≤ 0.5: SU = 0.5 + 0.072 = 0.572, on_1 = 0.25 / 0.572 = 0.437062937…
+#   s = 5e-4: ρ_b = 0.72 > 0.5 (full load after 16.7 h): SU = 1 − 0.25 / 1.44 = 0.826388…, on_1 = 0.302521008…
+
+def _ramp_values(speed: float) -> list:
+    rel = ["gen_d", "hd"]
+    return [["unit__outputNode", rel, "ramp_method", _s("ramp_limit")],
+            ["unit__outputNode", rel, "ramp_speed_up", _f(speed)],
+            ["unit__outputNode", rel, "ramp_speed_down", _f(speed)]]
+
+
+def _hand_ramp(tmp_path_factory, alt: str, speed: float, min_uptime: float = 24.0, extra=()):
+    url, scen = make_db(tmp_path_factory, alt=alt, values=_hand_uc_values(min_uptime) + _ramp_values(speed)
+                        + list(extra), base_chain=_HAND_CHAIN, entities=_HAND_ENTITIES)
+    return run(tmp_path_factory, url, scen)
+
+
+@pytest.mark.parametrize("speed, su_share", [(1e-4, 0.572), (5e-4, 1.0 - 0.25 / 1.44)])
+def test_hand_built_coarse_startup_reduction(tmp_path_factory, speed, su_share) -> None:
+    """The hand-built model with a ramp limit (derivation above): gen_d is coarse, its day-1 units online are
+    0.25 / SU with SU the mean start-up share over the day (also once the ramp reaches full load within the day),
+    started on day 1 and shut down at day 2's start; the reduction rows read the start-up of day 1 and the shut-down
+    of day 2 with the coefficient 1 − SU, the down ramp of day 2 its shut-down with SD = SU."""
+    step = last_stochastic(_hand_ramp(tmp_path_factory, f"co_red_{speed:g}", speed))
+    assert "gen_d" in _coarse_procs(step.flex_data)
+    on_1 = 0.25 / su_share
+    assert _hourly(step, "v_online_linear") == pytest.approx([on_1] * 24 + [0.0] * 24, abs=1e-9)
+    assert _hourly(step, "v_startup_linear") == pytest.approx([on_1] + [0.0] * 47, abs=1e-9)
+    assert _hourly(step, "v_shutdown_linear") == pytest.approx([0.0] * 24 + [on_1] + [0.0] * 23, abs=1e-9)
+    assert [f * 100.0 for f in _hourly(step, "v_flow")] == pytest.approx([25.0] * 24 + [0.0] * 24, abs=1e-7)
+    pb = build(step.flex_data)
+    arc = "gen_d,coal_market,hd,p2020,"
+    red = row_terms(pb, "maxFlow_online_linear_coarse", arc)
+    assert sorted(red) == [f"maxFlow_online_linear_coarse[{arc}t0001]", f"maxFlow_online_linear_coarse[{arc}t0025]"]
+    assert red[f"maxFlow_online_linear_coarse[{arc}t0001]"]["v_startup_linear[gen_d,p2020,t0001]"] == pytest.approx(
+        1.0 - su_share)
+    sd_rows = row_terms(pb, "maxFlow_online_shutdown_linear_coarse", arc)
+    assert list(sd_rows) == [f"maxFlow_online_shutdown_linear_coarse[{arc}t0001]"]
+    assert sd_rows[f"maxFlow_online_shutdown_linear_coarse[{arc}t0001]"][
+        "v_shutdown_linear[gen_d,p2020,t0025]"] == pytest.approx(1.0 - su_share)
+    assert not row_terms(pb, "maxFlow_online_linear", "gen_d,")
+    assert not row_terms(pb, "maxFlow_online_shutdown_linear", "gen_d,")
+    down = row_terms(pb, "ramp_sink_down_constraint", "gen_d,")
+    assert list(down) == [f"ramp_sink_down_constraint[{arc}t0025]"]
+    assert abs(down[f"ramp_sink_down_constraint[{arc}t0025]"]["v_shutdown_linear[gen_d,p2020,t0025]"]) == \
+        pytest.approx(su_share)
+
+
+def _step_values(values: list) -> list:
+    """``values`` of the hand-built model with the 24-h step on the solve (solve-level new_stepduration) instead of
+    on the group of hd: every process and node on 24-h solve steps."""
+    return [v for v in values if not (v[0] == "group" and v[2] == "new_stepduration")] + [
+        ["solve", "y2020_2day_dispatch", "new_stepduration", _f(24.0)]]
+
+
+_HAND_ROLLING = [["solve", "y2020_2day_dispatch", "solve_mode", _s("rolling_window")],
+                 ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", _f(48.0)],
+                 ["solve", "y2020_2day_dispatch", "rolling_solve_jump", _f(24.0)]]
+
+
+@pytest.mark.parametrize("min_uptime, rolling", [(24.0, False), (30.0, False), (30.0, True)])
+def test_coarse_ramp_reduction_equals_24h_solve(tmp_path_factory, min_uptime, rolling) -> None:
+    """With the ramp short of full load within a day (s = 1e-4 / min), the coarse unit's start-up / shut-down
+    reduction, online ramps and minimum up time are those of the same model solved on 24-h steps (the fine rule
+    min(1, ml + ½·ρ) equals the mean share there): gen_d's units online, start-ups, shut-downs and flows are the
+    same in every solve, also rolling (48-h horizon, 24-h jump: units online, the ramp's flow and the 30-h minimum up
+    time carried into day 2's roll).  gen_d and hd are a separate part of the model: the rest of tests.json changes
+    with the solve's step, so the objectives differ.  (Once the ramp reaches full load within the step the coarse
+    step takes the exact mean share 1 − (1 − ml)²/(2ρ), the fine rule caps at 1.)"""
+    tag = f"{int(min_uptime)}{'r' if rolling else ''}"
+    extra = _HAND_ROLLING if rolling else []
+    coarse = without_realization(_hand_ramp(tmp_path_factory, f"co_red24_{tag}", 1e-4, min_uptime, extra))
+    url, scen = make_db(tmp_path_factory, alt=f"co_red24s_{tag}",
+                        values=_step_values(_hand_uc_values(min_uptime) + _ramp_values(1e-4) + extra),
+                        base_chain=_HAND_CHAIN, entities=_HAND_ENTITIES)
+    daily = without_realization(run(tmp_path_factory, url, scen))
+    assert len(coarse) == len(daily) == (2 if rolling else 1)
+    started = 0.0
+    for c, f in zip(coarse.values(), daily.values()):
+        assert "gen_d" in _coarse_procs(c.flex_data) and not _coarse_procs(f.flex_data)
+        for var in ("v_online_linear", "v_startup_linear", "v_shutdown_linear", "v_flow"):
+            got = [utf8(s.solution.value(var)).filter(pl.col("p") == "gen_d").sort("t")["value"].to_list()
+                   for s in (c, f)]
+            assert len(got[0]) == len(got[1]) and got[0] == pytest.approx(got[1], abs=1e-9), var
+        started += utf8(c.solution.value("v_startup_linear")).filter(pl.col("p") == "gen_d")["value"].sum()
+    assert started > 1e-6
+
+
+def _top_ramp(speed: float) -> list:
+    rel = ["top_turbine", "upper"]
+    return [["unit__outputNode", rel, "ramp_method", _s("ramp_limit")],
+            ["unit__outputNode", rel, "ramp_speed_up", _f(speed)],
+            ["unit__outputNode", rel, "ramp_speed_down", _f(speed)]]
+
+
+def test_stochastic_coarse_unit_with_ramps(tmp_path_factory) -> None:
+    """Rolling stochastic dispatch with 24-h coarse steps and a ramp limit on top_turbine (min_load 0.2, speed
+    1e-4 / min: SU = 0.2 + ½·0.144 = 0.272 < 1, a start-up / shut-down reduction): top_turbine is coarse in every
+    roll, tied once per committed day per forecast pair, with its capacity reduction once per coarse step of every
+    forecast (maxFlow_online_linear_coarse) and no hourly online capacity row."""
+    url, scen = make_db(tmp_path_factory, alt="co_sto_ramp", values=_top_values(24.0) + _top_ramp(1e-4),
+                        base_chain=_chain(STOCH, "1_week_rolling_wind"), entities=_TOP_ENTITIES, fixture_json=STOCH)
+    steps = without_realization(run(tmp_path_factory, url, scen))
+    rolls = [s.flex_data for s in steps.values() if _forecasts(s.flex_data)]
+    assert len(rolls) >= 5
+    for fd in rolls:
+        assert "top_turbine" in _coarse_procs(fd)
+        assert _online_tie_reach(fd) == []
+        pb = build(fd)
+        ties = [r for r in row_terms(pb, "non_anticipativity_online_linear") if "top_turbine" in r]
+        assert len(ties) == sum(len(fs) - 1 for fs in _forecasts(fd).values())
+        steps_tt = utf8(fd.process_coarse_step).filter(pl.col("p") == "top_turbine").select("d", "b_first").unique()
+        red = row_terms(pb, "maxFlow_online_linear_coarse", "top_turbine,")
+        assert len(red) == steps_tt.height
+        assert all(any(c.startswith("v_startup_linear[top_turbine,") for c in terms) for terms in red.values())
+        assert not row_terms(pb, "maxFlow_online_linear", "top_turbine,")
+
+
+# Mid-horizon stochastic fixture (stoch_two_period_midhorizon_nreal0.json: elec, period p2035 = t0001–t0003 and its
+# branches p2040_high / _low = t0004–t0006, 1-h steps): elec in a 3-h group makes each period one coarse step, so the
+# trunk's coarse step has one coarse successor per branch (a branch point).  base (invested, unitsize 1) gets linear
+# online variables, min_load 0.4, a start-up cost and a ramp limit of 1e-3 / min on base -> elec:
+# ρ_b = 1e-3·60·3 = 0.18 ≤ 0.6, SU = SD = 0.4 + 0.09 = 0.49, the value of the fine rule min(1, ml + ½·ρ) on a 3-h step.
+_MID = FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_midhorizon_nreal0.json"
+_MID_UC = [["unit", "base", "startup_method", _s("linear")], ["unit", "base", "min_load", _f(0.4)],
+           ["unit", "base", "startup_cost", _f(5.0)],
+           ["unit__outputNode", ["base", "elec"], "ramp_method", _s("ramp_limit")],
+           ["unit__outputNode", ["base", "elec"], "ramp_speed_up", _f(1e-3)],
+           ["unit__outputNode", ["base", "elec"], "ramp_speed_down", _f(1e-3)]]
+
+
+def test_coarse_branch_point_reduction_equals_3h_solve(tmp_path_factory) -> None:
+    """At the branch point the shut-down reduction of the trunk's coarse step is one
+    maxFlow_online_shutdown_branch_linear_coarse row per branch (each with that branch's shut-down), and the whole
+    stochastic model equals the model solved on 3-h steps (solve-level new_stepduration): the same objective (every
+    parameter of a period is averaged or summed over it in both)."""
+    url, scen = make_db(tmp_path_factory, alt="co_mid", values=_MID_UC + [["group", "g3", "new_stepduration", _f(3.0)]],
+                        base_chain=["init", "base", "stoch"], fixture_json=_MID,
+                        entities=[["group", "g3", None], ["group__node", ["g3", "elec"], None]])
+    coarse = last_stochastic(run(tmp_path_factory, url, scen))
+    assert {"base", "wind"} <= _coarse_procs(coarse.flex_data)
+    url, scen = make_db(tmp_path_factory, alt="co_mid3",
+                        values=_MID_UC + [["solve", "stoch_2p_mid", "new_stepduration", _f(3.0)]],
+                        base_chain=["init", "base", "stoch"], fixture_json=_MID)
+    step3 = last_stochastic(run(tmp_path_factory, url, scen))
+    assert not _coarse_procs(step3.flex_data)
+    pb = build(coarse.flex_data)
+    branch = row_terms(pb, "maxFlow_online_shutdown_branch_linear_coarse", "base,")
+    assert len(branch) == 2
+    sd_cols = sorted(c for terms in branch.values() for c in terms if c.startswith("v_shutdown_linear"))
+    assert [c.split(",")[1] for c in sd_cols] == ["p2040_high", "p2040_low"]
+    assert len(row_terms(build(step3.flex_data), "maxFlow_online_shutdown_branch_linear", "base,")) == 2
+    assert float(coarse.obj) == pytest.approx(float(step3.obj), rel=1e-9)

@@ -508,7 +508,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # (f"{family}{sfx}_coarse").  Explicit: the fine-family prefixes would otherwise resolve them silently.
     **{f"{fam}_{kind}_coarse": CstrFamily(QuantityType.DIMENSIONLESS)
        for fam in ("maxFlow_online", "maxFlow_back_online", "maxOutputSum_online", "minFlow_minload",
-                   "minFlow_output_floor")
+                   "minFlow_output_floor", "maxFlow_online_shutdown", "maxFlow_online_shutdown_branch",
+                   "maxInputFlow_online", "maxInputFlow_online_shutdown", "maxInputFlow_online_shutdown_branch")
        for kind in ("linear", "integer")},
     # _unit_floors.py: downward-reserve headroom rows (zero
     # floor) per unit / per arc; unit-count flow units

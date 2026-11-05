@@ -10,7 +10,7 @@ its flows have one value per coarse step of its nodes (a rate that stays the sam
 units online, start-ups and shut-downs (the start and stop at the step's start; minimum up / down times count
 whole coarse steps).  A process with a fine balance node, or with no balance node, keeps the solve's step, and
 so does a process with a feature whose rows are per fine step and couple the flow to other per-step terms
-(online variables together with ramp limits, reserves, a delay, DC power flow, an exact connection, a user
+(reserves, a delay, DC power flow, an exact connection, a user
 constraint flow term, a flow group instant limit, a capacity-margin / inertia / non-synchronous group): those
 rows would not hold for a flow that cannot change within the coarse step.  In a stochastic solve, a process at
 a node whose net flow is tied between the forecasts, and every online process, also keeps the solve's step when
