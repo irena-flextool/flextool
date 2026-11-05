@@ -179,15 +179,25 @@ python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
 | `--debug` | Enable verbose logging, per-checkpoint memory trace, and a `solve_data/memory_diagnostics.csv` per-solve CSV |
 | `--csv-dump` | Preserve cascade debug artefacts on disk: `input/`, `solve_data/`, `cross_solve/`, and `output_raw/` mirrors. Off by default (these directories are normally cleaned up after the run) |
 
-**Numerical precision and solver tuning:**
+**Scaling and solver tuning:**
+
+Each of these flags has an environment-variable twin for runs without a command line (Spine Toolbox, a
+script); a given flag wins over the variable, and the variable over the solve's database value. See
+[Environment variables](env_vars.md).
 
 | Flag | Description |
 |---|---|
 | `--scaling {off,solver_only,basic,full}` | FlexTool autoscaler strategy (see [scaling.md](dev/scaling.md)). `off` disables all scaling including HiGHS' internal equilibration; `solver_only` keeps only HiGHS' default matrix scaling; `basic` adds FlexTool's Layer-1 range detection and Layer-3 `user_*_scale` recommendation without LP mutation; `full` (default) adds Layer-2 semantic per-type column/row/cost scaling. Env fallback: `FLEXTOOL_SCALING` |
-| `--user-bound-scale N` | Pin HiGHS' `user_bound_scale` exponent (multiplies all column bounds and RHS by `2**N`). Use the value HiGHS suggests in its scaling warning; clamped to `[-10, 0]`. Overrides the Layer-3 auto-pick and any DB value |
-| `--presolve {on,off,choose}` | HiGHS `presolve` override. Default keeps the determinism-pinned `on`; `off` disables presolve (slower but useful for memory or numerical diagnostics) |
-| `--highs-threads N` | Number of HiGHS solver threads (default `1`). Values >1 enable HiGHS parallel mode and trade determinism for wall-clock speedup |
-| `--save-memory` | Opt-in peak-RSS reduction: after the LP matrix is built, drop polar-high's polars/numpy source, write the LP to a temp MPS file, and solve it in a separate HiGHS subprocess (via `cmd_solve_mps`) so the solver's working set lives outside the FlexTool address space. Frees ~5-10 GB on large models at ~+90 s I/O per sub-solve. Also disables warm-LP reuse across cascade iterations. See [architecture.md](dev/architecture.md) |
+| `--user-bound-scale N` | Pin HiGHS' `user_bound_scale` exponent (multiplies all column bounds and RHS by `2**N`). Use the value HiGHS suggests in its scaling warning; clamped to `[-10, 0]`. Overrides the Layer-3 auto-pick. Env fallback: `FLEXTOOL_USER_BOUND_SCALE` |
+| `--presolve {on,off,choose}` | HiGHS `presolve` override. Default keeps the determinism-pinned `on`; `off` disables presolve (slower but useful for memory or numerical diagnostics). Env fallback: `FLEXTOOL_HIGHS_PRESOLVE` |
+| `--highs-threads N` | Number of HiGHS solver threads (default `1`). Values >1 enable HiGHS parallel mode and trade determinism for wall-clock speedup. Env fallback: `FLEXTOOL_HIGHS_THREADS` |
+| `--solver-time-limit SECONDS` | HiGHS wall-clock time limit per solve (default: none). Env fallback: `FLEXTOOL_HIGHS_TIME_LIMIT` |
+| `--solver-mip-gap GAP` | HiGHS MIP relative gap for every solve of the run. Unset: each solve's `solver_mip_gap`, else `mip_rel_gap` in `solver_config/highs.opt`. Env fallback: `FLEXTOOL_HIGHS_MIP_GAP` |
+| `--solver-log-level {silent,normal,verbose}` | HiGHS log output (default `normal`). Env fallback: `FLEXTOOL_SOLVER_LOG_LEVEL` |
+| `--save-memory` | Opt-in peak-RSS reduction: after the LP matrix is built, drop polar-high's polars/numpy source, write the LP to a temp MPS file, and solve it in a separate HiGHS subprocess (via `cmd_solve_mps`) so the solver's working set lives outside the FlexTool address space. Frees ~5-10 GB on large models at ~+90 s I/O per sub-solve. Also disables warm-LP reuse across cascade iterations. See [architecture.md](dev/architecture.md). Env fallback: `FLEXTOOL_SAVE_MEMORY=1` |
+| `--warm-start` | With `--save-memory`, reuse a cached HiGHS basis for solves of the same model structure; any mismatch falls back to a cold solve. Env fallback: `FLEXTOOL_WARM_START=1` |
+| `--basis-cache-dir PATH` | Folder of the `--warm-start` basis cache (default `<work folder>/basis_cache`); share one folder to reuse bases between runs. Env fallback: `FLEXTOOL_BASIS_CACHE_DIR` |
+| `--benders-workers N` | Threads for the region solves of a Benders solve (default, or `0`: the number of regions, at most cores minus one). Env fallback: `FLEXTOOL_BENDERS_WORKERS` |
 
 **Decomposition (Benders):**
 

@@ -215,32 +215,111 @@ OPTIONS: dict[str, OptionSpec] = {
 
 @dataclass(frozen=True)
 class EnvKnob:
-    """An environment variable that is not the twin of a flag: process-level, developer or test-only."""
+    """An environment variable that is not the twin of a flag: process-level, developer or test-only.
+
+    *read_by* names who reads it: ``"flextool"`` (this package, or for a test knob the test suite) or the
+    library that does (``"polars"``) when FlexTool only documents it.  ``tests/test_env_knob_registry.py`` checks
+    that every variable FlexTool reads is registered here or in :data:`OPTIONS`, that each is on its page, and
+    that no page lists one that is no longer read.
+    """
 
     name: str
     audience: Audience
     page: str  # the documentation page that describes it
     help: str
+    read_by: str = "flextool"
 
 
-_USER_PAGE = "docs/env_vars.md"
+USER_PAGE = "docs/env_vars.md"
+DEV_PAGE = "docs/dev/env_vars.md"
+TEST_PAGE = "docs/dev/testing.md"
 
+#: The page of each audience; :data:`OPTIONS` entries are documented on the page of their audience.
+AUDIENCE_PAGES: dict[str, str] = {"user": USER_PAGE, "dev": DEV_PAGE, "test": TEST_PAGE}
+
+
+def _user(name: str, help: str, read_by: str = "flextool") -> EnvKnob:
+    return EnvKnob(name, "user", USER_PAGE, help, read_by)
+
+
+def _dev(name: str, help: str) -> EnvKnob:
+    return EnvKnob(name, "dev", DEV_PAGE, help)
+
+
+def _test(name: str, help: str) -> EnvKnob:
+    return EnvKnob(name, "test", TEST_PAGE, help)
+
+
+# Developer and test variables keep their names (no ``FLEXTOOL_DEV_*`` prefix); the audience here and the page
+# they are on mark them as developer-only.
 ENV_KNOBS: dict[str, EnvKnob] = {
     knob.name: knob
     for knob in (
-        EnvKnob("FLEXTOOL_SOLVER_CONFIG_DIR", "user", _USER_PAGE,
-                "folder whose solver option files (highs.opt, ...) seed a run's work folder"),
-        EnvKnob("FLEXTOOL_NO_ENV_CHECK", "user", _USER_PAGE, "skip the start-up check of the native libraries"),
-        EnvKnob("FLEXTOOL_NO_UPDATE_CHECK", "user", _USER_PAGE, "the GUI does not look for a newer FlexTool"),
-        EnvKnob("FLEXTOOL_DPI", "user", _USER_PAGE, "GUI screen resolution override"),
-        EnvKnob("FLEXTOOL_SLICE", "user", _USER_PAGE, "systemd slice for GUI-started runs (Linux)"),
-        EnvKnob("MALLOC_ARENA_MAX", "user", _USER_PAGE, "glibc malloc arena cap; a value you set is kept"),
-        EnvKnob("POLARS_PREFER_PKG", "user", _USER_PAGE, "which polars build loads; a value you set is kept"),
-        EnvKnob("POLARS_FORCE_PKG", "user", _USER_PAGE, "force one polars build"),
-        EnvKnob("POLARS_MAX_THREADS", "user", _USER_PAGE, "polars thread pool size; printed in the run header"),
-        EnvKnob("POLARS_ENGINE_AFFINITY", "dev", "docs/dev/env_vars.md",
-                "polars engine choice; only the in-memory engine is verified"),
-        EnvKnob("_RJEM_MALLOC_CONF", "dev", "docs/dev/env_vars.md", "jemalloc settings of polars' allocator"),
+        # --- user: process-level and GUI settings ---------------------------------------------------------
+        _user("FLEXTOOL_SOLVER_CONFIG_DIR",
+              "folder whose solver option files (highs.opt, ...) seed a run's work folder"),
+        _user("FLEXTOOL_NO_ENV_CHECK", "skip the start-up check of the native libraries (polars, highspy)"),
+        _user("FLEXTOOL_NO_UPDATE_CHECK", "the GUI does not look for a newer FlexTool at start"),
+        _user("FLEXTOOL_DPI", "GUI screen resolution override"),
+        _user("FLEXTOOL_SLICE", "systemd slice for GUI-started runs (Linux)"),
+        _user("MALLOC_ARENA_MAX", "glibc malloc arena cap; run_flextool sets 4 unless you set it"),
+        _user("POLARS_PREFER_PKG", "which polars build loads first; a value you set is kept"),
+        _user("POLARS_FORCE_PKG", "force one polars build; also skips FlexTool's processor check"),
+        _user("POLARS_MAX_THREADS", "polars thread pool size; the run header prints the effective count",
+              read_by="polars"),
+        # --- dev: solve acceptance ------------------------------------------------------------------------
+        _dev("FLEXTOOL_ACCEPT_NEAR_OPTIMAL", "0 rejects every HiGHS status other than optimal (default on)"),
+        _dev("FLEXTOOL_ACCEPT_PD_GAP", "largest primal-dual gap of an accepted near-optimal solve (1e-2)"),
+        _dev("FLEXTOOL_ACCEPT_PRIMAL_REL", "relative primal infeasibility of an accepted near-optimal solve (1e-6)"),
+        _dev("FLEXTOOL_ACCEPT_PRIMAL_ABS_MARGIN",
+             "absolute primal infeasibility allowed, as a multiple of HiGHS' feasibility tolerance (10)"),
+        # --- dev: Benders ---------------------------------------------------------------------------------
+        _dev("FLEXTOOL_BENDERS_CUT_POLICY", "master cut compaction policy: slack (default) or dominance"),
+        _dev("FLEXTOOL_BENDERS_CUT_WINDOW", "trial-point window of the dominance cut policy (10)"),
+        _dev("FLEXTOOL_BENDERS_CUT_COMPACT_AT", "master cut count that triggers compaction; 0 / unset is off"),
+        _dev("FLEXTOOL_BENDERS_MAX_STALL", "iterations without progress before the stall guard stops (8)"),
+        _dev("FLEXTOOL_BENDERS_TRUST_REGION_RADIUS", "trust-region half-width on the coupling flows; unset is off"),
+        _dev("FLEXTOOL_BENDERS_REGION_DUALS", "region dual for the cuts: basic (default) or interior"),
+        _dev("FLEXTOOL_BENDERS_PIN_DIAGNOSTIC",
+             "parquet of monolith coupling flows: evaluate the decomposition there once instead of iterating"),
+        _dev("FLEXTOOL_BENDERS_PIN_MONOLITH_OBJ", "monolith objective for the pin diagnostic's exactness check"),
+        _dev("FLEXTOOL_BENDERS_PIN_BLOWUP_MULT", "pin diagnostic: region cost multiple that counts as blow-up (100)"),
+        _dev("FLEXTOOL_BENDERS_VERBOSE", "show the HiGHS log of every Benders master and region solve"),
+        # --- dev: checks and modes ------------------------------------------------------------------------
+        _dev("FLEXTOOL_AUTOSCALE_STRICT", "a missing autoscale registry entry raises instead of solving unscaled"),
+        _dev("FLEXTOOL_AXIS_ENUMS", "experimental axis-Enum mode for a whole run"),
+        _dev("FLEXTOOL_FORCE_ROW_SCALING", "turn on the legacy node / group balance row scaling"),
+        _dev("FLEXTOOL_SKIP_SOLVER_PROBE", "skip the start-up probe of commercial solver licences"),
+        _dev("FLEXTOOL_NATIVE_SCENARIO", "scenario name for run_chain when the work folder name does not give it"),
+        _dev("FLEXTOOL_AUDIT_SOURCES", "log every externally injected Provider entry to audit_sources.log"),
+        _dev("FLEXTOOL_LEVEL_RELEASE_AUDIT", "record solves whose HiGHS instance outlives its level"),
+        _dev("FLEXTOOL_DUMP_CSVS", "with --csv-dump, also write the eight largest debug CSVs"),
+        _dev("FLEXTOOL_COLD_KEEP_PROVIDER", "under --save-memory keep the data provider across cold solves"),
+        _dev("FLEXTOOL_RSS_BUDGET_MB", "RSS budget above which the data provider evicts cached frames"),
+        _dev("FLEXTOOL_WARM_AB_MARGIN", "warm start is kept when within this fraction of the cold time (0.10)"),
+        _dev("FLEXTOOL_DISABLE_AUTOSCALE_CACHE", "recompute the autoscale plan in every roll"),
+        _dev("FLEXTOOL_DISABLE_OUTPUT_HOIST", "fetch solution arrays per output instead of once per solve"),
+        # --- dev: profiling -------------------------------------------------------------------------------
+        _dev("FLEXTOOL_MEMORY_DIAGNOSTICS", "memory recorder with tracemalloc and memory_diagnostics.csv"),
+        _dev("FLEXTOOL_MEMORY_VERBOSE", "print every phase of the memory table"),
+        _dev("FLEXTOOL_MEM_SAMPLER", "background RSS sampler"),
+        _dev("FLEXTOOL_MEM_SAMPLER_LOG", "RSS sampler log path"),
+        _dev("FLEXTOOL_MEM_SAMPLER_INTERVAL_MS", "RSS sampler interval in milliseconds (100)"),
+        _dev("FLEXTOOL_PHASE_TIMING", "per-iteration rows in timings.csv"),
+        _dev("FLEXTOOL_PHASE_PROFILE", "RSS line per orchestration phase on stderr"),
+        _dev("FLEXTOOL_PYRAMID_PROFILE", "RSS line per preprocessing emit on stderr"),
+        _dev("FLEXTOOL_AUTOSCALE_PROFILE", "RSS markers around the autoscale steps"),
+        _dev("FLEXTOOL_BUILD_PROFILE", "RSS line per model-build step on stderr"),
+        _dev("FLEXTOOL_LOADFLEX_PROFILE", "RSS line per data-load step on stderr"),
+        _dev("POLAR_HIGH_LAYER2_PROFILE", "profile line per term of the autoscale Layer 2 walk"),
+        _dev("POLAR_HIGH_RANGES_MAX_FAMILY_ROWS",
+             "row cap per constraint family of Layer 2 bucketing with an old polar-high (1000000)"),
+        # --- dev: process level ---------------------------------------------------------------------------
+        _dev("POLARS_ENGINE_AFFINITY", "polars engine; FlexTool sets in-memory, the only engine it verifies"),
+        _dev("_RJEM_MALLOC_CONF", "jemalloc settings of polars' allocator; FlexTool sets page decay"),
+        # --- test suite -----------------------------------------------------------------------------------
+        _test("FLEXTOOL_NATIVE_PARITY_SWEEP", "run the slow parity sweep over every fixture"),
+        _test("FLEXTOOL_TEST_RSS_BUDGET_MB", "RSS budget of the input-derivation memory test (1500)"),
     )
 }
 
@@ -362,6 +441,7 @@ def _format_value(value: Any) -> str:
 
 
 __all__ = [
+    "AUDIENCE_PAGES",
     "ENV_KNOBS",
     "EnvKnob",
     "OPTIONS",

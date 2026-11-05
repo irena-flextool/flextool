@@ -57,6 +57,7 @@ nav:
     - 'Spine database editor': spine_database.md
     - 'Excel as input/output': excel_interface.md
     - 'Terminal / CLI': terminal_workflow.md
+    - 'Environment variables': env_vars.md
   - Solvers:
     - 'Solver selection': solvers/index.md
     - 'HiGHS': solvers/highs.md
@@ -72,7 +73,7 @@ nav:
     - 'Decomposition': dev/decomposition.md
     - 'Database schema and migration': dev/db_schema.md
     - 'Testing': dev/testing.md
-    - 'Environment variables': dev/env_vars.md
+    - 'Environment variables (developer)': dev/env_vars.md
     - 'Injecting parameters between solves': dev/inject_between_solves.md
   - 'Changelog': release.md
   - Archived:

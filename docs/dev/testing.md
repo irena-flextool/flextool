@@ -273,6 +273,18 @@ Run them with `pytest -m csv_reload tests/csv_reload/`.
   Layer-2 MPS parity (30-minute timeout).
 - **slow** — nightly only; `-m slow`.
 
+### Test-suite environment variables
+
+Opt-in switches read by the test suite only (registered with audience `test` in `ENV_KNOBS`,
+`flextool/run_options.py`). The runtime developer switches the suite also uses, such as
+`FLEXTOOL_AUTOSCALE_STRICT` and `FLEXTOOL_SKIP_SOLVER_PROBE`, are in
+[Environment variables (developer)](env_vars.md).
+
+| Variable | Default | Set to | What it does |
+|---|---|---|---|
+| `FLEXTOOL_NATIVE_PARITY_SWEEP` | unset (skipped) | `1` | Run the slow parity sweep of `tests/engine/test_orchestration.py` over every fixture (about 5 min per fixture). |
+| `FLEXTOOL_TEST_RSS_BUDGET_MB` | `1500` | MB | RSS budget of the input-derivation memory test `tests/spinedb_backend/test_memory_budget.py`, for machines with unrelated memory pressure. |
+
 ## Running the tests
 
 ```bash

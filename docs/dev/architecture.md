@@ -81,6 +81,43 @@ packages. Every CLI command also has an installed entry point in
 | `cmd_update_flextool` | `flextool-update` | `git pull` + project-side migration in one step. |
 | `cmd_gui` (via `flextool.gui.__main__`) | `flextool-gui` | Launch the Tkinter desktop application. |
 
+### Runtime options
+
+`flextool/run_options.py` holds the one resolver for every operator option that has more than one form, and
+the registry of every environment variable FlexTool reads. Where a setting belongs:
+
+- **database** — what changes the model or its answer (a solve's `scaling`, `solver_mip_gap`,
+  `benders_in_out_weight`, ...);
+- **CLI flag** — a choice for one run (threads, time limit, log level, `--save-memory`, `--benders-workers`);
+- **environment variable** — process-level settings that must exist before import (allocator, polars build),
+  developer / CI switches, and the twin of a flag for callers without a command line (Spine Toolbox, a Python
+  console, tests).
+
+The contract:
+
+1. Several forms of one option resolve in the order **flag > environment variable > database > default**,
+   through `resolve()` / `RunOptions`, one `OptionSpec` per option in `OPTIONS`.
+2. Flags of registry options default to `None` (a `store_true` flag gives `True` or `None`), so an unset flag
+   lets the environment variable through.
+3. Nothing writes `os.environ` to carry an option. `cmd_run_flextool` builds `RunOptions.from_cli(args)` and
+   passes it to `run_chain_from_db(..., run_options=)`, which stores it on `RunnerState.run_options`; a library
+   caller that passes none gets `RunOptions.from_env()`, resolved once per run. The database tier is added per
+   solve with `RunOptions.with_db` (e.g. `scaling`).
+4. A child FlexTool process (GUI job, calibration iteration, workflow run) gets the parent's flag-given choices
+   as flags (`RunOptions.to_argv()`) and inherits the parent's environment untouched. Benders region workers are
+   threads and read the same `RunOptions`.
+5. Process-level variables (`MALLOC_ARENA_MAX`, `_RJEM_MALLOC_CONF`, `POLARS_*`) keep `setdefault` semantics: a
+   value already in the environment wins.
+6. HiGHS keys keep their own stack (baseline < `highs.opt` < `solve.solver_mip_gap` < `solve.solver_arguments` <
+   operator layer); the registry supplies only the operator layer.
+7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
+   with its source — and polars' thread count.
+
+Every other variable is an `EnvKnob` in `ENV_KNOBS` with its audience (`user`, `dev`, `test`) and page:
+[user page](../env_vars.md), [developer page](env_vars.md), [testing](testing.md#test-suite-environment-variables).
+`tests/test_env_knob_registry.py` fails on an unregistered read, an undocumented registered variable, or a
+documented variable that is no longer read.
+
 ## Repository layout
 
 ```

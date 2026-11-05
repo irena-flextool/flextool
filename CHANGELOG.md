@@ -29,6 +29,10 @@
   values; the developer documentation said it rounded them to 10 significant figures by default, which was wrong.
 - The run header lists the options set by a flag or an environment variable, with where each came from, and the
   number of polars threads.
+- **New page "Environment variables"** in the user guide: every variable users set, with its `run_flextool` flag
+  twin and the order flag > environment variable > database > default. The developer guide keeps the diagnostic,
+  profiling and experimental variables, now marked developer-only, and the help of every `run_flextool` flag names
+  its environment variable.
 - **Processors with AVX2 keep polars' fast build when the compatible build is installed too.** polars loads its
   compatible build (`polars[rtcompat]`) first whenever it is installed, so a `flextool[compat]` install ran about
   10-30% slower on every processor. `import flextool` now selects polars' default build on a processor that has
