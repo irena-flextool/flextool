@@ -208,7 +208,18 @@ def derive_dc_power_flow(
             for node in nodes_in_group:
                 adjacency.setdefault(node, set())
 
-            # Read existing capacity for nodes
+            # Existing capacity of the nodes: existing × virtual_unitsize when that is set (existing is then the
+            # number of units), else existing.
+            node_vu: dict[str, float] = {}
+            for pv in backend.find_parameter_values(
+                entity_class_name="node",
+                parameter_definition_name="virtual_unitsize",
+            ):
+                if pv["type"] is None:
+                    continue
+                val = pv["parsed_value"]
+                if isinstance(val, (int, float)) and float(val) != 0.0:
+                    node_vu[pv["entity_byname"][0]] = float(val)
             node_existing: dict[str, float] = {}
             for pv in backend.find_parameter_values(
                 entity_class_name="node",
@@ -220,7 +231,7 @@ def derive_dc_power_flow(
                 if node_name in nodes_in_group:
                     val = pv["parsed_value"]
                     if isinstance(val, (int, float)):
-                        node_existing[node_name] = float(val)
+                        node_existing[node_name] = float(val) * node_vu.get(node_name, 1.0)
 
             # BFS to find connected components
             visited: set[str] = set()
@@ -249,7 +260,7 @@ def derive_dc_power_flow(
                         best_node = node
                 reference_nodes.append(best_node)
                 logger.info(
-                    "DC power flow: auto-selected reference node '%s' (existing=%.1f) "
+                    "DC power flow: auto-selected reference node '%s' (existing capacity=%.1f) "
                     "for connected component in group '%s'.",
                     best_node, best_cap, group_name,
                 )
@@ -307,7 +318,8 @@ def derive_dc_power_flow(
                 precapacity = float(pv["parsed_value"])
                 break
 
-        # Read existing capacity for connections
+        # Existing of the connections, for the zero check only: the capacity (existing × virtual_unitsize when
+        # that is set) is zero exactly when existing is.
         conn_existing: dict[str, float] = {}
         for pv in backend.find_parameter_values(
             entity_class_name="connection",

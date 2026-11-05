@@ -342,6 +342,10 @@
 - **Fixed: the `--region` export gave a cross-region connection with `virtual_unitsize` only `existing` MW.** The
   virtual half-flow connection of the region's input now carries `existing` × `virtual_unitsize`. Solve results
   (including the Benders decomposition) are unchanged.
+- **Fixed: the automatic DC power-flow reference node reads a node's `existing` as the number of units with
+  `virtual_unitsize`.** The reference is the node with the largest existing capacity (`existing` × `virtual_unitsize`);
+  before, `existing` was compared as is, so a node with `virtual_unitsize` could lose to a smaller one. Results
+  change only where that picks another reference node.
 - **Docs: `constraint_invested_capacity_coeff` is a coefficient per MW (MWh for storage).** Its description said
   "Not multiplied by unitsize"; FlexTool has always applied it to the invested capacity in MW (MWh).
 - **Docs: `increase_reserve_ratio` applies to upward and downward reserve alike.** The ratio stands for the
