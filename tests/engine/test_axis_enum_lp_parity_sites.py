@@ -24,7 +24,7 @@ import pytest
 
 from tests._support.lp_parity import snapshot
 
-pytestmark = pytest.mark.solver
+pytestmark = [pytest.mark.solver, pytest.mark.timeout(2700)]
 
 FIXTURES = (
     "howto_non_sync_curtailment", "invest_limits", "stoch_t0_commit", "ramp_roll_span",

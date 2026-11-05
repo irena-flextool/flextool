@@ -490,8 +490,10 @@ CI job `enum-mode`), and by hand `tools/lp_snapshot.py snapshot A`,
 
 Known gaps (not exercised, or not Enum, in this mode):
 
-- Writing results (`process_outputs`) has never run with Enum axes; no
-  test compares its outputs with the Utf8 run's.
+- Writing results (`process_outputs`) is not covered by the opt-in
+  run. It runs after the run's vocabulary is reset, so its axis columns
+  come out as `Categorical` instead of `String`; a manual `base` check
+  found the output values equal to the Utf8 run's.
 - Providers built without a vocabulary stay Utf8 even with the switch
   on: region decomposition (`decomposition/region_decomposition.py`)
   and the CLI region export (`decomposition/region_filter.py`), the staged input

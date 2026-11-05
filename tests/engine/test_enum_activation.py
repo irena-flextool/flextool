@@ -98,8 +98,6 @@ def test_load_flextool_emits_enum_typed_dim_columns(scenario_run) -> None:
     )
 
 
-
-
 def _utf8_rows(frame: pl.DataFrame) -> list[tuple]:
     out = frame.with_columns(pl.col(c).cast(pl.Utf8) for c, t in frame.schema.items() if isinstance(t, pl.Enum))
     return sorted(out.rows(), key=lambda r: tuple(str(v) for v in r))
