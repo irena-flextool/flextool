@@ -325,9 +325,11 @@ def _print_unit_count_capacity_note(vre: dict[str, VreUnit]) -> None:
 
     Earlier FlexTool versions read ``existing`` as MW here also with ``virtual_unitsize``; for a unit with
     virtual_unitsize ≠ 1 and existing ≠ 0 the net load, and so the representative-period selection, changes.
-    Printed once per read, only when such a unit exists.
+    Printed once per read, only when such a unit exists.  A virtual_unitsize ≤ 0 is unset (existing is MW), so such
+    a unit is not named.
     """
-    changed = [(name, u) for name, u in vre.items() if u.unitsize != 1.0 and u.existing_cap != 0.0]
+    changed = [(name, u) for name, u in vre.items()
+               if u.unitsize > 0.0 and u.unitsize != 1.0 and u.existing_cap != 0.0]
     if not changed:
         return
     listing = ", ".join(f"{name} ({u.existing_cap / u.unitsize:g} × {u.unitsize:g} = {u.existing_cap:g} MW)"

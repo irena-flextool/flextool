@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from spinedb_api import Array, DatabaseMapping, Map, import_data
 
-from flextool.representative_periods.netload_inputs import read_netload_inputs
+from flextool.representative_periods.netload_inputs import VreUnit, _print_unit_count_capacity_note, read_netload_inputs
 from flextool.update_flextool.initialize_database import initialize_database
 
 _SCHEMA = (
@@ -200,6 +200,13 @@ def test_reader_end_to_end_builds_matrix(netload_db: str):
     assert names == ["n_load", "n_vre"]
     assert n_base == 2
     assert C.shape == (4, 2)
+
+
+def test_unit_count_note_skips_unset_virtual_unitsize(capsys):
+    """A virtual_unitsize of 0 is unset (existing 5 is MW), so the note does not name the unit and does not divide."""
+    _print_unit_count_capacity_note({"pv": VreUnit(node="n", profile="p", existing_cap=5.0, unitsize=0.0,
+                                                   investable=False)})
+    assert "Note: net-load clustering" not in capsys.readouterr().out
 
 
 def test_reader_array_inflow_skipped(tmp_path, capsys):
