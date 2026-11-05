@@ -1,9 +1,9 @@
 """polars' jemalloc decay settings, whichever of polars and flextool was imported first.
 
 polars links jemalloc statically.  jemalloc reads ``_RJEM_MALLOC_CONF`` once, while ``import polars`` loads the
-runtime library.  polars' own values, which ``import polars`` writes into the variable, are
+runtime library.  polars 1.x's own values, which ``import polars`` writes into the variable, are
 ``dirty_decay_ms:500,muzzy_decay_ms:-1``: freed pages pass to the "muzzy" (MADV_FREE) state and stay resident, so a
-large model's peak memory roughly doubles.
+large model's peak memory roughly doubles.  polars 2.x writes ``muzzy_decay_ms:1000``, which returns them after ~2 s.
 FlexTool wants ``dirty_decay_ms:1000,muzzy_decay_ms:0``: a freed page is returned to the OS about a second after it
 goes idle.
 

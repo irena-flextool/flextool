@@ -863,8 +863,9 @@ build time. The orchestrator emits a one-time warning when it disables
 warm-start because of this flag.
 
 **Memory: polars allocator.** polars links jemalloc statically, and its
-own decay settings (`dirty_decay_ms:500,muzzy_decay_ms:-1`) leave freed
-pages resident for good, which roughly doubles peak RSS on large models.
+own decay settings in 1.x (`dirty_decay_ms:500,muzzy_decay_ms:-1`) leave
+freed pages resident for good, which roughly doubles peak RSS on large
+models (2.x writes `muzzy_decay_ms:1000`, which returns them after ~2 s).
 FlexTool wants `dirty_decay_ms:1000,muzzy_decay_ms:0`
 (`flextool/_allocator.py`, called first thing in `flextool/__init__.py`).
 jemalloc reads `_RJEM_MALLOC_CONF` once, when `import polars` loads the

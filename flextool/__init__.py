@@ -2,8 +2,9 @@
 # jemalloc decay config for polars, applied BEFORE the first ``import polars``
 # (which happens transitively in the imports below).  polars statically links
 # jemalloc and reads ``_RJEM_MALLOC_CONF`` once, when its runtime library
-# loads; polars' own values are ``dirty_decay_ms:500,muzzy_decay_ms:-1``, and
-# muzzy -1 leaves freed pages resident (MADV_FREE) for good.  Then each
+# loads; polars 1.x's own values are ``dirty_decay_ms:500,muzzy_decay_ms:-1``,
+# and muzzy -1 leaves freed pages resident (MADV_FREE) for good (polars 2.x
+# writes ``muzzy_decay_ms:1000``, which returns them after ~2 s).  Then each
 # rolling solve's freed GB-scale coefficient frames stay resident and peak
 # memory roughly doubles on large models.  ``dirty_decay_ms:1000`` purges
 # freed pages ~1 s after they go idle without madvise-ing on every transient

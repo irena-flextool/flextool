@@ -73,29 +73,48 @@ def test_conf_set_after_polars_import_is_applied_at_runtime():
     assert after["arenas.dirty_decay_ms"] == 2000 and after["arenas.muzzy_decay_ms"] == 7
 
 
-def test_pages_freed_before_flextool_is_imported_are_returned():
-    # ~0.7 GB of frames is freed while polars' own config (muzzy -1) is active: the pages stay resident.  Importing
-    # flextool switches the decay, and jemalloc's background thread then returns them.
-    proc = _run("""
-        import polars as pl
-        def rss():
-            return int(open("/proc/self/statm").read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 2**30
-        base = rss()
-        df = pl.DataFrame({"a": pl.int_range(0, 30_000_000, eager=True)}).with_columns(b=pl.col("a").cast(pl.Utf8))
-        peak = rss()
-        del df
-        gc.collect()
-        time.sleep(3)
-        freed = rss()
-        import flextool
-        time.sleep(4)
-        print("RSS " + json.dumps({"base": base, "peak": peak, "freed": freed, "after": rss()}))
-    """)
+_HELD_PAGES = """
+    import importlib.util
+    import polars as pl
+    spec = importlib.util.spec_from_file_location("held_allocator", {path!r})
+    A = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(A)
+    A.apply_decay(A.Mallctl.from_library(*A.runtime_library()), {{"muzzy_decay_ms": -1}})
+    def rss():
+        return int(open("/proc/self/statm").read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 2**30
+    base = rss()
+    df = pl.DataFrame({{"a": pl.int_range(0, {rows}, eager=True)}}).with_columns(b=pl.col("a").cast(pl.Utf8))
+    peak = rss()
+    del df
+    gc.collect()
+    time.sleep(3)
+    freed = rss()
+    import flextool
+    time.sleep(4)
+    print("RSS " + json.dumps({{"base": base, "peak": peak, "freed": freed, "after": rss()}}))
+"""
+
+
+def _held_pages_rss(rows: int) -> dict:
+    proc = _run(_HELD_PAGES.format(path=_allocator.__file__, rows=rows))
     assert proc.returncode == 0, proc.stderr[-2000:]
-    r = json.loads(next(ln for ln in proc.stdout.splitlines() if ln.startswith("RSS "))[4:])
+    return json.loads(next(ln for ln in proc.stdout.splitlines() if ln.startswith("RSS "))[4:])
+
+
+def test_pages_freed_before_flextool_is_imported_are_returned():
+    # ~0.7 GB of frames is freed while a decay config that keeps freed pages resident is active (muzzy -1, the
+    # value polars 1.x writes; polars 2.x writes muzzy 1000, which returns them by itself within ~2 s).  The
+    # subprocess sets muzzy -1 at runtime, so the pages stay resident whatever the installed polars writes.
+    # Importing flextool switches the decay, and jemalloc's background thread then returns them.  ``_allocator`` is
+    # loaded from its file, because importing it as ``flextool._allocator`` would run ``flextool/__init__.py``.
+    # The memory that ``import flextool`` itself adds (~0.15-0.2 GB, depending on the platform and the installed
+    # packages) is measured in a twin process that frees no frames, and taken off the remaining memory.
+    r = _held_pages_rss(30_000_000)
+    control = _held_pages_rss(0)
     held = r["freed"] - r["base"]
     assert held > 0.5 * (r["peak"] - r["base"]), r
-    assert r["after"] - r["base"] < 0.3 * held, r
+    import_cost = control["after"] - control["freed"]
+    assert r["after"] - r["base"] - import_cost < 0.3 * held, (r, control)
 
 
 def test_importing_flextool_does_not_load_the_engine_or_solver_backends():
