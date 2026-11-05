@@ -325,9 +325,9 @@
 - **Fix: a node retirement or an investment without its period map stops with an error** naming the missing data
   (before: the retirement or investment was left out of the capacity without a word). Results unchanged.
 - **Warning when `existing` is not a whole number of units for a unit or connection with integer online
-  variables** (`startup_method = binary`). `existing` is the capacity in MW (MWh for storage); with
-  `virtual_unitsize` the number of units is `existing` / `virtual_unitsize`. The warning names the entity, the
-  resulting count and the unit size. Results unchanged.
+  variables** (`startup_method = binary`) and `virtual_unitsize`. With `virtual_unitsize`, `existing` is the number
+  of units; integer online variables commit whole units, so a count such as 2.5 cannot all be online. The warning
+  names the entity, the count and the unit size. Results unchanged.
 - **Docs: with `virtual_unitsize`, `existing` is the number of units** (as in FlexTool 3 and every 4.x release);
   the 4.x reference example said MW. Results unchanged.
 - **Docs: `constraint_invested_capacity_coeff` is a coefficient per MW (MWh for storage).** Its description said
