@@ -549,7 +549,7 @@ def test_import_guard_defers_to_diagnostics_without_asking(monkeypatch, capsys):
     _needs_compat(monkeypatch)
     ran = _Ran()
     ask = lambda _p: pytest.fail("asked")  # noqa: E731
-    assert env_check.ensure_polars_runtime_before_import(run=ran, ask=ask, interactive=True, entry="defer") == "deferred"
+    assert env_check.ensure_polars_runtime_before_import(run=ran, ask=ask, interactive=True, entry="defer") == "diagnostics"
     assert ran.calls == []
     assert env_check.format_command(_COMPAT_STEP) in capsys.readouterr().err
 
@@ -726,6 +726,43 @@ def test_gui_launch_asks_before_polars_is_imported(tmp_path, mode, reply):
         assert record["pip"] == [[sys.executable, "-m", "pip", "install", f"polars[rtcompat]=={env_check._dist_version('polars')}"]]
         assert record["exit"] is None
         assert "polars" in record["loaded_after"]  # the GUI went on importing after the install
+
+
+# ``python -m flextool.env_check`` in a fresh interpreter on a CPU without
+# AVX2 (faked /proc/cpuinfo) and no compatible runtime: importing the package
+# must not load polars, whose default runtime would crash the process before
+# the diagnostics print.
+_DIAGNOSTICS_IMPORT_DRIVER = r"""
+import builtins, io, json, sys
+_open = builtins.open
+_FLAGS = "flags\t\t: fpu sse sse2 pni ssse3 sse4_1 sse4_2 popcnt cx16 pclmulqdq\n"
+
+def fake_open(file, *args, **kwargs):
+    if file == "/proc/cpuinfo":
+        return io.StringIO(_FLAGS)
+    return _open(file, *args, **kwargs)
+
+builtins.open = fake_open
+sys.orig_argv = [sys.executable, "-m", "flextool.env_check"]
+import flextool
+loaded = sorted(m for m in sys.modules if m == "polars" or m.startswith(("polars.", "_polars")))
+sys.__stdout__.write("RESULT:" + json.dumps(loaded) + "\n")
+"""
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the CPU is faked through /proc/cpuinfo")
+@pytest.mark.skipif(env_check.compat_runtime_ready(), reason="the compatible runtime is installed here")
+def test_diagnostics_import_does_not_load_polars(tmp_path):
+    driver = tmp_path / "diagnostics_import.py"
+    driver.write_text(_DIAGNOSTICS_IMPORT_DRIVER, encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k not in ("FLEXTOOL_NO_ENV_CHECK", "POLARS_FORCE_PKG")}
+    done = subprocess.run(
+        [sys.executable, str(driver)], capture_output=True, text=True, timeout=240, env=env, stdin=subprocess.DEVNULL
+    )
+    lines = [line for line in done.stdout.splitlines() if line.startswith("RESULT:")]
+    assert lines, done.stdout + done.stderr
+    assert json.loads(lines[-1].removeprefix("RESULT:")) == []
+    assert "polars[rtcompat]" in done.stderr  # the note with the fix
 
 
 @pytest.mark.parametrize(

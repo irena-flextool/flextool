@@ -983,7 +983,11 @@ def ensure_polars_runtime_before_import(
       reason is noted on stderr and the GUI's own startup check offers the
       install (``"deferred"``).
     * defer (``python -m flextool.env_check``): note the reason on stderr
-      and continue; the diagnostics command prints the fix.
+      and return ``"diagnostics"``, on which ``flextool/__init__.py`` skips
+      the rest of the package (it imports polars, whose default runtime
+      would crash this process before the diagnostics print); the
+      diagnostics command probes polars in a child process and prints the
+      fix.  The same on a CPU below x86-64-v2 (its own message, no note).
     * repair (``flextool-update``): the user asked for a repair, so install
       without asking (``"failed"`` is reported and the update continues).
 
@@ -992,7 +996,7 @@ def ensure_polars_runtime_before_import(
     it (:func:`prefer_default_runtime`).
 
     Returns ``"skipped"``, ``"not_needed"``, ``"unsupported"``,
-    ``"deferred"``, ``"installed"`` or ``"failed"``.  *run*, *ask*,
+    ``"diagnostics"``, ``"deferred"``, ``"installed"`` or ``"failed"``.  *run*, *ask*,
     *interactive*, *entry* and *dialog* are parameters for tests.  Skipped
     when polars is already imported (a Toolbox console, a notebook), when
     ``POLARS_FORCE_PKG`` picks a runtime, or when ``FLEXTOOL_NO_ENV_CHECK``
@@ -1013,6 +1017,8 @@ def ensure_polars_runtime_before_import(
     entry = entry or import_entry_mode()
     terminal = _has_terminal() if interactive is None else interactive
     if verdict.status == CPU_UNSUPPORTED:
+        if entry == ENTRY_DEFER:
+            return "diagnostics"
         _stderr(unsupported_cpu_help(verdict))
         if entry == ENTRY_GUI and not terminal:
             _dialog_notice("FlexTool cannot run on this computer", unsupported_cpu_help(verdict))
@@ -1023,7 +1029,7 @@ def ensure_polars_runtime_before_import(
     message = compat_runtime_message(verdict, steps)
     if entry == ENTRY_DEFER:
         _stderr(message)
-        return "deferred"
+        return "diagnostics"
     if entry == ENTRY_REPAIR:
         _stderr(proactive_banner(verdict))
         returncode = _run_steps(steps, run)
