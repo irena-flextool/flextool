@@ -783,22 +783,23 @@ _SCRIPTS = {
 # on stdin).  Format helpers below.
 
 
-def _resolve_solver_config_dir() -> Path:
+def _resolve_solver_config_dir(config_dir: Path | None = None) -> Path:
     """Resolve the directory holding ``<solver>.opt`` baseline files.
 
     Lookup order:
 
-    1. ``$FLEXTOOL_SOLVER_CONFIG_DIR`` environment variable (matches the
-       override hook used by the existing ``highs.opt`` resolution path
-       in tests / CI).
-    2. ``<cwd>/solver_config`` — the same default that
-       :func:`flextool.engine.solve._orchestration.run_chain_from_db`
-       uses for ``highs.opt``.
+    1. *config_dir* — the run's solver-config folder (``run_chain_from_db``
+       passes its work-folder copy, ``<work_folder>/solver_config``).
+    2. ``$FLEXTOOL_SOLVER_CONFIG_DIR`` environment variable, for a caller
+       that passes no folder.
+    3. ``<cwd>/solver_config``.
 
     Returns the resolved :class:`Path` regardless of whether it exists;
     callers check ``.is_file()`` on the specific solver file before
     parsing.
     """
+    if config_dir is not None:
+        return Path(config_dir)
     env = os.environ.get("FLEXTOOL_SOLVER_CONFIG_DIR")
     if env:
         return Path(env)
@@ -914,7 +915,7 @@ def _build_commercial_opt_file(
     *options* dict is empty (caller skips the per-solver opt-file slot
     entirely so the CLI doesn't get a ``ReadParams=`` to a no-op file).
     """
-    config_dir = config_dir or _resolve_solver_config_dir()
+    config_dir = _resolve_solver_config_dir(config_dir)
     baseline_path = config_dir / f"{solver_name}.opt"
     merged: dict[str, str] = {
         k: str(v) for k, v in _parse_native_opt_file(baseline_path).items()
@@ -1161,6 +1162,7 @@ def solve_via_subprocess(
     logger: logging.Logger | None = None,
     work_folder: Path | None = None,
     run_options: "RunOptions | None" = None,
+    config_dir: Path | None = None,
 ) -> "Solution":
     """Solve *problem* via the appropriate CLI subprocess; return a Solution.
 
@@ -1194,6 +1196,10 @@ def solve_via_subprocess(
     run_options
         The run's operator options; the HiGHS path reads ``warm_start`` and
         ``basis_cache_dir`` from them.  ``None`` reads the environment.
+    config_dir
+        The run's solver-config folder holding the commercial
+        ``<solver>.opt`` baselines (:func:`_resolve_solver_config_dir`:
+        this folder > ``$FLEXTOOL_SOLVER_CONFIG_DIR`` > ``<cwd>/solver_config``).
 
     Returns
     -------
@@ -1211,7 +1217,7 @@ def solve_via_subprocess(
     if solver_name in _SCRIPTS:
         return _solve_commercial_subprocess(
             problem, solver_name, options, solve_name=solve_name,
-            logger=logger, work_folder=work_folder,
+            logger=logger, work_folder=work_folder, config_dir=config_dir,
         )
     raise ValueError(
         f"solve_via_subprocess: unknown solver_name={solver_name!r}; "
@@ -1613,6 +1619,7 @@ def _solve_commercial_subprocess(
     solve_name: str,
     logger: logging.Logger | None,
     work_folder: Path | None,
+    config_dir: Path | None = None,
 ) -> "Solution":
     """Solve via a commercial solver's CLI binary.
 
@@ -1719,7 +1726,7 @@ def _solve_commercial_subprocess(
         # ``None`` when both sources are empty — the per-solver script
         # builders then skip the opt-file slot entirely.
         opt_arg = _build_commercial_opt_file(
-            solver_name, options, opt_path,
+            solver_name, options, opt_path, config_dir=config_dir,
         )
 
         argv, stdin_text = _SCRIPTS[solver_name](

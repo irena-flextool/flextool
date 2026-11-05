@@ -304,6 +304,7 @@ def run_one_solve(
     solve_name: str | None = None,
     work_folder: "Path | None" = None,
     run_options: "RunOptions | None" = None,
+    solver_config_dir: "Path | None" = None,
 ):
     """Dispatch *problem* to the chosen solver.
 
@@ -360,6 +361,10 @@ def run_one_solve(
     run_options
         The run's operator options, handed to the subprocess path (warm-start
         basis cache).  ``None`` reads the environment.
+    solver_config_dir
+        The run's solver-config folder; the commercial path reads its
+        ``<solver>.opt`` baseline there.  ``None`` falls back to
+        ``$FLEXTOOL_SOLVER_CONFIG_DIR``, else ``<cwd>/solver_config``.
 
     Returns
     -------
@@ -441,6 +446,7 @@ def run_one_solve(
             logger=logger,
             work_folder=work_folder,
             run_options=run_options,
+            config_dir=solver_config_dir,
         )
     except RuntimeError as e:
         msg = str(e)

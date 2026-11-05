@@ -7,6 +7,10 @@
 - **Fixed: a solve with Benders decomposition ignored its `scaling` setting.** Its region subproblems were scaled
   with `full`, or with the `scaling` of the solve that ran before it in the chain. Each solve now uses its own
   `scaling`; `--scaling` / `FLEXTOOL_SCALING` still override it.
+- **Fixed: a second run in the same Python session (Spine Toolbox console, a script) took its solver option files
+  (`highs.opt`, `gurobi.opt`, ...) from the previous run's work folder** instead of from `solver_config/` or
+  `FLEXTOOL_SOLVER_CONFIG_DIR`. A run no longer sets `FLEXTOOL_SOLVER_CONFIG_DIR`, and `run_flextool` no longer
+  writes its flags into environment variables.
 - **New flags `--benders-workers N` and `--basis-cache-dir PATH`** for `run_flextool`, the command-line twins of
   `FLEXTOOL_BENDERS_WORKERS` and `FLEXTOOL_BASIS_CACHE_DIR`.
 - The run header lists the options set by a flag or an environment variable, with where each came from, and the

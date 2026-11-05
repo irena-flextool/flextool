@@ -88,3 +88,16 @@ def test_run_options_reach_the_engine_with_their_sources(clean_env, monkeypatch,
     assert "presolve=off (env FLEXTOOL_HIGHS_PRESOLVE)" in header
     assert "scaling=basic (flag)" in header
     assert "Polars threads:" in header
+
+
+def test_given_flags_are_not_written_into_the_environment(clean_env, monkeypatch, tmp_path):
+    seen = _run_main(monkeypatch, tmp_path, "--scaling", "basic", "--save-memory", "--warm-start",
+                     "--highs-threads", "3", "--benders-workers", "2", "--basis-cache-dir", str(tmp_path / "bc"),
+                     "--presolve", "off", "--user-bound-scale", "-3")
+    assert [name for name in _OPTION_ENV_VARS if name in os.environ] == []
+    opts = seen["kwargs"]["run_options"]
+    assert {key: opts.value(key) for key in ("scaling", "save_memory", "warm_start", "highs_threads",
+                                              "benders_workers", "presolve", "user_bound_scale")} == {
+        "scaling": "basic", "save_memory": True, "warm_start": True, "highs_threads": 3, "benders_workers": 2,
+        "presolve": "off", "user_bound_scale": -3}
+    assert seen["highs_overrides"] == {"threads": 3, "parallel": "on", "presolve": "off"}

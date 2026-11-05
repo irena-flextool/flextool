@@ -41,7 +41,7 @@ from flextool.process_outputs.write_outputs import write_outputs
 from flextool.cli._console import run_tool
 from flextool.cli._timing import TimingRecorder
 from flextool.common_utils.precision import resolve_precision_digits
-from flextool.run_options import OPTIONS, RunOptions
+from flextool.run_options import RunOptions
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import DatabaseMapping, to_database, DateTime
@@ -448,19 +448,6 @@ def _run_options_from_args(args):
     return RunOptions.from_cli(args)
 
 
-def _carry_flags_into_env(run_options):
-    """Set the environment variable of every flag given on the command line.
-
-    The engine readers still take these options from their environment variables; a variable is written only
-    for a flag that was given, so a value set in the shell for an option without a flag stays as it was.
-    """
-    for key, spec in OPTIONS.items():
-        resolved = run_options.get(key)
-        if resolved.source != "cli" or spec.env is None:
-            continue
-        os.environ[spec.env] = "1" if resolved.value is True else str(resolved.value)
-
-
 def _polars_thread_count() -> int:
     """Size of polars' thread pool (``POLARS_MAX_THREADS``, else the core count), for the run header."""
     import polars as pl
@@ -637,13 +624,14 @@ def build_parser() -> argparse.ArgumentParser:
             "(Layer 2), and HiGHS user_*_scale recommendation (Layer 3). "
             "Produces the most robust conditioning. Default.\n"
             "\n"
+            "Precedence for the mode: this flag > FLEXTOOL_SCALING > the "
+            "solve's scaling parameter > full.\n"
+            "\n"
             "Precedence for user_objective_scale and user_bound_scale:\n"
-            "  1. --user-bound-scale N (CLI override)\n"
+            "  1. --user-bound-scale N (or FLEXTOOL_USER_BOUND_SCALE)\n"
             "  2. user_*_scale set via solver config file\n"
             "  3. Layer 3 autoscaler recommendation\n"
-            "  4. HiGHS default (0)\n"
-            "\n"
-            "Env fallback: FLEXTOOL_SCALING."
+            "  4. HiGHS default (0)"
         ),
     )
     parser.add_argument('--user-bound-scale', type=int, default=None,
@@ -653,9 +641,10 @@ def build_parser() -> argparse.ArgumentParser:
                              '2**N).  When HiGHS prints '
                              '"Consider setting the user_bound_scale option '
                              'to <N>" in its scaling warning, pass that '
-                             '<N> here.  Clamped to [-10, 0].  Overrides '
-                             'any DB value; falls through to the '
-                             'input-data heuristic when unset.')
+                             '<N> here.  Clamped to [-10, 0].  When '
+                             'unset, the autoscaler chooses.  Environment '
+                             'variable: FLEXTOOL_USER_BOUND_SCALE; the flag '
+                             'wins.')
     parser.add_argument('--presolve', choices=['on', 'off', 'choose'],
                         default=None,
                         help='HiGHS ``presolve`` override.  Default '
@@ -740,7 +729,6 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
     run_options = _run_options_from_args(args)
-    _carry_flags_into_env(run_options)
 
     # Accept either a SQLAlchemy URL ("sqlite:///path") or a bare
     # filesystem path ("path/to.sqlite") for any DB argument. Downstream

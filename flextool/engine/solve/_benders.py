@@ -221,22 +221,24 @@ def _benders_failure_message(summary: str, meaning: str, how_to_avoid: str) -> s
 # safety net confirming the floor never produced an invalid bound.
 _ETA_FLOOR_MULT = 1.1
 
-# Env override for the per-iteration region-solve worker count (machine-local;
-# NO schema/DB knob — avoids another migration).  ``FLEXTOOL_BENDERS_WORKERS``
-# pins the thread-pool size for the parallel region recourse pass; unset/<=0
-# leaves the ``workers`` argument (default: auto = min(n_regions, cpu-1)) in
-# charge.  ``workers=1`` (or 1 region) keeps the fully-sequential path.
+# Environment twin of ``--benders-workers``: the per-iteration region-solve worker
+# count (machine-local; no schema/DB knob).  Read here only for a direct
+# ``solve_benders`` call with ``workers=None``; the cascade passes the run's
+# resolved value.  Unset/<=0 = auto (min(n_regions, cpu-1)); ``workers=1`` (or
+# 1 region) keeps the fully-sequential path.
 _BENDERS_WORKERS_ENV = "FLEXTOOL_BENDERS_WORKERS"
 
 
 def _resolve_benders_workers(n_regions: int, workers) -> int:
     """Resolve the effective region-solve worker count.
 
-    Precedence: explicit ``FLEXTOOL_BENDERS_WORKERS`` env (machine-local) wins;
-    otherwise the ``workers`` argument (``None`` ⇒ auto ``min(n, cpu-1)``).
-    Clamped to ``[1, n_regions]`` by :func:`resolve_worker_count`.
+    Precedence: the ``workers`` argument (the cascade passes the run's
+    ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS``) > the
+    ``FLEXTOOL_BENDERS_WORKERS`` env, read only when ``workers`` is ``None``
+    (a direct call) > auto ``min(n, cpu-1)``.  Clamped to ``[1, n_regions]``
+    by :func:`resolve_worker_count`.
     """
-    env = os.environ.get(_BENDERS_WORKERS_ENV)
+    env = os.environ.get(_BENDERS_WORKERS_ENV) if workers is None else None
     if env:
         try:
             env_n = int(env)
@@ -2076,8 +2078,9 @@ def solve_benders(
         Worker-thread count for the per-iteration region recourse pass (the
         N independent region subproblem solves).  ``None`` (default)
         auto-resolves to ``min(n_regions, cpu_count - 1)``; ``<= 1`` (or a
-        single region) keeps the fully-sequential path.  The machine-local
-        env override ``FLEXTOOL_BENDERS_WORKERS`` takes precedence when set.
+        single region) keeps the fully-sequential path.  ``None`` also lets the
+        machine-local ``FLEXTOOL_BENDERS_WORKERS`` env set it (a direct call);
+        the cascade passes the run's resolved value.
         The region solves are independent (each region owns its own HiGHS
         handle) and each solves single-threaded, so the parallel result is
         DETERMINISTIC — bit-identical ``(cost_r, cut slopes)`` and therefore

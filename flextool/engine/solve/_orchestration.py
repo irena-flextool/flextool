@@ -2837,6 +2837,8 @@ def _drive_cascade(
                     state, complete_solve_name, baseline=None,
                 ),
                 scaling_config=scaling_config,
+                # ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS``; None = automatic.
+                workers=run_options.value("benders_workers"),
             )
 
             # Final summary — convergence + the valid LB/UB sandwich that
@@ -3981,6 +3983,7 @@ def _drive_cascade(
                     solve_name=complete_solve_name,
                     work_folder=state.paths.work_folder,
                     run_options=run_options,
+                    solver_config_dir=state.paths.solver_config_dir,
                 )
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
@@ -4813,11 +4816,9 @@ def run_chain_from_db(
         else package_data_path("")
     )
     # Seeding SOURCE precedence: explicit ``solver_config_dir`` arg >
-    # a pre-existing ``$FLEXTOOL_SOLVER_CONFIG_DIR`` override (the hook the
-    # subprocess path already honours as its highest-priority source — read
-    # it BEFORE we overwrite it below, so a user/CI override's *content* is
-    # carried into the work-folder copy rather than silently lost) >
-    # ``<cwd>/solver_config``.
+    # ``$FLEXTOOL_SOLVER_CONFIG_DIR`` (a user / CI override; only read, never
+    # written, so a second run in the same process seeds from the same source
+    # as the first) > ``<cwd>/solver_config``.
     _env_solver_config = os.environ.get("FLEXTOOL_SOLVER_CONFIG_DIR")
     if solver_config_dir is not None:
         solver_config_dir_resolved = Path(solver_config_dir)
@@ -4837,12 +4838,9 @@ def run_chain_from_db(
     _workdir_solver_config = _seed_work_folder_solver_config(
         work_folder, solver_config_dir_resolved, logger
     )
+    # Every solve path reads this copy: ``state.paths.solver_config_dir`` feeds
+    # the HiGHS options and is passed to the commercial-solver subprocess path.
     solver_config_dir_resolved = _workdir_solver_config
-    # The subprocess/commercial solve path resolves its config dir
-    # independently via ``_resolve_solver_config_dir()``, which honours
-    # ``$FLEXTOOL_SOLVER_CONFIG_DIR`` first; point it at the same work-folder
-    # copy so both paths read a single source of truth.
-    os.environ["FLEXTOOL_SOLVER_CONFIG_DIR"] = str(_workdir_solver_config)
 
     # Cascade-input Provider population from the Spine DB.  Pure
     # in-memory: ``write_workdir_inputs`` runs the input_derivation

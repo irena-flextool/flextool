@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -413,3 +414,55 @@ def test_matrix_file_format_comes_from_run_options(options_db, monkeypatch) -> N
     chosen = SolveConfig.load_from_db_url(url, "custom", run_options=_env_options({}))
     assert from_env.solver_configs[SOLVE].io_api == "lp"
     assert chosen.solver_configs[SOLVE].io_api == "direct"
+
+
+# ---------------------------------------------------------------------------
+# Two runs in one process: each seeds and reads its own solver-config folder
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def gurobi_db(tmp_path_factory) -> str:
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    data = json.loads((FIXTURES / "tests.json").read_text())
+    data = _lp_snapshot()._overlay(data, name="custom", base=["init", "west", "coal"],
+                                   values=[["solve", SOLVE, "solver", "gurobi"]])
+    work = tmp_path_factory.mktemp("gurobi_db")
+    (work / "f.json").write_text(json.dumps(data))
+    url = json_to_db(work / "f.json", work / "f.sqlite")
+    migrate_database(url)
+    return url
+
+
+def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path, monkeypatch) -> None:
+    """Run 1 seeds from an explicit folder; run 2 (same process, no folder given) must seed from
+    ``<cwd>/solver_config`` and its commercial-solver ``.opt`` file must come from that, not from run 1's work
+    folder.  The commercial binary is replaced by HiGHS in process; the ``.opt`` file is built by the real code."""
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.solve import _subprocess_solve
+
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    first = tmp_path / "first_config"
+    first.mkdir()
+    (first / "gurobi.opt").write_text("Threads 11\n")
+    cwd = tmp_path / "project"
+    (cwd / "solver_config").mkdir(parents=True)
+    (cwd / "solver_config" / "gurobi.opt").write_text("Threads 22\n")
+    monkeypatch.chdir(cwd)
+    built: list[str] = []
+
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, config_dir=None):
+        opt = _subprocess_solve._build_commercial_opt_file(
+            solver_name, options, Path(work_folder) / f"{solve_name}.gurobi.opt", config_dir=config_dir)
+        built.append(opt.read_text() if opt is not None else "")
+        return problem.solve(keep_solver=True)
+
+    monkeypatch.setattr(_subprocess_solve, "_solve_commercial_subprocess", commercial)
+    run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=tmp_path / "w1",
+                      solver_config_dir=first)
+    assert "FLEXTOOL_SOLVER_CONFIG_DIR" not in os.environ
+    run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=tmp_path / "w2")
+    assert (tmp_path / "w2" / "solver_config" / "gurobi.opt").read_text() == "Threads 22\n"
+    assert len(built) == 2 and "11" in built[0] and "22" in built[1], built
