@@ -7,9 +7,10 @@
   loads in preference to the default build. It reads the processor's features when FlexTool is imported, before
   polars can crash. On such a processor without the compatible build, it prints why (the missing CPU features) and the
   exact pip command; in a terminal it asks "Run it now? [y/N]" and installs only on yes, and without a terminal (a
-  Spine Toolbox tool, a GUI-started run, CI) it stops with that message instead of installing anything. The GUI's
-  startup check shows the reason and the command in a dialog and runs it if you agree, and "Update FlexTool"
-  (`flextool-update`) installs it; an install that has `polars-lts-cpu` is moved to `polars[rtcompat]`. A processor without
+  Spine Toolbox tool, a GUI-started run, CI) it stops with that message instead of installing anything. The GUI
+  (`flextool`, `flextool-gui`) asks the same before it loads polars, so the default build cannot crash first: in
+  its terminal, or, started from a shortcut, in a small yes/no dialog with the reason and the command and a progress
+  window while it installs; on no it closes with the message. "Update FlexTool" (`flextool-update`) installs it; an install that has `polars-lts-cpu` is moved to `polars[rtcompat]`. A processor without
   even SSE4.2/POPCNT (x86-64-v2, for example Core 2 or Phenom II), which no current build of FlexTool's libraries
   supports, now gets a message that says so. New install option `pip install "flextool[compat]"`;
   `python -m flextool.env_check` reports the processor's features and the installed polars builds; set

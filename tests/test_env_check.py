@@ -6,6 +6,8 @@ current interpreter (which, in any environment able to run the test suite,
 has a working solver stack).
 """
 
+import json
+import os
 import platform
 import subprocess
 import sys
@@ -497,7 +499,7 @@ def test_import_guard_terminal_yes_but_pip_fails(monkeypatch):
         env_check.ensure_polars_runtime_before_import(run=_Ran(returncode=1), ask=ask, interactive=True, entry="ask")
 
 
-def test_import_guard_defers_to_gui_without_asking(monkeypatch, capsys):
+def test_import_guard_defers_to_diagnostics_without_asking(monkeypatch, capsys):
     _needs_compat(monkeypatch)
     ran = _Ran()
     ask = lambda _p: pytest.fail("asked")  # noqa: E731
@@ -522,13 +524,171 @@ def test_import_guard_update_reports_failed_install(monkeypatch, capsys):
     assert "polars[rtcompat]==1.40.1" in capsys.readouterr().err
 
 
+def test_gui_terminal_yes_installs_and_continues(monkeypatch, capsys):
+    _needs_compat(monkeypatch)
+    ask, asked = _answers("y")
+    ran = _Ran()
+    dialog = lambda *_a: pytest.fail("dialog opened in a terminal")  # noqa: E731
+    result = env_check.ensure_polars_runtime_before_import(
+        run=ran, ask=ask, interactive=True, entry="gui", dialog=dialog
+    )
+    assert result == "installed"
+    assert asked == ["Run it now? [y/N] "]
+    assert ran.calls == [_COMPAT_STEP]
+    assert env_check.format_command(_COMPAT_STEP) in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("reply", ["", "n"])
+def test_gui_terminal_no_exits_with_the_message(monkeypatch, reply):
+    # The GUI is an application: it exits with the message, not an ImportError traceback.
+    _needs_compat(monkeypatch)
+    ask, _asked = _answers(reply)
+    ran = _Ran()
+    with pytest.raises(SystemExit) as err:
+        env_check.ensure_polars_runtime_before_import(run=ran, ask=ask, interactive=True, entry="gui")
+    assert not isinstance(err.value, ImportError)
+    assert ran.calls == []
+    assert "Not installed" in str(err.value.code)
+    assert env_check.format_command(_COMPAT_STEP) in str(err.value.code)
+
+
+def test_gui_without_terminal_asks_in_a_dialog(monkeypatch):
+    _needs_compat(monkeypatch)
+    shown = []
+
+    def dialog(message, steps, run):
+        shown.append((message, steps))
+        return "installed"
+
+    ask = lambda _p: pytest.fail("asked in a terminal")  # noqa: E731
+    result = env_check.ensure_polars_runtime_before_import(
+        run=_Ran(), ask=ask, interactive=False, entry="gui", dialog=dialog
+    )
+    assert result == "installed"
+    (message, steps), = shown
+    assert steps == [_COMPAT_STEP]
+    assert "avx2, fma" in message
+    assert env_check.format_command(_COMPAT_STEP) in message
+
+
+@pytest.mark.parametrize(("outcome", "text"), [("declined", "Not installed"), ("failed", "could not install")])
+def test_gui_dialog_no_or_failure_exits(monkeypatch, outcome, text):
+    _needs_compat(monkeypatch)
+    with pytest.raises(SystemExit, match=text):
+        env_check.ensure_polars_runtime_before_import(
+            run=_Ran(), interactive=False, entry="gui", dialog=lambda *_a: outcome
+        )
+
+
+def test_gui_without_any_window_falls_back_to_the_startup_check(monkeypatch, capsys):
+    # No terminal and no display: note it and let the GUI's own startup check offer the install.
+    _needs_compat(monkeypatch)
+    result = env_check.ensure_polars_runtime_before_import(
+        run=_Ran(), interactive=False, entry="gui", dialog=lambda *_a: "unavailable"
+    )
+    assert result == "deferred"
+    assert env_check.format_command(_COMPAT_STEP) in capsys.readouterr().err
+
+
+# The GUI launcher, in a fresh interpreter: /proc/cpuinfo reads as an
+# x86-64-v2 CPU without AVX2, pip is recorded instead of run, and the
+# tkinter dialog / terminal answer are stubbed.  The question must be asked
+# while no polars module is loaded.
+_GUI_LAUNCH_DRIVER = r"""
+import builtins, io, json, subprocess, sys
+import tkinter
+from tkinter import messagebox
+
+mode, reply = sys.argv[1], sys.argv[2] == "yes"
+record = {"pip": []}
+_open = builtins.open
+_FLAGS = "flags\t\t: fpu sse sse2 pni ssse3 sse4_1 sse4_2 popcnt cx16 pclmulqdq\n"
+
+def fake_open(file, *args, **kwargs):
+    if file == "/proc/cpuinfo":
+        return io.StringIO(_FLAGS)
+    return _open(file, *args, **kwargs)
+
+builtins.open = fake_open
+_run = subprocess.run
+
+def fake_run(argv, *args, **kwargs):
+    if list(argv[1:3]) == ["-m", "pip"]:
+        record["pip"].append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    return _run(argv, *args, **kwargs)
+
+subprocess.run = fake_run
+
+def loaded():
+    return sorted(m for m in sys.modules if m == "polars" or m.startswith(("polars.", "_polars")))
+
+def answer(text):
+    record["asked"] = text
+    record["loaded_when_asked"] = loaded()
+    return reply
+
+class FakeTk:
+    def withdraw(self): pass
+    def destroy(self): pass
+
+tkinter.Tk = FakeTk
+messagebox.askyesno = lambda title, text, **kw: answer(text)
+
+class Tty:
+    def __init__(self, stream): self.stream = stream
+    def isatty(self): return True
+    def write(self, text): return self.stream.write(text)
+    def flush(self): self.stream.flush()
+    def readline(self): return ""
+
+if mode == "tty":
+    sys.stdin, sys.stdout = Tty(sys.stdin), Tty(sys.__stderr__)
+    builtins.input = lambda prompt: answer(prompt) and "y" or "n"
+sys.argv = ["/venv/bin/flextool-gui"]
+try:
+    import flextool.gui.__main__  # noqa: F401
+    record["exit"] = None
+except SystemExit as exc:
+    record["exit"] = str(exc.code)
+record["loaded_after"] = loaded()
+sys.__stdout__.write("RESULT:" + json.dumps(record) + "\n")
+"""
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the CPU is faked through /proc/cpuinfo")
+@pytest.mark.skipif(env_check.compat_runtime_ready(), reason="the compatible runtime is installed here")
+@pytest.mark.parametrize(("mode", "reply"), [("dialog", "no"), ("tty", "no"), ("tty", "yes")])
+def test_gui_launch_asks_before_polars_is_imported(tmp_path, mode, reply):
+    driver = tmp_path / "launch_gui.py"
+    driver.write_text(_GUI_LAUNCH_DRIVER, encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k not in ("FLEXTOOL_NO_ENV_CHECK", "POLARS_FORCE_PKG")}
+    done = subprocess.run(
+        [sys.executable, str(driver), mode, reply],
+        capture_output=True, text=True, timeout=240, env=env, stdin=subprocess.DEVNULL,
+    )
+    lines = [line for line in done.stdout.splitlines() if line.startswith("RESULT:")]
+    assert lines, done.stdout + done.stderr
+    record = json.loads(lines[-1].removeprefix("RESULT:"))
+    assert "asked" in record, done.stderr
+    assert record["loaded_when_asked"] == []
+    if reply == "no":
+        assert record["pip"] == []
+        assert "Not installed" in record["exit"]
+        assert record["loaded_after"] == []
+    else:
+        assert record["pip"] == [[sys.executable, "-m", "pip", "install", f"polars[rtcompat]=={env_check._dist_version('polars')}"]]
+        assert record["exit"] is None
+        assert "polars" in record["loaded_after"]  # the GUI went on importing after the install
+
+
 @pytest.mark.parametrize(
     ("orig_argv", "argv0", "expected"),
     [
-        (["python", "-m", "flextool.gui"], "-m", "defer"),
-        (["python", "-X", "dev", "-m", "flextool.gui.__main__"], "-m", "defer"),
-        (["pythonw.exe", "C:\\venv\\Scripts\\flextool.exe"], "C:\\venv\\Scripts\\flextool.exe", "defer"),
-        (["python", "/venv/bin/flextool-gui"], "/venv/bin/flextool-gui", "defer"),
+        (["python", "-m", "flextool.gui"], "-m", "gui"),
+        (["python", "-X", "dev", "-m", "flextool.gui.__main__"], "-m", "gui"),
+        (["pythonw.exe", "C:\\venv\\Scripts\\flextool.exe"], "C:\\venv\\Scripts\\flextool.exe", "gui"),
+        (["python", "/venv/bin/flextool-gui"], "/venv/bin/flextool-gui", "gui"),
         (["python", "-m", "flextool.env_check"], "-m", "defer"),
         (["python", "-m", "flextool.cli.cmd_update_flextool"], "-m", "repair"),
         (["python", "update_flextool.py", "--skip-git"], "update_flextool.py", "repair"),

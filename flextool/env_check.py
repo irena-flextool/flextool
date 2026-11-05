@@ -712,22 +712,24 @@ def compat_runtime_message(verdict: CpuVerdict | None = None, steps: list[list[s
 
 # How the import-time check behaves, by what started this Python process:
 # ENTRY_ASK asks in the terminal (or stops with CompatRuntimeRequired when
-# there is none); the GUI and the diagnostics command import flextool
-# themselves and offer / print the fix, so the check only notes it
+# there is none); ENTRY_GUI (the desktop GUI) asks in the terminal when it
+# has one, otherwise in a small tkinter yes/no dialog, and exits on no; the
+# diagnostics command prints the fix itself, so the check only notes it
 # (ENTRY_DEFER); "Update FlexTool" is a repair the user asked for, so it
 # installs without asking (ENTRY_REPAIR).
 ENTRY_ASK = "ask"
+ENTRY_GUI = "gui"
 ENTRY_DEFER = "defer"
 ENTRY_REPAIR = "repair"
 _ENTRY_MODULES = {
-    "flextool.gui": ENTRY_DEFER,
-    "flextool.gui.__main__": ENTRY_DEFER,
+    "flextool.gui": ENTRY_GUI,
+    "flextool.gui.__main__": ENTRY_GUI,
     "flextool.env_check": ENTRY_DEFER,
     "flextool.cli.cmd_update_flextool": ENTRY_REPAIR,
 }
 _ENTRY_SCRIPTS = {
-    "flextool": ENTRY_DEFER,
-    "flextool-gui": ENTRY_DEFER,
+    "flextool": ENTRY_GUI,
+    "flextool-gui": ENTRY_GUI,
     "flextool-update": ENTRY_REPAIR,
     "update_flextool": ENTRY_REPAIR,
 }
@@ -741,7 +743,7 @@ def _script_mode(path: str) -> str:
 
 
 def import_entry_mode(orig_argv: list[str] | None = None, argv0: str | None = None) -> str:
-    """:data:`ENTRY_ASK`, :data:`ENTRY_DEFER` or :data:`ENTRY_REPAIR` for
+    """:data:`ENTRY_ASK`, :data:`ENTRY_GUI`, :data:`ENTRY_DEFER` or :data:`ENTRY_REPAIR` for
     the command line that started this process.  Read from
     ``sys.orig_argv`` (while ``python -m pkg.mod`` imports ``pkg``,
     ``sys.argv[0]`` is still ``-m``), then from the script in
@@ -797,7 +799,110 @@ def _run_steps(steps: list[list[str]], run) -> int | str:
     return 0
 
 
-def ensure_polars_runtime_before_import(run=subprocess.run, ask=input, interactive=None, entry=None) -> str:
+_DIALOG_TITLE = "FlexTool needs the compatible polars build"
+
+
+def _no_console_window() -> dict:
+    """``subprocess`` options that keep pip from opening a console window
+    when the GUI runs under ``pythonw.exe``."""
+    return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
+
+def _open_dialog_root():
+    """A hidden tkinter root for the import-time dialogs, or ``None`` when
+    no window can be opened (tkinter missing, no display)."""
+    try:
+        import tkinter
+
+        root = tkinter.Tk()
+        root.withdraw()
+        return root
+    except Exception:  # noqa: BLE001  (TclError, ImportError, missing display)
+        return None
+
+
+def _dialog_notice(title: str, text: str) -> None:
+    """Show *text* in an error dialog if a window can be opened (the GUI
+    started without a terminal has no other way to say it)."""
+    root = _open_dialog_root()
+    if root is None:
+        return
+    try:
+        from tkinter import messagebox
+
+        messagebox.showerror(title, text, parent=root)
+    finally:
+        root.destroy()
+
+
+def compat_install_dialog(message: str, steps: list[list[str]], run=subprocess.run) -> str:
+    """Ask in a small tkinter dialog whether to install the compatible
+    polars build and, on yes, run *steps* with a progress window.
+
+    Used by the GUI when it starts without a terminal (a shortcut,
+    ``pythonw.exe``), before polars is imported: tkinter is stdlib and
+    imports no polars.  Returns ``"installed"``, ``"declined"``,
+    ``"failed"`` or ``"unavailable"`` (no window could be opened)."""
+    root = _open_dialog_root()
+    if root is None:
+        return "unavailable"
+    import threading
+    from tkinter import messagebox, ttk
+
+    try:
+        if not messagebox.askyesno(_DIALOG_TITLE, f"{message}\n\nRun it now?", icon="warning", parent=root):
+            return "declined"
+        outcome: dict = {}
+
+        def _run_quietly(argv):
+            done = run(argv, capture_output=True, text=True, **_no_console_window())
+            outcome["output"] = (getattr(done, "stdout", "") or "") + (getattr(done, "stderr", "") or "")
+            return done
+
+        def _worker() -> None:
+            outcome["returncode"] = _run_steps(steps, _run_quietly)
+
+        root.title(_DIALOG_TITLE)
+        ttk.Label(root, text="Installing the compatible polars build (polars[rtcompat])...", padding=12).pack()
+        bar = ttk.Progressbar(root, mode="indeterminate", length=320)
+        bar.pack(padx=12, pady=(0, 12))
+        bar.start(15)
+        root.deiconify()
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+        def _poll() -> None:
+            if thread.is_alive():
+                root.after(100, _poll)
+            else:
+                root.quit()
+
+        root.after(100, _poll)
+        root.mainloop()
+        thread.join()
+        bar.stop()
+        root.withdraw()
+        returncode = outcome.get("returncode", "not run")
+        if returncode != 0:
+            tail = "\n".join(outcome.get("output", "").strip().splitlines()[-8:])
+            messagebox.showerror(
+                _DIALOG_TITLE,
+                f"FlexTool could not install the compatible polars build (exit {returncode}).\n\n{tail}\n\n"
+                f"{message}",
+                parent=root,
+            )
+            return "failed"
+        messagebox.showinfo(
+            _DIALOG_TITLE, "The compatible polars build is installed. FlexTool starts now.", parent=root
+        )
+        return "installed"
+    finally:
+        root.destroy()
+
+
+def ensure_polars_runtime_before_import(
+    run=subprocess.run, ask=input, interactive=None, entry=None, dialog=None
+) -> str:
     """Offer the compatible polars runtime before polars is first imported,
     on a CPU that lacks the default runtime's features.
 
@@ -812,16 +917,25 @@ def ensure_polars_runtime_before_import(run=subprocess.run, ask=input, interacti
       subprocess, a Toolbox tool, CI, pytest), or on no, or when pip fails,
       raise :class:`CompatRuntimeRequired` with the reason and the command.
       pip never runs without a yes.
-    * defer (the GUI, ``python -m flextool.env_check``): note the reason on
-      stderr and continue; the GUI's startup check offers the install and
-      the diagnostics command prints it.
+    * gui (the ``flextool`` / ``flextool-gui`` launchers, ``python -m
+      flextool.gui``): with a terminal, the same question; without one (a
+      shortcut, ``pythonw.exe``), the reason and the command in a tkinter
+      yes/no dialog (*dialog*, default :func:`compat_install_dialog`), with
+      a progress window while pip runs.  On yes and a successful install the
+      GUI starts (polars is not imported yet, so it loads the compatible
+      runtime); on no, or when pip fails, the process exits
+      (``SystemExit``) with the message.  When no window can be opened the
+      reason is noted on stderr and the GUI's own startup check offers the
+      install (``"deferred"``).
+    * defer (``python -m flextool.env_check``): note the reason on stderr
+      and continue; the diagnostics command prints the fix.
     * repair (``flextool-update``): the user asked for a repair, so install
       without asking (``"failed"`` is reported and the update continues).
 
     Returns ``"skipped"``, ``"not_needed"``, ``"unsupported"``,
     ``"deferred"``, ``"installed"`` or ``"failed"``.  *run*, *ask*,
-    *interactive* and *entry* are parameters for tests.  Skipped when polars
-    is already imported (a Toolbox console, a notebook), when
+    *interactive*, *entry* and *dialog* are parameters for tests.  Skipped
+    when polars is already imported (a Toolbox console, a notebook), when
     ``POLARS_FORCE_PKG`` picks a runtime, or when ``FLEXTOOL_NO_ENV_CHECK``
     is set.
     """
@@ -833,15 +947,18 @@ def ensure_polars_runtime_before_import(run=subprocess.run, ask=input, interacti
         return "skipped"
     if compat_runtime_ready():
         return "not_needed"
+    entry = entry or import_entry_mode()
+    terminal = _has_terminal() if interactive is None else interactive
     verdict = cpu_verdict()
     if verdict.status == CPU_UNSUPPORTED:
         _stderr(unsupported_cpu_help(verdict))
+        if entry == ENTRY_GUI and not terminal:
+            _dialog_notice("FlexTool cannot run on this computer", unsupported_cpu_help(verdict))
         return "unsupported"
     steps = polars_compat_steps()
     if verdict.status != CPU_NEEDS_COMPAT or steps is None:
         return "not_needed"
     message = compat_runtime_message(verdict, steps)
-    entry = entry or import_entry_mode()
     if entry == ENTRY_DEFER:
         _stderr(message)
         return "deferred"
@@ -857,7 +974,20 @@ def ensure_polars_runtime_before_import(run=subprocess.run, ask=input, interacti
         "Then start FlexTool again. (To skip this check, set FLEXTOOL_NO_ENV_CHECK=1; polars will "
         "then probably crash on this processor.)"
     )
-    if not (_has_terminal() if interactive is None else interactive):
+    # The GUI is an application, not a library import: it exits with the
+    # message instead of an ImportError traceback.
+    stop = SystemExit if entry == ENTRY_GUI else CompatRuntimeRequired
+    if entry == ENTRY_GUI and not terminal:
+        result = (dialog or compat_install_dialog)(message, steps, run)
+        if result == "installed":
+            return "installed"
+        if result == "unavailable":
+            _stderr(message)
+            return "deferred"
+        if result == "failed":
+            raise SystemExit(f"FlexTool could not install the compatible polars build. {message}\n\n{opt_out}")
+        raise SystemExit(f"Not installed. {message}\n\n{opt_out}")
+    if not terminal:
         raise CompatRuntimeRequired(f"{message}\n\n{opt_out}")
     print(message, flush=True)
     try:
@@ -865,10 +995,10 @@ def ensure_polars_runtime_before_import(run=subprocess.run, ask=input, interacti
     except (EOFError, KeyboardInterrupt):
         answer = ""
     if answer.strip().lower() not in ("y", "yes"):
-        raise CompatRuntimeRequired(f"Not installed. {message}\n\n{opt_out}")
+        raise stop(f"Not installed. {message}\n\n{opt_out}")
     returncode = _run_steps(steps, run)
     if returncode != 0:
-        raise CompatRuntimeRequired(
+        raise stop(
             f"FlexTool could not install the compatible polars build (exit {returncode}). {message}\n\n{opt_out}"
         )
     return "installed"

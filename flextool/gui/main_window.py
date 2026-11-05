@@ -1213,6 +1213,11 @@ class MainWindow(tk.Tk):
                 if env_check.proactive_polars_fix_needed():
                     # The CPU lacks the default polars runtime's features:
                     # fix before the probe (or a scenario) crashes on it.
+                    # Normally the check at ``import flextool`` has already
+                    # asked (and installed or exited) before polars loaded;
+                    # this is the fallback for when it could not open its
+                    # dialog, or pip reported success without the compatible
+                    # runtime appearing.
                     self.post_to_main(self._offer_solver_fix, None, True)
                     return
                 probe = env_check.probe_solver_stack()

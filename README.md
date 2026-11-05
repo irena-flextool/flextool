@@ -114,8 +114,8 @@ Intel Core from before 2013 or an AMD FX), add the `compat` extra:
 `polars` data library, which is about 10-30% slower but runs on any x86-64-v2 processor.
 When FlexTool finds such a processor without the compatible build, it says why and gives
 the pip command: in a terminal it asks "Run it now? [y/N]" and installs only on yes;
-without a terminal (a Spine Toolbox tool, CI) it stops with that message; the GUI offers
-the install in a dialog, and `flextool-update` installs it. `python -m flextool.env_check`
+without a terminal (a Spine Toolbox tool, CI) it stops with that message; the GUI asks at
+startup, before it loads polars (in its terminal, or in a yes/no dialog from a shortcut), and `flextool-update` installs it. `python -m flextool.env_check`
 reports what it found.
 
 Your prompt should now show `(.venv)`. Verify with `python --version` — it

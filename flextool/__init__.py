@@ -5,7 +5,9 @@
 # installed polars version is needed, say why and give the pip command: in a
 # terminal FlexTool asks before running it; without one (a GUI subprocess, a
 # Toolbox tool, CI) the import stops with that message (an ImportError).  The
-# GUI offers the install in its own dialog.  See
+# GUI launchers import this package first, so the GUI asks here too: in its
+# terminal if it has one, otherwise in a small tkinter yes/no dialog, both
+# before polars is imported; on no it exits with the message.  See
 # flextool.env_check.ensure_polars_runtime_before_import.  env_check.py is
 # loaded from its file under a private name, so ``python -m
 # flextool.env_check`` still runs a fresh module (no runpy warning).
