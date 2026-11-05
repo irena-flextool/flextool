@@ -79,7 +79,7 @@ class FlexToolRunner:
                 db.fetch_all("parameter_value")
                 check_version(db=db, logger=logger)
                 # Solve-level fields — delegated to SolveConfig
-                solve = SolveConfig.load_from_db(db=db, logger=logger, run_options=run_options)
+                solve = SolveConfig.load_from_db(db=db, logger=logger)
                 # Timeline-level fields — delegated to TimelineConfig
                 timeline = TimelineConfig.load_from_db(db=db, logger=logger)
 

@@ -62,22 +62,11 @@ wrappers are installed, but `'highs'` must appear):
 If `'highs'` is missing, your FlexTool install is broken — reinstall
 FlexTool or run `pip install highspy` to repair.
 
-## The `--matrix-file-format` choices for HiGHS
+## How HiGHS is called
 
-The on-disk format used when a solver is dispatched via a matrix file is
-selected by the `--matrix-file-format` CLI flag (it replaced the old
-`solver_io_api` DB parameter):
-
-| Value      | What it does                                                                  | When to use it                                                  |
-|------------|-------------------------------------------------------------------------------|-----------------------------------------------------------------|
-| `mps`      | Default. On-disk MPS when a matrix file is written.                           | The default; required for commercial-solver dispatch.           |
-| `lp`       | On-disk LP format instead of MPS.                                             | When you prefer human-readable LP files.                        |
-
-For HiGHS without `--save-memory`, FlexTool dispatches in-process (the
-fastest path) and the flag has no effect. With `--save-memory`, HiGHS
-round-trips through MPS internally; the flag again has no effect on HiGHS.
-The flag matters for commercial solvers, which are always dispatched via a
-matrix file.
+Without `--save-memory`, FlexTool calls HiGHS in-process (the fastest path).
+With `--save-memory`, the model is written to an MPS file and solved by HiGHS
+in a separate process. Commercial solvers are always given an MPS file.
 
 ## HiGHS-specific options worth knowing
 

@@ -412,14 +412,12 @@ class MainWindow(tk.Tk):
         # ``None``: nothing is sent).
         self.solver_log_level_var = tk.StringVar(value="normal")
         self.solver_time_limit_var = tk.IntVar(value=0)
-        self.matrix_file_format_var = tk.StringVar(value="mps")
         self.scaling_var = tk.StringVar(value=_SOLVER_DEFAULT)
         self.presolve_var = tk.StringVar(value=_SOLVER_DEFAULT)
 
         for _v in (
             self.solver_log_level_var, self.solver_time_limit_var,
-            self.matrix_file_format_var, self.scaling_var,
-            self.presolve_var,
+            self.scaling_var, self.presolve_var,
         ):
             _v.trace_add("write", self._on_auto_gen_toggled)
 
@@ -737,12 +735,11 @@ class MainWindow(tk.Tk):
         # ── Solver options launcher (modal dialog) ─────────────────
         # Bundles the v56 CLI knobs that don't influence results — only
         # "ways to solve".  Clicking the button opens a ``Toplevel`` modal
-        # populated with five controls (Log level, Time limit, Matrix
-        # file format, Scaling, Presolve).  See ProjectSettings for the
-        # per-control defaults and the dialog factory below for the
-        # control layout / tooltips; ExecutionManager appends each flag
-        # only when it differs from the default so the engine command
-        # line stays clean on the common path.  Placed above the Debug
+        # populated with four controls (Log level, Time limit, Scaling,
+        # Presolve).  See ProjectSettings for the per-control defaults
+        # and the dialog factory below for the control layout /
+        # tooltips; ExecutionManager appends each flag only for a
+        # setting the user changed.  Placed above the Debug
         # radio group so it sits with the other run-time knobs.
         self.solver_opts_btn = ttk.Button(
             side_menu, width=22,
@@ -754,8 +751,8 @@ class MainWindow(tk.Tk):
             "Open the Solver options dialog.\n"
             "\n"
             "Controls how scenarios reach the solver (log verbosity,\n"
-            "wall-clock limit, on-disk matrix format, FlexTool\n"
-            "autoscaler strategy, HiGHS presolve).\n"
+            "wall-clock limit, FlexTool autoscaler strategy,\n"
+            "HiGHS presolve).\n"
             "\n"
             "These are 'ways to solve' knobs — they do not change\n"
             "the optimisation results (usually).  HiGHS thread count is\n"
@@ -5408,7 +5405,6 @@ class MainWindow(tk.Tk):
             # Solver options.
             self.solver_log_level_var.set(s.solver_log_level)
             self.solver_time_limit_var.set(s.solver_time_limit)
-            self.matrix_file_format_var.set(s.matrix_file_format)
             self.scaling_var.set(_choice_to_var(s.scaling))
             self.presolve_var.set(_choice_to_var(s.presolve))
         finally:
@@ -5441,9 +5437,6 @@ class MainWindow(tk.Tk):
             self.project_settings.solver_time_limit = max(0, int(self.solver_time_limit_var.get()))
         except (TypeError, ValueError, tk.TclError):
             pass
-        _mff = self.matrix_file_format_var.get()
-        if _mff in ("mps", "lp"):
-            self.project_settings.matrix_file_format = _mff
         self.project_settings.scaling = _var_to_choice(self.scaling_var.get(), SCALING_CHOICES)
         self.project_settings.presolve = _var_to_choice(self.presolve_var.get(), PRESOLVE_CHOICES)
 
@@ -5454,9 +5447,8 @@ class MainWindow(tk.Tk):
     def _open_solver_options_dialog(self) -> None:
         """Open the modal Solver options dialog.
 
-        Builds a ``tk.Toplevel`` parented to the main window with five
-        controls (Log level, Time limit, Matrix file format, Scaling,
-        Presolve).  Each control is bound to a *dialog-local* Tk var
+        Builds a ``tk.Toplevel`` parented to the main window with four
+        controls (Log level, Time limit, Scaling, Presolve).  Each control is bound to a *dialog-local* Tk var
         seeded from the corresponding main-window var so Cancel can
         discard pending edits without touching the persisted settings.
         OK copies the dialog-local values back into the main-window
@@ -5474,7 +5466,6 @@ class MainWindow(tk.Tk):
         # discards cleanly.
         d_sll = tk.StringVar(value=self.solver_log_level_var.get())
         d_stl = tk.IntVar(value=self.solver_time_limit_var.get())
-        d_mff = tk.StringVar(value=self.matrix_file_format_var.get())
         d_scl = tk.StringVar(value=self.scaling_var.get())
         d_ps = tk.StringVar(value=self.presolve_var.get())
 
@@ -5534,31 +5525,6 @@ class MainWindow(tk.Tk):
             "(the CLI's unset default). Routed through the\n"
             "effective-options resolver as a CLI override\n"
             "(highest precedence)."
-        ))
-        row += 1
-
-        # Matrix file format
-        ttk.Label(body, text="Matrix file format:").grid(
-            row=row, column=0, sticky="w", padx=(0, 8), pady=4,
-        )
-        mff_row = ttk.Frame(body)
-        mff_row.grid(row=row, column=1, sticky="w", pady=4)
-        for _t, _v in (("MPS", "mps"), ("LP", "lp")):
-            ttk.Radiobutton(
-                mff_row, text=_t, variable=d_mff, value=_v,
-            ).pack(side="left", padx=(0, 6))
-        _attach_tip(mff_row, (
-            "On-disk format when the solver is dispatched via a matrix\n"
-            "file (--matrix-file-format). The in-process vs. file\n"
-            "decision is implicit:\n"
-            "  • HiGHS + no Save memory  → direct (in-process; this\n"
-            "                                flag is ignored).\n"
-            "  • HiGHS + Save memory     → file write (polar-high\n"
-            "                                round-trips through MPS\n"
-            "                                internally; this flag is\n"
-            "                                ignored on that path too).\n"
-            "  • Commercial solver       → file write using the chosen\n"
-            "                                format here."
         ))
         row += 1
 
@@ -5661,9 +5627,6 @@ class MainWindow(tk.Tk):
                 self.solver_time_limit_var.set(max(0, int(d_stl.get())))
             except (TypeError, ValueError, tk.TclError):
                 pass
-            _v_mff = d_mff.get()
-            if _v_mff in ("mps", "lp"):
-                self.matrix_file_format_var.set(_v_mff)
             _v_scl = d_scl.get()
             if _v_scl == _SOLVER_DEFAULT or _v_scl in SCALING_CHOICES:
                 self.scaling_var.set(_v_scl)

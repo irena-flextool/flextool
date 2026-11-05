@@ -4926,7 +4926,7 @@ def run_chain_from_db(
         from flextool.engine.input._solve_config import SolveConfig
         from flextool.engine.input._timeline import TimelineConfig
 
-        sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger, run_options=run_options)
+        sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
         _memrec.checkpoint("solve_config_loaded", logger,
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)

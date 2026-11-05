@@ -102,7 +102,7 @@ is the authoritative inventory):
   `highs_presolve` fold into the `solver` / `parallel` / `presolve`
   keys of `solver_arguments`; `solver_threads` → `--highs-threads`,
   `solver_log_level` → `--solver-log-level`, `solver_time_limit` →
-  `--solver-time-limit`, `solver_io_api` → `--matrix-file-format`, and
+  `--solver-time-limit`, `solver_io_api` → `--matrix-file-format` (since removed: it had no effect), and
   `use_row_scaling` → the `--scaling` CLI flag (env `FLEXTOOL_SCALING`).
   The surviving `solve_advanced` DB parameters are `solver`,
   `solver_arguments`, `solver_mip_gap`, and `solver_precommand`. See

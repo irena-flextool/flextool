@@ -113,14 +113,6 @@ class ProjectSettings:
     # default).  Only appended when > 0.
     solver_time_limit: int = 0
 
-    # On-disk format used when the solver is dispatched via a matrix
-    # file (``--matrix-file-format``).  One of ``"mps"`` | ``"lp"``.
-    # Default "mps"; only appended when non-default.  The in-process
-    # vs. file decision itself is implicit (HiGHS + no --save-memory
-    # = direct binding; commercial solvers + HiGHS --save-memory =
-    # file write using the chosen format).
-    matrix_file_format: str = "mps"
-
     # FlexTool autoscaler strategy (``--scaling``): ``None`` (the dialog's "Default") sends nothing, so each
     # solve's ``scaling`` in the database governs (else full); ``"off"`` | ``"solver_only"`` | ``"basic"`` |
     # ``"full"`` is sent and wins over the database.

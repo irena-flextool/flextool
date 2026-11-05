@@ -167,3 +167,14 @@ def test_settings_io_tolerates_stale_lagrangian_workers_key(tmp_path: Path):
     loaded = load_project_settings(project)
     assert loaded.solver_time_limit == 7
     assert not hasattr(loaded, "lagrangian_workers")
+
+
+def test_a_stored_matrix_file_format_is_ignored(tmp_path: Path):
+    """The removed matrix-file-format option of older files loads without error, is not sent and is not saved."""
+    project = tmp_path / "proj"
+    _write_settings(project, {"matrix_file_format": "lp", "solver_settings_revision": SOLVER_SETTINGS_REVISION})
+    settings = load_project_settings(project)
+    assert not hasattr(settings, "matrix_file_format")
+    assert not any(tok.startswith("--matrix-file-format") for tok in _cmd_for(tmp_path, settings))
+    save_project_settings(project, settings)
+    assert "matrix_file_format" not in _read_settings(project)

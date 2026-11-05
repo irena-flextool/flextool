@@ -18,7 +18,6 @@ SAMPLES: dict[str, tuple[object, str, object, object]] = {
     "solver_log_level": ("verbose", "silent", "silent", "verbose"),
     "solver_time_limit": (30.0, "120", 120.0, 60.0),
     "solver_mip_gap": (0.01, "0.0005", 0.0005, 0.002),
-    "matrix_file_format": ("lp", "mps", "mps", "lp"),
     "scaling": ("off", "basic", "basic", "solver_only"),
     "user_bound_scale": (-4, "-2", -2, -6),
     "save_memory": (True, "1", True, True),
@@ -154,7 +153,7 @@ def test_to_argv_round_trips_through_the_run_parser():
 
     given = {
         "highs_threads": 3, "presolve": "off", "solver_log_level": "silent", "solver_time_limit": 12.5,
-        "solver_mip_gap": 0.0005, "matrix_file_format": "lp", "scaling": "basic", "user_bound_scale": -3,
+        "solver_mip_gap": 0.0005, "scaling": "basic", "user_bound_scale": -3,
         "save_memory": True, "warm_start": True, "basis_cache_dir": "/tmp/cache", "benders_workers": 2,
     }
     flagged = {key for key, spec in OPTIONS.items() if spec.flag}

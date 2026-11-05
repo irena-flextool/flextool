@@ -131,7 +131,6 @@ def test_solve_config_solver_defaults(tmp_path: Path):
     # absent-from-DB == default-from-DB semantically.
     default = SolverConfig()
     assert default.name == "highs"
-    assert default.io_api == "direct"
     assert default.options == {}
     assert default.time_limit is None
     assert default.mip_gap is None
@@ -151,7 +150,6 @@ def test_solve_config_solver_explicit_highs(tmp_path: Path):
     cfg = sc.solver_configs[SOLVE_NAME]
     assert cfg.name == "highs"
     # Other fields still default — only ``solver`` was authored.
-    assert cfg.io_api == "direct"
     assert cfg.options == {}
     assert cfg.time_limit is None
     assert cfg.log_level == "normal"

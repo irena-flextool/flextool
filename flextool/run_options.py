@@ -175,11 +175,6 @@ OPTIONS: dict[str, OptionSpec] = {
             help="HiGHS MIP relative gap for every solve; unset keeps the solve's solver_mip_gap, else highs.opt",
         ),
         _spec(
-            key="matrix_file_format", flag="--matrix-file-format", env="FLEXTOOL_MATRIX_FILE_FORMAT", db=None,
-            parse=_choice("mps", "lp"), default=None, audience="user",
-            help="file format when the solver is given a matrix file (mps / lp)",
-        ),
-        _spec(
             key="scaling", flag="--scaling", env="FLEXTOOL_SCALING", db="solve.scaling",
             parse=_choice("off", "solver_only", "basic", "full"), default="full", audience="user",
             help="autoscaler strategy (off / solver_only / basic / full)",

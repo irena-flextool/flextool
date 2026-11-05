@@ -136,10 +136,8 @@ def load_project_settings(
     _stl = data.get("solver_time_limit", settings.solver_time_limit)
     if isinstance(_stl, int) and not isinstance(_stl, bool) and _stl >= 0:
         settings.solver_time_limit = _stl
-    # ``solver_mip_gap`` / ``solver_mip_gap_set`` of older files are ignored: the GUI no longer sets the MIP gap.
-    _mff = data.get("matrix_file_format", settings.matrix_file_format)
-    if _mff in ("mps", "lp"):
-        settings.matrix_file_format = _mff
+    # ``solver_mip_gap`` / ``solver_mip_gap_set`` of older files are ignored (the GUI no longer sets the MIP gap),
+    # and so is ``matrix_file_format`` (the option was removed).
     _scl = data.get("scaling")
     if _scl in SCALING_CHOICES:
         settings.scaling = _scl

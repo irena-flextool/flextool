@@ -687,25 +687,6 @@ def build_parser() -> argparse.ArgumentParser:
                              'pure-LP solves ignore it.  Environment '
                              'variable: FLEXTOOL_HIGHS_MIP_GAP; the flag '
                              'wins.')
-    parser.add_argument('--matrix-file-format',
-                        choices=['mps', 'lp'],
-                        default=None,
-                        help='On-disk format used when the solver is '
-                             'dispatched via a matrix file: ``mps`` '
-                             '(default) or ``lp``.  The in-process '
-                             'vs. file decision is implicit:\n'
-                             '* HiGHS + no ``--save-memory`` -> direct '
-                             '(in-process binding, fastest).\n'
-                             '* HiGHS + ``--save-memory`` -> file write '
-                             '(polar-high round-trips through MPS '
-                             'internally; this flag has no effect).\n'
-                             '* Commercial solver (gurobi / cplex / '
-                             'xpress / copt) -> file write using the '
-                             'chosen format.\n'
-                             'Replaces the v55-era ``--solver-io-api`` '
-                             'flag; the engine still uses '
-                             '``direct|mps|lp`` internally for '
-                             '``SolverConfig.io_api``.')
     parser.add_argument('--csv-dump', action='store_true',
                         default=False,
                         help='Debug visibility for cascade-internal '

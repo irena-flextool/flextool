@@ -27,7 +27,6 @@ def root():
     r.withdraw()
     r.solver_log_level_var = tk.StringVar(master=r, value="normal")
     r.solver_time_limit_var = tk.IntVar(master=r, value=0)
-    r.matrix_file_format_var = tk.StringVar(master=r, value="mps")
     r.scaling_var = tk.StringVar(master=r, value="basic")
     r.presolve_var = tk.StringVar(master=r, value="choose")
     yield r

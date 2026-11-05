@@ -52,7 +52,6 @@ solve):
 
 | CLI flag               | Replaces former DB param | Values / notes                                  |
 |------------------------|--------------------------|-------------------------------------------------|
-| `--matrix-file-format` | `solver_io_api`          | `mps` (default) / `lp`; on-disk format used when the solver is dispatched via a matrix file |
 | `--solver-time-limit`  | `solver_time_limit`      | Wall-clock seconds (HiGHS `time_limit`); unset means no limit |
 | `--highs-threads`      | `solver_threads`         | Integer thread count (default 1); `>1` enables HiGHS parallel mode |
 | `--solver-log-level`   | `solver_log_level`       | `silent` / `normal` / `verbose`                 |
@@ -81,8 +80,8 @@ entering the values above. Unspecified parameters take their defaults.
 | `solver_mip_gap`     | float  | unset       | Relative MIP optimality gap (e.g. `0.01` for 1 %). Translated to each solver's native parameter (`MIPGap` / `mip.tolerances.mipgap` / `miprelstop` / `RelGap` / `mip_rel_gap`). |
 | `solver_precommand`  | str    | unset       | Shell command run before the solver subprocess (advanced; e.g. to source a licence environment). |
 
-The corresponding CLI flags (`--matrix-file-format`, `--solver-time-limit`,
-`--highs-threads`, `--solver-log-level`) are documented in the table above.
+The corresponding CLI flags (`--solver-time-limit`, `--highs-threads`,
+`--solver-log-level`) are documented in the table above.
 
 ### Authoring `solver_arguments` in Spine
 
@@ -228,10 +227,8 @@ per-solver page for the licence setup.
 - **Mixing solvers without checking.** A scenario tree can route each solve
   to a different solver, but every solve needs its own `solver` parameter
   if you want anything other than HiGHS. Unset solves stay on HiGHS.
-- **Using `--matrix-file-format mps` for very large models.** The MPS
-  fallback writes the full model to disk and shells out to the solver's CLI.
-  After the in-process cold-solve retirement this is the only path for
-  non-HiGHS solvers. The trade-off is bounded peak RSS (the
+- **Commercial solvers on very large models.** A non-HiGHS solver is always
+  given the model as an MPS file and run in its own process. The trade-off is bounded peak RSS (the
   `Problem.write_mps` writer caps ~2-3 GB on the largest LPs) at the cost
   of file I/O plus a fresh solver process per sub-solve.
 - **Hand-writing `solver_arguments` and the convenience knobs together.** Raw

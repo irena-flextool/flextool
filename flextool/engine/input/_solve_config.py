@@ -35,8 +35,6 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
 
-    from flextool.run_options import RunOptions
-
 
 # ---------------------------------------------------------------------------
 # DB-reader helpers used by the solve-config factory.
@@ -169,7 +167,7 @@ class SolverSettings:
 class SolverConfig:
     """Per-solve multi-solver dispatch configuration (v52 schema).
 
-    Holds the seven solver-selection parameters introduced by the
+    Holds the solver-selection parameters introduced by the
     v52 migration (see ``specs/flextool-multi-solver-handoff.md``
     Step 1).  Defaults match the v52 parameter definition defaults so
     a solve that does not author any ``solver_*`` parameter still
@@ -182,9 +180,6 @@ class SolverConfig:
         Solver name; one of polar-high's ``available_solvers``
         ("highs", "gurobi", "cplex", "xpress", "copt").  Default
         ``"highs"``.
-    io_api
-        "direct" (in-process binding, fastest), "mps" or "lp" (file
-        fallback).  Default ``"direct"``.
     options
         Free-form key→value dict forwarded raw to the solver.  Empty
         by default; user populates via the ``solver_arguments``
@@ -204,7 +199,6 @@ class SolverConfig:
     """
 
     name: str = "highs"
-    io_api: str = "direct"
     options: dict[str, Any] = field(default_factory=dict)
     time_limit: float | None = None
     mip_gap: float | None = None
@@ -374,12 +368,9 @@ class SolveConfig:
 
     @classmethod
     def load_from_db(
-        cls, db: "DatabaseMapping", logger: logging.Logger, run_options: "RunOptions | None" = None,
+        cls, db: "DatabaseMapping", logger: logging.Logger,
     ) -> "SolveConfig":
         """Read all solve-level parameters from *db* into a SolveConfig.
-
-        *run_options* supplies ``--matrix-file-format`` (the default
-        ``SolverConfig.io_api``); ``None`` reads the environment.
 
         Loading order is preserved exactly — see the four-step block at
         the bottom of this method.
@@ -454,7 +445,7 @@ class SolveConfig:
         # v52 multi-solver dispatch params.  Each per-solve value is
         # rolled up into one :class:`SolverConfig` keyed by solve name
         # (see ``specs/flextool-multi-solver-handoff.md`` Steps 1-3).
-        # The seven params are read individually here and aggregated
+        # The params are read individually here and aggregated
         # into ``solver_configs`` below.  ``solver_options`` is a Map of
         # str→Any forwarded raw to the chosen solver; everything else is
         # a scalar default-None convenience knob (None means "no override").
@@ -463,26 +454,6 @@ class SolveConfig:
         # variable above for the legacy :class:`SolverSettings` dataclass
         # (which downstream callers still consume); we reuse that dict
         # here rather than re-querying.
-        # Batch C.9 — ``solver_io_api`` DB axis removed.  Replaced by
-        # the ``--matrix-file-format`` flag (mps | lp; environment twin
-        # ``FLEXTOOL_MATRIX_FILE_FORMAT``), read from *run_options*.  The
-        # in-process vs. file dispatch is implicit:
-        # * HiGHS + no --save-memory: ``SolverConfig.io_api`` defaults
-        #   to ``"direct"`` (in-process binding).
-        # * HiGHS + --save-memory: ``Problem.solve(save_memory=True)``
-        #   round-trips through MPS internally; ``io_api`` is ignored
-        #   on that path.
-        # * Commercial solver: ``polar_high.solvers.solve`` consults
-        #   ``io_api``.  When the CLI flag is set its value
-        #   (``"mps"`` or ``"lp"``) applies uniformly to every solve.
-        # ``matrix_file_format`` stays an empty dict (no per-solve
-        # author override since the DB axis is gone); the default is
-        # the run's ``matrix_file_format`` when set, else ``"direct"``.
-        from flextool.run_options import RunOptions
-        _cli_io_api = (
-            run_options if run_options is not None else RunOptions.from_env()
-        ).value("matrix_file_format")
-        matrix_file_format: dict = {}
         # Batch C.7 — ``solver_log_level`` shortcut removed; use the
         # --solver-log-level CLI flag (silent / normal / verbose →
         # HiGHS output_flag + log_dev_level).
@@ -624,10 +595,10 @@ class SolveConfig:
             arguments=solver_arguments,
         )
 
-        # Roll the seven v52 per-solve param dicts into a single
+        # Roll the v52 per-solve param dicts into a single
         # ``solver_configs[solve_name] -> SolverConfig`` mapping.  Keys
         # are the union of solve names appearing across any of the
-        # seven dicts — a solve that authors *any* solver_* param gets
+        # dicts — a solve that authors *any* solver_* param gets
         # an explicit entry; solves with no override remain absent and
         # callers fall back to ``SolverConfig()`` defaults.
         # Batch C.2 — ``solver_options`` removed; the per-solve free-form
@@ -636,7 +607,6 @@ class SolveConfig:
         # consumes).
         solver_config_keys = (
             set(solvers)
-            | set(matrix_file_format)
             | set(solver_arguments)
             | set(solver_time_limit_raw)
             | set(solver_mip_gap_raw)
@@ -652,17 +622,10 @@ class SolveConfig:
             v = raw.get(key)
             return int(float(v)) if v is not None else None
 
-        # Batch C.9 — the run's ``--matrix-file-format``
-        # (when set, ``"mps"`` or ``"lp"``) becomes the default
-        # ``SolverConfig.io_api`` for every solve.  Otherwise the
-        # default is ``"direct"`` (HiGHS in-process binding; commercial
-        # solvers' in-process Python API).
-        _io_api_default = _cli_io_api if _cli_io_api in ("mps", "lp") else "direct"
         solver_configs: dict[str, SolverConfig] = {}
         for key in solver_config_keys:
             solver_configs[key] = SolverConfig(
                 name=solvers.get(key, "highs"),
-                io_api=matrix_file_format.get(key, _io_api_default),
                 options=dict(solver_arguments.get(key, {})),
                 time_limit=_opt_float(solver_time_limit_raw, key),
                 mip_gap=_opt_float(solver_mip_gap_raw, key),
@@ -741,7 +704,6 @@ class SolveConfig:
         db_url: str,
         scenario: str,
         logger: logging.Logger | None = None,
-        run_options: "RunOptions | None" = None,
     ) -> "SolveConfig":
         """Convenience factory: open *db_url*, apply *scenario*, load.
 
@@ -771,7 +733,7 @@ class SolveConfig:
             # customer DBs (H2_trade ≈ 13 MB, 2.5 s → 0.35 s).
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
-            return cls.load_from_db(db, logger, run_options)
+            return cls.load_from_db(db, logger)
 
     @classmethod
     def load_from_source(

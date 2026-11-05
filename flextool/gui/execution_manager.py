@@ -1272,9 +1272,6 @@ class ExecutionManager:
         _stl = getattr(settings, "solver_time_limit", 0)
         if isinstance(_stl, int) and _stl > 0:
             cmd.extend(["--solver-time-limit", str(_stl)])
-        _mff = getattr(settings, "matrix_file_format", "mps")
-        if _mff != "mps":
-            cmd.append(f"--matrix-file-format={_mff}")
         # Scaling / presolve: ``None`` is the dialog's "Default" entry and
         # sends nothing (the solve's scaling, else full; presolve on).  Any
         # other value was picked by the user and is sent, including "full".

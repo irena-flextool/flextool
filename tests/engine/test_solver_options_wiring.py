@@ -337,7 +337,6 @@ _READER_ENV = {
     "FLEXTOOL_HIGHS_THREADS": "4", "FLEXTOOL_HIGHS_PRESOLVE": "off", "FLEXTOOL_HIGHS_TIME_LIMIT": "7",
     "FLEXTOOL_HIGHS_MIP_GAP": "0.3", "FLEXTOOL_SOLVER_LOG_LEVEL": "silent", "FLEXTOOL_WARM_START": "1",
     "FLEXTOOL_SAVE_MEMORY": "1", "FLEXTOOL_SCALING": "off", "FLEXTOOL_USER_BOUND_SCALE": "-4",
-    "FLEXTOOL_MATRIX_FILE_FORMAT": "lp",
 }
 
 
@@ -403,17 +402,6 @@ def test_scaling_config_comes_from_run_options(monkeypatch) -> None:
     env_wins = resolve_scaling_config(None, run_options=_env_options({"FLEXTOOL_SCALING": "solver_only"}),
                                       db_scaling="basic")
     assert env_wins.mode is ScalingMode.SOLVER_ONLY
-
-
-def test_matrix_file_format_comes_from_run_options(options_db, monkeypatch) -> None:
-    from flextool.engine.input._solve_config import SolveConfig
-
-    url, _cfg = options_db
-    monkeypatch.setenv("FLEXTOOL_MATRIX_FILE_FORMAT", "lp")
-    from_env = SolveConfig.load_from_db_url(url, "custom")
-    chosen = SolveConfig.load_from_db_url(url, "custom", run_options=_env_options({}))
-    assert from_env.solver_configs[SOLVE].io_api == "lp"
-    assert chosen.solver_configs[SOLVE].io_api == "direct"
 
 
 # ---------------------------------------------------------------------------

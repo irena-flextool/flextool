@@ -21,6 +21,9 @@
   of MIP solves can change within the gap. A project saved by an earlier GUI is updated once when opened: a stored
   presolve `choose` and scaling `full` become "Default" (a stored presolve `on` / `off` is kept), and the GUI shows
   the change once. `--solver-mip-gap` and `FLEXTOOL_HIGHS_MIP_GAP` remain for terminal and Toolbox runs.
+- **Removed `--matrix-file-format` and `FLEXTOOL_MATRIX_FILE_FORMAT`** (and the GUI's "Matrix file format"
+  setting). They had no effect: HiGHS is called in-process, or with an MPS file under `--save-memory`, and
+  commercial solvers are always given an MPS file. A GUI project that stored the setting opens as before.
 - The run header lists the options set by a flag or an environment variable, with where each came from, and the
   number of polars threads.
 - **Processors with AVX2 keep polars' fast build when the compatible build is installed too.** polars loads its

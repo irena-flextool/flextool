@@ -237,9 +237,7 @@ def test_explicit_highs_matches_default(
     default path — the call site reduces to the same
     ``problem.solve(keep_solver=True)``.
 
-    v56 Batch C.9 removed the ``solver_io_api`` DB axis (replaced by
-    the ``--matrix-file-format`` CLI flag; when unset the default
-    ``SolverConfig.io_api`` is ``"direct"``).  Only ``solver`` needs
+    v56 removed the ``solver_io_api`` DB axis; only ``solver`` needs
     to be authored for this parity check.
     """
     db_url = _make_migrated_db(tmp_path)
@@ -273,7 +271,7 @@ def test_solver_not_installed_error() -> None:
     surface is the CLI-binary lookup in
     :func:`flextool.engine.solve._subprocess_solve._find_solver_binary`.
     """
-    cfg = SolverConfig(name="gurobi", io_api="direct")
+    cfg = SolverConfig(name="gurobi")
     pb = _make_minimal_problem()
 
     # Force the binary-lookup path to fail even if gurobi_cl happens to
@@ -313,7 +311,7 @@ def test_unknown_solver_name_error() -> None:
     Here we cover the raw-dispatch path: even with no options set,
     an unknown name must not produce a raw stack trace.
     """
-    cfg = SolverConfig(name="bogus_solver_name", io_api="direct")
+    cfg = SolverConfig(name="bogus_solver_name")
     pb = _make_minimal_problem()
 
     with pytest.raises(FlexToolUserError) as ei:
@@ -370,7 +368,6 @@ def test_solver_options_passthrough(
     # collision here).
     cfg = SolverConfig(
         name="gurobi",
-        io_api="direct",
         mip_gap=0.005,
         options={"Threads": 4, "Presolve": 2},
     )
@@ -520,12 +517,6 @@ def test_convenience_param_translation_raw_wins() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 7 — io_api="mps" on HiGHS.
-# ---------------------------------------------------------------------------
-
-
-
-# ---------------------------------------------------------------------------
 # Test 8 — multi-solver dispatch on one Problem instance.
 # ---------------------------------------------------------------------------
 
@@ -574,7 +565,7 @@ def test_multi_solver_scenario() -> None:
     ):
         with pytest.raises(FlexToolUserError) as ei:
             run_one_solve(
-                pb_gurobi, SolverConfig(name="gurobi", io_api="direct"),
+                pb_gurobi, SolverConfig(name="gurobi"),
             )
     assert "gurobi" in str(ei.value)
     # Discard the unused _fake_solve helper — kept as a no-op import
