@@ -17,7 +17,7 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Expr, Var
 
 from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
-from flextool.engine.model import _lead_time
+from flextool.engine.model import _coarse_flows, _lead_time
 from flextool.engine.model._common import (
     _entities_of_kind,
     _entity_rows,
@@ -909,6 +909,15 @@ def _eq_instant_flow(b: _Build) -> None:
     #   F = net flow into the group (_group_flow), MW
     # Limits the net power flowing into a flow group in every step.  The cap may be authored as a
     # scalar, period map, time map or period-time map; the rows cover every active step of its shape.
+    # Row rule (coarse steps): a flow group whose processes are all coarse gets one row per coarse step,
+    # {max,min}Instant_flow_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr): the step's
+    # constant net flow against the step-mean cap (named in the coarse-flow behaviour notice when the cap varies
+    # within a step).  A group with a fine process keeps its rows per solve step.
+    members = None
+    if b.has_coarse_proc:
+        from flextool.engine.preprocess.flex_data import coarse_row_members
+
+        members = coarse_row_members(d, "instant_flow")
     for name, sense, cap in (("maxInstant_flow", "<=", d.pdt_max_instant_flow),
                              ("minInstant_flow", ">=", d.pdt_min_instant_flow)):
         if cap is None or cap.frame.height == 0:
@@ -916,10 +925,11 @@ def _eq_instant_flow(b: _Build) -> None:
         over = _instant_flow_support(cap.frame, dt)
         if over.height == 0:
             continue
-        b.m.add_cstr(
-            name,
+        _coarse_flows.add_row_rule_cstr(
+            b, name,
             over      = over,
             sense     = sense,
             lhs_terms = {"flow": flow},
             rhs_terms = {"cap":  cap},
+            partition = None if members is None else _coarse_flows.row_partition(b, members, over),
         )

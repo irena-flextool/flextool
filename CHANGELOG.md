@@ -107,9 +107,7 @@
   limit that varies within the step and its cost, efficiency and prices do not vary within the step; otherwise
   the result can differ (hourly flows could use the cheapest or most efficient hours, and several varying limits
   are looser when averaged). Units and connections with a node outside the coarse groups keep the solve's step,
-  and so do those with a delay, a flow in a user constraint, a flow group instant limit or a node in a
-  capacity-margin, inertia or non-synchronous group; also flows that cross Benders regions or live in the Benders
-  master, and, in a
+  and so do those with a delay; also flows that cross Benders regions or live in the Benders master, and, in a
   stochastic solve, those at a stochastic node whose coarse step is only partly tied between the forecasts. An
   info line lists the units and connections that use a coarse step and those kept at the solve's step with the
   reason. Their flows are written at every time step of the solve, the same value through each coarse step. An
@@ -152,6 +150,19 @@
   between two such nodes is one row per coarse step. A coarse DC line at a node that also has a DC line at the
   solve's step keeps its DC power-flow row at every time step, which holds the angle difference across it constant
   through the coarse step; the coarse-step notice names such lines.
+- **Rows that combine several units and connections follow one rule on coarse steps** (results change for models
+  with coarse units or connections in such rows; before, those units and connections kept the solve's step). A
+  capacity-margin, inertia, non-synchronous or flow-group instant-flow row of a group, a user constraint with flow
+  or storage terms, and the stochastic storage-use tie of a node are one row per coarse step, the average of the
+  row over the step, when every unit and connection in the row uses the coarse step; the inertia and
+  non-synchronous shortfalls are then one value per coarse step (written at every time step of the step). Such a
+  row uses the step mean of the demand, inflow, profile or limit in it: an averaged capacity margin covers the mean
+  net demand of the step, not its peak hour, and the coarse-step notice names the units and connections of such
+  rows where the demand, inflow, profile or limit varies within a coarse step. A row that mixes units or
+  connections on the coarse step with others on the solve's step stays at every time step and sees the coarse
+  flows constant through their step; the notice names those too. The stochastic storage-use tie of a node whose
+  units and connections are all coarse now ties the forecasts' energy over each coarse step; before, it tied each
+  time step separately, which over-constrained the forecasts when an efficiency varied within the step.
 - **A Benders master that HiGHS left with an undetermined status after its cold retry is solved once more from
   its reloaded LP** (polar-high 3.12.1), instead of stopping with "Benders master problem did not solve to
   optimality". This happened on badly scaled masters (an unscaled objective with cut slopes near 1e9).

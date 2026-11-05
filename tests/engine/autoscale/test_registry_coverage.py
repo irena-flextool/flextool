@@ -327,6 +327,10 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     *(f"ramp_{side}_{dir_}_reserve_coarse" for side in ("sink", "source") for dir_ in ("up", "down")),
     # Coarse exact connections (add_cstr) and the row rule (add_row_rule_cstr writes f"{name}_coarse").
     "maxFlow_exact_forward_coarse", "maxFlow_exact_reverse_coarse", "dc_flow_eq", "dc_flow_eq_coarse",
+    "capacityMargin", "capacityMargin_coarse", "inertia_constraint", "inertia_constraint_coarse",
+    "non_sync_constraint", "non_sync_constraint_coarse", "maxInstant_flow_coarse", "minInstant_flow_coarse",
+    *(f"process_constraint_{s}{c}" for s in ("equal", "less_than", "greater_than") for c in ("", "_coarse")),
+    "non_anticipativity_storage_use", "non_anticipativity_storage_use_coarse",
 ]
 
 

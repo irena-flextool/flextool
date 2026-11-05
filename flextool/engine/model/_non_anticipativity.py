@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from flextool.engine.input._axis_enums import cast_dim
-from flextool.engine.model import _balance_terms
+from flextool.engine.model import _balance_terms, _coarse_flows
 from flextool.engine.model._common import _has_rows, _var_view
 from flextool.engine.model._online import online_rows
 from flextool.engine.preprocess.params._branch import forecast_star_pairs
@@ -131,6 +131,22 @@ def _balance_nodes(d, nodes: "pl.DataFrame | None") -> "pl.DataFrame | None":
     return out if out.height > 0 else None
 
 
+def _storage_use_partition(b: "_Build", over: pl.DataFrame) -> "pl.DataFrame | None":
+    """The coarse steps ``(n, d, b, b_first, t, w)`` of the tie rows ``over`` ``(n, d, b, t)`` whose node has only
+    coarse processes (``flex_data.coarse_row_members``, :func:`_coarse_flows.row_partition`): forecast d's coarse
+    steps, carried to each of its reference forecasts b.  None without such a node."""
+    if not b.has_coarse_proc:
+        return None
+    from flextool.engine.preprocess.flex_data import coarse_row_members
+
+    part = _coarse_flows.row_partition(b, coarse_row_members(b.d, "storage_use"), over.select("n", "d", "t"))
+    if part is None:
+        return None
+    pairs = over.select("n", "d", "b").unique()
+    return (part.join(pairs, on=["n", "d"], how="inner")
+            .select("n", "d", "b", "b_first", "t", "w"))
+
+
 def add_dispatch_constraints(b: "_Build") -> None:
     """Tie storage use, units online and reserves across the forecast branches of each anchor period."""
     d = b.d
@@ -163,6 +179,11 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # without an energy balance (e.g. a commodity node) has no balance flow terms to tie.  A coarse process has
     # one flow column per coarse step, so a tie at one of its steps holds the whole step; it is coarse only where
     # each of its coarse steps is wholly tied or wholly untied (flex_data.coarse_tie_straddles).
+    # Row rule (coarse steps): a node whose processes are all coarse gets one tie per wholly tied coarse step,
+    # non_anticipativity_storage_use_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr,
+    # the weights of forecast d's coarse step, which the reference forecast b shares over the tied steps): the
+    # forecasts' net energy into n over the step is the same, with a forecast-specific slope or section through its
+    # step mean.  A node with a fine process keeps its ties per solve step, reading the coarse flows constant.
     tie_nodes = _balance_nodes(d, stoch_nodes)
     if b.v_flow is not None and tie_nodes is not None and d.p_unitsize is not None \
             and d.p_step_duration is not None:
@@ -176,12 +197,13 @@ def add_dispatch_constraints(b: "_Build") -> None:
             if over.height > 0:
                 lhs_terms = {f"d_{k}": e for k, e in flow_d.items()}
                 lhs_terms.update({f"b_{k}": -e for k, e in flow_b.items()})
-                m.add_cstr(
-                    "non_anticipativity_storage_use",
+                _coarse_flows.add_row_rule_cstr(
+                    b, "non_anticipativity_storage_use",
                     over      = over,
                     sense     = "==",
                     lhs_terms = lhs_terms,
                     rhs_terms = {},
+                    partition = _storage_use_partition(b, over),
                 )
 
     # ─── EQ. ─── non_anticipativity_storage_state_first ──────────────────────

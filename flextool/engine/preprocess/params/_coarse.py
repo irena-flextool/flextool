@@ -11,11 +11,10 @@ its flows have one value per coarse step of its nodes (a rate that stays the sam
 units online, start-ups and shut-downs (the start and stop at the step's start; minimum up / down times count
 whole coarse steps), its reserve (the requirement is still checked at every solve step) and the direction of an
 exact connection.  A process with a fine balance node, or with no balance node, keeps the solve's step, and so does
-a process with a feature whose rows are per fine step and couple the flow to other per-step terms (a delay, a user
-constraint flow term, a flow group instant limit, a capacity-margin / inertia / non-synchronous group): those rows
-would not hold for a flow that cannot change within the coarse step.  A DC power-flow row follows the row rule
-(:func:`coarse_row_steps`): one averaged row per coarse step between coarse-angle nodes, per solve step otherwise
-with the coarse terms at their constant value.  In a stochastic solve, a process at a node
+a process with a delay (its flow is shifted by solve steps).  Rows that couple several entities follow the row rule
+(:func:`coarse_row_steps`): a capacity-margin / inertia / non-synchronous / flow-group instant-flow row, a user
+constraint, the forecast storage-use tie or a DC power-flow row whose every member is coarse is one averaged row per
+coarse step; a row with a fine member stays per solve step and reads the coarse terms at their constant value.  In a stochastic solve, a process at a node
 whose net flow is tied between the forecasts, every online process and every reserve provider also keeps the
 solve's step when a coarse step holds both tied (committed) and untied steps (``flex_data.coarse_tie_straddles``):
 its one value would tie the untied steps too.  A realization solve keeps a process at the solve's step when its

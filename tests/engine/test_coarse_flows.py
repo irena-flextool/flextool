@@ -2,10 +2,9 @@
 
 Owner decision 2026-11-03 ("Coarse new_stepduration groups"): a process between coarse nodes has one flow per
 coarse step (a rate constant over the step); a process with a fine balance node keeps the solve's step, and so
-does a process with a feature whose rows are per fine step (a delay,
-DC power flow, an exact connection, a user-constraint flow term, a flow-group instant limit, a capacity-margin /
-inertia / non-synchronous group), or, in a stochastic solve, a forecast tie that covers only part of one of its
-coarse steps.  Online processes: test_coarse_online_reserves.py.
+does a process with a delay, or, in a stochastic solve, a forecast tie that covers only part of one of its coarse
+steps.  Online processes and reserves: test_coarse_online_reserves.py; exact connections, DC power flow and the
+rows that couple several entities (the row rule): test_coarse_row_rule.py.
 
 Fixture: ``tests/fixtures/lh2_three_region.json`` (h2_* / lh2_* in the 24-h ``daily_group``, elec_* hourly; the
 liquefiers h2 -> lh2 and the pipes lh2 <-> lh2 are between daily nodes, the electrolysers elec -> h2 are not),
@@ -165,15 +164,13 @@ def test_lh2_online_unit_with_ramps_is_coarse(tmp_path_factory, caplog, monkeypa
         assert not row_terms(pb, fam, "liquefier_A,"), fam
 
 
-def test_lh2_user_constraint_flow_stays_fine(tmp_path_factory) -> None:
-    """A user constraint with a flow coefficient on pipe_AB keeps pipe_AB at the solve's step: the constraint's
-    rows are per fine step, and with a time-varying constant a constant flow could not meet them."""
-    fd = last_stochastic(_lh2(tmp_path_factory, "cf_uc_flow", [
-        ["constraint", "cap_ab", "sense", _s("less_than")], ["constraint", "cap_ab", "constant", _f(1000.0)],
-        ["connection__node", ["pipe_AB", "lh2_B"], "constraint_flow_coeff",
-         b64({"index_type": "str", "index_name": "constraint", "data": [["cap_ab", 1.0]]}, "map")]],
-        [["constraint", "cap_ab", None], ["connection__node", ["pipe_AB", "lh2_B"], None]])).flex_data
-    assert _coarse_procs(fd) == LH2_COARSE - {"pipe_AB"}
+def test_lh2_delayed_unit_stays_fine(tmp_path_factory) -> None:
+    """A unit with a delay keeps the solve's step even when its nodes are all coarse: its delayed flow is shifted
+    by solve steps, which a flow constant over a coarse step cannot follow (the one exclusion left; user
+    constraints, DC lines, exact connections and group rows follow the row rule, test_coarse_row_rule.py)."""
+    fd = last_stochastic(_lh2(tmp_path_factory, "cf_delay", [["unit", "liquefier_A", "delay", _f(2.0)]])).flex_data
+    assert "liquefier_A" in set(utf8(fd.process_delayed)["p"].to_list())
+    assert _coarse_procs(fd) == LH2_COARSE - {"liquefier_A"}
 
 
 # ---------------------------------------------------------------------------

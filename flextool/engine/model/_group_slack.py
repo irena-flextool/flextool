@@ -6,6 +6,12 @@ group to meet a floor (available capacity, rotating inertia) or to stay under a 
 non-synchronous infeed); the slack variable absorbs the violation and is priced in the objective.
 Every slack is a fraction of the group's scaling quantity (group_capacity_for_scaling or the inertia
 limit), which keeps the rows well scaled.
+
+Coarse steps (``new_stepduration`` groups), the row rule: a group whose row has only coarse members (its flows and
+units online are those of coarse processes, ``flex_data.coarse_row_members``) gets one row per coarse step, the
+row's Δt-weighted mean over the step (``<family>_coarse``, ``_coarse_flows.add_cstr``), and its inertia /
+non-synchronous slack is one value per coarse step; a group with a fine member keeps its rows per solve step and
+reads the coarse terms at their constant value.
 """
 
 from __future__ import annotations
@@ -19,6 +25,7 @@ from polar_high.engine import Expr
 
 from flextool.engine.input._axis_enums import align_join_dtypes, join_aligned
 from flextool.engine.preprocess._provider_io import _provider_key
+from flextool.engine.model import _coarse_flows
 from flextool.engine.model._common import _has_rows, _var_view
 
 if TYPE_CHECKING:
@@ -238,8 +245,15 @@ def add_variables(b: _Build) -> None:
     # vq_inertia[g,d,t] ≥ 0   ∀ g ∈ groupInertia, (d,t) ∈ dt
     # Inertia shortfall of group g, as a fraction of its inertia limit:
     # MWs = vq_inertia · inertia_limit[g,d].
+    # ─── VAR. ─── vq_inertia, vq_non_synchronous (coarse rows) ───────────────
+    # vq[g,d,b] ≥ 0   ∀ g whose inertia / non-synchronous row is averaged over coarse steps (the row rule), (d,b)
+    #   the coarse steps of its row (b = the step's first fine step)
+    # One shortfall per coarse step, held over its fine steps (a level, _coarse_flows.alias), as the row it relaxes.
     if b.has_inertia:
-        b.vq_inertia = m.add_var("vq_inertia", ("g", "d", "t"), d.groupInertia.join(d.dt, how="cross"), lower=0.0)
+        idx = d.groupInertia.join(d.dt, how="cross")
+        steps = _row_steps(b, "inertia", idx)
+        b.vq_inertia = _coarse_flows.alias(
+            b, m.add_var("vq_inertia", ("g", "d", "t"), _coarse_flows.domain(b, idx, steps), lower=0.0), idx, steps)
 
     # ─── VAR. ─── vq_non_synchronous ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -247,8 +261,33 @@ def add_variables(b: _Build) -> None:
     # Non-synchronous infeed of group g above its allowed share, as a
     # fraction of group_capacity_for_scaling: MW = vq_non_synchronous · group_capacity_for_scaling[g,d].
     if b.has_non_sync:
-        b.vq_non_synchronous = m.add_var("vq_non_synchronous", ("g", "d", "t"),
-                                         d.groupNonSync.join(d.dt, how="cross"), lower=0.0)
+        idx = d.groupNonSync.join(d.dt, how="cross")
+        steps = _row_steps(b, "non_sync", idx)
+        b.vq_non_synchronous = _coarse_flows.alias(
+            b, m.add_var("vq_non_synchronous", ("g", "d", "t"), _coarse_flows.domain(b, idx, steps), lower=0.0),
+            idx, steps)
+
+
+def _row_partition(b: _Build, family: str, like: pl.DataFrame) -> pl.DataFrame | None:
+    """The coarse steps ``(g, d, b_first, t, w)`` of the groups of ``family`` whose row has only coarse members
+    (``flex_data.coarse_row_members``, :func:`_coarse_flows.row_partition`), in the dtypes of ``like``; None without
+    any.  Kept on ``b.group_row_steps`` so the slack and the row read one partition."""
+    if family not in b.group_row_steps:
+        part = None
+        if b.has_coarse_proc:
+            from flextool.engine.preprocess.flex_data import coarse_row_members
+
+            part = _coarse_flows.row_partition(b, coarse_row_members(b.d, family), like)
+        b.group_row_steps[family] = part
+    return b.group_row_steps[family]
+
+
+def _row_steps(b: _Build, family: str, like: pl.DataFrame) -> pl.DataFrame:
+    """``(g, d, b_first, t)`` of :func:`_row_partition` (the steps of the slack of ``family``); empty without."""
+    part = _row_partition(b, family, like)
+    if part is None:
+        return pl.DataFrame(schema={c: pl.Utf8 for c in ("g", "d", "b_first", "t")})
+    return part.select("g", "d", "b_first", "t")
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +336,7 @@ def _eq_capacity_margin(b: _Build) -> None:
     """capacityMargin: available unit capacity of a group covers its net demand plus the margin."""
     if not b.has_capacity_margin:
         return
-    m, d = b.m, b.d
+    d = b.d
     gcm = d.groupCapacityMargin
     invc = d.p_inv_group_cap
     p_us = d.p_unitsize
@@ -338,6 +377,10 @@ def _eq_capacity_margin(b: _Build) -> None:
     # slack remain.
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Row rule (coarse steps): a group whose consuming units are all coarse processes gets one row per coarse step,
+    # capacityMargin_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr): the profile, the
+    # inflow and the slope act through their step means, so the margin covers the step-mean net demand, not its
+    # peak (named in the coarse-flow behaviour notice).  Otherwise the rows stay per solve step.
     lhs: dict = {"slack": b.vq_capacity_margin}
     rhs: dict = {}
 
@@ -444,14 +487,16 @@ def _eq_capacity_margin(b: _Build) -> None:
             rhs["inflow_neg"] = Param(("g", "d", "t"), rhs_inflow)
 
     dt_inv = d.dt.join(_capacity_margin_periods(d), on="d", how="semi")
-    m.add_cstr("capacityMargin", over=gcm.join(dt_inv, how="cross"), sense=">=", lhs_terms=lhs, rhs_terms=rhs)
+    over = gcm.join(dt_inv, how="cross")
+    _coarse_flows.add_row_rule_cstr(b, "capacityMargin", over=over, sense=">=", lhs_terms=lhs, rhs_terms=rhs,
+                                    partition=_row_partition(b, "capacity_margin", over))
 
 
 def _eq_inertia(b: _Build) -> None:
     """inertia_constraint: rotating inertia of a group meets its inertia limit."""
     if not b.has_inertia:
         return
-    m, d = b.m, b.d
+    d = b.d
     pss = d.process_source_sink
     gn_in_gi = d.group_node.join(d.groupInertia, on="g", how="inner")
 
@@ -469,6 +514,9 @@ def _eq_inertia(b: _Build) -> None:
     # in proportion to the units online, or to their flow when they have no
     # online variable; the shortfall is penalised.  The slack is a fraction of
     # the limit.
+    # Row rule (coarse steps): a group whose inertia providers are all coarse processes gets one row per coarse
+    # step, inertia_constraint_coarse = the row's mean over the step (_coarse_flows.add_cstr), on one slack per
+    # step; with constant inertia constants and limit it is the per-step row itself.  Otherwise per solve step.
     lhs: dict = {"slack": b.vq_inertia * d.pdGroup_inertia_limit}
     for side in ("source", "sink"):
         side_idx = getattr(d, f"process_{side}_inertia", None)
@@ -492,15 +540,17 @@ def _eq_inertia(b: _Build) -> None:
             if with_g_off.height > 0:
                 lhs[f"flow_{side}"] = Sum(Where(b.v_flow, with_g_off) * coef, over=("p", "source", "sink"))
 
-    m.add_cstr("inertia_constraint", over=d.groupInertia.join(d.dt, how="cross"), sense=">=",
-               lhs_terms=lhs, rhs_terms={"floor": d.pdGroup_inertia_limit})
+    over = d.groupInertia.join(d.dt, how="cross")
+    _coarse_flows.add_row_rule_cstr(b, "inertia_constraint", over=over, sense=">=", lhs_terms=lhs,
+                                    rhs_terms={"floor": d.pdGroup_inertia_limit},
+                                    partition=_row_partition(b, "inertia", over))
 
 
 def _eq_non_sync(b: _Build) -> None:
     """non_sync_constraint: non-synchronous infeed of a group stays under its share of the group's supply."""
     if not b.has_non_sync:
         return
-    m, d = b.m, b.d
+    d = b.d
     pss = d.process_source_sink
     p_us = d.p_unitsize
     invc = d.p_inv_group_cap
@@ -548,6 +598,10 @@ def _eq_non_sync(b: _Build) -> None:
     # sink, lossless, as in nodeBalance_eq.  The slack has no icap, which makes
     # it a fraction of group_capacity_for_scaling.  slope already holds the
     # sink/source coefficient ratio of multi-arc processes.
+    # Row rule (coarse steps): a group whose processes are all coarse gets one row per coarse step,
+    # non_sync_constraint_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr), on one slack
+    # per step: the non-synchronous share then holds for the step's energy, with the inflow and the slope through
+    # their step means (named in the coarse-flow behaviour notice).  Otherwise per solve step.
     lhs: dict = {"slack_neg": -(b.vq_non_synchronous * d.p_step_duration)}
     if sink_ns is not None and sink_ns.height > 0 and b.v_flow is not None:
         pss_in_g = _not_inside(_arcs_at_group(pss.join(sink_ns, on=["p", "sink"], how="inner"), "sink", gn_in_gns))
@@ -627,8 +681,9 @@ def _eq_non_sync(b: _Build) -> None:
         if exo_out.height > 0:
             rhs["exo_demand"] = Param(("g", "d", "t"), exo_out)
 
-    m.add_cstr("non_sync_constraint", over=d.groupNonSync.join(d.dt, how="cross"), sense="<=",
-               lhs_terms=lhs, rhs_terms=rhs)
+    over = d.groupNonSync.join(d.dt, how="cross")
+    _coarse_flows.add_row_rule_cstr(b, "non_sync_constraint", over=over, sense="<=", lhs_terms=lhs, rhs_terms=rhs,
+                                    partition=_row_partition(b, "non_sync", over))
 
 
 # ---------------------------------------------------------------------------

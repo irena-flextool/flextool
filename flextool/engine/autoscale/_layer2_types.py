@@ -428,6 +428,11 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # _cumulative_invest._eq_instant_flow ({max,min}Instant_flow)
     "maxInstant_flow": CstrFamily(QuantityType.POWER),
     "minInstant_flow": CstrFamily(QuantityType.POWER),
+    # The row rule on coarse steps (every member coarse: one averaged row per coarse step) —
+    # _coarse_flows.add_row_rule_cstr (f"{name}_coarse").  Explicit: the fine-family prefixes would otherwise
+    # resolve them silently.
+    "maxInstant_flow_coarse": CstrFamily(QuantityType.POWER),
+    "minInstant_flow_coarse": CstrFamily(QuantityType.POWER),
 
     # ── User-defined constraints: composite LHS, RHS in caller's
     # coordinates.  Layer 2 skips per-row scaling.
@@ -439,6 +444,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "process_constraint_equal_period": CstrFamily(None),
     "process_constraint_less_than_period": CstrFamily(None),
     "process_constraint_greater_than_period": CstrFamily(None),
+    # The row rule on coarse steps — _coarse_flows.add_row_rule_cstr (f"{name}_coarse").
+    "process_constraint_equal_coarse": CstrFamily(None),
+    "process_constraint_less_than_coarse": CstrFamily(None),
+    "process_constraint_greater_than_coarse": CstrFamily(None),
 
     # ── Node-balance fix (used by manual demand patching).  Zero RHS
     # in the most common case; treat as DIMENSIONLESS so the row
@@ -590,6 +599,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "inertia_constraint": CstrFamily(QuantityType.INERTIA),
     # flextool/engine/model/_group_slack.py _eq_non_sync
     "non_sync_constraint": CstrFamily(QuantityType.POWER),
+    # The row rule on coarse steps — _coarse_flows.add_row_rule_cstr (f"{name}_coarse").
+    "capacityMargin_coarse": CstrFamily(QuantityType.POWER),
+    "inertia_constraint_coarse": CstrFamily(QuantityType.INERTIA),
+    "non_sync_constraint_coarse": CstrFamily(QuantityType.POWER),
 
     # ── Commodity ladder.  ENERGY (MWh).
     # flextool/engine/model/_commodity_ladder.py _eq_ladder_balance
@@ -611,6 +624,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Non-anticipativity (cross-branch equality).  RHS = 0; skip.
     # flextool/engine/model/_non_anticipativity.py:add_dispatch_constraints
     "non_anticipativity_storage_use": CstrFamily(None),
+    # The row rule on coarse steps (a node whose processes are all coarse) — _coarse_flows.add_row_rule_cstr.
+    "non_anticipativity_storage_use_coarse": CstrFamily(None),
     "non_anticipativity_storage_state_first": CstrFamily(None),
     "non_anticipativity_online_integer": CstrFamily(None),
     "non_anticipativity_online_linear": CstrFamily(None),

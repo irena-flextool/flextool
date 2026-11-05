@@ -439,29 +439,6 @@ def coarse_process_exclusions(flex_data: "FlexData") -> dict[str, str]:
             out.setdefault(p, why)
 
     add(_frame_values(getattr(d, "process_delayed", None), "p"), "it has a delay")
-    add(_frame_values(getattr(d, "flow_constraint_idx", None), "p"), "a user constraint has a flow term on it")
-    gpn = getattr(d, "group_process_node", None)
-    instant = set()
-    for cap in (getattr(d, "pdt_max_instant_flow", None), getattr(d, "pdt_min_instant_flow", None)):
-        if cap is not None:
-            instant |= _frame_values(cap.frame, "g")
-    if instant and gpn is not None and gpn.height > 0:
-        add(_frame_values(gpn.filter(pl.col("g").cast(pl.Utf8).is_in(sorted(instant))), "p"),
-            "its flow is in a flow group with an instant flow limit")
-    gn = getattr(d, "group_node", None)
-    pss = d.process_source_sink
-    if gn is not None and gn.height > 0 and pss is not None and pss.height > 0:
-        for groups, what in ((getattr(d, "groupCapacityMargin", None), "capacity-margin"),
-                             (getattr(d, "groupInertia", None), "inertia"),
-                             (getattr(d, "groupNonSync", None), "non-synchronous")):
-            gs = _frame_values(groups, "g")
-            if not gs:
-                continue
-            nodes = _frame_values(gn.filter(pl.col("g").cast(pl.Utf8).is_in(sorted(gs))), "n")
-            arcs = pss.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")))
-            add(set(arcs.filter(pl.col("source").is_in(sorted(nodes)) | pl.col("sink").is_in(sorted(nodes)))
-                    ["p"].to_list()),
-                f"it is connected to a node of a {what} group")
     return out
 
 
@@ -481,8 +458,11 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
     that varies within a coarse step (the averaged floor is the step-mean floor); with ramp limits too, the start-up /
     shut-down capacity reduction of the coarse step (the mean share over the whole step); reserves (one per coarse
     step while the requirement is checked at every solve step), and with an availability or profile that varies
-    within a step, the reserve headroom on its step mean; a coarse DC line whose power-flow row stays at the solve's
-    step (:func:`_dc_mixed_reasons`)."""
+    within a step, the reserve headroom on its step mean.  Rows under the row rule (:func:`_row_rule_reasons`): a
+    capacity-margin / inertia / non-synchronous / flow-group instant-flow / user-constraint / DC power-flow row that
+    mixes coarse and fine members stays at the solve's step and holds the coarse flow constant over its step; an
+    averaged capacity-margin / non-synchronous / instant-flow row whose demand, inflow, profile or limit varies
+    within a coarse step uses its step mean (a peak within the step is not seen)."""
     from flextool.engine.preprocess.params._coarse import varies_within_coarse_steps as varies
     from flextool.engine.preprocess.params._coarse import varying_within_coarse_steps as varying
 
@@ -551,8 +531,95 @@ def coarse_process_reasons(flex_data: "FlexData", steps: pl.DataFrame) -> dict[s
         headroom |= varies(arcs.join(profile.with_columns(pl.col("f").cast(pl.Utf8)), on="f", how="inner"),
                            steps, ("p", "f"))
     add(reserve & headroom, "its reserve headroom uses the step-mean availability / profile")
-    for p, why in _dc_mixed_reasons(d, coarse):
+    for p, why in _row_rule_reasons(d, coarse):
         out.setdefault(p, []).append(why)
+    return out
+
+
+def _spread_keys(part: pl.DataFrame, frame: "pl.DataFrame | None", key: str) -> set[str]:
+    """The keys of ``part`` ``(key, d, b_first, t)`` (Utf8) where ``frame`` ``(key, …, d, t, value)`` (Utf8 keys) takes
+    more than one value within a coarse step (per its other key columns)."""
+    if frame is None or frame.height == 0 or part.height == 0 or "t" not in frame.columns:
+        return set()
+    other = [c for c in frame.columns if c not in (key, "d", "t", "value")]
+    on = [c for c in (key, "d", "t") if c in frame.columns]
+    spread = (part.select(key, "d", "b_first", "t").join(frame, on=on, how="inner")
+              .group_by(key, *other, "d", "b_first")
+              .agg((pl.col("value").max() - pl.col("value").min()).alias("__s"),
+                   pl.col("value").abs().max().alias("__m"))
+              .filter(pl.col("__s") > 1e-9 * pl.max_horizontal(pl.lit(1.0), pl.col("__m"))))
+    return set(spread[key].to_list())
+
+
+def _node_param_by_group(gn: "pl.DataFrame | None", param: "Param | None") -> "pl.DataFrame | None":
+    """``(g, n, d, t, value)`` (Utf8 keys) of a node parameter ``(n, d, t)`` at the nodes of each group."""
+    frame = _param_frame(param)
+    if gn is None or frame is None or not {"n", "d", "t"}.issubset(frame.columns):
+        return None
+    f = frame.select(*(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t")), pl.col("value").cast(pl.Float64))
+    return gn.join(f, on="n", how="inner").select("g", "n", "d", "t", "value")
+
+
+def _row_rule_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str, str]]:
+    """``(p, reason)`` of the coarse processes ``coarse`` in rows under the row rule (:func:`coarse_process_reasons`):
+    a row mixing coarse and fine members (per solve step, the coarse flow constant over its step), and an averaged
+    row whose demand / inflow / profile / limit varies within a coarse step (the step mean)."""
+    d = flex_data
+    out: list[tuple[str, str]] = []
+    if not coarse:
+        return out
+    from flextool.engine.model import _group_slack
+
+    gn = _utf8_frame(getattr(d, "group_node", None), ("g", "n"))
+    active = {"capacity_margin": _group_slack.has_capacity_margin(d), "inertia": _group_slack.has_inertia(d),
+              "non_sync": _group_slack.has_non_sync(d), "instant_flow": True, "user_constraint": True,
+              "storage_use": False}
+    for family, what in COARSE_ROW_FAMILIES.items():
+        if not active[family]:
+            continue
+        members = coarse_row_members(d, family)
+        if members.height == 0:
+            continue
+        key = members.columns[0]
+        part = coarse_row_partition(d, family, members)
+        averaged = set(part[key].to_list())
+        procs = members.filter(pl.col("kind") == "p")
+        for k, p in procs.filter(~pl.col(key).is_in(sorted(averaged))).select(key, "e").unique().sort(key, "e").iter_rows():
+            if p in coarse:
+                out.append((p, f"the {what} row of {k!r} stays at the solve's step (not all its members take the "
+                               "coarse step) and holds its flow constant over the coarse step"))
+        varying: set[str] = set()
+        if family == "capacity_margin":
+            nodes = None if gn is None else gn.filter(
+                ~pl.col("n").is_in(sorted(_frame_values(getattr(d, "nodeState", None), "n"))))
+            varying |= _spread_keys(part, _node_param_by_group(nodes, getattr(d, "pdtNodeInflow_per_step", None)),
+                                    "g")
+            profile = _param_frame(d.p_profile_value)
+            pss = _utf8_frame(d.process_source_sink, ("p", "source", "sink"))
+            if nodes is not None and profile is not None and pss is not None:
+                for idx in (d.process_profile_upper, d.process_profile_fixed):
+                    arcs = _utf8_frame(idx, ("p", "sink", "f"))
+                    if arcs is None:
+                        continue
+                    by_g = (arcs.join(nodes.rename({"n": "sink"}), on="sink", how="inner")
+                            .join(profile.select(*(pl.col(c).cast(pl.Utf8) for c in ("f", "d", "t")),
+                                                 pl.col("value").cast(pl.Float64)), on="f", how="inner")
+                            .select("g", "f", "d", "t", "value"))
+                    varying |= _spread_keys(part, by_g, "g")
+        elif family == "non_sync":
+            for name in ("p_positive_inflow", "p_negative_inflow"):
+                varying |= _spread_keys(part, _node_param_by_group(gn, getattr(d, name, None)), "g")
+        elif family == "instant_flow":
+            for name in ("pdt_max_instant_flow", "pdt_min_instant_flow"):
+                cap = _param_frame(getattr(d, name, None))
+                if cap is not None and "t" in cap.columns:
+                    keys = [c for c in ("g", "d", "t") if c in cap.columns]
+                    varying |= _spread_keys(part, cap.select(*(pl.col(c).cast(pl.Utf8) for c in keys),
+                                                             pl.col("value").cast(pl.Float64)), "g")
+        for k, p in procs.filter(pl.col(key).is_in(sorted(varying))).select(key, "e").unique().sort(key, "e").iter_rows():
+            out.append((p, f"the {what} row of {k!r} uses the step mean of a demand, inflow, profile or limit that "
+                           "varies within a coarse step"))
+    out.extend(_dc_mixed_reasons(d, coarse))
     return out
 
 
@@ -695,6 +762,110 @@ def coarse_angle_steps(flex_data: "FlexData") -> pl.DataFrame:
         fine_line_nodes = set(fine["source"].to_list()) | set(fine["sink"].to_list())
     keep = sorted(dc_nodes - fine_line_nodes)
     return ncs.filter(pl.col("n").is_in(keep))
+
+
+#: The row families under the row rule (owner decision 2026-11-04) -> the row's name in the behaviour notice.
+COARSE_ROW_FAMILIES: dict[str, str] = {
+    "capacity_margin": "capacity-margin", "inertia": "inertia", "non_sync": "non-synchronous",
+    "instant_flow": "flow-group instant-flow", "user_constraint": "user constraint",
+    "storage_use": "forecast storage-use tie",
+}
+
+
+def _arcs_at_nodes(arcs: pl.DataFrame, nodes: pl.DataFrame, side: str) -> pl.DataFrame:
+    """``arcs`` ``(p, source, sink)`` (Utf8) whose ``side`` node is a node of ``nodes`` ``(key, n)``, with key."""
+    return arcs.join(nodes.rename({"n": side}), on=side, how="inner")
+
+
+def coarse_row_members(flex_data: "FlexData", family: str) -> pl.DataFrame:
+    """``(key, kind, e)`` (Utf8) of the rows of ``family`` (:data:`COARSE_ROW_FAMILIES`): the entities whose
+    time-varying variables can appear in the row of each key (``params._coarse.coarse_row_steps``: kind ``p`` a
+    process — its flows, units online —, kind ``n`` a node — the state of a coarse storage node).  The model and
+    the output readers both read the coarse steps of a row from these (:func:`coarse_row_partition`), so a
+    variable keyed like the row (the inertia and non-synchronous slacks) has the steps of its row.  A superset of
+    the row's entities is safe (one more member can only keep the row at the solve's step).
+
+    * ``capacity_margin`` (key ``g``): the units consuming from a node of g without a storage state;
+    * ``inertia`` (``g``): the processes with an inertia constant on a side at a node of g;
+    * ``non_sync`` (``g``): the processes with an arc at a node of g, without those inside g;
+    * ``instant_flow`` (``g``): the processes of the flow group (``group_process_node``);
+    * ``user_constraint`` (``cn``): the processes with a flow coefficient and the nodes with a state coefficient;
+    * ``storage_use`` (``n``): the processes with an arc at the stochastic node n."""
+    d = flex_data
+    key = {"user_constraint": "cn", "storage_use": "n"}.get(family, "g")
+    if family not in COARSE_ROW_FAMILIES:
+        raise ValueError(f"coarse_row_members: unknown family {family!r}")
+    empty = pl.DataFrame(schema={key: pl.Utf8, "kind": pl.Utf8, "e": pl.Utf8})
+    pss = _utf8_frame(d.process_source_sink, ("p", "source", "sink"))
+    parts: list[pl.DataFrame] = []
+
+    def procs(frame: "pl.DataFrame | None") -> None:
+        if frame is not None and frame.height > 0:
+            parts.append(frame.select(pl.col(key), kind=pl.lit("p"), e=pl.col("p")))
+
+    gn = _utf8_frame(getattr(d, "group_node", None), ("g", "n"))
+    if family in ("capacity_margin", "inertia", "non_sync"):
+        groups = {"capacity_margin": "groupCapacityMargin", "inertia": "groupInertia",
+                  "non_sync": "groupNonSync"}[family]
+        gs = _frame_values(getattr(d, groups, None), "g")
+        if gn is None or pss is None or not gs:
+            return empty
+        nodes = gn.filter(pl.col("g").is_in(sorted(gs)))
+        if family == "capacity_margin":
+            nodes = nodes.filter(~pl.col("n").is_in(sorted(_frame_values(getattr(d, "nodeState", None), "n"))))
+            units = _frame_values(getattr(d, "process_unit", None), "p")
+            for frame in (d.process_source_sink_eff, d.process_source_sink_noEff):
+                arcs = _utf8_frame(frame, ("p", "source", "sink"))
+                if arcs is None:
+                    continue
+                if units:
+                    arcs = arcs.filter(pl.col("p").is_in(sorted(units)))
+                procs(_arcs_at_nodes(arcs, nodes, "source"))
+        elif family == "inertia":
+            for side in ("source", "sink"):
+                idx = _utf8_frame(getattr(d, f"process_{side}_inertia", None), ("p", side))
+                if idx is not None:
+                    procs(_arcs_at_nodes(pss.join(idx, on=["p", side], how="inner"), nodes, side))
+        else:
+            at = pl.concat([_arcs_at_nodes(pss, nodes, "source"), _arcs_at_nodes(pss, nodes, "sink")],
+                           how="diagonal_relaxed").select("g", "p")
+            inside = _utf8_frame(getattr(d, "process_group_inside_nonSync", None), ("p", "g"))
+            if inside is not None:
+                at = at.join(inside, on=["p", "g"], how="anti")
+            procs(at)
+    elif family == "instant_flow":
+        gs = (_frame_values(_param_frame(getattr(d, "pdt_max_instant_flow", None)), "g")
+              | _frame_values(_param_frame(getattr(d, "pdt_min_instant_flow", None)), "g"))
+        gpn = _utf8_frame(getattr(d, "group_process_node", None), ("g", "p"))
+        if gpn is None or not gs:
+            return empty
+        procs(gpn.filter(pl.col("g").is_in(sorted(gs))))
+    elif family == "user_constraint":
+        procs(_utf8_frame(getattr(d, "flow_constraint_idx", None), ("cn", "p")))
+        state = _utf8_frame(_param_frame(getattr(d, "p_node_constraint_state_coeff", None)), ("cn", "n"))
+        if state is not None:
+            parts.append(state.select("cn", kind=pl.lit("n"), e=pl.col("n")))
+    else:
+        if pss is None:
+            return empty
+        for side in ("source", "sink"):
+            procs(pss.select("p", pl.col(side).alias("n")))
+    if not parts:
+        return empty
+    return pl.concat([f.select(key, "kind", "e") for f in parts]).unique().sort(key, "kind", "e")
+
+
+def coarse_row_partition(flex_data: "FlexData", family: str,
+                         members: "pl.DataFrame | None" = None) -> pl.DataFrame:
+    """``(key, d, b_first, t, w)`` (Utf8 keys): the coarse steps of the keys of ``family`` whose every member
+    (:func:`coarse_row_members`, or ``members``) is coarse — the row rule: one averaged row per coarse step.  Empty
+    without such a key (every row stays per solve step)."""
+    from flextool.engine.preprocess.params._coarse import coarse_row_steps
+
+    mem = coarse_row_members(flex_data, family) if members is None else members
+    psd = flex_data.p_step_duration
+    return coarse_row_steps(mem, getattr(flex_data, "process_coarse_step", None),
+                            getattr(flex_data, "node_coarse_step", None), None if psd is None else psd.frame)
 
 
 def _apply_coarse_process_frames(flex_data: "FlexData") -> None:

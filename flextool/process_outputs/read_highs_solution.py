@@ -734,9 +734,10 @@ def extract_variable(
 
     The variables of coarse entities (``_coarse_flows.COARSE_VARS``: flows,
     units online, start-ups, shut-downs, reserves of coarse processes, the
-    angles of coarse-angle nodes) have one LP column per coarse step; a level
-    is copied to every fine step of the step, an event stays at its first
-    fine step (:mod:`flextool.engine.output._coarse_flows`).  The coarse steps come
+    angles of coarse-angle nodes, the inertia / non-synchronous slacks of
+    averaged group rows) have one LP column per coarse step; a level is
+    copied to every fine step of the step, an event stays at its first fine
+    step (:mod:`flextool.engine.output._coarse_flows`).  The coarse steps come
     from ``coarse_steps`` (``(key, d, b_first, t)``) or else from
     ``flex_data`` (the variable's own steps).
 

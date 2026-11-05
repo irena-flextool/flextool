@@ -28,8 +28,8 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
   v_flow_back[p,source,sink,d,t]       reverse flow of 2-way 1-var and DC arcs; × unitsize = MW
   v_exact_forward[p,d,t]               exact connection set to its forward direction, binary   [_exact]
   v_angle[n,d,t]                       voltage angle, rad in [−π, π]                          [_dc_power_flow]
-                                       (units online, start-ups, reserves, directions and angles of coarse
-                                       entities: one column per coarse step)
+                                       (units online, start-ups, reserves, directions, angles and the inertia /
+                                       non-synchronous slacks of coarse entities: one column per coarse step)
   v_trade[c,n,d,i]                     commodity bought in tier i; × commodity unitsize = MWh [_commodity_ladder]
   vq_capacity_margin[g,d], vq_inertia[g,d,t], vq_non_synchronous[g,d,t]
                                        group floor slacks, fraction of the group's scale      [_group_slack]
@@ -353,6 +353,7 @@ class _Build:
     vq_non_synchronous: Var | None = None
     v_angle: Var | None = None
     angle_steps: pl.DataFrame | None = None      # (n, d, b_first, t) of the coarse-angle nodes (_dc_power_flow)
+    group_row_steps: dict = field(default_factory=dict)  # row-rule family -> its coarse steps (_group_slack)
     v_trade: Var | None = None
 
     # ── shared expressions ──
@@ -3364,7 +3365,7 @@ def _eq_user_constraints(b: _Build) -> None:
     """User-defined constraints."""
     if not b.has_user_cstr:
         return
-    m, d = b.m, b.d
+    d = b.d
     v_invest_p, v_invest_n = b.v_invest_p, b.v_invest_n
     lookback = d.edd_invest_lookback_set
 
@@ -3407,6 +3408,11 @@ def _eq_user_constraints(b: _Build) -> None:
     # sense constant cannot hold, else a warning naming the constraint.
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Row rule (coarse steps): a per-step constraint whose flow terms are all on coarse processes and whose state
+    # terms are on coarse nodes gets one row per coarse step, process_constraint_*_coarse = the row's Δt-weighted
+    # mean over the step (_coarse_flows.add_cstr); its coefficients are constant, so it is the per-step row itself
+    # on one flow per step.  A constraint with a fine flow or state term keeps its rows per solve step and reads
+    # the coarse flows at their constant value.
     flow_terms: list = []
     if _has_rows(d.flow_constraint_idx):
         flow_terms.append(Sum(
@@ -3561,6 +3567,11 @@ def _eq_user_constraints(b: _Build) -> None:
     live_period = _user_constraint_live_keys(period_terms)
     live_step = live_period | _user_constraint_live_keys(flow_terms + state_terms)
     empty_rows: list[tuple[pl.DataFrame, str]] = []
+    uc_members = None
+    if b.has_coarse_proc:
+        from flextool.engine.preprocess.flex_data import coarse_row_members
+
+        uc_members = coarse_row_members(d, "user_constraint")
     for over, sense, name in (
         (d.cdt_eq, "==", "process_constraint_equal"),
         (d.cdt_le, "<=", "process_constraint_less_than"),
@@ -3583,12 +3594,14 @@ def _eq_user_constraints(b: _Build) -> None:
             lhs: dict = {"contribution": _sum_terms(terms)}
             for i, const in enumerate(const_terms):
                 lhs[f"prebuilt_const_{i}"] = const
-            m.add_cstr(
-                family,
+            _coarse_flows.add_row_rule_cstr(
+                b, family,
                 over      = rows,
                 sense     = sense,
                 lhs_terms = lhs,
                 rhs_terms = {"constant": d.p_constraint_constant},
+                partition = (None if uc_members is None or "t" not in rows.columns
+                             else _coarse_flows.row_partition(b, uc_members, rows)),
             )
     _check_user_constraints_without_terms(b, empty_rows, const_terms)
 

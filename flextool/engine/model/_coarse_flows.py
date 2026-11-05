@@ -10,7 +10,7 @@ the fine coefficients on the one column, Σ_t v·Δt·slope_t = v_b·Σ_t Δt·s
 of a coarse process keyed ``(p, …, d, t)`` (a value that holds through the step, like a rate): its units online
 (``_online``), its reserve (``_reserve``) and the direction of an exact connection (``_exact``) are aliased like its
 flows; :func:`alias` with ``steps`` serves a level of another coarse entity: the angle of a coarse-angle node
-(``_dc_power_flow``).
+(``_dc_power_flow``) and the inertia / non-synchronous slack of a group whose row is averaged (``_group_slack``).
 The *events* of a coarse process (start-ups, shut-downs) are registered at ``b_first`` only and are not aliased: a
 fine row of an interior step has no event term (an alias would count one start-up on every fine step of a sum
 over t).
@@ -23,7 +23,8 @@ the average lets time-varying availability, profile, efficiency and capacity coe
 means.
 
 Rows that couple several entities follow the *row rule* (:func:`add_row_rule_cstr`): a row whose every member is
-coarse (:func:`row_partition`; DC power flow, the storage reserve rows) is one averaged row per coarse step; a row
+coarse (:func:`row_partition`; the capacity-margin, inertia, non-synchronous and flow-group instant-flow rows of a
+group, user constraints, the forecast storage-use tie, DC power flow) is one averaged row per coarse step; a row
 that mixes coarse and fine members stays per solve step and reads the coarse terms at their constant value.
 """
 from __future__ import annotations
@@ -217,10 +218,13 @@ def add_cstr(b: "_Build", name: str, *, over: pl.DataFrame, sense: str, lhs_term
     #             connection_reserve_{up,down}_coarse, connection_reserve_{up,down}_online{sfx}_coarse,
     #             connection_reserve_{up,down}_exact_coarse, reserve_storage_up_floor_coarse,
     #             reserve_storage_down_headroom_coarse, maxFlow_exact_{forward,reverse}_coarse; by the row rule
-    #             (add_row_rule_cstr): dc_flow_eq_coarse   ({sfx} = _linear / _integer) ──────────────────────
+    #             (add_row_rule_cstr): dc_flow_eq_coarse, capacityMargin_coarse, inertia_constraint_coarse,
+    #             non_sync_constraint_coarse, {max,min}Instant_flow_coarse,
+    #             process_constraint_{equal,less_than,greater_than}_coarse,
+    #             non_anticipativity_storage_use_coarse   ({sfx} = _linear / _integer) ─────────────────────────
     # Σ_{t∈b} w[K,d,b,t] · ( LHS_t − RHS_t )  {≤,=,≥}  E[K,d,b]      w = Δt / Δ_b,  Δ_b = Σ_{t∈b} Δt
-    #   ∀ coarse row key K (a coarse process p, or a row key whose every member is coarse: row_partition — a
-    #   storage node n, a DC arc between coarse-angle nodes), (…, d, b)
+    #   ∀ coarse row key K (a coarse process p, or a row key whose every member is coarse: row_partition — a group
+    #   g, a user constraint cn, a stochastic node n, a DC arc between coarse-angle nodes), (…, d, b)
     #   its coarse steps (b = its first fine step b_first);  LHS_t / RHS_t = the level terms of the fine row of the
     #   family at (d, t);  E = the row's event terms on the coarse grid (start-ups at b, shut-downs at the coarse
     #   successor b⁺: the capacity reduction of maxFlow_online / maxInputFlow_online and their _shutdown rows)

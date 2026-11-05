@@ -2,8 +2,8 @@
 
 A coarse process (``FlexData.processCoarse``, :func:`flextool.engine.preprocess.params._coarse.coarse_process_frames`)
 has one column per coarse step of its nodes for each of its time-indexed variables (:data:`COARSE_VARS`): the LP
-row is keyed by the step's first fine step ``b_first``.  So does the angle of a coarse-angle node
-(:data:`COARSE_VAR_STEPS`).  Every reader that needs the values on the solve's steps
+row is keyed by the step's first fine step ``b_first``.  So do the angle of a coarse-angle node and the inertia /
+non-synchronous slack of a group whose row is averaged over coarse steps (:data:`COARSE_VAR_STEPS`).  Every reader that needs the values on the solve's steps
 expands them to every fine step of the coarse step, by the variable's mode:
 
 * ``copy`` — a *level* that holds through the whole step (a flow is a rate in MW per unitsize, units online a
@@ -38,12 +38,14 @@ COARSE_VARS: dict[str, str] = {
     "v_online_linear": "copy", "v_online_integer": "copy", "v_reserve": "copy", "v_exact_forward": "copy",
     "v_startup_linear": "first", "v_startup_integer": "first",
     "v_shutdown_linear": "first", "v_shutdown_integer": "first",
-    "v_angle": "copy",
+    "v_angle": "copy", "vq_inertia": "copy", "vq_non_synchronous": "copy",
 }
 
 #: The variables of :data:`COARSE_VARS` that are not keyed by a process -> whose coarse steps they take: the
-#: coarse-angle nodes (``flex_data.coarse_angle_steps``).  The others take the coarse processes' steps.
-COARSE_VAR_STEPS: dict[str, str] = {"v_angle": "angle"}
+#: coarse-angle nodes (``flex_data.coarse_angle_steps``) or the row partition of a row-rule family
+#: (``flex_data.coarse_row_partition``: the slack has the steps of its row).  The others take the coarse
+#: processes' steps.
+COARSE_VAR_STEPS: dict[str, str] = {"v_angle": "angle", "vq_inertia": "inertia", "vq_non_synchronous": "non_sync"}
 
 
 def coarse_steps(flex_data, name: "str | None" = None) -> "pl.DataFrame | None":
@@ -58,10 +60,14 @@ def coarse_steps(flex_data, name: "str | None" = None) -> "pl.DataFrame | None":
         cols = ("p", "d", "b_first", "t")
     elif getattr(flex_data, "process_coarse_step", None) is None or flex_data.process_coarse_step.height == 0:
         return None
-    else:
+    elif kind == "angle":
         from flextool.engine.preprocess.flex_data import coarse_angle_steps
 
         steps, cols = coarse_angle_steps(flex_data), ("n", "d", "b_first", "t")
+    else:
+        from flextool.engine.preprocess.flex_data import coarse_row_partition
+
+        steps, cols = coarse_row_partition(flex_data, kind), ("g", "d", "b_first", "t")
     if steps is None or steps.height == 0:
         return None
     return steps.select(*(pl.col(c).cast(pl.Utf8) for c in cols))
@@ -123,7 +129,7 @@ def expand_value_keys(values_by_key: "dict[tuple[str, ...], float]", steps: "pl.
                       mode: str = "copy") -> None:
     """In place: each key ``(d, t, e, …)`` of a coarse entity at its coarse step's first fine step gets an entry
     for every other fine step of the step that has no key of its own (the HiGHS-name reader's row keys: period,
-    time, then the entity column first — the process, or the node of :data:`COARSE_VAR_STEPS`): its value
+    time, then the entity column first — the process, or the node / group of :data:`COARSE_VAR_STEPS`): its value
     (``mode="copy"``) or 0 (``mode="first"``)."""
     if mode not in ("copy", "first"):
         raise ValueError(f"expand_value_keys: unknown mode {mode!r}")
