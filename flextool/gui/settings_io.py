@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+from typing import Callable
 
 import yaml
 
 from flextool.gui.data_models import (
+    SOLVER_SETTINGS_REVISION,
     ExecutionLimits,
     GlobalSettings,
     PlotSettings,
@@ -17,6 +19,10 @@ from flextool.gui.data_models import (
 
 SETTINGS_FILENAME = "settings.yaml"
 GLOBAL_SETTINGS_FILENAME = "projects.yaml"
+
+# Values the Solver options dialog can store; ``None`` (not in the tuples) is the dialog's "Default" entry.
+PRESOLVE_CHOICES = ("on", "off", "choose")
+SCALING_CHOICES = ("off", "solver_only", "basic", "full")
 
 
 def _as_geometry_map(raw: object) -> dict[str, str]:
@@ -35,10 +41,46 @@ def _as_geometry_map(raw: object) -> dict[str, str]:
     return {}
 
 
-def load_project_settings(project_path: Path) -> ProjectSettings:
+def _upgrade_solver_settings(data: dict, settings: ProjectSettings) -> bool:
+    """Update the solver settings of a settings.yaml written before :data:`SOLVER_SETTINGS_REVISION`, once.
+
+    Such a file holds the earlier GUI defaults, which cannot be told apart from a deliberate choice: presolve
+    ``choose`` becomes the default (nothing sent: presolve on) and scaling ``full`` becomes the default (nothing
+    sent: the solve's ``scaling`` governs, as it did before since ``full`` was never sent).  A stored presolve
+    ``on`` / ``off`` and the other scaling modes were departures from the old default and are kept.  The stored
+    MIP gap is not read.  The revision is set, so the next save records the update and it does not repeat.
+
+    Returns True when GUI runs of the project now solve differently: the old file sent presolve ``choose`` or
+    the 0.001 MIP gap.
+    """
+    revision = data.get("solver_settings_revision")
+    if isinstance(revision, int) and not isinstance(revision, bool) and revision >= SOLVER_SETTINGS_REVISION:
+        return False
+    presolve_was_choose = data.get("presolve", "choose") == "choose"
+    mip_gap_was_sent = data.get("solver_mip_gap_set", True) is True
+    if settings.presolve == "choose":
+        settings.presolve = None
+    if settings.scaling == "full":
+        settings.scaling = None
+    settings.solver_settings_revision = SOLVER_SETTINGS_REVISION
+    return presolve_was_choose or mip_gap_was_sent
+
+
+def solver_defaults_notice(project_name: str) -> str:
+    """The one-time notice shown when :func:`load_project_settings` updated a project's old solver settings."""
+    from flextool.engine._behaviour_changes import notice_text
+
+    return notice_text("gui_solver_defaults", "projects", [project_name])
+
+
+def load_project_settings(
+    project_path: Path, *, on_solver_defaults_reset: Callable[[], None] | None = None,
+) -> ProjectSettings:
     """Load project settings from settings.yaml in the project directory.
 
-    Returns defaults if the file does not exist or cannot be parsed.
+    Returns defaults if the file does not exist or cannot be parsed.  When the file holds the solver settings
+    of an earlier GUI and the update changes how its runs solve, *on_solver_defaults_reset* is called (the
+    caller shows :func:`solver_defaults_notice` and saves, which records the update).
     """
     settings_file = project_path / SETTINGS_FILENAME
     if not settings_file.exists():
@@ -94,21 +136,18 @@ def load_project_settings(project_path: Path) -> ProjectSettings:
     _stl = data.get("solver_time_limit", settings.solver_time_limit)
     if isinstance(_stl, int) and not isinstance(_stl, bool) and _stl >= 0:
         settings.solver_time_limit = _stl
-    _smg = data.get("solver_mip_gap", settings.solver_mip_gap)
-    if isinstance(_smg, (int, float)) and not isinstance(_smg, bool) and _smg >= 0:
-        settings.solver_mip_gap = float(_smg)
-    _smg_set = data.get("solver_mip_gap_set", settings.solver_mip_gap_set)
-    if isinstance(_smg_set, bool):
-        settings.solver_mip_gap_set = _smg_set
+    # ``solver_mip_gap`` / ``solver_mip_gap_set`` of older files are ignored: the GUI no longer sets the MIP gap.
     _mff = data.get("matrix_file_format", settings.matrix_file_format)
     if _mff in ("mps", "lp"):
         settings.matrix_file_format = _mff
-    _scl = data.get("scaling", settings.scaling)
-    if _scl in ("off", "solver_only", "basic", "full"):
+    _scl = data.get("scaling")
+    if _scl in SCALING_CHOICES:
         settings.scaling = _scl
-    _ps = data.get("presolve", settings.presolve)
-    if _ps in ("on", "off", "choose"):
+    _ps = data.get("presolve")
+    if _ps in PRESOLVE_CHOICES:
         settings.presolve = _ps
+    if _upgrade_solver_settings(data, settings) and on_solver_defaults_reset is not None:
+        on_solver_defaults_reset()
 
     # Calibrate-investments dialog — validate each field against its
     # allowed set / type and fall back to the dataclass default on

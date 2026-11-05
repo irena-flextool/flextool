@@ -15,6 +15,10 @@ A run calls :func:`start_run` with the markers of its input database (:func:`rea
 prints with ``print(..., flush=True)`` and announces each entity of a change once per run, so rolls and repeated
 solves of the same run do not repeat it.  :func:`warn_once` gives other run-time warnings the same once-per-run
 scope.
+
+``gui_solver_defaults`` is not a database change: its marker is the ``solver_settings_revision`` of a GUI
+project's settings.yaml, and the GUI shows the notice once when it updates an older file
+(``flextool.gui.settings_io``).
 """
 from __future__ import annotations
 
@@ -164,6 +168,17 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "chained solves subtracted it from every period, and its fixed-cost saving was counted over "
                      "the lifetime from the retirement (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "retirement_of_existing_capacity_only"),
+        ),
+        BehaviourChange(
+            id="gui_solver_defaults",
+            summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "
+                     "Toolbox runs: presolve is on (before: choose), and the MIP gap of each solve comes from its "
+                     "solver_mip_gap, else mip_rel_gap in solver_config/highs.opt (before: 0.001 for every "
+                     "solve; the GUI no longer has a MIP-gap setting). Results of MIP solves (integer "
+                     "investments, online variables) can change within the gap; an LP keeps its optimal "
+                     "objective value."),
+            silence=("This notice is shown once. To keep the old behaviour, choose presolve 'Choose' in the "
+                     "Solver options dialog and set solver_mip_gap on the solves in the database."),
         ),
     )
 }

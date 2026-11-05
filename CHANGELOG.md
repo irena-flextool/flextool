@@ -13,6 +13,14 @@
   writes its flags into environment variables.
 - **New flags `--benders-workers N` and `--basis-cache-dir PATH`** for `run_flextool`, the command-line twins of
   `FLEXTOOL_BENDERS_WORKERS` and `FLEXTOOL_BASIS_CACHE_DIR`.
+- **GUI runs now use the same solver settings as terminal and Spine Toolbox runs** (behaviour change, notice). The
+  GUI sends presolve and scaling only when you pick them in the Solver options dialog, whose new "Default" entries
+  send nothing: presolve is then on (before: the GUI always sent `choose`), and scaling is each solve's `scaling`
+  (choosing "Full" now forces `full` over the solve's setting). The GUI no longer has a MIP-gap setting: each solve
+  uses its `solver_mip_gap`, else `mip_rel_gap` in `solver_config/highs.opt` (before: 0.001 for every solve). Results
+  of MIP solves can change within the gap. A project saved by an earlier GUI is updated once when opened: a stored
+  presolve `choose` and scaling `full` become "Default" (a stored presolve `on` / `off` is kept), and the GUI shows
+  the change once. `--solver-mip-gap` and `FLEXTOOL_HIGHS_MIP_GAP` remain for terminal and Toolbox runs.
 - The run header lists the options set by a flag or an environment variable, with where each came from, and the
   number of polars threads.
 - **Processors with AVX2 keep polars' fast build when the compatible build is installed too.** polars loads its

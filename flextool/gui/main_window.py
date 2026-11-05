@@ -21,10 +21,13 @@ from flextool.gui.project_utils import (
     rename_project,
 )
 from flextool.gui.settings_io import (
+    PRESOLVE_CHOICES,
+    SCALING_CHOICES,
     load_global_settings,
     load_project_settings,
     save_global_settings,
     save_project_settings,
+    solver_defaults_notice,
 )
 from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
@@ -52,6 +55,17 @@ from flextool.gui.db_editor_integration import DbEditorManager
 
 
 logger = logging.getLogger(__name__)
+
+# Tk-variable value of the Solver options dialog's "Default" entries (stored as ``None`` in ProjectSettings).
+_SOLVER_DEFAULT = "default"
+
+
+def _choice_to_var(value: str | None) -> str:
+    return _SOLVER_DEFAULT if value is None else value
+
+
+def _var_to_choice(value: str, choices: tuple[str, ...]) -> str | None:
+    return value if value in choices else None
 
 
 def _unlink_sqlite(db_path: Path) -> None:
@@ -389,22 +403,21 @@ class MainWindow(tk.Tk):
 
         # ── Solver options vars ────────────────────────────────────
         # Persisted into ProjectSettings; ExecutionManager._build_run_command
-        # appends the matching CLI flag only when the value differs from
-        # the default below.  See ProjectSettings docstrings for the
-        # allowed value sets.  The five vars below back the Solver
-        # options dialog (launched from the "Solver options…" button in
-        # the side menu, above the Debug radio group).
+        # appends the matching CLI flag only for a setting the user
+        # changed.  See ProjectSettings docstrings for the allowed value
+        # sets.  The vars below back the Solver options dialog (launched
+        # from the "Solver options…" button in the side menu, above the
+        # Debug radio group).  Scaling and presolve hold
+        # ``_SOLVER_DEFAULT`` for the dialog's "Default" entry (stored as
+        # ``None``: nothing is sent).
         self.solver_log_level_var = tk.StringVar(value="normal")
         self.solver_time_limit_var = tk.IntVar(value=0)
-        self.solver_mip_gap_var = tk.DoubleVar(value=0.001)
-        self.solver_mip_gap_set_var = tk.BooleanVar(value=True)
         self.matrix_file_format_var = tk.StringVar(value="mps")
-        self.scaling_var = tk.StringVar(value="full")
-        self.presolve_var = tk.StringVar(value="choose")
+        self.scaling_var = tk.StringVar(value=_SOLVER_DEFAULT)
+        self.presolve_var = tk.StringVar(value=_SOLVER_DEFAULT)
 
         for _v in (
             self.solver_log_level_var, self.solver_time_limit_var,
-            self.solver_mip_gap_var, self.solver_mip_gap_set_var,
             self.matrix_file_format_var, self.scaling_var,
             self.presolve_var,
         ):
@@ -1854,7 +1867,25 @@ class MainWindow(tk.Tk):
         # Load project settings
         projects_dir = get_projects_dir()
         project_path = projects_dir / name
-        self.project_settings = load_project_settings(project_path)
+        solver_defaults_reset = False
+
+        def _on_solver_defaults_reset() -> None:
+            nonlocal solver_defaults_reset
+            solver_defaults_reset = True
+
+        self.project_settings = load_project_settings(
+            project_path, on_solver_defaults_reset=_on_solver_defaults_reset,
+        )
+        if solver_defaults_reset:
+            # Shown once: saving records the updated solver settings
+            # (their revision) in settings.yaml.
+            _notice = solver_defaults_notice(name)
+            logger.warning("%s", _notice)
+            print(_notice, flush=True)
+            save_project_settings(project_path, self.project_settings)
+            self.after_idle(
+                lambda: messagebox.showinfo("Solver settings updated", _notice, parent=self)
+            )
 
         # Create input source manager and scenario managers
         self.input_source_mgr = InputSourceManager(project_path, self.project_settings)
@@ -5377,11 +5408,9 @@ class MainWindow(tk.Tk):
             # Solver options.
             self.solver_log_level_var.set(s.solver_log_level)
             self.solver_time_limit_var.set(s.solver_time_limit)
-            self.solver_mip_gap_var.set(s.solver_mip_gap)
-            self.solver_mip_gap_set_var.set(s.solver_mip_gap_set)
             self.matrix_file_format_var.set(s.matrix_file_format)
-            self.scaling_var.set(s.scaling)
-            self.presolve_var.set(s.presolve)
+            self.scaling_var.set(_choice_to_var(s.scaling))
+            self.presolve_var.set(_choice_to_var(s.presolve))
         finally:
             self._suppress_auto_gen_save = False
 
@@ -5412,20 +5441,11 @@ class MainWindow(tk.Tk):
             self.project_settings.solver_time_limit = max(0, int(self.solver_time_limit_var.get()))
         except (TypeError, ValueError, tk.TclError):
             pass
-        try:
-            self.project_settings.solver_mip_gap = max(0.0, float(self.solver_mip_gap_var.get()))
-        except (TypeError, ValueError, tk.TclError):
-            pass
-        self.project_settings.solver_mip_gap_set = bool(self.solver_mip_gap_set_var.get())
         _mff = self.matrix_file_format_var.get()
         if _mff in ("mps", "lp"):
             self.project_settings.matrix_file_format = _mff
-        _scl = self.scaling_var.get()
-        if _scl in ("off", "solver_only", "basic", "full"):
-            self.project_settings.scaling = _scl
-        _ps = self.presolve_var.get()
-        if _ps in ("on", "off", "choose"):
-            self.project_settings.presolve = _ps
+        self.project_settings.scaling = _var_to_choice(self.scaling_var.get(), SCALING_CHOICES)
+        self.project_settings.presolve = _var_to_choice(self.presolve_var.get(), PRESOLVE_CHOICES)
 
         if self.current_project:
             project_path = get_projects_dir() / self.current_project
@@ -5454,8 +5474,6 @@ class MainWindow(tk.Tk):
         # discards cleanly.
         d_sll = tk.StringVar(value=self.solver_log_level_var.get())
         d_stl = tk.IntVar(value=self.solver_time_limit_var.get())
-        d_mg = tk.DoubleVar(value=self.solver_mip_gap_var.get())
-        d_mg_set = tk.BooleanVar(value=self.solver_mip_gap_set_var.get())
         d_mff = tk.StringVar(value=self.matrix_file_format_var.get())
         d_scl = tk.StringVar(value=self.scaling_var.get())
         d_ps = tk.StringVar(value=self.presolve_var.get())
@@ -5484,14 +5502,13 @@ class MainWindow(tk.Tk):
         ))
         row += 1
 
-        # Shared input guard for the two free-text numeric fields below
-        # (time limit, MIP gap).  Plain Entry widgets — not Spinboxes:
-        # both span too wide a range (1 s … 10^9 s; 1e-5 … 1) for spin
-        # arrows to be useful.
+        # Input guard for the free-text time-limit field below.  A plain
+        # Entry widget — not a Spinbox: it spans too wide a range
+        # (1 s … 10^9 s) for spin arrows to be useful.
         def _validate_nonneg_number(proposed: str) -> bool:
             # Allow empty / bare-dot mid-edit; otherwise require a
             # parseable, non-negative number.  Rejects "-" and any
-            # negative value as you type, so the fields can never hold a
+            # negative value as you type, so the field can never hold a
             # negative value.
             if proposed in ("", "."):
                 return True
@@ -5518,51 +5535,6 @@ class MainWindow(tk.Tk):
             "effective-options resolver as a CLI override\n"
             "(highest precedence)."
         ))
-        row += 1
-
-        # MIP relative gap.  A checkbox decides whether the dialog value
-        # is sent at all: when off, no --solver-mip-gap flag is emitted
-        # and the solver_config/<solver>.opt baseline (or the solver's
-        # built-in default) governs.  When on, the value IS sent — and
-        # 0 is a valid value (solve to a proven exact optimum), so 0 is
-        # no longer overloaded as the "defer" sentinel.
-        mg_check = ttk.Checkbutton(
-            body, text="Set relative MIP gap here", variable=d_mg_set,
-        )
-        mg_check.grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
-        mg_entry = ttk.Entry(
-            body, width=14, textvariable=d_mg,
-            validate="key", validatecommand=_vcmd,
-        )
-        mg_entry.grid(row=row, column=1, sticky="w", pady=4)
-
-        def _sync_mg_state(*_a) -> None:
-            mg_entry.configure(
-                state="normal" if d_mg_set.get() else "disabled",
-            )
-
-        mg_check.configure(command=_sync_mg_state)
-        _sync_mg_state()  # apply initial enabled/disabled state
-        _mg_tip = (
-            "HiGHS MIP relative optimality gap\n"
-            "(--solver-mip-gap, routed to HiGHS 'mip_rel_gap').\n"
-            "Only affects MIP solves (integer investments,\n"
-            "unit-commitment / online variables); pure-LP solves\n"
-            "ignore it.\n"
-            "  • Checked   — FlexTool sends this gap to the solver,\n"
-            "                overriding any value in the\n"
-            "                solver_config/<solver>.opt file. 0 is\n"
-            "                valid (solve to a proven exact optimum);\n"
-            "                a larger gap (e.g. 0.01 = 1%) stops the\n"
-            "                branch-and-bound search sooner, trading\n"
-            "                optimality for speed.\n"
-            "  • Unchecked — no override is sent; the value in\n"
-            "                solver_config/<solver>.opt applies. If\n"
-            "                that file sets no gap either, the solver's\n"
-            "                built-in default applies (HiGHS: 1e-4)."
-        )
-        _attach_tip(mg_check, _mg_tip)
-        _attach_tip(mg_entry, _mg_tip)
         row += 1
 
         # Matrix file format
@@ -5597,15 +5569,22 @@ class MainWindow(tk.Tk):
         scl_row = ttk.Frame(body)
         scl_row.grid(row=row, column=1, sticky="w", pady=4)
         _scl_opts = (
-            ("Off", "off"), ("Solver only", "solver_only"),
-            ("Basic", "basic"), ("Full", "full"),
+            ("Default (solve's scaling)", _SOLVER_DEFAULT), ("Off", "off"),
+            ("Solver only", "solver_only"), ("Basic", "basic"),
+            ("Full", "full"),
         )
-        for _i, (_t, _v) in enumerate(_scl_opts):
+        ttk.Radiobutton(
+            scl_row, text=_scl_opts[0][0], variable=d_scl, value=_scl_opts[0][1],
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=(0, 6))
+        for _i, (_t, _v) in enumerate(_scl_opts[1:]):
             ttk.Radiobutton(
                 scl_row, text=_t, variable=d_scl, value=_v,
-            ).grid(row=_i // 2, column=_i % 2, sticky="w", padx=(0, 6))
+            ).grid(row=1 + _i // 2, column=_i % 2, sticky="w", padx=(0, 6))
         _attach_tip(scl_row, (
             "FlexTool autoscaler strategy (--scaling).\n"
+            "  • Default      Nothing is sent: each solve uses its\n"
+            "                  'scaling' in the database, else full.\n"
+            "                  The other entries apply to every solve.\n"
             "  • off          Disable ALL scaling (incl. HiGHS internal\n"
             "                  matrix equilibration). Raw numerics.\n"
             "  • solver_only  Disable FlexTool autoscaler; HiGHS still\n"
@@ -5616,7 +5595,7 @@ class MainWindow(tk.Tk):
             "  • full         Full autoscaler: range detection,\n"
             "                  semantic per-type LP scaling (Layer 2),\n"
             "                  and HiGHS user_*_scale recommendation\n"
-            "                  (Layer 3). Default."
+            "                  (Layer 3)."
         ))
         row += 1
 
@@ -5626,20 +5605,21 @@ class MainWindow(tk.Tk):
         )
         ps_row = ttk.Frame(body)
         ps_row.grid(row=row, column=1, sticky="w", pady=4)
-        for _t, _v in (("On", "on"), ("Off", "off"), ("Choose", "choose")):
+        for _t, _v in (
+            ("Default (on)", _SOLVER_DEFAULT), ("On", "on"), ("Off", "off"),
+            ("Choose", "choose"),
+        ):
             ttk.Radiobutton(
                 ps_row, text=_t, variable=d_ps, value=_v,
             ).pack(side="left", padx=(0, 6))
         _attach_tip(ps_row, (
-            "HiGHS presolve override (--presolve).\n"
-            "  • on       — force presolve on.\n"
+            "HiGHS presolve (--presolve).\n"
+            "  • Default  — nothing is sent: presolve on, the same as a\n"
+            "                terminal or Spine Toolbox run.\n"
+            "  • on       — presolve on.\n"
             "  • off      — disable presolve entirely (much slower but\n"
             "                useful for memory or numerical diagnostics).\n"
-            "  • choose   — let HiGHS decide per-problem (its native\n"
-            "                default; the recommended setting).\n"
-            "The engine's determinism gate pins presolve='on' internally\n"
-            "for byte-identical golden tests; that pin is independent of\n"
-            "this GUI/CLI knob, so 'choose' here is safe for normal runs."
+            "  • choose   — let HiGHS decide per problem."
         ))
         row += 1
 
@@ -5653,7 +5633,9 @@ class MainWindow(tk.Tk):
             text=(
                 "These are the common knobs. The full set of solver "
                 "options can be set\nthrough the .opt files (e.g. "
-                "highs.opt) in the project's solver_config folder."
+                "highs.opt) in the project's solver_config folder;\n"
+                "the MIP gap is set per solve (solver_mip_gap) or in "
+                "highs.opt."
             ),
             justify="left",
             foreground="#666666",
@@ -5679,19 +5661,14 @@ class MainWindow(tk.Tk):
                 self.solver_time_limit_var.set(max(0, int(d_stl.get())))
             except (TypeError, ValueError, tk.TclError):
                 pass
-            self.solver_mip_gap_set_var.set(bool(d_mg_set.get()))
-            try:
-                self.solver_mip_gap_var.set(max(0.0, float(d_mg.get())))
-            except (TypeError, ValueError, tk.TclError):
-                pass
             _v_mff = d_mff.get()
             if _v_mff in ("mps", "lp"):
                 self.matrix_file_format_var.set(_v_mff)
             _v_scl = d_scl.get()
-            if _v_scl in ("off", "solver_only", "basic", "full"):
+            if _v_scl == _SOLVER_DEFAULT or _v_scl in SCALING_CHOICES:
                 self.scaling_var.set(_v_scl)
             _v_ps = d_ps.get()
-            if _v_ps in ("on", "off", "choose"):
+            if _v_ps == _SOLVER_DEFAULT or _v_ps in PRESOLVE_CHOICES:
                 self.presolve_var.set(_v_ps)
             dlg.destroy()
 
