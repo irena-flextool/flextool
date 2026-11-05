@@ -33,7 +33,7 @@ LH2_COARSE = {"liquefier_A", "liquefier_B", "liquefier_C", "pipe_AB", "pipe_BC"}
 
 
 def _chain(fixture: Path, scenario: str) -> list[str]:
-    data = json.loads(fixture.read_text())
+    data = json.loads(fixture.read_text(encoding="utf-8"))
     rows = [r for r in data["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
     alt = next(a for a in nxt if a not in set(nxt.values()))
@@ -273,7 +273,7 @@ def test_readers_expand_coarse_variables() -> None:
         rel = path.relative_to(FLEXTOOL_ROOT).as_posix()
         if rel in _RAW_READERS:
             continue
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
         for i, line in enumerate(lines, 1):
             if literal.search(line) or (dynamic.search(line)
                                         and any(quoted.search(x) for x in lines[max(0, i - 9):i])):
