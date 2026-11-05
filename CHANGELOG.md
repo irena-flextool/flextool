@@ -97,7 +97,7 @@
   stochastic solves with mid-horizon branches and units with online variables and a downward ramp limit). Each
   branch's first step now reads the shut-down share of the trunk's last step once; before, it was multiplied by
   the number of branches squared (1.04 instead of 0.26 with two branches), which let units shut down at the branch
-  point drop their flow faster than the ramp limit allows.
+  point drop their flow faster than the ramp limit allows. An upgraded database prints a notice naming the units.
 - **Units and connections between coarse nodes use the coarse step** (results can change for models with a
   `group` `new_stepduration`; before, every flow, unit commitment and reserve stayed at the solve's step). A unit
   or connection whose balance nodes are all in coarse groups now decides once per coarse step, so the model gets
@@ -123,19 +123,24 @@
     capacity, a connection's net position, the floor of its flow, the storage energy for `reserve_duration` when
     the storage node and every provider are coarse) apply to the average over the step, with the average
     availability or profile (a wind unit offers reserve against its mean capacity factor over the step), and the
-    room its ramp limit leaves for reserve is the smallest of the step's time steps.
+    room its ramp limit leaves for reserve is the smallest of the step's time steps (each with its own capacity
+    factor).
   - *Exact connections and DC power flow*: an `exact` connection chooses its direction once per coarse step, its
-    direction limits applying to the average over the step. A DC line has one flow per coarse step; a coarse node
-    whose every DC line uses the coarse step has one voltage angle per coarse step.
+    direction limits applying to the average over the step. A DC line has one flow per coarse step; the nodes of a DC
+    network whose every line uses the coarse step (and whose nodes all have the same coarse step) have one voltage
+    angle per coarse step. In a DC network with a line at the solve's step every angle stays at the solve's step,
+    so that line keeps its per-step physics.
   - *Rows that combine several units and connections*: a capacity-margin, inertia or non-synchronous row of a
     group, a flow group's instant-flow limit, a user constraint with flow or storage terms, the DC power-flow row
     of a line and the stochastic storage-use tie of a node are one row per coarse step, the average of the row
     over the step, when every unit and connection in the row uses the coarse step; the inertia and
     non-synchronous shortfalls are then one value per coarse step. Such a row uses the step mean of the demand,
     inflow, profile, limit or constant in it: an averaged capacity margin covers the mean net demand of the step,
-    not its peak hour. A row that mixes units or connections on the coarse step with others on the solve's step
-    stays at every time step and sees the coarse flows constant through their step (a coarse DC line at a node
-    that also has a DC line at the solve's step holds the angle difference across it constant through the step).
+    not its peak hour. A row whose limit is given on only part of a coarse step stays at the time steps it covers.
+    A row that mixes units or connections on the coarse step with others on the solve's step stays at every time
+    step and sees the coarse flows constant through their step (a coarse DC line in a network
+    with a line at the solve's step holds the angle difference across it constant through the step; the angles
+    themselves stay per time step).
   - *What keeps the solve's step*: units and connections with a node outside the coarse groups, and those with a
     delay; flows that cross Benders regions or live in the Benders master; in a stochastic solve, a unit or
     connection at a stochastic node, with online variables or providing reserves, whose coarse step is tied

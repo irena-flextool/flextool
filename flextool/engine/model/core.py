@@ -2153,11 +2153,12 @@ def _eq_ramp(b: _Build) -> None:
     #   R↑ ≤ ρ·c·cap (up),  −R↓ ≥ −ρ·c·cap (down),  ρ = ramp_speed · 60 · step_duration[d,t] < 1;
     #   cap = v_online[p,d,t] for units with online variables, built units otherwise.
     # ─── EQ. ─── ramp_{sink,source}_{up,down}_reserve_coarse ─────────────────
-    # R↑[p,s,k,d,b] ≤ ρ_min · c̄ · cap (up),  −R↓[p,s,k,d,b] ≥ −ρ_min · c̄ · cap (down)
+    # R↑[p,s,k,d,b] ≤ room_b · cap (up),  −R↓[p,s,k,d,b] ≥ −room_b · cap (down)
     #   ∀ arc of a coarse process with the ramp limit, holding reserve in that direction on its coarse step (d,b)
-    #   (b = its first fine step);  ρ_min = min_{t∈b} ρ_t < 1, ρ_t the room of the fine row at t:
-    #   ramp_speed · 60 · (step_duration[d′,t′] + step_duration[d,t]) / 2 with t's ramp predecessor (d′,t′) (a
-    #   carried one: its carried duration), ramp_speed · 60 · step_duration[d,t] without one;  c̄ the step mean of c;
+    #   (b = its first fine step) with some ρ_t < 1;  room_b = min_{t∈b, ρ_t<1} ρ_t · c[p,s,k,d,t], ρ_t the room of
+    #   the fine row at t: ramp_speed · 60 · (step_duration[d′,t′] + step_duration[d,t]) / 2 with t's ramp
+    #   predecessor (d′,t′) (a carried one: the arc's carried duration p_roll_continue_flow_duration, as the
+    #   carried ramp row), ramp_speed · 60 · step_duration[d,t] without one;  c the arc's capacity factor at t;
     #   cap = v_online (units online of the step) or the built units
     # A coarse process holds one reserve and one flow per coarse step: the fine rows inside the step (no flow change)
     # would bound the reserve by each step's own room, so the smallest binds; the ramp between coarse steps above
@@ -2428,7 +2429,20 @@ def _ramp_rate(d, idx_set: "pl.DataFrame", side: str, rows_subset: "pl.DataFrame
     """``c · ρ̄`` (or ``c · ρ`` on reserve-only rows) over ``rows_subset`` (:func:`_ramp_rows` output, any
     ``__kind``): the per-row ramp room already scaled by the arc's capacity factor ``c`` (c14c design §3,
     EQ. header of :func:`_eq_ramp`).  A coarse process's time-varying source factor is its coarse step's mean
-    (``b`` given: :func:`_coarse_flows.at_first_steps`)."""
+    (``b`` given: :func:`_coarse_flows.at_first_steps`).  The reserve-room rows of a coarse process
+    (:func:`_coarse_flows.reserve_room_rows`) already hold c in their room, min_t ρ_t · c_t, and are not scaled
+    again."""
+    if b is not None and b.has_coarse_proc and "__kind" in rows_subset.columns:
+        fine_rows, coarse_rows = _coarse_flows.split_arcs(b, rows_subset)
+        is_room = pl.col("__kind") == "reserve"
+        room_rows = coarse_rows.filter(is_room)
+        if room_rows.height > 0:
+            rest = pl.concat([fine_rows, coarse_rows.filter(~is_room)])
+            room = room_rows.select(*keys, "d", "t", value=pl.col("__room").cast(pl.Float64))
+            if rest.height > 0:
+                other = _ramp_rate(d, idx_set, side, rest, keys, b=b).frame.select(*keys, "d", "t", "value")
+                room = pl.concat([other, room.select(*(pl.col(c).cast(other.schema[c]) for c in other.columns))])
+            return Param(("p", "source", "sink", "d", "t"), room)
     rate = Param(("p", "source", "sink", "d", "t"), rows_subset.select(*keys, "d", "t", value=pl.col("__room")))
     if side == "sink":
         if d.p_process_sink_max_capacity_coef is not None:
@@ -2545,11 +2559,12 @@ def _coarse_ramp_limit_share(b: "_Build", ramp_speed: Param, side: str, points: 
     speed = ramp_speed.frame.select(
         pl.col("p").cast(pl.Utf8).alias("_p"), pl.col(side).cast(pl.Utf8).alias("_n"),
         pl.col("value").cast(pl.Float64).alias("__speed"))
-    return (pts.join(share, on=["_p", "_source", "_sink", "_d", "_t"], how="left")
-            .with_columns(pl.col("__ml").fill_null(0.0))
-            .join(dur, on=["_d", "_t"], how="inner")
-            .group_by(*keys, "d", "t", "_p", "_source", "_sink")
-            .agg(pl.col("__dur").sum(), (pl.col("__w") * pl.col("__ml")).sum().alias("__ml"))
+    step_rows = (pts.join(share, on=["_p", "_source", "_sink", "_d", "_t"], how="left")
+                 .with_columns(pl.col("__ml").fill_null(0.0))
+                 .join(dur, on=["_d", "_t"], how="inner")
+                 .with_columns((pl.col("__w") * pl.col("__ml")).alias("__ml")))
+    return (_coarse_flows.ordered_sum(step_rows, [*keys, "d", "t", "_p", "_source", "_sink"], "_t",
+                                      values=("__dur", "__ml"))
             .with_columns(pl.col(f"_{side}").alias("_n"))
             .join(speed, on=["_p", "_n"], how="inner")
             .with_columns(value=_coarse_flows.step_limit_share(pl.col("__ml"),
@@ -2588,6 +2603,19 @@ def _predecessor_points(rows_subset: "pl.DataFrame", d) -> "pl.DataFrame":
         "p", "source", "sink",
         pl.col("__d_prev").cast(d.dt.schema["d"]).alias("d"),
         pl.col("__t_prev").cast(d.dt.schema["t"]).alias("t")).unique(maintain_order=True)
+
+
+def _branch_point_notice(link_rows: "pl.DataFrame") -> None:
+    """Behaviour-change notice naming the units whose downward ramp rows meet a branch point: several rows (one per
+    branch) share the predecessor step, where the shut-down share used to be multiplied (:func:`_predecessor_points`
+    counts it once)."""
+    shared = (link_rows.select(pl.col("p").cast(pl.Utf8), pl.col("source").cast(pl.Utf8),
+                               pl.col("sink").cast(pl.Utf8), "__d_prev", "__t_prev")
+              .filter(pl.struct("p", "source", "sink", "__d_prev", "__t_prev").is_duplicated()))
+    if shared.height > 0:
+        from flextool.engine import _behaviour_changes
+
+        _behaviour_changes.notice("ramp_branch_point_shutdown_once", "units", sorted(set(shared["p"].to_list())))
 
 
 def _attach_at_predecessor(rows_subset: "pl.DataFrame", values: "pl.DataFrame", keys: list) -> "pl.DataFrame":
@@ -2666,10 +2694,11 @@ def _online_ramp_rhs(b: "_Build", idx_set: "pl.DataFrame", ramp_speed: Param, si
                    .select(*keys, "d", "t", "value"))
         if su_coef.height > 0:
             terms["startup"] = v_startup_k * Param(tuple(keys) + ("d", "t"), su_coef)
-        # shutdown: −c·SD′[d′,t′] on link rows (ml-based); −c·SD′_carry on carry rows (critique item 3:
-        #   SD′_carry = max(1, f̂ / (c · ĉ)), ĉ = p_roll_continue_online, 1.0 where ĉ = 0 — no stoppers then).
+        # shutdown: −c·SD′[d′,t′] on link rows (ml-based); −c·SD′_carry on carry rows:
+        #   SD′_carry = max(1, f̂ / (c · ĉ)), ĉ = p_roll_continue_online, 1.0 where ĉ = 0 — no stoppers then.
         shutdown_parts = []
         if link_kind.height > 0:
+            _branch_point_notice(link_kind)
             sd = _ramp_limit_share(b, ramp_speed, side, _predecessor_points(link_kind, d))
             sd_at_row = _attach_at_predecessor(link_kind, sd, keys)
             c_link = _c_values(link_kind, c_param, keys)

@@ -15,12 +15,11 @@ The *events* of a coarse process (start-ups, shut-downs) are registered at ``b_f
 fine row of an interior step has no event term (an alias would count one start-up on every fine step of a sum
 over t).
 
-The arc-local rows of a coarse process (capacity, output sum, conversion, input share, profiles, the online
-capacity, the minimum load and the reserve limits) are not written per fine step: :func:`add_cstr` writes them once per coarse step as
-the twin family ``<family>_coarse``, the fine row's Δt-weighted average over the step (EQ. header in
-:func:`add_cstr`).  A constant flow could not meet a per-step equality while a parameter varies within the step;
-the average lets time-varying availability, profile, efficiency and capacity coefficients act through their step
-means.
+The arc-local rows of a coarse process (capacity, output sum, conversion, input share, profiles, the online capacity,
+the minimum load and the reserve limits) are not written per fine step: :func:`add_cstr` writes them once per coarse
+step as the twin family ``<family>_coarse``, the fine row's Δt-weighted average over the step (EQ. header in
+:func:`add_cstr`).  A constant flow could not meet a per-step equality while a parameter varies within the step; the
+average lets time-varying availability, profile, efficiency and capacity coefficients act through their step means.
 
 Rows that couple several entities follow the *row rule* (:func:`add_row_rule_cstr`): a row whose every member is
 coarse (:func:`row_partition`; the capacity-margin, inertia, non-synchronous and flow-group instant-flow rows of a
@@ -31,12 +30,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
 import polars as pl
 from polar_high import Param, Sum
 from polar_high.engine import Expr, Var
 
 from flextool.engine.model._common import _has_rows
+from flextool.engine.preprocess.params._coarse import ordered_sum
 
 if TYPE_CHECKING:
     from flextool.engine.model.core import _Build
@@ -117,11 +116,18 @@ def alias(b: "_Build", registered: Var, index: pl.DataFrame, steps: "pl.DataFram
 
 
 def _split(b: "_Build", over: pl.DataFrame,
-           partition: "pl.DataFrame | None" = None) -> "tuple[pl.DataFrame, pl.DataFrame]":
+           partition: "pl.DataFrame | None" = None) -> "tuple[pl.DataFrame, pl.DataFrame, int]":
     """``over`` (with ``p``, ``d``, ``t``) split into the rows of fine processes and the coarse rows, one per
     coarse step: ``over``'s columns with ``t`` replaced by ``b_first``.  With ``partition`` (:func:`row_partition`:
-    ``(key…, d, b_first, t, w)``) the coarse rows are those of its keys instead."""
+    ``(key…, d, b_first, t, w)``) the coarse rows are those of its keys instead.  Also returns the number of rows
+    of coarse keys that stay per solve step (below).
+
+    A row key gets a coarse row of a coarse step only when ``over`` has its row at every fine step of the step;
+    otherwise its rows of that step stay per solve step (they read the coarse terms at their constant value).
+    The average weighs every fine step of the step, so a step where the fine model has no row (a limit authored on
+    part of the step) would count as a row with every term 0 there."""
     if partition is None:
+        steps = b.coarse_steps.select("p", "d", "t", "b_first")
         with_b = _step_of(b, over)
     else:
         keys = [c for c in partition.columns if c not in ("b_first", "w")]
@@ -130,25 +136,35 @@ def _split(b: "_Build", over: pl.DataFrame,
             if over.schema[c] != steps.schema[c]:
                 steps = steps.with_columns(pl.col(c).cast(over.schema[c], strict=False))
         with_b = over.join(steps, on=keys, how="left")
+    step_key = [c for c in steps.columns if c != "t"]
+    size = steps.group_by(step_key).agg(pl.len().alias("__size"))
+    for c in step_key:
+        if c in over.columns and size.schema[c] != over.schema[c]:
+            size = size.with_columns(pl.col(c).cast(over.schema[c], strict=False))
+    row_key = [c for c in over.columns if c != "t"] + ["b_first"]
+    with_b = (with_b
+              .with_columns(pl.col("t").n_unique().over(row_key).alias("__n"))
+              .join(size, on=step_key, how="left", maintain_order="left")
+              .with_columns((pl.col("b_first").is_not_null() & (pl.col("__n") != pl.col("__size"))).alias("__part"))
+              .with_columns(pl.when(pl.col("__part")).then(None).otherwise(pl.col("b_first")).alias("b_first")))
     fine = with_b.filter(pl.col("b_first").is_null()).select(over.columns)
     cols = [("b_first" if c == "t" else c) for c in over.columns]
     coarse = (with_b.filter(pl.col("b_first").is_not_null())
               .select(cols)
               .unique(maintain_order=True))
-    return fine, coarse
+    return fine, coarse, int(with_b["__part"].sum())
 
 
-def _ordered_sum(frame: pl.DataFrame, keys: list[str], order: str) -> pl.DataFrame:
-    """``(keys…, value)``: ``frame``'s values summed per ``keys`` in ``order`` (and key) order, with
-    ``numpy.add.reduceat`` on one contiguous array, so the bits of each sum do not depend on the row order a
-    join produced or on how the frame is chunked."""
-    srt = frame.sort([*keys, order])
-    if srt.height == 0:
-        return srt.select(*keys, "value")
-    new = pl.any_horizontal([pl.col(c).ne_missing(pl.col(c).shift(1)) for c in keys]).fill_null(True)
-    starts = np.flatnonzero(srt.select(new)[:, 0].to_numpy())
-    sums = np.add.reduceat(srt["value"].to_numpy().astype(np.float64, copy=False), starts)
-    return srt[starts].select(keys).with_columns(value=pl.Series("value", sums, dtype=pl.Float64))
+def _no_event(name: str) -> None:
+    """Raise when ``name`` is an event variable (start-ups / shut-downs: the ``first`` mode of
+    ``output._coarse_flows.COARSE_VARS``) on the fine grid: an event is registered at a coarse step's first fine step
+    only, so averaging it would weigh it by w[b_first]; event terms enter a coarse row on the coarse grid
+    (:func:`at_step`, ``coarse_rhs``)."""
+    from flextool.engine.output._coarse_flows import COARSE_VARS
+
+    if COARSE_VARS.get(name) == "first":
+        raise ValueError(f"average: the event variable {name} cannot be averaged over a coarse step; pass it on the "
+                         "coarse grid (at_step, coarse_rhs)")
 
 
 def average(b: "_Build", term, w: "Param | None" = None):
@@ -156,7 +172,7 @@ def average(b: "_Build", term, w: "Param | None" = None):
     step: ``Σ_{t∈b} w[K,d,b,t] · term[…,t]`` with open dims ``(…, b_first)``; ``w`` the weights of the row's
     partition keyed ``(K, d, b_first, t)`` (default :attr:`coarse_w`, K = ``p``).  A term without ``t`` (and a
     scalar, and an event term on the coarse grid) is the same on every fine step of the step, so it is returned as
-    it is (Σ_t w = 1)."""
+    it is (Σ_t w = 1).  An event variable on the fine grid raises (:func:`_no_event`)."""
     w = b.coarse_w if w is None else w
     if isinstance(term, (int, float)):
         return term
@@ -176,13 +192,20 @@ def average(b: "_Build", term, w: "Param | None" = None):
         weighted = (frame.join(wf.rename({"value": "__w"}), on=on, how="inner")
                     .with_columns(value=pl.col("value") * pl.col("__w"))
                     .select(*dims, "t", "value"))
-        return Param(dims, _ordered_sum(weighted, list(dims), "t"))
+        return Param(dims, ordered_sum(weighted, list(dims), "t"))
     if isinstance(term, Var):
-        return Sum(term * w, over=("t",)) if "t" in term.dims else term
+        if "t" not in term.dims:
+            return term
+        _no_event(term.name)
+        return Sum(term * w, over=("t",))
     if isinstance(term, Expr):
         with_t = [x for x in term.terms if "t" in x.dims]
         if not with_t:
             return term
+        for x in with_t:
+            source = getattr(x, "var_source", None)
+            if source is not None:
+                _no_event(source.name)
         avg = Sum(Expr(with_t) * w, over=("t",))
         rest = [x for x in term.terms if "t" not in x.dims]
         return avg + Expr(rest) if rest else avg
@@ -195,16 +218,19 @@ def add_cstr(b: "_Build", name: str, *, over: pl.DataFrame, sense: str, lhs_term
     """``m.add_cstr(name, …)`` for the rows of fine processes and ``<name>_coarse`` for those of coarse ones (the
     EQ. header below).  ``fine_rhs`` holds right-hand-side terms of the fine rows only (after ``rhs_terms``);
     ``coarse_rhs`` the event terms E of the coarse rows, already on the coarse grid (open dims with ``b_first``,
-    :func:`at_step`), added to the averaged right-hand side unchanged.  ``over`` may name a coarse row by its
-    coarse step's first fine step.  ``partition`` (:func:`row_partition`) makes the rows of its keys coarse instead
-    of those of coarse processes: a row key whose every member is coarse (the row rule); the other rows stay per
-    solve step and read the coarse terms at their constant value."""
+    :func:`at_step`), added to the averaged right-hand side unchanged.  ``partition`` (:func:`row_partition`)
+    makes the rows of its keys coarse instead of those of coarse processes: a row key whose every member is coarse
+    (the row rule); the other rows stay per solve step and read the coarse terms at their constant value."""
     m = b.m
     if (not b.has_coarse_proc or (partition is not None and partition.height == 0)
             or (partition is None and "p" not in over.columns)):
         m.add_cstr(name, over=over, sense=sense, lhs_terms=lhs_terms, rhs_terms={**rhs_terms, **(fine_rhs or {})})
         return
-    fine, coarse = _split(b, over, partition)
+    fine, coarse, partial = _split(b, over, partition)
+    if partial and coarse_rhs:
+        # The event terms of a coarse process exist only on the coarse grid (coarse_rhs); a per-step row of it
+        # would miss them.
+        raise ValueError(f"{name}: {partial} rows of coarse processes do not cover their whole coarse step")
     if fine.height > 0:
         m.add_cstr(name, over=fine, sense=sense, lhs_terms=lhs_terms, rhs_terms={**rhs_terms, **(fine_rhs or {})})
     # ─── EQ. ─── <family>_coarse: maxFlow_coarse, maxFlow_negCap_coarse, maxFlow_back_coarse, maxOutputSum_coarse,
@@ -227,7 +253,10 @@ def add_cstr(b: "_Build", name: str, *, over: pl.DataFrame, sense: str, lhs_term
     #   g, a user constraint cn, a stochastic node n, a DC arc between coarse-angle nodes), (…, d, b)
     #   its coarse steps (b = its first fine step b_first);  LHS_t / RHS_t = the level terms of the fine row of the
     #   family at (d, t);  E = the row's event terms on the coarse grid (start-ups at b, shut-downs at the coarse
-    #   successor b⁺: the capacity reduction of maxFlow_online / maxInputFlow_online and their _shutdown rows)
+    #   successor b⁺: the capacity reduction of maxFlow_online / maxInputFlow_online and their _shutdown rows);
+    #   only where the fine family has a row of K at every fine step of b — a key whose rows cover part of b (a
+    #   limit authored on part of the step) keeps its fine rows there, reading the coarse terms at their constant
+    #   value (_split)
     # The fine row's Δt-weighted average over the coarse step.  The flow is one column per coarse step, so its own
     # term averages to itself; time-varying availability, profile, efficiency (slope) and capacity coefficients act
     # through their step means (the mean of a product, not the product of means); so do the units online and the
@@ -306,7 +335,7 @@ def spans(b: "_Build") -> pl.DataFrame:
                                            pl.col("value").cast(pl.Float64).alias("__dt"))
     st = b.coarse_steps.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
                                pl.col("b_first").alias("_b"), pl.col("t").cast(pl.Utf8).alias("_t"))
-    return _ordered_sum(st.join(psd, on=["_d", "_t"], how="left").select("_p", "_d", "_b", "_t", value="__dt"),
+    return ordered_sum(st.join(psd, on=["_d", "_t"], how="left").select("_p", "_d", "_b", "_t", value="__dt"),
                         ["_p", "_d", "_b"], "_t").rename({"value": "__dur"})
 
 
@@ -414,13 +443,17 @@ def reserve_room_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: Param, side: 
     """The reserve ramp-room rows of the coarse-process ``arcs`` ``(p, source, sink)`` in ramp direction ``dir_``:
     one per coarse step b on which the arc holds reserve in that direction (upward / downward reserve at its sink
     in the same direction, at its source in the opposite one, ``prundt``), in the columns of ``core._ramp_rows``
-    (``__kind`` ``reserve``, ``t`` = b_first) with ``__room`` = min_{t∈b} ρ_t, only where it is < 1.
+    (``__kind`` ``reserve``, ``t`` = b_first) with ``__room`` = min_{t∈b, ρ_t<1} ρ_t · c_t (none where every ρ_t ≥ 1):
+    the room already scaled by the arc's capacity factor c at each fine step (``core._c_param_plain``), so
+    ``core._ramp_rate`` does not scale these rows again.
 
     ρ_t is the fine rule's room at each fine step t of b: ramp_speed · 60 · (Δt_prev + Δt) / 2 where t has a ramp
-    predecessor (``link``; ``carry``: the previous roll's step with its carried duration), ramp_speed · 60 · Δt
-    where it has none.  The reserve is one value per coarse step and the flow does not change within it, so the
-    fine rows of the step (flow change 0) would each bound the reserve by their own room: the smallest binds.  The
-    ramp between coarse steps (:func:`ramp_rows`) still holds the reserve with the flow change."""
+    predecessor (``link``; ``carry``: the previous roll's step, with the arc's carried duration
+    ``p_roll_continue_flow_duration`` as in :func:`ramp_rows`, else the carried step's), ramp_speed · 60 · Δt where
+    it has none; the fine rule builds the row only where ρ_t < 1.  The reserve is one value per coarse step and the
+    flow does not change within it, so the fine rows of the step (flow change 0) would each bound the reserve by
+    their own room c_t · ρ_t: the smallest binds.  The ramp between coarse steps (:func:`ramp_rows`) still holds the
+    reserve with the flow change."""
     d = b.d
     keys = ["p", "source", "sink"]
     empty_cols = {**{k: arcs.schema[k] for k in keys}, "d": b.pss_dt.schema["d"], "t": b.pss_dt.schema["t"],
@@ -435,8 +468,6 @@ def reserve_room_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: Param, side: 
                                pl.col("b_first").alias("_b"), pl.col("t").cast(pl.Utf8).alias("_t"))
     psd = d.p_step_duration.frame.select(pl.col("d").cast(pl.Utf8).alias("_d"), pl.col("t").cast(pl.Utf8).alias("_t"),
                                          pl.col("value").cast(pl.Float64).alias("__dt"))
-    prev = pl.concat([link.select("_d", "_t", "__dur_prev"), carry.select("_d", "_t", "__dur_prev")]).unique(
-        subset=["_d", "_t"], keep="first")
     held = prundt.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("ud").cast(pl.Utf8).alias("_ud"),
                          pl.col("n").cast(pl.Utf8).alias("_rn"), pl.col("d").cast(pl.Utf8).alias("_d"),
                          pl.col("t").cast(pl.Utf8).alias("_t"))
@@ -450,15 +481,39 @@ def reserve_room_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: Param, side: 
     hold = pl.concat([base.join(at_sink, on=["_p", "_sink", "_d", "_t"], how="semi"),
                       base.join(at_source, on=["_p", "_source", "_d", "_t"], how="semi")]).select(
         "_p", "_source", "_sink", "_d", "_b").unique()
-    rho = (base.join(psd, on=["_d", "_t"], how="left")
-           .join(prev, on=["_d", "_t"], how="left")
-           .with_columns(__rho=pl.when(pl.col("__dur_prev").is_not_null())
-                         .then(pl.col("__speed") * 60.0 * (pl.col("__dt") + pl.col("__dur_prev")) / 2.0)
+    from flextool.engine.model.core import _c_param_plain
+
+    fine = (base.join(hold, on=["_p", "_source", "_sink", "_d", "_b"], how="semi")
+            .join(psd, on=["_d", "_t"], how="left")
+            .join(link.select("_d", "_t", pl.col("__dur_prev").alias("__dur_link")).unique(subset=["_d", "_t"]),
+                  on=["_d", "_t"], how="left")
+            .join(carry.select("_d", "_t", pl.col("__dur_prev").alias("__dur_carry")).unique(subset=["_d", "_t"]),
+                  on=["_d", "_t"], how="left"))
+    dur_p = getattr(d, "p_roll_continue_flow_duration", None)
+    if dur_p is not None and carry.height > 0:
+        durs = dur_p.frame.select(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in (*keys, "d", "t")),
+                                  pl.col("value").cast(pl.Float64).alias("__dur_arc"))
+        fine = fine.join(durs, on=["_p", "_source", "_sink", "_d", "_t"], how="left")
+    else:
+        fine = fine.with_columns(pl.lit(None, pl.Float64).alias("__dur_arc"))
+    c_param = _c_param_plain(d, arcs, side)
+    if c_param is None:
+        fine = fine.with_columns(__c=pl.lit(1.0))
+    else:
+        on = [k for k in (*keys, "d", "t") if k in c_param.frame.columns]
+        cf = c_param.frame.select(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in on),
+                                  pl.col("value").cast(pl.Float64).alias("__c"))
+        fine = (fine.join(cf, on=[f"_{k}" for k in on], how="left")
+                .with_columns(pl.col("__c").fill_null(1.0)))
+    prev_dur = pl.coalesce(pl.col("__dur_link"), pl.when(pl.col("__dur_carry").is_not_null())
+                           .then(pl.coalesce(pl.col("__dur_arc"), pl.col("__dur_carry"))))
+    rho = (fine
+           .with_columns(__rho=pl.when(prev_dur.is_not_null())
+                         .then(pl.col("__speed") * 60.0 * (pl.col("__dt") + prev_dur) / 2.0)
                          .otherwise(pl.col("__speed") * 60.0 * pl.col("__dt")))
-           .join(hold, on=["_p", "_source", "_sink", "_d", "_b"], how="semi")
+           .filter(pl.col("__rho") < 1.0)
            .group_by(*keys, "_d", "_b")
-           .agg(pl.col("__rho").min().alias("__room"))
-           .filter(pl.col("__room") < 1.0))
+           .agg((pl.col("__rho") * pl.col("__c")).min().alias("__room")))
     t_dtype, d_dtype = b.pss_dt.schema["t"], b.pss_dt.schema["d"]
     return rho.select(*(pl.col(k).cast(arcs.schema[k]) for k in keys), pl.col("_d").cast(d_dtype).alias("d"),
                       pl.col("_b").cast(t_dtype).alias("t"), __kind=pl.lit("reserve"),

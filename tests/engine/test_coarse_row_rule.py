@@ -2,8 +2,9 @@
 
 Owner decision 2026-11-04 ("Coarse flows for units with online variables / reserves", (8) and the row rule): an
 exact connection whose nodes are all coarse is coarse, with one direction per coarse step; a DC line whose nodes
-are all coarse is coarse, and a coarse node whose every DC line is coarse has one voltage angle per coarse step
-(Q3: a node with a DC line at the solve's step keeps its angle per solve step).  A row whose every member is coarse
+are all coarse is coarse, and the nodes of a DC network whose every line is coarse (its nodes with the same coarse
+steps) have one voltage angle per coarse step (Q3: a DC network with a line at the solve's step keeps every angle
+per solve step).  A row whose every member is coarse
 — the capacity-margin, inertia, non-synchronous and flow-group instant-flow rows of a group, a user constraint, the
 forecast storage-use tie, a DC power-flow row between coarse-angle nodes — is one averaged row per coarse step
 (``<family>_coarse``); a row that mixes coarse and fine members stays per solve step and reads the coarse terms at
@@ -142,19 +143,26 @@ def test_coarse_exact_equals_tied_fine_model(tmp_path_factory, monkeypatch) -> N
 
 
 # ---------------------------------------------------------------------------
-# DC power flow: angles per coarse step where every DC line at the node is coarse
+# DC power flow: angles per coarse step where every line of the DC network is coarse
 
 _BUSES = [f"bus_{i}" for i in range(1, 15)]
 
 
-def _dc_case(tmp_path_factory, alt: str, buses: list[str]) -> dict:
-    """case14 on 4 hourly steps with ``buses`` in the 2-h group blk (constant inflows)."""
+def _dc_case(tmp_path_factory, alt: str, buses: list[str], load3: "list[float] | None" = None,
+             buses_4h: tuple[str, ...] = ()) -> dict:
+    """case14 on 4 hourly steps with ``buses`` in the 2-h group blk and ``buses_4h`` in the 4-h group blk4
+    (constant inflows; ``load3`` the hourly inflow of bus_3)."""
     four = _pmap({f"t000{i}": 1.0 for i in range(1, 5)}, "time")
     ents = [["timeline", "tl_dispatch", None], ["group", "blk", None]]
     ents += [["group__node", ["blk", n], None] for n in buses]
     vals = [["timeline", "tl_dispatch", "timestep_duration", four],
             ["timeset", "ts_dispatch", "timeset_duration", _pmap({"t0001": 4.0}, "time")],
             ["group", "blk", "new_stepduration", _f(2.0)]]
+    if buses_4h:
+        ents += [["group", "blk4", None], *(["group__node", ["blk4", n], None] for n in buses_4h)]
+        vals.append(["group", "blk4", "new_stepduration", _f(4.0)])
+    if load3 is not None:
+        vals.append(["node", "bus_3", "inflow", _pmap({f"t000{i}": v for i, v in enumerate(load3, 1)}, "time")])
     url, scen = make_db(tmp_path_factory, alt=alt, values=vals, base_chain=_chain(DC, "dc_opf_test"), entities=ents,
                         fixture_json=DC)
     return run(tmp_path_factory, url, scen)
@@ -211,6 +219,51 @@ def test_dc_line_at_a_node_with_a_fine_line_keeps_per_step_rows(tmp_path_factory
     assert not row_terms(pb, "dc_flow_eq_coarse")
     why = coarse_process_reasons(fd, fd.process_coarse_step)["line_13_14"]
     assert any("DC power-flow row stays at the solve's step" in w for w in why)
+
+
+def _per_step_angles(monkeypatch) -> None:
+    """Build every model with every voltage angle per solve step (no coarse-angle node); flows stay coarse."""
+    import flextool.engine.preprocess.flex_data as fdm
+
+    monkeypatch.setattr(fdm, "coarse_angle_steps",
+                        lambda d: pl.DataFrame(schema={c: pl.Utf8 for c in ("n", "d", "b_first", "t")}))
+
+
+@pytest.mark.parametrize("buses, buses_4h, load3", [
+    # bus_12's lines (line_6_12, line_12_13) are coarse, but bus_6 and bus_13 also have hourly lines.
+    (["bus_6", "bus_12", "bus_13"], (), [-94.2, -250.0, -94.2, -250.0]),
+    # Every line coarse, but bus_14 has 4-h steps and the lines at it 2-h steps.
+    ([f"bus_{i}" for i in range(1, 14)], ("bus_14",), [-94.2, -94.2, -250.0, -250.0]),
+], ids=["fine-line-in-network", "different-coarse-steps"])
+def test_dc_network_not_all_coarse_keeps_per_step_angles(tmp_path_factory, monkeypatch, buses, buses_4h,
+                                                         load3) -> None:
+    """A coarse angle is held only where the whole DC network is coarse with one set of coarse steps.  In a network
+    with an hourly line (or with nodes of different coarse steps) a coarse angle would force the coarse lines' rows
+    (flow and one end angle constant over the step) to hold the neighbouring angles constant too, and through
+    them the hourly lines' flows.  So every angle stays per solve step: the model equals the same coarse model
+    built with every angle per solve step.  Before: bus_12 (bus_14) had one angle per coarse step and the objective
+    was higher (the hourly lines lost their per-step physics)."""
+    coarse = _dc_case(tmp_path_factory, f"rr_dc_net_{len(buses_4h)}", buses, load3, buses_4h)
+    fd = last_stochastic(coarse).flex_data
+    pb = build(fd)
+    for n in ("bus_12", "bus_14"):
+        assert len(_cols(pb, f"v_angle[{n},")) == 4, n
+    assert not row_terms(pb, "dc_flow_eq_coarse")
+    _per_step_angles(monkeypatch)
+    per_step = _dc_case(tmp_path_factory, f"rr_dc_net_ps_{len(buses_4h)}", buses, load3, buses_4h)
+    assert _total_objective(coarse) == pytest.approx(_total_objective(per_step), rel=1e-9)
+
+
+def test_all_coarse_dc_network_equals_per_step_angles(tmp_path_factory, monkeypatch) -> None:
+    """In an all-coarse DC network with one set of coarse steps the per-step rows of the coarse lines already hold
+    every angle difference constant over a coarse step, and the reference angle is 0: one angle per coarse step
+    is exact (equal objective with every angle per solve step), here with a bus_3 inflow that changes between the
+    two coarse steps."""
+    load3 = [-94.2, -94.2, -250.0, -250.0]
+    coarse = _dc_case(tmp_path_factory, "rr_dc_allc", _BUSES, load3)
+    _per_step_angles(monkeypatch)
+    per_step = _dc_case(tmp_path_factory, "rr_dc_allc_ps", _BUSES, load3)
+    assert _total_objective(coarse) == pytest.approx(_total_objective(per_step), rel=1e-9)
 
 
 def test_angle_outputs_are_constant_within_a_coarse_step(tmp_path_factory) -> None:
@@ -317,10 +370,37 @@ def test_instant_flow_of_coarse_flow_group_is_one_row_per_day(tmp_path_factory) 
     bounds = row_bounds(pb, "maxInstant_flow_coarse", "fg_pipe,")
     assert _steps_of(bounds) == _DAYS
     assert all(hi == pytest.approx(20.0) for _, hi in bounds.values())
-    terms = row_terms(pb, "maxInstant_flow_coarse", "fg_pipe,y2030,t0025")["maxInstant_flow_coarse[fg_pipe,y2030,t0025]"]
+    terms = row_terms(pb, "maxInstant_flow_coarse",
+                      "fg_pipe,y2030,t0025")["maxInstant_flow_coarse[fg_pipe,y2030,t0025]"]
     assert set(terms) == {"v_flow[pipe_AB,lh2_A,lh2_B,y2030,t0025]", "v_flow[pipe_AB,lh2_B,lh2_A,y2030,t0025]"}
     why = coarse_process_reasons(fd, fd.process_coarse_step)["pipe_AB"]
     assert any("flow-group instant-flow row of 'fg_pipe' uses the step mean" in w for w in why)
+
+
+def _partial_cap() -> list:
+    """max_instant_flow 10 MW authored on the first 12 hours of each day only (no limit on the other hours)."""
+    return b64({"index_type": "str", "index_name": "time",
+                "data": [[f"t{h + 1:04d}", 10.0] for h in range(168) if h % 24 < 12]}, "map")
+
+
+def test_instant_flow_on_part_of_a_coarse_step_stays_per_step(tmp_path_factory, monkeypatch) -> None:
+    """fg_pipe's max_instant_flow is authored on the first 12 hours of each day only, so the fine model has a row
+    on those hours and none on the others.  An averaged row would count the 12 hours without a row as a limit of 0
+    (bound (12·10 + 12·0)/24 = 5 MW); instead the row stays per solve step on the hours it covers: 12 rows per day
+    with the authored bound 10 MW, each on the day's pipe flow column, no maxInstant_flow_coarse row; and the model
+    equals the hourly model with the pipe flows tied over each day."""
+    coarse = _case(tmp_path_factory, "rr_fg_partial", _fg(_partial_cap()), _FG_ENTS)
+    fd = last_stochastic(coarse).flex_data
+    assert "pipe_AB" in _coarse_procs(fd)
+    pb = build(fd)
+    assert not row_terms(pb, "maxInstant_flow_coarse")
+    bounds = row_bounds(pb, "maxInstant_flow", "fg_pipe,")
+    assert len(bounds) == 7 * 12
+    assert all(hi == pytest.approx(10.0) for _, hi in bounds.values())
+    terms = row_terms(pb, "maxInstant_flow", "fg_pipe,y2030,t0030")["maxInstant_flow[fg_pipe,y2030,t0030]"]
+    assert set(terms) == {"v_flow[pipe_AB,lh2_A,lh2_B,y2030,t0025]", "v_flow[pipe_AB,lh2_B,lh2_A,y2030,t0025]"}
+    _tied_fine(monkeypatch)
+    _assert_equals_tied(coarse, _case(tmp_path_factory, "rr_fg_partial_fine", _fg(_partial_cap()), _FG_ENTS))
 
 
 def test_instant_flow_equals_tied_fine_model(tmp_path_factory, monkeypatch) -> None:

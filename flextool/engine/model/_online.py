@@ -14,9 +14,9 @@ parameters).
 
 A coarse process (``processCoarse``) has one units-online value per coarse step (an aliased level) and one
 start-up / shut-down per coarse step at its start (events registered at the step's first fine step); its online
-capacity and minimum-load rows are averaged over the step (``_coarse_flows.add_cstr``).  With ramp limits, its start-up /
-shut-down capacity reduction uses the coarse step (``_cap_reduction``: the mean share over the whole step of a
-unit that starts at the step's start or stops at its end) and its units online ramp between coarse steps
+capacity and minimum-load rows are averaged over the step (``_coarse_flows.add_cstr``).  With ramp limits, its
+start-up / shut-down capacity reduction uses the coarse step (``_cap_reduction``: the mean share over the whole
+step of a unit that starts at the step's start or stops at its end) and its units online ramp between coarse steps
 (``core._eq_ramp``).
 """
 
@@ -307,7 +307,7 @@ def add_constraints(b: "_Build") -> None:
         # (maxFlow_online keeps only its startup term, a valid — looser — bound) and maxFlow_online_shutdown_branch
         # gives the tight, correctly-isolated bound per branch instead: summing the branches' v_shutdown into one
         # row would let several mutually-exclusive branches each buy back a whole unit of ramp room from the
-        # trunk step (critique item 1).  Only capped arcs (direct arcs and indirect
+        # trunk step.  Only capped arcs (direct arcs and indirect
         # output arcs, see _capped_arcs): indirect input arcs are tied to the outputs by
         # conversion_indirect, and conversion_flow_coeff = 0 arcs are uncapped.  Availability and
         # capacity_max_coeff are densified to their 1.0 defaults so an unauthored unit keeps
@@ -415,8 +415,8 @@ def add_constraints(b: "_Build") -> None:
         # (maxInputFlow_online LHS) ≤ input_cap · ( v_online · x(availability) − red_sd · v_shutdown[p,d⁺,t⁺]
         #                                           − max(0, red_su − red_sd) · v_startup[p,d,t] )
         #   ∀ (row of maxInputFlow_online, successor (d⁺,t⁺) of (d,t)) with red_sd > 0, at a (d,t) with several
-        #     successors (a branch point) — split per successor exactly as maxFlow_online_shutdown_branch
-        #     (critique item 1): never summed across mutually-exclusive branches.
+        #     successors (a branch point) — split per successor exactly as maxFlow_online_shutdown_branch,
+        #     never summed across mutually-exclusive branches.
         # x(y) = (slope · W(y) + section) / (slope · W(1) + section): the input drawn at output level y per unit of
         #   full-load input (W(y): the output-side fuel width filled up to y, as in p_indirect_input_cap; section
         #   only for min_load_efficiency units).  x(availability) replaces availability: the section is drawn per
@@ -685,7 +685,7 @@ def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *,
     ``fine`` covers the arcs of fine processes over dt: ``(p, source, sink, d, t, red_su, red_sd, d_next, t_next,
     __nsucc)`` in the dtypes of ``arcs`` / ``d.dt`` (``d_next``, ``t_next`` Utf8, null where the step has no
     successor; ``__nsucc`` = the number of successors of ``(d, t)``, 0 without one), one row PER SUCCESSOR at a
-    branch point (several rows sharing ``(p, source, sink, d, t)``, critique item 1), only rows with ``red_su > 0``
+    branch point (several rows sharing ``(p, source, sink, d, t)``), only rows with ``red_su > 0``
     or (a successor and ``red_sd > 0``); ``None`` when there are none.  See the EQ. header of maxFlow_online:
     ``SU = min(1, ml + ½ · ramp_speed_up · 60 · step_duration)`` over the sides of the arc with an up ramp limit,
     ``red_su = max(0, availability − SU)``; ``SD`` / ``red_sd`` likewise with the down speeds.  ``ml`` is
@@ -768,10 +768,13 @@ def _reduction_rows(b: "_Build", arcs: "pl.DataFrame", speeds: "pl.LazyFrame", *
                                           pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("b_first").alias("_b"),
                                           pl.col("w").alias("__w"))
         t_dtype = d.dt.schema["t"]
-        grid = (grid.join(st, on=["_p", "_d", "_t"], how="inner")
-                .group_by(*keys, "d", "_p", "_source", "_sink", "_d", "_b")
-                .agg(pl.col("__dur").sum(), (pl.col("__w") * pl.col("__ml")).sum().alias("__ml"),
-                     (pl.col("__w") * pl.col("__av")).sum().alias("__av"))
+        step_rows = (grid.join(st, on=["_p", "_d", "_t"], how="inner")
+                     .with_columns((pl.col("__w") * pl.col("__ml")).alias("__ml"),
+                                   (pl.col("__w") * pl.col("__av")).alias("__av"))
+                     .collect())
+        grid = (_coarse_flows.ordered_sum(step_rows, [*keys, "d", "_p", "_source", "_sink", "_d", "_b"], "_t",
+                                          values=("__dur", "__ml", "__av"))
+                .lazy()
                 .with_columns(pl.col("_b").cast(t_dtype).alias("t"), pl.col("_b").alias("_t")))
         # The mean share over the whole step of a unit that starts at its start (stops at its end).
         lim_expr = _coarse_flows.step_limit_share(pl.col("__ml"), pl.col("__speed") * 60.0 * pl.col("__dur"))
@@ -963,7 +966,7 @@ def _reduction_terms(red: "pl.DataFrame", kappa: "pl.DataFrame", v_startup, v_sh
     unchanged) feed row1 / row2 exactly as before.  Predecessor rows at a branch point (``__nsucc > 1``,
     several mid-horizon branches continuing from the same trunk step) feed row3 instead: ONE
     maxFlow_online_shutdown_branch row per (predecessor, successor) pair, never summed across branches
-    (critique item 1 — summing would let several branches each buy back a whole unit of ramp room from the
+    (summing would let several branches each buy back a whole unit of ramp room from the
     trunk step, instead of each being bound by its own mutually-exclusive scenario).  row1 omits the
     shutdown_reduction cross-term at a branch point: it bounds the single v_flow[t] variable and cannot itself
     be split per branch; row3's rows give the tight, correctly-isolated bound there instead (row1 alone, without

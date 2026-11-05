@@ -145,7 +145,8 @@ def test_lh2_online_unit_with_ramps_is_coarse(tmp_path_factory, caplog, monkeypa
     caplog.set_level(logging.INFO, logger=_coarse.__name__)
     rel = ["liquefier_A", "lh2_A"]
     ramp = [["unit__outputNode", rel, "ramp_method", _s("ramp_limit")],
-            ["unit__outputNode", rel, "ramp_speed_up", _f(2e-4)], ["unit__outputNode", rel, "ramp_speed_down", _f(2e-4)]]
+            ["unit__outputNode", rel, "ramp_speed_up", _f(2e-4)],
+            ["unit__outputNode", rel, "ramp_speed_down", _f(2e-4)]]
     fd = last_stochastic(_lh2(tmp_path_factory, "cf_uc_ramp", uc + ramp)).flex_data
     assert _coarse_procs(fd) == LH2_COARSE
     msgs = [r.message for r in caplog.records]
@@ -825,6 +826,40 @@ def test_benders_regions_keep_cross_region_flows_fine(tmp_path_factory, monkeypa
     assert master.processCoarse is None and master.process_coarse_step is None
     _fine_flows(monkeypatch)
     url, scen = make_db(tmp_path_factory, alt="cf_benders_fine", values=[], fixture_json=LH2,
+                        base_chain=_chain(LH2, "lh2_three_region_invest"))
+    fine = next(s for k, s in run(tmp_path_factory, url, scen).items() if "lh2_invest" in k)
+    assert float(invest.obj) == pytest.approx(float(fine.obj), rel=1e-6)
+
+
+def test_benders_online_coarse_unit_same_objective_as_fine(tmp_path_factory, monkeypatch) -> None:
+    """lh2_three_region_invest under Benders with liquefier_B on linear online variables (min_load 0.3,
+    startup_cost 50): in region_B's subproblem liquefier_B is coarse with one units-online column per day (7 per
+    week), and the Benders objective is that of the same model with every process at the solve's step (the
+    liquefier's parameters are constant within a day and a daily start-up pattern is optimal there too; within the
+    gap tolerance)."""
+    from flextool.engine.solve import _region_filter as rf
+
+    vals = [["unit", "liquefier_B", "startup_method", _s("linear")],
+            ["unit", "liquefier_B", "min_load", _f(0.3)],
+            ["unit", "liquefier_B", "startup_cost", _f(50.0)]]
+    url, scen = make_db(tmp_path_factory, alt="cf_benders_on", values=vals, fixture_json=LH2,
+                        base_chain=_chain(LH2, "lh2_three_region_invest"))
+    invest = next(s for k, s in run(tmp_path_factory, url, scen).items() if "lh2_invest" in k)
+    assert invest.is_benders
+    fd = invest.flex_data
+    regions = ["region_A", "region_B", "region_C"]
+    membership = rf.load_region_membership(fd, regions)
+    hosted = frozenset(rf.compute_master_hosted_nodes(fd, membership))
+    with axis_vocabulary(fd):
+        splits = rf.split(fd, regions=regions, region_membership=membership, benders_uncap_cross_region=True,
+                          master_hosted_nodes=hosted)
+    sp = next(s for s in splits if s.region[-1] == "B")
+    assert "liquefier_B" in _coarse_procs(sp.data)
+    with axis_vocabulary(fd):
+        cols = _flow_cols(build(sp.data), "v_online_linear[liquefier_B,")
+    assert len(cols) == 7
+    _fine_flows(monkeypatch)
+    url, scen = make_db(tmp_path_factory, alt="cf_benders_on_fine", values=vals, fixture_json=LH2,
                         base_chain=_chain(LH2, "lh2_three_region_invest"))
     fine = next(s for k, s in run(tmp_path_factory, url, scen).items() if "lh2_invest" in k)
     assert float(invest.obj) == pytest.approx(float(fine.obj), rel=1e-6)

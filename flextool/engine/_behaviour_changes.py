@@ -102,8 +102,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "and shut-downs once per coarse step, counts its minimum up / down time in whole coarse "
                      "steps and takes its start-up / shut-down capacity reduction over the coarse step; a "
                      "reserve provider holds one reserve per coarse step, the requirement checked at every "
-                     "time step; an exact connection chooses its direction and a DC node whose lines are all "
-                     "coarse its angle once per coarse step; a capacity-margin, inertia, non-synchronous, "
+                     "time step; an exact connection chooses its direction and the nodes of a DC network whose "
+                     "lines are all coarse their angle once per coarse step; a capacity-margin, inertia, non-synchronous, "
                      "flow-group instant-flow, user-constraint, storage-use tie or DC power-flow row whose "
                      "units and connections are all coarse is averaged over the coarse step, and one that mixes "
                      "them with units at the solve's step sees the coarse flows constant (results change where, "
@@ -140,6 +140,15 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "operate in a later period after a construction lead time, was missing from the branches of "
                      "that period, and lifetimes ended late in the branches (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "stochastic_branch_period_years"),
+        ),
+        BehaviourChange(
+            id="ramp_branch_point_shutdown_once",
+            summary=("At a stochastic branch point (a step continued by several mid-horizon branches) the "
+                     "downward ramp row of each branch's first step now counts the shut-down share of the "
+                     "units online at the branch point once. Before, it was multiplied by the number of "
+                     "branches squared, so units shutting down there could drop their flow faster than the "
+                     "ramp limit allows (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "ramp_branch_point_shutdown_once"),
         ),
         BehaviourChange(
             id="retirement_of_existing_capacity_only",

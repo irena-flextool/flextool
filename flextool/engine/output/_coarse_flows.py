@@ -3,8 +3,8 @@
 A coarse process (``FlexData.processCoarse``, :func:`flextool.engine.preprocess.params._coarse.coarse_process_frames`)
 has one column per coarse step of its nodes for each of its time-indexed variables (:data:`COARSE_VARS`): the LP
 row is keyed by the step's first fine step ``b_first``.  So do the angle of a coarse-angle node and the inertia /
-non-synchronous slack of a group whose row is averaged over coarse steps (:data:`COARSE_VAR_STEPS`).  Every reader that needs the values on the solve's steps
-expands them to every fine step of the coarse step, by the variable's mode:
+non-synchronous slack of a group whose row is averaged over coarse steps (:data:`COARSE_VAR_STEPS`).  Every reader
+that needs the values on the solve's steps expands them to every fine step of the coarse step, by the variable's mode:
 
 * ``copy`` — a *level* that holds through the whole step (a flow is a rate in MW per unitsize, units online a
   count, a reserve a capacity held): the value is copied to each fine step, so ``energy = Σ_t flow · Δt`` stays
@@ -85,6 +85,12 @@ def expand_coarse(frame: "pl.DataFrame | None", flex_data, *, mode: str = "copy"
     steps = coarse_steps(flex_data, name)
     if frame is None or steps is None or frame.height == 0:
         return frame
+    return _expand(frame, steps, mode=mode, p=p, d=d, t=t, value=value)
+
+
+def _expand(frame: pl.DataFrame, steps: pl.DataFrame, *, mode: str, p: str, d: str, t: str,
+            value: str) -> pl.DataFrame:
+    """:func:`expand_coarse` with the coarse steps ``steps`` ``(key, d, b_first, t)`` (Utf8) given."""
     keys = [c for c in frame.columns if c != value]
     others = (steps.filter(pl.col("t") != pl.col("b_first")).with_row_index("__j", offset=1)
               .rename({steps.columns[0]: "__p", "d": "__d", "b_first": "__b", "t": "__t"}))
@@ -112,6 +118,36 @@ def var_values(sol, flex_data, name: str) -> "pl.DataFrame | None":
     if name not in COARSE_VARS or frame is None or frame.height == 0:
         return frame
     return expand_coarse(frame, flex_data, mode=COARSE_VARS[name], p=frame.columns[0], name=name)
+
+
+def var_values_at(sol, flex_data, name: str, d: str, t: str) -> "pl.DataFrame | None":
+    """:func:`var_values` on the one fine step ``(d, t)`` alone: reads only the LP columns at ``(d, t)`` and, of a
+    coarse entity, at the first fine step of its coarse step holding ``(d, t)``, and expands just that step (the
+    roll-end handoffs read one step: the whole variable need not be materialised).  ``None`` when the solution has
+    no such variable."""
+    if sol is None or name not in getattr(sol, "_vars", {}):
+        return None
+    var = sol._vars[name]
+    frame = var.frame
+    in_d = frame.filter(pl.col("d").cast(pl.Utf8) == str(d))
+    rows = in_d.filter(pl.col("t").cast(pl.Utf8) == str(t))
+    steps = coarse_steps(flex_data, name) if name in COARSE_VARS else None
+    if steps is not None:
+        e = steps.columns[0]
+        held = steps.filter((pl.col("d") == str(d)) & (pl.col("t") == str(t))).select(e, "b_first")
+        steps = steps.filter(pl.col("d") == str(d)).join(held, on=[e, "b_first"], how="semi")
+        key = var.dims[0]
+        firsts = (in_d.filter(pl.col("t").cast(pl.Utf8).is_in(held["b_first"].unique().implode())
+                              & (pl.col("t").cast(pl.Utf8) != str(t)))
+                  .with_columns(pl.col(key).cast(pl.Utf8).alias("__e"), pl.col("t").cast(pl.Utf8).alias("__b"))
+                  .join(held.rename({e: "__e", "b_first": "__b"}), on=["__e", "__b"], how="semi")
+                  .drop("__e", "__b"))
+        rows = pl.concat([rows, firsts])
+    vals = sol.col_value[rows["col_id"].to_numpy()]
+    out = rows.select(*var.dims).with_columns(value=pl.Series(vals, dtype=pl.Float64))
+    if steps is not None and steps.height > 0 and out.height > 0:
+        out = _expand(out, steps, mode=COARSE_VARS[name], p=var.dims[0], d="d", t="t", value="value")
+    return out.filter((pl.col("d").cast(pl.Utf8) == str(d)) & (pl.col("t").cast(pl.Utf8) == str(t)))
 
 
 def coarse_step_members(steps: "pl.DataFrame | None") -> "dict[tuple[str, str, str], list[str]]":

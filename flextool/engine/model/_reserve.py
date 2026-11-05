@@ -1173,7 +1173,8 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
                     built["invest_neg"] = -(b.invest_in_dispatch_p * mult)
                 if b.divest_in_dispatch_p is not None:
                     built["divest"] = b.divest_in_dispatch_p * mult
-        _coarse_flows.add_cstr(b, f"connection_reserve_{ud}", over=dom, sense="<=", lhs_terms=built, rhs_terms={"cap": rhs})
+        _coarse_flows.add_cstr(b, f"connection_reserve_{ud}", over=dom, sense="<=", lhs_terms=built,
+                               rhs_terms={"cap": rhs})
 
         if ch_own is None:
             continue
@@ -1185,8 +1186,8 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
             on_dom = own_dom.join(on_p, on="_p", how="semi")
             if on_dom.height == 0:
                 continue
-            _coarse_flows.add_cstr(b, f"connection_reserve_{ud}_online_{kind}", over=on_dom.select("p", "n", "d", "t"), sense="<=",
-                       lhs_terms=dict(lhs), rhs_terms={"online": v_online * factor})
+            _coarse_flows.add_cstr(b, f"connection_reserve_{ud}_online_{kind}", over=on_dom.select("p", "n", "d", "t"),
+                                   sense="<=", lhs_terms=dict(lhs), rhs_terms={"online": v_online * factor})
         # Direction switch of an exact connection: the own channel is its forward or its reverse arc.
         if exact is not None:
             ex_u = (_utf8_keys(exact.lazy(), keys).select("_p", "_source", "_sink", "forward").collect())
@@ -1208,8 +1209,8 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
                     pl.when(pl.col("__fwd")).then(0.0).otherwise(pl.col("value")).alias("value")), 0.0)
                 ex_lhs = dict(lhs)
                 ex_lhs["switch"] = b.v_exact_forward * coef
-                _coarse_flows.add_cstr(b, f"connection_reserve_{ud}_exact", over=ex_dom.select("p", "n", "d", "t"), sense="<=",
-                           lhs_terms=ex_lhs, rhs_terms={"cap": cap})
+                _coarse_flows.add_cstr(b, f"connection_reserve_{ud}_exact", over=ex_dom.select("p", "n", "d", "t"),
+                                       sense="<=", lhs_terms=ex_lhs, rhs_terms={"cap": cap})
 
 
 def _input_capacity_factor(d, idx: pl.DataFrame) -> "Param | None":

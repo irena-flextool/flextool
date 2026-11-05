@@ -6,10 +6,11 @@ component (node_reference_angle, chosen in input derivation) has its angle pinne
 v_flow_back of the arcs, its capacity row and its node-balance terms belong to model/core.py, which shares them
 with the other method_2way_1var_off arcs; :func:`nodeBalance_back_flow_terms` builds those balance terms.
 
-Coarse steps (``new_stepduration`` groups): a coarse node whose every DC line is a coarse process
-(``flex_data.coarse_angle_steps``) has one angle per coarse step (an aliased level); dc_flow_eq follows the row
-rule — a coarse line between two such nodes gets one row per coarse step (``dc_flow_eq_coarse``), any other line
-keeps a row per solve step and reads a coarse flow or angle at its constant value.
+Coarse steps (``new_stepduration`` groups): the nodes of a DC network component whose every line is a coarse
+process and whose nodes share one set of coarse steps (``flex_data.coarse_angle_steps``) have one angle per coarse
+step (an aliased level); every other angle stays per solve step.  dc_flow_eq follows the row rule — a coarse line
+between two such nodes gets one row per coarse step (``dc_flow_eq_coarse``), any other line keeps a row per solve
+step and reads a coarse flow at its constant value.
 """
 from __future__ import annotations
 
@@ -187,10 +188,11 @@ def add_variables(b: _Build) -> None:
     # scalar, so the reference nodes are pinned to 0 by dc_reference_angle_eq.
     # ─── VAR. ─── v_angle (coarse-angle nodes) ───────────────────────────────
     # −π ≤ v_angle[n,d,b] ≤ π   ∀ n ∈ coarse-angle nodes, (d,b) the coarse steps of n (b = its first fine step)
-    #   coarse-angle node = a node of node_dc_power_flow in a coarse group whose every DC line is a coarse process
-    #   (flex_data.coarse_angle_steps)
+    #   coarse-angle node = a node of a DC network component whose every line is a coarse process and whose
+    #   nodes all have the same coarse steps (flex_data.coarse_angle_steps)
     # One angle per coarse step, held over its fine steps (a level: b.v_angle is indexed on every fine step,
-    # _coarse_flows.alias).  A coarse node with a DC line at the solve's step keeps an angle per solve step.
+    # _coarse_flows.alias).  Every node of a component with a DC line at the solve's step keeps an angle per solve
+    # step, so the fine line keeps its per-step physics.
     b.angle_steps = _angle_steps(b)
     b.v_angle = _coarse_flows.alias(
         b, b.m.add_var("v_angle", ("n", "d", "t"), _coarse_flows.domain(b, angle_idx, b.angle_steps),
@@ -263,8 +265,8 @@ def _eq_dc_flow(b: _Build) -> None:
     # Row rule (coarse steps): a coarse line whose both end nodes are coarse-angle nodes gets one row per coarse
     # step, dc_flow_eq_coarse = the row's mean over the step (_coarse_flows.add_cstr; the susceptance is constant,
     # so it is the row itself on one flow and two angles per step).  Any other line keeps a row per solve step and
-    # reads a coarse flow or angle at its constant value (a coarse line to a node with a fine DC line holds the
-    # angle difference constant over the coarse step).
+    # reads a coarse flow at its constant value (a coarse line in a component with a fine DC line holds the angle
+    # difference of its per-step angles constant over the coarse step).
     over = dc_arcs.join(d.dt, how="cross").select("p", "source", "sink", "d", "t")
     flow_signed = Where(v_flow, dc_arcs)
     if b.v_flow_back is not None:

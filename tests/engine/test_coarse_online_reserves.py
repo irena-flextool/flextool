@@ -55,6 +55,24 @@ def _cols(pb, prefix: str) -> list[str]:
 # Structure
 
 
+def test_one_step_reader_equals_the_full_reader(tmp_path_factory) -> None:
+    """``var_values_at`` (the roll-end handoffs' reader of one step) gives the rows of ``var_values`` (every fine
+    step) at that step, for a level (copy mode) and an event (first mode), at a coarse step's first hour, inside
+    it and at its last hour, for coarse and fine processes."""
+    from flextool.engine.output._coarse_flows import var_values, var_values_at
+
+    step = last_stochastic(_lh2(tmp_path_factory, "co_reader", _UC))
+    sol, fd = step.solution, step.flex_data
+    for name in ("v_flow", "v_online_linear", "v_startup_linear"):
+        full = utf8(var_values(sol, fd, name))
+        for t in ("t0025", "t0030", "t0048", "t0168"):
+            one = utf8(var_values_at(sol, fd, name, "y2030", t))
+            want = full.filter((pl.col("d") == "y2030") & (pl.col("t") == t))
+            cols = [c for c in want.columns if c != "value"]
+            assert one.height == want.height > 0, (name, t)
+            assert one.sort(cols).equals(want.sort(cols)), (name, t)
+
+
 def test_online_unit_is_coarse_with_one_column_per_day(tmp_path_factory) -> None:
     """coarse_uc: liquefier_A (linear online, min_load 0.3) is coarse.  Its units online, start-ups and shut-downs
     have 7 columns (one per day, at the day's first hour), online_change / maxOnline / maxStartup 7 rows, the online
@@ -77,7 +95,8 @@ def test_online_unit_is_coarse_with_one_column_per_day(tmp_path_factory) -> None
     assert rows["online_change_linear[liquefier_A,y2030,t0025]"] == pytest.approx({
         "v_online_linear[liquefier_A,y2030,t0025]": 1.0, "v_online_linear[liquefier_A,y2030,t0001]": -1.0,
         "v_startup_linear[liquefier_A,y2030,t0025]": -1.0, "v_shutdown_linear[liquefier_A,y2030,t0025]": 1.0})
-    first = row_terms(pb, "online_change_linear", "liquefier_A,y2030,t0001")["online_change_linear[liquefier_A,y2030,t0001]"]
+    first = row_terms(pb, "online_change_linear",
+                      "liquefier_A,y2030,t0001")["online_change_linear[liquefier_A,y2030,t0001]"]
     assert first["v_online_linear[liquefier_A,y2030,t0145]"] == pytest.approx(-1.0)
 
 
@@ -850,7 +869,8 @@ def test_hand_built_coarse_reserve(tmp_path_factory, monkeypatch, ramp, held) ->
     keys = ["r", "ud", "g", "d", "t"]
     vq = utf8(step.solution.value("vq_reserve")).filter(pl.col("g") == "hd_res")
     scale = utf8(reserve_shortfall_scale(fd).frame).filter(pl.col("g") == "hd_res").rename({"value": "__s"})
-    short = vq.join(scale, on=[c for c in keys if c in scale.columns], how="inner").with_columns(mw=pl.col("value") * pl.col("__s")).sort("t")
+    short = (vq.join(scale, on=[c for c in keys if c in scale.columns], how="inner")
+             .with_columns(mw=pl.col("value") * pl.col("__s")).sort("t"))
     assert short["t"].to_list() == _HOURS
     assert short["mw"].to_list()[:24] == pytest.approx([0.0] * 12 + [30.0 - held] * 12, abs=1e-6)
     pb = build(fd)
@@ -858,7 +878,8 @@ def test_hand_built_coarse_reserve(tmp_path_factory, monkeypatch, ramp, held) ->
     assert len(row_terms(pb, "reserveBalance_timeseries_eq", "r_up,up,hd_res,")) == 48
     room = row_terms(pb, "ramp_sink_up_reserve_coarse", "gen_d,")
     if ramp:
-        assert sorted(room) == [f"ramp_sink_up_reserve_coarse[gen_d,coal_market,hd,p2020,{t}]" for t in ("t0001", "t0025")]
+        assert sorted(room) == [f"ramp_sink_up_reserve_coarse[gen_d,coal_market,hd,p2020,{t}]"
+                                for t in ("t0001", "t0025")]
         lo, hi = row_bounds(pb, "ramp_sink_up_reserve_coarse", "gen_d,coal_market,hd,p2020,t0001")[
             "ramp_sink_up_reserve_coarse[gen_d,coal_market,hd,p2020,t0001]"]
         assert hi == pytest.approx(0.2)
@@ -867,6 +888,33 @@ def test_hand_built_coarse_reserve(tmp_path_factory, monkeypatch, ramp, held) ->
     _tied_fine(monkeypatch)
     tied = _hand_res(tmp_path_factory, f"co_res_hand{int(ramp)}_fine", ramp)
     assert _total_objective(steps) == pytest.approx(_total_objective(tied), rel=1e-9)
+
+
+def test_reserve_ramp_room_is_the_smallest_room_times_capacity_factor(tmp_path_factory) -> None:
+    """liquefier_A with a second output (lh2_B: an indirect unit, so its input arc h2_A -> liquefier_A is capped by
+    p_indirect_input_cap) and an efficiency of 0.85 in hours 1–12 and 0.5 in hours 13–24 of each day holds
+    downward reserve r_dn at its input h2_A, with an upward ramp limit of 0.1 / 60 per minute on the input arc.
+    Hand derivation (EQ. ramp_source_up_reserve_coarse): 1-h steps, so every fine step's room is
+    ρ_t = 0.1 · 60 · 1 / 60 = 0.1 (with or without a predecessor); the input arc's capacity factor is the full-load
+    input per unit of capacity, c_t = input_share_max · 1 / efficiency_t = 1 / 0.85 in hours 1–12 and 2 in hours
+    13–24; the one row per day bounds the reserve by min_t ρ_t · c_t = 0.1 / 0.85 = 0.117647 per unit (one unit:
+    unitsize = existing).  Before: the smallest room times the day's mean factor, 0.1 · (1/0.85 + 2) / 2 = 0.158824,
+    looser than every hour of the tied model in hours 1–12."""
+    ents, vals = _reserve("r_dn", "down", "h2_res", [("unit", "liquefier_A", "h2_A")], reservation=500.0)
+    ents = [["group", "h2_res", None], ["group__node", ["h2_res", "h2_A"], None],
+            ["unit__outputNode", ["liquefier_A", "lh2_B"], None]] + ents
+    vals += [["unit", "liquefier_A", "efficiency", _tmap_lh2(lambda h: 0.85 if h % 24 < 12 else 0.5)],
+             ["unit__inputNode", ["liquefier_A", "h2_A"], "ramp_method", _s("ramp_limit")],
+             ["unit__inputNode", ["liquefier_A", "h2_A"], "ramp_speed_up", _f(0.1 / 60.0)]]
+    fd = last_stochastic(_lh2(tmp_path_factory, "co_res_room", vals, entities=ents)).flex_data
+    assert "liquefier_A" in _coarse_procs(fd)
+    pb = build(fd)
+    bounds = row_bounds(pb, "ramp_source_up_reserve_coarse", "liquefier_A,")
+    assert sorted(_keys(k)[-1] for k in bounds) == _DAYS
+    assert all(hi == pytest.approx(0.1 / 0.85, rel=1e-12) for _, hi in bounds.values())
+    terms = row_terms(pb, "ramp_source_up_reserve_coarse", "liquefier_A,h2_A,liquefier_A,y2030,t0025")
+    assert terms == {"ramp_source_up_reserve_coarse[liquefier_A,h2_A,liquefier_A,y2030,t0025]":
+                     {"v_reserve[liquefier_A,r_dn,down,h2_A,y2030,t0025]": pytest.approx(1.0)}}
 
 
 # Stochastic: top_turbine (above) also holds upward reserve r_up for the group upper_res = {upper} (10 MW).

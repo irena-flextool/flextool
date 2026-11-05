@@ -3,10 +3,11 @@
 Owner decision Q1: a node of a group whose ``new_stepduration`` is longer than the solve's step is balanced once
 per coarse step by summing its fine balance terms (``nodeBalanceCoarse_eq``), and a coarse storage node keeps one
 state per coarse step (``stateConstantCoarse_eq``).  A unit or connection whose balance nodes are all coarse has
-one flow per coarse step (owner decision 2026-11-03, ``tests/engine/test_coarse_flows.py``) and, with online
-variables, its units online once per coarse step (``tests/engine/test_coarse_online_reserves.py``); every other
-flow and online status, and reserves and angles, stay on the solve's step; listing a unit or connection in a coarse group has no
-effect on time resolution (Q-c15-A default, warned where it would have mattered).
+one flow per coarse step (owner decision 2026-11-03, ``tests/engine/test_coarse_flows.py``), with online variables
+its units online and with reserves its reserve once per coarse step (``tests/engine/test_coarse_online_reserves.py``),
+and the nodes of an all-coarse DC network one angle per coarse step (``tests/engine/test_coarse_row_rule.py``); every
+other flow, online status, reserve and angle stays on the solve's step; listing a unit or connection in a coarse
+group has no effect on time resolution (Q-c15-A default, warned where it would have mattered).
 
 Fixtures: ``tests/fixtures/lh2_three_region.json`` (h2_* / lh2_* in the 24-h ``daily_group``, elec_* hourly),
 ``tests.json`` (battery in an added 24-h group), ``case14_dc_power_flow.json`` (bus_14 in an added 2-h group),

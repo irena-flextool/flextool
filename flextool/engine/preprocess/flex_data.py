@@ -584,7 +584,8 @@ def _row_rule_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str
         part = coarse_row_partition(d, family, members)
         averaged = set(part[key].to_list())
         procs = members.filter(pl.col("kind") == "p")
-        for k, p in procs.filter(~pl.col(key).is_in(sorted(averaged))).select(key, "e").unique().sort(key, "e").iter_rows():
+        fine_rows = procs.filter(~pl.col(key).is_in(sorted(averaged))).select(key, "e").unique().sort(key, "e")
+        for k, p in fine_rows.iter_rows():
             if p in coarse:
                 out.append((p, f"the {what} row of {k!r} stays at the solve's step (not all its members take the "
                                "coarse step) and holds its flow constant over the coarse step"))
@@ -616,7 +617,8 @@ def _row_rule_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str
                     keys = [c for c in ("g", "d", "t") if c in cap.columns]
                     varying |= _spread_keys(part, cap.select(*(pl.col(c).cast(pl.Utf8) for c in keys),
                                                              pl.col("value").cast(pl.Float64)), "g")
-        for k, p in procs.filter(pl.col(key).is_in(sorted(varying))).select(key, "e").unique().sort(key, "e").iter_rows():
+        varying_rows = procs.filter(pl.col(key).is_in(sorted(varying))).select(key, "e").unique().sort(key, "e")
+        for k, p in varying_rows.iter_rows():
             out.append((p, f"the {what} row of {k!r} uses the step mean of a demand, inflow, profile or limit that "
                            "varies within a coarse step"))
     out.extend(_dc_mixed_reasons(d, coarse))
@@ -624,8 +626,9 @@ def _row_rule_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str
 
 
 def _dc_mixed_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str, str]]:
-    """``(p, reason)`` of the coarse DC lines with an end node whose angle stays at the solve's step (a DC line at
-    the solve's step meets that node): their DC power-flow row is per solve step with the flow constant."""
+    """``(p, reason)`` of the coarse DC lines with an end node whose angle stays at the solve's step (its DC network
+    is not all coarse, :func:`coarse_angle_steps`): their DC power-flow row is per solve step with the flow
+    constant."""
     d = flex_data
     a = _dc_arcs_utf8(d)
     if a is None:
@@ -634,8 +637,8 @@ def _dc_mixed_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str
     a = a.unique()
     mixed = a.filter(pl.col("p").is_in(sorted(coarse))
                      & ~(pl.col("source").is_in(sorted(angle)) & pl.col("sink").is_in(sorted(angle))))
-    return [(p, "its DC power-flow row stays at the solve's step (a DC line at the solve's step meets one of its "
-                "nodes) and holds the angle difference constant over the coarse step")
+    return [(p, "its DC power-flow row stays at the solve's step (its DC network has a line at the solve's step "
+                "or nodes with different coarse steps) and holds the angle difference constant over the coarse step")
             for p in sorted(set(mixed["p"].to_list()))]
 
 
@@ -743,11 +746,16 @@ def _dc_arcs_utf8(flex_data: "FlexData") -> "pl.DataFrame | None":
 
 
 def coarse_angle_steps(flex_data: "FlexData") -> pl.DataFrame:
-    """``(n, d, b_first, t)`` (Utf8): the coarse steps of the *coarse-angle* nodes — the nodes of
-    ``node_dc_power_flow`` that are coarse (``node_coarse_step``) and whose every DC line
-    (``_dc_power_flow.dc_arcs_frame``) is a coarse process.  Their voltage angle is one value per coarse step; a
-    coarse node with a DC line that keeps the solve's step keeps an angle per solve step, so the fine line keeps
-    its per-step physics (owner decision 2026-11-04, Q3).  Empty without such a node."""
+    """``(n, d, b_first, t)`` (Utf8): the coarse steps of the *coarse-angle* nodes — the nodes of a DC network
+    component (the nodes of ``node_dc_power_flow`` joined by DC lines, ``_dc_power_flow.dc_arcs_frame``) whose
+    every node is coarse (``node_coarse_step``) with the same coarse steps and whose every DC line is a coarse
+    process.  Their voltage angle is one value per coarse step.  Every other DC node keeps an angle per solve step
+    (owner decision 2026-11-04, Q3), so a DC line at the solve's step keeps its per-step physics: a coarse angle
+    next to a node with a per-step line would make the coarse line's row (flow and one end angle constant over the
+    step) hold that node's angle constant, and through it the angles and fine flows of the rest of the component.
+    In a component of coarse-angle nodes the per-step rows of the coarse lines already hold every angle difference
+    constant over a coarse step, and the reference angle is 0, so one angle per coarse step is exact.  Empty
+    without such a component."""
     empty = pl.DataFrame(schema={c: pl.Utf8 for c in ("n", "d", "b_first", "t")})
     d = flex_data
     ncs = _utf8_frame(getattr(d, "node_coarse_step", None), ("n", "d", "b_first", "t"))
@@ -756,11 +764,30 @@ def coarse_angle_steps(flex_data: "FlexData") -> pl.DataFrame:
     if ncs is None or not dc_nodes or not coarse_p or d.process_source_sink is None:
         return empty
     a = _dc_arcs_utf8(d)
-    fine_line_nodes: set[str] = set()
-    if a is not None:
-        fine = a.filter(~pl.col("p").is_in(sorted(coarse_p)))
-        fine_line_nodes = set(fine["source"].to_list()) | set(fine["sink"].to_list())
-    keep = sorted(dc_nodes - fine_line_nodes)
+    arcs = [] if a is None else a.select("p", "source", "sink").unique().sort("p", "source", "sink").rows()
+    # Connected components of the DC network (union-find over the nodes of node_dc_power_flow).
+    parent = {n: n for n in dc_nodes}
+
+    def root(n: str) -> str:
+        while parent[n] != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+
+    for _p, s, k in arcs:
+        rs, rk = root(s), root(k)
+        if rs != rk:
+            parent[max(rs, rk)] = min(rs, rk)
+    steps = {n: frozenset(g.select("d", "b_first", "t").rows())
+             for (n,), g in ncs.filter(pl.col("n").is_in(sorted(dc_nodes))).group_by("n")}
+    bad: set[str] = {root(n) for n in dc_nodes if n not in steps}
+    bad |= {root(s) for p, s, _k in arcs if p not in coarse_p}
+    first: dict[str, frozenset] = {}
+    for n in sorted(steps):
+        r = root(n)
+        if first.setdefault(r, steps[n]) != steps[n]:
+            bad.add(r)
+    keep = sorted(n for n in dc_nodes if root(n) not in bad)
     return ncs.filter(pl.col("n").is_in(keep))
 
 
@@ -6506,11 +6533,10 @@ def _roll_end_flow(sol, flex_data: "FlexData | None", last: "tuple[str, str] | N
     if not sets or last is None:
         return None
     arcs = pl.concat(sets).unique()
-    from flextool.engine.output._coarse_flows import var_values
+    from flextool.engine.output._coarse_flows import var_values_at
 
-    # Every fine step, also of coarse processes (one LP column per coarse step).
-    flows = var_values(sol, flex_data, "v_flow")
-    frame = flows.filter((pl.col("d").cast(pl.Utf8) == last[0]) & (pl.col("t").cast(pl.Utf8) == last[1]))
+    # The last realized step, also of coarse processes (their column of the coarse step holding it).
+    frame = var_values_at(sol, flex_data, "v_flow", last[0], last[1])
     if frame.height == 0:
         return None
     rows = (frame.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")),
@@ -6950,18 +6976,16 @@ def build_handoff_from_solution(
         # The last committed step lies in the fan (after every pre-reveal realized step): read the tied value.
         online_step = (fan_online["d_ref"][-1], fan_online["t"][-1])
     if online_step is not None and _has_online_var:
-        from flextool.engine.output._coarse_flows import var_values
+        from flextool.engine.output._coarse_flows import var_values_at
 
         last_d_on, last_t_on = online_step
         rco_rows: list[tuple[str, float]] = []
         for _vname in ("v_online_linear", "v_online_integer"):
-            # Every fine step (a coarse process's units online hold through its coarse step, whose last fine
-            # step is the last realized step), then the committed-jump-end (d, t).
-            _all = var_values(sol, flex_data, _vname)
-            if _all is None:
+            # The committed-jump-end (d, t) alone (a coarse process's units online hold through its coarse step,
+            # whose last fine step is the last realized step: the column of that coarse step).
+            _lst = var_values_at(sol, flex_data, _vname, str(last_d_on), str(last_t_on))
+            if _lst is None:
                 continue
-            _lst = _all.filter((pl.col("d").cast(pl.Utf8) == str(last_d_on))
-                               & (pl.col("t").cast(pl.Utf8) == str(last_t_on)))
             for r in _lst.iter_rows(named=True):
                 rco_rows.append((str(r["p"]), float(r["value"])))
         if rco_rows:

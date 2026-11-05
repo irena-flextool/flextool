@@ -715,10 +715,37 @@ def test_branch_point_shutdown_share_counted_once(tmp_path_factory) -> None:
     url, scen = make_db(tmp_path_factory, alt="ramp_branch", values=vals, base_chain=["init", "base", "stoch"],
                         fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_midhorizon_nreal0.json")
     step = list(run(tmp_path_factory, url, scen).values())[-1]
-    rows = {k: v for k, v in row_terms(build(step.flex_data), "ramp_sink_down_constraint", "base,base,elec,p2040_").items()
-            if k.endswith(",t0004]")}
+    rows = {k: v for k, v in row_terms(build(step.flex_data), "ramp_sink_down_constraint",
+                                       "base,base,elec,p2040_").items() if k.endswith(",t0004]")}
     assert sorted(rows) == [f"ramp_sink_down_constraint[base,base,elec,p2040_{b},t0004]" for b in ("high", "low")]
     for name, terms in rows.items():
         branch = name.split(",")[3]
         assert coef(terms, f"v_shutdown_linear[base,{branch},t0004]") == pytest.approx(0.43, abs=TOL), name
         assert coef(terms, "v_flow[base,base,elec,p2035,t0003]") == pytest.approx(-1.0, abs=TOL)
+
+
+@pytest.mark.parametrize("marker", [True, False], ids=["marker", "no_marker"])
+def test_branch_point_shutdown_notice(tmp_path_factory, capsys, marker) -> None:
+    """The mid-horizon branch-point model above: an upgraded database (marker present) prints the behaviour notice
+    naming base, the unit whose downward ramp rows meet the branch point; without the marker, nothing."""
+    from spinedb_api import DatabaseMapping
+
+    rel = ["base", "elec"]
+    vals = [["unit", "base", "startup_method", b64("linear", "str")], ["unit", "base", "min_load", b64(0.4, "float")],
+            *_ramp(1e-3, rel)]
+    url, scen = make_db(tmp_path_factory, alt=f"ramp_branch_notice_{marker}", values=vals,
+                        base_chain=["init", "base", "stoch"],
+                        fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_midhorizon_nreal0.json")
+    name = "flextool_behaviour_change:ramp_branch_point_shutdown_once"
+    if marker:
+        with DatabaseMapping(url) as db:
+            db.add_item("metadata", name=name, value="77")
+            db.commit_session("behaviour-change marker")
+    capsys.readouterr()
+    run(tmp_path_factory, url, scen)
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "shut-down share" in ln]
+    if not marker:
+        assert not lines
+        return
+    assert len(lines) == 1 and name in lines[0]
+    assert "Affected units: base." in lines[0]

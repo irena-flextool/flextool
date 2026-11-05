@@ -3,23 +3,24 @@
 A group whose ``new_stepduration`` is longer than the solve's time step makes its balance and storage nodes
 *coarse*: each coarse node is balanced once per coarse step by summing its fine balance terms over the step
 (``nodeBalanceCoarse_eq``); a coarse storage node keeps one state per coarse step (``stateConstantCoarse_eq``).
-A coarse DC power-flow node whose every DC line is a coarse process has one angle per coarse step
-(``flex_data.coarse_angle_steps``); the other angles stay on the solve's steps.
+The nodes of a DC power-flow network component whose every line is a coarse process (its nodes with the same
+coarse steps) have one angle per coarse step (``flex_data.coarse_angle_steps``); the other angles stay on the
+solve's steps.
 
-A unit or connection whose every balance node is coarse is a *coarse process* (:func:`coarse_process_frames`):
-its flows have one value per coarse step of its nodes (a rate that stays the same over the step), and so do its
-units online, start-ups and shut-downs (the start and stop at the step's start; minimum up / down times count
-whole coarse steps), its reserve (the requirement is still checked at every solve step) and the direction of an
-exact connection.  A process with a fine balance node, or with no balance node, keeps the solve's step, and so does
-a process with a delay (its flow is shifted by solve steps).  Rows that couple several entities follow the row rule
+A unit or connection whose every balance node is coarse is a *coarse process* (:func:`coarse_process_frames`): its
+flows have one value per coarse step of its nodes (a rate that stays the same over the step), and so do its units
+online, start-ups and shut-downs (the start and stop at the step's start; minimum up / down times count whole coarse
+steps), its reserve (the requirement is still checked at every solve step) and the direction of an exact
+connection.  A process with a fine balance node, or with no balance node, keeps the solve's step, and so does a
+process with a delay (its flow is shifted by solve steps).  Rows that couple several entities follow the row rule
 (:func:`coarse_row_steps`): a capacity-margin / inertia / non-synchronous / flow-group instant-flow row, a user
 constraint, the forecast storage-use tie or a DC power-flow row whose every member is coarse is one averaged row per
-coarse step; a row with a fine member stays per solve step and reads the coarse terms at their constant value.  In a stochastic solve, a process at a node
-whose net flow is tied between the forecasts, every online process and every reserve provider also keeps the
-solve's step when a coarse step holds both tied (committed) and untied steps (``flex_data.coarse_tie_straddles``):
-its one value would tie the untied steps too.  A realization solve keeps a process at the solve's step when its
-units online or its reserve are pinned on part of a coarse step or to values that change within one
-(``flex_data.coarse_pin_varies``).
+coarse step; a row with a fine member stays per solve step and reads the coarse terms at their constant value.  In a
+stochastic solve, a process at a node whose net flow is tied between the forecasts, every online process and every
+reserve provider also keeps the solve's step when a coarse step holds both tied (committed) and untied steps
+(``flex_data.coarse_tie_straddles``): its one value would tie the untied steps too.  A realization solve keeps a
+process at the solve's step when its units online or its reserve are pinned on part of a coarse step or to values
+that change within one (``flex_data.coarse_pin_varies``).
 
 :func:`coarse_node_frames` cuts the solve's steps into coarse steps.  It is the only source of the coarse
 steps; the per-block timelines of the block layout (``solve_data/block_step_duration`` etc.) do not feed the
@@ -40,6 +41,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+import numpy as np
 import polars as pl
 
 from flextool.engine.input._solve_state import FlexToolConfigError
@@ -60,6 +62,21 @@ def _warn_once(msg: str) -> None:
     if msg not in _WARNED:
         _WARNED.add(msg)
         _LOG.warning(msg)
+
+
+def ordered_sum(frame: pl.DataFrame, keys: list[str], order: str,
+                values: tuple[str, ...] = ("value",)) -> pl.DataFrame:
+    """``(keys…, values…)``: ``frame``'s ``values`` columns summed per ``keys`` in ``order`` (and key) order, with
+    ``numpy.add.reduceat`` on one contiguous array, so the bits of each sum do not depend on the row order a
+    join produced or on how the frame is chunked."""
+    srt = frame.sort([*keys, order])
+    if srt.height == 0:
+        return srt.select(*keys, *values)
+    new = pl.any_horizontal([pl.col(c).ne_missing(pl.col(c).shift(1)) for c in keys]).fill_null(True)
+    starts = np.flatnonzero(srt.select(new)[:, 0].to_numpy())
+    return srt[starts].select(keys).with_columns(
+        pl.Series(v, np.add.reduceat(srt[v].to_numpy().astype(np.float64, copy=False), starts), dtype=pl.Float64)
+        for v in values)
 
 
 @dataclass(frozen=True)
@@ -432,8 +449,10 @@ def coarse_row_steps(members: pl.DataFrame, process_steps: "pl.DataFrame | None"
         dur = sd.with_columns(__dt=step_duration["value"].cast(pl.Float64)).select("d", "t", "__dt")
     else:
         dur = pl.DataFrame(schema={"d": pl.Utf8, "t": pl.Utf8, "__dt": pl.Float64})
-    return (chosen.join(dur, on=["d", "t"], how="left")
-            .with_columns(pl.col("__dt").fill_null(float(solve_step)))
-            .with_columns((pl.col("__dt") / pl.col("__dt").sum().over(*keys, "d", "b_first")).alias("w"))
+    rows = (chosen.join(dur, on=["d", "t"], how="left")
+            .with_columns(pl.col("__dt").fill_null(float(solve_step))))
+    span = ordered_sum(rows.select(*keys, "d", "b_first", "t", value="__dt"), [*keys, "d", "b_first"], "t")
+    return (rows.join(span, on=[*keys, "d", "b_first"], how="left")
+            .with_columns((pl.col("__dt") / pl.col("value")).alias("w"))
             .select(*keys, "d", "b_first", "t", "w")
             .sort([*keys, "d", "t"]))
