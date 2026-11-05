@@ -171,7 +171,7 @@ def _summarise_diff(committed: Path, regenerated: Path) -> str:
 
 
 def _compare(json_abs: Path, regenerated: Path, name: str) -> bool:
-    with open(json_abs) as f:
+    with open(json_abs, encoding="utf-8") as f:
         committed_text = f.read()
     with open(regenerated) as f:
         regenerated_text = f.read()

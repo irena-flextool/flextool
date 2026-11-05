@@ -28,7 +28,7 @@ def _unpack_value(packed: Any) -> tuple[bytes | None, str | None]:
 
 def json_to_db(json_path: Path, db_path: Path) -> str:
     """Import a JSON fixture into a new SQLite DB. Returns the sqlite:/// URL."""
-    with open(json_path) as f:
+    with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
     url = f"sqlite:///{db_path.resolve()}"
     with DatabaseMapping(url, create=True) as db_map:

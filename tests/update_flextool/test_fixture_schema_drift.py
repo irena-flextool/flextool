@@ -19,6 +19,9 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -62,7 +65,7 @@ def test_json_carries_the_schema_sections(path: Path, fmt: Format) -> None:
 def test_drift_is_named_per_field() -> None:
     """Negative twin: tests.json data on the schema's sections, with one default nulled and one
     list value removed, fails with exactly those two differences."""
-    with open(TESTS / "fixtures" / "tests.json") as f:
+    with open(TESTS / "fixtures" / "tests.json", encoding="utf-8") as f:
         data = json.load(f)
     data.update(schema_sections("packed"))
     assert section_diffs(data, "packed") == []
@@ -78,3 +81,21 @@ def test_drift_is_named_per_field() -> None:
         "schema=['reinvest_automatic', 'reinvest_choice', 'no_investment']",
         "parameter_definitions: unit/lifetime_method: default: fixture='<no default>' schema='reinvest_automatic'",
     ]
+
+
+def test_schema_sections_do_not_depend_on_the_locale_encoding() -> None:
+    """The schema JSON is UTF-8 (arrows, dashes, ellipses in descriptions) and is read as UTF-8 whatever the
+    locale: built under an ASCII locale (as a cp1252 Windows locale, which decodes the same bytes to mojibake
+    instead of failing) the decoded sections equal those of this process."""
+    descriptions = [row[4] for row in schema_sections("decoded")["parameter_definitions"] if row[4]]
+    assert any(not d.isascii() for d in descriptions)
+    env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0",
+           "PYTHONIOENCODING": "utf-8"}
+    code = ("import json, locale; from flextool.update_flextool.fixture_schema import schema_sections; "
+            "print(locale.getpreferredencoding(False)); print(json.dumps(schema_sections('decoded')))")
+    out = subprocess.run([sys.executable, "-X", "utf8=0", "-c", code], env=env, cwd=TESTS.parent,
+                         capture_output=True, text=True, encoding="utf-8", timeout=300)
+    assert out.returncode == 0, out.stderr[-2000:]
+    encoding, sections = out.stdout.splitlines()[-2:]
+    assert encoding.lower() not in ("utf-8", "utf8"), encoding
+    assert json.loads(sections) == schema_sections("decoded")

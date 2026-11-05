@@ -158,7 +158,7 @@ def _sync_settings_param_defs(json_template, sqlite_path):
     """
     from flextool.update_flextool.export_database import keep_serialized_unparse
     try:
-        with open(json_template) as json_file:
+        with open(json_template, encoding="utf-8") as json_file:
             template = json.load(json_file)
         payload = {
             key: template[key]
@@ -442,9 +442,9 @@ def migrate_project(old_path, new_path):
         "Plot_settings",
     ]
 
-    with open(old_path) as old_json:
+    with open(old_path, encoding="utf-8") as old_json:
         old_dict = json.load(old_json)
-    with open(new_path) as new_json:
+    with open(new_path, encoding="utf-8") as new_json:
         new_dict = json.load(new_json)
     
     for item in items:

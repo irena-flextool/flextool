@@ -101,7 +101,7 @@ def migrate_fixture(json_path: Path, out_path: Path | None = None) -> None:
     when the fixture's data does not fit the schema.
     """
     out_path = out_path if out_path is not None else json_path
-    with open(json_path) as f:
+    with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
     with tempfile.TemporaryDirectory() as tmp:
         source = json_path

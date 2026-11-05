@@ -103,7 +103,7 @@ def _load_schema() -> dict[str, Any]:
     """
     if not _SCHEMA_PATH.is_file():
         raise RuntimeError(f"Schema file missing: {_SCHEMA_PATH}")
-    with open(_SCHEMA_PATH) as f:
+    with open(_SCHEMA_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -161,7 +161,7 @@ def _index_source(source_json: Path) -> dict[str, Any]:
     against a fresh SQLite via spinedb_api which enforces the same
     uniqueness constraints at the DB level.
     """
-    with open(source_json) as f:
+    with open(source_json, encoding="utf-8") as f:
         data = json.load(f)
 
     entities: set[tuple[str, Any]] = set()

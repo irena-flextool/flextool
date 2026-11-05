@@ -1,5 +1,8 @@
 ## Unreleased
 
+- **Fixed: on Windows, creating or migrating a database wrote garbled parameter descriptions** (`â†’` for `→`,
+  `â€”` for `—`). The schema and template JSON files were read with the Windows code page instead of UTF-8;
+  they are now always read as UTF-8.
 - **Fixed: `FLEXTOOL_HIGHS_THREADS` was ignored by `run_flextool`.** The `--highs-threads` flag always sent 1, which
   replaced the environment variable, so HiGHS ran on one thread. An unset flag now lets the environment variable
   through; a given flag still wins. The flags of the other options with an environment variable twin work the same

@@ -11,7 +11,7 @@ def initialize_database(json_template, database_name="new_database.sqlite"):
         print("Give a name with .sqlite file extension")
         exit(-1)
 
-    with open(json_template) as json_file:
+    with open(json_template, encoding="utf-8") as json_file:
         template = json.load(json_file)
 
     # ``with`` closes only the session; ``close()`` (below) also disposes the engine, whose pooled connection

@@ -32,7 +32,7 @@ def _default_values(db_url):
 
 def test_sync_backfills_output_spinedb_and_preserves_user_values(tmp_path):
     template_path = str(package_data_path("schemas/output_settings_template.json"))
-    with open(template_path) as f:
+    with open(template_path, encoding="utf-8") as f:
         template = json.load(f)
     assert any(d[1] == "output-spinedb" for d in template["parameter_definitions"]), \
         "fixture itself must define output-spinedb"

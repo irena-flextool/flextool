@@ -1906,7 +1906,7 @@ def add_value_list_manual(db, new_value_lists):
 def add_new_parameters(db, filepath):
 
     #get template JSON. This can be the master or old template if conflicting migrations in between
-    with open(filepath) as json_file:
+    with open(filepath, encoding="utf-8") as json_file:
         template = json.load(json_file)
 
     #Parameter values need to be added first! Otherwise the new value_list_name cannot be connected!

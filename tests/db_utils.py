@@ -43,7 +43,7 @@ def db_to_json(db_path: Path, json_path: Path) -> None:
 
 def json_to_db(json_path: Path, db_path: Path) -> str:
     """Import a JSON fixture into a new SQLite DB. Returns the sqlite:/// URL."""
-    with open(json_path) as f:
+    with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
     # ``.as_posix()`` — SQLite URLs need forward slashes; a Windows backslash
     # path (``C:\...``) mangles to an invalid ``/C:\...`` when the URL is

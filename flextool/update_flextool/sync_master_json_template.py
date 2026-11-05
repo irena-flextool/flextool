@@ -34,7 +34,7 @@ SPINEDB_SCHEMA = SCHEMAS_DIR / "spinedb_schema.json"
 
 def _create_db_from_template(template_path: Path, db_path: Path) -> None:
     """Create a fresh SQLite DB from a JSON template."""
-    with open(template_path) as f:
+    with open(template_path, encoding="utf-8") as f:
         template = json.load(f)
 
     url = f"sqlite:///{db_path}"
@@ -81,7 +81,7 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
     # Step 4: Compare or overwrite
     new_json = json.dumps(new_data, indent=2, ensure_ascii=False) + "\n"
 
-    with open(SPINEDB_SCHEMA) as f:
+    with open(SPINEDB_SCHEMA, encoding="utf-8") as f:
         old_json = f.read()
 
     if new_json == old_json:
@@ -99,7 +99,7 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
         print("Master template is OUT OF DATE. Run without --verify to regenerate.")
         return False
 
-    with open(SPINEDB_SCHEMA, "w") as f:
+    with open(SPINEDB_SCHEMA, "w", encoding="utf-8") as f:
         f.write(new_json)
     print(f"Regenerated {SPINEDB_SCHEMA}")
     return True

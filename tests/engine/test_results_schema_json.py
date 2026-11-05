@@ -33,7 +33,7 @@ CANONICAL_RESERVE_CLASSES = {
 
 
 def test_results_schema_roundtrip(tmp_path):
-    with open(RESULTS_SCHEMA) as f:
+    with open(RESULTS_SCHEMA, encoding="utf-8") as f:
         schema = json.load(f)
 
     # JSON shape mirrors the input schema export.
