@@ -1,9 +1,10 @@
 name: CI
 
-# Three-tier CI gate:
+# CI gate:
 #   smoke  — every push and pull_request; <1 min, blocks merge
-#   full   — push to main + nightly; full Layer-1 + Layer-2 parity (<30 min)
 #   slow   — nightly only; xlsx workflow + other slow integration tests
+# The whole suite runs sharded in the Tests workflow (tests.yml) and its heaviest
+# modules in that workflow's nightly-heavy job.
 #
 # All jobs use the in-repo HiGHS / glpsol binaries under bin/ (no external
 # secrets). The `chmod +x` step makes them executable after checkout.
@@ -44,43 +45,9 @@ jobs:
 
       - name: Run smoke gate
         # Just the smoke-marked fast Layer-1 scenarios — the genuine per-commit
-        # gate. The broader "not slow and not solver" set is the `full` job's job
-        # (it ran ~the whole suite here and blew the 1-min cap).
+        # gate. The whole suite runs sharded in the Tests workflow (it ran ~the
+        # whole suite here and blew the 1-min cap).
         run: pytest -m smoke -v --tb=short
-
-  full:
-    name: Full (Layer-1 + Layer-2 parity)
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    # Run on push to main and on nightly schedule (skip pull_request to
-    # keep PR feedback fast — smoke is the PR gate).
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          pip install -e .
-          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
-
-      - name: Set solver binary permissions
-        run: |
-          if [ -f bin/highs ]; then chmod +x bin/highs; fi
-
-      - name: Run full Layer-1 (excluding slow)
-        run: pytest tests/ -v --tb=short --ignore=tests/test_xlsx_workflow.py
-
-      - name: Run Layer-2 MPS parity (if present)
-        run: |
-          if [ -f tests/test_mps_parity.py ]; then
-            pytest tests/test_mps_parity.py -v --tb=short
-          else
-            echo "tests/test_mps_parity.py not present yet — skipping Layer-2 parity job"
-          fi
 
   slow:
     name: Slow (nightly only)

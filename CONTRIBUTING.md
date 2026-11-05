@@ -339,7 +339,7 @@ FlexTool uses the HiGHS solver, called via the `highspy` Python package (install
 ## CI Workflows
 
 - **`tests.yml`** — runs pytest on all three platforms and verifies the master template is up to date. Triggered on push/PR to `main`.
-- **`ci.yml`** — smoke gate on every push/PR; full suite on push to `main` and nightly; slow tests nightly; the axis-Enum mode LP parity run (`enum-mode`) nightly, non-gating.
+- **`ci.yml`** — smoke gate on every push/PR; slow tests nightly (the whole suite runs sharded in `tests.yml`); the axis-Enum mode LP parity run (`enum-mode`) nightly, non-gating.
 - **`canary.yml`** — weekly dependency canary (see below).
 - **`toolbox-flextool-bundle.yml`** — manual (*Run workflow*, inputs: the Spine Toolbox ref and the FlexTool
   ref): builds the Windows zip with a frozen Spine Toolbox and FlexTool. The runner's Python (3.14) only builds the
@@ -381,7 +381,7 @@ When an older highspy crashes natively, `flextool/env_check.py` offers
 The weekly **canary** (`.github/workflows/canary.yml`, also runnable by hand
 with *Run workflow*) lifts the caps with `.github/scripts/dependency_caps.py
 lift`, installs the newest versions of everything, prints the installed
-versions against the caps, and runs the `ci.yml` full-suite command. When the
+versions against the caps, and runs the whole test suite. When the
 tests fail, or a capped package has a release past its cap, it opens (or
 updates) the single issue **"canary: dependency drift"** (label `canary`);
 a later clean run closes it. To raise a cap: wait for (or trigger) a green
