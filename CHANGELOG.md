@@ -1,5 +1,21 @@
 ## Unreleased
 
+- **Processors with AVX2 keep polars' fast build when the compatible build is installed too.** polars loads its
+  compatible build (`polars[rtcompat]`) first whenever it is installed, so a `flextool[compat]` install ran about
+  10-30% slower on every processor. `import flextool` now selects polars' default build on a processor that has
+  its features (`POLARS_PREFER_PKG`; a value you set is kept). On Linux a processor feature now counts only when both
+  `/proc/cpuinfo` and the processor itself (cpuid) report it, so emulators are read correctly.
+- **Fixed: `python -m flextool.env_check` crashed on a processor without AVX2** when the compatible polars build was
+  missing, before printing anything. It now prints the diagnostics and the pip command.
+- **Windows Toolbox bundle: runs on processors without AVX2 and on Windows without the Visual C++ runtime.** The
+  bundle's Python now has both polars builds (FlexTool picks the right one at start) and the Microsoft Visual C++
+  runtime DLLs (`msvcp140.dll` and companions) next to `python.exe`.
+- **highspy 1.15.1 or newer is required** (was `>=1.14.0,<1.15`; now `>=1.15.1,<1.16`). From 1.15 the Windows
+  highspy carries its own C++ runtime; highspy 1.14.0 crashed on import on Windows 10 1809 / Server 2019. The
+  automatic fix for a crashing highspy now installs this requirement instead of downgrading to 1.13.1. Two test
+  scenarios with several equally cheap solutions now report another one of them (same total cost). If a library
+  reports "DLL load failed" on Windows, `python -m flextool.env_check` points to the Visual C++ Redistributable.
+
 - **Fixed: FlexTool on processors without AVX2** (for example Celeron/Pentium laptops up to about 2021, Intel Core
   from before 2013, AMD FX). polars' default build crashes on these. The automatic fix installed `polars-lts-cpu`,
   whose last release (1.33.1) is older than the polars FlexTool needs, so the fixed install was still broken. FlexTool

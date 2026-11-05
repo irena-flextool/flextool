@@ -10,7 +10,7 @@ For the Spine Toolbox installation path, see [Install with Spine Toolbox](instal
 ## Requirements
 
 - **Python ≥ 3.11** (see `requires-python` in `pyproject.toml` for up-to-date requirements)
-- **64-bit Windows 10 or 11, Linux or macOS.** Windows 7 and 8.1 cannot run FlexTool 4 (its libraries need Windows 10).
+- **64-bit Windows 10 or 11, Linux or macOS.** Windows 7 and 8.1 cannot run FlexTool 4 (its libraries need Windows 10). If a library reports "DLL load failed" on Windows, install the Microsoft Visual C++ Redistributable (x64, https://aka.ms/vs/17/release/vc_redist.x64.exe).
 - **Processor (Intel/AMD):** at least SSE4.2 and POPCNT (x86-64-v2: Intel Core i3/i5/i7 from 2009 on, AMD FX or Ryzen; Core 2 and Phenom II are not supported). AVX2 (most processors from 2013 on) runs the fastest build. Without AVX2 (for example Celeron/Pentium laptops up to about 2021, Intel Core before 2013, AMD FX), FlexTool uses the compatible build of the `polars` data library (about 10-30% slower): add the `compat` extra (`pip install "flextool[compat]"`). Without it, FlexTool says why it needs the compatible build and gives the pip command: in a terminal it asks before running it, the GUI asks at startup (in its terminal, or in a small yes/no dialog when started from a shortcut) before it loads polars and closes if you decline, a Spine Toolbox tool stops with the message, and `flextool-update` installs it. Run `python -m flextool.env_check` to see what FlexTool found.
 - **Git** (optional, but recommended for easy updates)
 

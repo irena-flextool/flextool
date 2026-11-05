@@ -63,6 +63,7 @@ FlexTool requires **Python 3.11+**, 64-bit Windows 10 or 11, Linux or macOS, and
 Intel/AMD computers a processor with SSE4.2 and POPCNT (x86-64-v2: Intel Core
 i3/i5/i7 from 2009 on, AMD FX or Ryzen; not Core 2 or Phenom II). A processor with
 AVX2 (most from 2013 on) runs the fastest build. Windows 7 and 8.1 cannot run FlexTool 4.
+If a library reports "DLL load failed" on Windows, install the Microsoft Visual C++ Redistributable (x64, https://aka.ms/vs/17/release/vc_redist.x64.exe).
 
 Open a terminal (Windows: Command Prompt or PowerShell; macOS: Terminal; Linux: your shell)
 and check which Python you have:
