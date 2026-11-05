@@ -346,6 +346,9 @@
   `virtual_unitsize`.** The reference is the node with the largest existing capacity (`existing` × `virtual_unitsize`);
   before, `existing` was compared as is, so a node with `virtual_unitsize` could lose to a smaller one. Results
   change only where that picks another reference node.
+- **Docs: a lossy connection's capacity limits the flow it delivers.** The how-to example on the *regular*
+  transfer method said both nodes can send 500 but receive 400 (capacity 500, efficiency 0.8); as the model has
+  always done, they receive 500 and send 625. Results unchanged.
 - **Docs: `constraint_invested_capacity_coeff` is a coefficient per MW (MWh for storage).** Its description said
   "Not multiplied by unitsize"; FlexTool has always applied it to the invested capacity in MW (MWh).
 - **Docs: `increase_reserve_ratio` applies to upward and downward reserve alike.** The ratio stands for the
