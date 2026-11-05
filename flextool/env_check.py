@@ -62,6 +62,7 @@ _PROBE_CODE = (
     "         .select(pl.col('b').sum())).to_series()[0]\n"
     "assert out == 499500, out\n"
     "mark('polars')\n"
+    "sys.stdout.write('RUNTIME:' + str(getattr(sys.modules.get('polars._plr'), 'RUNTIME_REPR', '?')) + '\\n')\n"
     "import highspy\n"
     "highspy.Highs()\n"
     "mark('highspy')\n"
@@ -105,6 +106,13 @@ class StackProbe:
     @property
     def is_native_fault(self) -> bool:
         return self.status == NATIVE_FAULT
+
+    @property
+    def polars_runtime(self) -> str | None:
+        """The native runtime polars loaded in the probe (``"rt32"``,
+        ``"rt64"``, ``"rtcompat"``), or ``None`` if it got no further."""
+        match = re.search(r"^RUNTIME:(\S+)", self.stdout, re.MULTILINE)
+        return match.group(1) if match else None
 
     def summary(self) -> str:
         """One-line, copy-pasteable description of the outcome."""
@@ -259,6 +267,37 @@ def polars_runtimes() -> dict[str, str]:
     return found
 
 
+def default_runtime_installed() -> str | None:
+    """The installed default runtime (``"64"`` before ``"32"``, polars' own
+    order) whose version matches the ``polars`` package, or ``None``."""
+    dist, ver = installed_polars()
+    if dist != "polars" or ver is None:
+        return None
+    runtimes = polars_runtimes()
+    for rt in ("64", "32"):
+        if runtimes.get(rt) == ver:
+            return rt
+    return None
+
+
+def prefer_default_runtime(verdict: CpuVerdict) -> str | None:
+    """Make polars load its default runtime on a CPU that runs it, also when
+    the compatible runtime is installed next to it (the Toolbox bundle ships
+    both; ``flextool[compat]`` installs both).  polars loads the compatible
+    runtime first whenever it is installed, which costs about 10-30% speed on
+    an AVX2 CPU.  Sets ``POLARS_PREFER_PKG`` (read by ``polars/_plr.py`` at
+    import; child processes inherit it) and returns the runtime, or ``None``
+    when nothing is changed: the CPU is not confirmed :data:`CPU_FULL`, no
+    compatible runtime is installed, no default runtime of the polars
+    version is installed, or ``POLARS_PREFER_PKG`` is already set."""
+    if verdict.status != CPU_FULL or os.environ.get("POLARS_PREFER_PKG") or "compat" not in polars_runtimes():
+        return None
+    rt = default_runtime_installed()
+    if rt is not None:
+        os.environ["POLARS_PREFER_PKG"] = rt
+    return rt
+
+
 def compat_runtime_ready() -> bool:
     """True if the standard ``polars`` is installed together with a
     ``polars-runtime-compat`` of the same version — the one polars loads."""
@@ -409,27 +448,43 @@ def _polars_cpuid_flags() -> CpuFeatures | None:
     return None
 
 
+def merge_cpu_features(*sources: CpuFeatures) -> CpuFeatures:
+    """One feature set from several sources: a feature is present only if
+    every source that reports it says present, and missing if any says
+    missing."""
+    flags: dict[str, bool] = {}
+    for features in sources:
+        for name, present in features.flags.items():
+            flags[name] = flags.get(name, True) and present
+    return CpuFeatures("+".join(f.source for f in sources), flags)
+
+
 def detect_cpu_features() -> CpuFeatures | None:
     """Read the CPU's instruction-set flags without importing polars.
 
     ``None`` if the machine is not x86 (nothing to check) or no source could
     be read.  Linux reads ``/proc/cpuinfo`` (which also reflects features the
-    kernel disabled); elsewhere ``cpuid`` through polars' checker, and on
-    Windows ``IsProcessorFeaturePresent`` when polars is not installed.
+    kernel disabled) and ``cpuid`` through polars' checker, and a feature
+    counts as present only when both say so: under a user-mode emulator
+    (``qemu-x86_64 -cpu Nehalem``) ``/proc/cpuinfo`` is the host's, while
+    ``cpuid`` and the instructions that run are the emulated CPU's.
+    Elsewhere ``cpuid``, and on Windows ``IsProcessorFeaturePresent`` when
+    polars is not installed.
     """
     if platform.machine().lower() not in _X86_MACHINES:
         return None
+    from_kernel = None
     if sys.platform.startswith("linux"):
         try:
             with open("/proc/cpuinfo", encoding="utf-8") as fh:
-                parsed = parse_proc_cpuinfo(fh.read())
-            if parsed is not None:
-                return parsed
+                from_kernel = parse_proc_cpuinfo(fh.read())
         except OSError:
             pass
     from_cpuid = _polars_cpuid_flags()
-    if from_cpuid is not None:
-        return from_cpuid
+    if from_kernel is not None and from_cpuid is not None:
+        return merge_cpu_features(from_kernel, from_cpuid)
+    if from_kernel is not None or from_cpuid is not None:
+        return from_kernel or from_cpuid
     if sys.platform.startswith("win"):
         try:
             import ctypes
@@ -932,6 +987,10 @@ def ensure_polars_runtime_before_import(
     * repair (``flextool-update``): the user asked for a repair, so install
       without asking (``"failed"`` is reported and the update continues).
 
+    On a CPU that runs the default runtime, the default runtime is selected
+    with ``POLARS_PREFER_PKG`` when the compatible one is installed next to
+    it (:func:`prefer_default_runtime`).
+
     Returns ``"skipped"``, ``"not_needed"``, ``"unsupported"``,
     ``"deferred"``, ``"installed"`` or ``"failed"``.  *run*, *ask*,
     *interactive*, *entry* and *dialog* are parameters for tests.  Skipped
@@ -945,11 +1004,14 @@ def ensure_polars_runtime_before_import(
         or os.environ.get("POLARS_FORCE_PKG")
     ):
         return "skipped"
+    verdict = cpu_verdict()
+    if verdict.status == CPU_FULL:
+        prefer_default_runtime(verdict)
+        return "not_needed"
     if compat_runtime_ready():
         return "not_needed"
     entry = entry or import_entry_mode()
     terminal = _has_terminal() if interactive is None else interactive
-    verdict = cpu_verdict()
     if verdict.status == CPU_UNSUPPORTED:
         _stderr(unsupported_cpu_help(verdict))
         if entry == ENTRY_GUI and not terminal:
@@ -1031,7 +1093,7 @@ def diagnostics_report(probe: StackProbe | None = None) -> str:
         f"  platform    : {platform.platform()}",
         f"  machine     : {platform.machine()}",
         f"  cpu         : {_cpu_hint()}",
-        f"  polars build: {pol_dist} {pol_ver} (runtimes: {_runtimes_text()})",
+        f"  polars build: {pol_dist} {pol_ver} (runtimes: {_runtimes_text()}; loaded: {probe.polars_runtime or '-'})",
         f"  highspy     : {_dist_version('highspy')}",
         f"  {probe.summary()}",
     ]

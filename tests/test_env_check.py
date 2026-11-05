@@ -299,6 +299,52 @@ def test_proc_cpuinfo_without_x86_flags_is_not_parsed():
     assert env_check.classify_cpu(None, is_x86=False).status == env_check.CPU_NOT_X86
 
 
+def _cpuid_from(flags_line):
+    """cpuid flags as polars' checker reports them, for a CPU whose kernel
+    flags are *flags_line*."""
+    return env_check.CpuFeatures("cpuid", dict(env_check.parse_proc_cpuinfo(_cpuinfo(flags_line)).flags))
+
+
+def test_feature_missing_in_any_source_is_missing():
+    # qemu-x86_64 -cpu SandyBridge on a Haswell host: /proc/cpuinfo is the
+    # host's, cpuid (and the instructions that run) the emulated CPU's.
+    host = env_check.parse_proc_cpuinfo(_cpuinfo(_CPUINFO_HASWELL))
+    merged = env_check.merge_cpu_features(host, _cpuid_from(_CPUINFO_SANDY_BRIDGE))
+    assert merged.source == "/proc/cpuinfo+cpuid"
+    verdict = env_check.classify_cpu(merged)
+    assert verdict.status == env_check.CPU_NEEDS_COMPAT
+    assert verdict.missing_default == ["avx2", "fma", "bmi1", "bmi2", "lzcnt", "movbe"]
+    # The other way round (a kernel that disabled AVX on an AVX2 CPU) too.
+    reverse = env_check.merge_cpu_features(
+        env_check.parse_proc_cpuinfo(_cpuinfo(_CPUINFO_SANDY_BRIDGE)), _cpuid_from(_CPUINFO_HASWELL)
+    )
+    assert env_check.classify_cpu(reverse).status == env_check.CPU_NEEDS_COMPAT
+    # A feature only one source reports keeps that source's answer.
+    partial = env_check.merge_cpu_features(
+        env_check.CpuFeatures("a", {"avx2": True}), env_check.CpuFeatures("b", {"sse3": False})
+    )
+    assert partial.flags == {"avx2": True, "sse3": False}
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc/cpuinfo")
+def test_linux_detection_sees_the_emulated_cpu(monkeypatch):
+    import io
+
+    real_open = open
+
+    def fake_open(path, *args, **kwargs):
+        if path == "/proc/cpuinfo":
+            return io.StringIO(_cpuinfo(_CPUINFO_HASWELL))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(env_check, "open", fake_open, raising=False)
+    monkeypatch.setattr(env_check.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(env_check, "_polars_cpuid_flags", lambda: _cpuid_from(_CPUINFO_GEMINI_LAKE))
+    verdict = env_check.classify_cpu(env_check.detect_cpu_features())
+    assert verdict.status == env_check.CPU_NEEDS_COMPAT
+    assert "avx2" in verdict.missing_default
+
+
 def test_linux_flag_mapping_covers_every_runtime_feature():
     assert set(env_check._LINUX_FLAGS.values()) == set(env_check.DEFAULT_RUNTIME_FEATURES)
     assert set(env_check.X86_64_V2_FEATURES) < set(env_check.DEFAULT_RUNTIME_FEATURES)
@@ -733,6 +779,60 @@ def test_import_guard_skips_when_polars_already_imported(monkeypatch):
     ran = _Ran()
     assert env_check.ensure_polars_runtime_before_import(run=ran) == "skipped"
     assert ran.calls == []
+
+
+# ── default runtime next to the compatible one ────────────────────
+
+_BOTH_RUNTIMES = {"polars": "2.1.0", "polars_runtime_32": "2.1.0", "polars_runtime_compat": "2.1.0"}
+
+
+@pytest.mark.parametrize(
+    ("status", "dists", "preset", "expected"),
+    [
+        # AVX2 CPU with both runtimes (the Toolbox bundle, flextool[compat]): the default one.
+        (env_check.CPU_FULL, _BOTH_RUNTIMES, None, "32"),
+        (env_check.CPU_FULL, {**_BOTH_RUNTIMES, "polars_runtime_64": "2.1.0"}, None, "64"),
+        # The user's own choice stays.
+        (env_check.CPU_FULL, _BOTH_RUNTIMES, "compat", "compat"),
+        # No compatible runtime: polars loads the default one anyway, nothing to set.
+        (env_check.CPU_FULL, {"polars": "2.1.0", "polars_runtime_32": "2.1.0"}, None, None),
+        # A default runtime of another version would be skipped by polars: leave the order alone.
+        (env_check.CPU_FULL, {**_BOTH_RUNTIMES, "polars_runtime_32": "2.0.0"}, None, None),
+        # Not confirmed to run the default runtime: polars keeps loading the compatible one.
+        (env_check.CPU_NEEDS_COMPAT, _BOTH_RUNTIMES, None, None),
+        (env_check.CPU_UNKNOWN, _BOTH_RUNTIMES, None, None),
+    ],
+)
+def test_import_guard_selects_the_default_runtime_on_an_avx2_cpu(monkeypatch, status, dists, preset, expected):
+    _no_polars_imported(monkeypatch)
+    # setenv first, so the variable the guard sets is undone after the test.
+    monkeypatch.setenv("POLARS_PREFER_PKG", preset or "")
+    if preset is None:
+        monkeypatch.delenv("POLARS_PREFER_PKG")
+    _fake_dists(monkeypatch, **dists)
+    _fake_cpu(monkeypatch, status, [] if status == env_check.CPU_FULL else ["avx2"])
+    ran = _Ran()
+    ask = lambda _p: pytest.fail("asked")  # noqa: E731
+    assert env_check.ensure_polars_runtime_before_import(run=ran, ask=ask, interactive=False) == "not_needed"
+    assert os.environ.get("POLARS_PREFER_PKG") == expected
+    assert ran.calls == []
+
+
+def test_runtime_selection_respects_the_opt_outs(monkeypatch):
+    _no_polars_imported(monkeypatch)
+    monkeypatch.setenv("POLARS_PREFER_PKG", "")
+    monkeypatch.delenv("POLARS_PREFER_PKG")
+    monkeypatch.setenv("FLEXTOOL_NO_ENV_CHECK", "1")
+    _fake_dists(monkeypatch, **_BOTH_RUNTIMES)
+    _fake_cpu(monkeypatch, env_check.CPU_FULL)
+    assert env_check.ensure_polars_runtime_before_import(run=_Ran()) == "skipped"
+    assert "POLARS_PREFER_PKG" not in os.environ
+
+
+def test_probe_reports_the_loaded_runtime():
+    probe = env_check.StackProbe(env_check.OK, 0, stdout="PROBE:begin\nPROBE:polars\nRUNTIME:rtcompat\nPROBE:all_ok")
+    assert probe.polars_runtime == "rtcompat"
+    assert env_check.StackProbe(env_check.NATIVE_FAULT, -4, stdout="PROBE:begin").polars_runtime is None
 
 
 # ── unattended heal of "Update FlexTool" ──────────────────────────

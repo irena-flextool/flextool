@@ -7,7 +7,10 @@
 # Toolbox tool, CI) the import stops with that message (an ImportError).  The
 # GUI launchers import this package first, so the GUI asks here too: in its
 # terminal if it has one, otherwise in a small tkinter yes/no dialog, both
-# before polars is imported; on no it exits with the message.  See
+# before polars is imported; on no it exits with the message.  On a CPU that
+# runs the default runtime, with the compatible runtime installed next to it
+# (the Toolbox bundle ships both), POLARS_PREFER_PKG selects the default one:
+# polars loads the compatible runtime first whenever it is installed.  See
 # flextool.env_check.ensure_polars_runtime_before_import.  env_check.py is
 # loaded from its file under a private name, so ``python -m
 # flextool.env_check`` still runs a fresh module (no runpy warning).
