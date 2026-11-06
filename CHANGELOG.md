@@ -24,6 +24,12 @@
   characters outside the Windows console code page no longer crashes these runs. Update FlexTool (`flextool-update`,
   or `pip install -e .` in a source checkout) to get the new `flextool-run`; until then it runs the engine in the
   same process as before. The documentation and the command the GUI shows for a run use `flextool-run`.
+- **Changed: the GUI lists failed and running runs with their state, and offers only results of a run that
+  succeeded.** A scenario whose latest run is running, failed, was interrupted, killed or crashed shows ✗ or … in
+  place of its checkbox (– when the run wrote no parquet), says why on hover, and cannot be checked for plots or
+  comparison, even when the folder still holds an earlier run's parquet; ▶ on it opens the run's log. The result
+  viewer and the comparison leave such folders out. The list updates when a run starts. Results from before this
+  version show as before.
 - **Fixed: two GUI runs of the same scenario could run at once into the same output folder**, the second deleting
   the first one's work folder. A run now waits until the earlier run of its folder has finished.
 - **Fixed: stopping a GUI run left its `--save-memory` solver process running**; it now stops the run's whole

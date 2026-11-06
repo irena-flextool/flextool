@@ -337,7 +337,13 @@ class ScenarioInfo:
 
 @dataclass
 class ExecutedScenarioInfo:
-    """Information about an executed scenario with results."""
+    """Information about an executed scenario with results.
+
+    ``status`` is the folder's ``_run_status.json`` (``None`` for a folder from before run records).
+    ``run_state`` is its ``state``, with a stale ``running`` replaced by ``abandoned`` / ``unknown``
+    (``run_record.effective_state``), for display.  ``checkable`` is ``run_record.results_usable(status)``:
+    only then may the row be checked for plots and comparison, and ``unusable_reason`` says why not.
+    """
     name: str
     source_number: int
     timestamp: str
@@ -346,3 +352,8 @@ class ExecutedScenarioInfo:
     has_csvs: bool = False
     has_comp_plots: bool = False
     has_comp_excel: bool = False
+    status: dict | None = None
+    run_state: str | None = None
+    parquet_state: str | None = None
+    checkable: bool = True
+    unusable_reason: str | None = None

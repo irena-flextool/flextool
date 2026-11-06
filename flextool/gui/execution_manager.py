@@ -414,6 +414,9 @@ class ExecutionJob:
     # Set by ``flextool/gui/calibrate_jobs.py``. See MemoryWatchdog._loop.
     watchdog_exempt: bool = False
     native_fault: bool = False  # set on finalize when the process died from a native crash (segfault / illegal instruction)
+    # The run folder whose _run_status.json / _run.log this job's engine writes, set when the engine's marker
+    # arrives (its record says "running" from then on): the main window refreshes its executed list once then.
+    run_record_folder: Path | None = None
     # Opaque per-platform handle returned by `_wrap_for_memory_cap` post_spawn
     # (e.g. Windows Job Object). Must outlive the Popen, else the cap is
     # released when the last handle closes. None on platforms that don't need it.
@@ -1142,7 +1145,11 @@ class ExecutionManager:
             for line in proc.stdout:
                 stripped = line.rstrip("\n")
                 if not owner.feed(stripped):
-                    continue  # the engine's run-record marker
+                    # The engine's run-record marker: its record now says "running".
+                    with self._lock:
+                        job.run_record_folder = owner.folder
+                    self._notify_status_change(job)
+                    continue
                 with self._lock:
                     job.stdout_lines.append(stripped)
                     # Fast-path warmed flip: the solver has loaded the matrix
