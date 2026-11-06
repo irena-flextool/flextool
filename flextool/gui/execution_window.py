@@ -10,6 +10,12 @@ from tkinter import ttk, messagebox
 from flextool.gui.execution_manager import ExecutionManager, JobStatus, JobType
 from flextool.gui.hover_tooltip import attach_tooltip
 
+#: Hover text of the "Threads per run" setting.
+THREADS_PER_RUN_TIP = (
+    "Used by FlexTool's data processing and by the solver for each run;\n"
+    "runs executed in parallel each use this many."
+)
+
 logger = logging.getLogger(__name__)
 
 # Status icons for the scenarios list.
@@ -222,8 +228,9 @@ class ExecutionWindow(tk.Toplevel):
         # Also sync the spinbox to the current manager value
         self._max_workers_var.set(self._mgr.max_workers)
 
-        # Cores per job
-        ttk.Label(top_frame, text="  Cores per job:").pack(side="left", padx=(15, 5))
+        # Threads per run (stored as execution_limits.max_cores_per_job; sent as --threads)
+        threads_label = ttk.Label(top_frame, text="  Threads per run:")
+        threads_label.pack(side="left", padx=(15, 5))
 
         limits = self._mgr.execution_limits
         initial_cores = limits.max_cores_per_job if limits.max_cores_per_job > 0 else 1
@@ -239,6 +246,8 @@ class ExecutionWindow(tk.Toplevel):
         self._cores_per_job_spin.pack(side="left")
         self._cores_per_job_spin.bind("<Return>", lambda e: self._on_cores_per_job_changed())
         self._cores_per_job_spin.bind("<FocusOut>", lambda e: self._on_cores_per_job_changed())
+        attach_tooltip(threads_label, THREADS_PER_RUN_TIP)
+        attach_tooltip(self._cores_per_job_spin, THREADS_PER_RUN_TIP)
 
         # Memory budget per job (soft target; used to pick a victim under global pressure)
         mem_label = ttk.Label(top_frame, text="  Memory budget/job (GB, 0=auto):")

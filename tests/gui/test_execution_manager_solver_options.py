@@ -1,8 +1,8 @@
 """The GUI → ``cmd_run_flextool`` solver flags, and the one-time update of older solver settings.
 
 A GUI run sends a solver flag only for a setting the user changed, so it solves like a terminal run of the same
-database: the default settings send no solver flag apart from ``--highs-threads`` (the Execution jobs window's
-per-job core budget).  The GUI has no MIP-gap setting.  A settings.yaml of an earlier GUI held the old defaults
+database: the default settings send no solver flag apart from ``--threads`` (the Execution jobs window's
+"Threads per run").  The GUI has no MIP-gap setting.  A settings.yaml of an earlier GUI held the old defaults
 (presolve ``choose``, MIP gap 0.001 sent with every run); loading it updates them once.
 
 No Tk: the manager constructor only stores ``project_path`` / ``settings`` and reads package-bundled plot
@@ -47,9 +47,9 @@ def _run_options(cmd: list[str]) -> RunOptions:
 
 def test_default_settings_send_only_the_thread_count(tmp_path: Path):
     cmd = _cmd_for(tmp_path)
-    assert _registry_flags_in(cmd) == {"--highs-threads"}
+    assert _registry_flags_in(cmd) == {"--threads"}
     options = _run_options(cmd)
-    assert {k for k, r in options.resolved.items() if r.source == "cli"} == {"highs_threads"}
+    assert {k for k, r in options.resolved.items() if r.source == "cli"} == {"threads"}
 
 
 @pytest.mark.parametrize(
@@ -69,12 +69,41 @@ def test_a_changed_setting_sends_exactly_its_flag(tmp_path: Path, field, value, 
     """Each changed setting reaches the run as the same option a terminal user would set by hand."""
     cmd = _cmd_for(tmp_path, ProjectSettings(**{field: value}))
     gui = _run_options(cmd)
-    assert {k for k, r in gui.resolved.items() if r.source == "cli"} == {"highs_threads", key}
+    assert {k for k, r in gui.resolved.items() if r.source == "cli"} == {"threads", key}
     by_hand = RunOptions.from_cli(
-        build_parser().parse_args(["in.sqlite", OPTIONS[key].flag, str(value), "--highs-threads", "1"]), environ={},
+        build_parser().parse_args(["in.sqlite", OPTIONS[key].flag, str(value), "--threads", "1"]), environ={},
     )
     assert gui.get(key) == by_hand.get(key)
     assert gui.value(key) == expected
+
+
+@pytest.mark.parametrize("per_run", [1, 6])
+def test_threads_per_run_is_sent_as_the_thread_budget(tmp_path: Path, per_run: int):
+    """The Execution jobs window's "Threads per run" (stored as ``max_cores_per_job``) reaches the run as
+    ``--threads``, which gives HiGHS ``threads`` without its parallel simplex; ``--highs-threads`` is not sent."""
+    from flextool.engine.solve._orchestration import _operator_highs_overrides
+    from flextool.gui.data_models import ExecutionLimits
+
+    settings = ProjectSettings()
+    settings.execution_limits = ExecutionLimits(max_cores_per_job=per_run)
+    cmd = _cmd_for(tmp_path, settings)
+    assert "--highs-threads" not in cmd
+    options = _run_options(cmd)
+    assert (options.value("threads"), options.source("threads")) == (per_run, "cli")
+    assert _operator_highs_overrides(options) == {"threads": per_run}
+
+
+def test_calibration_sends_threads_per_run(tmp_path: Path):
+    from flextool.calibrate._cli import build_parser as calibrate_parser
+    from flextool.gui.calibrate_commands import build_calibrate_command
+
+    argv = build_calibrate_command(
+        "python", "sqlite:///in.sqlite", "scen", iterations=2, sizing="uniform", overshoot=1.0,
+        damping_first=1.0, damping_remaining=0.5, stall_fraction=0.05, warm_start_cache_dir=None, work_dir=None,
+        output_location=None, debug=False, threads=3,
+    )
+    assert argv[1:3] == ["-m", "flextool.calibrate"]
+    assert calibrate_parser().parse_args(argv[3:]).threads == 3
 
 
 def test_the_gui_never_sends_a_mip_gap(tmp_path: Path):
@@ -111,7 +140,7 @@ def test_old_default_settings_are_updated_once(tmp_path: Path):
     settings, notices = _load_counting(project)
     assert (settings.presolve, settings.scaling) == (None, None)
     assert notices == 1
-    assert _registry_flags_in(_cmd_for(tmp_path, settings)) == {"--highs-threads"}
+    assert _registry_flags_in(_cmd_for(tmp_path, settings)) == {"--threads"}
 
     save_project_settings(project, settings)
     stored = _read_settings(project)

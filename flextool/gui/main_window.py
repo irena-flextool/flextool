@@ -755,9 +755,9 @@ class MainWindow(tk.Tk):
             "HiGHS presolve).\n"
             "\n"
             "These are 'ways to solve' knobs — they do not change\n"
-            "the optimisation results (usually).  HiGHS thread count is\n"
-            "controlled separately by the Execution jobs window\n"
-            "(execution_limits.max_cores_per_job)."
+            "the optimisation results (usually).  The thread count\n"
+            "(FlexTool's processing and the solver) is set separately\n"
+            "by 'Threads per run' in the Execution jobs window."
         ))
 
         # Debug: tri-state radio group (Off / Basic / Full).  The

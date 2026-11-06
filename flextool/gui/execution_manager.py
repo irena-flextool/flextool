@@ -1241,7 +1241,9 @@ class ExecutionManager:
         if single.only_first_file:
             cmd.append("--only-first-file-per-plot")
 
-        cmd.extend(["--highs-threads", str(self.execution_limits.max_cores_per_job)])
+        # "Threads per run" (Execution jobs window): FlexTool's data processing and the solver of this run.
+        # ``--threads`` gives HiGHS ``threads=N`` with its parallel simplex left off.
+        cmd.extend(["--threads", str(max(1, int(self.execution_limits.max_cores_per_job)))])
 
         # "Debug" radio group in the main window: Off / Basic / Full.
         # Basic → --debug=basic only (verbose checkpoints, no tracemalloc).
@@ -1261,7 +1263,7 @@ class ExecutionManager:
 
         # ── Solver options (Solver options dialog in the side menu) ──
         # A flag is appended only for a setting the user changed, so a GUI
-        # run and a terminal run of the same database solve alike.  HiGHS
+        # run and a terminal run of the same database solve alike.  The
         # thread count is sourced solely from the
         # execution_limits.max_cores_per_job append above (the Execution
         # jobs window owns that knob).  The MIP gap is not a GUI setting:

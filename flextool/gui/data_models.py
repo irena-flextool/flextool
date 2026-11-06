@@ -97,9 +97,9 @@ class ProjectSettings:
     # common path.
     #
     # The previous ``highs_threads`` and ``user_bound_scale`` fields
-    # were dropped: HiGHS thread count is the canonical responsibility
+    # were dropped: the thread count (FlexTool's processing and HiGHS) is the canonical responsibility
     # of ``execution_limits.max_cores_per_job`` (Execution jobs
-    # window), and ``user_bound_scale`` overlaps with ``scaling`` for
+    # window, "Threads per run"), and ``user_bound_scale`` overlaps with ``scaling`` for
     # the rare advanced-user case where the autoscaler is bypassed in
     # favour of a hand-set bound scale via ``solver_arguments``.
 
@@ -237,7 +237,7 @@ class ExecutionLimits:
     per-project field.  A value of 0 / 0.0 means "auto" (compute at
     dispatch time from system info).
     """
-    max_cores_per_job: int = 1            # passed as --highs-threads to each subprocess
+    max_cores_per_job: int = 1            # "Threads per run": passed as --threads to each subprocess
     memory_cap_per_job_gb: float = 0.0    # 0 = auto: (system_total - system_reserve_gb) / max_workers
     system_reserve_gb: float = 0.5        # tier 4: leave at least this much free system RAM
     swap_allowance_gb: float = 0.0        # tier 4: 0 = no swap; >0 allowed but warns user
