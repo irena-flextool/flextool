@@ -93,7 +93,7 @@ def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
                        db.get_item("parameter_definition", entity_class_name=ABSENT[0], name=ABSENT[1])["id"])
         db.commit_session("pre-77 content")
         before = _snapshot(db)
-    migrate_database(url)
+    migrate_database(url, up_to=77)  # the v77 step only: later steps rewrite descriptions again
     with DatabaseMapping(url) as db:
         after = _snapshot(db)
         data = export_data(db)
