@@ -102,7 +102,7 @@ def _install(
     cost_reader = _SeqSpy(dispatch_costs)
     solves_override = _SeqSpy([None] * 64)  # no-op, count writes
 
-    def fake_run_solve(url, scenario, *, work_dir, out_root, cache_dir):
+    def fake_run_solve(url, scenario, *, work_dir, out_root, cache_dir, threads=None):
         return SimpleNamespace(
             assess_dir=Path(out_root) / "assess",
             returncode=0,
@@ -345,7 +345,7 @@ def test_stable_alt_name_leaves_one_timeset(tmp_path, monkeypatch):
     url = _build_iter_db(tmp_path / "orphan.sqlite")
 
     # Real selection + DB write; only the solve and cap read are stubbed.
-    def fake_run_solve(u, scenario, *, work_dir, out_root, cache_dir):
+    def fake_run_solve(u, scenario, *, work_dir, out_root, cache_dir, threads=None):
         return SimpleNamespace(
             assess_dir=Path(out_root) / "assess", returncode=0, started_at=0.0
         )

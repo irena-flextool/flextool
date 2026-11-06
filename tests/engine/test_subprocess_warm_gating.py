@@ -118,9 +118,12 @@ def test_first_transfer_probes_then_trusts(tmp_path: Path, monkeypatch) -> None:
     warm run (2 spawns, one w/o and one w/ ``--warm-basis``) and writes
     ``.abtested``; solve #3 trusts warm (1 spawn, warm injected)."""
     monkeypatch.setenv("FLEXTOOL_WARM_START", "1")
-    # Positive margin: on an identical model the warm run is never slower
-    # than cold by 10%, so the verdict is "beneficial" (.abtested).
-    monkeypatch.setattr(_subp, "_WARM_AB_MARGIN", 0.10)
+    # Infinite margin: any warm time is within it, so the verdict is
+    # "beneficial" (.abtested) whatever the two runs measure.  A finite
+    # margin compares two millisecond HiGHS run times, which a busy CI
+    # runner can put on either side of it.
+    monkeypatch.setenv("FLEXTOOL_WARM_AB_MARGIN", "inf")
+    monkeypatch.setattr(_subp, "_WARM_AB_MARGIN", float("inf"))
     spy = _install_spy(monkeypatch)
 
     work = tmp_path / "work"
