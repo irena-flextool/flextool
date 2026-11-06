@@ -162,6 +162,11 @@ RAMP = Transform(
     "Change in flow between consecutive timesteps (a ramp).",
     algebra="flow[t] − flow[t-1]",
 )
+CAPACITY_FACTOR = Transform(
+    "", Semantics.RATIO,
+    "Capacity factor (a fraction): the period's flow divided by the capacity and the period's hours.",
+    algebra="Σ(MW · step_duration) / (capacity · period_hours)",
+)
 CAPACITY_MW = Transform(
     "MW", Semantics.LEVEL,
     "Installed/usable capacity (a stock that holds over the period, not a flow).",
@@ -215,10 +220,11 @@ FACTOR = Transform(
     "", Semantics.RATIO,
     "Dimensionless discount / inflation factor.",
 )
-ANNUITY = Transform(
-    "CUR/MW/a", Semantics.ANNUALIZED,
-    "Annualised investment cost per MW of capacity — the cost charged for "
-    "each year of the entity's economic lifetime.",
+INVEST_COST_DISCOUNTED = Transform(
+    "CUR/MW", Semantics.DISCOUNTED,
+    "Discounted investment cost per MW of capacity (per MWh for storage nodes): the yearly annuity summed "
+    "with the inflation factors over the years of the lifetime inside the horizon.",
+    algebra="annuity · Σ inflation_factor over the lifetime window",
 )
 YEARS = Transform(
     "a", Semantics.COUNT,
@@ -319,10 +325,9 @@ _NODEGROUP_GDT_P = {
     '2. VRE generation': ENERGY_PERSTEP,
     '3. Excess load': ENERGY_PERSTEP,
     '4. Curtailed VRE': ENERGY_PERSTEP,
-    # Raw inflow level at the timestep — no step_duration applied (an MW
-    # level, like nodeGroup/node dt flows), unlike the slack/VRE columns
-    # above which are integrated to MWh/step.
-    '5. Timestep inflow': RATE,
+    # The inflow as given: already MWh per time step (inflow is an energy per
+    # step), like the slack/VRE columns above, which are integrated to MWh/step.
+    '5. Timestep inflow': ENERGY_PERSTEP,
     '6. Curtailed VRE of potential VRE': RATIO,
     '7. Annualized inflow': PREENERGY_ANNUAL,
     '8. VRE share of demand': RATIO,
@@ -364,6 +369,9 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "unit_inputNode_dt_ee": RATE,
     "unit_outputNode_d_ee": ENERGY_ANNUAL,
     "unit_inputNode_d_ee": ENERGY_ANNUAL,
+    "unit_outputs_cf_d_ee": CAPACITY_FACTOR,
+    "unit_inputs_cf_d_ee": CAPACITY_FACTOR,
+    "connection_cf_d_e": CAPACITY_FACTOR,
     "connection_dt_eee": RATE,
     "connection_d_eee": ENERGY_ANNUAL,
     "connection_leftward_dt_eee": RATE,
@@ -379,12 +387,12 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     # Node / group flows
     "nodeGroup_flows_d_g": PREENERGY_ANNUAL,
     "nodeGroup_flows_d_gpe": PREENERGY_ANNUAL,
-    # dt group/node flows show the un-integrated MW level (no step_duration —
-    # relatable to installed capacity), per maintainer convention.  Only
-    # sum_flow_t (gpe) integrates the flow columns to MWh/step.
-    "nodeGroup_flows_dt_g": RATE,
+    # Inflow is an energy per time step (MWh per step, not a rate): the group
+    # inflow sum and the node inflow are written as given.  sum_flow_t (gpe)
+    # integrates its flow columns to MWh/step as well.
+    "nodeGroup_flows_dt_g": ENERGY_PERSTEP,
     "nodeGroup_flows_dt_gpe": ENERGY_PERSTEP,
-    "node_inflow__dt": RATE,
+    "node_inflow__dt": ENERGY_PERSTEP,
     "node_state_dt_e": STORAGE_STATE,
     # VRE shares + curtailment/potential.  NOTE: the *_d_ee curtailment and
     # potential are SUM-ONLY over the sample (per_period), NOT annualized —
@@ -414,7 +422,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     # Costs / factors
     "costs_discounted_p_": MONEY_DISCOUNTED,
     "discountFactors_d_p": FACTOR,
-    "entity_annuity_d_p": ANNUITY,
+    "entity_annuity_d_p": INVEST_COST_DISCOUNTED,
     "years_represented__d": YEARS,
     # Start-ups
     "unit_startup_d_e": COUNT_ANNUAL,
