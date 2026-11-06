@@ -569,13 +569,13 @@ def cpu_verdict() -> CpuVerdict:
 
 # flextool's own polars / highspy requirements, used when the installed
 # flextool's metadata cannot be read (e.g. running from a source checkout).
-_POLARS_SPEC_FALLBACK = ">=1.40,<3"
+_POLARS_SPEC_FALLBACK = ">=1.40,<2"
 _HIGHSPY_SPEC_FALLBACK = ">=1.15.1,<1.16"
 
 
 def _flextool_requirement_spec(name: str, fallback: str) -> str:
     """The version specifier of flextool's requirement on *name* (e.g.
-    ``">=1.40,<3"`` for ``polars``), from the installed flextool's metadata."""
+    ``">=1.40,<2"`` for ``polars``), from the installed flextool's metadata."""
     try:
         requirements = importlib.metadata.requires("flextool") or []
     except importlib.metadata.PackageNotFoundError:
