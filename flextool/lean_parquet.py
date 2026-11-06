@@ -18,11 +18,17 @@ from __future__ import annotations
 
 import ast
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+if TYPE_CHECKING:
+    import polars as pl
 
 
 def write_lean_parquet(
@@ -157,3 +163,166 @@ def read_lean_parquet(path: str | Path) -> pd.DataFrame:
             df.columns.name = single_col_name
 
     return df
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Reading a table without pandas: the footer's layout, the wide frame, the long view
+#
+# A lean parquet stores a table "wide": the row index levels as columns of their own, and one physical column
+# per column key, named by arrow's text of the key tuple (``"('scenario', 'unit', 'node')"``; the bare key for a
+# single column level).  This module is the one place that knows those names.  The functions below read only
+# what is asked for: :func:`lean_parquet_layout` the footer, :func:`read_lean_parquet_wide` the index columns and
+# the kept data columns, and :func:`to_long` turns an already reduced wide frame into rows with one column per
+# level.
+
+#: Files up to this size are read into memory in one go and closed before they are parsed.
+IN_MEMORY_MAX_BYTES = 64 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class LeanLayout:
+    """The layout of a parquet table, from its footer.
+
+    *idx* are the row level names (an unnamed level is ``level_<i>``) and *index_physical* their physical
+    columns; *col* the column level names (empty for a flat table, whose columns are all row levels).  Each data
+    column has its key (one value per column level) in *columns* and its physical name in *physical*, in file
+    order.  *column_meta* is the ``flextool_columns`` blob, *num_rows* the row count, and *lean* whether the file
+    carries FlexTool's footer (else the pandas metadata, or none, described it).
+    """
+
+    idx: tuple[str, ...]
+    index_physical: tuple[str, ...]
+    col: tuple[str, ...]
+    columns: tuple[tuple[str, ...], ...]
+    physical: tuple[str, ...]
+    column_meta: dict | None
+    num_rows: int
+    lean: bool
+
+    def level_values(self, level: str) -> list[str]:
+        """The distinct keys of the column level *level*, in file order."""
+        i = self.col.index(level)
+        return list(dict.fromkeys(key[i] for key in self.columns))
+
+    def select(self, filters: "dict[str, Callable[[str], bool]] | None" = None) -> list[str]:
+        """The physical data columns whose key passes every ``{column level: predicate}`` of *filters*."""
+        if not filters:
+            return list(self.physical)
+        tests = [(self.col.index(level), test) for level, test in filters.items()]
+        return [name for name, key in zip(self.physical, self.columns)
+                if all(test(key[i]) for i, test in tests)]
+
+
+def _level_names(names: list, prefix: str) -> tuple[str, ...]:
+    return tuple(str(n) if n is not None else f"{prefix}_{i}" for i, n in enumerate(names))
+
+
+def _key_of(physical: str, n_levels: int) -> tuple[str, ...]:
+    """The column key of a physical column name (arrow's text of the tuple; the bare name for one level)."""
+    if n_levels <= 1:
+        return (physical,)
+    try:
+        value = ast.literal_eval(physical)
+    except (ValueError, SyntaxError):
+        value = None
+    if not isinstance(value, tuple) or len(value) != n_levels:
+        raise ValueError(f"the column {physical!r} is not a key of {n_levels} levels")
+    return tuple(str(v) for v in value)
+
+
+def _open_source(path: Path) -> "pa.BufferReader | str":
+    """What pyarrow reads *path* from: its bytes when the file is small (the file is closed before parsing),
+    else the path itself (pyarrow opens and closes it within the call)."""
+    if path.stat().st_size <= IN_MEMORY_MAX_BYTES:
+        return pa.BufferReader(path.read_bytes())
+    return str(path)
+
+
+def lean_parquet_layout(path: str | Path) -> LeanLayout:
+    """The layout of the parquet table at *path*, from its footer only.
+
+    Reads FlexTool's ``flextool`` footer (``write_lean_parquet``), else the pandas metadata of a file written by
+    ``DataFrame.to_parquet``, else treats every column as a row level (a flat table).  Raises
+    ``pyarrow.ArrowInvalid`` for a file that is not (or not yet) a complete parquet file.
+    """
+    path = Path(path)
+    with pq.ParquetFile(_open_source(path)) as pf:
+        schema = pf.schema_arrow
+        num_rows = pf.metadata.num_rows
+    names = list(schema.names)
+    meta = schema.metadata or {}
+    column_meta = json.loads(meta[b"flextool_columns"]) if meta.get(b"flextool_columns") else None
+    if b"flextool" in meta:
+        info = json.loads(meta[b"flextool"])
+        raw_idx = list(info.get("idx") or [])
+        index_physical = [n if n is not None else f"__index_level_{i}__" for i, n in enumerate(raw_idx)]
+        idx = _level_names(raw_idx, "level")
+        if info.get("col"):
+            col = _level_names(list(info["col"]), "column_level")
+        elif info.get("col_name") is not None:
+            col = (str(info["col_name"]),)
+        elif raw_idx:
+            col = ("column",)
+        else:
+            col = ()
+        lean = True
+    elif b"pandas" in meta:
+        pandas_meta = json.loads(meta[b"pandas"])
+        by_field = {c.get("field_name"): c.get("name") for c in pandas_meta.get("columns", [])}
+        index_physical = [c for c in pandas_meta.get("index_columns", []) if isinstance(c, str)]
+        idx = _level_names([by_field.get(c) for c in index_physical], "level")
+        col = _level_names([c.get("name") for c in pandas_meta.get("column_indexes", [])], "column_level")
+        if not col:
+            col = ("column",)
+        lean = False
+    else:
+        index_physical, idx, col, lean = [], (), (), False
+    present = [p for p in index_physical if p in names]
+    idx = tuple(level for level, p in zip(idx, index_physical) if p in names)
+    if not col:                                       # a flat table: every column is a row level
+        return LeanLayout(tuple(names), tuple(names), (), (), (), column_meta, num_rows, lean)
+    data = [n for n in names if n not in set(present)]
+    columns = tuple(_key_of(n, len(col)) for n in data)
+    return LeanLayout(idx, tuple(present), col, columns, tuple(data), column_meta, num_rows, lean)
+
+
+def read_lean_parquet_wide(path: str | Path, *, keep: "list[str] | None" = None,
+                           layout: LeanLayout | None = None) -> "pl.DataFrame":
+    """The table at *path* as a wide polars frame: the row levels (named as in the layout) and the physical data
+    columns *keep* (all when ``None``), in file order.  Only those columns are read."""
+    import polars as pl
+
+    path = Path(path)
+    layout = layout if layout is not None else lean_parquet_layout(path)
+    wanted = set(layout.physical if keep is None else keep)
+    unknown = wanted - set(layout.physical)
+    if unknown:
+        raise KeyError(f"not data columns of {path.name}: {sorted(unknown)[:5]}")
+    data = [p for p in layout.physical if p in wanted]
+    table = pq.read_table(_open_source(path), columns=list(layout.index_physical) + data)
+    frame = pl.from_arrow(table)
+    renames = {p: level for p, level in zip(layout.index_physical, layout.idx)
+               if p != level and level not in frame.columns}
+    return frame.rename(renames) if renames else frame
+
+
+def to_long(wide: "pl.DataFrame", layout: LeanLayout, *, value_name: str = "value") -> "pl.DataFrame":
+    """*wide* (columns from :func:`read_lean_parquet_wide`, possibly reduced) with one row per (row, data column):
+    its row levels, one column per column level, and *value_name*.  Meant for frames already reduced or
+    filtered: a large table's long form has rows × columns rows."""
+    import polars as pl
+
+    if not layout.col:
+        return wide
+    keys = dict(zip(layout.physical, layout.columns))
+    data = [c for c in wide.columns if c in keys]
+    index = [c for c in wide.columns if c not in keys]
+    if data and all(wide.schema[c].is_numeric() or wide.schema[c] == pl.Null for c in data):
+        wide = wide.with_columns(pl.col(data).cast(pl.Float64))
+    long = wide.unpivot(index=index, on=data, variable_name="__column", value_name=value_name)
+    mapping = pl.DataFrame(
+        {"__column": data, **{level: [keys[c][i] for c in data] for i, level in enumerate(layout.col)}},
+        schema={"__column": pl.String, **{level: pl.String for level in layout.col}},
+    )
+    long = long.join(mapping, on="__column", how="left", maintain_order="left").drop("__column")
+    return long.select([*index, *layout.col, value_name])
