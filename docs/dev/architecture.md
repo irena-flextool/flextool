@@ -107,11 +107,12 @@ The contract:
    as flags (`RunOptions.to_argv()`) and inherits the parent's environment untouched. Benders region workers are
    threads and read the same `RunOptions`.
 5. Process-level variables (`MALLOC_ARENA_MAX`, `_RJEM_MALLOC_CONF`, `POLARS_*`) keep `setdefault` semantics: a
-   value already in the environment wins.
+   value already in the environment wins.  The exception is `POLARS_MAX_THREADS` while `flextool/__init__.py`
+   imports polars: see "Thread budget" below.
 6. HiGHS keys keep their own stack (baseline < `highs.opt` < `solve.solver_mip_gap` < `solve.solver_arguments` <
    operator layer); the registry supplies only the operator layer.
 7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
-   with its source — and polars' thread count.
+   with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
 
 Every other variable is an `EnvKnob` in `ENV_KNOBS` with its audience (`user`, `dev`, `test`) and page:
 [user page](../env_vars.md), [developer page](env_vars.md), [testing](testing.md#test-suite-environment-variables).
@@ -921,6 +922,22 @@ runtime library, so there are two paths:
   on stderr with the remedy: import flextool before polars, or start
   Python with `_RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0`.
   Windows (mimalloc) and builds without jemalloc are a silent no-op.
+
+**Thread budget.** One number B per run (`--threads` > `FLEXTOOL_THREADS` > the available cores, by CPU
+affinity) limits FlexTool's processing and the solver (`flextool/_thread_budget.py`). polars reads
+`POLARS_MAX_THREADS` only at import, and `import flextool` imports it, so `flextool/__init__.py` runs, in this
+order: the thread budget (`apply_before_polars`: when the process is a FlexTool command that accepts
+`--threads` — `sys.orig_argv` holds `-m flextool.cli.cmd_run_flextool` / `cmd_solve_mps` /
+`cmd_execute_flextool_workflow` / `flextool.calibrate`, or `sys.argv[0]` is `flextool-run[.exe]` or the
+`cmd_run_flextool.py` file Spine Toolbox runs — the flag is read from the command line, full name only; then
+`POLARS_MAX_THREADS = min(B, the user's POLARS_MAX_THREADS, else 8)`), the allocator config, `import polars`,
+the rest of the package, and finally `restore_env`, which puts `POLARS_MAX_THREADS` back exactly as it was.
+The environment therefore never carries B: a child gets `--threads` on its command line (workflow, calibrator,
+GUI jobs, the `--save-memory` solve child). With a polar-high older than 3.12.2, whose import sets
+`POLARS_MAX_THREADS=1` even with polars loaded, it is imported before the restore so that value is removed too.
+When polars was imported before flextool, its pool cannot change; the header says so. HiGHS: a caller-set B
+gives `threads=B` with the `parallel=off` pin kept (`highs_thread_options`); `--highs-threads N>1` keeps its
+parallel-simplex opt-in, at most B. Benders: without `--benders-workers`, at most B region solves at once.
 
 ## Solver outputs: folder layout
 

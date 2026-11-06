@@ -1,5 +1,19 @@
 ## Unreleased
 
+- **New: `--threads N` (`FLEXTOOL_THREADS`), one thread count per FlexTool run, for FlexTool's data processing and
+  the solver.** FlexTool's own processing (polars) uses at most N threads and at most 8 (`POLARS_MAX_THREADS` can
+  set a lower limit), HiGHS gets `threads=N` (its parallel simplex stays off) and a Benders solve runs at most N
+  region solves at once. Default: the available cores, with HiGHS and Benders as before. Give each run about
+  cores / runs when several run at once (a script or an AI agent driving the terminal, Spine Toolbox running
+  scenarios in parallel: add `--threads N` to the FlexTool Tool's arguments). The run header prints the threads
+  in use. The workflow runner and the calibrator take `--threads` too and pass it on.
+- **Changed: the GUI's "Cores per job" is now "Threads per run" and also sets FlexTool's own data processing.**
+  GUI runs used one thread for FlexTool's processing by accident, about 30-45 % slower before the solver; a GUI
+  run now sends its "Threads per run" as `--threads` (default 1, as before). It no longer turns on HiGHS' parallel
+  simplex when set above 1.
+- **Changed: terminal and Spine Toolbox runs use at most 8 threads for FlexTool's data processing** (before: every
+  core). No measured slowdown, and less contention when several runs execute at once.
+
 - **Changed: a solve HiGHS could not certify as optimal (status "Unknown") is judged against its own feasibility
   tolerance.** It is accepted as near-optimal when its largest relative primal infeasibility is within
   max(1e-6, 10 × `primal_feasibility_tolerance`) (before: 1e-6 whatever the tolerance) and its primal-dual

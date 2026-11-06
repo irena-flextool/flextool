@@ -20,6 +20,7 @@ read (for example `FLEXTOOL_HIGHS_THREADS=many`) is ignored with one warning tha
 
 | Variable | Flag | Set to | What it does |
 |---|---|---|---|
+| `FLEXTOOL_THREADS` | `--threads` | positive integer (default: the available cores) | Threads for one FlexTool run: FlexTool's data processing and the solver. polars uses at most this many and at most 8; HiGHS gets `threads` set to it (its parallel simplex stays off); a Benders solve runs at most this many region solves at once. Unset: polars uses up to 8 threads and HiGHS and Benders keep their defaults. |
 | `FLEXTOOL_HIGHS_THREADS` | `--highs-threads` | positive integer (default `1`) | HiGHS solver threads. More than 1 turns on HiGHS' parallel mode, which is faster but not bit-for-bit reproducible. |
 | `FLEXTOOL_HIGHS_PRESOLVE` | `--presolve` | `on` / `off` / `choose` | HiGHS presolve. Unset keeps `on`. |
 | `FLEXTOOL_HIGHS_TIME_LIMIT` | `--solver-time-limit` | seconds | HiGHS wall-clock limit per solve, a positive number. Unset means no limit; 0 or a negative value is ignored with a warning, for the flag and the variable alike. |
@@ -44,7 +45,7 @@ read (for example `FLEXTOOL_HIGHS_THREADS=many`) is ignored with one warning tha
 | `MALLOC_ARENA_MAX` | integer | Linux: cap on glibc's malloc arenas. `run_flextool` sets `4`, which keeps memory from fragmenting over long runs, unless you set a value. |
 | `POLARS_PREFER_PKG` | `64` / `32` / `compat` | polars' own: which polars build loads first. On a processor with AVX2, `import flextool` sets the fast build when the compatible build is installed too; a value you set is kept. |
 | `POLARS_FORCE_PKG` | `64` / `32` / `compat` | polars' own: load only this build. Also skips FlexTool's processor check. |
-| `POLARS_MAX_THREADS` | integer | polars' own: size of polars' thread pool. Set it before FlexTool starts; the run header prints the count polars uses. |
+| `POLARS_MAX_THREADS` | integer | polars' own: size of polars' thread pool. FlexTool uses it in place of its limit of 8, but never above the run's `--threads` / `FLEXTOOL_THREADS`. Set it before FlexTool starts; the run header prints the count polars uses. |
 
 FlexTool also reads developer variables (diagnostics, profiling, Benders experiments, test switches). They are
 described in the developer guide, are not meant for production runs and can change between releases.
