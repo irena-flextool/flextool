@@ -65,7 +65,7 @@ jobs:
       - name: Behaviour-change registry matches the CHANGELOG
         run: |
           python -m pip install -e . pytest
-          python -m pytest tests/engine/test_behaviour_change_registry.py -q -p no:cacheprovider --noconftest
+          python -m pytest tests/engine/test_behaviour_change_registry.py -q -p no:cacheprovider --noconftest -o addopts="--import-mode=importlib"
 
       - name: Build sdist + wheel
         run: |
