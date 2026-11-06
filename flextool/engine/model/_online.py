@@ -49,7 +49,7 @@ def add_variables(b: "_Build") -> None:
     #   ∀ (p,d,t) ∈ p_online_dt, p ∈ process_online_linear
     # Units online, and units started / shut down: the change of units online, online_change
     # (count of unitsize), continuous.
-    # ─── VAR. ─── v_online / v_startup / v_shutdown (coarse processes) ───────
+    # ─── VAR. ─── v_online{sfx} / v_startup{sfx} / v_shutdown{sfx} (coarse processes) ───
     # on[p,d,b], su[p,d,b], sd[p,d,b]   ∀ p ∈ processCoarse ∩ process_online, (d,b) the coarse steps of p
     #   (b = its first fine step b_first)
     # Units online once per coarse step, held over its fine steps (a level: b.v_online_* is indexed on every fine
