@@ -16,6 +16,7 @@ from flextool.gui.data_models import PlotSettings, ProjectSettings
 from flextool.gui.platform_utils import open_file_in_default_app
 from flextool.gui.project_utils import get_projects_dir
 from flextool.gui.scenario_key import resolve_subdir_for_read
+from flextool.gui.scenario_lists import folder_results_usable
 
 if TYPE_CHECKING:
     from flextool.gui.execution_manager import ExecutionManager
@@ -241,9 +242,15 @@ class OutputActionManager:
         parquet_base = self.project_path / "output_parquet"
         plot_dir = self.project_path / "output_plot_comparisons"
 
+        # Only folders whose latest run succeeded and wrote its parquet (their run record says so, or they
+        # have none): a failed run's folder may still hold an earlier run's parquet, which is not offered.
         subdirs = [
-            resolve_subdir_for_read(settings.bare_output_owners, sn, name)
-            for sn, name in scenario_ids
+            subdir
+            for subdir in (
+                resolve_subdir_for_read(settings.bare_output_owners, sn, name)
+                for sn, name in scenario_ids
+            )
+            if folder_results_usable(parquet_base / subdir)
         ]
 
         cmd: list[str] = [
