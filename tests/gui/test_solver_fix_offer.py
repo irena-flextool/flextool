@@ -93,15 +93,29 @@ def _boxes(monkeypatch, answer):
     return shown
 
 
-def _needs_display():
-    root = env_check._open_dialog_root()
-    if root is None:
-        pytest.skip("no display (run under xvfb-run)")
-    root.destroy()
+@pytest.fixture
+def dialog_root(monkeypatch):
+    """One hidden Tk root, handed to the dialog in place of the one it would create.
+
+    Creating a Tk root can fail intermittently on a headless runner (the Windows CI runner), and the dialog
+    reports that as "unavailable".  The root is created here once: when it cannot be, the test is skipped with
+    the reason; when it can, the dialog under test runs on it and cannot fail to open its window.
+    """
+    tkinter = pytest.importorskip("tkinter")
+    try:
+        root = tkinter.Tk()
+    except tkinter.TclError as exc:
+        pytest.skip(f"tkinter cannot open a window here (run under xvfb-run): {exc}")
+    root.withdraw()
+    monkeypatch.setattr(env_check, "_open_dialog_root", lambda: root)
+    yield root
+    try:
+        root.destroy()  # the dialog destroys it on success
+    except tkinter.TclError:
+        pass
 
 
-def test_dialog_no_runs_nothing(monkeypatch):
-    _needs_display()
+def test_dialog_no_runs_nothing(monkeypatch, dialog_root):
     shown = _boxes(monkeypatch, False)
     pip = _Pip(0)
     assert env_check.compat_install_dialog("REASON + COMMAND", [_STEP], pip) == "declined"
@@ -109,8 +123,7 @@ def test_dialog_no_runs_nothing(monkeypatch):
     assert shown == [("ask", "REASON + COMMAND\n\nRun it now?")]
 
 
-def test_dialog_yes_installs_and_says_so(monkeypatch):
-    _needs_display()
+def test_dialog_yes_installs_and_says_so(monkeypatch, dialog_root):
     shown = _boxes(monkeypatch, True)
     pip = _Pip(0)
     assert env_check.compat_install_dialog("REASON", [_STEP], pip) == "installed"
@@ -119,8 +132,7 @@ def test_dialog_yes_installs_and_says_so(monkeypatch):
     assert [kind for kind, _text in shown] == ["ask", "info"]
 
 
-def test_dialog_failed_install_shows_pip_output(monkeypatch):
-    _needs_display()
+def test_dialog_failed_install_shows_pip_output(monkeypatch, dialog_root):
     shown = _boxes(monkeypatch, True)
     assert env_check.compat_install_dialog("REASON", [_STEP], _Pip(1)) == "failed"
     kind, text = shown[-1]
