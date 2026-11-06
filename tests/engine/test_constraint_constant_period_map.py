@@ -55,6 +55,10 @@ def test_period_map_missing_a_period_is_an_error(tmp_path_factory) -> None:
 
 ROLL_CHAIN = ["init", "west", "battery", "wind", "fullYear", "dispatch_fullYear_roll"]
 ROLL_PERIODS = ["p2020", "p2025", "p2030", "p2035"]
+# dispatch_fullYear_roll with a 48 h horizon and a 36 h jump instead of 8 h / 4 h: two rolls in each of the four
+# 72-h periods (8 rolls, not 72), the second roll of a period reaching into the next period.
+ROLL_LONG_JUMP = [["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", b64(48.0, "float")],
+                  ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", b64(36.0, "float")]]
 STOCH_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json"
 
 
@@ -62,8 +66,9 @@ def _period_map(values: dict[str, float]) -> list:
     return b64({"index_type": "str", "index_name": "period", "data": [[k, v] for k, v in values.items()]}, "map")
 
 
-def _rows_per_step(tmp_path_factory, alt: str, constant, *, chain, arc, fixture_json=None) -> list[dict]:
-    values = [["constraint", "c_cap", "sense", b64("less_than", "str")],
+def _rows_per_step(tmp_path_factory, alt: str, constant, *, chain, arc, fixture_json=None,
+                   extra=()) -> list[dict]:
+    values = list(extra) + [["constraint", "c_cap", "sense", b64("less_than", "str")],
               ["constraint", "c_other", "sense", b64("less_than", "str")],
               ["constraint", "c_cap", "constant", constant],
               ["unit__outputNode", arc, "constraint_flow_coeff",
@@ -87,11 +92,13 @@ def _rows_per_step(tmp_path_factory, alt: str, constant, *, chain, arc, fixture_
 ])
 def test_period_map_equals_constant_in_every_solve(tmp_path_factory, case, chain, arc, periods, fixture) -> None:
     """One constraint with a period map and one with the spread default 0 in the same model: the map that
-    repeats the constant gives every roll / branch the same rows as the constant."""
+    repeats the constant gives every roll / branch the same rows as the constant (rolling: the 8 rolls of
+    ``ROLL_LONG_JUMP``)."""
+    extra = ROLL_LONG_JUMP if case == "rolling" else []
     scalar = _rows_per_step(tmp_path_factory, f"uc_c_{case}_s", b64(300.0, "float"), chain=chain, arc=arc,
-                            fixture_json=fixture)
+                            fixture_json=fixture, extra=extra)
     mapped = _rows_per_step(tmp_path_factory, f"uc_c_{case}_m", _period_map({p: 300.0 for p in periods}),
-                            chain=chain, arc=arc, fixture_json=fixture)
+                            chain=chain, arc=arc, fixture_json=fixture, extra=extra)
     assert len(scalar) == len(mapped) and scalar
     for s, m in zip(scalar, mapped):
         assert any("[c_cap," in r for r in s["bounds"]) and any("[c_other," in r for r in s["bounds"])
@@ -104,7 +111,7 @@ def test_period_map_gives_each_period_its_value_in_rolling(tmp_path_factory) -> 
     """Every roll's c_cap row of period d has the map's value for d (300, 310, 320, 330)."""
     values = dict(zip(ROLL_PERIODS, (300.0, 310.0, 320.0, 330.0)))
     steps = _rows_per_step(tmp_path_factory, "uc_c_roll_values", _period_map(values), chain=ROLL_CHAIN,
-                           arc=["wind_plant", "west"])
+                           arc=["wind_plant", "west"], extra=ROLL_LONG_JUMP)
     seen = set()
     for rows in steps:
         for r, (_, upper) in rows["bounds"].items():

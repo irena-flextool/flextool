@@ -336,13 +336,18 @@ def test_silent_label_case_builds_the_twin_lp(tmp_path_factory, case_patch, case
 def test_roll_p2030_present_only_in_the_rolls_holding_it(tmp_path_factory):
     """west's self_discharge_loss (keyed by p2030, silent) resolves to a value only in the rolls whose window
     holds p2030, and to nothing in every other roll -- the per-roll re-evaluation (critique.md item 6) must
-    see a different drop set per roll, not a single answer memoised for the whole solve.  Verified
-    empirically: rolls 35-53 of fullYear_roll's 72 hold p2030; the rest don't."""
+    see a different drop set per roll, not a single answer memoised for the whole solve.  fullYear_roll runs
+    here with a 48 h horizon and a 36 h jump (two rolls in each of its four 72-h periods instead of 72 rolls of
+    8 h / 4 h): rolls that hold p2030 and rolls that don't, as before."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = _roll_p2030_guard_case(json.loads(TESTS_JSON.read_text()))
+    lps = _lp_snapshot()
+    data = lps._overlay(json.loads(TESTS_JSON.read_text()), name="roll_p2030_guard", base="fullYear_roll", values=[
+        ["node", "west", "self_discharge_loss", lps._pmap({"p2030": 0.1}, index_name="x")],
+        ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", 48.0],
+        ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", 36.0]])
     work = tmp_path_factory.mktemp("roll_p2030_presence")
     (work / "f.json").write_text(json.dumps(data))
     url = json_to_db(work / "f.json", work / "f.sqlite")

@@ -17,7 +17,10 @@ infeasibility no node penalty slack can absorb.
 
 All scenarios are built from JSON (CLAUDE.md invariant #3), never a
 checked-in .sqlite.  The witnesses drive the full rolling chain and read
-the realized ``output_raw`` parquets.
+the realized ``output_raw`` parquets.  The rolling chain runs over the
+periods a witness needs (``_PERIODS_ALT``): p2020 alone (18 rolls of 8 h /
+4 h, 17 roll boundaries) where the witness lies within one period, p2020 +
+p2025 where it must cross the period boundary.
 """
 from __future__ import annotations
 
@@ -107,23 +110,40 @@ def _db(tmp_path_factory, name):
     return url
 
 
+#: Alternative (last in a witness's chain) that limits dispatch_fullYear_roll to some of its four periods.
+_PERIODS_ALT = "c2_periods"
+
+
+def _import_periods(dm, periods: list[str]) -> None:
+    """Add ``_PERIODS_ALT``: dispatch_fullYear_roll over ``periods`` only (fullYear timeset, all realized)."""
+    from spinedb_api import import_data
+    from spinedb_api.parameter_value import Array, Map
+
+    import_data(dm, alternatives=[_PERIODS_ALT], object_parameter_values=[
+        ("solve", "dispatch_fullYear_roll", "period_timeset",
+         Map(list(periods), ["fullYear"] * len(periods), index_name="period"), _PERIODS_ALT),
+        ("solve", "dispatch_fullYear_roll", "realized_periods", Array(list(periods)), _PERIODS_ALT)])
+
+
 # ───────────────────── min_uptime witness (48 → 0) ──────────────────────
 @pytest.fixture(scope="module")
 def updown_run(tmp_path_factory):
     """``coal_min_updown_roll``: min_uptime = min_downtime = 5, method=both,
-    on the fullYear rolling timeline (horizon=8, jump=4).  Exercises BOTH
+    on the fullYear rolling timeline (horizon=8, jump=4) of p2020.  Exercises BOTH
     Carrier 1 (``roll_end_online``, inherent to rolling UC) and Carrier 2."""
     from spinedb_api import DatabaseMapping, import_data
     url = _db(tmp_path_factory, "db_c2_updown")
     scen = "coal_min_updown_roll"
     with DatabaseMapping(url) as dm:
+        _import_periods(dm, ["p2020"])
         import_data(dm, scenarios=[(scen, False, "")], scenario_alternatives=[
             (scen, "init", "west"), (scen, "west", "coal"),
             (scen, "coal", "coal_min_load"),
             (scen, "coal_min_load", "coal_min_updowntime"),
             (scen, "coal_min_updowntime", "wind"), (scen, "wind", "fullYear"),
             (scen, "fullYear", "dispatch_fullYear_roll"),
-            (scen, "dispatch_fullYear_roll", None)])
+            (scen, "dispatch_fullYear_roll", _PERIODS_ALT),
+            (scen, _PERIODS_ALT, None)])
         dm.commit_session("c2 updown witness")
     workdir = tmp_path_factory.mktemp("c2_updown_run")
     steps = run_chain_from_db(url, scen, work_folder=workdir,
@@ -133,7 +153,7 @@ def updown_run(tmp_path_factory):
 
 def test_min_uptime_cross_boundary_zero(updown_run):
     """Carrier 2: cross-boundary min_uptime obligations are honoured — 0
-    cross-roll-boundary up-violations (HEAD/MINTIME-1 left 48)."""
+    cross-roll-boundary up-violations (HEAD/MINTIME-1 left 48 over fullYear_roll's four periods)."""
     assert all(s.optimal for s in updown_run["steps"].values())
     rows = _global_realized(updown_run["workdir"])
     viol = _cross_boundary_violations(rows, 5, "up")
@@ -167,21 +187,23 @@ def test_composition_carrier1_and_carrier2_active(updown_run):
 @pytest.fixture(scope="module")
 def cross_period_run(tmp_path_factory):
     """min_uptime=6 (> jump), method=min_uptime.  The fullYear rolling
-    timeline has a roll straddling the p2020→p2025 period boundary; a NAIVE
-    cross-period carry makes that roll infeasible even with node slack.
-    The timeline-aware carry (only where the next step continues the
-    timeline) keeps it feasible."""
+    timeline of p2020 + p2025 has a roll straddling the p2020→p2025 period
+    boundary; a NAIVE cross-period carry makes that roll infeasible even with
+    node slack.  The timeline-aware carry (only where the next step continues
+    the timeline) keeps it feasible."""
     from spinedb_api import DatabaseMapping, import_data
     url = _db(tmp_path_factory, "db_c2_xp")
     scen = "coal_min_up6_roll"
     with DatabaseMapping(url) as dm:
+        _import_periods(dm, ["p2020", "p2025"])
         import_data(dm, scenarios=[(scen, False, "")], scenario_alternatives=[
             (scen, "init", "west"), (scen, "west", "coal"),
             (scen, "coal", "coal_min_load"),
             (scen, "coal_min_load", "coal_min_updowntime"),
             (scen, "coal_min_updowntime", "wind"), (scen, "wind", "fullYear"),
             (scen, "fullYear", "dispatch_fullYear_roll"),
-            (scen, "dispatch_fullYear_roll", None)])
+            (scen, "dispatch_fullYear_roll", _PERIODS_ALT),
+            (scen, _PERIODS_ALT, None)])
         import_data(dm, object_parameter_values=[
             ("unit", UNIT, "min_uptime", 6.0, "coal_min_updowntime"),
             ("unit", UNIT, "min_downtime", 0.0, "coal_min_updowntime"),
@@ -267,7 +289,8 @@ def downtime_run(tmp_path_factory):
     resumes at t0021 — still within min_downtime=20 of that shutdown.  Wind
     is removed so coal is the swing unit.  WITHOUT the carry a later roll
     illegally re-starts coal at t0021; WITH it the obligation is honoured
-    (``v_online + carried_shutdown ≤ existing`` ⇒ v_online ≤ ~0.2)."""
+    (``v_online + carried_shutdown ≤ existing`` ⇒ v_online ≤ ~0.2).  The rolls
+    run over p2020, where the witness lies."""
     from spinedb_api import DatabaseMapping, import_data
     from spinedb_api.parameter_value import Map
     url = _db(tmp_path_factory, "db_c2_dn")
@@ -278,6 +301,7 @@ def downtime_run(tmp_path_factory):
     demand_map = Map([s for s, _ in dem], [v for _, v in dem],
                      index_name="time")
     with DatabaseMapping(url) as dm:
+        _import_periods(dm, ["p2020"])
         import_data(dm, alternatives=["dn_witness"],
                     scenarios=[(scen, False, "")], scenario_alternatives=[
             (scen, "init", "west"), (scen, "west", "coal"),
@@ -286,7 +310,8 @@ def downtime_run(tmp_path_factory):
             (scen, "coal_min_updowntime", "wind"), (scen, "wind", "fullYear"),
             (scen, "fullYear", "dispatch_fullYear_roll"),
             (scen, "dispatch_fullYear_roll", "dn_witness"),
-            (scen, "dn_witness", None)])
+            (scen, "dn_witness", _PERIODS_ALT),
+            (scen, _PERIODS_ALT, None)])
         import_data(dm, object_parameter_values=[
             ("unit", UNIT, "min_uptime", 0.0, "dn_witness"),
             ("unit", UNIT, "min_downtime", 20.0, "dn_witness"),
@@ -346,18 +371,20 @@ def test_downtime_carry_is_timeline_aware_and_present(downtime_run):
 # ───────────────────────── byte-parity (no-op) ──────────────────────────
 @pytest.fixture(scope="module")
 def _no_mintime_rolling(tmp_path_factory):
-    """A rolling solve WITHOUT any min-up/down.  Carrier 2 must be fully
+    """A rolling solve (p2020) WITHOUT any min-up/down.  Carrier 2 must be fully
     inert: no ``online_history`` stored, no carry built."""
     from spinedb_api import DatabaseMapping, import_data
     url = _db(tmp_path_factory, "db_c2_nomin")
     scen = "coal_nomin_roll"
     with DatabaseMapping(url) as dm:
+        _import_periods(dm, ["p2020"])
         import_data(dm, scenarios=[(scen, False, "")], scenario_alternatives=[
             (scen, "init", "west"), (scen, "west", "coal"),
             (scen, "coal", "coal_min_load"), (scen, "coal_min_load", "wind"),
             (scen, "wind", "fullYear"),
             (scen, "fullYear", "dispatch_fullYear_roll"),
-            (scen, "dispatch_fullYear_roll", None)])
+            (scen, "dispatch_fullYear_roll", _PERIODS_ALT),
+            (scen, _PERIODS_ALT, None)])
         dm.commit_session("c2 no-mintime rolling")
     workdir = tmp_path_factory.mktemp("c2_nomin_run")
     steps = run_chain_from_db(url, scen, work_folder=workdir,

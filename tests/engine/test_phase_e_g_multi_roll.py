@@ -13,6 +13,11 @@ These tests assert:
    path and the ``--csv-dump`` path within ``rel_tol=1e-6`` — both
    feed identical data into identical LPs; the dump is a one-way
    debug snapshot, not a re-entry point.
+3. In-loop solution nulling (``keep_solutions=False``) leaves every
+   per-roll objective and output cell unchanged.
+
+The default 72-roll cascade (``keep_solutions=True``) is run once per
+module (``keep_run``) and is the reference of 1 and 2.
 """
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ import pytest
 
 from flextool.engine import run_chain_from_db
 from flextool.lean_parquet import read_lean_parquet
+from tests.engine._unit_db import FULLYEAR_ROLL_CHAIN, fullyear_roll_first_hours, make_db
 
 
 _SCEN = "fullYear_roll"
@@ -34,17 +40,19 @@ _SCEN = "fullYear_roll"
 _V3320_ROLL_71_OBJ = 3.432825e8
 
 
-def test_fullYear_roll_matches_v3320_golden(scenario_workdir) -> None:
+@pytest.fixture(scope="module")
+def keep_run(test_db_url, tmp_path_factory) -> dict:
+    """The default in-memory ``fullYear_roll`` cascade (warm, ``keep_solutions=True``) of the tests DB, once per
+    module.  Shared by the tests below: read only."""
+    wf = tmp_path_factory.mktemp("fullYear_roll_keep") / "default"
+    return run_chain_from_db(test_db_url, scenario_name=_SCEN, work_folder=wf, keep_solutions=True)
+
+
+def test_fullYear_roll_matches_v3320_golden(keep_run) -> None:
     """The 72-roll in-memory cascade reproduces the v3.32.0 golden
     final-roll objective.
     """
-    db = scenario_workdir(_SCEN) / "tests.sqlite"
-    with tempfile.TemporaryDirectory() as t:
-        wf = Path(t) / "default"
-        sols = run_chain_from_db(
-            db, scenario_name=_SCEN, work_folder=wf,
-            keep_solutions=True,
-        )
+    sols = keep_run
     last = next(reversed(sols.values()))
     obj = float(last.obj if last.obj is not None else last.solution.obj)
     assert obj == pytest.approx(_V3320_ROLL_71_OBJ, rel=1e-6), (
@@ -53,22 +61,18 @@ def test_fullYear_roll_matches_v3320_golden(scenario_workdir) -> None:
     )
 
 
-def test_fullYear_roll_csv_dump_per_roll_parity(scenario_workdir) -> None:
+def test_fullYear_roll_csv_dump_per_roll_parity(test_db_url, keep_run) -> None:
     """Every per-roll objective matches between default (in-memory)
     and ``--csv-dump`` paths within ``rel_tol=1e-6``.
 
     ``--csv-dump`` is a one-way Provider snapshot to disk — it must not
     influence the cascade's numeric output.
     """
-    db = scenario_workdir(_SCEN) / "tests.sqlite"
+    db = test_db_url
+    sols_default = keep_run
     with tempfile.TemporaryDirectory() as t:
-        default_wf = Path(t) / "default"
         dump_wf = Path(t) / "dump"
 
-        sols_default = run_chain_from_db(
-            db, scenario_name=_SCEN, work_folder=default_wf,
-            keep_solutions=True,
-        )
         sols_dump = run_chain_from_db(
             db, scenario_name=_SCEN, work_folder=dump_wf,
             keep_solutions=True, csv_dump=True,
@@ -138,7 +142,7 @@ def _compare_output_raw(wf_ref: Path, wf_sub: Path) -> list[str]:
         or n.startswith("v_state")
         for n in ref_files
     ), (
-        "fullYear_roll produced no decision-variable output_raw parquets — "
+        "the rolling cascade produced no decision-variable output_raw parquets — "
         "output-parity assertion would be vacuous"
     )
     for name in sorted(ref_files & sub_files):
@@ -172,15 +176,16 @@ def _compare_output_raw(wf_ref: Path, wf_sub: Path) -> list[str]:
     return problems
 
 
-def test_inloop_solution_null_preserves_results(scenario_workdir) -> None:
+def test_inloop_solution_null_preserves_results(tmp_path_factory) -> None:
     """In-loop whole-``solution`` nulling (the per-roll floor-ratchet
     release) must not change any cascade result.
 
-    ``fullYear_roll`` is a 72-roll SAME-LEVEL warm cascade, so on the
-    ``keep_solutions=False`` run every prior roll's parked
-    ``OrchestrationStep.solution`` is nulled IN-LOOP by the warm slim
-    (``_same_level_older`` predicate) the moment the next roll parks —
-    long before the post-cascade final slim runs.  This is the path the
+    ``fullYear_roll`` cut to p2020's first 24 h is a 6-roll SAME-LEVEL
+    warm cascade, so on the ``keep_solutions=False`` run every prior
+    roll's parked ``OrchestrationStep.solution`` is nulled IN-LOOP by the
+    warm slim (``_same_level_older`` predicate) the moment the next roll
+    parks — long before the post-cascade final slim runs (rolls 0-4 are
+    each nulled while later rolls still solve).  This is the path the
     end-state-only tests do NOT cover.  ``keep_solutions=True`` retains
     every solution (slim gated off) and is the ground truth.
 
@@ -189,7 +194,8 @@ def test_inloop_solution_null_preserves_results(scenario_workdir) -> None:
       (ii) full decision-variable output parity (every
            ``output_raw/*.parquet`` cell matches between the two modes).
     """
-    db = scenario_workdir(_SCEN) / "tests.sqlite"
+    db, scen = make_db(tmp_path_factory, alt="inloop_null_6_rolls", values=fullyear_roll_first_hours(24.0),
+                       base_chain=FULLYEAR_ROLL_CHAIN)
     with tempfile.TemporaryDirectory() as t:
         wf_keep = Path(t) / "keep"
         wf_slim = Path(t) / "slim"
@@ -197,13 +203,13 @@ def test_inloop_solution_null_preserves_results(scenario_workdir) -> None:
         # Reference: keep_solutions=True — slim gated off, every parked
         # step retains its full Solution.
         ref = run_chain_from_db(
-            db, scenario_name=_SCEN, work_folder=wf_keep,
+            db, scenario_name=scen, work_folder=wf_keep,
             warm=True, keep_solutions=True,
         )
         # Subject: keep_solutions=False — in-loop whole-solution nulling
         # active (the fix under test).
         sub = run_chain_from_db(
-            db, scenario_name=_SCEN, work_folder=wf_slim,
+            db, scenario_name=scen, work_folder=wf_slim,
             warm=True, keep_solutions=False,
         )
 
@@ -215,7 +221,7 @@ def test_inloop_solution_null_preserves_results(scenario_workdir) -> None:
     # the same solve-name set.
     assert list(ref.keys()) == list(sub.keys())
     assert len(ref) >= 3, (
-        f"fullYear_roll yielded only {len(ref)} rolls; need >=3 same-level "
+        f"the cut fullYear_roll yielded only {len(ref)} rolls; need >=3 same-level "
         "rolls to exercise in-loop slimming of multiple prior steps"
     )
 

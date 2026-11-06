@@ -43,6 +43,7 @@ if str(TEST_DIR) not in sys.path:
 
 from flextool.engine import run_chain_from_db  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402
+from tests.engine._unit_db import b64, make_db  # noqa: E402
 
 pytestmark = pytest.mark.solver
 
@@ -83,6 +84,29 @@ SCENARIO = "unidirectional_connection"  # uses test_db_url (tests.json)
 # rolling logic with ZERO duplicates, so the dedup / winner code is never
 # validated there — this scenario is what makes the multi-solve labels real.
 MULTISOLVE_SCENARIO = "multi_fullYear_battery_nested_multi_invest"
+
+# The multi-solve scenario's nested dispatch with a 36 h horizon / 24 h jump instead of 8 h / 4 h: three dispatch
+# rolls per period instead of eighteen; the invest and storage levels and their overlap with the dispatch stay.
+_MULTISOLVE_DISPATCH_36_24 = [
+    ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", b64(36.0, "float")],
+    ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", b64(24.0, "float")],
+]
+
+
+def _scenario_chain(scenario: str) -> list[str]:
+    """The alternative chain of ``scenario`` in tests.json (first alternative first)."""
+    import json
+
+    rows = [r for r in json.loads((TEST_DIR / "fixtures" / "tests.json").read_text())["scenario_alternatives"]
+            if r[0] == scenario]
+    nxt = {a: b for _, a, b in rows}
+    alt = next(a for a in nxt if a not in set(nxt.values()))
+    chain = []
+    while alt is not None:
+        chain.append(alt)
+        alt = nxt.get(alt)
+    return chain
+
 
 # The bidirectional connection in the multi-solve scenario.  Its (source, sink)
 # node ordering is the KNOWN-UNRECOVERABLE 2-way limitation of the parquet
@@ -252,7 +276,7 @@ def test_spinedb_parquet_replay_matches_native(
 
 
 def test_spinedb_parquet_replay_matches_native_multisolve(
-    test_db_url: str,
+    tmp_path_factory: pytest.TempPathFactory,
     test_solver_config_dir: Path,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -264,7 +288,9 @@ def test_spinedb_parquet_replay_matches_native_multisolve(
     The single-solve test above exercises the shim with zero overlapping
     (period,time), so the rolling/dedup/winner logic is never validated there;
     this test drives a nested multi-solve cascade (invest sequence + rolling
-    dispatch) whose realized timeline DOES overlap across rolls, then asserts:
+    dispatch; ``MULTISOLVE_SCENARIO`` with its dispatch rolls at 36 h / 24 h,
+    see ``_MULTISOLVE_DISPATCH_36_24``) whose realized timeline DOES overlap
+    across solves, then asserts:
 
       (a) every non-discount parameter value matches native byte-for-byte,
           INCLUDING the full Map key structure — i.e. the per-solve ``solve``
@@ -276,18 +302,20 @@ def test_spinedb_parquet_replay_matches_native_multisolve(
           single-solve test.
     """
     # --- 1. run the (multi-solve) cascade ----------------------------------
+    url, scenario = make_db(tmp_path_factory, alt="spinedb_multisolve", values=_MULTISOLVE_DISPATCH_36_24,
+                            base_chain=_scenario_chain(MULTISOLVE_SCENARIO))
     steps = run_chain_from_db(
-        input_db_url=test_db_url,
-        scenario_name=MULTISOLVE_SCENARIO,
+        input_db_url=url,
+        scenario_name=scenario,
         work_folder=tmp_path,
         solver_config_dir=test_solver_config_dir,
         warm=True,
         keep_solutions=True,
     )
-    assert steps, f"no steps for scenario {MULTISOLVE_SCENARIO!r}"
+    assert steps, f"no steps for scenario {scenario!r}"
     # This MUST be genuinely multi-solve or the test is vacuous.
     assert len(steps) > 1, (
-        f"{MULTISOLVE_SCENARIO!r} ran as a single solve "
+        f"{scenario!r} ran as a single solve "
         f"({len(steps)} step) — multi-solve logic would not be exercised"
     )
     last_step = next(reversed(steps.values()))
@@ -297,9 +325,9 @@ def test_spinedb_parquet_replay_matches_native_multisolve(
     replay_db = "sqlite:///" + str(tmp_path / "results_replay.sqlite")
 
     common = dict(
-        scenario_name=MULTISOLVE_SCENARIO,
+        scenario_name=scenario,
         output_location=str(tmp_path),
-        subdir=MULTISOLVE_SCENARIO,
+        subdir=scenario,
         output_config_path=OUTPUT_CONFIG,
         fallback_output_location=str(tmp_path),
         raw_output_dir=str(tmp_path / "output_raw"),
@@ -330,7 +358,7 @@ def test_spinedb_parquet_replay_matches_native_multisolve(
             results_db_url=replay_db,
         )
 
-    alternative = MULTISOLVE_SCENARIO  # derive_alternative_name == scenario
+    alternative = scenario  # derive_alternative_name == scenario
 
     native_vals = _dump_param_values(native_db, alternative)
     replay_vals = _dump_param_values(replay_db, alternative)

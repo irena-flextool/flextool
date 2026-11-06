@@ -163,8 +163,16 @@ def test_outputs_equal_with_names_kept_out_space_names(
 @pytest.mark.solver
 @pytest.mark.parametrize("scenario", [
     "wind_battery_invest_lifetime_renew_4solve",
-    pytest.param("fullYear_roll", marks=pytest.mark.slow),  # rolling window, ~110 s for the twin
+    # The rolling window cut to p2020's first 12 h: three warm rolls of the same solve (the whole 72-roll
+    # scenario took ~110 s for the twin).
+    pytest.param("fullYear_roll", marks=pytest.mark.slow),
 ])
 def test_outputs_equal_with_names_kept_out_multi_solve(
-        scenario, tmp_path, monkeypatch, test_db_url, test_solver_config_dir) -> None:
-    _run_twins(test_db_url, scenario, tmp_path, monkeypatch, test_solver_config_dir)
+        scenario, tmp_path, tmp_path_factory, monkeypatch, test_db_url, test_solver_config_dir) -> None:
+    url = test_db_url
+    if scenario == "fullYear_roll":
+        from tests.engine._unit_db import FULLYEAR_ROLL_CHAIN, fullyear_roll_first_hours, make_db
+
+        url, scenario = make_db(tmp_path_factory, alt="names_roll_3", values=fullyear_roll_first_hours(12.0),
+                                base_chain=FULLYEAR_ROLL_CHAIN)
+    _run_twins(url, scenario, tmp_path, monkeypatch, test_solver_config_dir)

@@ -182,10 +182,11 @@ def test_rolling_online_carry_matches_cold(tmp_path_factory) -> None:
 
 
 def test_rolling_variable_step_duration_warm_equals_cold(tmp_path_factory) -> None:
-    """Step durations alternate 1 h / 3 h, rolling 8 h / 1 h: equal-shape rolls differ positionally in
-    ``p_step_duration``.  Before: the warm run stopped (roll 1 infeasible)."""
+    """Step durations alternate 1 h / 3 h, rolling 8 h / 1 h over the first 48 h (rolling_duration): equal-shape
+    rolls differ positionally in ``p_step_duration``.  Before: the warm run stopped (roll 1 infeasible)."""
     dur = [[f"t{i:04d}", (1.0, 3.0)[(i - 1) % 2]] for i in range(1, 8761)]
-    values = [["timeline", "y2020", "timestep_duration", b64({"index_type": "str", "rank": 1, "data": dur}, "map")]]
+    values = [["timeline", "y2020", "timestep_duration", b64({"index_type": "str", "rank": 1, "data": dur}, "map")],
+              ["solve", DISPATCH, "rolling_duration", b64(48.0, "float")]]
     url, scen = make_db(tmp_path_factory, alt="reuse_stepdur", values=values + _rolling(8.0, 1.0),
                         base_chain=["init", "west", "coal"])
     runs = _warm_and_cold(tmp_path_factory, url, scen, "reuse_stepdur")
