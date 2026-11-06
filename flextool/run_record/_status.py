@@ -78,6 +78,10 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _pct(value: float | None) -> str:
+    return f"{value * 100:.4g}%" if value is not None else "unknown"
+
+
 def _jsonable(value: Any) -> Any:
     """A JSON-safe copy of an option value."""
     if value is None or isinstance(value, (bool, int, str)):
@@ -504,15 +508,25 @@ class RunRecorder:
             if entry is None:
                 return
             entry["kind"] = "benders"
+            gap_v, tol_v = _finite(gap), _finite(tol)
             if converged:
                 entry["acceptance"], entry["state"] = "converged", "accepted"
+                entry["message"] = None
             elif has_incumbent:
                 entry["acceptance"], entry["state"] = "not_converged", "accepted"
+                entry["message"] = (
+                    f"decomposed solve {entry['name']!r} did not meet its convergence tolerance after "
+                    f"{iterations} iterations (gap {_pct(gap_v)}, tolerance {_pct(tol_v)}); its results are "
+                    "feasible but not certified optimal"
+                )
             else:
                 entry["acceptance"], entry["state"] = "no_incumbent", "rejected"
+                entry["message"] = (
+                    f"decomposed solve {entry['name']!r} found no feasible solution in {iterations} iterations"
+                )
             entry["objective"] = _finite(objective)
             entry["warm_used"] = False
-            entry["benders"] = {"gap": _finite(gap), "tol": _finite(tol),
+            entry["benders"] = {"gap": gap_v, "tol": tol_v,
                                 "iterations": None if iterations is None else int(iterations)}
             self._status["progress"] = None
             self._status["verdict"] = worst_verdict(self._status["solves"])

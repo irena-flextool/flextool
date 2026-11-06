@@ -1,6 +1,7 @@
 import logging
 import sys
 import spinedb_api as api
+from flextool import run_record
 from flextool.update_flextool.db_handle import open_database_mapping
 from pathlib import Path
 
@@ -77,10 +78,16 @@ class FlexToolRunner:
                 # the cascade starts.  The previous multi-line INFO
                 # here duplicated the Scenario line and split related
                 # metadata across the startup log; drop it.
-                if len(db.get_scenario_alternative_items(scenario_name=scenario_name)) == 0:
+                _scenario_alternatives = db.get_scenario_alternative_items(scenario_name=scenario_name)
+                if len(_scenario_alternatives) == 0:
                     message = "No alternatives in the scenario, i.e. empty scenario."
                     logger.error(message)
                     raise FlexToolConfigError(message)
+                # The run record lists the scenario's alternatives in rank order.
+                run_record.active().note_input(alternatives=[
+                    item["alternative_name"]
+                    for item in sorted(_scenario_alternatives, key=lambda item: item["rank"])
+                ])
 
                 # Pre-warm both entity and parameter_value caches so
                 # every find_* call downstream (SolveConfig, TimelineConfig,

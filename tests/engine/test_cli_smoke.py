@@ -117,7 +117,7 @@ def test_cli_csv_dump_keeps_output_raw(
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     output_parquet = tmp_path / "output_parquet" / scenario
-    assert output_parquet.exists() and any(output_parquet.iterdir()), (
+    assert output_parquet.exists() and any(output_parquet.glob("*.parquet")), (
         f"canonical output_parquet/<scenario>/ missing under "
         f"--csv-dump: {output_parquet}"
     )
@@ -494,7 +494,7 @@ def test_cli_highs_threads_default(work_base_db_with_scenario, tmp_path) -> None
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     output_parquet = tmp_path / "output_parquet" / scenario
-    assert output_parquet.exists() and any(output_parquet.iterdir()), (
+    assert output_parquet.exists() and any(output_parquet.glob("*.parquet")), (
         f"output_parquet/<scenario>/ missing or empty under "
         f"--highs-threads 1: {output_parquet}"
     )
@@ -513,7 +513,7 @@ def test_cli_highs_threads_two(work_base_db_with_scenario, tmp_path) -> None:
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     output_parquet = tmp_path / "output_parquet" / scenario
-    assert output_parquet.exists() and any(output_parquet.iterdir()), (
+    assert output_parquet.exists() and any(output_parquet.glob("*.parquet")), (
         f"output_parquet/<scenario>/ missing or empty under "
         f"--highs-threads 2: {output_parquet}"
     )
