@@ -116,12 +116,17 @@ jobs:
       - name: Clone FlexTool
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          git clone https://github.com/irena-flextool/flextool.git --depth=1 --branch "${{ inputs.flextool-ref }}" flextool
+          # Shallow (one commit) and partial (file contents are fetched only
+          # for what is checked out). FlexTool runs from this clone, and the
+          # self-update's `git pull` deepens it and fetches what it needs.
+          git clone https://github.com/irena-flextool/flextool.git --depth=1 --filter=blob:none --no-checkout --branch "${{ inputs.flextool-ref }}" flextool
           # Leave FlexTool's test suite out of the working tree. A sparse
           # checkout, so the self-update's `git restore .` and `git pull`
           # keep it out and do not see it as deleted.
           git -C flextool sparse-checkout set --no-cone '/*' '!/tests/'
+          git -C flextool checkout
           if (Test-Path flextool/tests) { throw "flextool/tests is still checked out" }
+          if (-not (Test-Path flextool/flextool/__init__.py)) { throw "flextool is not checked out" }
           git -C flextool log -1 --format="FlexTool %H %s"
       - name: Build odfpy wheel
         run: |
@@ -135,12 +140,35 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           cd embedded-python
-          # Non-editable: the clone is moved into the bundle afterwards, and
-          # FlexTool's self-update reinstalls it from there.
-          ./python.exe -m pip install --no-build-isolation --find-links ../wheelhouse ../flextool
+          # Editable: the bundled Python imports FlexTool from the clone, so
+          # the bundle has one copy of it and the self-update's `git pull`
+          # takes effect (it reinstalls with `pip install -e`, which brings in
+          # new dependencies).
+          ./python.exe -m pip install --no-build-isolation --find-links ../wheelhouse -e ../flextool
           ./python.exe -m pip list
           # Leave the clone as cloned (no build/ or *.egg-info in the bundle).
           git -C ../flextool clean -fdxq
+          # setuptools' editable install finds the clone by its absolute path,
+          # which is wrong once the bundle is moved or unzipped elsewhere. The
+          # script points it to the clone by a path relative to site-packages
+          # instead; it runs again after "Update FlexTool" reinstalls.
+          $script = Join-Path $Env:RUNNER_TEMP "relocatable-flextool.ps1"
+          Set-Content -Path $script -Value @'
+          param([string]$SitePackages, [switch]$Check)
+          # From _internal/Python/Lib/site-packages to the clone in the bundle root.
+          $relative = "../../../../flextool"
+          $sp = (Resolve-Path -LiteralPath $SitePackages).Path
+          $pth = @(Get-ChildItem -LiteralPath $sp -Filter "__editable__.flextool-*.pth")
+          if ($pth.Count -ne 1) { throw "expected one FlexTool editable .pth in $sp, found $($pth.Count)" }
+          # A path line: site adds it to sys.path, relative to site-packages.
+          Set-Content -LiteralPath $pth[0].FullName -Value $relative
+          Get-ChildItem -LiteralPath $sp -Filter "__editable___flextool_*" | Remove-Item -Force
+          Get-ChildItem -LiteralPath (Join-Path $sp "__pycache__") -Filter "__editable___flextool_*" -ErrorAction SilentlyContinue | Remove-Item -Force
+          if (Test-Path -LiteralPath (Join-Path $sp "flextool")) { throw "site-packages has a copy of flextool" }
+          if ($Check -and -not (Test-Path -LiteralPath (Join-Path $sp "$relative/flextool/__init__.py"))) { throw "no FlexTool clone at $relative from $sp" }
+          Write-Output "$($pth[0].Name): $relative"
+          '@
+          pwsh -NoProfile -ExecutionPolicy Bypass -File $script -SitePackages Lib/site-packages
       - name: Add the compatible polars runtime to embedded Python
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -164,14 +192,27 @@ jobs:
           # The frozen Toolbox starts Jupyter kernels with the embedded Python,
           # so it does not need a kernel itself: ipykernel (reached only through
           # qtconsole's in-process kernel), its debugger debugpy, and jedi /
-          # parso (IPython's completer, which runs in the kernel). The spec
-          # file has no other way to pass PyInstaller excludes.
+          # parso (IPython's completer, which runs in the kernel).
+          # SciPy: the frozen Toolbox uses only scipy.sparse.csgraph (the DB
+          # editor's graph layout, spinedb_api.graph_layout_generator), which
+          # loads scipy._lib, scipy._external, scipy.linalg and scipy.sparse.
+          # The other subpackages come in through pandas' and networkx's
+          # function-level imports, in functions Toolbox does not call.
+          # pandas and all of pyarrow stay: a Data Package importer reads
+          # parquet resources through frictionless, pyarrow.parquet/.dataset
+          # and pandas. The spec file has no other way to pass PyInstaller
+          # excludes.
+          $excludes = @("debugpy", "ipykernel", "jedi", "parso") + @(
+            "cluster", "constants", "datasets", "differentiate", "fft", "fftpack", "integrate", "interpolate",
+            "io", "misc", "ndimage", "odr", "optimize", "signal", "spatial", "special", "stats"
+          ).ForEach({ "scipy.$_" })
           $spec = Get-Content spinetoolbox.spec -Raw
           if ($spec -notmatch 'excludes=\[\],') {
-            Write-Output "::warning::spinetoolbox.spec has no 'excludes=[],'; the frozen Toolbox keeps ipykernel, debugpy, jedi and parso."
+            Write-Output "::warning::spinetoolbox.spec has no 'excludes=[],'; the frozen Toolbox keeps $($excludes -join ', ')."
             exit 0
           }
-          $spec.Replace('excludes=[],', 'excludes=["debugpy", "ipykernel", "jedi", "parso"],') | Set-Content spinetoolbox.spec -NoNewline
+          $list = ($excludes | ForEach-Object { "`"$_`"" }) -join ", "
+          $spec.Replace('excludes=[],', "excludes=[$list],") | Set-Content spinetoolbox.spec -NoNewline
           Select-String -Path spinetoolbox.spec -Pattern 'excludes='
       - name: Build bundle
         run: |
@@ -189,8 +230,13 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           cd "dist/Spine Toolbox/flextool"
           # The bundled interpreter, so the reinstall and the solver-stack
-          # check of update_flextool act on what the bundle ships.
-          ..\_internal\Python\python.exe update_flextool.py --skip-git
+          # check of update_flextool act on what the bundle ships. It starts
+          # from the relocatable editable install, as on a user's computer,
+          # and must take the editable reinstall.
+          ..\_internal\Python\python.exe update_flextool.py --skip-git | Tee-Object -Variable out
+          if (-not ($out -match '^Refreshing flextool install and dependencies \(editable,')) { throw "update_flextool did not reinstall FlexTool as editable" }
+          if ($out -match '^Warning: pip install failed') { throw "update_flextool: pip install failed" }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Env:RUNNER_TEMP "relocatable-flextool.ps1") -SitePackages ../_internal/Python/Lib/site-packages -Check
       - name: Add flextool start bat-file
         run: |
           cd "dist/Spine Toolbox"
@@ -291,7 +337,32 @@ jobs:
               Remove-Item -LiteralPath $_.FullName -Recurse -Force
             }
           }
-          foreach ($name in @("debugpy", "ipykernel", "jedi", "parso")) {
+          # A DLL at the top of _internal that is byte-identical to one in a
+          # package folder is a second copy (arrow.dll, 18 MB, next to
+          # pyarrow/arrow.dll). Python loads an extension module's DLLs from
+          # the module's own folder first, so pyarrow uses its own copy. Only
+          # arrow.dll is removed; the others are listed.
+          $twins = Get-ChildItem -LiteralPath $internal -Recurse -File -Filter *.dll |
+            Where-Object { $_.DirectoryName -ne $internal } | Group-Object Name -AsHashTable
+          foreach ($top in Get-ChildItem -LiteralPath $internal -File -Filter *.dll) {
+            if (-not $twins -or -not $twins.ContainsKey($top.Name)) { continue }
+            $hash = (Get-FileHash -LiteralPath $top.FullName).Hash
+            $same = @($twins[$top.Name] | Where-Object { (Get-FileHash -LiteralPath $_.FullName).Hash -eq $hash } |
+              ForEach-Object { [IO.Path]::GetRelativePath($internal, $_.FullName) })
+            if (-not $same) { continue }
+            $note = "$($top.Name) ($([math]::Round($top.Length / 1MB, 1)) MB; the same file is $($same -join ', '))"
+            if ($top.Name -eq "arrow.dll" -and $same -contains (Join-Path "pyarrow" "arrow.dll")) {
+              Write-Output "  removed $note"
+              Remove-Item -LiteralPath $top.FullName -Force
+            } else {
+              Write-Output "  kept $note"
+            }
+          }
+          $excluded = @("debugpy", "ipykernel", "jedi", "parso") + @(
+            "cluster", "constants", "datasets", "differentiate", "fft", "fftpack", "integrate", "interpolate",
+            "io", "misc", "ndimage", "odr", "optimize", "signal", "spatial", "special", "stats"
+          ).ForEach({ "scipy/$_" })
+          foreach ($name in $excluded) {
             if (Test-Path (Join-Path $internal $name)) { Write-Output "::warning::the frozen Toolbox still has $name" }
           }
       - name: "Size report: after slimming"
@@ -322,6 +393,37 @@ jobs:
           $broken = $check | Where-Object { $_ -and $_ -notmatch '^ipykernel \S+ requires debugpy, which is not installed\.$' -and $_ -ne 'No broken requirements found.' }
           if ($broken) { throw "pip check: $($broken -join '; ')" }
           & $py -m flextool.env_check
+      - name: "Smoke: FlexTool runs from the clone, also when the bundle is moved"
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $root = (Resolve-Path "dist/Spine Toolbox").Path
+          # From a folder outside the bundle, so FlexTool is found through
+          # site-packages and not through the current folder.
+          cd $Env:RUNNER_TEMP
+          $check = "import pathlib, sys, flextool; from flextool.update_flextool import install_info as ii; p = pathlib.Path(flextool.__file__).resolve(); clone = pathlib.Path(sys.argv[1]).resolve(); print(p); assert p.is_relative_to(clone), (p, clone); assert ii.git_checkout_root() == clone, ii.git_checkout_root(); print(ii.describe_install())"
+          & (Join-Path $root "_internal/Python/python.exe") -c $check (Join-Path $root "flextool")
+          # The self-update reinstalls with `pip install -e` only when pip
+          # reports an editable install.
+          $show = & (Join-Path $root "_internal/Python/python.exe") -m pip show flextool
+          if (-not ($show -match '^Editable project location:')) { throw "pip does not report FlexTool as editable" }
+          # The self-update's `git restore .` and `git pull` act on a clean,
+          # shallow, sparse checkout.
+          $clone = Join-Path $root "flextool"
+          if ((git -C $clone rev-parse --is-shallow-repository) -ne "true") { throw "the FlexTool clone is not shallow" }
+          if ((git -C $clone config --get core.sparseCheckout) -ne "true") { throw "the FlexTool clone is not a sparse checkout" }
+          $dirty = git -C $clone status --porcelain --untracked-files=no
+          if ($dirty) { throw "tracked files changed in the FlexTool clone: $dirty" }
+          # Users unzip the bundle anywhere: move it and import again.
+          $moved = Join-Path (Split-Path $root) "Spine Toolbox moved"
+          for ($i = 0; ; $i++) {
+            try { Move-Item -LiteralPath $root $moved -ErrorAction Stop; break }
+            catch { if ($i -ge 5) { throw }; Start-Sleep -Seconds 10 }
+          }
+          try {
+            & (Join-Path $moved "_internal/Python/python.exe") -c $check (Join-Path $moved "flextool")
+          } finally {
+            Move-Item -LiteralPath $moved $root
+          }
       - name: "Smoke: a Jupyter kernel in the bundled Python"
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
