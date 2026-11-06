@@ -209,7 +209,7 @@ _PROJECT_FOLDER_TEMPLATE = (
     "# Use projects sub-folders to allow access by FlexTool GUI as well.\n"
     "# Using the project specific input_sources folder for the input data db\n"
     "# makes it visible in the GUI too.\n"
-    "# e.g.:  projects/Rivendell\n"
+    "# e.g.:  projects/MyProject\n"
 )
 
 

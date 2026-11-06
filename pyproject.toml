@@ -98,7 +98,7 @@ dependencies = [
     # (polars majors change row-order and API guarantees — 2.0 broke the
     # rolling warm-start, fixed in 4.0.5); the weekly canary tests the newest.
     # Held below 2: polars 2.x roughly triples peak RAM at the LP hand-off to
-    # HiGHS (Cyprus 8 -> 25 GB, same LP); lift once that is understood.
+    # HiGHS (a large model: 8 -> 25 GB, same LP); lift once that is understood.
     "polars>=1.40,<2",
     # Core data + I/O.  pandas: the floor is spinedb-api's own requirement
     # (>=2.2.3); 3.0.x is what fresh installs get and what CI tests; the next
